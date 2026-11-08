@@ -70,12 +70,12 @@ func TestCatid4x2_S2_LateCutover(t *testing.T) {
 			t.Logf("%s: completed by %s %s after the program change", v.name, co.TriggeredBy, took.Round(time.Second))
 			c.cycle(5) // past the cutover
 			if v.hold != nil {
-				held := c.heldBeside("S2 "+v.name+" mid-run", 4, atChange, c.counted()-run)
+				held := c.loggedBeside("S2 "+v.name+" mid-run", 4, atChange, c.counted()-run)
 				// The force left the held legs waiting; released now, they land
 				// as ordinary orders.
 				c.carryAll("the held legs", after, nil)
 				c.cycle(3)
-				c.tookTheHold("S2 "+v.name, 4, atChange, held)
+				c.landedFresh("S2 "+v.name, 4, atChange, held)
 			}
 			for _, i := range []int{3, 4} {
 				if tn := c.cart(i); tn == nil || !strings.HasPrefix(tn.label, "MIRROR-R") {
@@ -94,11 +94,11 @@ func TestCatid4x2_S2_LateCutover(t *testing.T) {
 	}
 }
 
-// heldBeside fails unless the cart of RUN's part standing at position i reads
-// at, its count at the program change, and the seat holds n of ALT's part
-// there: every ALT stroke since, none drawn from that cart. It logs the read
-// and returns n.
-func (c *w6Cell) heldBeside(label string, i int, at, n int64) int64 {
+// loggedBeside fails unless the cart of RUN's part standing at position i
+// reads at, its count at the program change, and the ledger has logged n of
+// ALT's part there: every ALT stroke since, none drawn from that cart and none
+// held at the seat (decision 55). It logs the read and returns n.
+func (c *w6Cell) loggedBeside(label string, i int, at, n int64) int64 {
 	c.t.Helper()
 	c.flush()
 	tn := c.cart(i)
@@ -107,21 +107,22 @@ func (c *w6Cell) heldBeside(label string, i int, at, n int64) int64 {
 	if tn == nil || tn.part != w6RunParts[i] {
 		c.t.Fatalf("%s: %s holds %+v, want the %s cart its legs kept", label, w6Pos[i], tn, w6RunParts[i])
 	}
-	if got := c.count(tn); got != at || rt.PendingUOPDelta != n || rt.PendingUOPPayload != w6AltParts[i] {
+	logged := c.loggedAt(c.holds(), i)
+	if got := c.count(tn); got != at || rt.PendingUOPDelta != 0 || logged != n {
 		c.dump(label)
 		c.t.Fatalf("%s: %s: cart %s reads %d (at the program change %d: %d of ALT's strokes drawn from it), the seat holds "+
-			"%d of %q; want it standing at %d and the seat holding %d of %s", label, w6Pos[i], tn.label, got, at, at-got,
-			rt.PendingUOPDelta, rt.PendingUOPPayload, at, n, w6AltParts[i])
+			"%d, the ledger logged %d; want it standing at %d, nothing held and %d logged", label, w6Pos[i], tn.label, got, at,
+			at-got, rt.PendingUOPDelta, logged, at, n)
 	}
-	c.t.Logf("HELD %s: %s holds %d of %s beside cart %s, which stands at %d from the program change", label, w6Pos[i], n,
+	c.t.Logf("LOGGED %s: %s logged %d of %s beside cart %s, which stands at %d from the program change", label, w6Pos[i], n,
 		w6AltParts[i], tn.label, at)
 	return n
 }
 
-// tookTheHold fails unless position i's RUN-part cart left at at (no ALT
-// stroke drawn from it) and the ALT-part cart standing there now drew the n
-// held strokes and its own, the seat's hold replayed.
-func (c *w6Cell) tookTheHold(label string, i int, at, n int64) {
+// landedFresh fails unless position i's RUN-part cart left at at (no ALT
+// stroke drawn from it) and the ALT-part cart standing there now drew its own
+// strokes alone, the n logged still in the ledger (decision 55).
+func (c *w6Cell) landedFresh(label string, i int, at, n int64) {
 	c.t.Helper()
 	c.flush()
 	ts := c.tenures[i]
@@ -129,20 +130,19 @@ func (c *w6Cell) tookTheHold(label string, i int, at, n int64) {
 		c.t.Fatalf("%s: %s's carts %+v, want the %s cart then the %s cart", label, w6Pos[i], ts, w6RunParts[i], w6AltParts[i])
 	}
 	old, cur := ts[len(ts)-2], ts[len(ts)-1]
-	rt, err := c.edge.DB.GetProcessNodeRuntime(c.nodes[i])
-	mustNil(c.t, err, "runtime")
-	if got := c.count(old); got != at || rt.PendingUOPDelta != 0 {
+	if got := c.count(old); got != at {
 		c.dump(label)
-		c.t.Fatalf("%s: cart %s left at %d, want %d; the seat holds %d, want its hold replayed", label, old.label, got, at,
-			rt.PendingUOPDelta)
+		c.t.Fatalf("%s: cart %s left at %d, want %d", label, old.label, got, at)
 	}
 	drew := w6Full - c.count(cur)
-	if own := c.counted() - cur.countsIn; drew != n+own {
+	if own := c.counted() - cur.countsIn; drew != own {
 		c.dump(label)
-		c.t.Fatalf("%s: cart %s drew %d, want the %d held and its own %d", label, cur.label, drew, n, own)
+		c.t.Fatalf("%s: cart %s drew %d, want its own %d (the %d logged are no cart's)", label, cur.label, drew, own, n)
 	}
-	c.t.Logf("HELD %s: cart %s left at %d; cart %s drew %d (the %d held and %d of its own)", label, old.label, at, cur.label,
-		drew, n, drew-n)
+	if logged := c.loggedAt(c.holds(), i); logged < n {
+		c.t.Fatalf("%s: %s: the ledger logged %d, want the %d from before the cart landed still there", label, w6Pos[i], logged, n)
+	}
+	c.t.Logf("FRESH %s: cart %s left at %d; cart %s drew %d of its own; %d logged", label, old.label, at, cur.label, drew, n)
 }
 
 // declareWindow is the CATID monitor's 60 s stability window (the process

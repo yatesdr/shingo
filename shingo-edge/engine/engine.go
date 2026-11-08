@@ -141,9 +141,6 @@ type Engine struct {
 	// first read (by the point's PLC and tag, a *catchUp:
 	// repoint_catch_up.go): the poll asks catchUpHeld, with no lock.
 	catchUps sync.Map
-	// endOfLine is the station tile's end-of-line sentence per process, as
-	// last computed (end_of_line.go).
-	endOfLine endOfLineMemo
 	// cutoverMu is the changeover door's mutex (completeCutover): the
 	// operator's CUTOVER, the monitor's fire, the admin switch and the restore
 	// complete one at a time.
@@ -264,11 +261,6 @@ type Engine struct {
 	// the list-then-create dedup gap. One sweep of each kind at a time.
 	sweepingUnloaders atomic.Bool
 	sweepingLoaders   atomic.Bool
-	// strandedAlarms holds the current parked-ticks alarm detail per core node
-	// name (map[string]string), maintained by strandedMonitor. The operator-
-	// station view reads it via StrandedAlarmDetail so the tile renders the chip
-	// on load AND on the SSE-driven refresh. Empty/absent = no active alarm.
-	strandedAlarms sync.Map
 	// keepStagedNotes holds the keep-staged keeper's sentence per line (core
 	// node name -> string): paused, or why it cannot keep its spot. Recomputed
 	// on every keeper pass, so a restart loses nothing the next sweep does not
@@ -392,11 +384,7 @@ func New(c Config) *Engine {
 	// Lazy via loaders(); the not-found sentinel is mapped to a clean miss for
 	// the view.
 	e.stationService.SetLoaderResolver(stationLoaderResolver{e})
-	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
-	// the live alarm map so the chip renders on load and on every refresh.
-	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
 	e.stationService.SetKeepStagedResolver(e.KeepStagedNote)
-	e.stationService.SetEndOfLineResolver(e.endOfLineNote)
 	e.stationService.SetUnloaderAskResolver(e.UnloaderAskNote)
 	// A served row names its part's bin type, and an unloader tile its CLEAR
 	// panels' carriers, both from the payload-to-bin-type catalog Core
@@ -454,7 +442,6 @@ func (e *Engine) Start() {
 
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg.WarLink, e.cfg.PollRate, e.cfg.Counter.JumpThreshold, plcEmit, e.warlinkClient)
-	e.plcMgr.SetIdentityChangeSource(e.identityChangedAt)
 	e.plcMgr.SetPollClock(e.pollClock)
 	e.plcMgr.SetPointHold(e.catchUpHeld)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())

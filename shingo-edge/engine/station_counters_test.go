@@ -244,7 +244,7 @@ func TestBind_LogsTheTransition(t *testing.T) {
 	defer mu.Unlock()
 	found := false
 	for _, l := range lines {
-		if strings.Contains(l, "T-1 moves from the production counter to station counter") && strings.Contains(l, "net against this cart's run-out") {
+		if strings.Contains(l, "T-1 moves from the production counter to station counter") {
 			found = true
 		}
 	}

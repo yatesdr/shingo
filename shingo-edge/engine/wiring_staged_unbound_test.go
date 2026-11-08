@@ -6,7 +6,7 @@ import (
 	"shingo/protocol/testutil"
 )
 
-// TestStagedUnbound_TicksParkInPendingNoBinEverBound is the F1a bug reproduction
+// TestStagedUnbound_TicksWithNoBinEverBoundAreLogged is the F1a bug reproduction
 // (P2-C1). It pins the CURRENT steady-state that produced the SNF3 CARRIER-0024
 // incident (2026-07-24): a bin physically delivered to a consuming lineside node
 // whose order never reached `delivered` — stuck at `staged`, or the Edge
@@ -14,7 +14,8 @@ import (
 // bin. Consume ticks then keep arriving and:
 //
 //   - active_bin_id never points at the new bin (nothing binds it),
-//   - the ticks pile up in pending_uop_delta (held, not charged),
+//   - the ticks are logged in the ledger (decision 55; held in
+//     pending_uop_delta before it), not charged,
 //   - NOT ONE BinUOPDelta ever carries the new bin's ID,
 //
 // so Core's bins.uop_remaining for that carrier can never move from its
@@ -28,11 +29,12 @@ import (
 // delivered fix, both out of scope tonight); they make it survivable:
 //   - P2-C3 makes the delivered-gate skips scream instead of no-op'ing,
 //   - P2-C5 lets a front-door count correction BIND this stranded bin,
-//   - P2-C7 raises the parked-ticks / staged-age alarm that names the bin.
+//   - P2-C7 raised the parked-ticks alarm that named the bin (decision 55
+//     replaced it: the strokes are a "no cart" row on the strip).
 //
 // If a future change silently binds a staged bin (papering over the symptom
 // rather than fixing the producer), this assertion trips first — by design.
-func TestStagedUnbound_TicksParkInPendingNoBinEverBound(t *testing.T) {
+func TestStagedUnbound_TicksWithNoBinEverBoundAreLogged(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
@@ -77,10 +79,10 @@ func TestStagedUnbound_TicksParkInPendingNoBinEverBound(t *testing.T) {
 			rt.ActiveBinID)
 	}
 
-	// 2) the ticks pile up in pending_uop_delta, held rather than charged.
-	if rt.PendingUOPDelta != 46 {
-		t.Errorf("PendingUOPDelta = %d, want 46 (every consume tick parked while the slot is unbound)",
-			rt.PendingUOPDelta)
+	// 2) the ticks are logged in the ledger, not charged (decision 55).
+	if s := readSeat55(t, eng, processID, nodeID); rt.PendingUOPDelta != 0 || s.logged != 46 {
+		t.Errorf("hold %d, logged %d; want no hold and 46 logged (every consume tick while the slot is unbound)",
+			rt.PendingUOPDelta, s.logged)
 	}
 
 	// 3) the cache never moved — held ticks must not touch remaining while unbound.

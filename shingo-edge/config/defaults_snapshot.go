@@ -82,10 +82,6 @@ func RenderDefaults() string {
 	}
 	b.WriteString(fmt.Sprintf("demand.default_hysteresis_percent = %g\n", DefaultHysteresisPercent))
 	b.WriteString(fmt.Sprintf("demand.min_hysteresis_uop = %d\n", MinHysteresisUOP))
-	// Same reason: the raw field reads "0s", which looks like "no delay — always
-	// ask" and means the opposite.
-	b.WriteString(fmt.Sprintf("uop_accumulating_cta_after.resolved = %v\n",
-		cfg.UOPAccumulatingCTADelay()))
 	return b.String()
 }
 

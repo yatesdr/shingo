@@ -149,17 +149,9 @@ type StationService struct {
 	// Optional: nil makes no tile a loader tile, so the lighter test
 	// constructors that don't wire it compile and pass unchanged. The engine injects the live resolver via SetLoaderResolver.
 	loaders LoaderResolver
-	// stranded resolves a node's active parked-ticks alarm sentence (P2-C8) by
-	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
-	// the live resolver (its strandedAlarms map) via SetStrandedResolver.
-	stranded func(coreNodeName string) string
 	// keepStaged resolves a line's keep-staged keeper sentence; nil leaves
 	// KeepStagedNote empty. The engine injects KeepStagedNote.
 	keepStaged func(coreNodeName string) string
-	// endOfLine resolves a process's end-of-line sentence for its tiles
-	// counted at the production counter; nil leaves EndOfLine empty. The
-	// engine injects its memo's reader (end_of_line.go).
-	endOfLine func(processID int64) string
 	// unloaderAsk resolves an unloader window's pending U1 note (the engine's
 	// UnloaderAskNote); nil leaves AskPending empty.
 	unloaderAsk func(coreNodeName string) string
@@ -453,20 +445,10 @@ func (s *StationService) binTypeForPayload(payloadCode string) string {
 	return s.binTypes(payloadCode)
 }
 
-// SetStrandedResolver injects the parked-ticks alarm resolver (P2-C8) — the
-// engine's StrandedAlarmDetail — so BuildView can render the tile chip. Optional;
-// unset leaves StrandedAlarm empty for the lighter test constructors.
-func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string) { s.stranded = r }
-
 // SetKeepStagedResolver injects the keep-staged keeper's sentence per line (the
 // engine's KeepStagedNote) so BuildView can render its chip. Optional; unset
 // leaves KeepStagedNote empty.
 func (s *StationService) SetKeepStagedResolver(r func(coreNodeName string) string) { s.keepStaged = r }
-
-// SetEndOfLineResolver injects the end-of-line sentence per process (the
-// engine's, from its memo) so BuildView can put it on the tiles the production
-// counter counts. Optional; unset leaves EndOfLine empty.
-func (s *StationService) SetEndOfLineResolver(r func(processID int64) string) { s.endOfLine = r }
 
 // SetUnloaderAskResolver injects the pending U1 note per unloader window (the
 // engine's UnloaderAskNote) so BuildView can put it on the window's card.
@@ -1481,11 +1463,6 @@ func (s *StationService) buildNodeTile(
 	// board's prefetch already holds (release_render.go).
 	nodeView.LastReleaseError = releaseHeld(nodeView.Orders)
 	nodeView.ReleasePurposes = releasePurposes(nodeView.Orders)
-	// Surface any active parked-ticks alarm (P2-C7/C8): consume ticks piling
-	// up on this node while no bin is bound. Rendered as an amber chip.
-	if s.stranded != nil {
-		nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
-	}
 	if s.keepStaged != nil {
 		nodeView.KeepStagedNote = s.keepStaged(node.CoreNodeName)
 	}
@@ -1493,12 +1470,6 @@ func (s *StationService) buildNodeTile(
 		nodeView.AskPending = s.unloaderAsk(node.CoreNodeName)
 	}
 	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
-	// The end-of-line sentence, at a consume position the production counter
-	// counts (no station counter, no loader).
-	if s.endOfLine != nil && node.LineCounterID == nil && nodeView.Loader == nil && nodeView.ActiveClaim != nil &&
-		nodeView.ActiveClaim.Role == protocol.ClaimRoleConsume {
-		nodeView.EndOfLine = s.endOfLine(process.ID)
-	}
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
 	// order for something a loader operator has said they cannot supply.
 	//
@@ -1614,7 +1585,7 @@ func countWaits(coreNode string, claim *processes.NodeClaim, rt *processes.Runti
 	if rt == nil || !rt.ActivePull || rt.ActiveBinID != nil {
 		return ""
 	}
-	return fmt.Sprintf("The line is on %s; its parts wait for %s's bin.", coreNode, coreNode)
+	return fmt.Sprintf("The line is on %s; its parts are logged until %s's bin lands.", coreNode, coreNode)
 }
 
 // canSkipChangeoverStep is domain.AbandonRefusal over the orders the board

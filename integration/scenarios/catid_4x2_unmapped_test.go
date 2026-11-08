@@ -31,7 +31,7 @@ func TestCatid4x2_S5_UnmappedPart(t *testing.T) {
 	drawn := c.drawnNow()
 	c.cycle(w6Depth + 4) // 1003 refills the line, then four counts
 	held := c.counted() - before
-	h := c.holds()
+	h := c.shares()
 	if len(h.rows) != 1 || h.rows[0].ProcessNodeID != 0 || h.rows[0].CATID != "1003" || h.open != held {
 		t.Fatalf("1003's counts: holds %+v, want one open node-0 row of %d", h.rows, held)
 	}
@@ -68,12 +68,12 @@ func TestCatid4x2_S5_UnmappedPart(t *testing.T) {
 	before = c.counted()
 	c.cycle(3)
 	held = c.counted() - before
-	h = c.holds()
+	h = c.shares()
 	if open := h.open; open != held {
 		t.Fatalf("1004's counts: %d held, want %d: %+v", open, held, h.rows)
 	}
 	c.writeOffHold(h.rows[len(h.rows)-1].ID)
-	if h := c.holds(); h.open != 0 || h.writ != held {
+	if h := c.shares(); h.open != 0 || h.writ != held {
 		t.Fatalf("after Write off: %d open, %d written off; want 0 and %d: %+v", h.open, h.writ, held, h.rows)
 	}
 	l = c.ledger("S5", false)

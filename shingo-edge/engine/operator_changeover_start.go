@@ -480,21 +480,6 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 	return blockers
 }
 
-// retagRunOutHolds retags each consume task's run-out hold of the departing
-// part to the incoming part at START: from here every stroke at the seat is
-// held under the incoming part, which a hold of another part would drop
-// (retagHold, decision 45).
-func (e *Engine) retagRunOutHolds(changeoverID int64) {
-	tasks, err := e.db.ListChangeoverNodeTasks(changeoverID)
-	if err != nil {
-		log.Printf("changeover: list node tasks of changeover %d to retag their holds: %v", changeoverID, err)
-		return
-	}
-	for _, task := range tasks {
-		e.retagHold(task, true)
-	}
-}
-
 // incomingTakes reports whether the target style's claim at coreNode takes
 // part (its part or an allowed alternate); a node it does not claim takes none.
 func incomingTakes(plan *changeoverPlan, coreNode, part string) bool {
@@ -627,9 +612,6 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	if err != nil {
 		return nil, err
 	}
-	// A run-out hold under the departing part becomes the incoming part's
-	// (retagRunOutHolds). Under the cells' locks, as the cancel's retag.
-	e.retagRunOutHolds(changeover.ID)
 	// The PLC's part as the changeover starts: the evidence a pin is later
 	// suggested from never suggests the value the cell was already on.
 	if v, ok := e.liveIdentity(processID); ok {

@@ -114,9 +114,9 @@ func TestRepoint_WithNoReadingFromBeforeTheMoveSeedsAsToday(t *testing.T) {
 	if got, ok := items[0].Data["not_recorded_since"].(time.Time); !ok || !got.Equal(last) {
 		t.Errorf("the item's not_recorded_since = %v, want %v", items[0].Data["not_recorded_since"], last)
 	}
-	eol, err := eng.EndOfLine(pid)
+	slots, err := eng.CountingSlots(pid)
 	testutil.MustNoErr(t, err, "the Counting block's read")
-	if s := eol.Slots[1]; s.NotRecordedSince == nil || !s.NotRecordedSince.Equal(last) {
+	if s := slots[1]; s.NotRecordedSince == nil || !s.NotRecordedSince.Equal(last) {
 		t.Errorf("the Counting block's _02 line: not recorded since %v, want %v", s.NotRecordedSince, last)
 	}
 	testutil.MustNoErr(t, click(t, eng, pid, 17), "the click")

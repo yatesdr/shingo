@@ -2332,22 +2332,19 @@ func edgeMigrations() []migrate.Migration {
 			},
 		},
 		{
-			// The parts in the line and the end of the line. On line_counters:
-			// anchor_count / anchor_at, the station counter's count at the last
-			// program change (a production-counter reset that came with a
-			// confirmed CATID change; NULL = unanchored), written by the poll at
-			// a reset and read by the station card, which computes the parts in
-			// the line from it; deepest_runout, the most production strokes
-			// seen between two of its clicks, raised when it grows (NULL = none
-			// seen). On processes: line_depth_typed, the parts a person says sit
-			// between the cart and an end-of-line counter (NULL = none), with
-			// who typed it and when (the per-row called_by / time pattern of
-			// process_changeovers and style_node_claims). No reader decides
-			// anything from any of them. Each column guarded, as v33; the
-			// processes columns are in the baseline too, line_counters' are
-			// the chain's alone (the table is, v41).
+			// The last cart released at each position, and the ledger's rows
+			// for strokes with no cart of their part (decision 55). On
+			// process_node_runtime_states: released_bin_id / released_count /
+			// released_at, the carrier the seat's last release declared, the
+			// count it declared and when (the engine's clock), written by the
+			// release's own count statement. On catid_holds: last_bin_id /
+			// last_declared / last_left_at, that record as a row's first stroke
+			// found it; the open-row index is rebuilt on it too, so each cart's
+			// departure opens its own row. Each column guarded, as v33; the
+			// runtime's are in the baseline too, catid_holds' are the chain's
+			// alone (the table is, v40).
 			Version: 43,
-			Name:    "line_counters_anchor_processes_line_depth",
+			Name:    "runtime_released_catid_holds_last_cart",
 			Fn: func(tx *sql.Tx) error {
 				for _, c := range v43Columns {
 					var n int
@@ -2361,17 +2358,25 @@ func edgeMigrations() []migrate.Migration {
 						return err
 					}
 				}
-				return nil
+				if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_catid_holds_open`); err != nil {
+					return err
+				}
+				_, err := tx.Exec(`CREATE UNIQUE INDEX idx_catid_holds_open
+    ON catid_holds(process_id, catid, process_node_id, payload_code, last_bin_id, last_left_at) WHERE resolved_at IS NULL;`)
+				return err
 			},
 			Verify: func(q migrate.Querier) bool {
-				var a, b int
-				if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('line_counters')
-					WHERE name IN ('anchor_count', 'anchor_at', 'deepest_runout')`).Scan(&a); err != nil {
+				var a, b, i int
+				if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name IN ('released_bin_id', 'released_count', 'released_at')`).Scan(&a); err != nil {
 					return false
 				}
-				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('processes')
-					WHERE name IN ('line_depth_typed', 'line_depth_typed_by', 'line_depth_typed_at')`).Scan(&b)
-				return err == nil && a == 3 && b == 3
+				if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('catid_holds')
+					WHERE name IN ('last_bin_id', 'last_declared', 'last_left_at')`).Scan(&b); err != nil {
+					return false
+				}
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_index_info('idx_catid_holds_open')`).Scan(&i)
+				return err == nil && a == 3 && b == 3 && i == 6
 			},
 		},
 	}
@@ -2379,12 +2384,12 @@ func edgeMigrations() []migrate.Migration {
 
 // v43Columns are v43's columns, each with its ADD (run only where missing).
 var v43Columns = []struct{ table, column, add string }{
-	{"line_counters", "anchor_count", "ALTER TABLE line_counters ADD COLUMN anchor_count INTEGER"},
-	{"line_counters", "anchor_at", "ALTER TABLE line_counters ADD COLUMN anchor_at TEXT"},
-	{"line_counters", "deepest_runout", "ALTER TABLE line_counters ADD COLUMN deepest_runout INTEGER"},
-	{"processes", "line_depth_typed", "ALTER TABLE processes ADD COLUMN line_depth_typed INTEGER"},
-	{"processes", "line_depth_typed_by", "ALTER TABLE processes ADD COLUMN line_depth_typed_by TEXT NOT NULL DEFAULT ''"},
-	{"processes", "line_depth_typed_at", "ALTER TABLE processes ADD COLUMN line_depth_typed_at TEXT"},
+	{"process_node_runtime_states", "released_bin_id", "ALTER TABLE process_node_runtime_states ADD COLUMN released_bin_id INTEGER"},
+	{"process_node_runtime_states", "released_count", "ALTER TABLE process_node_runtime_states ADD COLUMN released_count INTEGER NOT NULL DEFAULT 0"},
+	{"process_node_runtime_states", "released_at", "ALTER TABLE process_node_runtime_states ADD COLUMN released_at TEXT"},
+	{"catid_holds", "last_bin_id", "ALTER TABLE catid_holds ADD COLUMN last_bin_id INTEGER NOT NULL DEFAULT 0"},
+	{"catid_holds", "last_declared", "ALTER TABLE catid_holds ADD COLUMN last_declared INTEGER NOT NULL DEFAULT 0"},
+	{"catid_holds", "last_left_at", "ALTER TABLE catid_holds ADD COLUMN last_left_at TEXT NOT NULL DEFAULT ''"},
 }
 
 // collapseRecipeRoutingOnce is the recipe migration's body: every row of

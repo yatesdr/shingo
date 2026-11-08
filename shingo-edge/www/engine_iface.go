@@ -191,10 +191,8 @@ type EngineOrchestration interface {
 	// The station counters and "counted at": a refusal is an
 	// *engine.StationCounterRefused carrying the page's sentence.
 	ListStationCounters(processID int64) ([]engine.StationCounterCard, error)
-	// EndOfLine is the setup page's and the history's end-of-line read: the
-	// measured run-outs and the sentence (it reads the CATID sets the engine
-	// derives).
-	EndOfLine(processID int64) (*engine.EndOfLine, error)
+	// CountingSlots is the setup page's Counting block's MES slots.
+	CountingSlots(processID int64) ([]engine.MESSlot, error)
 	CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error)
 	UpdateStationCounter(id int64, label, tagName string) error
 	DeleteStationCounter(id int64) error

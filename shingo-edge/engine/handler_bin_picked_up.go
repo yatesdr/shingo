@@ -36,7 +36,6 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
@@ -231,9 +230,10 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 	}
 	if bound {
 		// The carrier left: pointer, count and identity go together
-		// (carrier_left.go), with the lift's generation stamped and the
-		// ticks after the lift held for the next carrier of the part, in the
-		// same statement (Lane H, D11).
+		// (carrier_left.go), with the lift's generation stamped and a
+		// produce seat's ticks after the lift held for its next bin, in the
+		// same statement (Lane H, D11); a consume seat's are logged
+		// (takeTicksAfterLift).
 		if err := e.carrierLeftAtPickup(*order.ProcessNodeID, location, bp.Epoch, hold, holdPart); err != nil {
 			e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
 		}
@@ -244,24 +244,6 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 		orderUUID, binID, order.Status)
 }
 
-// liftIncomingPart is incomingConsumePart for a lift, which has no claim set
-// in hand: the process, and its two styles' claims only when a changeover is
-// open.
-func (e *Engine) liftIncomingPart(node *processes.Node, claim *processes.NodeClaim) string {
-	if claim == nil {
-		return ""
-	}
-	process, err := e.db.GetProcess(node.ProcessID)
-	if err != nil || process == nil || process.TargetStyleID == nil {
-		return ""
-	}
-	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(process))
-	if err != nil {
-		return ""
-	}
-	return incomingConsumePart(process, node, claim, claims)
-}
-
 // takeTicksAfterLift is the Edge half of the late-lift rule (Lane H R4,
 // DECISIONS D11 (ii)). Core ended the carrier's generation at the lift, at
 // time T = bp.PickedUpAt, and refuses every window of that generation that
@@ -270,11 +252,13 @@ func (e *Engine) liftIncomingPart(node *processes.Node, claim *processes.NodeCla
 // sent, and the flushed ones are summed (uop.Mutator.TakeAfterLift). Those m
 // ticks were charged to the carrier because it was still bound when they were
 // counted; they belong to what the line drew from after the robot took it.
-// So they go back the way a tick goes when no carrier is chargeable: the pile
-// first (drainLinesideFirst), then the hold with the carrier's part (R2),
-// which the next carrier of the part takes on its first tick. The hold rides
-// the leave's statement (carrierLeftAtPickup, +0); the pile drain is one
-// write only when a pile has stock.
+// So they go back the way a tick goes when no carrier takes it: on a consume
+// seat the pile first (drainLinesideFirst), then the ledger (decision 55: no
+// cart of the part stands there), against the claim's part under the PLC's
+// part as the lift reads it, one upsert on the seat as read (logNoCart); on a
+// produce seat the hold with the claim's part, which the next bin takes on
+// its first tick, riding the leave's statement (carrierLeftAtPickup, +0). The
+// pile drain is one write only when a pile has stock.
 //
 // The carrier's own count needs no correction: the leave zeroes it.
 //
@@ -313,12 +297,15 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 		if len(drains) > 0 {
 			_ = e.inventoryDelta.Consumed(uop.TickEvent{NodeID: node.ID, CoreNodeName: node.CoreNodeName, Drains: drains})
 		}
-		held = rest
-		// Mid-changeover the ticks after the lift are the incoming cart's, as
-		// a gap tick's are (holdPartFor). Two reads, at a changeover lift only.
-		if in := e.liftIncomingPart(node, claim); held > 0 && in != "" {
-			part = in
+		if rest > 0 && claim != nil {
+			catid := e.confirmedCATID(node.ProcessID)
+			if _, err := e.logNoCart(node.ProcessID, catid, node, claim.PayloadCode, rest, processes.SeatAsReadOf(rt), "after the lift"); err != nil {
+				log.Printf("bin_picked_up: %d counted after the lift of bin %d not logged: %v", rest, bp.BinID, err)
+			}
+		} else if rest > 0 {
+			log.Printf("bin_picked_up: %d counted after the lift of bin %d not logged: the seat names no claim", rest, bp.BinID)
 		}
+		return 0, ""
 	}
 	if held <= 0 {
 		return 0, ""

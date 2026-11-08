@@ -1,41 +1,31 @@
-// catid_holds.go — counts held per CATID.
+// catid_holds.go — the ledger: cart draws no cart took.
 //
-// A counted stroke Shingo cannot place by the PLC's part has its CART DRAW held
-// in a ledger (store catid_holds); its production record still ships, under the
-// point's style with the part on the row, and hourly counts it as today. What
-// is held: a held tick's whole draw (node 0), and an off-plan tick's share at a
-// node whose bound carrier is not the tick's style's part. Nothing here ever
-// writes a seat hold (pending_uop_*), D12's one slot.
+// Two kinds of row, one table, one strip (decision 55). A counted stroke
+// Shingo cannot place by the PLC's part has its CART DRAW held here (store
+// catid_holds); its production record still ships, under the point's style
+// with the part on the row, and hourly counts it as today: a held tick's whole
+// draw (node 0), and an off-plan tick's share at a node whose bound carrier is
+// not the tick's style's part. And a consume stroke with no cart of its part
+// standing at its position — the seat empty, a cart of another part there, a
+// cart released at 0, a cart that cannot say read as the departing part — is
+// logged as a "no cart" row against the position and the part, with the last
+// cart released there (chargeOrLog). Nothing writes a consume seat's hold.
 //
-// A hold is released four ways, each latched before anything moves (a second
-// release writes nothing) and each charging through the walk directly — never
-// a re-emitted counter delta, which would count the hour twice:
+// Nothing ever lands a row by itself. A row is resolved two ways, each
+// latched before anything moves (a second resolution writes nothing):
 //
-//   - automatically, when a cutover or a switch lands the process on a style
-//     whose set holds the CATID and no other changeover has started since the
-//     hold opened (a cancelled one is not counted);
-//   - automatically, when a cart lands at the hold's position (any position,
-//     for a whole draw) while the active style runs the CATID, under the same
-//     guards: the cart a forced cutover went ahead of, or the one a person
-//     brought. Landing what waited, not ordering;
-//   - a person's Charge, under the one style that runs the CATID;
+//   - a person's Charge, under the one style that runs the CATID, charging
+//     through the walk directly — never a re-emitted counter delta, which
+//     would count the hour twice. A share lands only on a cart of the style's
+//     part (tickRelease); a share at a cart of another part, or at no cart, is
+//     held again. A Charge that would land nothing — the share's position
+//     deleted or not the style's, no cart of its part — is refused and the row
+//     stays open, naming why (holdRows). The quantity charged is the quantity
+//     the latch resolved;
 //   - a person's Write off, which charges nothing.
 //
-// The landings and the Charge apply one rule. A share lands only on a cart of
-// the style's part (tickRelease); a share at a cart of another part, or at no
-// cart, is held again for a person. A release that would land nothing — the
-// share's position deleted or not the style's, no cart of its part — is
-// refused and the hold stays open, naming why (holdRows). The quantity
-// charged is the quantity the latch resolved.
-//
-// The automatic releases add one rule a person's Charge does not: a share
-// lands only when it fits the cart (decision 46). A share bigger than the
-// cart's count did not come from that cart; the hold stays open for a person,
-// its line saying "N held, the cart at X holds M", and Charge (with its
-// preview) and Write off apply as before (decision 25: the quantity charged is
-// the quantity latched).
-//
-// A hold that never resolves stays, with its age and its quantity.
+// A row that is never resolved stays, with its age and its quantity: a count
+// on the strip, for whoever reconciles it.
 
 package engine
 
@@ -50,13 +40,15 @@ import (
 	"shingoedge/store/processes"
 )
 
-// The holds' reasons and resolutions.
+// The rows' reasons and resolutions.
 const (
 	holdReasonHeld    = "held"
 	holdReasonOffPlan = "off-plan"
-	holdReleased      = "released"
-	holdCharged       = "charged"
-	holdWrittenOff    = "written-off"
+	// holdReasonNoCart is a stroke with no cart of its part at its position
+	// (logNoCart).
+	holdReasonNoCart = "no-cart"
+	holdCharged      = "charged"
+	holdWrittenOff   = "written-off"
 )
 
 // tickRelease is the walk kind of a hold's release (chargeHold). Like an
@@ -85,128 +77,25 @@ func (e *Engine) holdCatidDraw(tick tickScope, nodeID int64, part string, qty in
 	}
 }
 
-// releaseHoldsOnLanding releases the process's open holds whose CATID the style
-// a changeover just landed it on runs (releaseHolds, every position). The
-// changeover's own completion is the landing; its row is written completed
-// first, so releaseHolds reads it as the newest completed one to the style.
-func (e *Engine) releaseHoldsOnLanding(processID int64) {
-	e.releaseHolds(processID, nil)
-}
-
-// releaseHoldsOnArrival releases what a cart that just landed at node lands:
-// the open holds at that position and the process's whole draws (node 0),
-// whose CATID the active style runs (releaseHolds). A share there lands only
-// on a cart of its part, so a landing of another part leaves it waiting; a
-// whole draw lands what lands and is held again at its other positions
-// (chargeHold). The landing changeover the guard excepts is the one that put
-// the process on the style it runs (landedActiveBy): a cart that lands after
-// a completion went ahead of it lands what that completion would have. +1
-// statement per landing (the open holds); the rest only when one waits.
-// Latched, so a release racing the door's charges once.
-func (e *Engine) releaseHoldsOnArrival(node *processes.Node) {
-	e.releaseHolds(node.ProcessID, node)
-}
-
-// releaseHolds releases the process's open holds whose CATID its active style
-// runs — those at node and the whole draws, when node is given — when no
-// changeover has started since the hold opened (the one that landed the active
-// style excepted, landedActiveBy, and a cancelled one not counted), something
-// would land (holdRows), and every share fits its cart (overTheCart); a hold
-// that would land nothing, or more than a cart holds, waits for a person.
-func (e *Engine) releaseHolds(processID int64, node *processes.Node) {
-	holds, err := e.db.ListOpenCatidHolds(processID)
-	if err != nil {
-		return
+// logNoCart logs a consume stroke with no cart of its part at the position
+// (decision 55): one upsert on the "no cart" row of (process, CATID, node,
+// part) and the seat's last release, on the seat as the stroke read it
+// (store.DB.LogNoCartStroke) — the statement the seat hold's write was, so a
+// stroke costs what it did. The row's opening is logged and raises the strip's
+// refresh; a stroke after it only grows it. Reports whether the seat was still
+// as read: false, the caller re-reads it. Caller holds countMu.
+func (e *Engine) logNoCart(processID int64, catid string, node *processes.Node, part string, qty int,
+	seat processes.SeatAsRead, source string) (bool, error) {
+	written, opened, err := e.db.LogNoCartStroke(processID, catid, node.ID, part, holdReasonNoCart, int64(qty), clock.Now(), seat)
+	if err != nil || !written {
+		return written, err
 	}
-	if node != nil {
-		holds = holdsLandingAt(holds, node.ID)
-	}
-	if len(holds) == 0 {
-		return
-	}
-	proc, err := e.db.GetProcess(processID)
-	if err != nil || proc == nil || proc.ActiveStyleID == nil {
-		return
-	}
-	landing := e.landedActiveBy(processID, *proc.ActiveStyleID)
-	var landed styleCATIDEntry
-	for _, s := range e.processStyleCATIDSets(processID) {
-		if s.ID == *proc.ActiveStyleID {
-			landed = s
-		}
-	}
-	on := "the landing on " + landed.Name
-	if node != nil {
-		on = "the cart that landed at " + node.Name
-	}
-	released := 0
-	for i := range holds {
-		h := &holds[i]
-		if !catidSetHas(landed.Set, h.CATID) {
-			continue
-		}
-		if n, err := e.db.CountChangeoversStartedSince(processID, h.FirstTickAt, landing); err != nil || n > 0 {
-			log.Printf("catid hold %d: a changeover started since it opened — it waits for a person", h.ID)
-			continue
-		}
-		rows, refusal, err := e.holdRows(h, landed.ID, landed.Name)
-		if err == nil && refusal == "" {
-			refusal = overTheCart(rows)
-		}
-		if err != nil || refusal != "" {
-			log.Printf("catid hold %d: not released on %s — it waits for a person: %s%v", h.ID, on, refusal, err)
-			continue
-		}
-		qty, ok, err := e.db.ResolveCatidHold(h.ID, holdReleased, "auto", clock.Now())
-		if err != nil || !ok {
-			continue
-		}
-		h.Qty = qty
-		n := e.chargeHold(h, landed.ID)
-		released++
-		log.Printf("catid hold %d: released on %s: %d of CATID %s charged at %d position(s)", h.ID, on, qty, h.CATID, n)
-	}
-	if node == nil || released > 0 {
+	if opened {
+		log.Printf("no cart: process %d CATID %q node %s: %d of part %q logged, no %s cart there (%s); the strokes after it join the row",
+			processID, catid, node.CoreNodeName, qty, part, part, source)
 		e.catidHealthChanged(processID)
 	}
-}
-
-// landedActiveBy is the changeover that landed the process on styleID: the
-// newest completed row to it, one read; 0 when none is (or the read fails,
-// which excepts nothing). The completion's own row and the row a later
-// arrival finds are the same once the completed row is written.
-func (e *Engine) landedActiveBy(processID, styleID int64) int64 {
-	id, err := e.db.LatestCompletedChangeoverTo(processID, styleID)
-	if err != nil {
-		log.Printf("catid holds: process %d: the changeover that landed style %d: %v", processID, styleID, err)
-		return 0
-	}
-	return id
-}
-
-// overTheCart is why an automatic release refuses a share bigger than the
-// cart it would land on (decision 46): "N held, the cart at X holds M"; ""
-// when every share fits. As holdRows read the carts: a stroke between the read
-// and the latch can still add one.
-func overTheCart(rows []CatidHoldChargeRow) string {
-	for _, r := range rows {
-		if r.BinID != 0 && !r.WrongPart && r.Qty > int64(r.CartCount) {
-			return fmt.Sprintf("%d held, the cart at %s holds %d", r.Qty, r.Node, r.CartCount)
-		}
-	}
-	return ""
-}
-
-// holdsLandingAt is the holds a landing at nodeID can release: the shares
-// taken there and the whole draws.
-func holdsLandingAt(holds []store.CatidHold, nodeID int64) []store.CatidHold {
-	var out []store.CatidHold
-	for _, h := range holds {
-		if h.ProcessNodeID == 0 || h.ProcessNodeID == nodeID {
-			out = append(out, h)
-		}
-	}
-	return out
+	return true, nil
 }
 
 // chargeHold charges a hold's latched draw under styleID through the walk, as

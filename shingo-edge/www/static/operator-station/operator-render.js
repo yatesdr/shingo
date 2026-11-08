@@ -921,13 +921,7 @@ function createNodeButton(entry) {
     if (isReplenishing(entry)) btn.classList.add('os-replenishing');
 
     btn.appendChild(el('span', { className: 'os-node-name', textContent: entry.node.name }));
-    // The end-of-line sentence (the server's) on a tile the production counter
-    // counts; the tile's modal shows it too.
-    if (entry.end_of_line) btn.title = entry.end_of_line;
 
-    // Parked-ticks attention badge (P2-C8): draws the operator to tap the tile,
-    // where the modal chip shows the full "... Record Count on the bin tab."
-    // instruction. Amber, corner-anchored, cleared automatically once a bin binds.
     // The residue of a refusal, once it has been answered. NOT the alert — the
     // modal was the alert, and it is gone. This is what answers "why is this cell
     // stopped" for the operator who walks up ten minutes later, for the incoming
@@ -943,26 +937,6 @@ function createNodeButton(entry) {
         chip.title = refusedForMe.loader_node + ' cannot supply ' + refusedForMe.payload_code +
             (refusedForMe.refused_by ? ' — ' + refusedForMe.refused_by : '');
         btn.appendChild(chip);
-    }
-
-    // UOP-accumulating chip. The sentence carries its own severity: while a swap
-    // is in progress it reads as a statement of what is happening, and only once
-    // the wait passes the configured limit does it ask for anything ("Record
-    // Count"). The chip follows — grey-blue and factual until then, amber after.
-    // It used to be amber "⚠ NOT BOUND" from the first second, which is an alarm
-    // face on the normal case, and an alarm that is usually nothing gets ignored
-    // when it is something.
-    if (entry.stranded_alarm) {
-        const asking = entry.stranded_alarm.indexOf('Record Count') !== -1;
-        const alarm = el('span', {
-            className: 'os-node-alarm',
-            textContent: asking ? '⚠ NOT BOUND' : 'UOP ACCUM',
-        });
-        alarm.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
-            'font-weight:700;padding:2px 6px;border-radius:4px;' +
-            (asking ? 'color:#1a1204;background:#ffd98a' : 'color:#dbe7f5;background:#2b3a4d');
-        alarm.title = entry.stranded_alarm;
-        btn.appendChild(alarm);
     }
 
     // Keep-staged keeper: paused (REQUEST resumes it) or unable to keep its
@@ -991,10 +965,10 @@ function createNodeButton(entry) {
     }
 
     // The line moved onto this sequential position before its bin arrived:
-    // the count waits and replays onto the bin when it binds. Informational;
-    // the sentence is the server's (count_waits).
-    if (entry.count_waits && !entry.stranded_alarm) {
-        const waits = el('span', { className: 'os-node-alarm', textContent: 'COUNT WAITS FOR BIN' });
+    // its strokes are logged until the bin lands. Informational; the sentence
+    // is the server's (count_waits).
+    if (entry.count_waits) {
+        const waits = el('span', { className: 'os-node-alarm', textContent: 'NO BIN: STROKES LOGGED' });
         waits.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
             'font-weight:700;padding:2px 6px;border-radius:4px;color:#dbe7f5;background:#2b3a4d';
         waits.title = entry.count_waits;

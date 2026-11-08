@@ -118,8 +118,6 @@ export function eventConcerns(view, type, data) {
     case 'order-cancelled':
     case 'order-faulted':
         return ownOrder(data.order_id);
-    case 'uop-stranded-alarm':
-        return ownNode(data.core_node_name);
     case 'bins':
         // A board that does not know its bins (no copy held) takes every bins
         // event: the first snapshot is what it waits for, whatever it names.

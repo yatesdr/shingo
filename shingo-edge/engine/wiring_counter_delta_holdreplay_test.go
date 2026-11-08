@@ -46,8 +46,8 @@ import (
 // is the durable post-pickup runtime state that FinalizeProduceNode + the robot
 // pickup produce. We model it directly rather than calling FinalizeProduceNode
 // so the test isolates hold-and-replay from FinalizeProduceNode's dispatch and
-// capture-to-lineside side effects — the same approach as the canonical
-// consume-side TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin.
+// capture-to-lineside side effects. (A consume seat holds nothing since
+// decision 55: TestRuntimeBinding_PLCTicksWithNoBinAreLoggedTheNextBinStartsFresh.)
 func TestHoldAndReplay_BinUOPDeltaLumpsAcrossBinSwapGap(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

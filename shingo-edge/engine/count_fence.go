@@ -131,7 +131,7 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 	}
 	unfenced := func(why string, write bool) (*protocol.ReleaseFence, int) {
 		if write {
-			if err := e.db.SetProcessNodeReleaseCount(node.ID, count); err != nil {
+			if err := e.db.SetProcessNodeReleaseCount(node.ID, count, clock.Now()); err != nil {
 				log.Printf("release: finalize old-bin count for node %s: %v", node.CoreNodeName, err)
 			}
 		}
@@ -156,7 +156,7 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 	)
 	e.countMu.Lock()
 	err := e.inventoryDelta.WithPending(func(p uop.Pending) error {
-		w, seq, net, ok, err := e.db.ReleaseCountWithCursor(node.ID, declared, protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch)
+		w, seq, net, ok, err := e.db.ReleaseCountWithCursor(node.ID, declared, protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch, clock.Now())
 		if err != nil || !ok {
 			return err
 		}
@@ -189,15 +189,21 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 // release. With no suggestion sent, none goes (Core audits nothing). A typed
 // count keeps the screen's pre-fill as its suggestion, and Core audits the
 // difference as before.
+//
+// A cart drawn below 0 declares what it reads, on the seat and in the
+// release's log line (decision 55); Core takes a release's count as 0 or more,
+// and a count at or below 0 is an empty cart there, so the envelope carries 0
+// and Core's ledger keeps the overpack as the release's before-count.
 func (e *Engine) declareReleaseCount(node *processes.Node, rt *processes.RuntimeState, binID int64, count int, disp ReleaseDisposition, wire *protocol.UOPDisposition) (*int, *protocol.ReleaseFence) {
 	fromSeat := disp.CountFromSeat()
 	fence, written := e.writeReleaseCount(node, rt, binID, count, fromSeat)
+	sent := max(written, 0)
 	if fromSeat && wire != nil && wire.Kind == protocol.DispositionReleasePartial {
-		wire.Count = written
+		wire.Count = sent
 		if wire.CountSuggested != nil {
-			suggested := written
+			suggested := sent
 			wire.CountSuggested = &suggested
 		}
 	}
-	return &written, fence
+	return &sent, fence
 }

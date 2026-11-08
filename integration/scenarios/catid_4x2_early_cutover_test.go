@@ -6,7 +6,6 @@
 package scenarios
 
 import (
-	"fmt"
 	"testing"
 	"time"
 )
@@ -35,6 +34,10 @@ func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 			c.change(catALT) // the station stops loading RUN; the line runs out
 			c.carryAll("the changeover's legs", after, nil)
 			runBefore := c.counted()
+			pre := map[int]int64{}
+			for _, i := range []int{3, 4} {
+				pre[i] = c.loggedAt(c.holds(), i)
+			}
 			if err := c.edge.Engine.SetProcessActiveStyle(c.processID, &c.alt); err != nil {
 				t.Fatalf("Mark as running: %v", err)
 			}
@@ -50,43 +53,24 @@ func TestCatid4x2_S3_EarlyCutover(t *testing.T) {
 				t.Errorf("the process runs style %d after the run-out, want ALT (%d); changeovers %s",
 					a, c.alt, describeChangeovers(c.changeovers()))
 			}
-			// The program change anchored the load station: what it has
-			// loaded since, less what the counter has counted, is the line.
-			if v.station != nil {
-				if n := c.inLine("S3 station-counted, after the program change"); n == nil || *n != w6Depth ||
-					*n != int64(c.plc.state().InFlight) {
-					got := "unanchored"
-					if n != nil {
-						got = fmt.Sprint(*n)
-					}
-					t.Errorf("the parts in the line read %s after the program change, want L = %d (the fake has %d in flight)",
-						got, w6Depth, c.plc.state().InFlight)
-				}
-			}
-			var landed int64
-			for _, co := range c.changeovers() {
-				if co.ToStyleID == c.alt && co.CompletedAt != nil {
-					landed = co.ID
-				}
-			}
-			if n := c.runOut("S3 "+v.name, landed); n == nil || *n != w6Depth {
-				got := "none"
-				if n != nil {
-					got = fmt.Sprint(*n)
-				}
-				t.Errorf("changeover #%d's history row: run-out %s, want L = %d", landed, got, w6Depth)
-			}
-			if h := c.holds(); len(h.rows) != 0 {
-				t.Errorf("the run-out opened %d hold(s), %d held, want none: %+v", len(h.rows), h.open, h.rows)
-			}
 			l := c.ledger("S3 "+v.name, true)
-			c.wantRecord("S3 "+v.name, l, runBefore, c.counted()-runBefore)
+			c.wantRecordRunOut("S3 "+v.name, l, runBefore)
 			if v.station == nil {
+				// The run-out is RUN's part, and so are the counts the cell made
+				// before the monitor confirmed 1002 (the tag still read 1001): at
+				// the mirror positions, where ALT's carts stand, they are logged,
+				// and ALT's carts draw ALT's counts alone (decision 55).
+				h := c.holds()
 				for _, i := range []int{3, 4} {
-					if tn := c.cart(i); c.counts(tn) != c.truth(tn) {
-						t.Fatalf("%s: the new cart %s drew %d counts against %d taken: the run-out did not prepay it",
-							w6Pos[i], tn.label, c.counts(tn), c.truth(tn))
+					tn := c.cart(i)
+					drew, logged := w6Full-c.count(tn), c.loggedAt(h, i)-pre[i]
+					if drew > c.counts(tn) || drew+logged != c.counts(tn)+w6Depth {
+						t.Fatalf("%s: the new cart %s drew %d and %d were logged since the landing, against %d of its part "+
+							"counted and the run-out of %d: it is never pre-paid, and every count is a cart's or the ledger's",
+							w6Pos[i], tn.label, drew, logged, c.counts(tn), w6Depth)
 					}
+					c.t.Logf("S3: %s: the new cart drew %d of ALT's; %d logged (the run-out %d, and %d before the confirm)",
+						w6Pos[i], drew, logged, w6Depth, logged-w6Depth)
 				}
 			}
 			c.confirmedAll("S3 " + v.name)

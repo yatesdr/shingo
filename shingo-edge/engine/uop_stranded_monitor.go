@@ -1,196 +1,33 @@
-// uop_stranded_monitor.go — parked-ticks alarm (P2-C7).
+// uop_stranded_monitor.go — the produce seat's hold sweep, on a scan.
 //
-// A periodic monitor that watches every consume node for the SNF3 parked-ticks
-// class: pending_uop_delta growing across consecutive scan intervals while no
-// bin is bound. That is consume ticks piling up unattributed because the
-// physical carrier at the line was never bound (F1b's residual / no-match
-// backstop, or any producer of a staged-but-unbound node). A seat bound to a
-// carrier recorded as a part its claim does not take is watched the same way:
-// a consume stroke never draws such a cart, so its strokes pile up in the hold
-// until a cart of the part lands or a person names the cart. It is a GROWTH
-// condition, NOT a fixed threshold — an idle line (pending flat) never alarms,
-// and it clears the moment a bin binds. Detection only: it raises an alarm
-// (log + EventUOPStranded + tile chip) and NEVER binds, moves, cancels, or
-// re-plans anything.
-//
-// The same scan carries a produce arm, which does write: an unbound produce
-// seat with a hold and no live order placing a carrier at the node has the
-// hold dropped with a hold_dropped row (Engine.sweepProduceHold, produce_hold.go),
-// every scan and once at boot (sweepAtBoot).
+// A periodic scan of every node: an unbound produce seat with a hold and no
+// live order placing a carrier at the node has the hold dropped with a
+// hold_dropped row (Engine.sweepProduceHold, produce_hold.go), every scan and
+// once at boot (sweepAtBoot). A consume seat holds nothing to watch: a stroke
+// with no cart of its part is logged in the ledger (decision 55), which the
+// strip shows.
 
 package engine
 
 import (
-	"errors"
-	"fmt"
-	"log"
 	"time"
 
-	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
-// strandedWindow is the number of consecutive rising samples (taken while
-// unbound) required before the parked-ticks alarm fires. It is a SHAPE
-// requirement (sustained monotonic growth), not a count/threshold on the pending
-// value: a node sitting one unit over any figure never alarms; a node climbing
-// every interval does. strandedWindow rises => strandedWindow+1 samples.
-const strandedWindow = 3
-
-// strandedScanInterval is how often the monitor samples each node — the
-// "flush interval" the growth is measured across. Variable so tests can compress
-// it; the growth logic (evalStrandedGrowth) is pure and tested without the loop.
+// strandedScanInterval is how often the monitor scans. Variable so tests can
+// compress it.
 var strandedScanInterval = 60 * time.Second
 
-// strandedNodeState is one node's detector. samples holds the recent
-// pending_uop_delta readings taken while unbound (capped at strandedWindow+1);
-// the window is "growing" iff those are strictly increasing. alarmed dedups the
-// log/emit to once per growth window. since marks when the node first went
-// unbound-with-pending, for the staged-age the operator sees. carrier keeps the
-// bin label resolved at fire time (from the bins table) for the per-scan detail
-// refreshes.
-type strandedNodeState struct {
-	samples []int
-	alarmed bool
-	since   time.Time
-	carrier string
-	// beside says, while the seat is bound to a carrier of another part, what
-	// that carrier is recorded as and what the style draws there
-	// (heldBesideSaid); "" otherwise. Read once per such window.
-	beside string
-}
-
-// evalStrandedGrowth advances one node's detector by a single sample and reports
-// (fire, active). fire is true exactly once per window — on the sample where the
-// unbound growth streak first spans strandedWindow+1 readings. active is true
-// whenever the window is currently grown-and-unbound (drives the tile chip).
-// Binding, an empty hold, or a stalled/idle line resets the window — so an idle
-// line (pending flat) never escalates and a bind clears it immediately.
-func evalStrandedGrowth(st *strandedNodeState, pending int, bound bool, now time.Time) (fire, active bool) {
-	if bound || pending <= 0 {
-		st.samples = st.samples[:0]
-		st.alarmed = false
-		st.since = time.Time{}
-		return false, false
-	}
-	if len(st.samples) == 0 {
-		st.since = now
-	}
-	st.samples = append(st.samples, pending)
-	if len(st.samples) > strandedWindow+1 {
-		st.samples = st.samples[len(st.samples)-(strandedWindow+1):]
-	}
-	if len(st.samples) < strandedWindow+1 || !strictlyIncreasing(st.samples) {
-		// Not (yet) a sustained climb — an idle/flat line lands here and never
-		// escalates. Drop the alarmed latch so a later genuine climb re-fires.
-		st.alarmed = false
-		return false, false
-	}
-	if !st.alarmed {
-		st.alarmed = true
-		return true, true
-	}
-	return false, true
-}
-
-func strictlyIncreasing(xs []int) bool {
-	for i := 1; i < len(xs); i++ {
-		if xs[i] <= xs[i-1] {
-			return false
-		}
-	}
-	return true
-}
-
-// formatStrandedDetail builds the exact operator sentence the tile renders
-// verbatim (P2-C8). carrier "" degrades to a generic subject rather than a blank.
-//
-// Two sentences, chosen by how long the node has been waiting.
-//
-// Under ctaAfter this is a swap in progress. A carrier is at the line, the line
-// is running, and the counts are being held until the bind lands — which is what
-// is supposed to happen, so the chip says what is happening and nothing else.
-// Calling that an alarm taught operators that the chip means nothing.
-//
-// Over ctaAfter the wait is longer than a swap takes, and the chip adds the fix.
-// The threshold is config (Config.UOPAccumulatingCTAAfter) because the longest
-// legitimate gap is a property of the plant.
-//
-// The duration renders in minutes below an hour. It used to be whole hours only,
-// so every alarm inside the first hour read "staged 0h" — a number that told the
-// operator nothing and made the chip look broken.
-func formatStrandedDetail(carrier string, unbound, ctaAfter time.Duration, coreNodeName string) string {
-	if carrier == "" {
-		carrier = "A carrier"
-	}
-	if unbound < ctaAfter {
-		return fmt.Sprintf("Binding in progress — UOP accumulating. %s at %s, %s.",
-			carrier, coreNodeName, humanizeUnbound(unbound))
-	}
-	return fmt.Sprintf("Binding in progress — UOP accumulating. %s at %s, %s and not bound — Record Count on the bin tab.",
-		carrier, coreNodeName, humanizeUnbound(unbound))
-}
-
-// formatHeldBesideDetail is the operator sentence for a hold beside a cart of
-// another part: the position, what the cart is recorded as and by what, the
-// part the style draws there (said, from heldBesideSaid), and the count held,
-// with the two ways out.
-func formatHeldBesideDetail(coreNodeName, said string, pending int, part string) string {
-	return fmt.Sprintf("Strokes held at %s — %s. %d held for the next %s cart: land one, or name this cart with Load Payload.",
-		coreNodeName, said, pending, part)
-}
-
-// heldBesideSaid is the middle of formatHeldBesideDetail: "the cart there is
-// recorded as P (from the switch off S); T draws Q here", T the claim's style.
-// Reads the style's name and, for a flip, the style that ran.
-func (e *Engine) heldBesideSaid(node *processes.Node, claim *processes.NodeClaim, rt *processes.RuntimeState) string {
-	style := fmt.Sprintf("style %d", claim.StyleID)
-	if s, err := e.db.GetStyle(claim.StyleID); err == nil && s != nil && s.Name != "" {
-		style = s.Name
-	}
-	return fmt.Sprintf("the cart there is %s; %s draws %s here",
-		recordedAs(rt, e.carrierRecordSaid(node, rt, claim.StyleID)), style, claim.PayloadCode)
-}
-
-// humanizeUnbound renders how long a node has been waiting to bind, in the
-// largest unit that still says something. Minutes below an hour; the "0h"
-// problem is the whole reason this exists.
-func humanizeUnbound(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		m := int(d.Minutes())
-		if m == 1 {
-			return "1 min"
-		}
-		return fmt.Sprintf("%d min", m)
-	default:
-		h := int(d.Hours())
-		m := int(d.Minutes()) % 60
-		if m == 0 {
-			if h == 1 {
-				return "1 hr"
-			}
-			return fmt.Sprintf("%d hr", h)
-		}
-		return fmt.Sprintf("%dh %dm", h, m)
-	}
-}
-
-// strandedMonitor is the live loop. states is keyed by process_node id and is
-// touched only from the monitor goroutine (no lock); the alarm results are
-// published to the engine's strandedAlarms sync.Map, which the view builder
-// reads concurrently.
+// strandedMonitor is the live loop.
 type strandedMonitor struct {
-	eng    *Engine
-	states map[int64]*strandedNodeState
+	eng *Engine
 }
 
 func (e *Engine) startStrandedMonitor() {
-	sm := &strandedMonitor{eng: e, states: map[int64]*strandedNodeState{}}
+	sm := &strandedMonitor{eng: e}
 	go sm.run()
 }
 
@@ -220,44 +57,21 @@ func (sm *strandedMonitor) run() {
 
 // tick scans every node on the Edge once.
 //
-// FOUR STATEMENTS, WHATEVER THE PLANT LOOKS LIKE. This loop used to resolve the
-// claim and read the runtime row inside evaluate, one node at a time, and
-// resolving the claim meant re-reading the node's PROCESS as well — three
-// statements per node per scan, on a store pinned to one SQLite connection on a
-// Pi. It walks the WHOLE Edge rather than one process, so the multiplier is the
-// plant's node count, not a cell's.
-//
-// The process list replaces the per-node process read: processes.List and
-// processes.Get apply the same predicate (neither filters), so a node whose
-// process_id names no row is absent from the map exactly as Get returned an
-// error for it — and NodeClaimSet.Resolve answers nil for a nil process, which
-// is what requestedClaimAtNode did with that error.
-//
-// THE PRODUCE ARM RUNS FIRST, for every node, before evaluate's consume-only
-// skip: an unbound produce seat with a hold and no carrier coming has its hold
-// dropped (Engine.sweepProduceHold). It reads nothing more for any other seat,
-// so a plant with no standing produce pile still costs the four statements;
-// each unbound holding produce seat adds its one placing read, and a drop.
-func (sm *strandedMonitor) tick(now time.Time) {
-	nodes, resolve, runtimes, ok := sm.read()
-	if !ok {
-		return
-	}
-	for i := range nodes {
-		node := &nodes[i]
-		claim, rt := resolve(node), runtimes[node.ID]
-		sm.eng.sweepProduceHold(node, claim, rt)
-		sm.evaluate(node, claim, rt, now)
-	}
+// FOUR STATEMENTS, WHATEVER THE PLANT LOOKS LIKE: every node, every process,
+// the claims of their styles and the nodes' runtime rows. A node whose
+// process_id names no row is absent from the map, and NodeClaimSet.Resolve
+// answers nil for a nil process. Each unbound holding produce seat adds its
+// one placing read, and a drop.
+func (sm *strandedMonitor) tick(time.Time) {
+	sm.sweepAtBoot()
 }
 
-// sweepAtBoot is the produce arm alone, once, as the monitor starts (after the
+// sweepAtBoot is the scan's sweep, once, as the monitor starts (after the
 // engine's managers exist, so a drop's row can be built and queued; the
 // outbox drains it once the drainer runs). It is the write-off of every pile
 // that stood before an unbound produce seat stopped holding without a carrier
 // coming: no migration could write that row, because a migration runs before
-// the engine and the outbox. The consume alarm is not sampled here, so its
-// growth window keeps its cadence.
+// the engine and the outbox.
 func (sm *strandedMonitor) sweepAtBoot() {
 	nodes, resolve, runtimes, ok := sm.read()
 	if !ok {
@@ -300,110 +114,4 @@ func (sm *strandedMonitor) read() (nodes []processes.Node, resolve func(*process
 		return claims.Resolve(byID[node.ProcessID], node, store.ActiveStyleFirst)
 	}
 	return nodes, resolve, runtimes, true
-}
-
-// evaluate advances one node and publishes/clears its alarm.
-//
-// The claim and the runtime row are passed in rather than read here: tick reads
-// both for the whole node set in one statement each. A nil claim is what the
-// per-node resolver answered for an unclaimed node, and a nil runtime is what a
-// node with no runtime row gave.
-func (sm *strandedMonitor) evaluate(node *processes.Node, claim *processes.NodeClaim, runtime *processes.RuntimeState, now time.Time) {
-	e := sm.eng
-	// Only consume cells count parts down against a bound bin; the "Record Count
-	// on the bin tab" fix and the consuming-active co-condition are consume-
-	// specific. Skip produce / manual_swap / unclaimed nodes and drop any state.
-	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IsLoaderNode() {
-		delete(sm.states, node.ID)
-		sm.clear(node.CoreNodeName)
-		return
-	}
-	if runtime == nil {
-		return
-	}
-	st := sm.states[node.ID]
-	if st == nil {
-		st = &strandedNodeState{}
-		sm.states[node.ID] = st
-	}
-
-	// Bound is bound to a carrier the claim takes: a hold beside a carrier
-	// recorded as another part grows as an unbound seat's does (no stroke
-	// draws that cart), and is watched the same way.
-	other := recordedOtherPart(runtime, claim)
-	fire, active := evalStrandedGrowth(st, int(runtime.PendingUOPDelta), runtime.ActiveBinID != nil && !other, now)
-	if !active {
-		st.beside = ""
-		sm.clear(node.CoreNodeName)
-		return
-	}
-
-	if fire {
-		// Resolve the carrier once per window (rare) from the bins table, kept
-		// for the per-scan detail refreshes.
-		st.carrier = sm.resolveCarrier(node.CoreNodeName)
-	}
-	switch {
-	case !other:
-		st.beside = ""
-	case st.beside == "":
-		st.beside = e.heldBesideSaid(node, claim, runtime)
-	}
-	unbound := now.Sub(st.since)
-	ctaAfter := e.cfg.UOPAccumulatingCTADelay()
-	detail := formatStrandedDetail(st.carrier, unbound, ctaAfter, node.CoreNodeName)
-	why := "no bin bound"
-	if st.beside != "" {
-		detail = formatHeldBesideDetail(node.CoreNodeName, st.beside, int(runtime.PendingUOPDelta), claim.PayloadCode)
-		why = "beside a cart of another part"
-	}
-	e.strandedAlarms.Store(node.CoreNodeName, detail)
-
-	if fire {
-		// One log/audit line per alarm window (P2-C8) — greppable "parked ticks:".
-		log.Printf("parked ticks: %s (pending=%d held, %s)", detail, int(runtime.PendingUOPDelta), why)
-		e.Events.Emit(Event{Type: EventUOPStranded, Payload: UOPStrandedEvent{
-			CoreNodeName: node.CoreNodeName,
-			Carrier:      st.carrier,
-			StagedHours:  int(unbound.Hours()),
-			UnboundFor:   unbound,
-			NeedsAction:  unbound >= ctaAfter,
-			PendingDelta: int(runtime.PendingUOPDelta),
-			Detail:       detail,
-		}})
-	}
-}
-
-// clear removes any active alarm for a node (bind, idle, or role change).
-func (sm *strandedMonitor) clear(coreNodeName string) {
-	sm.eng.strandedAlarms.Delete(coreNodeName)
-}
-
-// resolveCarrier is the label of the bin the bins table holds at the node (a
-// process node, on the watch list): "" when the node is empty or the table may
-// not be decided from (BinsActable) — the alarm still fires, without the
-// carrier label, and the skip is logged with the table's reason. Memory only.
-func (sm *strandedMonitor) resolveCarrier(coreNodeName string) string {
-	row, err := sm.eng.binsRowAt(coreNodeName)
-	if err != nil {
-		var nc *BinsNotCurrent
-		if errors.As(err, &nc) {
-			sm.eng.logFn("parked ticks: %s: no carrier label (%s)", coreNodeName, nc.Why)
-		}
-		return ""
-	}
-	if !row.Occupied {
-		return ""
-	}
-	return row.BinLabel
-}
-
-// StrandedAlarmDetail returns the active parked-ticks alarm sentence for a core
-// node, or "" when none. Read by the operator-station view builder so the tile
-// renders the chip on load and on refresh. Concurrency-safe (sync.Map).
-func (e *Engine) StrandedAlarmDetail(coreNodeName string) string {
-	if v, ok := e.strandedAlarms.Load(coreNodeName); ok {
-		return v.(string)
-	}
-	return ""
 }

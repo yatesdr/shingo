@@ -291,6 +291,16 @@ func (cm *catidMonitor) slotFactsOf(processID int64) *slotFacts {
 	return (*m)[processID]
 }
 
+// CountingSlots is the setup page's Counting block's MES slots for a process,
+// as the watch last published them (mesSlots).
+func (e *Engine) CountingSlots(processID int64) ([]MESSlot, error) {
+	proc, err := e.db.GetProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	return e.mesSlots(proc), nil
+}
+
 // mesSlots is a process's slots as the watch last published them, for the
 // setup page ([] when it has none, or read them against another counter tag):
 // one load of the published pointer, no lock, and no statement unless a slot

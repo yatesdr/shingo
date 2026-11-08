@@ -2,6 +2,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -34,6 +35,23 @@ func windowWorld(t *testing.T, coreNode string) (*Engine, *processes.Node, *proc
 
 var windowClaim = &processes.NodeClaim{Role: protocol.ClaimRoleConsume, PayloadCode: "PART-A"}
 
+// windowTick is a stroke of delta at the node, as the walk hands it on.
+func windowTick(node *processes.Node, delta int) tickScope {
+	return tickScope{processID: node.ProcessID, delta: delta, source: "test"}
+}
+
+// windowLogged is what the ledger logged at the node: the open rows' quantity.
+func windowLogged(t *testing.T, eng *Engine, node *processes.Node) int64 {
+	t.Helper()
+	n := int64(0)
+	for _, h := range openHolds(t, eng, node.ProcessID) {
+		if h.ProcessNodeID == node.ID {
+			n += h.Qty
+		}
+	}
+	return n
+}
+
 // chargedToBin is what the accumulator holds for the bin at epoch 3: the
 // ticks charged to it and not yet flushed (a draw is negative).
 func chargedToBin(t *testing.T, acc *uop.Mutator, binID int64) int {
@@ -46,32 +64,33 @@ func chargedToBin(t *testing.T, acc *uop.Mutator, binID int64) int {
 func TestCountWindow_AReleaseInTheWindowStands(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name      string
-		declared  int
-		wantCount int
-		wantHold  int64
-		wantBin   int
+		name       string
+		declared   int
+		wantCount  int
+		wantLogged int64
+		wantBin    int
 	}{
-		// Released empty: the bin takes no more ticks (R3); the tick is held.
-		{name: "released empty", declared: 0, wantCount: 0, wantHold: 3, wantBin: 0},
+		// Released empty: the bin takes no more ticks (R3); the stroke is
+		// logged (decision 55).
+		{name: "released empty", declared: 0, wantCount: 0, wantLogged: 3, wantBin: 0},
 		// A count release keeps charging the bin until the lift (R1), on top
 		// of what the operator declared.
-		{name: "released with 10", declared: 10, wantCount: 7, wantHold: 0, wantBin: -3},
+		{name: "released with 10", declared: 10, wantCount: 7, wantLogged: 0, wantBin: -3},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, node, read, acc, binID := windowWorld(t, "WIN-REL-"+c.name[:8])
-			testutil.MustNoErr(t, eng.db.SetProcessNodeReleaseCount(node.ID, c.declared), "the release's count")
+			testutil.MustNoErr(t, eng.db.SetProcessNodeReleaseCount(node.ID, c.declared, time.Now()), "the release's count")
 
-			eng.handleConsumeTick(node, read, windowClaim, windowClaim.PayloadCode, 3, unsaidCarrier{})
+			eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 3), unsaidCarrier{})
 
 			rt, err := eng.db.GetProcessNodeRuntime(node.ID)
 			testutil.MustNoErr(t, err, "runtime")
 			if rt.RemainingUOPCached != c.wantCount {
 				t.Errorf("count %d, want %d: the release declared %d before the tick's write", rt.RemainingUOPCached, c.wantCount, c.declared)
 			}
-			if rt.PendingUOPDelta != c.wantHold {
-				t.Errorf("hold %d, want %d", rt.PendingUOPDelta, c.wantHold)
+			if got := windowLogged(t, eng, node); rt.PendingUOPDelta != 0 || got != c.wantLogged {
+				t.Errorf("hold %d, logged %d; want no hold, %d logged", rt.PendingUOPDelta, got, c.wantLogged)
 			}
 			if got := chargedToBin(t, acc, binID); got != c.wantBin {
 				t.Errorf("charged to bin %d: %d, want %d", binID, got, c.wantBin)
@@ -85,7 +104,7 @@ func TestCountWindow_APickupInTheWindowStands(t *testing.T) {
 	eng, node, read, acc, binID := windowWorld(t, "WIN-PICKUP")
 	testutil.MustNoErr(t, eng.carrierLeftAtPickup(node.ID, node.CoreNodeName, 4, 0, ""), "the pickup's leave")
 
-	eng.handleConsumeTick(node, read, windowClaim, windowClaim.PayloadCode, 2, unsaidCarrier{})
+	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 2), unsaidCarrier{})
 
 	rt, err := eng.db.GetProcessNodeRuntime(node.ID)
 	testutil.MustNoErr(t, err, "runtime")
@@ -95,8 +114,8 @@ func TestCountWindow_APickupInTheWindowStands(t *testing.T) {
 	if rt.RemainingUOPCached != 0 {
 		t.Errorf("count %d on an empty seat, want 0: the leave zeroed it", rt.RemainingUOPCached)
 	}
-	if rt.PendingUOPDelta != 2 || rt.PendingUOPPayload != "PART-A" {
-		t.Errorf("hold %d of %q, want 2 of PART-A for the next carrier", rt.PendingUOPDelta, rt.PendingUOPPayload)
+	if got := windowLogged(t, eng, node); rt.PendingUOPDelta != 0 || got != 2 {
+		t.Errorf("hold %d, logged %d; want no hold and 2 logged: no cart stands there (decision 55)", rt.PendingUOPDelta, got)
 	}
 	if got := chargedToBin(t, acc, binID); got != 0 {
 		t.Errorf("charged %d to bin %d, which had left; want 0", got, binID)
@@ -113,7 +132,7 @@ func TestCountWindow_AnOperatorsCountInTheWindowStands(t *testing.T) {
 		t.Fatalf("control: the operator's count wrote %d, want 12", got)
 	}
 
-	eng.handleConsumeTick(node, read, windowClaim, windowClaim.PayloadCode, 3, unsaidCarrier{})
+	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 3), unsaidCarrier{})
 
 	if got := runtimeCount(t, eng, node.ID); got != 9 {
 		t.Errorf("count %d, want 9: the operator counted 12 before the tick's write, and the tick draws 3 from it", got)
@@ -136,7 +155,7 @@ func TestCountWindow_AnUnchangedSeatIsOneWrite(t *testing.T) {
 	testutil.MustNoErr(t, err, "the row the tick read")
 
 	counter.Reset()
-	eng.handleConsumeTick(node, read, windowClaim, windowClaim.PayloadCode, 1, unsaidCarrier{})
+	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 1), unsaidCarrier{})
 	if n := counter.Count(); n != 2 {
 		t.Errorf("an unchanged seat's tick ran %d statements, want 2 (the pile read, the count write)", n)
 	}

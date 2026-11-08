@@ -712,3 +712,124 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### STALE — `TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin`
+- test: `TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin` · pkg `shingo/integration/scenarios` · run `-run '^TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin$'` · `integration/scenarios/carrier_handoff_pending_test.go:70` @ `818e9d89` · tags `docker`
+- code: STALE
+- assertion map: renamed `TestScenario_H_R4_ALateLiftsTicksAreLoggedTheNextBinLandsFresh` (`integration/scenarios/carrier_handoff_pending_test.go`): Core's old bin N - k, the after_lift refusal and no stale drop (kept); after the pickup nothing is held and the m ticks are logged (held m -> held 0, logged m); the next bin lands at M and takes its own tick in both books (M - m - 1 -> M - 1). Flipped by decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing).
+- mutation: the source of this commit before the walk's consume arm became chargeOrLog (the characterisation commit's tree): the renamed test fails there on the flipped assertions, as `TestPinRuling55_SeatHoldsAndTheLedgersLandings` records case by case
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestCounterDelta_UnboundTickDrainsPileAndHoldsOnlyTheRemainder`
+- test: `TestCounterDelta_UnboundTickDrainsPileAndHoldsOnlyTheRemainder` · pkg `shingoedge/engine` · run `-run '^TestCounterDelta_UnboundTickDrainsPileAndHoldsOnlyTheRemainder$'` · `shingo-edge/engine/lineside_bucket_pins_test.go:157` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: renamed `TestCounterDelta_UnboundTickDrainsPileAndLogsOnlyTheRemainder` (`shingo-edge/engine/lineside_bucket_pins_test.go`): the pile drains 2 and no bin delta is sent (kept); the remainder of 3 is logged, not held (pending 3 -> pending 0, logged 3). Flipped by decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing).
+- mutation: the source of this commit before the walk's consume arm became chargeOrLog (the characterisation commit's tree): the renamed test fails there on the flipped assertions, as `TestPinRuling55_SeatHoldsAndTheLedgersLandings` records case by case
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestEvalStrandedGrowth_BindClearsMidWindow`
+- test: `TestEvalStrandedGrowth_BindClearsMidWindow` · pkg `shingoedge/engine` · run `-run '^TestEvalStrandedGrowth_BindClearsMidWindow$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:78` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks alarm's growth window (evalStrandedGrowth): a bind clears it; decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestEvalStrandedGrowth_BoundNeverAlarms`
+- test: `TestEvalStrandedGrowth_BoundNeverAlarms` · pkg `shingoedge/engine` · run `-run '^TestEvalStrandedGrowth_BoundNeverAlarms$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:64` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks alarm's growth window (evalStrandedGrowth): a bound seat never alarms; decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestEvalStrandedGrowth_IdleLineNeverAlarms`
+- test: `TestEvalStrandedGrowth_IdleLineNeverAlarms` · pkg `shingoedge/engine` · run `-run '^TestEvalStrandedGrowth_IdleLineNeverAlarms$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:49` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks alarm's growth window (evalStrandedGrowth): a flat hold never alarms; decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestEvalStrandedGrowth_StallReArmsOnRenewedGrowth`
+- test: `TestEvalStrandedGrowth_StallReArmsOnRenewedGrowth` · pkg `shingoedge/engine` · run `-run '^TestEvalStrandedGrowth_StallReArmsOnRenewedGrowth$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:93` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks alarm's growth window (evalStrandedGrowth): a stall re-arms; decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestEvalStrandedGrowth_SustainedGrowthFiresOnce`
+- test: `TestEvalStrandedGrowth_SustainedGrowthFiresOnce` · pkg `shingoedge/engine` · run `-run '^TestEvalStrandedGrowth_SustainedGrowthFiresOnce$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:31` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks alarm's growth window over a consume seat's hold (evalStrandedGrowth); decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold`
+- test: `TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold` · pkg `shingoedge/engine` · run `-run '^TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold$'` · `shingo-edge/engine/carrier_handoff_pins_test.go:206` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: renamed `TestPinR3_ReleasedEmptyIsNotChargedItsStrokesAreLogged` (`shingo-edge/engine/carrier_handoff_pins_test.go`): every old assertion kept but two, flipped by decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing): past the pile the 2 strokes are logged at the position, not held (`held` 2 -> held 0, logged 2), and the next bin of the part lands at N and takes its own stroke (N - 3 -> N - 1). The released bin is still not charged (R3).
+- mutation: the source of this commit before the walk's consume arm became chargeOrLog (the characterisation commit's tree): the renamed test fails there on the flipped assertions, as `TestPinRuling55_SeatHoldsAndTheLedgersLandings` records case by case
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin`
+- test: `TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin` · pkg `shingoedge/engine` · run `-run '^TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin$'` · `shingo-edge/engine/runtime_uop_binding_test.go:225` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: renamed `TestRuntimeBinding_PLCTicksWithNoBinAreLoggedTheNextBinStartsFresh` (`shingo-edge/engine/runtime_uop_binding_test.go`): the gap's 3 ticks are logged in the ledger, not held (pending 3 -> pending 0, logged 3); the cache stays 0 while unbound (kept); the first tick after the delivered bind is the new bin's alone (1000 - 4 -> 1000 - 1). Flipped by decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing).
+- mutation: the source of this commit before the walk's consume arm became chargeOrLog (the characterisation commit's tree): the renamed test fails there on the flipped assertions, as `TestPinRuling55_SeatHoldsAndTheLedgersLandings` records case by case
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestStagedUnbound_TicksParkInPendingNoBinEverBound`
+- test: `TestStagedUnbound_TicksParkInPendingNoBinEverBound` · pkg `shingoedge/engine` · run `-run '^TestStagedUnbound_TicksParkInPendingNoBinEverBound$'` · `shingo-edge/engine/wiring_staged_unbound_test.go:35` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: renamed `TestStagedUnbound_TicksWithNoBinEverBoundAreLogged` (`shingo-edge/engine/wiring_staged_unbound_test.go`): the unbound slot never binds (kept); its 46 ticks are logged in the ledger, not parked in pending (pending 46 -> 0, logged 46); the cache stays 0 (kept). Flipped by decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing).
+- mutation: the source of this commit before the walk's consume arm became chargeOrLog (the characterisation commit's tree): the renamed test fails there on the flipped assertions, as `TestPinRuling55_SeatHoldsAndTheLedgersLandings` records case by case
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestStrandedCarrier_LabelFromCore`
+- test: `TestStrandedCarrier_LabelFromCore` · pkg `shingoedge/engine` · run `-run '^TestStrandedCarrier_LabelFromCore$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:366` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks alarm's carrier label (resolveCarrier); decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestStrandedDetail_AsksOnlyOnceTheWaitIsLong`
+- test: `TestStrandedDetail_AsksOnlyOnceTheWaitIsLong` · pkg `shingoedge/engine` · run `-run '^TestStrandedDetail_AsksOnlyOnceTheWaitIsLong$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:192` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the parked-ticks chip's two sentences (formatStrandedDetail, uop_accumulating_cta_after); decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestStrandedMonitor_DecisionLadder`
+- test: `TestStrandedMonitor_DecisionLadder` · pkg `shingoedge/engine` · run `-run '^TestStrandedMonitor_DecisionLadder$'` · `shingo-edge/engine/node_walkers_decision_test.go:341` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned which consume seats the stranded monitor's consume arm watched; decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestStrandedMonitor_Evaluate_FiresNamedAlarm`
+- test: `TestStrandedMonitor_Evaluate_FiresNamedAlarm` · pkg `shingoedge/engine` · run `-run '^TestStrandedMonitor_Evaluate_FiresNamedAlarm$'` · `shingo-edge/engine/uop_stranded_monitor_test.go:120` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the stranded monitor's consume scan naming a growing seat hold (evaluate, EventUOPStranded); decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestBuildView_StrandedResolverPopulatesChip`
+- test: `TestBuildView_StrandedResolverPopulatesChip` · pkg `shingoedge/service` · run `-run '^TestBuildView_StrandedResolverPopulatesChip$'` · `shingo-edge/service/station_stranded_test.go:15` @ `818e9d89` · tags `none`
+- code: STALE
+- assertion map: it pinned the station view's parked-ticks chip (StationNodeView.StrandedAlarm, SetStrandedResolver); decision 55 (a stroke charges the cart of its part standing at the position, or is logged in the ledger; a consume seat holds nothing) deleted the consume seat's hold, so there is nothing for the alarm to watch: a stroke with no cart of its part is a "no cart" row in the ledger, shown on the strip (`TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull`, `shingo-edge/engine/stroke_charged_or_logged_test.go`), and the monitor's produce sweep keeps its pins (`TestProduceHoldSweep_*`).
+- mutation: none run for this row (the code it pinned is deleted)
+- coverage Δ: not measured for this row (its statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row

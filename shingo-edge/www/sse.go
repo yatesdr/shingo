@@ -568,14 +568,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CoreNodesUpdatedEvent); ok {
 				sseEvt = SSEEvent{Type: "core-nodes", Data: p}
 			}
-		case engine.EventUOPStranded:
-			// Parked-ticks alarm (P2-C8): push a refresh so the operator tile
-			// picks up the StrandedAlarm chip the moment the stranding is
-			// detected, not on the next poll. The sentence itself rides the
-			// station view, so the payload only needs to name the node.
-			if p, ok := evt.Payload.(engine.UOPStrandedEvent); ok {
-				sseEvt = SSEEvent{Type: "uop-stranded-alarm", Data: p}
-			}
 		case engine.EventCATIDMismatch:
 			// A5: wrong physical part on a press vs the active style. Distinct
 			// event so the HMI can raise a station alert naming the press and

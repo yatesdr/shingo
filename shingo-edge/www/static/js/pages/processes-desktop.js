@@ -3792,7 +3792,7 @@ function clearSelected() {
 async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
-    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadEndOfLine()]);
+    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots()]);
     await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
@@ -4664,13 +4664,12 @@ function identityField() {
 }
 
 // countingSection is the process's Counting block (station-card.js): the MES
-// slots, carried by the end-of-line read; the station counters' cards with
-// their positions; and the end of the line, each line labelled discovered,
-// confirmed, measured or typed.
+// slots, and the station counters' cards with their positions, each line
+// labelled discovered, confirmed or measured.
 function countingSection(p) {
     const card = window.StationCard;
     if (!card) return '';
-    return card.countingHTML({ process: p, end: S.endOfLine, counters: S.stationCounters || [],
+    return card.countingHTML({ process: p, slots: S.countingSlots || [], counters: S.stationCounters || [],
         positions: S.curtainNodes || [], verdicts: S.stationVerdicts });
 }
 
@@ -4704,11 +4703,9 @@ function saveStationPositions(id) {
     }
     const here = changes.filter(x => x.line_counter_id).map(x => name(x.id));
     const back = changes.filter(x => !x.line_counter_id).map(x => name(x.id));
-    const counter = (S.stationCounters || []).find(x => x.id === id);
     openSheet('Save this station counter’s positions?',
         (here.length ? 'Counted here: ' + here.join(', ') + '. ' : '') +
-        (back.length ? 'Back to the production counter: ' + back.join(', ') + '. ' : '') +
-        window.StationCard.inLineSentence(counter),
+        (back.length ? 'Back to the production counter: ' + back.join(', ') + '.' : ''),
         '', 'Save', async () => {
             for (const x of changes) {
                 const out = await postJSON('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id });
@@ -4723,24 +4720,13 @@ function saveStationPositions(id) {
         });
 }
 
-// loadEndOfLine reads the process's end-of-line block and its MES slots (none
-// on a failed read).
-async function loadEndOfLine() {
+// loadCountingSlots reads the process's MES slots for the Counting block
+// (none on a failed read).
+async function loadCountingSlots() {
     try {
-        const res = await fetch('/api/processes/' + S.processID + '/end-of-line', { cache: 'no-store' });
-        S.endOfLine = res.ok ? await res.json() : null;
-    } catch (_) { S.endOfLine = null; }
-}
-
-// saveLineDepth types the process's line depth (blank clears it).
-async function saveLineDepth() {
-    const raw = ($('eol-depth') || {}).value;
-    const n = raw === '' || raw == null ? null : Number(raw);
-    const out = await postJSON('PUT', '/api/processes/' + S.processID + '/line-depth', { line_depth: n });
-    S.settingsError = out.ok ? '' : out.error;
-    S.settingsNotice = out.ok ? 'Saved.' : '';
-    await loadEndOfLine();
-    drawSettings();
+        const res = await fetch('/api/processes/' + S.processID + '/counting-slots', { cache: 'no-store' });
+        S.countingSlots = res.ok ? ((await res.json()).slots || []) : [];
+    } catch (_) { S.countingSlots = []; }
 }
 
 // loadStationCounters reads the process's station counters ([] on a failed read).
@@ -4783,7 +4769,7 @@ function openStationCounter(id, bindNode) {
 
 async function afterStationChange() {
     S._tagCache = {};
-    await Promise.all([loadStationCounters(), loadCurtainNodes(), loadEndOfLine()]);
+    await Promise.all([loadStationCounters(), loadCurtainNodes(), loadCountingSlots()]);
     await loadStationVerdicts();
     drawSettings();
 }
@@ -8018,7 +8004,6 @@ function onClick(e) {
             case 'sc-new': openStationCounter(0, 0); return;
             case 'sc-edit': openStationCounter(Number(btn.dataset.sc), 0); return;
             case 'sc-positions': saveStationPositions(Number(btn.dataset.sc)); return;
-            case 'eol-save': void saveLineDepth(); return;
             case 'sc-delete': {
                 const id = Number(btn.dataset.sc);
                 openSheet('Delete this station counter?', 'its positions are counted by the production counter again', '',

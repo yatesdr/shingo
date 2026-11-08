@@ -155,7 +155,7 @@ func TestCounterDelta_ABFallthroughDrainsTheParkedSidesPileFirst(t *testing.T) {
 // tick drains the pile and marks it at once; only the remainder is held in
 // pending_uop_delta, and no bin delta goes out.
 // Stays.
-func TestCounterDelta_UnboundTickDrainsPileAndHoldsOnlyTheRemainder(t *testing.T) {
+func TestCounterDelta_UnboundTickDrainsPileAndLogsOnlyTheRemainder(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
@@ -178,9 +178,9 @@ func TestCounterDelta_UnboundTickDrainsPileAndHoldsOnlyTheRemainder(t *testing.T
 	}
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
-	if rt.PendingUOPDelta != 3 || rt.RemainingUOPCached != 100 {
-		t.Errorf("runtime pending/remaining = %d/%d, want 3/100: only the remainder is held",
-			rt.PendingUOPDelta, rt.RemainingUOPCached)
+	if s := readSeat55(t, eng, processID, nodeID); rt.PendingUOPDelta != 0 || rt.RemainingUOPCached != 100 || s.logged != 3 {
+		t.Errorf("runtime pending/remaining = %d/%d, logged %d; want 0/100 and 3: only the remainder is logged (decision 55)",
+			rt.PendingUOPDelta, rt.RemainingUOPCached, s.logged)
 	}
 }
 

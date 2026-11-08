@@ -130,11 +130,10 @@ func TestLineTick_BoundNodeTurnedPairedCountsAsUnbound(t *testing.T) {
 	}
 }
 
-// TestLineTick_GapTickHeldUnderTheIncomingPart: B through the station path —
-// station strokes in the gap between the outgoing cart's lift and the incoming
-// cart's landing are held for the incoming cart, as the production walk holds
-// them.
-func TestLineTick_GapTickHeldUnderTheIncomingPart(t *testing.T) {
+// TestLineTick_GapTickIsLogged: through the station path, station strokes in
+// the gap between the outgoing cart's lift and the incoming cart's landing are
+// logged at the position (decision 55), as the production walk logs them.
+func TestLineTick_GapTickIsLogged(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, nodeID, from, _ := runOutRig(t)
 	lc := stationCounter(t, db, pid, nodeID)
@@ -145,9 +144,8 @@ func TestLineTick_GapTickHeldUnderTheIncomingPart(t *testing.T) {
 	}
 	testutil.MustNoErr(t, eng.carrierLeft(nodeID, runOutNode), "the lift")
 	stationTick(eng, lc, pid, today, 3)
-	rt := runtimeOf(t, eng, nodeID)
-	if rt.PendingUOPDelta != 3 || rt.PendingUOPPayload != "PART-NEW" {
-		t.Errorf("seat after the gap = hold %d of %q, want 3 of PART-NEW", rt.PendingUOPDelta, rt.PendingUOPPayload)
+	if s := readSeat55(t, eng, pid, nodeID); s.hold != 0 || s.logged != 3 {
+		t.Errorf("seat after the gap = hold %d, logged %d; want no hold, 3 logged", s.hold, s.logged)
 	}
 }
 
@@ -156,7 +154,7 @@ func TestLineTick_GapTickHeldUnderTheIncomingPart(t *testing.T) {
 // While the PLC runs today's part, the outgoing part's pile drains first; once
 // it runs the incoming part, the stroke is the target's and the outgoing pile
 // is left (it strands at the cutover), as is the outgoing cart: the stroke is
-// held for the incoming one.
+// logged (decision 55).
 func TestStation_PileDrainsUnderTheTicksStyle(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, nodeID, from, to := runOutRig(t)
@@ -168,9 +166,9 @@ func TestStation_PileDrainsUnderTheTicksStyle(t *testing.T) {
 		t.Errorf("cart after 3 on today's part = %d, want 17: the pile pays first", got)
 	}
 	stationTick(eng, lc, pid, plc.TickIdentity{StyleID: to, Kind: plc.TickTarget}, 2)
-	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 17 || rt.PendingUOPDelta != 2 || rt.PendingUOPPayload != "PART-NEW" {
-		t.Errorf("cart after 2 on the incoming part = %d, hold %d of %q; want 17 and 2 of PART-NEW held: the outgoing "+
-			"pile is not the target's, nor is the outgoing cart", rt.RemainingUOPCached, rt.PendingUOPDelta, rt.PendingUOPPayload)
+	if s := readSeat55(t, eng, pid, nodeID); s.cart != 17 || s.hold != 0 || s.logged != 2 {
+		t.Errorf("cart after 2 on the incoming part = %d, hold %d, logged %d; want 17, none and 2 logged: the outgoing "+
+			"pile is not the target's, nor is the outgoing cart", s.cart, s.hold, s.logged)
 	}
 	buckets, err := db.ListLinesideBuckets(nodeID)
 	testutil.MustNoErr(t, err, "piles")

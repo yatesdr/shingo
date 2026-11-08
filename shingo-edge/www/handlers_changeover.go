@@ -249,16 +249,6 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		}
 		changeoverHistory = filtered
 	}
-	// Each completed changeover's measured run-out (the record, on read).
-	runOuts := map[int64]int64{}
-	if activeProcess != nil && len(changeoverHistory) > 0 {
-		if eol, err := h.orchestration.EndOfLine(activeProcess.ID); err == nil {
-			for _, ro := range eol.Measured {
-				runOuts[ro.ChangeoverID] = ro.Parts
-			}
-		}
-	}
-
 	data := map[string]any{
 		"Page":              "changeover",
 		"Processes":         processList,
@@ -274,7 +264,6 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		"GateBlockers":      d.GateBlockers,
 		"SourcingByStyle":   d.SourcingByStyle,
 		"ChangeoverHistory": changeoverHistory,
-		"RunOuts":           runOuts,
 	}
 	h.renderTemplate(w, r, "changeover.html", data)
 }

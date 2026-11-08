@@ -347,24 +347,6 @@ function handleOrderCancelled(data) {
     showToast(msg, 'error', { sticky: true });
 }
 
-function handleUopStranded(data) {
-    // One toast per window (the engine emits once per window). The detail is the
-    // operator sentence, rendered verbatim.
-    //
-    // Severity follows needs_action rather than being fixed at error. Under the
-    // configured wait this is a swap in progress — a normal, temporary state —
-    // and a sticky red toast for it is how operators learned the notice means
-    // nothing. Past the wait it is a real ask and keeps the sticky error.
-    const msg = data && (data.detail || data.Detail);
-    if (!msg) return;
-    const needsAction = !!(data && (data.needs_action || data.NeedsAction));
-    if (needsAction) {
-        showToast(msg, 'error', { sticky: true });
-    } else {
-        showToast(msg, 'info');
-    }
-}
-
 // ─── Alerts: the post-cutover flag and the part-change alerts ───
 //
 // One place at the top of the screen (#os-alerts) holds them: the post-cutover
@@ -629,9 +611,6 @@ const stationEvents = {
     // fleet stopped it, an admin terminated it, its swap partner died): the same
     // sticky toast, with Core's reason.
     'order-cancelled': onEvent('order-cancelled', handleOrderCancelled),
-    // Parked ticks piling up on an unbound node: refresh so the tile's chip
-    // appears now, and one toast per alarm window with the instruction.
-    'uop-stranded-alarm': onEvent('uop-stranded-alarm', handleUopStranded),
     // A post-cutover part-id disagreement was flagged: refresh so
     // checkPostCutoverFlag fetches and shows the prompt.
     'changeover-verify-mismatch': onEvent('changeover-verify-mismatch', recheckPostCutoverFlag),

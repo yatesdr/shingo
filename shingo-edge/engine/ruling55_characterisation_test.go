@@ -1,8 +1,8 @@
 // ruling55_characterisation_test.go — what the seat holds, their replay and
-// the ledger's automatic landings do, one case per mechanism decision 55
-// removes, each beside its prediction ("Decision 55:"): every one becomes
-// charged, logged, or the row stays. The ruling's commit flips each case to its
-// prediction; nothing else in it changes.
+// the ledger's automatic landings did, one case per mechanism decision 55
+// removes. Each case asserted that at the characterisation commit; the
+// ruling's commit flipped each to its prediction (the "Decision 55:" line above
+// it): every one is charged, logged, or the row stays.
 package engine
 
 import (
@@ -68,12 +68,12 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 			tickConsume(eng, pid, styleID, 1)
 		}
 		// Decision 55: logged — {0, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "after 3 strokes at the empty seat", seat55{0, 3, 0})
+		wantSeat55(t, eng, pid, nodeID, "after 3 strokes at the empty seat", seat55{0, 0, 3})
 		eng.HandleBinLanded(landing("R55A-NODE", 8551, 1, 100, "PART-A", 7))
 		tickConsume(eng, pid, styleID, 1)
 		// Decision 55: the cart lands at its full count and takes its own
 		// stroke; the row stays — {99, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "the next cart of the part after one stroke", seat55{96, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the next cart of the part after one stroke", seat55{99, 0, 3})
 	})
 
 	t.Run("D12: another part's hold is kept, and a stroke beside it is neither held nor charged", func(t *testing.T) {
@@ -87,16 +87,16 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 			tickConsume(eng, pid, from, 1)
 		}
 		// Decision 55: logged — {0, 0, 2}.
-		wantSeat55(t, eng, pid, nodeID, "after 2 PART-OLD strokes at the empty seat", seat55{0, 2, 0})
+		wantSeat55(t, eng, pid, nodeID, "after 2 PART-OLD strokes at the empty seat", seat55{0, 0, 2})
 		testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "the switch to PART-NEW")
 		testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &toClaim, 0), "seat on PART-NEW's claim")
 		tickConsume(eng, pid, to, 1)
 		// Decision 55: logged, under PART-NEW — {0, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "after a PART-NEW stroke beside the PART-OLD hold", seat55{0, 2, 0})
+		wantSeat55(t, eng, pid, nodeID, "after a PART-NEW stroke beside the PART-OLD hold", seat55{0, 0, 3})
 		eng.HandleBinLanded(landing("CO-NODE", 8561, 1, 200, "PART-NEW", 7))
 		tickConsume(eng, pid, to, 1)
 		// Decision 55: the rows stay — {199, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "the PART-NEW cart after one stroke", seat55{199, 2, 0})
+		wantSeat55(t, eng, pid, nodeID, "the PART-NEW cart after one stroke", seat55{199, 0, 3})
 	})
 
 	t.Run("R3: a cart released at 0 takes no stroke; past the pile the strokes are held for the next cart", func(t *testing.T) {
@@ -115,12 +115,12 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 			t.Errorf("pile = %d, want 0 (the pile drains first)", got)
 		}
 		// Decision 55: logged; the cart stays at 0 — {0, 0, 2}.
-		wantSeat55(t, eng, pid, nodeID, "the cart released at 0, after 5 strokes", seat55{0, 2, 0})
+		wantSeat55(t, eng, pid, nodeID, "the cart released at 0, after 5 strokes", seat55{0, 0, 2})
 		testutil.MustNoErr(t, eng.carrierLeft(nodeID, "R55C-NODE"), "the lift")
 		eng.HandleBinLanded(landing("R55C-NODE", 8572, 1, 100, "PART-C", 7))
 		tickConsume(eng, pid, styleID, 1)
 		// Decision 55: the next cart lands fresh; the row stays — {99, 0, 2}.
-		wantSeat55(t, eng, pid, nodeID, "the next cart of the part after one stroke", seat55{97, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the next cart of the part after one stroke", seat55{99, 0, 2})
 	})
 
 	t.Run("B v1: the run-out after the lift is held under the incoming part and prepays its cart", func(t *testing.T) {
@@ -128,14 +128,14 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		eng, _, pid, nodeID, from, _ := runOutRig(t)
 		runOutToGap(t, eng, pid, nodeID, from)
 		// Decision 55: logged, under PART-OLD — {0, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "after the 3 strokes in the gap", seat55{0, 3, 0})
+		wantSeat55(t, eng, pid, nodeID, "after the 3 strokes in the gap", seat55{0, 0, 3})
 		landCart(t, eng, nodeID, 9102, "PART-NEW", 53)
 		for i := 0; i < 4; i++ {
 			tickConsume(eng, pid, from, 1)
 		}
 		// Decision 55: a PART-OLD stroke at the PART-NEW cart is logged; the
 		// cart stays at its full count — {53, 0, 7}.
-		wantSeat55(t, eng, pid, nodeID, "the incoming cart after 4 run-out strokes", seat55{46, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the incoming cart after 4 run-out strokes", seat55{53, 0, 7})
 	})
 
 	t.Run("decision 45: START retags a run-out hold of the departing part to the incoming part", func(t *testing.T) {
@@ -143,16 +143,16 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		eng, pid, nodeID, from := runOutBeforeTheStart(t)
 		// Decision 55: nothing to retag; the 3 before the start are logged —
 		// {0, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "after the start", seat55{0, 3, 0})
+		wantSeat55(t, eng, pid, nodeID, "after the start", seat55{0, 0, 3})
 		for i := 0; i < 2; i++ {
 			tickConsume(eng, pid, from, 1)
 		}
 		// Decision 55: logged — {0, 0, 5}.
-		wantSeat55(t, eng, pid, nodeID, "after 2 strokes in the changeover", seat55{0, 5, 0})
+		wantSeat55(t, eng, pid, nodeID, "after 2 strokes in the changeover", seat55{0, 0, 5})
 		landCart(t, eng, nodeID, 9102, "PART-NEW", 53)
 		tickConsume(eng, pid, from, 1)
 		// Decision 55: logged; the incoming cart is fresh — {53, 0, 6}.
-		wantSeat55(t, eng, pid, nodeID, "the incoming cart after one run-out stroke", seat55{47, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the incoming cart after one run-out stroke", seat55{53, 0, 6})
 	})
 
 	t.Run("the cancel retags the hold back to the staying part", func(t *testing.T) {
@@ -161,11 +161,11 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		runOutToGap(t, eng, pid, nodeID, from)
 		testutil.MustNoErr(t, eng.CancelProcessChangeover(pid), "cancel")
 		// Decision 55: nothing to retag; the rows stay — {0, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "after the cancel", seat55{0, 3, 0})
+		wantSeat55(t, eng, pid, nodeID, "after the cancel", seat55{0, 0, 3})
 		landCart(t, eng, nodeID, 9105, "PART-OLD", 30)
 		tickConsume(eng, pid, from, 1)
 		// Decision 55: the cart lands fresh — {29, 0, 3}.
-		wantSeat55(t, eng, pid, nodeID, "the re-landed old cart after one stroke", seat55{26, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the re-landed old cart after one stroke", seat55{29, 0, 3})
 	})
 
 	t.Run("decision 52: a cart that cannot say, bound before the start, holds the incoming strokes", func(t *testing.T) {
@@ -175,15 +175,15 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		tickConsume(eng, pid, alt, 1)
 		// Decision 55: logged under MIRROR-R, the cart (the departing part)
 		// untouched — {30, 0, 1}.
-		wantSeat55(t, eng, pid, nodeID, "after an ALT stroke", seat55{30, 1, 0})
+		wantSeat55(t, eng, pid, nodeID, "after an ALT stroke", seat55{30, 0, 1})
 		if d := deltasSince(eng, mark); len(d) != 0 {
-			t.Errorf("deltas %+v, want none (Decision 55: none)", d)
+			t.Errorf("deltas %+v, want none", d)
 		}
 		testutil.MustNoErr(t, eng.carrierLeft(nodeID, otherPartNode), "the cart leaves")
 		eng.HandleBinLanded(landing(otherPartNode, 9911, 1, 40, "MIRROR-R", 7))
 		tickConsume(eng, pid, alt, 1)
 		// Decision 55: the incoming cart lands fresh — {39, 0, 1}.
-		wantSeat55(t, eng, pid, nodeID, "the MIRROR-R cart after one stroke", seat55{38, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the MIRROR-R cart after one stroke", seat55{39, 0, 1})
 	})
 
 	t.Run("decision 38 rule 2: a stroke at a known cart of another part is held for a cart of its part", func(t *testing.T) {
@@ -191,12 +191,12 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "MIRROR-L", true, nil)
 		tickConsume(eng, pid, alt, 1)
 		// Decision 55: logged, the cart unchanged — {30, 0, 1}.
-		wantSeat55(t, eng, pid, nodeID, "after an ALT stroke at the MIRROR-L cart", seat55{30, 1, 0})
+		wantSeat55(t, eng, pid, nodeID, "after an ALT stroke at the MIRROR-L cart", seat55{30, 0, 1})
 		testutil.MustNoErr(t, eng.carrierLeft(nodeID, otherPartNode), "the MIRROR-L cart leaves")
 		eng.HandleBinLanded(landing(otherPartNode, 9911, 1, 40, "MIRROR-R", 7))
 		tickConsume(eng, pid, alt, 1)
 		// Decision 55: the MIRROR-R cart lands fresh — {39, 0, 1}.
-		wantSeat55(t, eng, pid, nodeID, "the MIRROR-R cart after one stroke", seat55{38, 0, 0})
+		wantSeat55(t, eng, pid, nodeID, "the MIRROR-R cart after one stroke", seat55{39, 0, 1})
 	})
 
 	t.Run("D11 (ii): the strokes counted after the robot took the cart are held for the next cart", func(t *testing.T) {
@@ -212,11 +212,11 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		testutil.MustNoErr(t, err, "read node")
 		held, part := eng.takeTicksAfterLift(node, runtimeOf(t, eng, nodeID), protocol.BinPickedUp{BinID: bin, Epoch: 4, PickedUpAt: time.Now()})
 		// Decision 55: nothing held; the 4 are logged at the position.
-		if held != 4 || part != "PART-I" {
-			t.Errorf("after the lift: %d held of %q; want 4 of PART-I", held, part)
+		if held != 0 || part != "" {
+			t.Errorf("after the lift: %d held of %q; want none", held, part)
 		}
-		if n := openQty(t, eng, node.ProcessID); n != 0 {
-			t.Errorf("logged %d, want 0", n)
+		if n := openQty(t, eng, node.ProcessID); n != 4 {
+			t.Errorf("logged %d, want 4", n)
 		}
 	})
 
@@ -228,8 +228,8 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		cNode := cartNode(t, eng, pid, c, "C-NODE", "PART-C", "PART-C", 9801)
 		landOn(t, eng, pid, a, c)
 		// Decision 55: the row stays; the cart is untouched — cart 40, open 2.
-		if got, open := runtimeOf(t, eng, cNode).RemainingUOPCached, openQty(t, eng, pid); got != 38 || open != 0 {
-			t.Errorf("after the completion: C's cart %d, open %d; want 38, 0 (released onto it)", got, open)
+		if got, open := runtimeOf(t, eng, cNode).RemainingUOPCached, openQty(t, eng, pid); got != 40 || open != 2 {
+			t.Errorf("after the completion: C's cart %d, open %d; want 40, 2 (the row stays)", got, open)
 		}
 	})
 
@@ -272,8 +272,9 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 			testutil.MustNoErr(t, eng.carrierLeft(node, "N-MIRROR"), "the MIRROR-L cart lifted")
 			eng.HandleBinLanded(protocol.BinLanded{BinID: 9752, CoreNodeName: "N-MIRROR", Count: 40, Epoch: 1,
 				PayloadCode: "MIRROR-R", PayloadKnown: true, PlacedSeq: 1 << 40})
-			if got, open := runtimeOf(t, eng, node).RemainingUOPCached, openQty(t, eng, pid); got != row.cart || open != int64(row.open) {
-				t.Errorf("after the MIRROR-R landing: cart %d, open %d; want %d, %d", got, open, row.cart, row.open)
+			if got, open := runtimeOf(t, eng, node).RemainingUOPCached, openQty(t, eng, pid); got != row.cart55 || open != int64(row.open55) {
+				t.Errorf("after the MIRROR-R landing: cart %d, open %d; want %d, %d (today's was %d, %d)", got, open,
+					row.cart55, row.open55, row.cart, row.open)
 			}
 		})
 	}
@@ -284,17 +285,17 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		eng := testEngine(t, db)
 		eng.wireEventHandlers()
 		pid, nodeID, styleID, _ := emptySeat(t, eng, "R55L", "PART-L", 100)
-		sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+		sm := &strandedMonitor{eng: eng}
 		base := time.Now()
-		for i := 0; i < strandedWindow+1; i++ {
+		for i := 0; i < 4; i++ {
 			tickConsume(eng, pid, styleID, 3)
 			sm.tick(base.Add(time.Duration(i) * time.Minute))
 		}
 		// Decision 55: no hold to watch; the 12 are a row in the ledger, on
 		// the strip — {0, 0, 12}, and no parked-ticks alarm.
-		wantSeat55(t, eng, pid, nodeID, "after 4 scans of rising strokes", seat55{0, 12, 0})
-		if eng.StrandedAlarmDetail("R55L-NODE") == "" {
-			t.Error("no parked-ticks alarm, want one")
+		wantSeat55(t, eng, pid, nodeID, "after 4 scans of rising strokes", seat55{0, 0, 12})
+		if hs := openHolds(t, eng, pid); len(hs) != 1 || hs[0].Reason != holdReasonNoCart || hs[0].Strokes != 4 {
+			t.Errorf("rows %+v, want one no-cart row of 4 strokes", hs)
 		}
 	})
 }

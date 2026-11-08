@@ -53,9 +53,6 @@ func TestCatid4x2_S1_SteadyRun(t *testing.T) {
 		c.swapAll("the swap")
 		c.cycle(w6Depth + 1)
 		c.offsets("the line ran out onto the landed carts", -w6Depth)
-		if n := c.inLine("S1 cell-counted, after the change to the running program"); n != nil {
-			t.Fatalf("the parts in the line read %d after a counter reset with no CATID change, want unanchored", *n)
-		}
 		for i, tn := range first {
 			if off := (w6Full - c.count(tn)) - c.truth(tn); off != -w6Depth {
 				t.Fatalf("%s: the departed cart %s drew %d against %d taken, want its last %d on its successor",

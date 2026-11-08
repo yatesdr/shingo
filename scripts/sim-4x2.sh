@@ -22,8 +22,8 @@
 #             ~60 sim-s window nothing has moved (RUN active, no changeover, no order at the
 #             mirror positions) and the strip's red wrong-part item offers the changeover to ALT.
 #             Untapped, the mirror holds grow and the record is ALT's by CATID. `tap` presses the
-#             item's Start changeover: the legs land, the monitor completes it, and the completion
-#             lands the held shares on the MIRROR-R carts
+#             item's Start changeover: the legs land and the monitor completes it; the held shares
+#             stay in the ledger for a person (decision 55: nothing lands a row by itself)
 #   S5        the forced program change to 1003, which no style pins: every stroke's draw held;
 #             Charge one position's hold (preview first), Write off another's
 #   S6        positions 1-3 on the station counter, 4-5 on the cell counter; RUN->ALT on the
@@ -45,19 +45,20 @@
 #             Untapped, ALT strokes and the holds grow; `tap` starts the changeover (the person
 #             cancels RUN's swap staged at a mirror position first, as START's refusal says), the
 #             person sends the hand-placed carts back (RELEASE: nobody named them, so the sim
-#             operator waits), and it completes and lands each hold that fits its cart (no Charge;
-#             a share bigger than its cart stays for a person, and no cart goes below 0). It prints what the
-#             seats record (part, known, source, held at the seat), the mirror holds, Core's mirror
-#             carts and the deltas Core refused as the wrong part (none: the strokes between the
-#             tap and the release are held at the seats for the MIRROR-R carts)
+#             operator waits), and it completes; the holds and the strokes logged with no cart of
+#             their part stay in the ledger for a person (decision 55). It prints what the seats
+#             record (part, known, source), the mirror holds, Core's mirror carts and the deltas
+#             Core refused as the wrong part (none: the strokes between the tap and the release
+#             are logged, the cart there being the departing part)
 #
 # It brings the stack up from nothing as scripts/kanban-rig.sh does (down -v, a fresh sim anchor,
 # build, seed with Core stopped), sets the PLC's CATID to 1001, drives the shape over Edge and
 # Core HTTP at the stack's 10x, prints a line per step naming what to look at, leaves the stack
 # and its pages up, and ends on the ledger (what each number is: see ledger):
 #
-#   carts Σ C + held H + written off W = loads Σ E; holds open N; record RUN a / ALT b; Core received a+b of the Edge's T
+#   carts Σ C + logged G + written off W = loads Σ E; rows open N; record RUN a / ALT b; Core received a+b of the Edge's T
 #   lost at the lift L
+#   minimum cart M (node bin)
 #
 # The loss is its own line, never a term of the sum (a sum that included it would be exact by
 # construction): Core's stale drops of the cell's parts on a cart released in the window, and the
@@ -67,7 +68,7 @@
 #
 # A window opens at rest and the final ledger is read at rest: loading paused, the line drained,
 # then Core and the Edge's hourly store caught up (a window's opening then lets the line refill).
-# The final ledger's three numbers are exact (carts + held + written off = loads; the record = the
+# The final ledger's three numbers are exact (carts + logged + written off = loads; the record = the
 # parts the line counted out; Core received = the Edge's), and it says EXACT or NOT EXACT; a run
 # whose final ledger is not exact exits 5. A mid-run ledger (S1's first window) is read on the
 # running line and says so: it may carry one part in flight.
@@ -249,10 +250,10 @@ slot_counter() { slots_of | awk -v n="$1" '$1 == n {print $3}'; }
 slot_item() { edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep "^{\"kind\":\"$1\"" | head -1; }
 counter_tag() { proc_row | grep -oE '"counter_tag_name":"[^"]*"' | head -1 | sed 's/.*:"//; s/"$//'; }
 
-# The holds open on the process: the catid-health strip's "held" items, one "<hold id> <qty>
-# <process node id>" per line. Its automatic-decisions item names released holds too, so only
-# held items count. Node 0 is the production counter's held stroke, whole: a release draws it
-# at every position counted there, so it holds one share per cell-counted position.
+# The ledger's open rows on the process: the catid-health strip's "held" items (a held or off-plan
+# share, and a stroke logged with no cart of its part), one "<hold id> <qty> <process node id>" per
+# line. Node 0 is the production counter's held stroke, whole: a Charge draws it at every position
+# counted there, so it holds one share per cell-counted position.
 holds_list() {
   edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep '^{"kind":"held"' \
     | sed -E 's/.*"hold_id":([0-9]+).*"process_node_id":([0-9]+).*"qty":(-?[0-9]+).*/\1 \3 \2/'
@@ -370,7 +371,6 @@ held_red() { co_open && ! gate_green; }
 plc_on() { [ "$(line_field identity)" = "$1" ]; }
 closed_on() { ! co_open && [ "$(active)" = "$1" ]; }
 holds_at_least() { [ "$(holds_n)" -ge "$1" ]; }
-no_holds() { [ "$(holds_n)" -eq 0 ]; }
 # shellcheck disable=SC2086 # MIRRORS is a list of positions
 mirrors_quiet() { [ "$(fleet_orders_at $MIRRORS)" -eq 0 ]; }
 line_live() { [ "${1:-0}" -lt "$(line_field loads)" ] 2>/dev/null; }
@@ -527,18 +527,23 @@ refused() {
        WHERE op = 'payload_mismatch_dropped' AND id > ${1:-0}" | tr '|' ' '
 }
 
-# seat_holds: the strokes the five positions' seats hold for a cart of their part (the station
-# view's runtime pending_uop_delta): a stroke no cart of its part was there to take, the third
-# term of a position's draws beside the carts and the holds ledger.
-seat_holds() {
-  edge_get "/api/operator-stations/$OPS_ID/view" | sed 's/{"node":{/\n{"node":{/g' \
-    | grep -E "^\{\"node\":\{[^}]*\"core_node_name\":\"($POS_RE)\"" \
-    | grep -oE '"pending_uop_delta":-?[0-9]+' | sed 's/.*://' | awk '{s += $1} END {print s + 0}'
+# strip_logged: the strip's items for the strokes logged with no cart of their part, as rendered
+# (their headlines), one a line.
+strip_logged() {
+  edge_get "/api/processes/$PID/catid-health" | sed 's/{"kind":/\n{"kind":/g' | grep '^{"kind":"held"' \
+    | grep '"reason":"no-cart"' | grep -oE '"headline":"[^"]*"' | sed 's/^"headline":"//; s/"$//'
+}
+# min_cart: the lowest count a cart at the five positions reached in the window, as Core's ledger
+# records each draw, "<count> <node> <bin>"; negatives allowed (a stroke charges the cart standing
+# there into the negative, decision 55).
+min_cart() {
+  sql "SELECT l.after_uop, n.name, l.bin_id FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
+       WHERE l.id > ${W_LEDGER:-0} AND n.name IN ($POS_SQL) AND l.after_uop IS NOT NULL
+       ORDER BY l.after_uop, l.id LIMIT 1" | tr '|' ' '
 }
 mark_read() {
   local lj
   lj="$(line_json)"
-  W_SEAT="$(seat_holds)"
   W_LOADS="$(field "$lj" loads)"; W_FLIGHT="$(field "$lj" in_flight)"
   W_DATES="$(days_around "$(sim_date)")"
   W_SINCE=$(date +%s)
@@ -654,7 +659,8 @@ ledger_read() {
   read -r L_EDGE_FENCED L_EDGE_UNFENCED L_CORE_FENCED L_CORE_UNFENCED < <(release_lines)
   L_REFUSED="$(refused "$W_LEDGER")"
   L_HOLDS="$(holds_list)"
-  L_SEAT="$(seat_holds)"
+  L_MIN="$(min_cart)"
+  L_STRIP="$(strip_logged)"
   L_CORE="$(record "${W_PARTS:-0}")"
 }
 
@@ -719,11 +725,11 @@ forensics() {
 }
 
 # ledger [mid]: closes the window. The final ledger (no argument) is read at rest and checked:
-# carts + held + written off = loads, the record = the parts the line counted out, Core received
+# carts + logged + written off = loads, the record = the parts the line counted out, Core received
 # = the Edge's, nothing lost at the lift, and Core refused no draw as the wrong part. A mid-run
 # ledger is read on the running line and says so.
 ledger() {
-  local kind="${1:-final}" carts expect n q seat a b other got miss="" line refused_n
+  local kind="${1:-final}" carts expect n q a b other got miss="" line refused_n
   if [ "$kind" = final ]; then
     at_rest "the final ledger is read at rest"
     rest_read ledger_read
@@ -734,29 +740,32 @@ ledger() {
   carts=$(( ${L_DRAWN:-0} - (${L_PILES:-0} - ${W_PILES:-0}) ))
   n="$(printf '%s\n' "$L_HOLDS" | grep -c .)"
   q="$(printf '%s\n' "$L_HOLDS" | awk -v nc="$L_NC" 'NF { if ($3 == 0) s += $2 * nc; else s += $2 } END {print s + 0}')"
-  seat=$(( ${L_SEAT:-0} - ${W_SEAT:-0} ))
   a="$(printf '%s\n' "$L_CORE" | awk -v id="$RUN_ID" '$1 == id {print $2}')"
   b="$(printf '%s\n' "$L_CORE" | awk -v id="$ALT_ID" '$1 == id {print $2}')"
   other="$(printf '%s\n' "$L_CORE" | awk -v r="$RUN_ID" -v x="$ALT_ID" 'NF && $1 != r && $1 != x {s += $2} END {print s + 0}')"
   got=$(( ${a:-0} + ${b:-0} + other ))
-  say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, ${L_TRANSIT:-0} of them booked at _TRANSIT, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n holds open, $q held at the positions, $seat held at the seats, $WRITTEN_OFF written off"
+  say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, ${L_TRANSIT:-0} of them booked at _TRANSIT, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n rows open, $q logged at the positions, $WRITTEN_OFF written off"
   [ "${L_TRANSIT:-0}" -eq 0 ] || say "LOOK: $L_TRANSIT of the cell's draws Core booked at _TRANSIT (they stay in the sum: Core booked them there)"
   say "partial releases in the window: the Edge's $L_EDGE_FENCED fenced, $L_EDGE_UNFENCED unfenced; Core's $L_CORE_FENCED fenced, $L_CORE_UNFENCED unfenced"
   say "Core refused as the wrong part in the window (deltas parts): $L_REFUSED"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
   say "the record: $got parts against the $L_COUNTED the line counted out"
-  line="carts Σ $carts + held $q + at the seats $seat + written off $WRITTEN_OFF = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $L_T"
+  line="carts Σ $carts + logged $q + written off $WRITTEN_OFF = loads Σ $expect; rows open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $L_T"
   if [ "$kind" = mid ]; then
     echo "$line (mid-run: the line runs, a read may carry one part in flight)" | tee -a "$OUT/log.txt"
     echo "lost at the lift ${L_LOST:-0}" | tee -a "$OUT/log.txt"
   else
     echo "$line" | tee -a "$OUT/log.txt"
     echo "lost at the lift ${L_LOST:-0}" | tee -a "$OUT/log.txt"
+    echo "minimum cart ${L_MIN:-none}" | tee -a "$OUT/log.txt"
+    if [ -n "$L_STRIP" ]; then
+      printf '%s\n' "$L_STRIP" | sed 's/^/strip: /' | tee -a "$OUT/log.txt"
+    fi
     [ "${L_LOST:-0}" -eq 0 ] || miss="$miss; lost at the lift ${L_LOST}"
     refused_n="${L_REFUSED%% *}"
     [ "${refused_n:-0}" -eq 0 ] || miss="$miss; Core refused $refused_n draw(s) as the wrong part"
     [ $(( ${L_EDGE_UNFENCED:-0} + ${L_CORE_UNFENCED:-0} )) -eq 0 ] || miss="$miss; unfenced partial releases (the Edge's ${L_EDGE_UNFENCED}, Core's ${L_CORE_UNFENCED})"
-    [ $(( carts + q + seat + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + held + at the seats + written off $(( carts + q + seat + WRITTEN_OFF )) against loads $expect"
+    [ $(( carts + q + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + logged + written off $(( carts + q + WRITTEN_OFF )) against loads $expect"
     [ "$got" -eq "$L_COUNTED" ] || miss="$miss; the record $got against the $L_COUNTED counted out"
     [ "$got" -eq "$L_T" ] || miss="$miss; Core received $got against the Edge's $L_T"
     if [ -z "$miss" ]; then say "at rest: EXACT"; else say "at rest: NOT EXACT$miss"; LEDGER_EXACT=0; forensics; fi
@@ -873,7 +882,6 @@ run_ticks() {
 await_landing() { wait_for "$LAND_WALL" "ALT's carts landed, the gate green" landed || die "the carts did not land"; }
 await_plc() { wait_for $(( $(wall $(( DRAIN_S + 4 * TICK_S ))) + 30 )) "the PLC reports $1" plc_on "$1" || die "the PLC never reported $1"; }
 await_holds() { wait_for $(( $(wall $(( 6 * TICK_S ))) + 30 )) "$2" holds_at_least "$1"; }
-await_no_holds() { wait_for "$LAND_WALL" "no hold open" no_holds; }
 # await_on_alt <sim s before it can act> <what>: the changeover (or the switch) lands on ALT.
 await_on_alt() { wait_for $(( $(wall $(( $1 + 6 * TICK_S ))) + 30 )) "$2" closed_on "$ALT_ID"; }
 
@@ -938,8 +946,7 @@ shape_S2() {
   status
   if [ "$VARIANT" = red ]; then
     legs_held off
-    say "Look at: the held legs land as ordinary deliveries; the mirror positions' held draws land on ALT's carts"
-    await_no_holds
+    say "Look at: the held legs land as ordinary deliveries; the mirror positions' strokes before they landed stay logged, ALT's carts land fresh"
     status
   fi
 }
@@ -1068,14 +1075,12 @@ tap_and_land() {
   wait_for "$LAND_WALL" "ALT's carts landed (the gate green, or the changeover already completed)" "landed || closed_on $ALT_ID"     || die "the carts did not land"
   await_on_alt "$DECLARE_S" "the monitor completes the changeover onto ALT"
   say "the monitor: $(dc logs --since 30m edge 2>/dev/null | grep 'predicate held' | grep -- '— cut over' | tail -1 | sed 's/^[^|]*| //' | cut -c1-300)"
-  if ! wait_for 60 "the completion lands the held shares (no hold open)" no_holds; then
-    say "holds left open for a person (id qty node): $(holds_list | tr '\n' ';'); the mirror carts (node bin part count): $(mirror_carts)"
-    say "the Edge's lines on them: $(dc logs --no-log-prefix --since 30m edge 2>/dev/null | grep -a 'it waits for a person' | tail -4 | cut -c1-200 | tr '\n' ';')"
-  fi
-  [ -z "$(carts_below_zero)" ] || die "a cart at the positions below 0 (node bin count): $(carts_below_zero | tr '\n' ';')"
+  say "the rows stay for a person (id qty node): $(holds_list | tr '\n' ';'); the mirror carts (node bin part count): $(mirror_carts)"
+  [ -z "$(carts_below_zero)" ] || say "carts at the positions below 0 (node bin count), shown, not refused: $(carts_below_zero | tr '\n' ';')"
   status
 }
-# carts_below_zero: Core's carts at the positions that read below 0, "node|bin|count" a line.
+# carts_below_zero: Core's carts at the positions that read below 0, "node|bin|count" a line
+# (decision 55: a stroke charges the cart standing there into the negative; shown, never refused).
 carts_below_zero() {
   sql "SELECT n.name, b.id, b.uop_remaining FROM bins b JOIN nodes n ON n.id = b.node_id
        WHERE n.name IN ($POS_SQL) AND b.uop_remaining < 0"
@@ -1103,8 +1108,6 @@ shape_S5() {
       say "Preview Charge of hold $first: $(hold_preview "$first" | cut -c1-400)"
       ;;
   esac
-  # Once 1003 is RUN's, a cart landing at the held position lands the hold too (the landing
-  # release): a 409 here says it was released first.
   code="$(hold_charge "$first")"; say "Charge hold $first: $code $(last)"
   say "Look at: the charged hold's quantity off RUN's carts; the written-off one charges nothing"
   status
@@ -1191,15 +1194,13 @@ shape_S8() {
 jstr() { printf '%s' "$1" | grep -oE "\"$2\":\"[^\"]*\"" | head -1 | sed 's/^"[^"]*":"//; s/"$//'; }
 jbool() { printf '%s' "$1" | grep -oE "\"$2\":(true|false)" | head -1 | sed 's/.*://'; }
 # seat <position>: the Edge's seat as the operator station's board reads it: the cart bound, the
-# part the seat records, known or not and who said so, its count, the strokes held at the seat for
-# a cart of their part, and the parked-ticks alarm when it is raised.
+# part the seat records, known or not and who said so, and its count.
 OPS_ID=""
 seat() {
-  local t alarm
+  local t
   t="$(edge_get "/api/operator-stations/$OPS_ID/view" | sed 's/{"node":{/\n{"node":{/g' \
     | grep -E "^\{\"node\":\{[^}]*\"core_node_name\":\"$1\"" | head -1)"
-  alarm="$(jstr "$t" stranded_alarm)"
-  echo "$1: bin $(field "$t" active_bin_id) part $(jstr "$t" lineside_payload_code) known $(jbool "$t" lineside_payload_known) source $(jstr "$t" lineside_source) count $(field "$t" remaining_uop_cached), held at the seat $(field "$t" pending_uop_delta) $(jstr "$t" pending_uop_payload)${alarm:+; alarm: $alarm}"
+  echo "$1: bin $(field "$t" active_bin_id) part $(jstr "$t" lineside_payload_code) known $(jbool "$t" lineside_payload_known) source $(jstr "$t" lineside_source) count $(field "$t" remaining_uop_cached)"
 }
 mirror_carts() {
   sql "SELECT n.name, b.id, b.payload_code, b.uop_remaining FROM bins b JOIN nodes n ON n.id = b.node_id

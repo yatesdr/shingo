@@ -21,7 +21,7 @@ func TestCountWaits(t *testing.T) {
 		want  string
 	}{
 		{"the line is on it and no bin is bound", seq, &processes.RuntimeState{ActivePull: true},
-			"The line is on SEQ-B; its parts wait for SEQ-B's bin."},
+			"The line is on SEQ-B; its parts are logged until SEQ-B's bin lands."},
 		{"a bin is bound", seq, &processes.RuntimeState{ActivePull: true, ActiveBinID: &bin}, ""},
 		{"the line is on the partner", seq, &processes.RuntimeState{}, ""},
 		{"not sequential", &processes.NodeClaim{SwapMode: protocol.SwapModeTwoRobot, PairedCoreNode: "SEQ-A"},

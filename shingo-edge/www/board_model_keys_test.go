@@ -97,7 +97,6 @@ func boardFixture() domain.OperatorStationView {
 			BufferPartial:  &domain.BufferPartial{Node: "SMN_F1"},
 			SupplyRefusals: map[string]domain.SupplyRefusal{"PART-A": {}},
 			// The board's alarm sentences: a card's note.
-			StrandedAlarm:      "counts are waiting for a bin",
 			ContainmentFlagged: true,
 			AskPending:         "A full of PART-A is asked of Core; no answer yet",
 		}},

@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"time"
-
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
 	"shingoedge/domain"
@@ -67,15 +65,6 @@ const (
 	// binding behavior. Rendered on the operator-station tile (C8) and greppable
 	// in the journal via its "delivered but NOT bound:" log line.
 	EventDeliveredNotBound
-
-	// EventUOPStranded fires when a node's pending_uop_delta has grown across
-	// several consecutive flush intervals while no bin is bound — consume ticks
-	// piling up unattributed because the physical carrier at the line was never
-	// bound (the SNF3 parked-ticks class). It is a GROWTH condition, not a fixed
-	// threshold: an idle line (pending flat) never fires. The alarm names the
-	// carrier + node and carries the operator's front-door fix. Rendered on the
-	// operator-station tile (P2-C8) and greppable via its "parked ticks:" log line.
-	EventUOPStranded
 
 	// EventCATIDMismatch fires when a press's live WarLink CATID_01 (its
 	// physical part identity) diverges from the active style's expected_catid
@@ -534,30 +523,4 @@ type DeliveredNotBoundEvent struct {
 	BinID        *int64 `json:"bin_id,omitempty"`
 	Reason       string `json:"reason"`
 	Instruction  string `json:"instruction"`
-}
-
-// UOPStrandedEvent carries the UOP-accumulating notice (P2-C7): a node whose
-// pending_uop_delta kept growing across consecutive flush intervals while
-// unbound. CoreNodeName names the node; Carrier is the physical bin's label
-// (best-effort from Core, "" when unknown); PendingDelta is the held count that
-// never landed on a bin. Detail is the fully-formatted operator sentence the
-// tile renders verbatim.
-//
-// NeedsAction is what decides how loudly the HMI says it. False means a swap is
-// in progress and this is a normal, temporary state — informational. True means
-// the wait has passed the configured limit and the operator is being asked to
-// record the count.
-//
-// StagedHours is kept for older readers and is whole hours, which was the
-// original bug: everything inside the first hour reported 0. UnboundFor is the
-// real elapsed time; prefer it.
-type UOPStrandedEvent struct {
-	eventbus.PayloadBase
-	CoreNodeName string        `json:"core_node_name"`
-	Carrier      string        `json:"carrier,omitempty"`
-	StagedHours  int           `json:"staged_hours"`
-	UnboundFor   time.Duration `json:"unbound_for_ns"`
-	NeedsAction  bool          `json:"needs_action"`
-	PendingDelta int           `json:"pending_delta"`
-	Detail       string        `json:"detail"`
 }

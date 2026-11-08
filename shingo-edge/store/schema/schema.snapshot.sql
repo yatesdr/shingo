@@ -1,5 +1,5 @@
 CREATE UNIQUE INDEX idx_catid_holds_open
-    ON catid_holds(process_id, catid, process_node_id, payload_code) WHERE resolved_at IS NULL;
+    ON catid_holds(process_id, catid, process_node_id, payload_code, last_bin_id, last_left_at) WHERE resolved_at IS NULL;
 
 CREATE INDEX idx_changeovers_process_started ON process_changeovers(process_id, started_at DESC);
 
@@ -78,7 +78,7 @@ CREATE TABLE catid_holds (
     resolved_at     TEXT,
     resolution      TEXT    NOT NULL DEFAULT '',
     resolved_by     TEXT    NOT NULL DEFAULT ''
-);
+, last_bin_id INTEGER NOT NULL DEFAULT 0, last_declared INTEGER NOT NULL DEFAULT 0, last_left_at TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE changeover_node_tasks (
     id                         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,7 +294,7 @@ CREATE TABLE line_counters (
     tag_name        TEXT    NOT NULL,
     last_count      INTEGER NOT NULL DEFAULT 0,
     last_poll_at    TEXT,
-    warlink_managed INTEGER NOT NULL DEFAULT 0, anchor_count INTEGER, anchor_at TEXT, deepest_runout INTEGER,
+    warlink_managed INTEGER NOT NULL DEFAULT 0,
     UNIQUE (plc_name, tag_name)
 );
 
@@ -564,6 +564,14 @@ CREATE TABLE process_node_runtime_states (
     -- left cannot rebind it under an ended generation.
     last_bin_id        INTEGER,
     last_bin_epoch     INTEGER NOT NULL DEFAULT 0,
+    -- released_bin_id / released_count / released_at are the carrier this
+    -- seat's last release declared, the count it declared and when (the
+    -- engine's clock), written by the release's count statement. A stroke
+    -- logged with no cart of its part records them as the last cart off
+    -- (catid_holds.last_*).
+    released_bin_id    INTEGER,
+    released_count     INTEGER NOT NULL DEFAULT 0,
+    released_at        TEXT,
     -- adj_bin_id / adj_bin_epoch / adj_as_of_seq are the carrier, generation
     -- and AsOfSeq of the last fenced count this slot took (the record-count
     -- fence). A count for the same carrier and generation taken earlier in
@@ -711,12 +719,6 @@ CREATE TABLE processes (
     identity_none       INTEGER NOT NULL DEFAULT 0,
     identity_warlink_managed INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
-    -- The parts a person says sit between the cart and an end-of-line
-    -- counter (NULL = none typed), and who typed it and when. Shown in the
-    -- end-of-line sentence beside the measured run-outs; decides nothing.
-    line_depth_typed    INTEGER,
-    line_depth_typed_by TEXT NOT NULL DEFAULT '',
-    line_depth_typed_at TEXT,
     group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,
     -- flow_composer_enabled gates the HMI flow composer for this process. OFF
     -- until the engineer has reviewed the routing set derived into

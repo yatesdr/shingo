@@ -137,28 +137,6 @@ func TestHold_ChargeReachesAStationCountedPosition(t *testing.T) {
 	}
 }
 
-// TestHold_LandingReleasesAStationShare: a cutover landing on the style that
-// runs the CATID releases a station's held share through the same walk.
-func TestHold_LandingReleasesAStationShare(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, _, _ := holdRig(t, "1003")
-	s := pinnedStyle(t, eng, pid, "STYLE-S", "1003")
-	x := cartNode(t, eng, pid, s, "LX", "PART-S", "PART-S", 9981)
-	stationCounter(t, eng.db, pid, x)
-	_, err := eng.db.HoldCatidDraw(pid, "1003", x, "", holdReasonHeld, 2, time.Now().Add(-time.Minute))
-	testutil.MustNoErr(t, err, "a station's held share")
-	id := mustOneHold(t, eng.db, pid).ID
-	landOn(t, eng, pid, a, s)
-	if got := runtimeOf(t, eng, x).RemainingUOPCached; got != 38 {
-		t.Errorf("LX's cart after the landing = %d, want 38", got)
-	}
-	h, err := eng.db.GetCatidHold(id)
-	testutil.MustNoErr(t, err, "hold")
-	if h.Resolution != holdReleased {
-		t.Errorf("hold = %+v, want released", h)
-	}
-}
-
 // TestStation_HeldStrokeHoldsAtAPositionOnlyTheTargetClaims: A → B is open and
 // a station-counted position only B claims has B's cart. A held station stroke
 // holds its share there, and the landing on B (the CATID pinned to B) charges
@@ -186,8 +164,11 @@ func TestStation_HeldStrokeHoldsAtAPositionOnlyTheTargetClaims(t *testing.T) {
 	testutil.MustNoErr(t, eng.db.SetStyleExpectedCATID(b, "1002,1007"), "pin the part to B")
 	_, err = eng.completeCutover(pid, coID, triggeredManual, CutoverForced)
 	testutil.MustNoErr(t, err, "land on B")
-	if got := runtimeOf(t, eng, x).RemainingUOPCached; got != 38 {
-		t.Errorf("IX's cart after the landing = %d, want 38", got)
+	if got := runtimeOf(t, eng, x).RemainingUOPCached; got != 40 {
+		t.Errorf("IX's cart after the landing = %d, want 40: nothing lands a row by itself (decision 55)", got)
+	}
+	if hs := openHolds(t, eng, pid); len(hs) != 1 || hs[0].Qty != 2 {
+		t.Errorf("holds = %+v, want the share still open for a person", hs)
 	}
 }
 

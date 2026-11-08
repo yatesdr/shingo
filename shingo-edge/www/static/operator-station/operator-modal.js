@@ -235,40 +235,6 @@ export function renderModal(entry) {
             '</div>';
     }
 
-    // UOP-accumulating chip (P2-C8): counts are piling up on this node while no
-    // bin is bound. Under the configured wait that is a swap in progress and the
-    // chip is informational; past it the sentence adds the fix ("... Record
-    // Count on the bin tab.") and the chip goes amber. Rendered verbatim from
-    // the server, so the sentence is the single source of the wording — the
-    // presence of the call to action is what the styling keys on. Clears
-    // automatically once a bin binds (Record Count / the next delivery).
-    //
-    // CAVEAT WORTH KNOWING: this notice needs the count to keep RISING. A
-    // stranded carrier on a stopped line goes flat and the chip disappears on
-    // its own. "Chip gone" therefore does not mean "resolved" — which is part of
-    // why the wording no longer implies anything is still being watched.
-    if (entry.stranded_alarm) {
-        const asking = entry.stranded_alarm.indexOf('Record Count') !== -1;
-        html += '<div class="os-stranded-chip" style="' +
-            'margin:8px 0;padding:10px 14px;border-radius:6px;' +
-            (asking
-                ? 'background:#3a2f14;color:#ffd98a;border:1px solid #6a5322;'
-                : 'background:#1f2a36;color:#dbe7f5;border:1px solid #35485e;') +
-            'font-size:13px;line-height:1.4">' +
-            esc(entry.stranded_alarm) +
-            '</div>';
-    }
-    // The end of the line: a cart counted at the cell's production counter
-    // is charged when the part is made, and about N parts sit between it and
-    // the counter. The server's sentence, verbatim; informational.
-    if (entry.end_of_line) {
-        html += '<div class="os-end-of-line-chip" style="' +
-            'margin:8px 0;padding:10px 14px;border-radius:6px;' +
-            'background:#1f2a36;color:#dbe7f5;border:1px solid #35485e;' +
-            'font-size:13px;line-height:1.4">' +
-            esc(entry.end_of_line) +
-            '</div>';
-    }
     if (entry.count_waits) {
         html += '<div class="os-count-waits-chip" style="' +
             'margin:8px 0;padding:10px 14px;border-radius:6px;' +

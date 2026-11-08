@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -323,73 +322,6 @@ func TestLevelSweep_ParkedSideIsNotSkipped(t *testing.T) {
 
 // ── WALKER 2: THE PARKED-TICKS MONITOR ────────────────────────────────────
 
-// strandedLadder is the stranded monitor's own decision set, which is NOT the
-// level sweep's:
-//
-//	NOCLAIM    no claim                   — cleared, state dropped
-//	PRODUCE    produce role               — cleared; only consume cells count
-//	                                        parts down against a bound bin
-//	LOADER     manual_swap                — cleared
-//	BOUND      consume, a bin bound       — cleared by the growth rule itself
-//	FLAT       consume, unbound, pending  — never escalates; an idle line is not
-//	           not growing                  an alarm
-//	CLIMB      consume, unbound, pending  — fires once per window
-//	           rising every scan
-//	PARKED     consume, unbound, climbing — FIRES. The monitor does not read
-//	           on a parked A/B side         active_pull at all, so a parked side
-//	                                        alarms on the same terms as any other
-func TestStrandedMonitor_DecisionLadder(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	bound := int64(7)
-	f := seedWalkerProcess(t, db, "STRAND", []walkerNode{
-		{Suffix: "NOCLAIM", NoClaim: true},
-		{Suffix: "PRODUCE", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
-			PayloadCode: "SYN-PART-B", Capacity: 30},
-		{Suffix: "LOADER", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeManualSwap,
-			PayloadCode: "SYN-PART-A", Capacity: 40},
-		{Suffix: "BOUND", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
-			PayloadCode: "SYN-PART-A", Capacity: 40, BoundBin: &bound},
-		{Suffix: "FLAT", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
-			PayloadCode: "SYN-PART-A", Capacity: 40},
-		{Suffix: "CLIMB", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
-			PayloadCode: "SYN-PART-A", Capacity: 40},
-		{Suffix: "PARKED", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSequential,
-			PayloadCode: "SYN-PART-A", Capacity: 40, Paired: "STRAND_CLIMB", ActivePull: false},
-	})
-	eng := testEngine(t, db)
-	var fired []string
-	eng.Events.SubscribeTypes(func(evt Event) {
-		if a, ok := evt.Payload.(UOPStrandedEvent); ok {
-			fired = append(fired, a.CoreNodeName)
-		}
-	}, EventUOPStranded)
-
-	// FLAT holds a constant non-zero pending; BOUND, CLIMB and PARKED climb.
-	testutil.MustNoErr(t, db.AddPendingUOPDelta(f.node(t, "FLAT"), 5), "seed flat pending")
-	sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
-	base := time.Now()
-	for i := 0; i < strandedWindow+2; i++ {
-		for _, s := range []string{"BOUND", "CLIMB", "PARKED"} {
-			testutil.MustNoErr(t, db.AddPendingUOPDelta(f.node(t, s), 3), "climb "+s)
-		}
-		sm.tick(base.Add(time.Duration(i) * time.Minute))
-	}
-
-	sort.Strings(fired)
-	assertSet(t, "nodes that raised a parked-ticks alarm", fired,
-		[]string{"STRAND_CLIMB", "STRAND_PARKED"})
-
-	var lit []string
-	for suffix, name := range f.Names {
-		if eng.StrandedAlarmDetail(name) != "" {
-			lit = append(lit, suffix)
-		}
-	}
-	sort.Strings(lit)
-	assertSet(t, "nodes with a lit chip", lit, []string{"CLIMB", "PARKED"})
-}
-
 // ── WALKER 3: THE COUNTER TICK ────────────────────────────────────────────
 
 // tickOutcome is one node's post-tick runtime, which is where the counter
@@ -422,7 +354,7 @@ func tickOutcomes(t *testing.T, db *store.DB, f *walkerFixture) map[string]tickO
 //	                                         count is an operator declaration and
 //	                                         no PLC tag is tied to it
 //	CONSUME    consume, paired, ACTIVE     — decremented
-//	UNBOUND    consume, no bin bound       — HELD in pending, count unmoved
+//	UNBOUND    consume, no bin bound       — logged (decision 55), count unmoved
 //	PRODUCE    produce, bound              — incremented
 //	PARKEDCON  consume, paired, not active — SKIPPED (inactive_consume). This is
 //	                                         the rung that differs from the level
@@ -467,7 +399,7 @@ func TestCounterDelta_DecisionLadder(t *testing.T) {
 		"NOCLAIM":   {Remaining: 100, Pending: 0},
 		"LOADER":    {Remaining: 100, Pending: 0},
 		"CONSUME":   {Remaining: 95, Pending: 0},
-		"UNBOUND":   {Remaining: 100, Pending: 5},
+		"UNBOUND":   {Remaining: 100, Pending: 0},
 		"PRODUCE":   {Remaining: 105, Pending: 0},
 		"PARKEDCON": {Remaining: 100, Pending: 0},
 		"PARKEDPRO": {Remaining: 100, Pending: 0},

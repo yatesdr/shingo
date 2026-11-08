@@ -64,55 +64,32 @@ check('the save sends each changed box, and only those', () => {
 
 const fmt = () => 'T';
 
-check('the lead: the parts in the line sit beside the ratio, measured, dated by the program change', () => {
-    const m = C.measures({ ratio: 1.04, ratio_intervals: 20, in_line: 16, anchor_at: 'x', deepest_runout: 17 }, fmt);
+check('the measures: the clicks per part, measured; none yet says so', () => {
+    let m = C.measures({ ratio: 1.04, ratio_intervals: 20, strokes_since_click: 2, stopped: false });
     assert.strictEqual(m.ratio, '≈1.0 clicks per part over 20 strokes');
-    assert.strictEqual(m.lead, '≈16 in the line since the program change at T (measured)');
-    assert.strictEqual(m.deepest, 'deepest run-out seen: 17');
-});
-
-check('the lead: 0 ahead reads as a counter that counts like the production counter', () => {
-    const m = C.measures({ ratio: 1, ratio_intervals: 20, in_line: 0, anchor_at: 'x', deepest_runout: 1 }, fmt);
-    assert.strictEqual(m.lead, '0 ahead since the program change at T: counts like the production counter');
-});
-
-check('the lead: unanchored says the next program change sets it; no ratio yet says so', () => {
-    const m = C.measures({ ratio: null, ratio_intervals: 0, in_line: null, deepest_runout: null }, fmt);
-    assert.strictEqual(m.lead, 'not anchored yet: the next program change sets it');
+    assert.strictEqual(m.stopped, 'last click 2 production strokes ago');
+    m = C.measures({ ratio: null, ratio_intervals: 0, strokes_since_click: 40, stopped: true });
     assert.strictEqual(m.ratio, 'clicks per part: not measured yet');
-    assert.strictEqual(m.deepest, 'deepest run-out seen: 0');
-});
-
-check('the lead: the binding confirm names the parts in the line', () => {
-    assert.strictEqual(C.inLineSentence({ in_line: 17 }),
-        '≈17 in the line; they net against this cart’s run-out under the borrowing rule.');
-    assert.ok(C.inLineSentence({ in_line: null }).indexOf('not anchored yet') >= 0);
+    assert.strictEqual(m.stopped, 'stopped: no click for 40 production strokes, more than the deepest run-out seen');
 });
 
 // The Counting block, rendered from a fixture: a cell counted on its MES
-// struct's first slot, two station counters (one read, one not; one stopped)
-// and an end of the line measured at a changeover.
+// struct's first slot, and two station counters (one read, one not; one
+// stopped).
 const block = {
     process: { id: 3, counter_plc_name: 'PLC_01', counter_tag_name: 'MES_WELD_6.Prod_Counter_01' },
-    end: {
-        applies: true, has_n: true, typed: { n: null, by: '' },
-        measured: [{ changeover_id: 4, parts: 8, completed_at: '2026-11-01T10:00:00Z' }],
-        sentence: 'Counted at the end of the line: carts are charged when the part is made. About 8 parts sit ' +
-            'between the cart and the counter (measured at changeovers #4 on 2026-11-01).',
-        slots: [
+    slots: [
             { slot: 1, tag: 'MES_WELD_6.Prod_Counter_01', catid: '1001', part: true, count: 5234, read: true,
                 rising: true, rose_at: '2026-11-06T10:00:00Z', counted: true, label: 'discovered' },
             { slot: 2, tag: 'MES_WELD_6.Prod_Counter_02', catid: '-1', part: false, count: 0, read: true,
                 rising: false, counted: false, label: 'discovered' },
             { slot: 3, tag: 'MES_WELD_6.Prod_Counter_03', catid: '', part: false, count: 0, read: false,
                 rising: false, counted: false, label: 'discovered' },
-        ],
-    },
+    ],
     counters: [
         { id: 7, label: 'load station', tag_name: 'STATION_01', last_poll_at: '2026-11-06T10:00:00Z', ratio: 1.02,
-            ratio_intervals: 20, in_line: 8, anchor_at: 'x', deepest_runout: 9, strokes_since_click: 2, stopped: false },
-        { id: 8, label: '', tag_name: 'STATION_02', ratio: null, ratio_intervals: 0, in_line: null,
-            deepest_runout: null, strokes_since_click: 40, stopped: true },
+            ratio_intervals: 20, strokes_since_click: 2, stopped: false },
+        { id: 8, label: '', tag_name: 'STATION_02', ratio: null, ratio_intervals: 0, strokes_since_click: 40, stopped: true },
     ],
     positions: [
         { id: 1, name: 'POS-1', line_counter_id: 7 },
@@ -144,9 +121,9 @@ function labelOf(lines, prefix) {
     return hit[0].src;
 }
 
-check('the counting block: three groups, the MES slots discovered and the slot counted on confirmed', () => {
+check('the counting block: two groups, the MES slots discovered and the slot counted on confirmed', () => {
     const g = groupsOf(C.countingHTML(block));
-    assert.deepStrictEqual(g.map(x => x.group), ['slots', 'stations', 'end']);
+    assert.deepStrictEqual(g.map(x => x.group), ['slots', 'stations']);
     const s = g[0].lines;
     assert.strictEqual(labelOf(s, 'counts on Prod_Counter_01'), 'confirmed');
     assert.strictEqual(labelOf(s, 'Prod_Counter_01 · CATID 1001 · count 5234 · rising'), 'discovered');
@@ -158,7 +135,7 @@ check('the counting block: three groups, the MES slots discovered and the slot c
 check('the counting block: a slot the PLC counts on, with no reading from before it rose, says the record lacks its strokes', () => {
     const b = JSON.parse(JSON.stringify(block));
     b.fmt = fmt;
-    b.end.slots[1] = { slot: 2, tag: 'MES_WELD_6.Prod_Counter_02', catid: '1001', part: true, count: 14, read: true,
+    b.slots[1] = { slot: 2, tag: 'MES_WELD_6.Prod_Counter_02', catid: '1001', part: true, count: 14, read: true,
         rising: true, rose_at: '2026-11-06T10:01:00Z', counted: false, label: 'discovered',
         not_recorded_since: '2026-11-06T09:50:00Z' };
     const s = groupsOf(C.countingHTML(b))[0].lines;
@@ -173,24 +150,9 @@ check('the counting block: a station tag discovered until read, then confirmed; 
     assert.strictEqual(labelOf(s, 'counts POS-1'), 'confirmed');
     assert.strictEqual(labelOf(s, 'counts no position yet'), 'confirmed');
     assert.strictEqual(labelOf(s, '≈1.0 clicks per part over 20 strokes'), 'measured');
-    assert.strictEqual(labelOf(s, '≈8 in the line since the program change at T (measured)'), 'measured');
-    assert.strictEqual(labelOf(s, 'deepest run-out seen: 9'), 'measured');
     assert.strictEqual(labelOf(s, 'last click 2 production strokes ago'), 'measured');
     assert.strictEqual(labelOf(s, 'stopped: no click for 40 production strokes'), 'measured');
-    assert.strictEqual(s.length, 12, 'two cards of six lines');
-});
-
-check('the counting block: the end of the line measured, or typed', () => {
-    let e = groupsOf(C.countingHTML(block))[2].lines;
-    assert.strictEqual(labelOf(e, 'Counted at the end of the line'), 'measured');
-    assert.strictEqual(labelOf(e, 'parts between the cart and the counter: none typed'), 'typed');
-    const typed = Object.assign({}, block, { end: Object.assign({}, block.end, {
-        measured: [], typed: { n: 12, by: 'engineer', at: '2026-11-02T08:00:00Z' },
-        sentence: 'Counted at the end of the line: carts are charged when the part is made. About 12 parts sit ' +
-            'between the cart and the counter (typed by engineer on 2026-11-02).' }) });
-    e = groupsOf(C.countingHTML(typed))[2].lines;
-    assert.strictEqual(labelOf(e, 'Counted at the end of the line'), 'typed');
-    assert.strictEqual(labelOf(e, 'parts between the cart and the counter: typed 12 by engineer on 2026-11-02'), 'typed');
+    assert.strictEqual(s.length, 8, 'two cards of four lines');
 });
 
 if (failed) { console.log('FAILED: ' + failed); process.exit(1); }

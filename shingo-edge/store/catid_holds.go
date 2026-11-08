@@ -1,20 +1,24 @@
 package store
 
-// catid_holds.go — the ledger of cart draws held per CATID (engine
-// catid_holds.go has the rules). One open row per (process, CATID, node,
-// part), grown stroke by stroke; a release latches resolved_at before anything
-// moves.
+// catid_holds.go — the ledger of cart draws no cart took (engine
+// catid_holds.go has the rules): a stroke Shingo could not place by the PLC's
+// part, and a stroke with no cart of its part at its position (decision 55).
+// One open row per (process, CATID, node, part, last cart off), grown stroke
+// by stroke; a person's Charge or Write off latches resolved_at before
+// anything moves.
 
 import (
 	"database/sql"
 	"errors"
 	"time"
 
-	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
+	"shingoedge/store/processes"
 )
 
-// CatidHold is one catid_holds row.
+// CatidHold is one catid_holds row. LastBinID, LastDeclared and LastLeftAt are
+// the last cart released at the position as the row's first stroke found it
+// (a "no cart" row's; 0 and nil when none had been, and on every other row).
 type CatidHold struct {
 	ID            int64      `json:"id"`
 	ProcessID     int64      `json:"process_id"`
@@ -29,16 +33,19 @@ type CatidHold struct {
 	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
 	Resolution    string     `json:"resolution,omitempty"`
 	ResolvedBy    string     `json:"resolved_by,omitempty"`
+	LastBinID     int64      `json:"last_bin_id,omitempty"`
+	LastDeclared  int64      `json:"last_declared"`
+	LastLeftAt    *time.Time `json:"last_left_at,omitempty"`
 }
 
 const catidHoldCols = `id, process_id, catid, process_node_id, payload_code, reason, qty, strokes,
-	first_tick_at, last_tick_at, COALESCE(resolved_at, ''), resolution, resolved_by`
+	first_tick_at, last_tick_at, COALESCE(resolved_at, ''), resolution, resolved_by, last_bin_id, last_declared, last_left_at`
 
 func scanCatidHold(sc interface{ Scan(...any) error }) (CatidHold, error) {
 	var h CatidHold
-	var first, last, resolved string
+	var first, last, resolved, left string
 	err := sc.Scan(&h.ID, &h.ProcessID, &h.CATID, &h.ProcessNodeID, &h.PayloadCode, &h.Reason, &h.Qty, &h.Strokes,
-		&first, &last, &resolved, &h.Resolution, &h.ResolvedBy)
+		&first, &last, &resolved, &h.Resolution, &h.ResolvedBy, &h.LastBinID, &h.LastDeclared, &left)
 	if err != nil {
 		return h, err
 	}
@@ -48,23 +55,61 @@ func scanCatidHold(sc interface{ Scan(...any) error }) (CatidHold, error) {
 		t := helpers.ScanTime(resolved)
 		h.ResolvedAt = &t
 	}
+	if left != "" {
+		t := helpers.ScanTime(left)
+		h.LastLeftAt = &t
+	}
 	return h, nil
 }
 
 // HoldCatidDraw adds qty (one stroke) to the open hold for (process, CATID,
 // node, part), opening it when there is none. Reports whether this stroke
-// opened it.
+// opened it. Its rows carry no last cart (0, ”), so a held or off-plan share
+// is one row however many carts come and go.
 func (db *DB) HoldCatidDraw(processID int64, catid string, nodeID int64, payload, reason string, qty int64, at time.Time) (bool, error) {
 	ts := at.UTC().Format(helpers.TimeLayout)
 	var strokes int64
 	err := db.QueryRow(`INSERT INTO catid_holds
-		(process_id, catid, process_node_id, payload_code, reason, qty, strokes, first_tick_at, last_tick_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-		ON CONFLICT (process_id, catid, process_node_id, payload_code) WHERE resolved_at IS NULL DO UPDATE SET
+		(process_id, catid, process_node_id, payload_code, reason, qty, strokes, first_tick_at, last_tick_at,
+		 last_bin_id, last_declared, last_left_at)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, '')
+		ON CONFLICT (process_id, catid, process_node_id, payload_code, last_bin_id, last_left_at) WHERE resolved_at IS NULL DO UPDATE SET
 			qty = qty + excluded.qty, strokes = strokes + 1, last_tick_at = excluded.last_tick_at
 		RETURNING strokes`,
 		processID, catid, nodeID, payload, reason, qty, ts, ts).Scan(&strokes)
 	return strokes == 1, err
+}
+
+// LogNoCartStroke adds qty (one stroke) to the open "no cart" row for
+// (process, CATID, node, part) and the seat's last release, opening it with
+// that release as its last cart off (released_bin_id / released_count /
+// released_at, read in the same statement), on the seat as the tick read it
+// (processes.SeatUnchanged): a seat changed since — a cart landed, left or was
+// released under the count lock — refuses the write, and the tick re-reads
+// the seat. written reports whether the row took the stroke, opened whether
+// this stroke opened it. The hold write it replaces was one statement on the
+// tick path; so is this.
+func (db *DB) LogNoCartStroke(processID int64, catid string, nodeID int64, payload, reason string, qty int64, at time.Time,
+	seat processes.SeatAsRead) (written, opened bool, err error) {
+	ts := at.UTC().Format(helpers.TimeLayout)
+	where, seatArgs := processes.SeatUnchanged(nodeID, seat)
+	args := append([]any{processID, catid, nodeID, payload, reason, qty, ts, ts}, seatArgs...)
+	var strokes int64
+	err = db.QueryRow(`INSERT INTO catid_holds
+		(process_id, catid, process_node_id, payload_code, reason, qty, strokes, first_tick_at, last_tick_at,
+		 last_bin_id, last_declared, last_left_at)
+		SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, COALESCE(released_bin_id, 0), released_count, COALESCE(released_at, '')
+		FROM process_node_runtime_states WHERE `+where+`
+		ON CONFLICT (process_id, catid, process_node_id, payload_code, last_bin_id, last_left_at) WHERE resolved_at IS NULL DO UPDATE SET
+			qty = qty + excluded.qty, strokes = strokes + 1, last_tick_at = excluded.last_tick_at
+		RETURNING strokes`, args...).Scan(&strokes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return true, strokes == 1, nil
 }
 
 // ListOpenCatidHolds returns a process's unresolved holds, oldest first.
@@ -113,28 +158,4 @@ func (db *DB) ResolveCatidHold(id int64, resolution, by string, at time.Time) (i
 		return 0, false, err
 	}
 	return qty, true, nil
-}
-
-// CountChangeoversStartedSince counts the process's changeovers started at or
-// after since, other than exceptID and other than a cancelled one: a tap of
-// the wrong style, cancelled, changed nothing a hold waits for (decision 47).
-func (db *DB) CountChangeoversStartedSince(processID int64, since time.Time, exceptID int64) (int, error) {
-	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM process_changeovers
-		WHERE process_id = ? AND started_at >= ? AND id <> ? AND state <> ?`,
-		processID, since.UTC().Format(helpers.TimeLayout), exceptID, string(domain.ChangeoverCancelled)).Scan(&n)
-	return n, err
-}
-
-// LatestCompletedChangeoverTo is the newest completed changeover of the
-// process to styleID, 0 when there is none. One read on the process's index.
-func (db *DB) LatestCompletedChangeoverTo(processID, styleID int64) (int64, error) {
-	var id int64
-	err := db.QueryRow(`SELECT id FROM process_changeovers
-		WHERE process_id = ? AND to_style_id = ? AND state = ? ORDER BY id DESC LIMIT 1`,
-		processID, styleID, string(domain.ChangeoverCompleted)).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return id, err
 }

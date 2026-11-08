@@ -52,6 +52,20 @@ func (e *Engine) liveIdentity(processID int64) (string, bool) {
 	return e.catidMon.liveCATID(processID)
 }
 
+// confirmedCATID is liveIdentity read from the monitor's published snapshot,
+// "" when it names no part: lock-free, for a caller under countMu, which
+// ranks above the monitor's lock (the lift's logged strokes).
+func (e *Engine) confirmedCATID(processID int64) string {
+	if e.catidMon == nil {
+		return ""
+	}
+	snap, ok := e.catidMon.snapshot(processID)
+	if !ok || !isIdentity(snap.value) {
+		return ""
+	}
+	return snap.value
+}
+
 // PostCutoverFlag is the operator-facing post-cutover verification flag for a
 // process.
 type PostCutoverFlag struct {

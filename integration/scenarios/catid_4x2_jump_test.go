@@ -59,7 +59,7 @@ func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 // MIRROR-R share of n at each mirror position, and nothing else.
 func (c *w6Cell) wantMirrorShares(label string, n int64) {
 	c.t.Helper()
-	h := c.holds()
+	h := c.shares()
 	if len(h.rows) != 2 || h.open != 2*n {
 		c.dump(label)
 		c.t.Fatalf("%s: holds %+v, want one open off-plan MIRROR-R share of %d at each mirror position", label, h.rows, n)
@@ -180,9 +180,9 @@ func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64
 	}
 	c.tick()
 	// The line strokes between the tap and the person's release, as a running
-	// cell does: an incoming count at a mirror position is held under MIRROR-R
-	// for the incoming cart, whatever the cart standing there can say (S9's
-	// cannot), and Core is sent nothing to refuse.
+	// cell does: an incoming count at a mirror position is logged, whatever the
+	// cart standing there can say (S9's cannot: it is the departing part), and
+	// Core is sent nothing to refuse.
 	c.cycle(1)
 	c.carryAll(label+" the changeover's legs", before, nil)
 	c.waitFor(label+" the changeover completed by the monitor", declareWindow+10*time.Second, func() bool {
@@ -204,20 +204,20 @@ func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64
 	c.cycle(5)
 	l := c.ledger(label+" tapped", true)
 	c.wantRecord(label+" tapped", l, run, c.counted()-run)
-	switch {
-	case overCartsMayStay:
-		for i := range w6Pos {
-			for _, tn := range c.tenures[i] {
-				if n := c.count(tn); n < 0 {
-					c.dump(label)
-					c.t.Fatalf("%s tapped: a cart at %s reads %d: a release landed more than it held", label, w6Pos[i], n)
-				}
-			}
-		}
-		c.t.Logf("%s tapped: %d hold(s) open, each over its cart", label, l.holdsOpen)
-	case l.holdsOpen != 0:
-		c.t.Fatalf("%s tapped: %d held open, want none: the completion lands the held shares", label, l.holdsOpen)
+	// Decision 55: nothing lands a row by itself; the shares the jump left and
+	// the strokes logged since stay for a person, and the ledger balances.
+	if h := c.shares(); h.charged != 0 || (l.holdsOpen == 0 && !overCartsMayStay) {
+		c.dump(label)
+		c.t.Fatalf("%s tapped: %d charged, %d open; want nothing charged and the jump's shares still open", label, h.charged, l.holdsOpen)
 	}
+	low := int64(0)
+	for i := range w6Pos {
+		for _, tn := range c.tenures[i] {
+			low = min(low, c.count(tn))
+		}
+	}
+	c.t.Logf("%s tapped: %d of shares and %d with no cart open; the lowest cart reads %d (shown, not refused)", label,
+		l.holdsOpen, l.noCart, low)
 	c.confirmedAll(label + " tapped")
 	c.line(label+" tapped", l)
 }

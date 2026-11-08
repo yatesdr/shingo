@@ -126,7 +126,7 @@ func TestBetweenBins_ANeverBoundSeatLogs(t *testing.T) {
 func TestBetweenBins_TheTrialResumedAfterDaysOfForkTruck(t *testing.T) {
 	t.Parallel()
 	eng, _, processID, nodeID, styleID, _ := betweenBinsSeat(t, true)
-	sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+	sm := &strandedMonitor{eng: eng}
 	strokes(eng, processID, styleID, betweenBinsPack+1)
 	for day := range 3 {
 		strokes(eng, processID, styleID, 500)
@@ -181,7 +181,7 @@ func TestBetweenBins_TheSweepKeepsADepartedSeatsPileWithinThePack(t *testing.T) 
 			eng, _, _, nodeID, _, _ := betweenBinsSeat(t, true)
 			_, err := eng.db.DB.Exec(`UPDATE process_node_runtime_states SET pending_uop_delta=?, pending_uop_payload='WIDGET-A' WHERE process_node_id=?`, tc.held, nodeID)
 			testutil.MustNoErr(t, err, "seed the pile")
-			sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+			sm := &strandedMonitor{eng: eng}
 			sm.tick(time.Now())
 			if tc.kept {
 				assertSeat(t, eng, nodeID, 0, int64(tc.held), "WIDGET-A")

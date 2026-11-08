@@ -5,14 +5,11 @@ package engine
 
 import (
 	"errors"
-	"fmt"
 	"log"
-	"strings"
 	"sync"
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/store/processes"
 )
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {
@@ -96,7 +93,6 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// keep draining a bin that has left the slot (Springfield 2026-06-02:
 	// aborted RH→LH at ALN_003 drained bin 18 in the supermarket until a manual
 	// cycle_count). Re-resolve each node against Core's physical bin-at-node.
-	var retagged []string
 	for _, task := range nodeTasks {
 		runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
 		if err != nil || runtime == nil {
@@ -105,14 +101,10 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		if err := e.db.ClearProcessNodeRuntimeOrders(task.ProcessNodeID); err != nil {
 			log.Printf("changeover: update runtime orders for node %d: %v", task.ProcessNodeID, err)
 		}
-		if line := e.retagHold(task, false); line != "" {
-			retagged = append(retagged, line)
-		}
 		e.reconcileActiveBinAfterCancel(task.ProcessNodeID)
 	}
 
-	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeover.ID, domain.ChangeoverCancelled, "",
-		strings.Join(retagged, "; ")); err != nil {
+	if err := e.db.UpdateProcessChangeoverStateWithTrigger(changeover.ID, domain.ChangeoverCancelled, "", ""); err != nil {
 		return err
 	}
 	// The episode ends CANCELLED, not complete. They are different outcomes and
@@ -160,60 +152,6 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	}
 
 	return nil
-}
-
-// retagHold moves a consume seat's hold between a changeover task's two parts,
-// at the two doors that change which part holdPartFor holds a stroke under.
-//
-// At START (toIncoming): every stroke at the seat is now held under the
-// incoming part (B v1), and the seat hold is single-part, so a hold the run-out
-// left under the departing part — its cart ran out before the changeover
-// opened — would drop each of them (D12) until a cart of the departing part
-// landed, which after a cutover is never. Those strokes are the incoming
-// cart's to absorb, as the ones after the start are: the hold becomes the
-// incoming part's (decision 45). Only where holdPartFor's rule holds: both
-// claims consume, the incoming one not a loader node, the parts different.
-//
-// At the cancel: the hold goes back under the staying part. The ticks are real
-// assemblies of the staying part, and the next cart to land after a cancel is
-// the staying part's.
-//
-// A retag, not a drop — the same rule as at every swap; the same store verb
-// (processes.SetSeatHold), under countMu. Returns the line the door logs (and
-// the cancel records on its row), "" when there was nothing to retag.
-func (e *Engine) retagHold(task processes.NodeTask, toIncoming bool) string {
-	if task.FromClaimID == nil || task.ToClaimID == nil {
-		return ""
-	}
-	from, err := e.db.GetStyleNodeClaim(*task.FromClaimID)
-	if err != nil || from == nil || from.Role != protocol.ClaimRoleConsume {
-		return ""
-	}
-	to, err := e.db.GetStyleNodeClaim(*task.ToClaimID)
-	if err != nil || to == nil || to.PayloadCode == from.PayloadCode {
-		return ""
-	}
-	door, was, now := "cancel", to.PayloadCode, from.PayloadCode
-	if toIncoming {
-		if to.Role != protocol.ClaimRoleConsume || to.IsLoaderNode() {
-			return ""
-		}
-		door, was, now = "start", from.PayloadCode, to.PayloadCode
-	}
-	e.countMu.Lock()
-	defer e.countMu.Unlock()
-	rt, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
-	if err != nil || rt == nil || rt.PendingUOPDelta == 0 || rt.PendingUOPPayload != was {
-		return ""
-	}
-	ok, err := processes.SetSeatHold(e.db.DB, task.ProcessNodeID, int(rt.PendingUOPDelta), now, processes.SeatAsReadOf(rt))
-	if err != nil || !ok {
-		log.Printf("changeover %s: retag the hold at node %s: written=%t %v", door, task.NodeName, ok, err)
-		return ""
-	}
-	line := fmt.Sprintf("hold of %d at %s retagged %s to %s", rt.PendingUOPDelta, task.NodeName, was, now)
-	e.logFn("changeover %s: %s", door, line)
-	return line
 }
 
 // reconcileActiveBinAfterCancel re-seats a node after a changeover cancel or a

@@ -38,12 +38,13 @@ func onPart(cm *catidMonitor, pid int64, v string, confirmedAt time.Time, observ
 	return st
 }
 
-// TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart: A → B is completed
-// by "Mark as running" while the PLC still reports A's part. A run-out stroke
-// after the landing prepays B's bound cart, as the same stroke did before the
-// cutover; nothing is held, and the process stays on B. Before, the stroke
-// after the landing was off-plan to A and its draw went to the holds ledger.
-func TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart(t *testing.T) {
+// TestTick_RunOutAfterAnEarlyCutoverIsTheOutgoingPart: A → B is completed by
+// "Mark as running" while the PLC still reports A's part. A run-out stroke is
+// today's under A on both sides of the landing (decision 55): B's cart, of
+// another part, takes none of it and lands at its full count, and the strokes
+// are logged at the position; the process stays on B. Before, the stroke
+// after the landing was today's under B and prepaid B's cart (decision 24).
+func TestTick_RunOutAfterAnEarlyCutoverIsTheOutgoingPart(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, nodeID, from, to := runOutRig(t)
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(from, "1001"), "pin A")
@@ -57,19 +58,28 @@ func TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart(t *testing.T) {
 	testutil.MustNoErr(t, eng.carrierLeft(nodeID, runOutNode), "A's cart lifted")
 	landCart(t, eng, nodeID, 9102, "PART-NEW", 40)
 
-	if id := strokeAt(eng, pid, from, 2); id.Kind != plc.TickToday {
-		t.Fatalf("before the cutover: attribution %+v, want today", id)
+	if id := strokeAt(eng, pid, from, 2); id.Kind != plc.TickToday || id.StyleID != from {
+		t.Fatalf("before the cutover: attribution %+v, want today under A", id)
 	}
-	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 38 {
-		t.Fatalf("B's cart before the cutover = %d, want 38", got)
+	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 40 {
+		t.Fatalf("B's cart before the cutover = %d, want 40: a stroke of A's part does not draw it", got)
 	}
 	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "mark B as running")
 	id := strokeAt(eng, pid, to, 2)
-	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 36 {
-		t.Errorf("B's cart after a run-out stroke past the landing = %d (attribution %+v), want 36", got, id)
+	if id.Kind != plc.TickToday || id.StyleID != from {
+		t.Errorf("after the landing: attribution %+v, want today under A, the style running out", id)
 	}
-	if hs := openHolds(t, eng, pid); len(hs) != 0 {
-		t.Errorf("holds = %+v, want none: a run-out stroke is today's", hs)
+	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 40 {
+		t.Errorf("B's cart after a run-out stroke past the landing = %d, want 40 (never pre-paid)", got)
+	}
+	n := int64(0)
+	for _, h := range openHolds(t, eng, pid) {
+		if h.ProcessNodeID == nodeID && h.Reason == holdReasonNoCart {
+			n += h.Qty
+		}
+	}
+	if n != 4 {
+		t.Errorf("logged at the position = %d, want 4: no cart of A's part stands there", n)
 	}
 	if p := mustProcess(t, db, pid); p.ActiveStyleID == nil || *p.ActiveStyleID != to {
 		t.Errorf("active style = %v, want B (%d)", p.ActiveStyleID, to)
@@ -144,8 +154,8 @@ func TestAttributeCATID_TheRule(t *testing.T) {
 		{"one other style's, unproven", "1003", set("-1"), sets, 0, plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
 		{"the active's set empty", "1003", proven, []styleCATIDEntry{{ID: a, Active: true}, sets[2]}, 0,
 			plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
-		{"the running-out style's part", "1003", proven, sets, s1, plc.TickIdentity{StyleID: point, CATID: "1003", Kind: plc.TickToday}},
-		{"shared by the running-out style", "1005", proven, sets, s2, plc.TickIdentity{StyleID: point, CATID: "1005", Kind: plc.TickToday}},
+		{"the running-out style's part", "1003", proven, sets, s1, plc.TickIdentity{StyleID: s1, CATID: "1003", Kind: plc.TickToday}},
+		{"shared by the running-out style", "1005", proven, sets, s2, plc.TickIdentity{StyleID: s2, CATID: "1005", Kind: plc.TickToday}},
 		{"another style's, a style running out", "1003", proven, sets, s2, plc.TickIdentity{StyleID: s1, CATID: "1003", Kind: plc.TickOffPlan}},
 	} {
 		if got := attributeCATID(c.v, point, c.sets, c.observed, c.runningOut); got != c.want {
@@ -184,23 +194,23 @@ func TestTick_TargetCATIDChargesAnIncomingOnlyNode(t *testing.T) {
 	}
 }
 
-// TestWalk_TargetTickBeforeTheLiftIsHeldForTheIncomingCart — read with
+// TestWalk_TargetTickBeforeTheLiftIsLogged — read with
 // TestRegression_TickDuringChangeoverRunout and
 // TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles: at a node both styles
 // claim, a stroke attributed to the target before the outgoing cart's lift
-// draws the target's part, which that cart is not: it is held at the seat
-// under the incoming part, and the outgoing cart and Core's record of it are
+// draws the target's part, which that cart is not: it is logged at the
+// position (decision 55), and the outgoing cart and Core's record of it are
 // untouched. Before, it was charged to the outgoing cart, stamped with its
 // resident part, and Core accepted it.
-func TestWalk_TargetTickBeforeTheLiftIsHeldForTheIncomingCart(t *testing.T) {
+func TestWalk_TargetTickBeforeTheLiftIsLogged(t *testing.T) {
 	t.Parallel()
 	eng, _, pid, nodeID, _, to := runOutRig(t)
 	sink := eng.inventoryDelta.(*fakeDeltaSink)
 	mark := len(sink.binCalls)
 	tickConsume(eng, pid, to, 1)
-	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 17 || rt.PendingUOPDelta != 1 || rt.PendingUOPPayload != "PART-NEW" {
-		t.Errorf("outgoing cart after a target stroke = %d, hold %d of %q; want 17, hold 1 of PART-NEW",
-			rt.RemainingUOPCached, rt.PendingUOPDelta, rt.PendingUOPPayload)
+	if s := readSeat55(t, eng, pid, nodeID); s.cart != 17 || s.hold != 0 || s.logged != 1 {
+		t.Errorf("outgoing cart after a target stroke = %d, hold %d, logged %d; want 17, none, 1 logged",
+			s.cart, s.hold, s.logged)
 	}
 	if len(sink.binCalls) != mark {
 		t.Errorf("deltas = %+v, want none: the outgoing cart is not drawn", sink.binCalls[mark:])

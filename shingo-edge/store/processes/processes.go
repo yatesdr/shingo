@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"shingo/protocol/clock"
 	"shingoedge/domain"
@@ -1317,19 +1318,24 @@ func UpdateRuntimeUOP(db *sql.DB, processNodeID int64, remainingUOPCached int) e
 }
 
 // SetRuntimeReleaseCount writes the outgoing carrier's count at its release,
-// and whether the release declared it empty, in one statement.
+// whether the release declared it empty, and the release itself, in one
+// statement.
 //
-// released_empty is set when the release declares 0 (RELEASE EMPTY, an
-// underpack, a send-back with nothing left) and cleared when it declares a
-// count: a bin released as empty is not charged afterwards (pile, then
-// held), while a count release keeps charging the bin until the lift (Lane H
-// R1/R3, DECISIONS D12). It rides the count write the release already ran,
-// so it costs no statement.
-func SetRuntimeReleaseCount(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
+// released_empty is set when the release declares 0 or below (RELEASE EMPTY,
+// an underpack, a send-back with nothing left, a cart drawn past 0) and
+// cleared when it declares a count: a bin released as empty is not charged
+// afterwards (the pile, then the strokes are logged), while a count release
+// keeps charging the bin until the lift (Lane H R1/R3, DECISIONS D12; decision
+// 55). The release is recorded as released_bin_id / released_count /
+// released_at (at, the engine's clock), the last cart off a stroke logged with
+// no cart of its part names. It rides the count write the release already
+// ran, so it costs no statement.
+func SetRuntimeReleaseCount(db *sql.DB, processNodeID int64, remainingUOPCached int, at time.Time) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		remaining_uop_cached=?, released_empty=?, updated_at=datetime('now')
+		remaining_uop_cached=?, released_empty=?, released_bin_id=active_bin_id, released_count=?, released_at=?,
+		updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		remainingUOPCached, remainingUOPCached == 0, processNodeID)
+		remainingUOPCached, remainingUOPCached <= 0, remainingUOPCached, at.UTC().Format(helpers.TimeLayout), processNodeID)
 	return err
 }
 
@@ -1368,6 +1374,13 @@ type SeatAsRead struct {
 func SeatAsReadOf(rt *RuntimeState) SeatAsRead {
 	return SeatAsRead{BinID: rt.ActiveBinID, Epoch: rt.ActiveBinEpoch, ReleasedEmpty: rt.ReleasedEmpty,
 		Pending: rt.PendingUOPDelta, Count: rt.RemainingUOPCached}
+}
+
+// SeatUnchanged is the WHERE that refuses a seat changed since it was read,
+// with its arguments, for a statement on another table that is guarded by the
+// seat (store.DB.LogNoCartStroke): it reads process_node_runtime_states.
+func SeatUnchanged(processNodeID int64, seat SeatAsRead) (string, []any) {
+	return seatUnchangedSQL, seatArgs(processNodeID, seat)
 }
 
 // seatUnchangedSQL is the WHERE that refuses a seat changed since it was read

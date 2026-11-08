@@ -213,16 +213,16 @@ func TestRuntimeBinding_RemovalOnlyOrderDoesNotResetCache(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// PLC tick attribution: hold-and-replay
+// PLC tick attribution: no bin, the strokes are logged
 // ─────────────────────────────────────────────────────────────────────────
 
-// TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin is the
-// load-bearing test for the model. While no bin is bound (pickup→delivery
-// gap) the bin portion of each tick is HELD in pending_uop_delta (durably
-// on the runtime row), not lost or charged to a departed bin. When the
-// next bin's OrderDelivered binds it, the first tick replays the held
-// total onto it with the bin's epoch.
-func TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin(t *testing.T) {
+// TestRuntimeBinding_PLCTicksWithNoBinAreLoggedTheNextBinStartsFresh is the
+// load-bearing test for the model (decision 55). While no bin is bound
+// (pickup→delivery gap) the bin portion of each tick is logged in the ledger
+// (durably), not lost or charged to a departed bin. When the next bin's
+// OrderDelivered binds it, it starts at its full count and takes its own
+// strokes.
+func TestRuntimeBinding_PLCTicksWithNoBinAreLoggedTheNextBinStartsFresh(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
@@ -234,16 +234,17 @@ func TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin(t *testing.T)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	// Three ticks during the gap — no bin to attribute to. They must be
-	// held (durable), not dropped, and must not touch the cache.
+	// Three ticks during the gap — no bin to attribute to. They are logged
+	// in the ledger (durable, decision 55), not dropped, and do not touch the
+	// cache.
 	for i := 0; i < 3; i++ {
 		eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 			ProcessID: processID, StyleID: styleID, Delta: 1,
 		}})
 	}
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.PendingUOPDelta != 3 {
-		t.Fatalf("PendingUOPDelta = %d, want 3 (gap ticks held, durable on the runtime row)", rt.PendingUOPDelta)
+	if s := readSeat55(t, eng, processID, nodeID); rt.PendingUOPDelta != 0 || s.logged != 3 {
+		t.Fatalf("hold %d, logged %d; want no hold, 3 logged (the gap's strokes, durable in the ledger)", rt.PendingUOPDelta, s.logged)
 	}
 	if rt.RemainingUOPCached != 0 {
 		t.Errorf("cache = %d, want 0 (held ticks must not touch the cache while unbound)", rt.RemainingUOPCached)
@@ -262,16 +263,13 @@ func TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin(t *testing.T)
 		ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop, BinEpoch: 7,
 	}})
 
-	// First tick after binding replays the 3 held + this 1 = 4 onto the new bin.
+	// The first tick after binding is the new bin's alone: it lands fresh.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 		ProcessID: processID, StyleID: styleID, Delta: 1,
 	}})
 	rt, _ = db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOPCached != newBinUOP-4 {
-		t.Errorf("cache = %d, want %d (1000 - (3 held + 1) replayed onto the new bin)", rt.RemainingUOPCached, newBinUOP-4)
-	}
-	if rt.PendingUOPDelta != 0 {
-		t.Errorf("PendingUOPDelta = %d, want 0 (held delta consumed on replay)", rt.PendingUOPDelta)
+	if rt.RemainingUOPCached != newBinUOP-1 {
+		t.Errorf("cache = %d, want %d (the new bin's own stroke; nothing replays onto it)", rt.RemainingUOPCached, newBinUOP-1)
 	}
 }
 

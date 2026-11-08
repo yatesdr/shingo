@@ -160,22 +160,13 @@ func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 		to = fmt.Sprintf("station counter %d (%s)", lc.ID, lc.TagName)
 	}
 	from := "the production counter"
-	station := counterID
 	if node.LineCounterID != nil {
 		from = fmt.Sprintf("station counter %d", *node.LineCounterID)
-		if station == nil {
-			station = node.LineCounterID
-		}
 	}
 	if err := e.db.SetNodeLineCounter(nodeID, counterID); err != nil {
 		return err
 	}
-	var n int64
-	var ok bool
-	if station != nil {
-		n, ok = e.stationInLine(*station)
-	}
-	e.logFn("counted at: %s moves from %s to %s — %s", node.Name, from, to, inLineWords(n, ok))
+	e.logFn("counted at: %s moves from %s to %s", node.Name, from, to)
 	return nil
 }
 

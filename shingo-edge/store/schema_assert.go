@@ -122,14 +122,13 @@ var requiredColumns = []requiredColumn{
 	{"processes", "changeover_auto_arm"},
 	{"processes", "identity_tag_name"},
 	{"process_nodes", "line_counter_id"},
-	// v43: the station counter's anchor and deepest run-out, the process's
-	// typed line depth.
-	{"line_counters", "anchor_count"},
-	{"line_counters", "anchor_at"},
-	{"line_counters", "deepest_runout"},
-	{"processes", "line_depth_typed"},
-	{"processes", "line_depth_typed_by"},
-	{"processes", "line_depth_typed_at"},
+	// v43: the seat's last release, and the ledger's record of it.
+	{"process_node_runtime_states", "released_bin_id"},
+	{"process_node_runtime_states", "released_count"},
+	{"process_node_runtime_states", "released_at"},
+	{"catid_holds", "last_bin_id"},
+	{"catid_holds", "last_declared"},
+	{"catid_holds", "last_left_at"},
 	{"processes", "identity_none"},
 	{"processes", "identity_warlink_managed"},
 	{"process_changeovers", "triggered_by"},

@@ -13,19 +13,18 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - A press counting the incoming part a minute past its CATID change completes the changeover
 - With no changeover open, a part one other style runs moves nothing: its draws at the positions whose part differs are held, and the strip's wrong-part item offers that changeover in one tap
 - The wrong-part item names an unpinned style to pin before it offers the changeover; START refused by a staged swap of the part it replaces says Cancel, not Release
-- A part standing since before a landing is run-out: it prepays the new cart, and nothing offers a changeover back
-- A changeover's start retags a run-out hold of the departing part to the incoming part; the cancel retags it back
+- A part standing since before a landing is run-out: it is the outgoing style's part, and nothing offers a changeover back
 - Mark as running completes an open changeover past its gate and records the switch
 - 0 and negative CATIDs name no part; a CATID both styles run never fires
 - A counted tick carries the PLC's part and its style; walk, hourly and Core count it there (v39)
 - The CATID monitor reads, confirms and times its windows on the engine's clock
-- An unmapped or off-plan part's draw is held (v40) until a landing, a Charge or a Write off
-- A cart landing at a hold's position, the active style running its CATID, releases the hold onto it
-- An automatic release lands a share only when it fits the cart ("N held, the cart at X holds M" waits for a person); a cancelled changeover strands no hold
+- An unmapped or off-plan part's draw is held in the ledger (v40) until a person Charges or Writes it off
 - A flip records each consume seat's cart that could not say its part as the departing style's part (source flip); a changeover's flip leaves alone the seats bound since it started
 - A landing that names no part takes the part its order delivered (source delivery); lineside_at keeps the engine's clock
-- A consume stroke never draws a cart recorded as another part: it is held for a cart of its part, and the parked-ticks notice names the seat
-- With a changeover open, a cart that cannot say its part, bound before the start at a position whose part changes, is the departing part: the incoming strokes are held for the incoming cart, not refused by Core
+- A consume stroke never draws a cart recorded as another part: it is logged
+- With a changeover open, a cart that cannot say its part, bound before the start at a position whose part changes, is the departing part: the incoming strokes are logged, not refused
+- A consume stroke charges the cart of its part standing at the position, into the negative if the count goes there (the release records it); with none there it is logged against the position and the part with the last cart released there (v43), a count on the strip; nothing is held, replayed or pre-paid, and the next cart lands at its full count
+- The parts in the line, the end-of-line sentence and the parked-ticks notice are gone; the Counting block keeps the MES slots and the station cards
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - The request guards and the changeover's participant gate refuse by position: a position whose part both styles run is supplied through a changeover
 - The guards read a door call's changeover, claims and task once (21 statements to 12 at a common position); a position with no task is a change, and a failed read that turns a request away is logged
@@ -42,20 +41,18 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - The click seeds the new slot at its count when the PLC moved: the strokes since count
 - A station counter's card owns its positions; the only station pre-ticks the unbound ones
 - Station tags are suggested by the family's convention; the process's own MES slot is refused
-- The parts in the line are anchored at a program-change reset and shown, never charged (v43)
-- The end-of-line sentence: N measured at changeovers or typed (v43); history shows each run-out
-- The process page's Counting block labels each line discovered, confirmed, measured or typed
+- The process page's Counting block labels each line discovered, confirmed or measured
 - The CATID health strip: per process, Edge-wide, and a list on Processes
 - The Charge's preview is POST /api/catid-holds/{id}/charge?mode=preview
 - processes.auto_cutover_enabled is dropped (v42); catid_holds and line_counters live in the chain
 - plants/master.yaml is the one sim plant; the old specs are its named sections
 - A seeded cart's seat knows its part (source seed); a bin with no part seeds one that cannot say
-- The sim operator sends back a cart recorded as another part: its strokes are held, so it never runs down
+- The sim operator sends back a cart recorded as another part: its strokes are logged, so it never runs down
 - The sim operator runs a common position's cart down through a changeover; only a changeover's leg, or a position it changes, goes back with parts
 - The fake PLC runs a line with program changes; the 4x2-shaped cell's scenarios run S1-S9
 - The fake PLC's line pauses its loading and drains (POST /api/sim/pause-loading)
 - scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S9)
-- Its ledger prints lost at the lift (asserted 0, never summed) and every partial release fenced; its person releases with the pre-fill and cancels a staged swap of the replaced part
+- Its ledger is carts + logged + written off = loads; it prints lost at the lift (asserted 0, never summed), every partial release fenced and the lowest cart; its person releases with the pre-fill and cancels a staged swap of the replaced part
 
 ## 2026-11-03 — An order's carts are its rows
 

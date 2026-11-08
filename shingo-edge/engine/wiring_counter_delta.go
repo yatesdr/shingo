@@ -78,15 +78,16 @@ func (e *Engine) counterDeltaRows(processID, tickStyleID int64, nodes []processe
 }
 
 // handleCounterDelta processes a production counter tick: a consume node's
-// bound bin is drawn down, a produce node's is filled (up to its pack when the
-// claim's strict_pack applies; NodeClaim.StrictPackApplies), and with nothing chargeable
-// the tick is held on the seat for the next bin of its part.
+// cart of the tick's part is drawn down, a produce node's bin is filled (up to
+// its pack when the claim's strict_pack applies; NodeClaim.StrictPackApplies).
+// A consume stroke with no cart of its part standing there is logged in the
+// ledger (chargeOrLog, decision 55); a produce stroke with no bin is held for
+// the next (applyHoldAndReplay).
 //
 // This walk validates the tick, resolves each node's claim against the tick's
 // style, skips the A/B inactive side, and hands each node to its role's
 // handler: handleConsumeTick (the lineside drain first), handleProduceTick, or
-// the A/B safety net handleABFallthrough. The seat arithmetic every one of them
-// shares is applyHoldAndReplay's.
+// the A/B safety net handleABFallthrough.
 func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 || delta.Delta <= 0 {
 		// A malformed tick is not a quiet no-op: the PLC path only
@@ -223,7 +224,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 				// The first dark side of a pair is its fallback, under the
 				// tick's style's claim, not a re-derived one (R43-1).
 				if pair != "" {
-					ab.noteDark(pair, node, runtime, claim, holdPartFor(process, &node, claim, claims))
+					ab.noteDark(pair, node, runtime, claim)
 				}
 				continue
 			}
@@ -237,7 +238,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 			}
 			nodeCopy := node
 			attr.consumeTicks++
-			e.handleConsumeTick(&nodeCopy, runtime, claim, holdPartFor(process, &nodeCopy, claim, claims), tick.delta,
+			e.handleConsumeTick(&nodeCopy, runtime, claim, tick,
 				unsaidCarrier{departing: departingPartAt(process, &nodeCopy, claims), start: start})
 
 		case protocol.ClaimRoleProduce:
@@ -494,9 +495,9 @@ func (a *abPairs) of(key string) *abPairTick {
 }
 
 // noteDark records a dark side; the first a pair meets is its fallback.
-func (a *abPairs) noteDark(key string, node processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string) {
+func (a *abPairs) noteDark(key string, node processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) {
 	if p := a.of(key); p.fallback == nil {
-		p.fallback = &abFallback{node: &node, runtime: runtime, claim: claim, hold: hold}
+		p.fallback = &abFallback{node: &node, runtime: runtime, claim: claim}
 	}
 }
 
@@ -514,7 +515,7 @@ func (e *Engine) fallThrough(process *processes.Process, claims *store.NodeClaim
 			attr.heldShares++
 			continue
 		}
-		e.handleABFallthrough(tick.processID, f.node, f.runtime, f.claim, f.hold, tick.delta)
+		e.handleABFallthrough(tick, f.node, f.runtime, f.claim)
 		attr.fallthroughTicks++
 	}
 }
@@ -530,7 +531,6 @@ type abFallback struct {
 	node    *processes.Node
 	runtime *processes.RuntimeState
 	claim   *processes.NodeClaim
-	hold    string
 }
 
 // abPairOf names the A/B pair a claim belongs to — its node and its partner,
@@ -571,21 +571,19 @@ func (e *Engine) secondLitSide(tick tickScope, p *abPairTick, node *processes.No
 	return true
 }
 
-// applyHoldAndReplay applies one UOP tick to a process node's cached counter
-// using the hold-and-replay rule shared verbatim by the consume, produce, and
-// A/B-fallthrough ticks (previously three near-identical copies).
+// applyHoldAndReplay applies one produce tick to a seat's cached counter
+// (handleProduceTick). A consume stroke never holds (chargeOrLog, decision 55).
 //
-// When a bin is bound (active_bin_id set) it charges the bin this tick PLUS any
-// counts held while the slot was empty (pending_uop_delta), writes the new
-// cached value, and clears the hold. When no bin is bound (the pickup→delivery
-// gap) it holds `input` in pending so the count lands on the next bin instead
-// of being lost or charged to a departed bin.
+// When a bin is bound (active_bin_id set) it charges the bin this tick PLUS
+// any counts held while the slot was empty (pending_uop_delta), writes the new
+// cached value, and clears the hold. When no bin is bound (the
+// finalize→new-empty gap) it holds `input` in pending so the parts land on the
+// next empty bin instead of being lost.
 //
-// sign is +1 for produce (fill) and -1 for consume / fallthrough (drain).
-// Returns the seat the tick was applied to, whether a bin was charged, and
-// binAttributed (the amount charged to the bin this tick, including any
-// replayed pending; 0 when nothing was charged, so no bin delta is recorded).
-// The caller records its bin delta against the returned seat.
+// sign is +1 (fill). Returns the seat the tick was applied to, whether a bin
+// was charged, and binAttributed (the amount charged to the bin this tick,
+// including any replayed pending; 0 when nothing was charged, so no bin delta
+// is recorded). The caller records its bin delta against the returned seat.
 //
 // ── THE SEAT IS WRITTEN AS IT WAS READ ───────────────────────────────────
 //
@@ -596,50 +594,29 @@ func (e *Engine) secondLitSide(tick tickScope, p *abPairTick, node *processes.No
 // generation, released-empty, hold: processes.SeatAsRead) and moves the count
 // by a delta, never to a value computed from the old row. A seat that changed
 // refuses the write; the tick re-reads it once, under the lock, and applies
-// itself to the seat as it now is (charged to the new carrier, or held). The
-// re-read runs only on a refusal: +0 statements on every other tick. partsOf
-// gives the tick's parts for a seat, since the carrier's part and the
-// released-empty flag are the seat's.
+// itself to the seat as it now is. The re-read runs only on a refusal: +0
+// statements on every other tick. partsOf gives the tick's parts for a seat.
 //
 // ── THE HOLD HAS A PART (Lane H R2/R3, DECISIONS D12) ────────────────────
 //
 // The hold records the part of the ticks it holds (pending_uop_payload, in
-// the hold's own statement) and replays only onto a bound carrier of that
-// part. It used to be a bare integer that replayed onto whatever bound next,
-// of any part: across a cutover the old part's held ticks landed on the new
-// part's bin, stamped with the new part, so Core could not catch it (pin
-// TestPinR2_HeldTicksAreNotReplayedOntoADifferentPart).
-//
-//   - A bound, chargeable carrier of the held part takes the tick plus the
-//     hold, and the hold (and its part) clears. A chargeable carrier of
-//     another part than the hold's takes the tick alone; the hold is kept for
-//     its own part's carrier.
-//   - A carrier that takes no tick (parts.notCharged: one released as empty,
-//     R3, or on a consume seat one recorded as a part the tick may not draw,
-//     tickParts) is not charged: the tick is held, exactly as if the seat were
-//     empty.
-//   - With nothing chargeable, the tick is held when the hold is empty or
-//     already of its part. When the seat holds ANOTHER part's ticks, that hold
-//     is kept and this tick is neither held nor charged: its own pile has
-//     already drained what it could (drainLinesideFirst runs first), and the
-//     rest is logged once per episode, by part, and not charged (D12: no new
-//     anomaly rows for an over-pull). The stranded monitor (EventUOPStranded)
-//     watches a consume seat's hold while the seat is unbound, or bound to a
-//     carrier recorded as a part its claim does not take, and the hold rises
-//     (uop_stranded_monitor.go).
-//
-// A hold written before the part existed reads "" and replays as it always
-// did.
+// the hold's own statement) and replays only onto a bound bin of that part.
+// A bound bin of another part than the hold's takes the tick alone; the hold
+// is kept for its own part's bin. With nothing chargeable, the tick is held
+// when the hold is empty or already of its part; when the seat holds ANOTHER
+// part's ticks, that hold is kept and the tick is neither held nor charged,
+// logged once per episode, by part (noteUnheldTick). A hold written before the
+// part existed reads "" and replays as it always did.
 //
 // ── AN UNBOUND PRODUCE SEAT HOLDS ONLY WHILE A CARRIER IS COMING ─────────
 //
-// With nothing chargeable, a produce tick asks one question first: is a live
-// order placing a carrier at the node (carrierComing, store.DB.LiveOrderPlacing)?
-// If one is, the rules above hold it. If none is, nothing will take the hold:
-// the tick is logged and not held, and a standing pile at the seat is dropped
-// with a hold_dropped row (dropPileAndLogTick). The strokes logged are counted
-// in memory and sent as one hold_dropped (no_bin) row when the episode ends,
-// in the transaction of the write that ends it. The one exception is a seat
+// With nothing chargeable, a tick asks one question first: is a live order
+// placing a carrier at the node (carrierComing, store.DB.LiveOrderPlacing)? If
+// one is, the rules above hold it. If none is, nothing will take the hold: the
+// tick is logged and not held, and a standing pile at the seat is dropped with
+// a hold_dropped row (dropPileAndLogTick). The strokes logged are counted in
+// memory and sent as one hold_dropped (no_bin) row when the episode ends, in
+// the transaction of the write that ends it. The one exception is a seat
 // between bins (betweenBins): its last carrier departed through Shingo, so the
 // tick is held with none coming, up to one pack; the stroke past the pack
 // drops the pile and clears the departure, and the seat logs from there. The
@@ -687,13 +664,13 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	if held == 0 {
 		e.endUnheldEpisode(node.ID)
 	}
-	if parts.produce && rt.ActiveBinID != nil {
+	if rt.ActiveBinID != nil {
 		e.endCarrierNote(node.ID)
 	}
-	if rt.ActiveBinID != nil && !parts.notCharged && parts.pack > 0 {
+	if rt.ActiveBinID != nil && parts.pack > 0 {
 		return e.chargeStrict(node, rt, input, parts)
 	}
-	if rt.ActiveBinID != nil && !parts.notCharged {
+	if rt.ActiveBinID != nil {
 		binAttributed = input
 		replay := held != 0 && holdIsOf(rt.PendingUOPPayload, parts.carrier)
 		if replay {
@@ -719,7 +696,7 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	if input == 0 {
 		return false, 0, true
 	}
-	if parts.produce && !e.carrierComing(node) {
+	if !e.carrierComing(node) {
 		if hold, pastPack := betweenBins(rt, parts.tick, parts.binPack, input); !hold {
 			return e.dropPileAndLogTick(node, rt, input, parts.tick, pastPack)
 		}
@@ -743,46 +720,23 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	return false, 0, true
 }
 
-// tickParts is what applyHoldAndReplay compares for one tick (D12).
-//
-// A CONSUME STROKE NEVER DRAWS A CART OF ANOTHER PART. On a consume seat a
-// bound carrier recorded (known: a landing, a person, the flip that left it) as
-// a part the tick's claim does not take (claimTakes: its part or an allowed
-// alternate) takes no tick, unless it is the part the tick is held under
-// (hold: B v1's incoming part mid-changeover, onto which the hold would replay
-// anyway). The tick is held as if the seat were empty (notCharged), under
-// hold, and replays onto the next carrier of that part: a landing, or a person
-// naming the standing cart, and the next stroke. A carrier that cannot say is
-// charged as the claim's part, except one an open changeover finds standing
-// at a position whose part changes, which is the departing part
-// (unsaidCarrier). A produce seat is unchanged: a changeover lifts
-// its cart, and a same-part changeover's strokes are the next bin's
-// (cutoverHoldClears).
+// tickParts is what applyHoldAndReplay compares for one produce tick (D12).
 type tickParts struct {
 	// tick is the part the tick is of: the matched claim's part, for the
 	// log line.
 	tick string
 	// hold is the part a hold written for this tick records, and the part an
-	// existing hold must be of for the tick to join it: the tick's part, or on
-	// a consume seat mid-changeover the incoming claim's (holdPartFor).
+	// existing hold must be of for the tick to join it: the tick's part.
 	hold string
 	// carrier is the part of the bound carrier, as the tick's bin delta is
-	// stamped (binAtNode for a draw, the claim's part for a fill). A hold
-	// replays onto the carrier only when it is of this part.
+	// stamped (the claim's part for a fill). A hold replays onto the carrier
+	// only when it is of this part.
 	carrier string
-	// notCharged: the bound carrier takes no tick, the tick is held as if the
-	// seat were empty: it was released as empty (R3), or on a consume seat it
-	// is recorded as a part the tick may not draw (drawsAnotherPart).
-	notCharged bool
 	// pack is the bound bin's cap when the strict arm applies to the seat as
 	// read (strictPackFor), else 0. Carried per attempt like the parts, so a
 	// retry after a refused write decides it again on the fresh row.
 	pack int
-	// produce: the tick is a produce claim's. With nothing chargeable it is
-	// held only while a carrier is coming (carrierComing, dropPileAndLogTick),
-	// or between bins (betweenBins).
-	produce bool
-	// binPack is a produce tick's pack, the claim's UOPCapacity whether or not
+	// binPack is the tick's pack, the claim's UOPCapacity whether or not
 	// strict_pack is set: the cap on an unbound seat's hold between bins.
 	binPack int
 }
@@ -824,16 +778,16 @@ func recordedOtherPart(rt *processes.RuntimeState, claim *processes.NodeClaim) b
 	return rt != nil && rt.ActiveBinID != nil && rt.LinesidePayloadKnown && !claimTakes(claim, string(rt.LinesidePayloadCode))
 }
 
-// drawsAnotherPart is the consume tick's rule (tickParts): the bound carrier is
-// a part the claim does not take and is not the part the tick is held under,
-// so it takes no tick. The carrier's part is the recorded one, or for a cart
-// that cannot say, unsaid (unsaidCarrier.partOf); with unsaid "" such a cart
-// is taken as the claim's part and charged.
-func drawsAnotherPart(rt *processes.RuntimeState, claim *processes.NodeClaim, hold, unsaid string) bool {
+// drawsAnotherPart is the consume stroke's other-part rule (chargeOrLog): the
+// bound carrier is a part the claim does not take, so the stroke does not draw
+// it and is logged. The carrier's part is the recorded one, or for a cart that
+// cannot say, unsaid (unsaidCarrier.partOf); with unsaid "" such a cart is
+// taken as the claim's part and drawn.
+func drawsAnotherPart(rt *processes.RuntimeState, claim *processes.NodeClaim, unsaid string) bool {
 	if recordedOtherPart(rt, claim) {
-		return string(rt.LinesidePayloadCode) != hold
+		return true
 	}
-	return unsaid != "" && !claimTakes(claim, unsaid) && unsaid != hold
+	return unsaid != "" && !claimTakes(claim, unsaid)
 }
 
 // unsaidCarrier reads a consume seat whose bound cart cannot say its part
@@ -843,9 +797,9 @@ func drawsAnotherPart(rt *processes.RuntimeState, claim *processes.NodeClaim, ho
 // under the departing style, so it is the departing part, as the flip will
 // record it. Core knows that cart, so an incoming stroke charged to it is
 // refused as another part's. Taken as the departing part, the cart takes no
-// incoming stroke: the stroke is held under the incoming part as if the seat
-// were empty, and the incoming cart absorbs it when it lands, as it absorbs a
-// run-out (holdPartFor). The departing style's own strokes still draw the cart.
+// incoming stroke: the stroke is logged, as at an empty seat (decision 55),
+// and the incoming cart lands at its full count. The departing style's own
+// strokes still draw the cart.
 //
 // A cart bound since the start came with the changeover, so it is the incoming
 // part and the claim's-part fallback is right for it (decision 40's reading).
@@ -927,35 +881,6 @@ func (c *changeoverStart) at() (time.Time, bool) {
 	return c.startedAt, c.open
 }
 
-// holdPartFor is the part a consume tick is held under when no carrier takes
-// it (B v1): the incoming claim's part while the process changes over and
-// incomingConsumePart applies, else the matched claim's. The run-out strokes
-// between a changeover's lift and its new cart's landing are the new cart's to
-// absorb, as at every swap, whichever side of the cutover the PLC switched on
-// (TestPinChangeover_RunOutTicksPrepayTheIncomingCart).
-func holdPartFor(process *processes.Process, node *processes.Node, matched *processes.NodeClaim, claims *store.NodeClaimSet) string {
-	if part := incomingConsumePart(process, node, matched, claims); part != "" {
-		return part
-	}
-	return matched.PayloadCode
-}
-
-// incomingConsumePart is B v1's rule: with a changeover open, a node whose
-// incoming claim (the target style's) is consume, not a loader node, and runs
-// a part other than matched's holds under the incoming part. "" when the rule
-// does not apply. The incoming claim is read from the claim set the walk
-// already loaded for both styles: +0 statements per tick.
-func incomingConsumePart(process *processes.Process, node *processes.Node, matched *processes.NodeClaim, claims *store.NodeClaimSet) string {
-	if process == nil || process.TargetStyleID == nil || matched == nil {
-		return ""
-	}
-	in := claims.Resolve(process, node, store.TargetStyleFirst)
-	if in == nil || in.Role != protocol.ClaimRoleConsume || in.IsLoaderNode() || in.PayloadCode == matched.PayloadCode {
-		return ""
-	}
-	return in.PayloadCode
-}
-
 // holdIsOf reports whether a hold recorded as heldPart may take, or replay
 // onto, part. "" is a hold from before the part was recorded, which goes
 // anywhere, as every hold did then.
@@ -988,10 +913,11 @@ func (e *Engine) endUnheldEpisode(nodeID int64) {
 	}
 }
 
-// handleConsumeTick applies a delta to one active-pull consume node:
-// drain lineside first, then decrement node UOP. Caller is responsible
-// for the A/B inactive-pair check; this is invoked only on the active
-// side. The level that count feeds is evaluated by the demand
+// handleConsumeTick applies a stroke to one active-pull consume node: drain
+// lineside first, then charge the cart of the stroke's part standing there,
+// or log the stroke with no such cart (chargeOrLog, decision 55). Caller is
+// responsible for the A/B inactive-pair check; this is invoked only on the
+// active side. The level that count feeds is evaluated by the demand
 // reconciler's sweep, not here.
 //
 // Post-May-4 (commit 6d226d1) Edge is authoritative for the count of
@@ -1010,8 +936,9 @@ func (e *Engine) endUnheldEpisode(nodeID int64) {
 // values — is the whole point of bin-as-truth. The runtime cache
 // must mirror this; clamping at zero would force a permanent drift
 // against Core (which doesn't clamp) and noisy reconciliation logs
-// as the heal/clamp/heal/clamp loop ping-pongs forever.
-func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string, delta int,
+// as the heal/clamp/heal/clamp loop ping-pongs forever. The release
+// records what the cart reads, below 0 included.
+func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, tick tickScope,
 	unsaid unsaidCarrier) {
 	// The drain, the count write and the record are one change to the seat;
 	// the lineside report must see all of it or none (countMu).
@@ -1021,36 +948,13 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// before touching the node counter. The pile is parts the operator
 	// pulled to lineside at the release, which physically leave the station
 	// before the new bin is tapped, until the cutover strands it. Remainder
-	// flows to the bin counter.
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, delta)
-
-	// Hold-and-replay. The count follows the bin physically at the slot
-	// (active_bin_id). When a bin is bound we apply this tick PLUS any
-	// counts held while the slot was empty (pending_uop_delta), then clear
-	// the hold. When no bin is bound (the pickup→delivery gap), we hold the
-	// bin portion so it lands on the next bin instead of being lost or
-	// charged to a departed bin. The lineside drain is marked every tick
-	// regardless — parts leaving the rack are independent of which bin is
-	// at the slot.
-	//
-	// A carrier released as empty is not charged: what the pile did not take
-	// is held for the next carrier of the part (Lane H R3, DECISIONS D12; pin
-	// TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold).
-	// A count release leaves the flag clear and keeps charging until the
-	// lift (R1). Nor is a carrier recorded as a part the claim does not take,
-	// or a cart that cannot say that the open changeover found standing at a
-	// position whose part changes (unsaid): the stroke is held under hold for a
-	// carrier of its part (tickParts).
-	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, func(rt *processes.RuntimeState) tickParts {
-		_, carrierPart, _ := e.binAtNode(rt, claim)
-		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart,
-			notCharged: rt.ReleasedEmpty || drawsAnotherPart(rt, claim, hold, unsaid.partOf(rt))}
-	})
+	// flows to the cart, or to the ledger.
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.delta)
+	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, unsaid, binRemainder)
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
-	// bin delta for binAttributed — which binAtNode skips when no bin
-	// is bound (binID 0), so the held portion isn't double-emitted; it
-	// ships on the bound tick that replays it.
+	// bin delta for binAttributed — 0 when the stroke was logged, so nothing
+	// reaches Core's bin for a cart that did not take it.
 	e.emitConsumeTickDeltas(node, runtime, claim, drains, binAttributed)
 }
 
@@ -1085,7 +989,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		binPack = claim.UOPCapacity
 	}
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
-		return tickParts{tick: part, hold: part, carrier: part, pack: pack, produce: true, binPack: binPack}
+		return tickParts{tick: part, hold: part, carrier: part, pack: pack, binPack: binPack}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -1329,17 +1233,22 @@ func dropsQueued(q queuedDrops) {
 
 // handleABFallthrough is the safety-net path when no active-pull consume node
 // existed for a process tick but at least one inactive paired consume node
-// was visible. It decrements the first such fallback node so the count
-// flows to lineside storage instead of being dropped on the floor.
+// was visible. It draws the first such fallback node so the count flows to
+// lineside storage instead of being dropped on the floor: the pile first,
+// then the cart of the stroke's part there, or the ledger when none stands
+// there (chargeOrLog), as a consume stroke anywhere.
 //
 // Phase 1: emits BinUOPDelta(ab_fallthrough, ...) against the
 // inactive-paired node's bin and marks its drained active piles. The plan
 // (B5 fix) singles this path out — it's the case where neither
 // operator action nor active-pull state surfaces a flush trigger, so
 // the periodic flush is the only signal that captures the change.
-func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, hold string, delta int) {
+func (e *Engine) handleABFallthrough(tick tickScope, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) {
 	log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
-		processID, node.Name)
+		tick.processID, node.Name)
+	if claim == nil {
+		return
+	}
 	e.countMu.Lock() // one change to the seat, as in handleConsumeTick
 	defer e.countMu.Unlock()
 
@@ -1349,28 +1258,9 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 	// ActiveStyleID claim, which during a changeover can differ from the
 	// tick's style and mis-attribute the lineside drain and bin delta
 	// (R43-1).
-	var drains map[string]int
-	binRemainder := delta
-	if claim != nil {
-		drains, binRemainder = e.drainLinesideFirst(node.ID, claim, delta)
-	}
-	partsOf := func(rt *processes.RuntimeState) tickParts {
-		if claim == nil {
-			return tickParts{}
-		}
-		_, carrierPart, _ := e.binAtNode(rt, claim)
-		return tickParts{tick: claim.PayloadCode, hold: hold, carrier: carrierPart}
-	}
-
-	// Hold-and-replay, mirror of handleConsumeTick: decrement the bound
-	// bin (this tick + any held pending of its part), or hold when no bin is
-	// bound. The released-empty flag is the consume tick's rule (D12), not
-	// this safety net's.
-	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, partsOf)
-
-	if claim != nil {
-		e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
-	}
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.delta)
+	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, unsaidCarrier{}, binRemainder)
+	e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
 }
 
 // emitConsumeTickDeltas records the pile drains and the bin delta for one

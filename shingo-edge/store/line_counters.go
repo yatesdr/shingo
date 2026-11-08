@@ -45,18 +45,6 @@ func (db *DB) RepointLineCounter(id int64, label, tagName string, managed bool) 
 	return counters.RepointLineCounter(db.DB, id, label, tagName, managed)
 }
 
-func (db *DB) AnchorLineCounter(id int64, plcName, tagName string, count int64, at time.Time) error {
-	return counters.AnchorLineCounter(db.DB, id, plcName, tagName, count, at)
-}
-
-func (db *DB) ClearLineCounterAnchors(processID int64) error {
-	return counters.ClearLineCounterAnchors(db.DB, processID)
-}
-
-func (db *DB) RaiseLineCounterDeepest(id, deepest int64) error {
-	return counters.RaiseLineCounterDeepest(db.DB, id, deepest)
-}
-
 func (db *DB) SetLineCounterManaged(id int64, managed bool) error {
 	return counters.SetLineCounterManaged(db.DB, id, managed)
 }
@@ -79,19 +67,4 @@ func (db *DB) SetNodeLineCounter(nodeID int64, counterID *int64) error {
 		processes.BumpNodeGeneration()
 	}
 	return err
-}
-
-// The end of the line: a changeover's run-out (store/counters/run_out.go) and
-// the typed line depth (store/processes/line_depth.go).
-
-func (db *DB) RunOuts(processID int64, landings []counters.Landing) (map[int64]int64, error) {
-	return counters.RunOuts(db.DB, processID, landings)
-}
-
-func (db *DB) GetLineDepth(processID int64) (processes.LineDepth, error) {
-	return processes.GetLineDepth(db.DB, processID)
-}
-
-func (db *DB) SetLineDepth(processID int64, n *int64, by string, at time.Time) error {
-	return processes.SetLineDepth(db.DB, processID, n, by, at)
 }

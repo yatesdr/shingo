@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"shingoedge/store"
 	"shingoedge/store/orders"
@@ -85,7 +86,7 @@ func TestSimStatementName_RealEdgeStatements(t *testing.T) {
 			return err
 		}, "SELECT styles"},
 		{"DB.ReleaseCountWithCursor", func() error {
-			_, _, _, _, err := db.ReleaseCountWithCursor(1, nil, "node", "N", 1)
+			_, _, _, _, err := db.ReleaseCountWithCursor(1, nil, "node", "N", 1, time.Now())
 			return err
 		}, "UPDATE process_node_runtime_states"},
 		{"orders.KeptSpotRowsQuery", func() error {

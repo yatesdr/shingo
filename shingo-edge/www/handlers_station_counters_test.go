@@ -20,7 +20,7 @@ func stationDo(t *testing.T, method, path, body string) (int, string) {
 	r.Delete("/api/station-counters/{id}", h.apiDeleteStationCounter)
 	r.Put("/api/process-nodes/{id}/counted-at", h.apiSetCountedAt)
 	r.Get("/api/process-nodes/{id}/countable", h.apiStationCountable)
-	r.Get("/api/processes/{id}/end-of-line", h.apiEndOfLine)
+	r.Get("/api/processes/{id}/counting-slots", h.apiCountingSlots)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
 	return rec.Code, rec.Body.String()
@@ -62,19 +62,19 @@ func TestStationCounterRoutes(t *testing.T) {
 	}
 }
 
-// TestCountingRoutes_CarryTheSlotsAndTheStopLabelled: the Counting block reads
-// no route of its own. The end-of-line read carries the MES slots, each
-// labelled with where its reading came from (the watch: discovered), the
-// counted one marked; a process with none answers [] rather than null. The
+// TestCountingRoutes_CarryTheSlotsAndTheStopLabelled: the Counting block's
+// slots read carries the MES slots, each labelled with where its reading came
+// from (the watch: discovered), the counted one marked; a process with none
+// answers [] rather than null. The
 // station counters' read carries each card's strokes since its last click and
 // whether that is a stop.
 func TestCountingRoutes_CarryTheSlotsAndTheStopLabelled(t *testing.T) {
-	code, body := stationDo(t, http.MethodGet, "/api/processes/1/end-of-line", "")
+	code, body := stationDo(t, http.MethodGet, "/api/processes/1/counting-slots", "")
 	var eol struct {
 		Slots []map[string]any `json:"slots"`
 	}
 	if code != http.StatusOK || json.Unmarshal([]byte(body), &eol) != nil || len(eol.Slots) != 2 {
-		t.Fatalf("end of line 1: %d %s, want two slots", code, body)
+		t.Fatalf("counting slots 1: %d %s, want two slots", code, body)
 	}
 	for _, s := range eol.Slots {
 		if s["label"] != "discovered" {
@@ -87,8 +87,8 @@ func TestCountingRoutes_CarryTheSlotsAndTheStopLabelled(t *testing.T) {
 	if c := eol.Slots[1]; c["counted"] != false || c["part"] != false || c["rising"] != false {
 		t.Errorf("slot 2 = %v, want not counted, no part, not rising", c)
 	}
-	if code, body := stationDo(t, http.MethodGet, "/api/processes/2/end-of-line", ""); code != http.StatusOK || !strings.Contains(body, `"slots":[]`) {
-		t.Errorf("end of line 2: %d %s, want \"slots\":[]", code, body)
+	if code, body := stationDo(t, http.MethodGet, "/api/processes/2/counting-slots", ""); code != http.StatusOK || !strings.Contains(body, `"slots":[]`) {
+		t.Errorf("counting slots 2: %d %s, want \"slots\":[]", code, body)
 	}
 	code, body = stationDo(t, http.MethodGet, "/api/processes/1/station-counters", "")
 	var cards []map[string]any

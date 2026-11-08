@@ -846,48 +846,6 @@ func (c *w6Cell) waitFor(what string, budget time.Duration, ok func() bool) {
 	c.t.Fatalf("timed out waiting for: %s", what)
 }
 
-// inLine reads the load station's card as the process page does: the parts
-// in the line it measures since the last program change (nil: not
-// anchored), and logs it.
-func (c *w6Cell) inLine(label string) *int64 {
-	c.t.Helper()
-	cards, err := c.edge.Engine.ListStationCounters(c.processID)
-	mustNil(c.t, err, "the load station's card")
-	for _, card := range cards {
-		if card.ID != c.counter {
-			continue
-		}
-		st := c.plc.state()
-		if card.InLine == nil {
-			c.t.Logf("IN LINE %s: not anchored yet (the fake: %d in flight)", label, st.InFlight)
-		} else {
-			c.t.Logf("IN LINE %s: \u2248%d in the line since the program change at %v (the fake: %d in flight, L = %d)",
-				label, *card.InLine, card.AnchorAt, st.InFlight, w6Depth)
-		}
-		return card.InLine
-	}
-	c.t.Fatalf("%s: no card for the load station's counter %d", label, c.counter)
-	return nil
-}
-
-// runOut reads a changeover's run-out as its history row says it ("ran out
-// N after the cutover", the engine's EndOfLine on read): nil when none is
-// measured. It logs it.
-func (c *w6Cell) runOut(label string, changeoverID int64) *int64 {
-	c.t.Helper()
-	eol, err := c.edge.Engine.EndOfLine(c.processID)
-	mustNil(c.t, err, "the end of the line")
-	for _, ro := range eol.Measured {
-		if ro.ChangeoverID == changeoverID {
-			n := ro.Parts
-			c.t.Logf("RUN-OUT %s: changeover #%d ran out %d after the cutover (L = %d)", label, changeoverID, n, w6Depth)
-			return &n
-		}
-	}
-	c.t.Logf("RUN-OUT %s: changeover #%d: none measured", label, changeoverID)
-	return nil
-}
-
 // ── the carts ───────────────────────────────────────────────────────────────
 
 // noteCarts reads which cart each position holds and opens and closes the
@@ -929,8 +887,7 @@ func (c *w6Cell) cart(i int) *w6Tenure {
 }
 
 // truth is what was taken from a cart: the loads made under its own part
-// during its stay, and the loads of its part held for it before it landed
-// (share).
+// during its stay (share).
 func (c *w6Cell) truth(tn *w6Tenure) int64 {
 	loads, _ := c.plc.strokes()
 	return c.share(tn, loads, func(t *w6Tenure) (int64, int64) {
@@ -941,10 +898,10 @@ func (c *w6Cell) truth(tn *w6Tenure) int64 {
 	})
 }
 
-// counts are the counter's counts a cart is charged under B v1 (a count the
-// seat holds between carts goes to the next cart; the scenarios land carts
-// between cycles, so none is held between them): the counts made under its
-// own part during its stay, and those of its part held for it (share).
+// counts are the counter's counts a cart is charged: the counts made under its
+// own part during its stay (share). A count between carts is logged, never the
+// next cart's (decision 55); the scenarios land carts between cycles, so none
+// falls between them.
 func (c *w6Cell) counts(tn *w6Tenure) int64 {
 	_, counts := c.plc.strokes()
 	return c.share(tn, counts, func(t *w6Tenure) (int64, int64) {
@@ -955,40 +912,32 @@ func (c *w6Cell) counts(tn *w6Tenure) int64 {
 	})
 }
 
-// share is a cart's strokes: the position's carts in the order they stood,
-// over ids (the identity each stroke at the position was made under, its loads
-// or its counts) and each cart's span of them. A stroke is the standing cart's,
-// except a stroke under ALT's identity at a cart of RUN's part where the two
-// differ (a mirror position): a stroke never draws a cart of another part, so
-// it is held for the next cart of ALT's part there, which takes every such
-// stroke when it lands. A stroke of RUN's part at a cart of ALT's is the
-// run-out, the incoming cart's (B v1's prepay), and a part no style pins is
-// the standing cart's (its draw is the holds ledger's, read apart).
+// share is a cart's strokes (decision 55): over ids (the identity each stroke
+// at the position was made under, its loads or its counts) and the cart's span
+// of them, the strokes of the cart's own part (partOfStroke). Any other stroke
+// in its stay — ALT's part at a cart of RUN's where the two differ, RUN's at a
+// cart of ALT's — is logged, and no cart's; nothing a cart did not take carries
+// to the next one. A part no style pins is the standing cart's: its draw is the
+// ledger's until a person Charges it there (read apart: the cart check skips a
+// position with an open row).
 func (c *w6Cell) share(tn *w6Tenure, ids []int64, span func(*w6Tenure) (int64, int64)) int64 {
-	held := map[string]int64{}
-	for _, t := range c.tenures[tn.pos] {
-		in, out := span(t)
-		got := held[t.part]
-		held[t.part] = 0
-		for k := in; k < out && k < int64(len(ids)); k++ {
-			if p := heldFor(t.pos, t.part, ids[k]); p != "" {
-				held[p]++
-				continue
-			}
+	in, out := span(tn)
+	var got int64
+	for k := in; k < out && k < int64(len(ids)); k++ {
+		if p := partOfStroke(tn.pos, ids[k]); p == "" || p == tn.part {
 			got++
 		}
-		if t == tn {
-			return got
-		}
 	}
-	return 0
+	return got
 }
 
-// heldFor is the part a stroke made under identity v at position i is held for
-// while a cart of part stands there, "" when it is that cart's: ALT's part,
-// for an ALT stroke at a cart of RUN's part where the two differ.
-func heldFor(i int, part string, v int64) string {
-	if v == catALT && part == w6RunParts[i] && part != w6AltParts[i] {
+// partOfStroke is the part a stroke made under identity v draws at position
+// i: RUN's or ALT's part there, "" for a part no style pins.
+func partOfStroke(i int, v int64) string {
+	switch v {
+	case catRUN:
+		return w6RunParts[i]
+	case catALT:
 		return w6AltParts[i]
 	}
 	return ""
@@ -1097,9 +1046,34 @@ func (c *w6Cell) holds() w6Holds {
 	return h
 }
 
-// heldAt is what the holds ledger keeps of position i's draw, open or written
-// off: its own rows, and on the cell counter the whole-draw (node 0) rows.
-func (c *w6Cell) heldAt(h w6Holds, i int) int64 {
+// shares is the ledger's held and off-plan rows alone: a CATID's draw Shingo
+// could not place, without the strokes logged with no cart of their part (a
+// swap's gap, a cart of another part standing there).
+func (c *w6Cell) shares() w6Holds {
+	c.t.Helper()
+	all := c.holds()
+	var h w6Holds
+	for _, r := range all.rows {
+		if r.Reason == "no-cart" {
+			continue
+		}
+		h.rows = append(h.rows, r)
+		switch {
+		case r.ResolvedAt == nil:
+			h.open += r.Qty
+		case r.Resolution == "written-off":
+			h.writ += r.Qty
+		default:
+			h.charged += r.Qty
+		}
+	}
+	return h
+}
+
+// loggedAt is what the ledger keeps of position i's draw, open or written
+// off: its own rows (a held or off-plan share, a stroke with no cart of its
+// part), and on the cell counter the whole-draw (node 0) rows.
+func (c *w6Cell) loggedAt(h w6Holds, i int) int64 {
 	var n int64
 	for _, r := range h.rows {
 		if r.ResolvedAt != nil && r.Resolution != "written-off" {
@@ -1112,26 +1086,39 @@ func (c *w6Cell) heldAt(h w6Holds, i int) int64 {
 	return n
 }
 
-// w6Ledger is the run's three ledgers, read at one instant.
+// w6Ledger is the run's three ledgers, read at one instant: the carts' draws
+// and the ledger's logged strokes, against the loads.
 type w6Ledger struct {
-	carts, loads int64
-	holdsOpen    int64
-	snapByStyle  map[int64]int64
-	snapByCATID  map[string]int64
-	hourly       map[int64]int64
-	core         map[int64]int64
+	carts, logged, loads int64
+	// holdsOpen is the open held and off-plan shares (shares); noCart the
+	// open strokes logged with no cart of their part.
+	holdsOpen, noCart int64
+	snapByStyle       map[int64]int64
+	snapByCATID       map[string]int64
+	hourly            map[int64]int64
+	core              map[int64]int64
 }
 
 // ledger reads the three ledgers and fails on the first disagreement with the
-// line; checkCarts is false for a position-by-position check the scenario
-// makes itself (a hold moved draws between carts).
+// line: at each position, carts + logged + written off = loads (decision 55);
+// checkCarts is false for a position-by-position check the scenario makes
+// itself.
 func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 	c.t.Helper()
 	c.flush()
 	c.noteCarts()
 	st := c.plc.state()
 	h := c.holds()
-	l := w6Ledger{holdsOpen: h.open}
+	l := w6Ledger{}
+	for _, r := range h.rows {
+		switch {
+		case r.ResolvedAt != nil:
+		case r.Reason == "no-cart":
+			l.noCart += r.Qty
+		default:
+			l.holdsOpen += r.Qty
+		}
+	}
 	for i := range w6Pos {
 		var drawn int64
 		for _, tn := range c.tenures[i] {
@@ -1139,20 +1126,26 @@ func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 		}
 		rt, err := c.edge.DB.GetProcessNodeRuntime(c.nodes[i])
 		mustNil(c.t, err, "runtime")
-		held := c.heldAt(h, i)
-		got := drawn + rt.PendingUOPDelta + held
+		if rt.PendingUOPDelta != 0 {
+			c.dump(label)
+			c.t.Fatalf("%s: %s: the seat holds %d of %q; a consume seat holds nothing (decision 55)", label, w6Pos[i],
+				rt.PendingUOPDelta, rt.PendingUOPPayload)
+		}
+		logged := c.loggedAt(h, i)
+		got := drawn + logged
 		want := st.Loads
 		if !c.station[i] {
 			want = st.Loads - int64(st.InFlight)
 		}
 		if got != want {
 			c.dump(label)
-			c.t.Fatalf("%s: %s: carts drew %d, the seat holds %d and the holds ledger %d (= %d), the line counted %d at "+
-				"its counter (%d loads, %d in flight)", label, w6Pos[i], drawn, rt.PendingUOPDelta, held, got, want, st.Loads, st.InFlight)
+			c.t.Fatalf("%s: %s: carts drew %d and the ledger logged %d (= %d), the line counted %d at "+
+				"its counter (%d loads, %d in flight)", label, w6Pos[i], drawn, logged, got, want, st.Loads, st.InFlight)
 		}
-		l.carts += got
+		l.carts += drawn
+		l.logged += logged
 		l.loads += want
-		if !checkCarts || held != 0 {
+		if !checkCarts || logged != 0 {
 			continue
 		}
 		for _, tn := range c.tenures[i] {
@@ -1161,9 +1154,6 @@ func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 				want = c.counts(tn)
 			}
 			got := w6Full - c.count(tn)
-			if tn.open && rt.PendingUOPPayload == tn.part {
-				got += rt.PendingUOPDelta // held for this cart: its next stroke takes it
-			}
 			if got != want {
 				c.dump(label)
 				c.t.Fatalf("%s: cart %s at %s drew %d, want %d (%d loads of its part, %d counts of its part)",
@@ -1232,8 +1222,9 @@ func (c *w6Cell) record(label string, l *w6Ledger) {
 
 // line prints the ledger line.
 func (c *w6Cell) line(label string, l w6Ledger) {
-	c.t.Logf("LEDGER %s: carts Σ %d = loads Σ %d; holds open %d; record RUN %d / ALT %d; Core received %d+%d",
-		label, l.carts, l.loads, l.holdsOpen, l.snapByStyle[c.run], l.snapByStyle[c.alt], l.core[c.run], l.core[c.alt])
+	c.t.Logf("LEDGER %s: carts Σ %d + logged (written off included) %d = loads Σ %d; shares open %d, no cart %d; "+
+		"record RUN %d / ALT %d; Core received %d+%d", label, l.carts, l.logged, l.loads, l.holdsOpen, l.noCart,
+		l.snapByStyle[c.run], l.snapByStyle[c.alt], l.core[c.run], l.core[c.alt])
 }
 
 // wantRecord fails unless the record by style is run / alt.
@@ -1242,6 +1233,19 @@ func (c *w6Cell) wantRecord(label string, l w6Ledger, run, alt int64) {
 	if l.snapByStyle[c.run] != run || l.snapByStyle[c.alt] != alt {
 		c.t.Fatalf("%s: the record has RUN %d / ALT %d, want RUN %d / ALT %d (by CATID %v)", label,
 			l.snapByStyle[c.run], l.snapByStyle[c.alt], run, alt, l.snapByCATID)
+	}
+}
+
+// wantRecordRunOut fails unless the record holds RUN's counts to the landing
+// and past it the run-out at least (decision 55: the run-out is RUN's), every
+// other count ALT's: the counts the cell made before the monitor confirmed the
+// new part are RUN's too, by the CATID it still read.
+func (c *w6Cell) wantRecordRunOut(label string, l w6Ledger, run int64) {
+	c.t.Helper()
+	got := l.snapByStyle[c.run] + l.snapByStyle[c.alt]
+	if l.snapByStyle[c.run] < run+w6Depth || got != c.counted() {
+		c.t.Fatalf("%s: the record has RUN %d / ALT %d, want RUN at least %d (the landing's %d and the run-out's %d) and %d in all (by CATID %v)",
+			label, l.snapByStyle[c.run], l.snapByStyle[c.alt], run+w6Depth, run, w6Depth, c.counted(), l.snapByCATID)
 	}
 }
 

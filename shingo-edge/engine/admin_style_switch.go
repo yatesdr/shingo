@@ -116,6 +116,5 @@ func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int
 		}
 	}
 	e.openPostCutoverVerify(processID, id)
-	e.releaseHoldsOnLanding(processID)
 	return nil
 }

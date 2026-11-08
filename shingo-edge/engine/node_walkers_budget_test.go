@@ -127,7 +127,7 @@ func TestStrandedMonitor_StatementsPerPass(t *testing.T) {
 			bin := int64(1)
 			seedWalkerProcess(t, db, "BUDGETS", uniformConsumeNodes(size.nodes, &bin))
 			eng := testEngine(t, db)
-			sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+			sm := &strandedMonitor{eng: eng}
 
 			counter.Reset()
 			sm.tick(time.Now())
@@ -173,7 +173,7 @@ func TestStrandedMonitor_StatementsPerPass(t *testing.T) {
 				testutil.MustNoErr(t, err, "a carrier coming")
 			}
 			eng := testEngine(t, db)
-			sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+			sm := &strandedMonitor{eng: eng}
 
 			counter.Reset()
 			sm.tick(time.Now())
@@ -259,6 +259,34 @@ func TestCounterDelta_StatementsPerTickLanding(t *testing.T) {
 						"landing cost is being measured on a subset", suffix, rt.RemainingUOPCached)
 				}
 			}
+		})
+	}
+}
+
+// TestCounterDelta_StatementsPerTickLogged pins the whole tick for a process
+// where no node has a cart: the flat 4-statement walk plus, per node, 1 bucket
+// drain + 1 log upsert (decision 55's "no cart" row, which replaced the seat
+// hold's write one for one: the same 6, 12 and 28 at the characterisation
+// commit, where the second statement was the hold).
+func TestCounterDelta_StatementsPerTickLogged(t *testing.T) {
+	t.Parallel()
+	for _, size := range []walkerBudget{
+		{nodes: 1, want: 6},
+		{nodes: 4, want: 12},
+		{nodes: 12, want: 28},
+	} {
+		t.Run(fmt.Sprintf("%dnodes", size.nodes), func(t *testing.T) {
+			t.Parallel()
+			db, counter := testEngineDBCounting(t)
+			f := seedWalkerProcess(t, db, "BUDGETL", uniformConsumeNodes(size.nodes, nil))
+			eng := testEngine(t, db)
+
+			counter.Reset()
+			eng.handleCounterDelta(CounterDeltaEvent{
+				ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 3,
+			})
+			checkBudget(t, size, counter.Count(),
+				"the flat 4-statement walk plus, per node with no cart: 1 bucket drain + 1 log upsert")
 		})
 	}
 }

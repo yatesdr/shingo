@@ -4,7 +4,11 @@ package store
 // store/processes/. This file preserves the *store.DB method surface
 // so external callers do not need to change.
 
-import "shingoedge/store/processes"
+import (
+	"time"
+
+	"shingoedge/store/processes"
+)
 
 // EnsureProcessNodeRuntime returns the runtime row for a process_node,
 // inserting a fresh row when none exists yet.
@@ -160,10 +164,10 @@ func (db *DB) UpdateProcessNodeUOP(processNodeID int64, remainingUOP int) error 
 }
 
 // SetProcessNodeReleaseCount writes the outgoing carrier's count at its
-// release and marks it released-empty when the count is 0. See
-// processes.SetRuntimeReleaseCount.
-func (db *DB) SetProcessNodeReleaseCount(processNodeID int64, remainingUOP int) error {
-	return processes.SetRuntimeReleaseCount(db.DB, processNodeID, remainingUOP)
+// release, marks it released-empty when the count is 0 or below, and records
+// the release (at). See processes.SetRuntimeReleaseCount.
+func (db *DB) SetProcessNodeReleaseCount(processNodeID int64, remainingUOP int, at time.Time) error {
+	return processes.SetRuntimeReleaseCount(db.DB, processNodeID, remainingUOP, at)
 }
 
 // AddPendingUOPDelta seeds a hold of no known part. NO PRODUCTION CALLER:

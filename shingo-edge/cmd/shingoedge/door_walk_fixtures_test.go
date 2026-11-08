@@ -191,11 +191,6 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/counter": {want: 400, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/counter", map[string]any{"tag_name": "MES_Walk.Prod_Counter_02"}
 		})},
-		// The typed line depth: the walk's press has no counter PLC, so no
-		// tile carries the end-of-line sentence the depth would feed.
-		"PUT /api/processes/{id}/line-depth": {want: 200, req: on(func(w *walk) (string, any) {
-			return pr(w) + "/line-depth", map[string]any{"line_depth": 12}
-		})},
 		"PUT /api/processes/{id}/active-style": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/active-style", map[string]any{"style_id": w.activeStyle()}
 		})},

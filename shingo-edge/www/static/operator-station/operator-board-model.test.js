@@ -192,7 +192,7 @@ function bt(id, name, o) {
     if (o.bin !== undefined) t.bin_state = o.bin;
     if (o.refusals) t.supply_refusals = o.refusals;
     if (o.partialFrom) t.buffer_partial = { node: o.partialFrom };
-    if (o.alarm) t.stranded_alarm = o.alarm;
+    if (o.alarm) t.ask_pending = o.alarm;
     if (o.askPending) t.ask_pending = o.askPending;
     return t;
 }

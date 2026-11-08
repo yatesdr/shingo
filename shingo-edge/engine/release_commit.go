@@ -306,8 +306,8 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	//
 	// A release declaring 0 also marks the bin released-empty in the same
 	// statement: it is not charged afterwards, and ticks past the pile are
-	// held for the next bin of the part (Lane H R3, DECISIONS D12; pin
-	// TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold).
+	// logged (Lane H R3, DECISIONS D12, decision 55; pin
+	// TestPinR3_ReleasedEmptyIsNotChargedItsStrokesAreLogged).
 	// A count release keeps charging the bin until the lift (R1).
 	//
 	// NOT COVERED: PULL PARTS LINESIDE that captures the whole bin. That

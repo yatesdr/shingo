@@ -49,12 +49,15 @@ func (e *Engine) attributeTick(processID, pointStyleID int64) plc.TickIdentity {
 //	v in A's set (a CATID A shares included)     → today, A
 //	v in T's set (alone or among others)         → target, T
 //	A's set not proven                           → today, the point's style
-//	v in R's set: the run-out after a landing    → today, the point's style
+//	v in R's set: the run-out after a landing    → today, R
 //	v in exactly one other style's set, S        → off-plan, S
 //	v in no style's set, or several              → held, the point's style
 //
-// The run-out is today's, so the incoming cart prepays it after the cutover as
-// it did before (TestTick_RunOutAfterAnEarlyCutoverPrepaysTheIncomingCart).
+// The run-out is today's, under the style it is the part of (decision 55):
+// it charges a cart of R's part where one still stands — a common position,
+// an outgoing cart not yet lifted — and is logged where none does; the
+// incoming cart lands at its full count and is never pre-paid
+// (TestTick_RunOutAfterAnEarlyCutoverIsTheOutgoingPart).
 func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observed map[string]struct{}, runningOut int64) plc.TickIdentity {
 	id := plc.TickIdentity{StyleID: pointStyleID, CATID: v, Kind: plc.TickToday}
 	var active, target *styleCATIDEntry
@@ -84,6 +87,7 @@ func attributeCATID(v string, pointStyleID int64, sets []styleCATIDEntry, observ
 	n := 0
 	for i := range sets {
 		if sets[i].ID == runningOut && catidSetHas(sets[i].Set, v) {
+			id.StyleID = runningOut
 			return id
 		}
 		if catidSetHas(sets[i].Set, v) {

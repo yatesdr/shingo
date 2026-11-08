@@ -93,45 +93,20 @@ func (h *Handlers) apiDeleteStationCounter(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// apiEndOfLine is the setup page's end-of-line block: whether the process
-// counts at the end of its line, the measured run-outs, the typed depth and
-// the sentence.
-func (h *Handlers) apiEndOfLine(w http.ResponseWriter, r *http.Request) {
+// apiCountingSlots is the setup page's Counting block's MES slots, as the slot
+// watch last read them: {"slots": [...]}.
+func (h *Handlers) apiCountingSlots(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	eol, err := h.orchestration.EndOfLine(processID)
+	slots, err := h.orchestration.CountingSlots(processID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, eol)
-}
-
-// apiSetLineDepth types the process's line depth ({"line_depth": n}, null
-// clears it), by the signed-in user.
-func (h *Handlers) apiSetLineDepth(w http.ResponseWriter, r *http.Request) {
-	processID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid process id")
-		return
-	}
-	var req struct {
-		LineDepth *int64 `json:"line_depth"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	by, _ := h.sessions.getUser(r)
-	if err := h.engine.ProcessService().SetLineDepth(processID, req.LineDepth, by); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	h.requestBackup("line-depth")
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSON(w, map[string]any{"slots": slots})
 }
 
 // apiStationCountable is the station card's dry run on one position:

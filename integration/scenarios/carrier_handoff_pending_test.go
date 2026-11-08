@@ -60,14 +60,14 @@ func (w *twoBooks) shipEdgeDeltas() {
 	}
 }
 
-// TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin — R4.
+// TestScenario_H_R4_ALateLiftsTicksAreLoggedTheNextBinLandsFresh — R4.
 // Count release at N (no bump, D11 (i)); k ticks, flushed; the robot lifts at
 // T; m ticks counted after T, flushed while the Edge has not heard; then the
 // pickup reaches the Edge. Old bin: N − k in both books (the m windows are
 // refused at Core as after_lift, and the Edge moves them to the pile, then the
-// hold, with the bin's part). The next bin of the part lands at M; one tick:
-// M − m − 1 in both books.
-func TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin(t *testing.T) {
+// ledger: no cart of the part stands there, decision 55). The next bin of the
+// part lands at M; one tick: M − 1 in both books, the m still logged.
+func TestScenario_H_R4_ALateLiftsTicksAreLoggedTheNextBinLandsFresh(t *testing.T) {
 	t.Parallel()
 	w := newTwoBooks(t, "SCN-H-R4", 100)
 	acc := edgeuop.New(w.edge.DB, handoffStation, w.edge.DB, w.edge.DB)
@@ -128,8 +128,16 @@ func TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin(t *testing
 		OrderUUID: w.order.EdgeUUID, BinID: w.binID, Location: nodeName,
 		PickedUpAt: liftedAt, Epoch: liftEpoch,
 	})
-	if rt := w.edgeRuntime(); rt.ActiveBinID != nil || rt.PendingUOPDelta != m {
-		t.Fatalf("Edge after the pickup: bound %v held %d, want nothing bound and %d held", rt.ActiveBinID, rt.PendingUOPDelta, m)
+	if rt := w.edgeRuntime(); rt.ActiveBinID != nil || rt.PendingUOPDelta != 0 {
+		t.Fatalf("Edge after the pickup: bound %v held %d, want nothing bound and nothing held", rt.ActiveBinID, rt.PendingUOPDelta)
+	}
+	var logged int64
+	if err := w.edge.DB.QueryRow(`SELECT COALESCE(SUM(qty), 0) FROM catid_holds WHERE process_node_id = ? AND reason = 'no-cart'
+		AND resolved_at IS NULL`, w.nodeID).Scan(&logged); err != nil {
+		t.Fatalf("the ledger: %v", err)
+	}
+	if logged != m {
+		t.Errorf("logged after the pickup = %d, want the %d counted after the lift (decision 55: no cart of the part)", logged, m)
 	}
 
 	// The next bin of the part lands at M; one tick.
@@ -153,14 +161,14 @@ func TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin(t *testing
 	acc.Flush()
 	w.shipEdgeDeltas()
 
-	if got := w.edgeRuntime().RemainingUOPCached; got != bigM-m-1 {
-		t.Errorf("Edge next bin = %d, want %d", got, bigM-m-1)
+	if got := w.edgeRuntime().RemainingUOPCached; got != bigM-1 {
+		t.Errorf("Edge next bin = %d, want %d: it lands fresh and takes its own tick", got, bigM-1)
 	}
 	var coreNext int
 	if err := w.core.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, next.ID).Scan(&coreNext); err != nil {
 		t.Fatalf("read next: %v", err)
 	}
-	if coreNext != bigM-m-1 {
-		t.Errorf("Core next bin = %d, want %d", coreNext, bigM-m-1)
+	if coreNext != bigM-1 {
+		t.Errorf("Core next bin = %d, want %d", coreNext, bigM-1)
 	}
 }

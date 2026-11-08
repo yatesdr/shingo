@@ -25,7 +25,7 @@ func TestCatid4x2_S7_Restart(t *testing.T) {
 	c.cycle(3)
 	c.force(catRUN)
 	c.cycle(4)
-	held := c.holds()
+	held := c.shares()
 	if held.open == 0 {
 		t.Fatalf("the unmapped spell held nothing: %+v", held.rows)
 	}
@@ -66,10 +66,10 @@ func TestCatid4x2_S7_Restart(t *testing.T) {
 	c.line("S7", l)
 }
 
-// sameHolds fails unless the holds ledger is as it was.
+// sameHolds fails unless the ledger's held and off-plan shares are as they were.
 func (c *w6Cell) sameHolds(label string, was w6Holds) {
 	c.t.Helper()
-	now := c.holds()
+	now := c.shares()
 	if len(now.rows) != len(was.rows) || now.open != was.open {
 		c.t.Fatalf("%s: holds %+v, want them as they were: %+v", label, now.rows, was.rows)
 	}

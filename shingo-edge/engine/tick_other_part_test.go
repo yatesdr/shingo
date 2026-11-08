@@ -1,7 +1,6 @@
 // tick_other_part_test.go — a consume stroke never draws a cart of another
 // part: a bound carrier recorded as a part the tick's claim does not take takes
-// no tick; the stroke is held at the seat for a cart of its part, and the
-// stranded notice names the seat.
+// no tick; the stroke is logged at the position (decision 55).
 package engine
 
 import (
@@ -56,14 +55,11 @@ func otherPartRig(t *testing.T, onRun bool, part string, known bool, altAllowed 
 	return eng, pid, run, alt, nodeID
 }
 
-// wantSeat fails unless the seat's cart reads count with hold of holdPart.
-func wantSeat(t *testing.T, eng *Engine, nodeID int64, what string, count int, hold int64, holdPart string) {
+// wantSeat fails unless the seat's cart reads count, nothing is held, and the
+// ledger has logged at the position.
+func wantSeat(t *testing.T, eng *Engine, pid, nodeID int64, what string, count int, logged int64) {
 	t.Helper()
-	rt := runtimeOf(t, eng, nodeID)
-	if rt.RemainingUOPCached != count || rt.PendingUOPDelta != hold || (hold != 0 && rt.PendingUOPPayload != holdPart) {
-		t.Errorf("%s: cart %d, hold %d of %q; want %d, hold %d of %q", what, rt.RemainingUOPCached, rt.PendingUOPDelta,
-			rt.PendingUOPPayload, count, hold, holdPart)
-	}
+	wantSeat55(t, eng, pid, nodeID, what, seat55{cart: count, logged: logged})
 }
 
 // deltasSince is the bin deltas the sink recorded after mark.
@@ -82,32 +78,33 @@ func deltaMark(eng *Engine) int {
 }
 
 // TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart: an ALT stroke at a cart
-// recorded MIRROR-L (by its landing, or by the flip that left it) is held at the
-// seat under MIRROR-R and the cart and Core's record of it are untouched; a
-// cart that cannot say is charged as the claim's part, as before; a cart of an
-// allowed alternate is the part. The hold replays onto a MIRROR-R cart that
-// lands, or onto the standing cart once a person names it MIRROR-R, at the next
-// stroke, stamped MIRROR-R. Before, every ALT stroke was charged to the
-// MIRROR-L cart, stamped MIRROR-L, and Core accepted it: the wrong cart.
+// recorded MIRROR-L (by its landing, or by the flip that left it) is logged at
+// the position and the cart and Core's record of it are untouched; a cart that
+// cannot say is charged as the claim's part, as before; a cart of an allowed
+// alternate is the part. A MIRROR-R cart that lands, or the standing cart once
+// a person names it MIRROR-R, takes the next stroke from its own count,
+// stamped MIRROR-R; the logged strokes stay in the ledger (decision 55).
+// Before decision 38, every ALT stroke was charged to the MIRROR-L cart,
+// stamped MIRROR-L, and Core accepted it: the wrong cart.
 func TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart(t *testing.T) {
 	t.Parallel()
-	t.Run("a cart known MIRROR-L from its landing: held under MIRROR-R", func(t *testing.T) {
+	t.Run("a cart known MIRROR-L from its landing: logged", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "MIRROR-L", true, nil)
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 30, 1, "MIRROR-R")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 30, 1)
 		if d := deltasSince(eng, mark); len(d) != 0 {
 			t.Errorf("deltas %+v, want none: the MIRROR-L cart is not drawn", d)
 		}
 	})
-	t.Run("a cart recorded MIRROR-L by the flip: held under MIRROR-R", func(t *testing.T) {
+	t.Run("a cart recorded MIRROR-L by the flip: logged", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := otherPartRig(t, true, "", false, nil)
 		testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &alt), "the switch to ALT")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 30, 1, "MIRROR-R")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 30, 1)
 		if d := deltasSince(eng, mark); len(d) != 0 {
 			t.Errorf("deltas %+v, want none: the cart the flip left is MIRROR-L", d)
 		}
@@ -117,7 +114,7 @@ func TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart(t *testing.T) {
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "", false, nil)
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 29, 0, "")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 29, 0)
 		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
 			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R", d)
 		}
@@ -127,39 +124,39 @@ func TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart(t *testing.T) {
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "MIRROR-R2", true, []string{"MIRROR-R", "MIRROR-R2"})
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 29, 0, "")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 29, 0)
 		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R2" {
 			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R2", d)
 		}
 	})
-	t.Run("a MIRROR-R landing: the hold replays onto the new cart", func(t *testing.T) {
+	t.Run("a MIRROR-R landing: the new cart takes its own strokes", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "MIRROR-L", true, nil)
 		tickConsume(eng, pid, alt, 1)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after two ALT strokes", 30, 2, "MIRROR-R")
+		wantSeat(t, eng, pid, nodeID, "after two ALT strokes", 30, 2)
 		testutil.MustNoErr(t, eng.carrierLeft(nodeID, otherPartNode), "the MIRROR-L cart leaves")
 		eng.HandleBinLanded(landing(otherPartNode, 9911, 1, 40, "MIRROR-R", 7))
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "the MIRROR-R cart after one stroke", 37, 0, "")
-		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9911 || d[0].Delta != -3 || d[0].PayloadCode != "MIRROR-R" {
-			t.Errorf("deltas %+v, want -3 on 9911 stamped MIRROR-R (the 2 held and the 1)", d)
+		wantSeat(t, eng, pid, nodeID, "the MIRROR-R cart after one stroke", 39, 2)
+		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9911 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
+			t.Errorf("deltas %+v, want -1 on 9911 stamped MIRROR-R", d)
 		}
 	})
-	t.Run("a person names the standing cart MIRROR-R: the next stroke replays the hold onto it", func(t *testing.T) {
+	t.Run("a person names the standing cart MIRROR-R: the next stroke draws it", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "MIRROR-L", true, nil)
 		tickConsume(eng, pid, alt, 1)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after two ALT strokes", 30, 2, "MIRROR-R")
+		wantSeat(t, eng, pid, nodeID, "after two ALT strokes", 30, 2)
 		eng.HandleUOPAdjustment(protocol.UOPAdjustment{CoreNodeName: otherPartNode, BinID: 9901, NewRemaining: 30,
 			Actor: "admin", PayloadCode: "MIRROR-R", PayloadKnown: true})
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "the named cart after one stroke", 27, 0, "")
-		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -3 || d[0].PayloadCode != "MIRROR-R" {
-			t.Errorf("deltas %+v, want -3 on 9901 stamped MIRROR-R (the 2 held and the 1)", d)
+		wantSeat(t, eng, pid, nodeID, "the named cart after one stroke", 29, 2)
+		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
+			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R", d)
 		}
 	})
 }
@@ -191,26 +188,26 @@ func unsaidUnderAChangeover(t *testing.T, bound string) (eng *Engine, pid, run, 
 	return eng, pid, run, alt, nodeID
 }
 
-// TestPinChangeover_ACartThatCannotSayHoldsTheIncomingStrokes: with a
+// TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes: with a
 // changeover open to ALT, the cart standing at a position whose part changes
 // (MIRROR-L to MIRROR-R) that cannot say its part, bound before the
-// changeover started, is the departing part: an ALT stroke is held at the seat
-// under MIRROR-R, the cart's count unchanged and nothing sent for Core to
-// refuse, until a MIRROR-R cart lands and takes it; RUN's stroke draws the cart
-// as before. A cart bound since the start came with the changeover and is
+// changeover started, is the departing part (decision 52's reading): an ALT
+// stroke is logged at the position (decision 55), the cart's count unchanged
+// and nothing sent for Core to refuse; a MIRROR-R cart that lands takes its
+// own strokes from its full count; RUN's stroke draws the cart as before. A cart bound since the start came with the changeover and is
 // charged as ALT's part (as the flip reads it, TestFlip_RecordsTheCarrierItLeaves);
 // with no changeover open the cart is charged as the claim's part, as before.
 // Before, an ALT stroke under the open changeover was charged to the cart that
 // cannot say, stamped MIRROR-R, and Core, which knows the cart as MIRROR-L,
 // refused the delta.
-func TestPinChangeover_ACartThatCannotSayHoldsTheIncomingStrokes(t *testing.T) {
+func TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes(t *testing.T) {
 	t.Parallel()
-	t.Run("bound before the start: an ALT stroke is held under MIRROR-R for the incoming cart", func(t *testing.T) {
+	t.Run("bound before the start: an ALT stroke is logged", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "before")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 30, 1, "MIRROR-R")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 30, 1)
 		if d := deltasSince(eng, mark); len(d) != 0 {
 			t.Errorf("deltas %+v, want none: the cart is MIRROR-L, and Core would refuse a MIRROR-R draw on it", d)
 		}
@@ -218,9 +215,9 @@ func TestPinChangeover_ACartThatCannotSayHoldsTheIncomingStrokes(t *testing.T) {
 		eng.HandleBinLanded(landing(otherPartNode, 9911, 1, 40, "MIRROR-R", 7))
 		mark = deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "the MIRROR-R cart after one stroke", 38, 0, "")
-		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9911 || d[0].Delta != -2 || d[0].PayloadCode != "MIRROR-R" {
-			t.Errorf("deltas %+v, want -2 on 9911 stamped MIRROR-R (the 1 held and the 1)", d)
+		wantSeat(t, eng, pid, nodeID, "the MIRROR-R cart after one stroke", 39, 1)
+		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9911 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
+			t.Errorf("deltas %+v, want -1 on 9911 stamped MIRROR-R", d)
 		}
 	})
 	t.Run("bound before the start: RUN's stroke draws the cart", func(t *testing.T) {
@@ -228,7 +225,7 @@ func TestPinChangeover_ACartThatCannotSayHoldsTheIncomingStrokes(t *testing.T) {
 		eng, pid, run, _, nodeID := unsaidUnderAChangeover(t, "before")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, run, 1)
-		wantSeat(t, eng, nodeID, "after a RUN stroke", 29, 0, "")
+		wantSeat(t, eng, pid, nodeID, "after a RUN stroke", 29, 0)
 		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-L" {
 			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-L", d)
 		}
@@ -238,7 +235,7 @@ func TestPinChangeover_ACartThatCannotSayHoldsTheIncomingStrokes(t *testing.T) {
 		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "since")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 29, 0, "")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 29, 0)
 		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
 			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R", d)
 		}
@@ -248,7 +245,7 @@ func TestPinChangeover_ACartThatCannotSayHoldsTheIncomingStrokes(t *testing.T) {
 		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, nodeID, "after an ALT stroke", 29, 0, "")
+		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 29, 0)
 		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
 			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R", d)
 		}
@@ -286,43 +283,5 @@ func TestPreview_TheRefusalSaysWhatTheCartIsRecordedAs(t *testing.T) {
 				t.Errorf("rows = %+v, want the MIRROR-L cart recorded by %s, the wrong part", pv.Rows, tc.source)
 			}
 		})
-	}
-}
-
-// TestStrandedMonitor_NamesAHoldBesideACartOfAnotherPart: a hold rising beside
-// a cart the flip recorded as MIRROR-L, under ALT's claim of MIRROR-R, is
-// watched as an unbound seat's is, and the notice says where, what the cart is
-// recorded as and by what, what the style draws, and how many are held. Before,
-// a bound seat was never watched.
-func TestStrandedMonitor_NamesAHoldBesideACartOfAnotherPart(t *testing.T) {
-	t.Parallel()
-	eng, pid, _, alt, _ := otherPartRig(t, true, "", false, nil)
-	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &alt), "the switch to ALT")
-	var fired []UOPStrandedEvent
-	eng.Events.SubscribeTypes(func(evt Event) {
-		if a, ok := evt.Payload.(UOPStrandedEvent); ok {
-			fired = append(fired, a)
-		}
-	}, EventUOPStranded)
-	sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
-	base := time.Now()
-	for i := 0; i < strandedWindow+1; i++ {
-		tickConsume(eng, pid, alt, 3)
-		sm.tick(base.Add(time.Duration(i) * time.Minute))
-	}
-	const want = "Strokes held at OP-P4 — the cart there is recorded as MIRROR-L (from the switch off RUN); ALT draws " +
-		"MIRROR-R here. 12 held for the next MIRROR-R cart: land one, or name this cart with Load Payload."
-	if got := eng.StrandedAlarmDetail(otherPartNode); got != want {
-		t.Errorf("notice = %q\nwant      %q", got, want)
-	}
-	if len(fired) != 1 || fired[0].PendingDelta != 12 || fired[0].Detail != want {
-		t.Errorf("events = %+v, want one with the notice and 12 held", fired)
-	}
-	testutil.MustNoErr(t, eng.carrierLeft(mustNodeIDByName(t, eng, otherPartNode), otherPartNode), "the MIRROR-L cart leaves")
-	eng.HandleBinLanded(landing(otherPartNode, 9912, 1, 40, "MIRROR-R", 9))
-	tickConsume(eng, pid, alt, 1)
-	sm.tick(base.Add(time.Duration(strandedWindow+1) * time.Minute))
-	if got := eng.StrandedAlarmDetail(otherPartNode); got != "" {
-		t.Errorf("after the MIRROR-R cart landed and took the hold, notice = %q, want none", got)
 	}
 }

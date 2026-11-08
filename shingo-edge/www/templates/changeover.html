@@ -43,7 +43,6 @@
                     <th>Completed</th>
                     <th>Called By</th>
                     <th>Completed By</th>
-                    <th>Run-out</th>
                 </tr>
             </thead>
             <tbody>
@@ -56,7 +55,6 @@
                     <td>{{formatTimePtr .CompletedAt}}</td>
                     <td>{{if .CalledBy}}{{.CalledBy}}{{else}}--{{end}}</td>
                     <td title="{{.TriggeredBy}}">{{triggeredByLabel .TriggeredBy}}</td>
-                    <td>{{if $.RunOuts}}{{with index $.RunOuts .ID}}ran out {{.}} after the cutover{{else}}--{{end}}{{else}}--{{end}}</td>
                 </tr>
                 {{end}}
             </tbody>

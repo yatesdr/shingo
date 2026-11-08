@@ -334,9 +334,9 @@ func TestRegression_AbortedEvacPickupClearsActiveBinByIdentity(t *testing.T) {
 		t.Errorf("post-tick RemainingUOPCached = %d, want 0 (pickup zeroed the departed bin's count; the tick is held in pending, not charged)",
 			after.RemainingUOPCached)
 	}
-	if after.PendingUOPDelta != 5 {
-		t.Errorf("post-tick PendingUOPDelta = %d, want 5 (held for the next bin to replay)",
-			after.PendingUOPDelta)
+	if s := readSeat55(t, eng, processID, nodeID); after.PendingUOPDelta != 0 || s.logged != 5 {
+		t.Errorf("post-tick hold %d, logged %d; want no hold and 5 logged (no cart stands there, decision 55)",
+			after.PendingUOPDelta, s.logged)
 	}
 }
 

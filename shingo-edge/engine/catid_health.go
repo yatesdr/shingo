@@ -117,7 +117,7 @@ func (e *Engine) CatidHealth(processID int64) ([]CatidHealthItem, error) {
 	}
 	items = append(items, e.oneWayPairItems(processID)...)
 	items = append(items, e.stationHealthItems(processID)...)
-	items = append(items, heldItems(holds, now)...)
+	items = append(items, e.heldItems(processID, holds, now)...)
 	items = markUnmappedHeld(items, holds)
 	items = append(items, sharedItems(sets)...)
 	if flag, ok := e.PostCutoverFlag(processID); ok {
@@ -444,11 +444,22 @@ func (e *Engine) oneWayPairItems(processID int64) []CatidHealthItem {
 	return items
 }
 
-// heldItems: each open hold, red, with its quantity and its age. Charge and
-// Write off act on its id.
-func heldItems(holds []store.CatidHold, now time.Time) []CatidHealthItem {
+// heldItems: each open row of the ledger. A held or off-plan row is red, with
+// its quantity and its age; a "no cart" row (decision 55) is a count, not an
+// alarm — info, in the words a person reads it by (noCartItem). Charge and
+// Write off act on its id either way. The node names are read once, only when
+// a "no cart" row is open.
+func (e *Engine) heldItems(processID int64, holds []store.CatidHold, now time.Time) []CatidHealthItem {
 	items := make([]CatidHealthItem, 0, len(holds))
+	var names map[int64]string
 	for _, h := range holds {
+		if h.Reason == holdReasonNoCart {
+			if names == nil {
+				names = e.nodeNames(processID)
+			}
+			items = append(items, noCartItem(h, names[h.ProcessNodeID], ReportingLocation(e.cfg.Timezone)))
+			continue
+		}
 		where := "the whole draw"
 		if h.ProcessNodeID != 0 {
 			where = fmt.Sprintf("node %d's share of %s", h.ProcessNodeID, h.PayloadCode)
@@ -463,6 +474,50 @@ func heldItems(holds []store.CatidHold, now time.Time) []CatidHealthItem {
 				"process_node_id": h.ProcessNodeID, "payload_code": h.PayloadCode, "reason": h.Reason}})
 	}
 	return items
+}
+
+// noCartItem is a "no cart" row as the strip says it: "N strokes of P at NODE
+// with no P cart — last cart off: bin B at D, HH:MM", or "— no cart released
+// there yet" when none was, the times in the plant's zone. Severity info: a
+// line that ran off-system for a shift is a row, not an alarm.
+func noCartItem(h store.CatidHold, node string, loc *time.Location) CatidHealthItem {
+	if node == "" {
+		node = fmt.Sprintf("node %d", h.ProcessNodeID)
+	}
+	noun := "strokes"
+	if h.Qty == 1 {
+		noun = "stroke"
+	}
+	last := "no cart released there yet"
+	if h.LastBinID != 0 && h.LastLeftAt != nil {
+		last = fmt.Sprintf("last cart off: bin %d at %d, %s", h.LastBinID, h.LastDeclared, h.LastLeftAt.In(loc).Format("15:04"))
+	}
+	catid := "no CATID"
+	if h.CATID != "" {
+		catid = "CATID " + h.CATID
+	}
+	t := h.FirstTickAt
+	return CatidHealthItem{Kind: catidKindHeld, Severity: CatidHealthInfo,
+		Headline: fmt.Sprintf("%d %s of %s at %s with no %s cart — %s", h.Qty, noun, h.PayloadCode, node, h.PayloadCode, last),
+		Detail: fmt.Sprintf("logged from %s to %s, %d strokes (%s); Charge it to a cart of %s, or write it off",
+			h.FirstTickAt.In(loc).Format("2006-01-02 15:04"), h.LastTickAt.In(loc).Format("15:04"), h.Strokes, catid, h.PayloadCode),
+		Since: &t,
+		Data: map[string]any{"hold_id": h.ID, "catid": h.CATID, "qty": h.Qty, "strokes": h.Strokes,
+			"process_node_id": h.ProcessNodeID, "payload_code": h.PayloadCode, "reason": h.Reason,
+			"last_bin_id": h.LastBinID, "last_declared": h.LastDeclared}}
+}
+
+// nodeNames is a process's positions by id, {} on a failed read.
+func (e *Engine) nodeNames(processID int64) map[int64]string {
+	out := map[int64]string{}
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return out
+	}
+	for _, n := range nodes {
+		out[n.ID] = n.Name
+	}
+	return out
 }
 
 // markUnmappedHeld turns an unmapped CATID red while counts are held on it.

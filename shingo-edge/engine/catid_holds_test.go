@@ -11,7 +11,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingoedge/domain"
 	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/counters"
@@ -219,143 +218,6 @@ func TestHold_NeverWritesTheSeatHold(t *testing.T) {
 	}
 }
 
-// TestHold_ReleasesOnALandingOnItsStyle: a held draw is charged when a
-// changeover lands the process on the style whose set holds its CATID, with
-// no other changeover started since it opened — once, under that style.
-func TestHold_ReleasesOnALandingOnItsStyle(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, _, _ := holdRig(t, "1003")
-	strokeAt(eng, pid, a, 2)
-	c := pinnedStyle(t, eng, pid, "STYLE-C", "1003")
-	cNode := cartNode(t, eng, pid, c, "C-NODE", "PART-C", "PART-C", 9801)
-	before := hourlyUnder(t, eng, pid, a) + hourlyUnder(t, eng, pid, c)
-	hs := openHolds(t, eng, pid)
-	if len(hs) != 1 {
-		t.Fatalf("holds = %+v, want one: 1003 ran no style when it was counted", hs)
-	}
-
-	landOn(t, eng, pid, a, c)
-	if got := runtimeOf(t, eng, cNode).RemainingUOPCached; got != 38 {
-		t.Errorf("C's cart after the landing = %d, want 38: the held draw charged under C", got)
-	}
-	h, err := eng.db.GetCatidHold(hs[0].ID)
-	testutil.MustNoErr(t, err, "hold")
-	if h.ResolvedAt == nil || h.Resolution != holdReleased || h.ResolvedBy != "auto" {
-		t.Errorf("hold = %+v, want released by auto", h)
-	}
-	if after := hourlyUnder(t, eng, pid, a) + hourlyUnder(t, eng, pid, c); after != before {
-		t.Errorf("hourly %d -> %d: the release counted the hour again", before, after)
-	}
-	if _, ok := healthKinds(t, eng, pid)[catidKindHeld]; ok {
-		t.Error("the held item outlived its release")
-	}
-}
-
-// TestHold_ChangeoverStartedSinceHoldWaitsForAPerson: a changeover started
-// after the hold opened means the plant moved on; the later landing on the
-// CATID's style does not charge it.
-func TestHold_ChangeoverStartedSinceHoldWaitsForAPerson(t *testing.T) {
-	t.Parallel()
-	eng, pid, a, b, _ := holdRig(t, "1003")
-	strokeAt(eng, pid, a, 2)
-	landOn(t, eng, pid, a, b)
-	c := pinnedStyle(t, eng, pid, "STYLE-C", "1003")
-	cNode := cartNode(t, eng, pid, c, "C-NODE", "PART-C", "PART-C", 9803)
-	landOn(t, eng, pid, b, c)
-	if got := runtimeOf(t, eng, cNode).RemainingUOPCached; got != 40 {
-		t.Errorf("C's cart = %d, want 40: the hold waits for a person", got)
-	}
-	if hs := openHolds(t, eng, pid); len(hs) != 1 {
-		t.Errorf("holds = %+v, want the one still open", hs)
-	}
-}
-
-// TestHold_ReleasesOnTheLandingOfItsPart: a share of B's part held at a
-// position, after a forced cutover onto B went ahead of the cart it waited for
-// (the MIRROR-L cart still standing, so the cutover's release left it open):
-// a cart of MIRROR-R landing there with no changeover started since the hold
-// opened, the one that landed B excepted, is charged the share; a cart of
-// MIRROR-L landing there leaves it open; a changeover started since makes it
-// wait for a person. Before, nothing released a hold at a cart's landing.
-//
-// A cancelled changeover is not counted (decision 47): one cancelled since the
-// landing, and the wrong tap cancelled before the right one (tap → cancel →
-// tap → complete), both release. A share bigger than the cart does not land
-// (decision 46): it stays open for a person and the cart is unchanged.
-func TestHold_ReleasesOnTheLandingOfItsPart(t *testing.T) {
-	t.Parallel()
-	for _, row := range []struct {
-		name       string
-		lands      string
-		qty        int64
-		tapCancel  bool   // a changeover onto B started and cancelled before the one that lands
-		later      string // a changeover started after the landing: "open" or "cancelled"
-		released   bool
-		wantOnCart int
-	}{
-		{name: "a cart of its part", lands: "MIRROR-R", released: true, wantOnCart: 37},
-		{name: "a cart of another part", lands: "MIRROR-L", wantOnCart: 40},
-		{name: "a changeover started since", lands: "MIRROR-R", later: "open", wantOnCart: 40},
-		{name: "a changeover cancelled since", lands: "MIRROR-R", later: "cancelled", released: true, wantOnCart: 37},
-		{name: "tap, cancel, tap", lands: "MIRROR-R", tapCancel: true, released: true, wantOnCart: 37},
-		{name: "a share bigger than the cart", lands: "MIRROR-R", qty: 56, wantOnCart: 40},
-	} {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
-			eng, pid, a, b, _ := holdRig(t, "1002")
-			node := mirrorNode(t, eng, pid, a, b, "N-MIRROR", "MIRROR-L", "MIRROR-R", 9751)
-			qty := row.qty
-			if qty == 0 {
-				qty = 3
-			}
-			_, err := eng.db.HoldCatidDraw(pid, "1002", node, "MIRROR-R", holdReasonOffPlan, qty, time.Now().Add(-time.Minute))
-			testutil.MustNoErr(t, err, "B's share held at N-MIRROR a minute ago")
-			if row.tapCancel {
-				wrong, err := eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
-				testutil.MustNoErr(t, err, "the first tap")
-				testutil.MustNoErr(t, eng.db.UpdateProcessChangeoverState(wrong, domain.ChangeoverCancelled), "cancelled")
-				testutil.MustNoErr(t, eng.db.SetTargetStyle(pid, nil), "the cancel clears the target")
-			}
-			_, err = eng.changeoverService.Create(pid, &a, b, "test", "", nil, nil, nil, nil)
-			testutil.MustNoErr(t, err, "the changeover onto B, after the hold opened")
-			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "the cutover onto B, forced, the MIRROR-L cart still there")
-			open := openHolds(t, eng, pid)
-			if len(open) != 1 {
-				t.Fatalf("after the cutover: open holds %+v, want the share still open (no MIRROR-R cart stood there)", open)
-			}
-			if row.later != "" {
-				later, err := eng.changeoverService.Create(pid, &b, a, "test", "", nil, nil, nil, nil)
-				testutil.MustNoErr(t, err, "another changeover")
-				if row.later == "cancelled" {
-					testutil.MustNoErr(t, eng.db.UpdateProcessChangeoverState(later, domain.ChangeoverCancelled), "cancelled")
-					testutil.MustNoErr(t, eng.db.SetTargetStyle(pid, nil), "the cancel clears the target")
-				}
-			}
-			testutil.MustNoErr(t, eng.carrierLeft(node, "N-MIRROR"), "the MIRROR-L cart lifted")
-			eng.HandleBinLanded(protocol.BinLanded{BinID: 9752, CoreNodeName: "N-MIRROR", Count: 40, Epoch: 1,
-				PayloadCode: row.lands, PayloadKnown: true, PlacedSeq: 1 << 40})
-			rt := runtimeOf(t, eng, node)
-			if rt.ActiveBinID == nil || *rt.ActiveBinID != 9752 {
-				t.Fatalf("the landing bound %v, want bin 9752", rt.ActiveBinID)
-			}
-			if rt.RemainingUOPCached != row.wantOnCart {
-				t.Errorf("the %s cart = %d, want %d", row.lands, rt.RemainingUOPCached, row.wantOnCart)
-			}
-			hs := openHolds(t, eng, pid)
-			if row.released != (len(hs) == 0) {
-				t.Errorf("open holds after the landing %+v, released %t wanted", hs, row.released)
-			}
-			if row.released {
-				h, err := eng.db.GetCatidHold(open[0].ID)
-				testutil.MustNoErr(t, err, "the hold")
-				if h == nil || h.Resolution != holdReleased || h.ResolvedBy != "auto" {
-					t.Errorf("hold = %+v, want released by auto", h)
-				}
-			}
-		})
-	}
-}
-
 // TestHold_ChargeLatchesOnce: a person's Charge charges under the CATID's one
 // style, once; a second Charge or a Write off after it is refused and moves
 // nothing.
@@ -514,30 +376,6 @@ func TestHold_AResolvedHoldTakesNoMoreStrokes(t *testing.T) {
 	}
 }
 
-// TestHold_LandingReleaseNeverDrawsAWrongPartCart: a held draw on B's part, B's
-// positions holding a cart of B's part and a cart of another. "Mark as running"
-// B lands it: the cart of B's part is charged, the other is not, and its share
-// stays open for a person. Before, the landing release charged both carts.
-func TestHold_LandingReleaseNeverDrawsAWrongPartCart(t *testing.T) {
-	t.Parallel()
-	eng, pid, _, b, _ := holdRig(t, "1001")
-	same := cartNode(t, eng, pid, b, "B-SAME", "PART-B", "PART-B", 9741)
-	other := cartNode(t, eng, pid, b, "B-OTHER", "PART-B", "PART-A", 9742)
-	_, err := eng.db.HoldCatidDraw(pid, "1002", 0, "", holdReasonHeld, 1, time.Now().Add(-time.Minute))
-	testutil.MustNoErr(t, err, "a held draw on 1002")
-	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &b), "mark B as running")
-	if got := runtimeOf(t, eng, same).RemainingUOPCached; got != 39 {
-		t.Errorf("B's cart of B's part = %d, want 39", got)
-	}
-	if got := runtimeOf(t, eng, other).RemainingUOPCached; got != 40 {
-		t.Errorf("B's cart of another part = %d, want 40: a release never draws it", got)
-	}
-	hs := openHolds(t, eng, pid)
-	if len(hs) != 1 || hs[0].ProcessNodeID != other || hs[0].Qty != 1 || hs[0].PayloadCode != "PART-B" {
-		t.Errorf("open holds = %+v, want the other cart's share of 1 left for a person", hs)
-	}
-}
-
 // TestHold_ChargeWalkNeverDrawsAWrongPartCart: the release's walk reads each
 // cart itself: a cart of another part bound since the preview read it is not
 // charged, and its share stays open. Before, the walk charged whatever cart
@@ -645,11 +483,11 @@ func (s *strokeOnConsume) Consumed(ev uop.TickEvent) error {
 	return s.fakeDeltaSink.Consumed(ev)
 }
 
-// TestHold_ReleaseChargesWhatItLatched: two holds released on one landing; a
-// stroke grows the second while the first is charged, after the release read
-// it. The second is charged the quantity its latch resolved. Before, it was
-// charged the quantity read, and the stroke's draw was resolved and never
-// charged.
+// TestHold_ReleaseChargesWhatItLatched: two holds a person Charges in turn; a
+// stroke grows the second while the first is charged, after the Charge's
+// preview read it. The second is charged the quantity its latch resolved, and
+// the stroke's own draw opens a row of its own. (Pinned on the landing release
+// until decision 55 deleted it.)
 func TestHold_ReleaseChargesWhatItLatched(t *testing.T) {
 	t.Parallel()
 	eng, pid, _, _, _ := holdRig(t, "1003")
@@ -665,9 +503,9 @@ func TestHold_ReleaseChargesWhatItLatched(t *testing.T) {
 		_, err := eng.db.HoldCatidDraw(pid, "1004", 0, "", holdReasonHeld, 2, time.Now())
 		testutil.MustNoErr(t, err, "a stroke on 1004")
 	}})
-	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &c), "mark C as running")
 	var resolved int64
 	for _, h := range holds {
+		testutil.MustNoErr(t, eng.ChargeCatidHold(h.ID, "engineer"), "a person's Charge")
 		got, err := eng.db.GetCatidHold(h.ID)
 		testutil.MustNoErr(t, err, "hold")
 		if got.ResolvedAt == nil {

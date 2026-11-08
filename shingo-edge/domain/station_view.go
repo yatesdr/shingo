@@ -160,14 +160,6 @@ type StationNodeView struct {
 	// their release didn't take and can click release again to retry.
 	// Empty when no recent release error is pending.
 	LastReleaseError string `json:"last_release_error,omitempty"`
-	// StrandedAlarm is the parked-ticks alarm sentence for this node: consume
-	// ticks piling up in pending_uop_delta while no bin is bound at the node (the
-	// carrier standing there was never bound to it). The node grid renders it as
-	// a chip on the node's tile and the loader board as its card's note,
-	// verbatim —
-	// "CARRIER-XXXX staged Nh at <node>, not bound — Record Count on the bin tab."
-	// Empty when the node has no active stranding alarm.
-	StrandedAlarm string `json:"stranded_alarm,omitempty"`
 	// KeepStagedNote is the keep-staged keeper's sentence for this line: that
 	// it is paused and REQUEST resumes it, or why it cannot keep its spot.
 	// Rendered as a chip on the node card, verbatim. Empty when there is
@@ -181,14 +173,9 @@ type StationNodeView struct {
 	AskPending string `json:"ask_pending,omitempty"`
 	// CountWaits is the sentence for a sequential position the line has moved
 	// onto before its bin arrived: "The line is on <node>; its parts wait for
-	// <node>'s bin." The count is held (pending_uop_delta) and replays when the
-	// bin binds. Empty otherwise.
+	// <node>'s bin lands." Its strokes are logged (decision 55: no cart of the
+	// part stands there). Empty otherwise.
 	CountWaits string `json:"count_waits,omitempty"`
-	// EndOfLine is the end-of-line sentence at a consume position the cell's
-	// production counter counts, when the process has an N for it (measured
-	// at a changeover or typed): the cart is charged when the part is made,
-	// about N parts after it leaves the cart. Informational; nothing reads it.
-	EndOfLine string `json:"end_of_line,omitempty"`
 	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
 	// position: non-empty when some producing claim names this node as its
 	// containment destination, and carries that claim's OutboundDestination —

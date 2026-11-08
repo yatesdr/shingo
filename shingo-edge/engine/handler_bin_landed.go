@@ -30,10 +30,6 @@ import (
 // the part that order delivered there (orderedPart, source delivery): the
 // order knows what it brought.
 //
-// A landing then releases the holds waiting for it at its position
-// (releaseHoldsOnArrival): the shares held for a cart of the part that
-// landed, under the guards the cutover's release applies.
-//
 // Pi cost per landing at a seat: the node read, the runtime row's ensure, the
 // bind, the identity write and the placement settle (settleCellPlacement's
 // reads), the same reads the Bound arm and the delivered bind paid for the
@@ -54,11 +50,9 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 	} else if part := e.orderedPart(l); part != "" {
 		carrier, src = domain.KnownCarrier(domain.LinesidePayloadCode(part)), domain.CarrierFromDelivery
 	}
-	if e.landCarrier(node, processes.LandingBind{
+	e.landCarrier(node, processes.LandingBind{
 		BinID: l.BinID, Epoch: l.Epoch, Count: l.Count, PlacedSeq: &seq,
-	}, carrier, src, "landing "+l.OrderUUID) {
-		e.releaseHoldsOnArrival(node)
-	}
+	}, carrier, src, "landing "+l.OrderUUID)
 }
 
 // orderedPart is the part the landing's order delivered to the node it

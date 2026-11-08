@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
+	"shingoedge/store/internal/helpers"
 )
 
 // InventoryDeltaNet returns the running net this station has flushed for one
@@ -38,25 +41,31 @@ func (db *DB) InventoryDeltaNet(scopeKind, scopeKey string, epoch int64) (int64,
 //
 // count is the declared count, or nil for the seat's own: remaining_uop_cached
 // as it stands when the statement runs, so the count and the fence are one
-// instant too (decision 44a). Either is floored at 0; released_empty follows
-// the value written (a release declaring 0 is not charged afterwards, R3), and
-// written is that value.
+// instant too (decision 44a). Neither is floored: a cart drawn below 0 declares
+// what it reads (decision 55), and written is that value. released_empty
+// follows it (a release declaring 0 or below takes no stroke afterwards: the
+// strokes are logged, R3). The same statement records the release at the seat
+// (released_bin_id / released_count / released_at, at the engine's clock): a
+// stroke logged with no cart of its part names it as the last cart off.
 //
 // One statement: the cursor rides the count write's RETURNING as two
 // primary-key subqueries, so a release that fences costs no statement beyond
 // the count write. found is false when the node has no runtime row (nothing
 // written, no fence).
-func (db *DB) ReleaseCountWithCursor(processNodeID int64, count *int, scopeKind, scopeKey string, epoch int64) (written int, seq, net int64, found bool, err error) {
+func (db *DB) ReleaseCountWithCursor(processNodeID int64, count *int, scopeKind, scopeKey string, epoch int64, at time.Time) (written int, seq, net int64, found bool, err error) {
 	err = db.QueryRow(`UPDATE process_node_runtime_states SET
-		remaining_uop_cached=MAX(COALESCE(?, remaining_uop_cached), 0),
-		released_empty=(MAX(COALESCE(?, remaining_uop_cached), 0) = 0),
+		remaining_uop_cached=COALESCE(?, remaining_uop_cached),
+		released_empty=(COALESCE(?, remaining_uop_cached) <= 0),
+		released_bin_id=active_bin_id,
+		released_count=COALESCE(?, remaining_uop_cached),
+		released_at=?,
 		updated_at=datetime('now')
 		WHERE process_node_id=?
 		RETURNING
 			remaining_uop_cached,
 			COALESCE((SELECT next_seq FROM inventory_delta_seq WHERE scope_kind = ? AND scope_key = ? AND epoch = ?), 0),
 			COALESCE((SELECT net FROM inventory_delta_seq WHERE scope_kind = ? AND scope_key = ? AND epoch = ?), 0)`,
-		count, count, processNodeID,
+		count, count, count, at.UTC().Format(helpers.TimeLayout), processNodeID,
 		scopeKind, scopeKey, epoch, scopeKind, scopeKey, epoch).Scan(&written, &seq, &net)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, 0, false, nil

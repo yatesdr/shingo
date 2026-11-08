@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -23,7 +24,7 @@ func TestReleaseCountWithCursor_WritesTheCountAndReadsTheCursorInOneStatement(t 
 	testutil.MustNoErr(t, err, "ensure runtime")
 
 	seven := 7
-	written, seq, net, found, err := db.ReleaseCountWithCursor(nodeID, &seven, protocol.InvDeltaScopeBin, "4401", 3)
+	written, seq, net, found, err := db.ReleaseCountWithCursor(nodeID, &seven, protocol.InvDeltaScopeBin, "4401", 3, time.Now())
 	testutil.MustNoErr(t, err, "release count, empty scope")
 	if !found || seq != 0 || net != 0 || written != 7 {
 		t.Fatalf("empty scope: found=%t seq=%d net=%d written=%d, want true 0 0 7", found, seq, net, written)
@@ -41,7 +42,7 @@ func TestReleaseCountWithCursor_WritesTheCountAndReadsTheCursorInOneStatement(t 
 	_, _, err = db.AllocateInventoryDeltaSeq(protocol.InvDeltaScopeBin, "4401", 4, -1) // another generation
 	testutil.MustNoErr(t, err, "allocate in another generation")
 	zero := 0
-	written, seq, net, found, err = db.ReleaseCountWithCursor(nodeID, &zero, protocol.InvDeltaScopeBin, "4401", 3)
+	written, seq, net, found, err = db.ReleaseCountWithCursor(nodeID, &zero, protocol.InvDeltaScopeBin, "4401", 3, time.Now())
 	testutil.MustNoErr(t, err, "release count, flushed scope")
 	if !found || seq != 2 || net != -10 || written != 0 {
 		t.Fatalf("flushed scope: found=%t seq=%d net=%d written=%d, want true 2 -10 0", found, seq, net, written)
@@ -53,15 +54,17 @@ func TestReleaseCountWithCursor_WritesTheCountAndReadsTheCursorInOneStatement(t 
 	}
 
 	five := 5
-	if _, _, _, found, err := db.ReleaseCountWithCursor(nodeID+999, &five, protocol.InvDeltaScopeBin, "4401", 3); err != nil || found {
+	if _, _, _, found, err := db.ReleaseCountWithCursor(nodeID+999, &five, protocol.InvDeltaScopeBin, "4401", 3, time.Now()); err != nil || found {
 		t.Fatalf("a node with no runtime row: found=%t err=%v, want false nil", found, err)
 	}
 }
 
 // TestReleaseCountWithCursor_NoCountDeclaresTheSeatsOwn: with no declared
 // count the statement writes the seat's count as it stands (decision 44a), so
-// the count and the fence are read in the one instant; floored at 0, with
-// released_empty following the value written.
+// the count and the fence are read in the one instant; a cart drawn below 0
+// declares what it reads (decision 55: no floor), with released_empty
+// following the value written (0 or below); and the release is recorded at the
+// seat, the bin, the count and when, for a stroke logged with no cart after it.
 func TestReleaseCountWithCursor_NoCountDeclaresTheSeatsOwn(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -75,15 +78,22 @@ func TestReleaseCountWithCursor_NoCountDeclaresTheSeatsOwn(t *testing.T) {
 	for _, c := range []struct {
 		seat, want int
 		empty      bool
-	}{{seat: 13, want: 13}, {seat: 0, want: 0, empty: true}, {seat: -2, want: 0, empty: true}} {
+	}{{seat: 13, want: 13}, {seat: 0, want: 0, empty: true}, {seat: -2, want: -2, empty: true}} {
 		testutil.MustNoErr(t, db.UpdateProcessNodeUOP(nodeID, c.seat), "seat the count")
-		written, _, _, found, err := db.ReleaseCountWithCursor(nodeID, nil, protocol.InvDeltaScopeBin, "4402", 1)
+		written, _, _, found, err := db.ReleaseCountWithCursor(nodeID, nil, protocol.InvDeltaScopeBin, "4402", 1, time.Now())
 		testutil.MustNoErr(t, err, "release with the seat's count")
 		rt, err := db.GetProcessNodeRuntime(nodeID)
 		testutil.MustNoErr(t, err, "read runtime")
 		if !found || written != c.want || rt.RemainingUOPCached != c.want || rt.ReleasedEmpty != c.empty {
 			t.Errorf("seat %d: found=%t written=%d seat after=%d released_empty=%t, want true %d %d %t",
 				c.seat, found, written, rt.RemainingUOPCached, rt.ReleasedEmpty, c.want, c.want, c.empty)
+		}
+		var count int
+		var at string
+		testutil.MustNoErr(t, db.QueryRow(`SELECT released_count, COALESCE(released_at, '') FROM process_node_runtime_states
+			WHERE process_node_id = ?`, nodeID).Scan(&count, &at), "the release's record")
+		if count != c.want || at == "" {
+			t.Errorf("seat %d: the release recorded %d at %q, want %d and a time", c.seat, count, at, c.want)
 		}
 	}
 }

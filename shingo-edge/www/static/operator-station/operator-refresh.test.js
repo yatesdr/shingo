@@ -449,8 +449,6 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
         ['order-cancelled', { order_id: 9, reason: 'x' }, 0, 'another station\'s Core-cancelled order'],
         ['order-faulted', { order_id: 501, reason: 'x' }, 1, 'a faulted order on one of its tiles'],
         ['order-faulted', { order_id: 9, reason: 'x' }, 0, 'another station\'s faulted order'],
-        ['uop-stranded-alarm', { core_node_name: 'PLN_2', detail: 'counts wait' }, 1, 'a stranded count at one of its tiles'],
-        ['uop-stranded-alarm', { core_node_name: 'PLN_9', detail: 'counts wait' }, 0, 'a stranded count elsewhere'],
         ['bins', { nodes: ['PLN_1'], groups: [] }, 1, 'bins at one of its tiles'],
         ['bins', { nodes: ['OTHER'], groups: [] }, 0, 'bins elsewhere'],
         ['material-refresh', { action: 'nudge' }, 1, 'the nudge after a write (every station)'],
@@ -513,9 +511,6 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     eq(toastTexts(), ['retrieve: RDS error 60009: Cannot find path to [SMN_011] (#501)×'],
         'order-failed with an RDS envelope: the code and message, not the raw JSON');
     await settle();
-    fire('uop-stranded-alarm', { core_node_name: 'PLN_9', detail: 'counts wait at PLN_9', needs_action: true });
-    await advance(600);
-    eq(toastTexts(), [], 'a stranded count at another station\'s node: no toast here');
 }
 {
     // A loader board: a bins event naming a buffer spot it draws, or its

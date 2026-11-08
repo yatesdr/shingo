@@ -200,7 +200,6 @@ func TestCatidMonitor_RunsOnTheEnginesClock(t *testing.T) {
 		{"partItems: the strip sums the parts since the confirm", partsSinceTheConfirm},
 		{"openPostCutoverVerify: the window closes in engine time", verifyWindowInEngineTime},
 		{"runSlotWatch: the watch's minute is the engine's", slotWatchMinute},
-		{"identityChangedAt: the anchor's confirm is on the poll's clock", anchorOnThePollsClock},
 	} {
 		t.Run(row.site, func(t *testing.T) { row.run(t, newClockRig(t)) })
 	}
@@ -345,16 +344,6 @@ func slotWatchMinute(t *testing.T, r *clockRig) {
 		}
 	}
 	t.Error("no pass of the slot watch in 5 minutes of engine time")
-}
-
-// anchorOnThePollsClock: the poll stamps a program change's reset with the
-// engine's clock and anchors when the monitor's confirm falls within 10 s of
-// it; the confirm is on that clock.
-func anchorOnThePollsClock(t *testing.T, r *clockRig) {
-	r.confirm(1002)
-	if d := clock.Now().Sub(r.eng.identityChangedAt(r.pid)); d < 0 || d > 10*time.Second {
-		t.Errorf("the change confirmed %v before the engine's now, want within the anchor's 10 s", d)
-	}
 }
 
 // wallClock is a read of the wall clock or a ticker on it.

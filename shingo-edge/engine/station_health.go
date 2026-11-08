@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shingo/protocol/clock"
+	"shingoedge/store/counters"
 	"shingoedge/store/processes"
 )
 
@@ -31,8 +32,7 @@ const (
 	stationKindPaired     = "station_paired"
 )
 
-// stationTrack is one station counter's running account. Its deepest run-out
-// is also stored, when it grows (deepestOf reads the deeper of the two).
+// stationTrack is one station counter's running account, this boot's.
 type stationTrack struct {
 	processID int64
 	// clicks since the last production stroke, and the production strokes
@@ -214,7 +214,7 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 				Data:     map[string]any{"counter_id": lc.ID, "node": p.node, "style": p.style}})
 		}
 		s := e.stationHealth.snapshot(lc.ID, processID)
-		deepest := deepestOf(lc, s)
+		deepest := s.deepest
 		if !changeoverOpen && activeBound && stationStopped(s.prodSinceClick, deepest) {
 			items = append(items, CatidHealthItem{Kind: stationKindStopped, Severity: CatidHealthAmber,
 				Headline: fmt.Sprintf("Station counter %s stopped while the line produces", name),
@@ -235,6 +235,39 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 		}
 	}
 	return items
+}
+
+// StationCounterCard is a station counter as its card reads it: the row; the
+// median clicks per production stroke over the intervals read so far (nil
+// before the first); and the production strokes since its last click, Stopped
+// past the deepest run-out this boot has seen (the strip's measure,
+// stationStopped).
+type StationCounterCard struct {
+	counters.LineCounter
+	Ratio             *float64 `json:"ratio"`
+	RatioIntervals    int      `json:"ratio_intervals"`
+	StrokesSinceClick int64    `json:"strokes_since_click"`
+	Stopped           bool     `json:"stopped"`
+}
+
+// ListStationCounters returns a process's station counters as their cards
+// read them ([] for none).
+func (e *Engine) ListStationCounters(processID int64) ([]StationCounterCard, error) {
+	list, err := e.db.ListLineCounters(processID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StationCounterCard, 0, len(list))
+	for _, lc := range list {
+		s := e.stationHealth.snapshot(lc.ID, processID)
+		c := StationCounterCard{LineCounter: lc, RatioIntervals: len(s.ratios), StrokesSinceClick: s.prodSinceClick,
+			Stopped: stationStopped(s.prodSinceClick, s.deepest)}
+		if m, ok := median(s.ratios); ok {
+			c.Ratio = &m
+		}
+		out = append(out, c)
+	}
+	return out, nil
 }
 
 // stationStopped: more production strokes since the station's last click than

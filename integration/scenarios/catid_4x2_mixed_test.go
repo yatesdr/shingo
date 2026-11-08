@@ -32,7 +32,7 @@ func TestCatid4x2_S6_MixedCell(t *testing.T) {
 	loads, counts = c.plc.state().Loads-loads, c.counted()-counts
 	c.force(catALT)
 	c.cycle(3)
-	h := c.holds()
+	h := c.shares()
 	for _, r := range h.rows {
 		i, want := c.posOf(r.ProcessNodeID), counts
 		switch {

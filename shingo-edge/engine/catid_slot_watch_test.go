@@ -253,14 +253,14 @@ func TestCounting_EndOfLineCarriesTheWatchedSlots(t *testing.T) {
 	cm.watchSlots(t0.Add(time.Minute))
 
 	type read struct {
-		eol *EndOfLine
-		err error
+		slots []MESSlot
+		err   error
 	}
 	got := make(chan read, 1)
 	cm.mu.Lock()
 	go func() {
-		eol, err := eng.EndOfLine(pid)
-		got <- read{eol, err}
+		slots, err := eng.CountingSlots(pid)
+		got <- read{slots, err}
 	}()
 	var r read
 	select {
@@ -270,8 +270,8 @@ func TestCounting_EndOfLineCarriesTheWatchedSlots(t *testing.T) {
 		cm.mu.Unlock()
 		t.Fatal("the setup page's read waited on the monitor's lock")
 	}
-	testutil.MustNoErr(t, r.err, "end of line")
-	s := r.eol.Slots
+	testutil.MustNoErr(t, r.err, "the Counting block's slots")
+	s := r.slots
 	if len(s) != mesSlots {
 		t.Fatalf("slots = %+v, want the struct's %d", s, mesSlots)
 	}
