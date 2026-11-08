@@ -42,9 +42,11 @@
 #             seats could not say what they are (seeded with no part; the line stands paused from
 #             boot until the shape, so those carts are still there); RUN draws; the FORCED
 #             program change to 1002; nothing moves and the item offers the changeover, as in S4.
-#             Untapped, ALT strokes and the holds grow; `tap` starts the changeover, the person sends
-#             the hand-placed carts back (RELEASE: nobody named them, so the sim operator waits),
-#             and it completes and lands the holds (no Charge). It prints what the
+#             Untapped, ALT strokes and the holds grow; `tap` starts the changeover (the person
+#             cancels RUN's swap staged at a mirror position first, as START's refusal says), the
+#             person sends the hand-placed carts back (RELEASE: nobody named them, so the sim
+#             operator waits), and it completes and lands each hold that fits its cart (no Charge;
+#             a share bigger than its cart stays for a person, and no cart goes below 0). It prints what the
 #             seats record (part, known, source, held at the seat), the mirror holds, Core's mirror
 #             carts and the deltas Core refused as the wrong part
 #
@@ -54,6 +56,13 @@
 # and its pages up, and ends on the ledger (what each number is: see ledger):
 #
 #   carts Σ C + held H + written off W = loads Σ E; holds open N; record RUN a / ALT b; Core received a+b of the Edge's T
+#   lost at the lift L
+#
+# The loss is its own line, never a term of the sum (a sum that included it would be exact by
+# construction): Core's stale drops of the cell's parts on a cart released in the window, and the
+# draws a release's count undid (a released row that raised a cart's count). The final ledger
+# asserts it 0, and every partial release fenced on both sides (the Edge's and Core's release
+# lines).
 #
 # A window opens at rest and the final ledger is read at rest: loading paused, the line drained,
 # then Core and the Edge's hourly store caught up (a window's opening then lets the line refill).
@@ -531,6 +540,7 @@ mark_read() {
   W_SEAT="$(seat_holds)"
   W_LOADS="$(field "$lj" loads)"; W_FLIGHT="$(field "$lj" in_flight)"
   W_DATES="$(days_around "$(sim_date)")"
+  W_SINCE=$(date +%s)
   # shellcheck disable=SC2086
   W_EDGE="$(edge_total $W_DATES)"
   IFS='|' read -r W_LEDGER W_PILES W_PARTS < <(sql "SELECT (SELECT COALESCE(max(id), 0) FROM bin_uop_ledger),
@@ -639,11 +649,45 @@ ledger_read() {
   L_TRANSIT="$(sql "SELECT COALESCE(sum(COALESCE(l.before_uop, l.after_uop) - l.after_uop), 0)
     FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
     WHERE l.op = 'bin_uop_delta' AND l.id > $W_LEDGER AND n.name = '_TRANSIT' AND l.payload_code IN ($PARTS_SQL)")"
+  L_LOST="$(lost_at_the_lift)"
+  read -r L_EDGE_FENCED L_EDGE_UNFENCED L_CORE_FENCED L_CORE_UNFENCED < <(release_lines)
   L_REFUSED="$(refused "$W_LEDGER")"
   L_HOLDS="$(holds_list)"
   L_SEAT="$(seat_holds)"
   L_CORE="$(record "${W_PARTS:-0}")"
 }
+
+# lost_at_the_lift: the draws the cell's carts lost at a release in the window, as Core's ledger
+# records them: its stale drops (stale_epoch_dropped, the dropped delta in the row's metadata) of
+# the cell's parts on a bin released in the window, and a partial release at a position that
+# raised the cart's count above the one Core had (the draws the release's count undid; an empty
+# release of a cart drawn below 0 sets it to 0, an overpack, and is not a loss). Never a term of
+# the sum.
+lost_at_the_lift() {
+  sql "SELECT COALESCE((SELECT -sum((l.metadata->>'delta')::int) FROM bin_uop_ledger l
+      WHERE l.op = 'stale_epoch_dropped' AND l.id > $W_LEDGER AND l.payload_code IN ($PARTS_SQL)
+        AND EXISTS (SELECT 1 FROM bin_uop_ledger r WHERE r.bin_id = l.bin_id AND r.op LIKE 'released%' AND r.id > $W_LEDGER)), 0)
+    + COALESCE((SELECT sum(l.after_uop - l.before_uop) FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
+      WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL) AND l.op LIKE 'released_partial%'
+        AND l.after_uop > COALESCE(l.before_uop, l.after_uop)), 0)"
+}
+# release_lines: the window's partial releases (a count above 0) at the cell, as both sides log
+# them: the Edge's lines at the five positions, Core's for the bins released at them (its ledger's
+# released rows in the window), "<edge fenced> <edge unfenced> <core fenced> <core unfenced>". The
+# rest of the sim plant releases too, and is not this ledger's.
+release_lines() {
+  local since=$(( $(date +%s) - ${W_SINCE:-$START_S} + 2 )) edge core="" bins posre
+  posre="$(printf '%s' "$POSITIONS" | tr -s ' ' '|')"
+  bins="$(sql "SELECT DISTINCT l.bin_id FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id
+    WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL) AND l.op LIKE 'released%'" | tr '\n' '|' | sed 's/|$//')"
+  edge="$(dc logs --no-log-prefix --since "${since}s" edge 2>/dev/null | grep -a 'release: ' \
+    | grep -aE " node ($posre) declared " | grep -avE ' declared 0 ')"
+  [ -n "$bins" ] && core="$(dc logs --no-log-prefix --since "${since}s" core 2>/dev/null \
+    | grep -aE "bin_manifest: release of bin ($bins) " | grep -avE ': declared 0,')"
+  echo "$(count_in "$edge" '— fenced') $(count_in "$edge" '— unfenced') $(count_in "$core" ') fenced at') $(count_in "$core" ') unfenced at')"
+}
+# count_in <text> <fixed string>: how many of text's lines carry the string.
+count_in() { printf '%s\n' "$1" | grep -acF -- "$2"; }
 
 # forensics: what a final ledger that is not exact is made of, read on the stack it stands on:
 # Core's draws in the window by position and by op at the positions, draws Core booked at a node
@@ -664,10 +708,8 @@ forensics() {
     ORDER BY l.id LIMIT 12" | tr '\n' ';' | cut -c1-900)"
   say "FORENSICS releases that raised a cart's count, draws the release's count undid (node bin before after op): $(sql "SELECT n.name, l.bin_id, l.before_uop, l.after_uop, l.op
     FROM bin_uop_ledger l JOIN nodes n ON n.id = l.node_id WHERE l.id > $W_LEDGER AND n.name IN ($POS_SQL)
-    AND l.op LIKE 'released%' AND l.after_uop > COALESCE(l.before_uop, l.after_uop) ORDER BY l.id" | tr '
-' ';')"
-  say "FORENSICS Core's stale drops, a draw that reached a cart after its release (last 8): $(dc logs --no-log-prefix core 2>/dev/null | grep -a 'stale epoch DROPPED' | tail -8 | cut -c1-160 | tr '
-' ';')"
+    AND l.op LIKE 'released%' AND l.after_uop > COALESCE(l.before_uop, l.after_uop) ORDER BY l.id" | tr '\n' ';')"
+  say "FORENSICS Core's stale drops, a draw that reached Core after the cart's arrival (last 8): $(dc logs --no-log-prefix core 2>/dev/null | grep -a 'stale epoch DROPPED' | tail -8 | cut -c1-160 | tr '\n' ';')"
   say "FORENSICS the positions' piles (node part state qty): $(sql "SELECT core_node_name, payload_code, state, qty FROM lineside_buckets
     WHERE core_node_name IN ($POS_SQL) ORDER BY core_node_name, state" | tr '\n' ';')"
   say "FORENSICS Core's carts at the positions (node bin part count): $(sql "SELECT n.name, b.id, b.payload_code, b.uop_remaining FROM bins b JOIN nodes n ON n.id = b.node_id
@@ -696,14 +738,20 @@ ledger() {
   other="$(printf '%s\n' "$L_CORE" | awk -v r="$RUN_ID" -v x="$ALT_ID" 'NF && $1 != r && $1 != x {s += $2} END {print s + 0}')"
   got=$(( ${a:-0} + ${b:-0} + other ))
   say "draws at the five positions: carts $carts (Core's deltas $L_DRAWN, ${L_TRANSIT:-0} of them booked at _TRANSIT, piles +$(( ${L_PILES:-0} - ${W_PILES:-0} ))); expected $expect = $L_NS station-counted x $L_DL loads + $L_NC cell-counted x $L_COUNTED counted out; $n holds open, $q held at the positions, $seat held at the seats, $WRITTEN_OFF written off"
+  [ "${L_TRANSIT:-0}" -eq 0 ] || say "LOOK: $L_TRANSIT of the cell's draws Core booked at _TRANSIT (they stay in the sum: Core booked them there)"
+  say "partial releases in the window: the Edge's $L_EDGE_FENCED fenced, $L_EDGE_UNFENCED unfenced; Core's $L_CORE_FENCED fenced, $L_CORE_UNFENCED unfenced"
   say "Core refused as the wrong part in the window (deltas parts): $L_REFUSED"
   [ "$other" -eq 0 ] || say "Core received $other more under neither style"
   say "the record: $got parts against the $L_COUNTED the line counted out"
   line="carts Σ $carts + held $q + at the seats $seat + written off $WRITTEN_OFF = loads Σ $expect; holds open $n; record RUN ${a:-0} / ALT ${b:-0}; Core received ${a:-0}+${b:-0} of the Edge's $L_T"
   if [ "$kind" = mid ]; then
     echo "$line (mid-run: the line runs, a read may carry one part in flight)" | tee -a "$OUT/log.txt"
+    echo "lost at the lift ${L_LOST:-0}" | tee -a "$OUT/log.txt"
   else
     echo "$line" | tee -a "$OUT/log.txt"
+    echo "lost at the lift ${L_LOST:-0}" | tee -a "$OUT/log.txt"
+    [ "${L_LOST:-0}" -eq 0 ] || miss="$miss; lost at the lift ${L_LOST}"
+    [ $(( ${L_EDGE_UNFENCED:-0} + ${L_CORE_UNFENCED:-0} )) -eq 0 ] || miss="$miss; unfenced partial releases (the Edge's ${L_EDGE_UNFENCED}, Core's ${L_CORE_UNFENCED})"
     [ $(( carts + q + seat + WRITTEN_OFF )) -eq "$expect" ] || miss="$miss; carts + held + at the seats + written off $(( carts + q + seat + WRITTEN_OFF )) against loads $expect"
     [ "$got" -eq "$L_COUNTED" ] || miss="$miss; the record $got against the $L_COUNTED counted out"
     [ "$got" -eq "$L_T" ] || miss="$miss; Core received $got against the Edge's $L_T"
@@ -999,7 +1047,9 @@ untapped_read() {
 }
 # tap_and_land [hook]: the strip's one tap on the item's action (the start verb, as the page calls
 # it), the hook (what a person does at the station before the legs can land), then the legs land,
-# the monitor completes the changeover, and the completion lands the holds.
+# the monitor completes the changeover, and the completion lands each hold that fits its cart. A
+# share bigger than the cart it would land on stays open for a person (its line names both
+# numbers); the assertion is that no cart at the positions went below 0.
 tap_and_land() {
   local to
   to="$(item_action_style)"
@@ -1010,8 +1060,17 @@ tap_and_land() {
   wait_for "$LAND_WALL" "ALT's carts landed (the gate green, or the changeover already completed)" "landed || closed_on $ALT_ID"     || die "the carts did not land"
   await_on_alt "$DECLARE_S" "the monitor completes the changeover onto ALT"
   say "the monitor: $(dc logs --since 30m edge 2>/dev/null | grep 'predicate held' | grep -- '— cut over' | tail -1 | sed 's/^[^|]*| //' | cut -c1-300)"
-  wait_for "$LAND_WALL" "the completion lands the held shares (no hold open)" no_holds || say "LOOK: holds still open (id qty node): $(holds_list | tr '\n' ';')"
+  if ! wait_for 60 "the completion lands the held shares (no hold open)" no_holds; then
+    say "holds left open for a person (id qty node): $(holds_list | tr '\n' ';'); the mirror carts (node bin part count): $(mirror_carts)"
+    say "the Edge's lines on them: $(dc logs --no-log-prefix --since 30m edge 2>/dev/null | grep -a 'it waits for a person' | tail -4 | cut -c1-200 | tr '\n' ';')"
+  fi
+  [ -z "$(carts_below_zero)" ] || die "a cart at the positions below 0 (node bin count): $(carts_below_zero | tr '\n' ';')"
   status
+}
+# carts_below_zero: Core's carts at the positions that read below 0, "node|bin|count" a line.
+carts_below_zero() {
+  sql "SELECT n.name, b.id, b.uop_remaining FROM bins b JOIN nodes n ON n.id = b.node_id
+       WHERE n.name IN ($POS_SQL) AND b.uop_remaining < 0"
 }
 
 shape_S5() {
@@ -1163,10 +1222,11 @@ request_at() {
   code="$(edge_send POST "/api/process-nodes/${NODE_ID[$1]}/request" '{}')"
   say "REQUEST at $1: $code $(last)"
 }
-# release_at <position>: the station's RELEASE of the staged swap, the standing cart sent back at
-# the count a person counts in it (Core's, the floor the sim operator reads); pressed again every
-# 5 s while it is refused (a leg still waiting for Core), until the standing cart has gone or is
-# one of ALT's part.
+# release_at <position>: the station's RELEASE of the staged swap, the standing cart sent back
+# with the screen's count left as it was (send partial back, no partial_count): the release
+# declares the seat's count in the fence's instant, as for a person who leaves the number. Pressed
+# again every 5 s while it is refused (a leg still waiting for Core), until the standing cart has
+# gone or is one of ALT's part.
 release_at() {
   local part count code deadline=$(( $(date +%s) + LAND_WALL ))
   while :; do
@@ -1174,11 +1234,20 @@ release_at() {
       WHERE n.name = '$1' ORDER BY b.id LIMIT 1")
     case "$part" in "" | "$MIRROR_ALT") say "the cart at $1 has gone or is $MIRROR_ALT: nothing to release"; return 0 ;; esac
     code="$(edge_send POST "/api/process-nodes/${NODE_ID[$1]}/release-staged" \
-      "{\"disposition\":\"send_partial_back\",\"partial_count\":${count:-0},\"called_by\":\"sim-4x2\"}")"
-    say "RELEASE at $1, the standing $part cart sent back at its count $count: $code $(last)"
+      "{\"disposition\":\"send_partial_back\",\"called_by\":\"sim-4x2\"}")"
+    say "RELEASE at $1, the standing $part cart (Core's count $count) sent back with the screen's count: $code $(last)"
     http_ok "$code" && return 0
     [ "$(date +%s)" -lt "$deadline" ] || { say "LOOK: RELEASE at $1 refused for ${LAND_WALL} s"; return 1; }
     nap 5
+  done
+}
+# cancel_at <position>: the person cancels each order live there (the order's abort door), START's
+# remedy for a swap of the part the changeover replaces ("Cancel it, then start the changeover").
+cancel_at() {
+  local id code
+  for id in $(orders_at "$1" | awk '{print $1}'); do
+    code="$(edge_send POST "/api/orders/$id/abort" '{}')"
+    say "CANCEL order $id at $1: $code $(last)"
   done
 }
 # release_hand_placed: the person at the station sends each hand-placed cart back once the
@@ -1218,13 +1287,14 @@ shape_S9() {
   asks_and_moves_nothing
   s9_read "past the window"
   if [ "$VARIANT" = tap ]; then
-    # A swap of RUN's part staged at a mirror position (RUN's own resupply) refuses START until its
-    # wait is released, as START's refusal says; the sim operator leaves it (the hand-placed cart is
-    # never drawn down), so the person releases it first.
+    # A swap of RUN's part staged at a mirror position (RUN's own resupply, asked before the
+    # monitor confirmed 1002) refuses START, and START's refusal names Cancel for a swap of the
+    # part the changeover replaces: released, it would land RUN's part for the changeover's leg to
+    # take away again. The person cancels it before the tap.
     for p in $MIRRORS; do
       [ -n "$(orders_at "$p")" ] || continue
-      say "S9 RUN's swap at $p is live: the person releases it once staged, before the tap, as START would say"
-      wait_for "$LAND_WALL" "RUN's swap at $p staged" "staged_at $p" && release_at "$p"
+      say "S9 RUN's swap at $p is live: the person cancels it once staged, before the tap, as START says"
+      wait_for "$LAND_WALL" "RUN's swap at $p staged" "staged_at $p" && cancel_at "$p"
     done
     tap_and_land release_hand_placed
     wait_for "$LAND_WALL" "a $MIRROR_ALT cart at each mirror position" mirrors_on_alt \

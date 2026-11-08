@@ -896,7 +896,7 @@ func (op *simOperator) release(orderID int64, whenDone bool) {
 	// A same-part swap waits for its bin to be done; the sweep looks again.
 	// PIN: TestSimOperator_ReleasesASamePartSwapWhenTheBinIsDone
 	if o, err := op.e.db.GetOrder(orderID); whenDone && err == nil && o.ProcessNodeID != nil {
-		if why := op.binNotDone(*o.ProcessNodeID); why != "" {
+		if why := op.binNotDone(*o.ProcessNodeID, orderID); why != "" {
 			op.e.debugFn("[sim] operator leaves order %d staged: %s", orderID, why)
 			return
 		}

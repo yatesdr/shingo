@@ -14,8 +14,10 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/catalog"
+	"shingoedge/store/processes"
 )
 
 // The sim operator stands in for a person, and a person exchanges a same-part
@@ -154,6 +156,31 @@ func TestSimOperator_AChangeoverLegGoesWithPartsLeft(t *testing.T) {
 	testutil.MustNoErr(t, err, "start a changeover")
 	if !w.pressed(t) {
 		t.Error("a changeover leg with 15 left was left staged; want it pressed as before")
+	}
+}
+
+// TestSimOperator_ACommonPositionsSwapWaitsThroughAChangeover — decision 50.
+// With a changeover open, a staged swap at a position both styles run for the
+// same part (its task unchanged) is not the changeover's: the operator leaves
+// it staged until its cart is done, as a person runs a common cart down.
+// Before, any open changeover sent it back with its parts.
+func TestSimOperator_ACommonPositionsSwapWaitsThroughAChangeover(t *testing.T) {
+	t.Parallel()
+	w := newBinDoneWorld(t, 15, false)
+	toStyle, err := w.f.db.CreateStyle("MACHINE-STYLE-B", "", w.f.processID)
+	testutil.MustNoErr(t, err, "the to-style")
+	_, err = upsertClaimRetiredMode(w.f.db, processes.NodeClaimInput{StyleID: toStyle, CoreNodeName: "ALN_003", Role: "consume",
+		SwapMode: "simple", PayloadCode: "PANEL-B", UOPCapacity: 30, InboundSource: "SYN_MARKET"})
+	testutil.MustNoErr(t, err, "the to-style's claim at ALN_003, the same part")
+	ns, err := w.f.db.ListProcessNodesByProcess(w.f.processID)
+	testutil.MustNoErr(t, err, "nodes")
+	from := w.f.styleID
+	_, err = testEngine(t, w.f.db).changeoverService.Create(w.f.processID, &from, toStyle, "test", "", nil,
+		[]processes.NodeTaskInput{{ProcessID: w.f.processID, CoreNodeName: "ALN_003", Situation: string(SituationUnchanged), State: "unchanged"}},
+		[]domain.ParticipantInput{{CoreNodeName: "ALN_003", Role: domain.ParticipantRoleTask}}, ns)
+	testutil.MustNoErr(t, err, "start a changeover that leaves ALN_003 unchanged")
+	if w.pressed(t) {
+		t.Error("the common position's swap with 15 left was pressed mid-changeover; want it left until the cart is done")
 	}
 }
 

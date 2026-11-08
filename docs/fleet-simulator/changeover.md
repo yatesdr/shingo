@@ -35,7 +35,9 @@ a mixed cell, S7 a restart, S8 the PLC moving its count to a sibling MES slot (t
 click that re-points and counts the strokes since the move), S9 the hand-placed cart; and
 `TestPinChangeover_ACommonPositionIsResuppliedWhileOpen` a common position supplied through an open
 changeover. `make dev-sim-4x2 SHAPE=S3` (`scripts/sim-4x2.sh`; `VARIANT=tap` taps S4's and S9's item) runs
-one shape on the dev stack for a person to watch and prints the same ledger line.
+one shape on the dev stack for a person to watch and prints the same ledger line, and beside it
+`lost at the lift N` (Core's stale drops on a cart released in the window and the draws a release's count
+undid), asserted 0 and never summed.
 
 ```bash
 cd integration

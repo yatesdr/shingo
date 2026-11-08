@@ -50,9 +50,11 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - plants/master.yaml is the one sim plant; the old specs are its named sections
 - A seeded cart's seat knows its part (source seed); a bin with no part seeds one that cannot say
 - The sim operator sends back a cart recorded as another part: its strokes are held, so it never runs down
+- The sim operator runs a common position's cart down through a changeover; only a changeover's leg, or a position it changes, goes back with parts
 - The fake PLC runs a line with program changes; the 4x2-shaped cell's scenarios run S1-S9
 - The fake PLC's line pauses its loading and drains (POST /api/sim/pause-loading)
 - scripts/sim-4x2.sh runs one shape on the dev stack (make dev-sim-4x2 SHAPE=S1..S9)
+- Its ledger prints lost at the lift (asserted 0, never summed) and every partial release fenced; its person releases with the pre-fill and cancels a staged swap of the replaced part
 
 ## 2026-11-03 — An order's carts are its rows
 

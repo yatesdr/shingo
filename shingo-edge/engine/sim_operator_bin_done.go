@@ -16,16 +16,25 @@ import "shingo/protocol"
 // looks again on its reconcile sweep, which re-schedules every staged order.
 //
 // A changeover's legs are not same-part swaps and go as before, and so does a
-// node with no bin on it, or a produce node whose capacity is unknown. A
-// consume count Core cannot answer for waits for the next sweep, since the
-// release would declare from it.
-func (op *simOperator) binNotDone(nodeID int64) string {
+// swap at a position the changeover changes (the guards' own test,
+// changesNothingAt false), a node with no bin on it, or a produce node whose
+// capacity is unknown. A swap at a position the changeover changes nothing at
+// waits for its cart to be done, as with no changeover open: a person runs a
+// common cart down (decision 50; it sent a common cart back at 13 mid-changeover
+// before). A consume count Core cannot answer for waits for the next sweep,
+// since the release would declare from it.
+func (op *simOperator) binNotDone(nodeID, orderID int64) string {
 	node, rt, claim, err := loadActiveNode(op.e.db, nodeID)
 	if err != nil || node == nil || rt == nil || claim == nil || claim.IsLoaderNode() {
 		return ""
 	}
-	if _, err := op.e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
-		return ""
+	if co, err := op.e.db.GetActiveProcessChangeover(node.ProcessID); err == nil && co != nil {
+		if task, _, terr := op.e.db.FindChangeoverNodeTaskByOrderID(orderID); terr == nil && task != nil {
+			return ""
+		}
+		if co.FromStyleID == nil || !op.e.changesNothingAt(newGuardReads(node), co, node) {
+			return ""
+		}
 	}
 	switch claim.Role {
 	case protocol.ClaimRoleConsume:

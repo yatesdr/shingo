@@ -230,31 +230,6 @@ func positionWorkedBy(node *processes.Node, claim *processes.NodeClaim, rows []d
 		node.Name, o.ID)
 }
 
-// guardStyleTransition refuses a material request for the OUTGOING style while a
-// changeover is armed on the node's process (A2, hop 2026-07-23). Once a target
-// style is set, the active-style claim this request resolved is the style the
-// cutover is replacing; firing outgoing-style produce/consume relief into a
-// half-cutover line is what stranded the Hopkinsville presses (LK41 relief raced
-// the KK21 cutover). The changeover's OWN evac/supply orders are created by
-// StartProcessChangeover, not through the RequestNodeMaterial / RequestProduceSwap
-// paths this guards, so they are unaffected.
-//
-// Loaders (manual_swap) are exempt: they supply empties ACROSS a changeover and
-// must stay available — gating them on the process changeover is exactly the
-// Springfield regression (see CanAcceptOrders). Only line produce/consume relief
-// is transition-sensitive.
-//
-// It refuses by position: a position the changeover changes nothing at — the
-// outgoing and incoming styles' claims there name the same parts, and the
-// changeover's task there, if any, is "unchanged" — is not refused
-// (changesNothingAt). Its part is the same under both styles, so relief there
-// is the next style's supply as much as this one's; refused, a common
-// position that runs out while a changeover stands open for hours got no cart
-// from Shingo at all, and the cell ran on carts nobody told it about.
-//
-// Edge-DB only, like guardNoActiveSwap — no Core round-trip. A read error is
-// treated as "no changeover" (fail-open): a transient read blip must not shut
-// down the line, and the changeover machinery has its own preflight/cutover gates.
 // ChangeoverArmedError is returned by guardStyleTransition when a material
 // request is refused because a changeover is armed on the node's process. It
 // carries the process id and both style names so the HTTP handler can offer the
@@ -283,6 +258,31 @@ func (e *Engine) styleName(id int64) string {
 	return fmt.Sprintf("style %d", id)
 }
 
+// guardStyleTransition refuses a material request for the OUTGOING style while a
+// changeover is armed on the node's process (A2, hop 2026-07-23). Once a target
+// style is set, the active-style claim this request resolved is the style the
+// cutover is replacing; firing outgoing-style produce/consume relief into a
+// half-cutover line is what stranded the Hopkinsville presses (LK41 relief raced
+// the KK21 cutover). The changeover's OWN evac/supply orders are created by
+// StartProcessChangeover, not through the RequestNodeMaterial / RequestProduceSwap
+// paths this guards, so they are unaffected.
+//
+// Loaders (manual_swap) are exempt: they supply empties ACROSS a changeover and
+// must stay available — gating them on the process changeover is exactly the
+// Springfield regression (see CanAcceptOrders). Only line produce/consume relief
+// is transition-sensitive.
+//
+// It refuses by position: a position the changeover changes nothing at — the
+// outgoing and incoming styles' claims there name the same parts, and the
+// changeover's task there, if any, is "unchanged" — is not refused
+// (changesNothingAt). Its part is the same under both styles, so relief there
+// is the next style's supply as much as this one's; refused, a common
+// position that runs out while a changeover stands open for hours got no cart
+// from Shingo at all, and the cell ran on carts nobody told it about.
+//
+// Edge-DB only, like guardNoActiveSwap — no Core round-trip. A read error is
+// treated as "no changeover" (fail-open): a transient read blip must not shut
+// down the line, and the changeover machinery has its own preflight/cutover gates.
 func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.NodeClaim) error {
 	return e.guardStyleTransitionIn(nil, node, claim)
 }
