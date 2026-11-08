@@ -3,6 +3,12 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-11-08 — Post-merge tidy
+
+Edge v44 (a backfill, no schema change). Deploy Core first, then the Edge.
+
+- A cart's part is recorded at its bind: the order's, else Core's, else the claim's part assumed (v44); a flip changes no seat
+
 ## 2026-11-03 — The cutover follows the PLC
 
 Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantspec, seeddev, simcalc): deploy Core first, then the Edge. Migrate a restored copy first. Roll back only to a ≥ v32 build (it re-adds v42's column and boots); open holds are not charged while rolled back. The first boot publishes every monitored identity tag on WarLink.

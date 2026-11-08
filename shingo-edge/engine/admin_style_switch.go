@@ -24,7 +24,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"shingoedge/store/processes"
 )
@@ -77,7 +76,7 @@ func (e *Engine) SetProcessActiveStyle(processID int64, styleID *int64) error {
 // clear (nil) or a re-set of the running style records nothing.
 func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64) error {
 	if styleID == nil || sameStyle(proc.ActiveStyleID, styleID) {
-		return e.flipActiveStyle(proc.ID, styleID, time.Time{})
+		return e.flipActiveStyle(proc.ID, styleID)
 	}
 	var from *int64
 	if proc.ActiveStyleID != nil {
@@ -98,7 +97,7 @@ func (e *Engine) adminSwitchNoChangeover(proc *processes.Process, styleID *int64
 // the door notes its own.
 func (e *Engine) recordSwitch(processID int64, fromStyleID *int64, toStyleID int64, calledBy, triggeredBy, notes string) error {
 	e.noteLanding(processID, fromStyleID)
-	if err := e.flipActiveStyle(processID, &toStyleID, time.Time{}); err != nil {
+	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
 		return err
 	}
 	id, err := e.db.InsertCompletedChangeover(processID, fromStyleID, toStyleID, calledBy, triggeredBy, notes)

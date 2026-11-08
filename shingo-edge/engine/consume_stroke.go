@@ -13,8 +13,8 @@ import (
 // to the seat as rt holds it. A cart of the stroke's part standing there
 // (cartOfThePart) is charged input, into the negative if that is where the
 // count goes: the release records what it reads. With none there — the seat
-// empty, a cart released at 0, a cart of another part, a cart that cannot say
-// read as the departing part — the stroke is logged in the ledger against the
+// empty, a cart released at 0, a cart recorded as another part, known or
+// assumed at its bind — the stroke is logged in the ledger against the
 // position and the part (logNoCart), and nothing else ever happens to it: no
 // hold, no replay onto the next cart, which lands at its full count.
 //
@@ -27,9 +27,9 @@ import (
 // cart was charged (0 when logged, so no bin delta is sent). Caller holds
 // countMu.
 func (e *Engine) chargeOrLog(node *processes.Node, rt *processes.RuntimeState, claim *processes.NodeClaim, tick tickScope,
-	unsaid unsaidCarrier, input int) (*processes.RuntimeState, int) {
+	input int) (*processes.RuntimeState, int) {
 	for attempt := 0; ; attempt++ {
-		charged, written := e.chargeOrLogOnce(node, rt, claim, tick, unsaid, input)
+		charged, written := e.chargeOrLogOnce(node, rt, claim, tick, input)
 		if written {
 			return rt, charged
 		}
@@ -53,12 +53,12 @@ func (e *Engine) chargeOrLog(node *processes.Node, rt *processes.RuntimeState, c
 // was read); a failed statement is logged and counts as written, as the
 // charge always did.
 func (e *Engine) chargeOrLogOnce(node *processes.Node, rt *processes.RuntimeState, claim *processes.NodeClaim, tick tickScope,
-	unsaid unsaidCarrier, input int) (charged int, written bool) {
+	input int) (charged int, written bool) {
 	if input == 0 {
 		return 0, true
 	}
 	seat := processes.SeatAsReadOf(rt)
-	if cartOfThePart(rt, claim, unsaid) {
+	if cartOfThePart(rt, claim) {
 		ok, err := processes.ChargeSeatUOP(e.db.DB, node.ID, -input, false, seat)
 		if err != nil {
 			log.Printf("update UOP for node %d: %v", node.ID, err)
@@ -79,8 +79,8 @@ func (e *Engine) chargeOrLogOnce(node *processes.Node, rt *processes.RuntimeStat
 
 // cartOfThePart reports whether a cart of the stroke's part stands at the
 // seat: bound, not released at 0 or below (its strokes are logged, R3), and
-// not a part the claim does not take — recorded as one, or a cart that cannot
-// say read as the departing part under an open changeover (unsaidCarrier).
-func cartOfThePart(rt *processes.RuntimeState, claim *processes.NodeClaim, unsaid unsaidCarrier) bool {
-	return rt.ActiveBinID != nil && !rt.ReleasedEmpty && !drawsAnotherPart(rt, claim, unsaid.partOf(rt))
+// not recorded as a part the claim does not take, known or assumed at its bind
+// (recordedOtherPart).
+func cartOfThePart(rt *processes.RuntimeState, claim *processes.NodeClaim) bool {
+	return rt.ActiveBinID != nil && !rt.ReleasedEmpty && !recordedOtherPart(rt, claim)
 }

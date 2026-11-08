@@ -1,7 +1,6 @@
-// lineside_flip_stamp_test.go — a flip records the carrier it leaves: every
-// consume seat of the departing style's whose bound carrier could not say its
-// part is recorded as that style's part there, at each door that flips; a
-// changeover's flip leaves alone a seat whose cart landed since it started.
+// lineside_flip_seats_test.go — a flip changes no seat: a cart's part was
+// recorded at its bind, known or assumed (decision 57), and every door that
+// flips the style leaves every seat's record as it found it.
 package engine
 
 import (
@@ -13,9 +12,8 @@ import (
 	"shingoedge/store/processes"
 )
 
-// flipStampSeat is one seat of the stamp rig: what stands there before the
-// flip, and what the seat says after it.
-type flipStampSeat struct {
+// flipSeat is one seat of the flip rig: the claims there and what stands on it.
+type flipSeat struct {
 	name string
 	// fromRole and fromMode are the departing style's claim ("" role: none);
 	// toPart the incoming style's (a consume claim; "" for none).
@@ -27,42 +25,42 @@ type flipStampSeat struct {
 	part   string
 	known  bool
 	source string
-	// landed: the cart landed without naming its part just before the flip,
-	// after the changeover the flip completes opened (a switch with none open
-	// stamps it; a changeover's flip leaves it as the landing left it).
+	// landed: the cart landed naming no part just before the flip, after the
+	// changeover the flip completes opened, and its bind recorded what the
+	// position's claim names, assumed.
 	landed bool
-	// want is what the seat says after the flip.
-	wantPart  string
-	wantKnown bool
-	wantSrc   string
 }
 
-// flipStampSeats are the rows: one seat each, all on one process.
-func flipStampSeats() []flipStampSeat {
+// assumedSource is the bind's record of a part no source named.
+var assumedSource = domain.CarrierSource("assumed")
+
+// flipSeats are the rows: one seat each, all on one process.
+func flipSeats() []flipSeat {
 	consume, simple := protocol.ClaimRoleConsume, protocol.SwapModeSimple
-	return []flipStampSeat{
-		{name: "FS-UNSAID", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9801,
-			wantPart: "PART-L", wantKnown: true, wantSrc: string(domain.CarrierFromFlip)},
+	return []flipSeat{
+		{name: "FS-ASSUMED", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9801,
+			part: "PART-L", source: string(assumedSource)},
 		{name: "FS-LANDED", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9802,
-			part: "PART-L", known: true, source: "landing", wantPart: "PART-L", wantKnown: true, wantSrc: "landing"},
+			part: "PART-L", known: true, source: "landing"},
 		{name: "FS-KNOWN-EMPTY", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9803,
-			known: true, source: "operator", wantKnown: true, wantSrc: "operator"},
+			known: true, source: "operator"},
+		{name: "FS-UNSAID", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9804},
 		{name: "FS-NO-CART", fromRole: consume, fromMode: simple, toPart: "PART-R"},
 		{name: "FS-PRODUCE", fromRole: protocol.ClaimRoleProduce, fromMode: simple, bin: 9805},
 		{name: "FS-LOADER", fromRole: consume, fromMode: protocol.SwapModeManualSwap, bin: 9806},
 		{name: "FS-TO-ONLY", toPart: "PART-R", bin: 9807},
-		{name: "FS-LANDED-UNNAMED", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9808, landed: true,
-			wantPart: "PART-L", wantKnown: true, wantSrc: string(domain.CarrierFromFlip)},
+		{name: "FS-LANDED-UNNAMED", fromRole: consume, fromMode: simple, toPart: "PART-R", bin: 9808, landed: true},
 	}
 }
 
-// landUnnamed records each landed seat's cart as the landing that did not
-// name its part records it: unknown, through the doorway, stamped now.
+// landUnnamed records each landed seat's cart as its bind records a cart that
+// names no part: the position's claim's part, assumed.
 func landUnnamed(t *testing.T, eng *Engine, nodes map[string]int64) {
 	t.Helper()
-	for _, s := range flipStampSeats() {
+	for _, s := range flipSeats() {
 		if s.landed {
-			eng.recordLinesideCarrier(nodes[s.name], s.name, domain.UnknownCarrier(), domain.CarrierFromLanding)
+			testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeLinesidePayload(nodes[s.name], "PART-L", false,
+				string(assumedSource)), "the bind's record of "+s.name)
 		}
 	}
 }
@@ -75,9 +73,9 @@ func openedBefore(t *testing.T, eng *Engine, coID int64) {
 	testutil.MustNoErr(t, err, "the changeover started two seconds ago")
 }
 
-// flipStampRig is a process on FROM (pinned 1001) with TO (pinned 1002), and
-// the seats.
-func flipStampRig(t *testing.T) (eng *Engine, pid, from, to int64, nodes map[string]int64) {
+// flipRig is a process on FROM (pinned 1001) with TO (pinned 1002), and the
+// seats.
+func flipRig(t *testing.T) (eng *Engine, pid, from, to int64, nodes map[string]int64) {
 	t.Helper()
 	db := testEngineDB(t)
 	eng = testEngine(t, db)
@@ -92,7 +90,7 @@ func flipStampRig(t *testing.T) (eng *Engine, pid, from, to int64, nodes map[str
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(to, "1002"), "pin to")
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &from), "active")
 	nodes = map[string]int64{}
-	for _, s := range flipStampSeats() {
+	for _, s := range flipSeats() {
 		id, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: s.name, Code: s.name, Name: s.name, Enabled: true})
 		testutil.MustNoErr(t, err, "node "+s.name)
 		nodes[s.name] = id
@@ -122,44 +120,55 @@ func flipStampRig(t *testing.T) (eng *Engine, pid, from, to int64, nodes map[str
 			bin = binPtr(s.bin)
 		}
 		testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(id, claim, bin, 30), "seat "+s.name)
-		if s.known {
-			testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(id, s.part, true, s.source), "record "+s.name)
+		if s.source != "" {
+			testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(id, s.part, s.known, s.source), "record "+s.name)
 		}
 	}
 	return eng, pid, from, to, nodes
 }
 
-// TestFlip_RecordsTheCarrierItLeaves: at every door that flips the style, a
-// consume seat of the departing style's whose carrier could not say its part
-// reads that style's part afterwards, source flip; a seat already known, an
-// empty seat, a produce seat, a loader and a node the departing style does not
-// claim are left as they were. A changeover's flip leaves alone a seat whose
-// cart landed unnamed since the changeover started (its cart is the incoming
-// part); a switch with no changeover open stamps it. Re-setting the running
-// style stamps nothing. Before, the flip left the seat unknown, and every
-// reader that falls back to the active style's part named the incoming part
-// for a cart bound under the departing style; then every changeover's flip
-// took its own unnamed landings for the departing part.
-func TestFlip_RecordsTheCarrierItLeaves(t *testing.T) {
+// seatRecord is what a seat says of its cart.
+type seatRecord struct {
+	part   string
+	known  bool
+	source string
+}
+
+func seatRecordOf(t *testing.T, eng *Engine, nodeID int64) seatRecord {
+	t.Helper()
+	rt := runtimeOf(t, eng, nodeID)
+	return seatRecord{part: string(rt.LinesidePayloadCode), known: rt.LinesidePayloadKnown, source: rt.LinesideSource}
+}
+
+// TestFlip_ChangesNoSeat: at every door that flips the style, and on a re-set
+// of the running style, every seat reads after the flip exactly what it read
+// before: a cart assumed the departing part at its bind keeps it, a cart that
+// landed naming no part during the changeover keeps what its bind assumed, a
+// known cart, an empty seat, a produce seat, a loader, a node only the
+// incoming style claims and a seat that records nothing are left as they were.
+// Before (decisions 38 rule 1 and 40, superseded by 57), the flip stamped
+// every unknown consume seat of the departing style with its part, source
+// flip, except the seats bound since the changeover started.
+func TestFlip_ChangesNoSeat(t *testing.T) {
 	t.Parallel()
 	doors := []struct {
 		name string
-		// flips: the style changes; completes: the flip completes a changeover.
-		flips, completes bool
-		flip             func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64)
+		// flips: the style changes.
+		flips bool
+		flip  func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64)
 	}{
-		{"completeCutover gated", true, true, func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64) {
+		{"completeCutover gated", true, func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64) {
 			coID, err := eng.changeoverService.Create(pid, &from, to, "test", "", nil, nil, nil, nil)
 			testutil.MustNoErr(t, err, "a changeover with nothing to do: the gate is green")
 			openedBefore(t, eng, coID)
 			landUnnamed(t, eng, nodes)
 			testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(pid), "CUTOVER")
 		}},
-		{"completeCutover forced", true, true, func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64) {
+		{"completeCutover forced", true, func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64) {
 			ns, err := eng.db.ListProcessNodesByProcess(pid)
 			testutil.MustNoErr(t, err, "nodes")
 			coID, err := eng.changeoverService.Create(pid, &from, to, "test", "", nil, []processes.NodeTaskInput{{ProcessID: pid,
-				CoreNodeName: "FS-UNSAID", Situation: "swap", State: "swap_required"}}, nil, ns)
+				CoreNodeName: "FS-ASSUMED", Situation: "swap", State: "swap_required"}}, nil, ns)
 			testutil.MustNoErr(t, err, "a changeover with a swap still to do: the gate is red")
 			if ok, _, err := eng.canCompleteChangeover(coID); err != nil || ok {
 				t.Fatalf("gate = %v (%v), want red", ok, err)
@@ -172,18 +181,18 @@ func TestFlip_RecordsTheCarrierItLeaves(t *testing.T) {
 				t.Fatal("the forced door overrode no blocker: the gate was not red")
 			}
 		}},
-		{"SetProcessActiveStyle completing a changeover", true, true, func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64) {
+		{"SetProcessActiveStyle completing a changeover", true, func(t *testing.T, eng *Engine, pid, from, to int64, nodes map[string]int64) {
 			coID, err := eng.changeoverService.Create(pid, &from, to, "test", "", nil, nil, nil, nil)
 			testutil.MustNoErr(t, err, "a changeover open")
 			openedBefore(t, eng, coID)
 			landUnnamed(t, eng, nodes)
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "Mark as running")
 		}},
-		{"SetProcessActiveStyle", true, false, func(t *testing.T, eng *Engine, pid, _, to int64, nodes map[string]int64) {
+		{"SetProcessActiveStyle", true, func(t *testing.T, eng *Engine, pid, _, to int64, nodes map[string]int64) {
 			landUnnamed(t, eng, nodes)
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "Mark as running")
 		}},
-		{"the same style re-set", false, false, func(t *testing.T, eng *Engine, pid, from, _ int64, nodes map[string]int64) {
+		{"the same style re-set", false, func(t *testing.T, eng *Engine, pid, from, _ int64, nodes map[string]int64) {
 			landUnnamed(t, eng, nodes)
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &from), "re-set the running style")
 		}},
@@ -191,7 +200,7 @@ func TestFlip_RecordsTheCarrierItLeaves(t *testing.T) {
 	for _, d := range doors {
 		t.Run(d.name, func(t *testing.T) {
 			t.Parallel()
-			eng, pid, from, to, nodes := flipStampRig(t)
+			eng, pid, from, to, nodes := flipRig(t)
 			d.flip(t, eng, pid, from, to, nodes)
 			wantStyle := to
 			if !d.flips {
@@ -200,23 +209,15 @@ func TestFlip_RecordsTheCarrierItLeaves(t *testing.T) {
 			if p := mustProcess(t, eng.db, pid); p.ActiveStyleID == nil || *p.ActiveStyleID != wantStyle {
 				t.Fatalf("active style = %v, want %d", p.ActiveStyleID, wantStyle)
 			}
-			for _, s := range flipStampSeats() {
-				t.Run(s.name, func(t *testing.T) {
-					want := s
-					if !d.flips {
-						want.wantPart, want.wantKnown, want.wantSrc = s.part, s.known, s.source
-					}
-					if s.landed && (d.completes || !d.flips) {
-						want.wantPart, want.wantKnown, want.wantSrc = "", false, string(domain.CarrierFromLanding)
-					}
-					rt := runtimeOf(t, eng, nodes[s.name])
-					if string(rt.LinesidePayloadCode) != want.wantPart || rt.LinesidePayloadKnown != want.wantKnown ||
-						rt.LinesideSource != want.wantSrc {
-						t.Errorf("%s after %s: part %q known %t source %q; want %q known %t source %q", s.name, d.name,
-							rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource, want.wantPart, want.wantKnown,
-							want.wantSrc)
-					}
-				})
+			for _, s := range flipSeats() {
+				want := seatRecord{part: s.part, known: s.known, source: s.source}
+				if s.landed {
+					want = seatRecord{part: "PART-L", source: string(assumedSource)}
+				}
+				if got := seatRecordOf(t, eng, nodes[s.name]); got != want {
+					t.Errorf("%s after %s reads %+v, want %+v as before the flip: the flip changes no seat",
+						s.name, d.name, got, want)
+				}
 			}
 		})
 	}

@@ -115,12 +115,12 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 	})
 }
 
-// TestCarrierBound_ByAdjustmentIsUnknown pins the bind arms' identity: a
+// TestCarrierBound_ByAdjustmentIsTheClaimsPartAssumed pins the bind arms' identity: a
 // carrier bound by Core's announcement (admin Move onto the node, or a count
 // correction binding a staged carrier) arrives with no payload on the
-// envelope, so the slot's identity is UNKNOWN — never the previous
-// occupant's.
-func TestCarrierBound_ByAdjustmentIsUnknown(t *testing.T) {
+// envelope, so the slot records the claim's part assumed, not known (decision
+// 57) — never the previous occupant's.
+func TestCarrierBound_ByAdjustmentIsTheClaimsPartAssumed(t *testing.T) {
 	t.Parallel()
 
 	t.Run("bound by admin move", func(t *testing.T) {
@@ -136,9 +136,9 @@ func TestCarrierBound_ByAdjustmentIsUnknown(t *testing.T) {
 		if rt.ActiveBinID == nil || *rt.ActiveBinID != 31008 || rt.RemainingUOPCached != 60 {
 			t.Fatalf("bind: active_bin_id=%v remaining=%d, want 31008/60", rt.ActiveBinID, rt.RemainingUOPCached)
 		}
-		if rt.LinesidePayloadCode != "" || rt.LinesidePayloadKnown {
-			t.Errorf("bind kept identity code=%q known=%v — the previous occupant's identity is a "+
-				"confident wrong answer about this one", rt.LinesidePayloadCode, rt.LinesidePayloadKnown)
+		if rt.LinesidePayloadCode != "PART-CL" || rt.LinesidePayloadKnown || rt.LinesideSource != "assumed" {
+			t.Errorf("bind recorded code=%q known=%v from %q, want the claim's PART-CL assumed: the previous occupant's known identity is a "+
+				"confident wrong answer about this one", rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
 		}
 	})
 
@@ -160,8 +160,9 @@ func TestCarrierBound_ByAdjustmentIsUnknown(t *testing.T) {
 		if rt.ActiveBinID == nil || *rt.ActiveBinID != 31009 {
 			t.Fatalf("correction did not bind the staged carrier: active_bin_id=%v", rt.ActiveBinID)
 		}
-		if rt.LinesidePayloadCode != "" || rt.LinesidePayloadKnown {
-			t.Errorf("correction bind kept identity code=%q known=%v", rt.LinesidePayloadCode, rt.LinesidePayloadKnown)
+		if rt.LinesidePayloadCode != "PART-CL" || rt.LinesidePayloadKnown || rt.LinesideSource != "assumed" {
+			t.Errorf("correction bind recorded code=%q known=%v from %q, want the claim's PART-CL assumed",
+				rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
 		}
 	})
 }

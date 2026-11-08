@@ -35,7 +35,7 @@ const landingSettle = 30 * time.Second
 // W1's own state must still be refused while its swap is in flight.
 func heldByItsOwnLanding(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim,
 	occupancy map[string]bool, now time.Time) (map[string]bool, bool) {
-	if runtime == nil || runtime.ActiveBinID == nil || runtime.LinesideSource != string(domain.CarrierFromLanding) ||
+	if runtime == nil || runtime.ActiveBinID == nil || !recordedAtABind(runtime.LinesideSource) ||
 		now.Sub(runtime.LinesideAt) > clock.ScaleTTL(landingSettle) || isOccupied(occupancy, claim.CoreNodeName) {
 		return occupancy, false
 	}
@@ -45,6 +45,18 @@ func heldByItsOwnLanding(node *processes.Node, runtime *processes.RuntimeState, 
 	log.Printf("[request-material] node %s: Core reads it empty, but bin %d landed here %s ago by this Edge's record — not downgrading",
 		node.Name, *runtime.ActiveBinID, now.Sub(runtime.LinesideAt).Round(time.Second))
 	return held, true
+}
+
+// recordedAtABind reports whether a seat's identity was written by a bind:
+// Core's landing names the bin (landing), its order's part (delivery), or the
+// part the position's claim names, assumed (decision 57). A landing records
+// any of the three, so the landing settle reads all three.
+func recordedAtABind(src string) bool {
+	switch domain.CarrierSource(src) {
+	case domain.CarrierFromLanding, domain.CarrierFromDelivery, domain.CarrierAssumed:
+		return true
+	}
+	return false
 }
 
 // vacantLine is what a line with a position that is not ready gets beside, or

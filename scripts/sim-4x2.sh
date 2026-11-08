@@ -39,7 +39,8 @@
 #             click re-points the counter from _02's count before it rose: the record equals the
 #             parts the line counted out (no gap), the carts lack nothing
 #   S9 [tap]  the hand-placed cart: the mirror positions' carts are MIRROR-L in Core and their
-#             seats could not say what they are (seeded with no part; the line stands paused from
+#             seats record RUN's part assumed, not known (seeded with no part, as the bind records
+#             a cart no source named, decision 57; the line stands paused from
 #             boot until the shape, so those carts are still there); RUN draws; the FORCED
 #             program change to 1002; nothing moves and the item offers the changeover, as in S4.
 #             Untapped, ALT strokes and the holds grow; `tap` starts the changeover (the person

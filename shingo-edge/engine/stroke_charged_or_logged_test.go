@@ -89,12 +89,12 @@ func TestPinNoCart_AStrokeAtAKnownCartOfAnotherPartIsLoggedTheCartUnchanged(t *t
 }
 
 // TestPinNoCart_AnIncomingStrokeAtAnUnknownCartBoundBeforeTheStartIsLogged:
-// under an open changeover, a cart that cannot say, bound before the start at
-// a position whose part changes, is the departing part: the incoming stroke is
+// under an open changeover, a cart its bind assumed the departing part, bound
+// before the start at a position whose part changes: the incoming stroke is
 // logged, the cart untouched and nothing sent for Core to refuse.
 func TestPinNoCart_AnIncomingStrokeAtAnUnknownCartBoundBeforeTheStartIsLogged(t *testing.T) {
 	t.Parallel()
-	eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "before")
+	eng, pid, _, alt, nodeID := assumedUnderAChangeover(t, "before")
 	mark := deltaMark(eng)
 	tickConsume(eng, pid, alt, 1)
 	if rows := noCartRows(t, eng, pid, nodeID); len(rows) != 1 || rows[0].Qty != 1 || rows[0].PayloadCode != "MIRROR-R" {
@@ -122,7 +122,7 @@ func TestPinNoCart_AStrokePastZeroAndTheReleaseRecordsIt(t *testing.T) {
 	testutil.MustNoErr(t, err, "the node")
 	claim := &processes.NodeClaim{Role: protocol.ClaimRoleConsume, PayloadCode: "PART-A"}
 	tick := tickScope{processID: node.ProcessID, delta: 1, source: "test"}
-	eng.handleConsumeTick(node, runtimeOf(t, eng, nodeID), claim, tick, unsaidCarrier{})
+	eng.handleConsumeTick(node, runtimeOf(t, eng, nodeID), claim, tick)
 	if got := runtimeCount(t, eng, nodeID); got != -1 {
 		t.Fatalf("the cart after a stroke at 0 = %d, want -1: no floor", got)
 	}
@@ -139,7 +139,7 @@ func TestPinNoCart_AStrokePastZeroAndTheReleaseRecordsIt(t *testing.T) {
 	if sent == nil || *sent != -1 || wire.Count != -1 {
 		t.Errorf("the envelope's count %v, the disposition's %d; want -1 both: the release sends what the cart reads", sent, wire.Count)
 	}
-	eng.handleConsumeTick(node, rt, claim, tick, unsaidCarrier{})
+	eng.handleConsumeTick(node, rt, claim, tick)
 	rows := noCartRows(t, eng, node.ProcessID, nodeID)
 	if len(rows) != 1 || rows[0].Qty != 1 || rows[0].LastBinID != binID || rows[0].LastDeclared != -1 || rows[0].LastLeftAt == nil {
 		t.Errorf("rows = %+v, want one no-cart row of 1 naming bin %d released at -1", rows, binID)

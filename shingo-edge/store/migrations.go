@@ -2379,6 +2379,29 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && a == 3 && b == 3 && i == 6
 			},
 		},
+		{
+			// A bound cart whose seat records no part takes the part of the
+			// consume claim its runtime points at, assumed (decision 57): what
+			// the bind would have recorded, so the seat keeps its cart's part
+			// through a style flip, which no longer stamps it. A loader's, a
+			// produce claim's or a claim naming no part leaves the seat as it
+			// was. The literals are frozen: source 'assumed', role 'consume',
+			// mode 'manual_swap'. No schema change; idempotent (a backfilled
+			// row records a part and is not matched again).
+			Version: 44,
+			Name:    "runtime_assumed_part_backfill",
+			Fn: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`UPDATE process_node_runtime_states
+					SET lineside_payload_code = (SELECT c.payload_code FROM style_node_claims c
+					                             WHERE c.id = process_node_runtime_states.active_claim_id),
+					    lineside_source = 'assumed'
+					WHERE active_bin_id IS NOT NULL AND lineside_payload_known = 0 AND lineside_payload_code = ''
+					  AND EXISTS (SELECT 1 FROM style_node_claims c
+					              WHERE c.id = process_node_runtime_states.active_claim_id AND c.role = 'consume'
+					                AND c.swap_mode != 'manual_swap' AND c.payload_code != '')`)
+				return err
+			},
+		},
 	}
 }
 

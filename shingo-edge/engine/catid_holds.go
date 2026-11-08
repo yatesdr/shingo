@@ -6,8 +6,8 @@
 // with the part on the row, and hourly counts it as today: a held tick's whole
 // draw (node 0), and an off-plan tick's share at a node whose bound carrier is
 // not the tick's style's part. And a consume stroke with no cart of its part
-// standing at its position — the seat empty, a cart of another part there, a
-// cart released at 0, a cart that cannot say read as the departing part — is
+// standing at its position — the seat empty, a cart recorded as another part
+// there (known, or assumed at its bind), a cart released at 0 — is
 // logged as a "no cart" row against the position and the part, with the last
 // cart released there (chargeOrLog). Nothing writes a consume seat's hold.
 //
@@ -252,7 +252,7 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 			row.BinID, row.CarrierPart, row.CarrierSource, row.WrongPart = *rt.ActiveBinID, string(rt.LinesidePayloadCode), recordedBy(rt), true
 			row.CartCount = rt.RemainingUOPCached
 			if refusal == "" {
-				refusal = e.wrongCartRefusal(&nodes[i], rt, styleID, styleName)
+				refusal = wrongCartRefusal(&nodes[i], rt, styleName)
 			}
 		default:
 			row.BinID, row.CarrierPart, row.CarrierSource = *rt.ActiveBinID, string(rt.LinesidePayloadCode), recordedBy(rt)
@@ -270,9 +270,10 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 	return rows, refusal, nil
 }
 
-// recordedBy is who recorded the seat's carrier, "" when it could not say.
+// recordedBy is who recorded the seat's carrier ("assumed" for a part assumed
+// at its bind), "" when it records none.
 func recordedBy(rt *processes.RuntimeState) string {
-	if !rt.LinesidePayloadKnown {
+	if !rt.PartRecorded() {
 		return ""
 	}
 	return rt.LinesideSource
@@ -280,13 +281,13 @@ func recordedBy(rt *processes.RuntimeState) string {
 
 // wrongCartRefusal is the refusal for a share at a cart that is not the
 // style's part, naming what a person can fix: "the cart at X is recorded as P
-// (from the switch off RUN), not S's part" — name the cart, or land one of the
-// part. A cart that could not say is taken as the running style's part.
-func (e *Engine) wrongCartRefusal(node *processes.Node, rt *processes.RuntimeState, styleID int64, styleName string) string {
-	if !rt.LinesidePayloadKnown {
+// (assumed at its bind), not S's part" — name the cart, or land one of the
+// part. A cart that records no part is taken as the running style's part.
+func wrongCartRefusal(node *processes.Node, rt *processes.RuntimeState, styleName string) string {
+	if !rt.PartRecorded() {
 		return fmt.Sprintf("the cart at %s is not %s's part", node.Name, styleName)
 	}
-	return fmt.Sprintf("the cart at %s is %s, not %s's part", node.Name, recordedAs(rt, e.carrierRecordSaid(node, rt, styleID)), styleName)
+	return fmt.Sprintf("the cart at %s is %s, not %s's part", node.Name, recordedAs(rt, carrierRecordSaid(rt)), styleName)
 }
 
 // ChargeCatidHold is a person's Charge: the hold's draw is charged under the

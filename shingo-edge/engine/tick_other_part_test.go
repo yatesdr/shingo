@@ -9,7 +9,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -77,10 +76,19 @@ func deltaMark(eng *Engine) int {
 	return len(sink.binCalls)
 }
 
+// assumeTheClaimsPart records the seat's cart as its bind records a cart no
+// source named (decision 57): RUN's claim's part, MIRROR-L, assumed.
+func assumeTheClaimsPart(t *testing.T, eng *Engine, nodeID int64) {
+	t.Helper()
+	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeLinesidePayload(nodeID, "MIRROR-L", false, "assumed"),
+		"the bind's assumed part")
+}
+
 // TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart: an ALT stroke at a cart
-// recorded MIRROR-L (by its landing, or by the flip that left it) is logged at
-// the position and the cart and Core's record of it are untouched; a cart that
-// cannot say is charged as the claim's part, as before; a cart of an allowed
+// recorded MIRROR-L (known from its landing, or assumed at its bind and kept
+// through the switch) is logged at the position and the cart and Core's record
+// of it are untouched; a cart that records no part is charged as the claim's
+// part, as before; a cart of an allowed
 // alternate is the part. A MIRROR-R cart that lands, or the standing cart once
 // a person names it MIRROR-R, takes the next stroke from its own count,
 // stamped MIRROR-R; the logged strokes stay in the ledger (decision 55).
@@ -98,18 +106,19 @@ func TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart(t *testing.T) {
 			t.Errorf("deltas %+v, want none: the MIRROR-L cart is not drawn", d)
 		}
 	})
-	t.Run("a cart recorded MIRROR-L by the flip: logged", func(t *testing.T) {
+	t.Run("a cart its bind assumed MIRROR-L, after the switch: logged", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := otherPartRig(t, true, "", false, nil)
+		assumeTheClaimsPart(t, eng, nodeID)
 		testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &alt), "the switch to ALT")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
 		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 30, 1)
 		if d := deltasSince(eng, mark); len(d) != 0 {
-			t.Errorf("deltas %+v, want none: the cart the flip left is MIRROR-L", d)
+			t.Errorf("deltas %+v, want none: the cart its bind assumed is MIRROR-L", d)
 		}
 	})
-	t.Run("a cart that cannot say: charged as the claim's part", func(t *testing.T) {
+	t.Run("a cart that records no part: charged as the claim's part", func(t *testing.T) {
 		t.Parallel()
 		eng, pid, _, alt, nodeID := otherPartRig(t, false, "", false, nil)
 		mark := deltaMark(eng)
@@ -161,50 +170,46 @@ func TestPinFlip_AStrokeNeverDrawsACartOfAnotherPart(t *testing.T) {
 	})
 }
 
-// unsaidUnderAChangeover is otherPartRig on RUN with a cart that cannot say
-// its part, and a changeover to ALT opened with nothing to do. bound is when
-// the cart was bound: "before" the start (the landing that could not name it,
-// then the changeover), "since" (the changeover, dated two seconds back, then
-// the landing), or "" with no changeover opened.
-func unsaidUnderAChangeover(t *testing.T, bound string) (eng *Engine, pid, run, alt, nodeID int64) {
+// assumedUnderAChangeover is otherPartRig on RUN with a cart no source named,
+// recorded as its bind records one (MIRROR-L, RUN's claim's part, assumed),
+// and a changeover to ALT opened with nothing to do. bound is when the cart was
+// bound: "before" the start (the landing, then the changeover), "since" (the
+// changeover, dated two seconds back, then the landing), or "" with no
+// changeover opened.
+func assumedUnderAChangeover(t *testing.T, bound string) (eng *Engine, pid, run, alt, nodeID int64) {
 	t.Helper()
 	eng, pid, run, alt, nodeID = otherPartRig(t, true, "", false, nil)
-	unnamed := func() {
-		eng.recordLinesideCarrier(nodeID, otherPartNode, domain.UnknownCarrier(), domain.CarrierFromLanding)
-	}
 	switch bound {
 	case "before":
-		unnamed()
+		assumeTheClaimsPart(t, eng, nodeID)
 		_, err := eng.changeoverService.Create(pid, &run, alt, "test", "", nil, nil, nil, nil)
 		testutil.MustNoErr(t, err, "the changeover to ALT")
 	case "since":
 		coID, err := eng.changeoverService.Create(pid, &run, alt, "test", "", nil, nil, nil, nil)
 		testutil.MustNoErr(t, err, "the changeover to ALT")
 		openedBefore(t, eng, coID)
-		unnamed()
+		assumeTheClaimsPart(t, eng, nodeID)
 	default:
-		unnamed()
+		assumeTheClaimsPart(t, eng, nodeID)
 	}
 	return eng, pid, run, alt, nodeID
 }
 
-// TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes: with a
-// changeover open to ALT, the cart standing at a position whose part changes
-// (MIRROR-L to MIRROR-R) that cannot say its part, bound before the
-// changeover started, is the departing part (decision 52's reading): an ALT
-// stroke is logged at the position (decision 55), the cart's count unchanged
-// and nothing sent for Core to refuse; a MIRROR-R cart that lands takes its
-// own strokes from its full count; RUN's stroke draws the cart as before. A cart bound since the start came with the changeover and is
-// charged as ALT's part (as the flip reads it, TestFlip_RecordsTheCarrierItLeaves);
-// with no changeover open the cart is charged as the claim's part, as before.
-// Before, an ALT stroke under the open changeover was charged to the cart that
-// cannot say, stamped MIRROR-R, and Core, which knows the cart as MIRROR-L,
-// refused the delta.
-func TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes(t *testing.T) {
+// TestPinChangeover_ACartAssumedAtItsBindKeepsItsPart: the cart standing at a
+// position whose part changes (MIRROR-L to MIRROR-R) whose bind assumed RUN's
+// part keeps it, whenever it was bound and whether a changeover is open: an
+// ALT stroke is logged at the position (decision 55), the cart's count
+// unchanged and nothing sent for Core to refuse; a MIRROR-R cart that lands
+// takes its own strokes from its full count; RUN's stroke draws the cart.
+// Before (decisions 52 and 40, superseded by 57), the cart was read at the walk
+// as the departing part only when a changeover was open and it was bound before
+// the start; bound since, or with no changeover open, an ALT stroke was charged
+// to it, stamped MIRROR-R.
+func TestPinChangeover_ACartAssumedAtItsBindKeepsItsPart(t *testing.T) {
 	t.Parallel()
 	t.Run("bound before the start: an ALT stroke is logged", func(t *testing.T) {
 		t.Parallel()
-		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "before")
+		eng, pid, _, alt, nodeID := assumedUnderAChangeover(t, "before")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
 		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 30, 1)
@@ -222,7 +227,7 @@ func TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes(t *testing.T) {
 	})
 	t.Run("bound before the start: RUN's stroke draws the cart", func(t *testing.T) {
 		t.Parallel()
-		eng, pid, run, _, nodeID := unsaidUnderAChangeover(t, "before")
+		eng, pid, run, _, nodeID := assumedUnderAChangeover(t, "before")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, run, 1)
 		wantSeat(t, eng, pid, nodeID, "after a RUN stroke", 29, 0)
@@ -230,26 +235,22 @@ func TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes(t *testing.T) {
 			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-L", d)
 		}
 	})
-	t.Run("bound since the start: an ALT stroke is charged as ALT's part", func(t *testing.T) {
-		t.Parallel()
-		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "since")
-		mark := deltaMark(eng)
-		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 29, 0)
-		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
-			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R", d)
+	for _, bound := range []string{"since", ""} {
+		name := "bound since the start: an ALT stroke is logged"
+		if bound == "" {
+			name = "no changeover open: an ALT stroke is logged"
 		}
-	})
-	t.Run("no changeover open: an ALT stroke is charged as the claim's part", func(t *testing.T) {
-		t.Parallel()
-		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "")
-		mark := deltaMark(eng)
-		tickConsume(eng, pid, alt, 1)
-		wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 29, 0)
-		if d := deltasSince(eng, mark); len(d) != 1 || d[0].BinID != 9901 || d[0].Delta != -1 || d[0].PayloadCode != "MIRROR-R" {
-			t.Errorf("deltas %+v, want -1 on 9901 stamped MIRROR-R", d)
-		}
-	})
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			eng, pid, _, alt, nodeID := assumedUnderAChangeover(t, bound)
+			mark := deltaMark(eng)
+			tickConsume(eng, pid, alt, 1)
+			wantSeat(t, eng, pid, nodeID, "after an ALT stroke", 30, 1)
+			if d := deltasSince(eng, mark); len(d) != 0 {
+				t.Errorf("deltas %+v, want none: the cart's bind assumed MIRROR-L", d)
+			}
+		})
+	}
 }
 
 // TestPreview_TheRefusalSaysWhatTheCartIsRecordedAs: a Charge of an ALT share
@@ -261,17 +262,16 @@ func TestPreview_TheRefusalSaysWhatTheCartIsRecordedAs(t *testing.T) {
 	for _, tc := range []struct {
 		source, said string
 	}{
-		{"flip", "from the switch off RUN"},
+		{"assumed", "assumed at its bind"},
 		{"landing", "from the delivery"},
 		{"operator", "by the operator"},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			t.Parallel()
 			eng, pid, _, alt, nodeID := otherPartRig(t, true, "", false, nil)
+			testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeLinesidePayload(nodeID, "MIRROR-L", tc.source != "assumed", tc.source),
+				"the cart's record")
 			testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &alt), "the switch to ALT")
-			if tc.source != "flip" {
-				testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeLinesidePayload(nodeID, "MIRROR-L", true, tc.source), "the cart's record")
-			}
 			_, err := eng.db.HoldCatidDraw(pid, "1002", nodeID, "MIRROR-R", holdReasonOffPlan, 4, time.Now())
 			testutil.MustNoErr(t, err, "an ALT share held")
 			pv, err := eng.PreviewCatidHold(openHolds(t, eng, pid)[0].ID)

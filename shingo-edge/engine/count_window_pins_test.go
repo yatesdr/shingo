@@ -82,7 +82,7 @@ func TestCountWindow_AReleaseInTheWindowStands(t *testing.T) {
 			eng, node, read, acc, binID := windowWorld(t, "WIN-REL-"+c.name[:8])
 			testutil.MustNoErr(t, eng.db.SetProcessNodeReleaseCount(node.ID, c.declared, time.Now()), "the release's count")
 
-			eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 3), unsaidCarrier{})
+			eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 3))
 
 			rt, err := eng.db.GetProcessNodeRuntime(node.ID)
 			testutil.MustNoErr(t, err, "runtime")
@@ -104,7 +104,7 @@ func TestCountWindow_APickupInTheWindowStands(t *testing.T) {
 	eng, node, read, acc, binID := windowWorld(t, "WIN-PICKUP")
 	testutil.MustNoErr(t, eng.carrierLeftAtPickup(node.ID, node.CoreNodeName, 4, 0, ""), "the pickup's leave")
 
-	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 2), unsaidCarrier{})
+	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 2))
 
 	rt, err := eng.db.GetProcessNodeRuntime(node.ID)
 	testutil.MustNoErr(t, err, "runtime")
@@ -132,7 +132,7 @@ func TestCountWindow_AnOperatorsCountInTheWindowStands(t *testing.T) {
 		t.Fatalf("control: the operator's count wrote %d, want 12", got)
 	}
 
-	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 3), unsaidCarrier{})
+	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 3))
 
 	if got := runtimeCount(t, eng, node.ID); got != 9 {
 		t.Errorf("count %d, want 9: the operator counted 12 before the tick's write, and the tick draws 3 from it", got)
@@ -155,7 +155,7 @@ func TestCountWindow_AnUnchangedSeatIsOneWrite(t *testing.T) {
 	testutil.MustNoErr(t, err, "the row the tick read")
 
 	counter.Reset()
-	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 1), unsaidCarrier{})
+	eng.handleConsumeTick(node, read, windowClaim, windowTick(node, 1))
 	if n := counter.Count(); n != 2 {
 		t.Errorf("an unchanged seat's tick ran %d statements, want 2 (the pile read, the count write)", n)
 	}

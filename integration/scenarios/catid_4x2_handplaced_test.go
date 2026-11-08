@@ -12,8 +12,8 @@ import (
 
 // TestCatid4x2_S9_HandPlacedCart: RUN runs on carts whose seats at the two
 // mirror positions could not say their part (a cart placed by hand, a seat
-// from before the known bit: the Edge has the cart bound and Core knows it as
-// MIRROR-L, the Edge does not), and draws them as RUN's part. The PLC is
+// from before the known bit: Core knows it as MIRROR-L, the Edge's bind
+// assumed RUN's claim's part, decision 57), and draws them as RUN's part. The PLC is
 // forced onto ALT's part with no changeover open: the off-plan ALT counts are
 // held at the mirror positions (the holds ledger) and charged at the common
 // ones, and nothing moves — no switch, no changeover row, no order — while the
@@ -31,8 +31,8 @@ func TestCatid4x2_S9_HandPlacedCart(t *testing.T) {
 			c := newW6Cell(t, w6Opts{})
 			mirror := []int{3, 4}
 			for _, i := range mirror {
-				mustNil(t, c.edge.DB.SetProcessNodeRuntimeLinesidePayload(c.nodes[i], "", false, ""),
-					"the seat at "+w6Pos[i]+" cannot say its cart's part")
+				mustNil(t, c.edge.DB.SetProcessNodeRuntimeLinesidePayload(c.nodes[i], w6RunParts[i], false, "assumed"),
+					"the seat at "+w6Pos[i]+" records its cart's part as its bind assumed it")
 			}
 			c.cycle(14)
 			l := c.ledger("S9 RUN on the unsaid carts", true)

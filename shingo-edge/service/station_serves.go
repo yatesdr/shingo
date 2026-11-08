@@ -214,8 +214,8 @@ func (s *StationService) isLoaderClaim(c processes.NodeClaim) bool {
 // the part, plus the node's active piles of the part. Nil when the node has no
 // runtime row, which is a cell the Edge cannot see.
 //
-// The bin's part is the runtime's established identity
-// (LinesidePayloadCode); where none was established, the running claim's part
+// The bin's part is the part the runtime records, known or assumed at its
+// bind (LinesidePayloadCode); where it records none, the running claim's part
 // at the node, which is the part the engine books the bin's count under
 // (Engine.binAtNode). Pinned by TestLoaderLineside_CreditsByPayload (engine).
 func servedHave(rt *processes.RuntimeState, piles []lineside.Bucket, part, runningPart string) *int {
@@ -223,7 +223,7 @@ func servedHave(rt *processes.RuntimeState, piles []lineside.Bucket, part, runni
 		return nil
 	}
 	binPart := string(rt.LinesidePayloadCode)
-	if !rt.LinesidePayloadKnown {
+	if !rt.PartRecorded() {
 		binPart = runningPart
 	}
 	have := 0

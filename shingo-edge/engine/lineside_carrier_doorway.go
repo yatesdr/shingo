@@ -6,8 +6,8 @@ package engine
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -54,12 +54,14 @@ import (
 // it, binAtNode and residentEvacDest ask "was this established" instead of
 // "is the string blank".
 func (e *Engine) recordLinesideCarrier(nodeID int64, nodeName string, carrier domain.LinesideCarrier, src domain.CarrierSource) {
-	payload, known := carrier.Payload()
+	payload, known := carrier.Recorded()
 	if err := e.db.SetProcessNodeRuntimeLinesidePayload(nodeID, string(payload), known, string(src)); err != nil {
 		e.logFn("lineside carrier: record node=%d (%s) source=%s: %v", nodeID, nodeName, src, err)
 		return
 	}
 	switch {
+	case !known && payload != "":
+		e.debugFn("lineside carrier: node=%d (%s) assumed %s, source=%s", nodeID, nodeName, payload, src)
 	case !known:
 		e.debugFn("lineside carrier: node=%d (%s) cleared, source=%s", nodeID, nodeName, src)
 	case payload == "":
@@ -73,67 +75,63 @@ func (e *Engine) recordLinesideCarrier(nodeID int64, nodeName string, carrier do
 // identity write that must land with a seat write or not at all. It logs
 // nothing: the caller logs after its commit.
 func (e *Engine) recordLinesideCarrierIn(ex processes.DBTX, nodeID int64, carrier domain.LinesideCarrier, src domain.CarrierSource) error {
-	payload, known := carrier.Payload()
+	payload, known := carrier.Recorded()
 	return processes.SetRuntimeLinesidePayload(ex, nodeID, string(payload), known, string(src))
 }
 
-// carrierRecordSaid says where a seat's recorded carrier came from, in the
-// words of the act that recorded it: "from the switch off RUN", "from the
-// delivery", "by the operator", "from Core's record of the bin"; "" for a
-// source no person would recognise. For the flip it names the style that ran:
-// the one style of the node's process, other than except, whose claim there
-// takes the recorded part ("from a style switch" when none or several do).
-// Reads the process's styles and their claims only for a flip.
-func (e *Engine) carrierRecordSaid(node *processes.Node, rt *processes.RuntimeState, except int64) string {
-	switch domain.CarrierSource(rt.LinesideSource) {
-	case domain.CarrierFromFlip:
-		if name := e.styleThatRan(node, string(rt.LinesidePayloadCode), except); name != "" {
-			return "from the switch off " + name
+// recordBoundCarrier is the doorway at a bind (decision 57): what the bind
+// knows (carrier, from src), or, when it could not say, the part the
+// position's active claim names, recorded as assumed (CarrierAssumed), so the
+// seat reads the part its cart was bound under for its whole stay and a style
+// flip moves nothing. Only a consume claim that names a part, not a loader's,
+// is assumed: a produce seat's carrier is an empty being filled, and a seat
+// with no such claim stays unknown. Cost: +0 on a bind that knows its part;
+// the runtime row and its claim (two statements) on one that does not.
+func (e *Engine) recordBoundCarrier(node *processes.Node, carrier domain.LinesideCarrier, src domain.CarrierSource) {
+	if !carrier.Known() {
+		if part := e.assumedPartAt(node.ID); part != "" {
+			carrier, src = domain.AssumedCarrier(domain.LinesidePayloadCode(part)), domain.CarrierAssumed
 		}
-		return "from a style switch"
+	}
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, src)
+}
+
+// assumedPartAt is the part a cart no source could name is assumed to be: the
+// part of the consume claim the seat's runtime points at, "" for none, a
+// loader's, or a claim naming no part.
+func (e *Engine) assumedPartAt(nodeID int64) string {
+	rt, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil || rt == nil || rt.ActiveClaimID == nil {
+		return ""
+	}
+	claim, err := e.db.GetStyleNodeClaim(*rt.ActiveClaimID)
+	if err != nil || claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IsLoaderNode() {
+		return ""
+	}
+	return claim.PayloadCode
+}
+
+// carrierRecordSaid says where a seat's recorded carrier came from, in the
+// words of the act that recorded it: "from the delivery", "by the operator",
+// "from Core's record of the bin", "assumed at its bind"; "" for a source no
+// person would recognise.
+func carrierRecordSaid(rt *processes.RuntimeState) string {
+	switch domain.CarrierSource(rt.LinesideSource) {
 	case domain.CarrierFromLanding, domain.CarrierFromDelivery:
 		return "from the delivery"
 	case domain.CarrierFromOperator:
 		return "by the operator"
 	case domain.CarrierFromReconcile:
 		return "from Core's record of the bin"
+	case domain.CarrierAssumed:
+		return "assumed at its bind"
 	}
 	return ""
 }
 
-// styleThatRan is the one style of the node's process, other than except,
-// whose claim at the node takes part; "" when none or several do.
-func (e *Engine) styleThatRan(node *processes.Node, part string, except int64) string {
-	styles, err := e.db.ListStylesByProcess(node.ProcessID)
-	if err != nil {
-		return ""
-	}
-	var ids []int64
-	for _, s := range styles {
-		if s.ID != except {
-			ids = append(ids, s.ID)
-		}
-	}
-	claims, err := e.db.NodeClaimsForStyles(ids)
-	if err != nil {
-		return ""
-	}
-	proc := &processes.Process{ID: node.ProcessID}
-	name := ""
-	for _, s := range styles {
-		if s.ID == except || !claimTakes(claims.Resolve(proc, node, store.ExactStyle(s.ID)), part) {
-			continue
-		}
-		if name != "" {
-			return ""
-		}
-		name = s.Name
-	}
-	return name
-}
-
-// recordedAs is "recorded as P (said)": what a seat's known carrier is recorded
-// as, an empty one as empty, and where the record came from when said names it.
+// recordedAs is "recorded as P (said)": what a seat's recorded carrier is
+// recorded as, an empty one as empty, and where the record came from when said
+// names it.
 func recordedAs(rt *processes.RuntimeState, said string) string {
 	part := string(rt.LinesidePayloadCode)
 	if part == "" {

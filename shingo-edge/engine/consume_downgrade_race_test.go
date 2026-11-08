@@ -478,31 +478,39 @@ func newOrdersSince(t *testing.T, db *store.DB, n int) []string {
 
 // TestConsumeDowngrade_ACartLandedThisSecondKeepsTheSwap: Core reads the cell
 // empty, this Edge recorded a landing there this second: the request keeps the
-// swap and mints no plain move onto the cell.
+// swap and mints no plain move onto the cell. A landing records Core's part
+// (landing), its order's part (delivery) or the claim's part assumed (decision
+// 57), and each is a landing this second.
 //
-// RED at edb48c1e: the request mints a move SYN_MARKET → ALN_004.
+// RED at edb48c1e: the request mints a move SYN_MARKET → ALN_004. RED for
+// delivery and assumed until the settle read every source a landing records.
 func TestConsumeDowngrade_ACartLandedThisSecondKeepsTheSwap(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID := spokenForFixture(t, false)
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "BRKT", true, string(domain.CarrierFromLanding)),
-		"the landing this Edge recorded")
+	for _, src := range []string{string(domain.CarrierFromLanding), string(domain.CarrierFromDelivery), "assumed"} {
+		t.Run(src, func(t *testing.T) {
+			t.Parallel()
+			eng, db, nodeID := spokenForFixture(t, false)
+			testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "BRKT", src != "assumed", src),
+				"the landing this Edge recorded")
 
-	before := countOrders(t, db)
-	if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
-		t.Fatalf("request refused: %v", err)
-	}
-	minted := newOrdersSince(t, db, before)
-	swap := false
-	for _, o := range minted {
-		if o == string(orders.TypeMove)+" ALN_004" {
-			t.Errorf("minted a plain move onto the cell a carrier landed on this second (%v): the downgrade on Core's occupancy alone", minted)
-		}
-		if strings.HasPrefix(o, string(orders.TypeComplex)+" ") {
-			swap = true
-		}
-	}
-	if !swap {
-		t.Errorf("minted %v, want the swap", minted)
+			before := countOrders(t, db)
+			if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
+				t.Fatalf("request refused: %v", err)
+			}
+			minted := newOrdersSince(t, db, before)
+			swap := false
+			for _, o := range minted {
+				if o == string(orders.TypeMove)+" ALN_004" {
+					t.Errorf("minted a plain move onto the cell a carrier landed on this second (%v): the downgrade on Core's occupancy alone", minted)
+				}
+				if strings.HasPrefix(o, string(orders.TypeComplex)+" ") {
+					swap = true
+				}
+			}
+			if !swap {
+				t.Errorf("minted %v, want the swap", minted)
+			}
+		})
 	}
 }
 

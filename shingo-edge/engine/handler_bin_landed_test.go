@@ -9,13 +9,16 @@ import (
 	"shingoedge/orders"
 )
 
-// TestLanding_AnUnnamedCartTakesItsOrdersPart: a landing that carries no part
-// but names its order records the part that order delivered to the node, from
-// the delivery; a landing that names its part keeps it, and one whose order
-// brought an empty, delivers elsewhere or is not named stays unknown. Before,
-// every unnamed landing was unknown, and the flip and the readers had to guess
-// the cart's part.
-func TestLanding_AnUnnamedCartTakesItsOrdersPart(t *testing.T) {
+// TestLanding_RecordsWhatTheDoorwayKnows: a landing records its cart's part at
+// the bind (decision 57): the part its order delivered to the node, from the
+// delivery; else Core's part for the bin, from the landing (Core's stands
+// where it names another part than the order's: it is the bin's record); else
+// the part the position's active claim names, assumed, not known. Before, a
+// landing whose part Core named was recorded from the landing even when its
+// order named the same part, and a cart neither named (placed by hand, an
+// order that brought an empty or delivers elsewhere) was recorded unknown and
+// left for the flip and the readers to guess.
+func TestLanding_RecordsWhatTheDoorwayKnows(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
 		name      string
@@ -28,10 +31,11 @@ func TestLanding_AnUnnamedCartTakesItsOrdersPart(t *testing.T) {
 		wantSrc   domain.CarrierSource
 	}{
 		{name: "the order delivered it here", order: true, wantPart: "PART-X", wantKnown: true, wantSrc: domain.CarrierFromDelivery},
-		{name: "the landing names its part", named: "PART-Y", order: true, wantPart: "PART-Y", wantKnown: true, wantSrc: domain.CarrierFromLanding},
-		{name: "the order brought an empty", order: true, empty: true, wantSrc: domain.CarrierFromLanding},
-		{name: "the order delivers elsewhere", order: true, elsewhere: true, wantSrc: domain.CarrierFromLanding},
-		{name: "no order named", wantSrc: domain.CarrierFromLanding},
+		{name: "Core names the order's part", named: "PART-X", order: true, wantPart: "PART-X", wantKnown: true, wantSrc: domain.CarrierFromDelivery},
+		{name: "Core names another part than the order", named: "PART-Y", order: true, wantPart: "PART-Y", wantKnown: true, wantSrc: domain.CarrierFromLanding},
+		{name: "the order brought an empty", order: true, empty: true, wantPart: "PART-OLD", wantSrc: domain.CarrierSource("assumed")},
+		{name: "the order delivers elsewhere", order: true, elsewhere: true, wantPart: "PART-OLD", wantSrc: domain.CarrierSource("assumed")},
+		{name: "a hand-placed cart: no order, no part", wantPart: "PART-OLD", wantSrc: domain.CarrierSource("assumed")},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()

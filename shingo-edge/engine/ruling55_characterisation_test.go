@@ -168,9 +168,9 @@ func TestPinRuling55_SeatHoldsAndTheLedgersLandings(t *testing.T) {
 		wantSeat55(t, eng, pid, nodeID, "the re-landed old cart after one stroke", seat55{29, 0, 3})
 	})
 
-	t.Run("decision 52: a cart that cannot say, bound before the start, holds the incoming strokes", func(t *testing.T) {
+	t.Run("decision 52, now 57: a cart assumed the departing part at its bind, bound before the start, holds the incoming strokes", func(t *testing.T) {
 		t.Parallel()
-		eng, pid, _, alt, nodeID := unsaidUnderAChangeover(t, "before")
+		eng, pid, _, alt, nodeID := assumedUnderAChangeover(t, "before")
 		mark := deltaMark(eng)
 		tickConsume(eng, pid, alt, 1)
 		// Decision 55: logged under MIRROR-R, the cart (the departing part)

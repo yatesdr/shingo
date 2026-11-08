@@ -283,7 +283,7 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 		claim, _ = e.db.GetStyleNodeClaim(*rt.ActiveClaimID)
 	}
 	part := string(rt.LinesidePayloadCode)
-	if !rt.LinesidePayloadKnown && claim != nil {
+	if !rt.PartRecorded() && claim != nil {
 		part = claim.PayloadCode
 	}
 	held := -sum // a draw: the ticks consumed after the lift

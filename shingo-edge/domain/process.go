@@ -293,6 +293,14 @@ type RuntimeState struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// PartRecorded reports whether the seat records its cart's part: known (a
+// source named it), or assumed at the bind (CarrierAssumed, decision 57). The
+// readers that take the cart's part read LinesidePayloadCode when it does; a
+// seat that records none falls back to the claim's part, as before.
+func (r *RuntimeState) PartRecorded() bool {
+	return r.LinesidePayloadKnown || r.LinesideSource == string(CarrierAssumed)
+}
+
 // NodeClaim is a per-Style binding to a process Node — declares the
 // payload, capacity, reorder behaviour, two-robot swap mode, and
 // staging conventions. The active NodeClaim drives material orders

@@ -192,9 +192,10 @@ func TestDelivered_NoPayloadFromCoreLeavesNoStaleIdentity(t *testing.T) {
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "get runtime")
-	if rt.LinesidePayloadCode != "" {
-		t.Errorf("LinesidePayloadCode = %q, want empty. The previous carrier's identity must not "+
-			"survive a delivery that could not name the new one.", rt.LinesidePayloadCode)
+	if rt.LinesidePayloadCode != "PART-REQ2" || rt.LinesidePayloadKnown || rt.LinesideSource != "assumed" {
+		t.Errorf("the seat records %q known %v from %q, want the claim's PART-REQ2 assumed (decision 57). The previous "+
+			"carrier's identity must not survive a delivery that could not name the new one.", rt.LinesidePayloadCode,
+			rt.LinesidePayloadKnown, rt.LinesideSource)
 	}
 }
 

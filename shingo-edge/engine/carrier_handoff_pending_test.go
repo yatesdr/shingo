@@ -87,8 +87,9 @@ func TestPinD10_AnOlderLandingDoesNotDisplaceANewerCarrier(t *testing.T) {
 
 // TestPinH1_TheLandingRecordsThePartAsKnown — H.1 (part with a known flag) and
 // H.5 (recordDeliveredCarrier re-homed onto the landing): the landing's part
-// is the seat's identity, known. The base's Bound arm records UNKNOWN
-// (TestCarrierBound_ByAdjustmentIsUnknown), which is the door this replaces.
+// is the seat's identity, known. The base's Bound arm records the claim's part
+// assumed (TestCarrierBound_ByAdjustmentIsTheClaimsPartAssumed), which is the
+// door this replaces.
 func TestPinH1_TheLandingRecordsThePartAsKnown(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -102,13 +103,14 @@ func TestPinH1_TheLandingRecordsThePartAsKnown(t *testing.T) {
 		t.Errorf("identity = %q known=%v, want PART-HPL4 known", rt.LinesidePayloadCode, rt.LinesidePayloadKnown)
 	}
 
-	// A landing that says the carrier's part is not known leaves it UNKNOWN,
-	// never the previous occupant's.
+	// A landing that says the carrier's part is not known records the claim's
+	// part assumed, not known (decision 57), never the previous occupant's.
 	testutil.MustNoErr(t, eng.carrierLeft(nodeID, "HPL4-NODE"), "the lift")
 	eng.HandleBinLanded(landing("HPL4-NODE", 9106, 1, 0, "", 32))
 	rt = runtimeOf(t, eng, nodeID)
-	if rt.LinesidePayloadCode != "" || rt.LinesidePayloadKnown {
-		t.Errorf("identity = %q known=%v, want unknown", rt.LinesidePayloadCode, rt.LinesidePayloadKnown)
+	if rt.LinesidePayloadCode != "PART-HPL4" || rt.LinesidePayloadKnown || rt.LinesideSource != "assumed" {
+		t.Errorf("identity = %q known=%v from %q, want the claim's PART-HPL4 assumed", rt.LinesidePayloadCode,
+			rt.LinesidePayloadKnown, rt.LinesideSource)
 	}
 }
 

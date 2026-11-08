@@ -728,13 +728,16 @@ func runOutBeforeTheStart(t *testing.T) (eng *Engine, pid, nodeID, from int64) {
 	return eng, pid, nodeID, from
 }
 
-// TestPinChangeover_PayloadUnknownLanding — a landing that did not carry the
-// cart's part reads as the matched claim's part, the outgoing one before the
-// cutover: the cart takes the strokes under it, and the gap's strokes stay
-// logged (decision 55). The cutover's flip leaves the seat as the landing left
-// it: the cart landed after the changeover started, so it is the incoming
-// part, not the one the departing style ran. Named behaviour (attribution
-// SYNTH-round1 §5 F-known).
+// TestPinChangeover_PayloadUnknownLanding — a cart that landed during the
+// changeover naming no part and no order (a cart placed by hand) is recorded
+// at its bind as the part the position's claim names, assumed: the outgoing
+// one, which the seat still points at. It takes the outgoing strokes, and the
+// gap's strokes stay logged (decision 55). The cutover's flip changes nothing
+// (decision 57): the cart keeps its assumed part, so an incoming stroke is
+// logged, not drawn from it, until a person names it or a cart of the part
+// lands. Before (decision 40), the flip left such a seat unknown and every
+// reader took it as the incoming part, drawing it. Named behaviour
+// (attribution SYNTH-round1 §5 F-known).
 func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 	t.Parallel()
 	eng, db, pid, nodeID, from, to := runOutRig(t)
@@ -742,19 +745,21 @@ func TestPinChangeover_PayloadUnknownLanding(t *testing.T) {
 	testutil.MustNoErr(t, err, "the open changeover")
 	openedBefore(t, eng, co.ID)
 	runOutToGap(t, eng, pid, nodeID, from)
-	landCart(t, eng, nodeID, 9106, "", 53)
+	landBound(eng, runOutNode, 9106, 1, 53)
+	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeLinesidePayload(nodeID, "PART-OLD", false, "assumed"),
+		"the bind's record: the claim's part, assumed")
 	tickConsume(eng, pid, from, 1)
 	if seat := readSeat55(t, eng, pid, nodeID); seat.cart != 52 || seat.hold != 0 || seat.logged != 3 {
 		t.Fatalf("before the cutover = %d, hold %d, logged %d; want 52, none, 3 logged", seat.cart, seat.hold, seat.logged)
 	}
 	testutil.MustNoErr(t, eng.SetProcessActiveStyle(pid, &to), "cut over")
-	if rt := runtimeOf(t, eng, nodeID); rt.LinesidePayloadKnown {
-		t.Fatalf("after the cutover the seat reads %q known from %q, want it left unknown: its cart came with the changeover",
-			rt.LinesidePayloadCode, rt.LinesideSource)
+	if rt := runtimeOf(t, eng, nodeID); rt.LinesidePayloadKnown || rt.LinesidePayloadCode != "PART-OLD" || rt.LinesideSource != "assumed" {
+		t.Fatalf("after the cutover the seat reads %q known %t from %q, want PART-OLD assumed as its bind left it",
+			rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
 	}
 	tickConsume(eng, pid, to, 1)
-	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != 51 {
-		t.Errorf("after the cutover, one tick = %d, want 51 (its own stroke; nothing replays)", got)
+	if seat := readSeat55(t, eng, pid, nodeID); seat.cart != 52 || seat.logged != 4 {
+		t.Errorf("after the cutover, one incoming tick = cart %d, logged %d; want 52 and 4: logged, not drawn", seat.cart, seat.logged)
 	}
 }
 

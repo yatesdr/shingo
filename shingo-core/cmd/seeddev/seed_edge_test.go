@@ -288,10 +288,11 @@ func TestSeedEdge_DemoPlant(t *testing.T) {
 
 // TestSeedEdge_ASeededCartsSeatKnowsItsPart: the spec names a seeded cart's
 // part, Core's bin carries it, and the seat the cart binds knows it too,
-// recorded as the seed's word. A bin the spec names no part for seeds a seat
-// that cannot say what stands on it: the hand-placed cart's shape, the one a
-// switch with no changeover has to handle. Before this the seeder wrote no
-// identity at all, so every seeded seat read as one that could not say.
+// recorded as the seed's word. A bin the spec names no part for is the
+// hand-placed cart's shape, and its seat is seeded as the Edge's bind records
+// such a cart: the claim's part, assumed, not known (decision 57). Before this
+// the seeder wrote no identity at all, so every seeded seat read as one that
+// could not say.
 func TestSeedEdge_ASeededCartsSeatKnowsItsPart(t *testing.T) {
 	t.Parallel()
 	plant, err := plantspec.Load("testdata/seed-fixture.yaml")
@@ -325,7 +326,7 @@ func TestSeedEdge_ASeededCartsSeatKnowsItsPart(t *testing.T) {
 		known        bool
 	}{
 		{node: "ALN_003", what: "a consume cart of PANEL-RH", code: "PANEL-RH", source: "seed", known: true},
-		{node: "ALN_001", what: "a consume cart the spec names no part for", code: "", source: "", known: false},
+		{node: "ALN_001", what: "a consume cart the spec names no part for: its claim's part, assumed", code: "PANEL-LH", source: "assumed", known: false},
 		{node: "PLN_001", what: "a produce seat's empty carrier, no part named", code: "", source: "", known: false},
 	} {
 		var code, source, at string
@@ -335,8 +336,8 @@ func TestSeedEdge_ASeededCartsSeatKnowsItsPart(t *testing.T) {
 			WHERE pn.core_node_name = ?`, row.node).Scan(&code, &known, &source, &at); err != nil {
 			t.Fatalf("%s seat: %v", row.node, err)
 		}
-		if code != row.code || known != row.known || source != row.source || (at != "") != row.known {
-			t.Errorf("%s (%s): seat reads part %q known %v source %q at %q; want part %q known %v source %q, stamped only when known",
+		if code != row.code || known != row.known || source != row.source || (at != "") != (row.source != "") {
+			t.Errorf("%s (%s): seat reads part %q known %v source %q at %q; want part %q known %v source %q, stamped only when recorded",
 				row.node, row.what, code, known, source, at, row.code, row.known, row.source)
 		}
 	}

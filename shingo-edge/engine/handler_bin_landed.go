@@ -24,16 +24,19 @@ import (
 // overtaken landing binds nothing (D10); the same bin already bound at an
 // equal or newer generation keeps its count (H.4).
 //
-// The landing's part, with its known flag, is the seat's identity (H.1): a
-// carrier Core does not know is recorded UNKNOWN, never as the previous
-// occupant's part. A landing that names no part but names its order records
-// the part that order delivered there (orderedPart, source delivery): the
-// order knows what it brought.
+// THE SEAT RECORDS ITS CART'S PART AT THE LANDING (decision 57), in this
+// order: the part the landing's order delivered to the node (orderedPart,
+// source delivery): the order knows what it brought; else Core's part for the
+// bin, with its known flag (source landing, H.1); else, for a cart neither
+// names, the part the position's active claim names, assumed
+// (recordBoundCarrier, source assumed). Where Core names a part the order did
+// not, Core's stands: it is the bin's record, and the one Core checks every
+// count against. A carrier is never recorded as the previous occupant's part.
 //
-// Pi cost per landing at a seat: the node read, the runtime row's ensure, the
-// bind, the identity write and the placement settle (settleCellPlacement's
-// reads), the same reads the Bound arm and the delivered bind paid for the
-// same carrier, now paid once instead of twice.
+// Pi cost per landing at a seat: the node read, the order read (a landing
+// naming one), the runtime row's ensure, the bind, the identity write and the
+// placement settle (settleCellPlacement's reads); a landing that names no part
+// adds the runtime row and its claim (the assumed part).
 func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 	node, err := e.db.GetProcessNodeByCoreNodeName(l.CoreNodeName)
 	if err != nil || node == nil {
@@ -45,10 +48,11 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 	}
 	seq := l.PlacedSeq
 	carrier, src := domain.UnknownCarrier(), domain.CarrierFromLanding
-	if l.PayloadKnown {
-		carrier = domain.KnownCarrier(domain.LinesidePayloadCode(l.PayloadCode))
-	} else if part := e.orderedPart(l); part != "" {
+	switch part := e.orderedPart(l); {
+	case part != "" && (!l.PayloadKnown || l.PayloadCode == part):
 		carrier, src = domain.KnownCarrier(domain.LinesidePayloadCode(part)), domain.CarrierFromDelivery
+	case l.PayloadKnown:
+		carrier = domain.KnownCarrier(domain.LinesidePayloadCode(l.PayloadCode))
 	}
 	e.landCarrier(node, processes.LandingBind{
 		BinID: l.BinID, Epoch: l.Epoch, Count: l.Count, PlacedSeq: &seq,
@@ -73,7 +77,8 @@ func (e *Engine) orderedPart(l protocol.BinLanded) string {
 // landCarrier is the landing verb's engine half: the bind (uop.Mutator.Land,
 // whose refusals are its WHERE), then, only if it landed, the relight of a
 // dark sequential pair (lightDarkSequentialPair, on a seat the bind left
-// dark), the identity through the lineside doorway (source src) and the
+// dark), the identity through the lineside doorway (source src, or assumed
+// where the bind could not say: recordBoundCarrier) and the
 // placement's settle. Reports whether it landed.
 //
 // THE SETTLE IS LOAD-BEARING. A bind here is the record that a bin is on the
@@ -113,7 +118,7 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 			l.BinID, node.CoreNodeName, l.Epoch, why)
 		return false
 	}
-	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, src)
+	e.recordBoundCarrier(node, carrier, src)
 	// Debug, not info: the landing itself is the record, and one line per
 	// carrier at every seat was the Pi's only log-line rise under Lane H
 	// (RULINGS-C2c-run-through §3.4; DECISIONS D35). Refusals stay at info.

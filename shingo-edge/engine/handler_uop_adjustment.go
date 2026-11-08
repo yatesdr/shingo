@@ -170,14 +170,15 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		log.Printf("uop_adjustment: bound staged bin %d to node %s via count correction (remaining=%d epoch=%d)",
 			adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
 		// Same identity hand-off as the Bound arm: a count binds a carrier whose
-		// payload its envelope does not carry, so UNKNOWN clears whatever the
-		// slot said before — through the doorway. A person's load or clear
-		// names it (UOPAdjustment.PayloadKnown).
+		// payload its envelope does not carry, so the bind's doorway records the
+		// part the position's active claim names, assumed (recordBoundCarrier),
+		// over whatever the slot said before. A person's load or clear names it
+		// (UOPAdjustment.PayloadKnown).
 		carrier, src := domain.UnknownCarrier(), domain.CarrierFromDelivery
 		if adj.PayloadKnown {
 			carrier, src = domain.KnownCarrier(domain.LinesidePayloadCode(adj.PayloadCode)), domain.CarrierFromOperator
 		}
-		e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, src)
+		e.recordBoundCarrier(node, carrier, src)
 		e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 			ProcessNodeID: node.ID,
 			CoreNodeName:  adj.CoreNodeName,
@@ -325,9 +326,10 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 // bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: an older Core
 // placed a bin onto this node, and it binds through the landing verb with no
 // placement stamp, as a displacing bind (Lane H, H.7; see the handler's
-// header). The Bound carries no payload, so the identity is UNKNOWN: whatever
+// header). The Bound carries no payload, so the identity is not known: whatever
 // the slot said of the previous occupant would be a confident wrong answer
-// about this one. The landing verb settles the placement (leg_departure.go).
+// about this one, and the landing verb records the position's claim's part,
+// assumed (recordBoundCarrier). It settles the placement (leg_departure.go).
 //
 // For one release; it goes on the cleanup sweep row with the delivered bind
 // fields.

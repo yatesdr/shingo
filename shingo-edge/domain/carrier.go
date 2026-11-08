@@ -63,10 +63,11 @@ func (p LinesidePayloadCode) String() string { return string(p) }
 // LinesideCarrier that nobody filled in cannot be mistaken for an answer.
 // Payload() refuses to hand out a code without the caller seeing ok=false.
 //
-// Deliberately only these two states. A provenance enum naming every way the
-// answer was obtained would have no reader that branches on it today, and an
-// enum nobody switches on is a comment with a type. Add a case when a caller
-// needs to tell two sources apart.
+// An unknown carrier may carry an ASSUMED part (AssumedCarrier): the part the
+// position's active claim names, recorded at the bind when no source could say
+// (decision 57). It is still not an answer, and Payload refuses it as it
+// refuses any unknown carrier; the doorway records it (Recorded) and the seat's
+// readers take it as the cart's part (RuntimeState.PartRecorded).
 type LinesideCarrier struct {
 	payload LinesidePayloadCode
 	known   bool
@@ -81,6 +82,17 @@ func KnownCarrier(payload LinesidePayloadCode) LinesideCarrier {
 // UnknownCarrier records that the question could not be answered. Equal to the
 // zero value, so a struct nobody filled in reads as "cannot say".
 func UnknownCarrier() LinesideCarrier { return LinesideCarrier{} }
+
+// AssumedCarrier records a carrier no source could name as the part the
+// position's active claim names (source CarrierAssumed): unknown, with the part
+// a person is asked to confirm.
+func AssumedCarrier(payload LinesidePayloadCode) LinesideCarrier {
+	return LinesideCarrier{payload: payload}
+}
+
+// Recorded is what the doorway writes for the carrier: its part, known or
+// assumed, and whether it is an answer.
+func (c LinesideCarrier) Recorded() (LinesidePayloadCode, bool) { return c.payload, c.known }
 
 // Payload returns the lineside payload and whether it is an answer at all.
 // The bool is not a nil-check: false means unreadable, and "" with true means
@@ -141,14 +153,14 @@ const (
 	// next occupant inherits it and it is read as a fact about them.
 	CarrierDeparted CarrierSource = "departed"
 
-	// CarrierFromFlip: the style that was running when this cart was bound
-	// left; the cart is that style's part here, by inference, named at the
-	// only moment the inference is still good (the flip, for a consume seat
-	// whose carrier could not say: engine.flipCarrierStamps). The known bit
-	// is true after it; any later source (a landing, an operator, a
-	// departure, a count correction's unknown) writes over it as it would
-	// over any other.
-	CarrierFromFlip CarrierSource = "flip"
+	// CarrierAssumed: no source could name the carrier when it was bound (a
+	// cart placed by hand, an older Core's bind, a seat from before the known
+	// bit), so the doorway recorded the part the position's active claim names
+	// (decision 57). The known bit stays false: it is an assumption, which a
+	// person confirms by naming the cart. The seat's readers take the recorded
+	// part as the cart's (RuntimeState.PartRecorded), so a style flip does not
+	// move it; any later source writes over it as over any other.
+	CarrierAssumed CarrierSource = "assumed"
 
 	// CarrierNotSeen: no source has spoken; the column's default, what a seat
 	// that never saw a carrier reads. Written over a departure that no longer

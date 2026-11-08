@@ -833,3 +833,35 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row (its statements are gone)
 - citations rewritten: none
 - verified at: the commit that adds this row
+### STALE — `TestFlip_RecordsTheCarrierItLeaves`
+- test: `TestFlip_RecordsTheCarrierItLeaves` · pkg `shingoedge/engine` · run `-run '^TestFlip_RecordsTheCarrierItLeaves$'` · `shingo-edge/engine/lineside_flip_stamp_test.go:143` @ `b3afc355` · tags `none`
+- code: STALE
+- assertion map: renamed `TestFlip_ChangesNoSeat` (`shingo-edge/engine/lineside_flip_seats_test.go`), the same five doors and seats: every seat now reads after the flip what it read before. Flipped by decision 57 (a cart's part is recorded at its bind, known or assumed; supersedes 38 rule 1 and 40): the unknown consume seats of the departing style are no longer stamped with its part (source flip), and the seat that landed unnamed since the changeover started keeps its bind's assumed record rather than an exemption from the stamp. The known, empty, produce, loader and incoming-only seats are unchanged, as before.
+- mutation: the renamed test at `b3afc355`: `lineside_flip_seats_test.go:218: FS-UNSAID after completeCutover gated reads {part:PART-L known:true source:flip}, want {part: known:false source:} as before the flip`, at every flipping door
+- coverage Δ: not measured for this row (the stamp's statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestLanding_AnUnnamedCartTakesItsOrdersPart`
+- test: `TestLanding_AnUnnamedCartTakesItsOrdersPart` · pkg `shingoedge/engine` · run `-run '^TestLanding_AnUnnamedCartTakesItsOrdersPart$'` · `shingo-edge/engine/handler_bin_landed_test.go:18` @ `b3afc355` · tags `none`
+- code: STALE
+- assertion map: renamed `TestLanding_RecordsWhatTheDoorwayKnows` (same file): kept, the order's part from the delivery and Core's part from the landing where it differs from the order's. Flipped by decision 57: a landing whose Core part is the order's is recorded from the delivery (was landing); a landing neither names (no order, an empty brought, delivered elsewhere) records the claim's part assumed, not known (was unknown from the landing).
+- mutation: the renamed test at `b3afc355`: `handler_bin_landed_test.go:64: the seat reads "" known false from "landing", want "PART-OLD" known false from "assumed"` (three rows) and `... "PART-X" known true from "landing", want "PART-X" known true from "delivery"`
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes`
+- test: `TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes` · pkg `shingoedge/engine` · run `-run '^TestPinChangeover_ACartThatCannotSayLogsTheIncomingStrokes$'` · `shingo-edge/engine/tick_other_part_test.go:203` @ `b3afc355` · tags `none`
+- code: STALE
+- assertion map: renamed `TestPinChangeover_ACartAssumedAtItsBindKeepsItsPart` (same file), the cart now recorded as its bind records it (RUN's part, assumed): kept, bound before the start an ALT stroke is logged and a MIRROR-R cart takes its own strokes, and RUN's stroke draws the cart. Flipped by decision 57 (supersedes 52's walk-time reading and 40): bound since the start, and with no changeover open, an ALT stroke is logged (was charged, stamped MIRROR-R).
+- mutation: the renamed test at `b3afc355`: `tick_other_part_test.go:248: after an ALT stroke: cart 29, hold 0, logged 0; want cart 30, hold 0, logged 1` (both flipped rows)
+- coverage Δ: not measured for this row (decision 52's statements are gone)
+- citations rewritten: none
+- verified at: the commit that adds this row
+### STALE — `TestCarrierBound_ByAdjustmentIsUnknown`
+- test: `TestCarrierBound_ByAdjustmentIsUnknown` · pkg `shingoedge/engine` · run `-run '^TestCarrierBound_ByAdjustmentIsUnknown$'` · `shingo-edge/engine/carrier_left_test.go:123` @ `b3afc355` · tags `none`
+- code: STALE
+- assertion map: renamed `TestCarrierBound_ByAdjustmentIsTheClaimsPartAssumed` (same file): every old assertion kept but the identity, flipped by decision 57: a bind whose envelope names no part records the claim's part assumed, not known (code "" -> PART-CL, known false kept, source assumed). The previous occupant's known identity still never survives.
+- mutation: the renamed test at `b3afc355`: `carrier_left_test.go:140: bind recorded code="" known=false from "landing", want the claim's PART-CL assumed` and `:164: correction bind recorded code="" known=false from "delivery"`
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
