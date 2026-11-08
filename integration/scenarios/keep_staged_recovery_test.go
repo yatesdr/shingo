@@ -571,21 +571,41 @@ func (c *ksrCell) tick() {
 	c.settle()
 }
 
-// eventually ticks until ok holds. Its budget is a DEADLINE, not a count of
-// tries: the poll is short so a met condition is seen at once, and a count
-// of tries at a short poll would shrink the budget with it and fail a slow
-// machine instead of waiting for it.
+// ksrPasses is eventually's budget in the cell's own passes: five times the
+// most any of the package's waits has needed (11, a changeover).
+const ksrPasses = 60
+
+// eventually ticks until ok holds. It gives up only when BOTH of its budgets
+// are spent, because the cell waits on two kinds of thing:
+//
+//   - What the cell moves itself. Each pass pumps the bus, runs the scan and
+//     steps the fleet, so a changeover takes the same passes however slow the
+//     host: 11 alone and 11 beside a fanned-out `gate.sh full`, in each of the
+//     package's 834 waits traced. Only the pass got slower, ~0.1 s alone to
+//     1.7 s, and a 15 s deadline alone failed them: it measured the host.
+//     So: at least ksrPasses passes.
+//   - What runs on a real timer: Core's 2 s robot poll ("Core's robot poll
+//     reads the dig robot's deck loaded"). There a fast host needs MORE
+//     passes, and a count alone would fail a fast machine. So: at least 15 s.
+//
+// The poll is short so a met condition is seen at once.
 func (c *ksrCell) eventually(what string, ok func() bool) {
 	c.t.Helper()
-	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+	start := time.Now()
+	pass := 0
+	for {
+		pass++
 		c.tick()
 		if ok() {
 			return
 		}
+		if pass >= ksrPasses && time.Since(start) >= 15*time.Second {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	c.dump("timed out: " + what)
-	c.t.Fatalf("timed out waiting for: %s", what)
+	c.t.Fatalf("timed out waiting for: %s (%d passes, %s)", what, pass, time.Since(start).Round(time.Millisecond))
 }
 
 func (c *ksrCell) coreOf(o domain.Order) *coreorders.Order {

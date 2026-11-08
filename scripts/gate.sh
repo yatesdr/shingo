@@ -1275,27 +1275,13 @@ step_docker() {
   # it. Each module keeps its own -p, its own log and its own exit code, and
   # the excerpts are printed afterwards in module order, so a red run reads as
   # it always did.
-  #
-  # INTEGRATION STARTS WHEN THE SHORT STEPS ARE DONE, in `full` (DOCKER_RELEASE).
-  # Its scenarios run dozens of t.Parallel() cells, each with its own engine
-  # stack, on 15 s wall-clock deadlines (ksrCell.eventually). With modbuild,
-  # lint, the guards, the sim compile and unit fanned out beside them, two
-  # cells timed out in four of five runs on the laptop; alone, the docker step
-  # was green in 169 s. Held until those steps finish (~80 s), it overlaps only
-  # core's docker packages, which tolerate the load. shingo-core starts at once.
-  # The held job gives up if the gate itself is gone.
-  local order hold
+  local order
   for m in $mods; do
     order="$(docker_order "$m")"
-    hold=""
-    [ -n "${DOCKER_RELEASE:-}" ] && [ "$m" = integration ] && hold="$DOCKER_RELEASE"
-    echo "  docker: $m ($( [ "$order" = "./..." ] && echo "./..." || echo "longest first, from the steps log")${hold:+; starts when the short steps are done})"
+    echo "  docker: $m ($( [ "$order" = "./..." ] && echo "./..." || echo "longest first, from the steps log"))"
     rm -f "$logdir/docker-$m.rc"
     # shellcheck disable=SC2086 # order is a package list
-    ( if [ -n "$hold" ]; then
-        while [ ! -e "$hold" ]; do kill -0 "$$" 2>/dev/null || exit 1; sleep 0.5; done
-      fi
-      cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" $order >"$logdir/docker-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" $order >"$logdir/docker-$m.log" 2>&1
       echo $? >"$logdir/docker-$m.rc" ) &
     pids="$pids $!"
   done
@@ -1483,7 +1469,6 @@ gate_steps=""
 gate_docker=""   # "" = not attempted | "ran" | "skipped"
 scope_against=""  # set by step_scope: "BASE @ sha"
 gate_unscoped=""  # 1 = `full --unscoped`
-DOCKER_RELEASE="" # set by `full` while integration's scenarios wait for the short steps
 
 # ── The steps log ────────────────────────────────────────────────────────
 #
@@ -1574,9 +1559,6 @@ note_step() { gate_steps="${gate_steps:+$gate_steps, }$1"; }
 # order the steps always printed whatever order they finished in; fan_ok is the
 # step's verdict. A missing rc reads as a failure, so fan_reset clears last
 # run's first.
-# fan_join drops wait's stderr: `full` waits for the short steps first, to
-# release integration's scenarios, and bash complains about a pid it has already
-# waited for. The verdicts are the .rc files, not wait's status.
 fan_reset() {
   local l
   for l in "$@"; do rm -f "$ROOT/.gate/fan-$l.rc" "$ROOT/.gate/fan-$l.out"; done
@@ -1589,7 +1571,7 @@ fan() {
 }
 fan_join() {
   # shellcheck disable=SC2086 # pids
-  [ -n "$FAN_PIDS" ] && wait $FAN_PIDS 2>/dev/null
+  [ -n "$FAN_PIDS" ] && wait $FAN_PIDS
   FAN_PIDS=""
 }
 fan_print() { [ -e "$ROOT/.gate/fan-$1.out" ] && cat "$ROOT/.gate/fan-$1.out"; return 0; }
@@ -1689,11 +1671,6 @@ case "${1:-all}" in
     [ "$GATE_TIER" = push ] && fan simvet timed step_simvet
     if [ "$docker_in" -eq 1 ]; then
       fan unit timed step_test "$(untagged_only_modules)"
-      # The short steps' pids, for releasing integration's scenarios when
-      # they are done (step_docker, "INTEGRATION STARTS WHEN ...").
-      short_pids="$FAN_PIDS"
-      DOCKER_RELEASE="$ROOT/.gate/docker-release.$$"
-      rm -f "$DOCKER_RELEASE"
       fan docker timed step_docker
     else
       fan unit timed step_test
@@ -1703,13 +1680,7 @@ case "${1:-all}" in
     else
       fan sim timed step_sim plain
     fi
-    if [ -n "${DOCKER_RELEASE:-}" ]; then
-      # shellcheck disable=SC2086 # pids
-      wait $short_pids 2>/dev/null
-      : >"$DOCKER_RELEASE"
-    fi
     fan_join
-    [ -n "${DOCKER_RELEASE:-}" ] && rm -f "$DOCKER_RELEASE"
     for l in modbuild lint scripts simvet unit docker side sim; do fan_print "$l"; done
     if fan_ok modbuild; then note_step modbuild; else rc=1; fi
     if fan_ok lint; then note_step lint; else rc=1; fi
