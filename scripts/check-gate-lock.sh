@@ -22,6 +22,9 @@ TMP="$(mktemp -d 2>/dev/null || mktemp -d -t gatelock)"
 trap 'rm -f "$TMP/stop"; touch "$TMP/stop"; sleep 0.5; rm -rf "$TMP"' EXIT
 unset GATE_LOCK_HELD GATE_NO_LOCK GATE_LOCK_TIMEOUT
 export GATE_LOCK_DIR="$TMP/gate.lock"
+# The nested gates these cases run are not a schedule: keep them out of the
+# real tree's .gate/steps.log.
+export GATE_STEPS_LOG=
 export GATE_LOCK_HEARTBEAT=1 GATE_LOCK_STALE=4 GATE_LOCK_POLL=0.3 GATE_LOCK_REPORT=1
 LIB="$ROOT/scripts/gate-lock.sh"
 

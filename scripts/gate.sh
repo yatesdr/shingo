@@ -348,17 +348,41 @@ untagged_only_modules() {
 # that let the first one go missing — a new guard would have to be remembered
 # in two places by whoever writes it. Globbing means it only has to be named
 # once, by its filename.
+#
+# ALL AT ONCE. Each guard reads the tree and writes nothing it shares (the
+# gate-lock pin works in a private lock directory), so they run side by side,
+# each into its own log under .gate/scripts/, and the logs are printed in name
+# order afterwards. In series the step was its guards' sum, which a process
+# spawn per grep makes dear on Windows: ~170 s on the laptop against ~27 s on
+# the Linux box, before the unit tests in both `all` and `full`. Side by side it
+# is about its slowest guard. Each guard's seconds go to the steps log as
+# `scripts:<name>`.
 step_scripts() {
-  local f failed=0 ran=0
+  local f n failed=0 ran=0 logdir="$ROOT/.gate/scripts" pids="" t0="$EPOCHREALTIME"
+  mkdir -p "$logdir" || { echo "FAIL scripts — cannot create $logdir"; return 1; }
   for f in "$ROOT"/scripts/check-*.sh; do
     [ -e "$f" ] || continue
     ran=$((ran + 1))
-    bash "$f" || failed=1
+    n="$(basename "$f" .sh)"
+    rm -f "$logdir/$n.rc"
+    ( t="$EPOCHREALTIME"; bash "$f" >"$logdir/$n.out" 2>&1; echo $? >"$logdir/$n.rc"
+      steps_log "scripts:$n" "$(_secs "$t")" ) &
+    pids="$pids $!"
   done
   if [ "$ran" -eq 0 ]; then
     echo "ok   scripts (none found)"
     return 0
   fi
+  # These jobs by pid: a bare wait would also wait for anything else this
+  # shell has started.
+  # shellcheck disable=SC2086
+  wait $pids
+  for f in "$ROOT"/scripts/check-*.sh; do
+    [ -e "$f" ] || continue
+    n="$(basename "$f" .sh)"
+    cat "$logdir/$n.out"
+    [ "$(cat "$logdir/$n.rc" 2>/dev/null)" = 0 ] || failed=1
+  done
   [ "$failed" -eq 0 ] && echo "ok   scripts ($ran)" || echo "FAIL scripts"
   return $failed
 }
@@ -1243,7 +1267,9 @@ GATE_MODE="${1:-all}"
 GATE_RUN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GATE_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 git diff --quiet HEAD 2>/dev/null || GATE_SHA="$GATE_SHA+"
-STEPS_LOG="$ROOT/.gate/steps.log"
+# GATE_STEPS_LOG names another file; set and empty, nothing is logged (the
+# gate-lock pin runs nested gates whose times are not a schedule).
+STEPS_LOG="${GATE_STEPS_LOG-$ROOT/.gate/steps.log}"
 GATE_T0="$EPOCHREALTIME"
 
 # _secs <from> — seconds since an $EPOCHREALTIME reading, to 0.1s.
@@ -1253,6 +1279,7 @@ _secs() {
 
 # steps_log <step> <seconds> — one line, appended.
 steps_log() {
+  [ -n "$STEPS_LOG" ] || return 0
   printf '%s %s %s %s %s\n' "$GATE_SHA" "$GATE_MODE" "$1" "$2" "$GATE_RUN" >>"$STEPS_LOG"
 }
 
@@ -1279,7 +1306,7 @@ timed() {
   echo "     ($1: ${s}s)"
   steps_log "$name" "$s"
   pat="$(step_logs "$1")"
-  if [ -n "$pat" ]; then
+  if [ -n "$pat" ] && [ -n "$STEPS_LOG" ]; then
     for f in "$ROOT"/.gate/$pat; do
       { [ -e "$f" ] && [ "$f" -nt "$mark" ]; } || continue
       awk -v sha="$GATE_SHA" -v mode="$GATE_MODE" -v step="$name" -v run="$GATE_RUN" '
