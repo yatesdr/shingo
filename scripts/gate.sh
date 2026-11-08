@@ -143,10 +143,15 @@ rc=0
 # a hardcoded triple, so the first `go:build docker` test to land in
 # `protocol` or `shared` would have had scope say NEEDED and docker silently
 # not run it. Today the two lists agree, which is why nobody noticed.
+#
+# A BUILD LINE, NOT THE WORDS. The guards' own fixture tests (shared/scripts)
+# write "//go:build docker" into Go strings, and an unanchored grep counted
+# shared as a docker module on the strength of them: its untagged tests moved
+# into the docker step and a shared _test.go change scoped docker in.
 docker_modules() {
   local m
   for m in $MODULES; do
-    if grep -rlq 'go:build docker' --include='*_test.go' "$ROOT/$m" 2>/dev/null; then
+    if grep -rlqE '^//go:build .*\bdocker\b' --include='*_test.go' "$ROOT/$m" 2>/dev/null; then
       printf '%s ' "$m"
     fi
   done
@@ -995,7 +1000,7 @@ stop_race_pg() {
 docker_packages() {
   local m
   for m in "$@"; do
-    grep -rl 'go:build docker' --include='*_test.go' "$ROOT/$m" 2>/dev/null
+    grep -rlE '^//go:build .*\bdocker\b' --include='*_test.go' "$ROOT/$m" 2>/dev/null
   done | sed 's#/[^/]*$##' | sort -u | wc -l | tr -d ' '
 }
 
