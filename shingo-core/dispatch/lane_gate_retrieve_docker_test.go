@@ -246,11 +246,13 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 // branch instead, which answers the dig through admission and then asks the
 // ordering tiers. A different arm from the retrieve one under test.
 //
-// MUTATION (verified): make laneOwnerFor return the order's own id instead of its
-// parent's (drop the ParentOrderID hop). The exemption then fails to match, the leg
-// parks, and this test's own "append calls = 0" assertion fires. That mutation is
-// the point: the test depends on the PARENT hop, not merely on some exemption
-// existing.
+// MUTATION (verified): make digAskerFor (lane_gate.go) keep the order's own id as the
+// lane owner instead of its parent's (drop the ParentOrderID hop). admission's
+// foreign-dig arm asks ownsDig, which resolves through digAskerFor; the exemption
+// then fails to match, the leg parks, and this test's own "append calls = 0"
+// assertion fires. That mutation is the point: the test depends on the PARENT hop,
+// not merely on some exemption existing. (The same hop in laneOwnerFor is not on
+// this path: dropping it there leaves the test green.)
 func TestGateChoreo_RetrieveOwnDigLegIsNotParked(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

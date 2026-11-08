@@ -238,3 +238,12 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none needed. `git grep -n 'FindCMSBoundary_StoreErrorPropagates'` over the five modules at the tip: `shingo-core/material/material_test.go:186,191` (the material test of the same name, which stays) and the moved scar comment, which now resolves to that test.
 - verified at: `37cf21bb` with this commit's diff applied
+
+### STALE — `TestGateChoreo_RetrieveOwnDigLegIsNotParked`
+- test: `TestGateChoreo_RetrieveOwnDigLegIsNotParked` · pkg `shingocore/dispatch` · run `-run '^TestGateChoreo_RetrieveOwnDigLegIsNotParked$'` · `shingo-core/dispatch/lane_gate_retrieve_docker_test.go:254` @ `22c81558` · tags `docker`
+- code: STALE
+- assertion map: no assertion change. The MUTATION note (`:249-253`) named `laneOwnerFor`, which is no longer on this path: admission's foreign-dig arm asks `ownsDig`, which resolves through `digAskerFor`. The note now names `digAskerFor` and says the `laneOwnerFor` hop is not on the path.
+- mutation: the note's own mutation at base, `lane_gate.go:922` `return *o.ParentOrderID, true` → `return orderID, true`: `ok shingocore/dispatch 6.122s` (green — the note was false) · re-derived, `lane_gate.go:760` `owner = *o.ParentOrderID` → `_ = owner`: `lane_gate_retrieve_docker_test.go:290: append calls = 0, want 1 — the leg is parked at the gate by its own parent's dig (leg 2, parent/dig owner 1, gate-staged=true)` (digAskerFor identical at base and tip)
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `8cd5c7ca` + this commit
