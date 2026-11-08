@@ -768,6 +768,72 @@ func TestPinChangeover_CancelRetagsToTheStayingPart(t *testing.T) {
 	}
 }
 
+// runOutBeforeTheStart is the run-out rig with the old cart lifted and three
+// strokes held under PART-OLD before the changeover opens: a mirror position
+// whose cart ran out first. The changeover is started last.
+func runOutBeforeTheStart(t *testing.T) (eng *Engine, pid, nodeID, from int64) {
+	t.Helper()
+	db := testEngineDB(t)
+	eng = testEngine(t, db)
+	eng.wireEventHandlers()
+	var fromClaim, to int64
+	pid, nodeID, from, to, fromClaim, _ = seedChangeoverScenario(t, db)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &fromClaim, binPtr(9101), 17), "bind the old cart")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "PART-OLD", true, "delivery"), "the old cart is PART-OLD")
+	testutil.MustNoErr(t, eng.carrierLeft(nodeID, runOutNode), "the old cart is lifted before the changeover")
+	for i := 0; i < 3; i++ {
+		tickConsume(eng, pid, from, 1)
+	}
+	if rt := runtimeOf(t, eng, nodeID); rt.PendingUOPDelta != 3 || rt.PendingUOPPayload != "PART-OLD" {
+		t.Fatalf("seat before the start = hold %d of %q, want 3 of PART-OLD", rt.PendingUOPDelta, rt.PendingUOPPayload)
+	}
+	startChangeover(t, eng, db, pid, to)
+	return eng, pid, nodeID, from
+}
+
+// TestPinChangeover_StartRetagsARunOutHoldToTheIncomingPart — decision 45. A
+// hold of the departing part at an empty mirror seat becomes the incoming
+// part's at START; the strokes during the changeover join it rather than drop
+// (no once-per-episode line, no hold_dropped row), and the incoming cart's
+// landing replays them all. Start then cancel returns the tag.
+func TestPinChangeover_StartRetagsARunOutHoldToTheIncomingPart(t *testing.T) {
+	t.Parallel()
+	t.Run("the changeover runs", func(t *testing.T) {
+		t.Parallel()
+		eng, pid, nodeID, from := runOutBeforeTheStart(t)
+		if rt := runtimeOf(t, eng, nodeID); rt.PendingUOPDelta != 3 || rt.PendingUOPPayload != "PART-NEW" {
+			t.Fatalf("seat after the start = hold %d of %q, want 3 of PART-NEW", rt.PendingUOPDelta, rt.PendingUOPPayload)
+		}
+		for i := 0; i < 2; i++ {
+			tickConsume(eng, pid, from, 1)
+		}
+		rt := runtimeOf(t, eng, nodeID)
+		if rt.PendingUOPDelta != 5 || rt.PendingUOPPayload != "PART-NEW" {
+			t.Fatalf("seat after two strokes in the changeover = hold %d of %q, want 5 of PART-NEW: they join the hold", rt.PendingUOPDelta, rt.PendingUOPPayload)
+		}
+		eng.countMu.Lock()
+		noted := eng.unheldTickLogged[nodeID]
+		eng.countMu.Unlock()
+		if noted != "" {
+			t.Errorf("a stroke was noted unheld (%q): the seat held another part's ticks", noted)
+		}
+		assertDrops(t, eng.db)
+		landCart(t, eng, nodeID, 9102, "PART-NEW", 53)
+		tickConsume(eng, pid, from, 1)
+		if got := runtimeOf(t, eng, nodeID); got.RemainingUOPCached != 47 || got.PendingUOPDelta != 0 {
+			t.Errorf("incoming cart after one stroke = %d, hold %d; want 47 (53 - 5 held - 1), hold 0", got.RemainingUOPCached, got.PendingUOPDelta)
+		}
+	})
+	t.Run("start then cancel", func(t *testing.T) {
+		t.Parallel()
+		eng, pid, nodeID, _ := runOutBeforeTheStart(t)
+		testutil.MustNoErr(t, eng.CancelProcessChangeover(pid), "cancel")
+		if rt := runtimeOf(t, eng, nodeID); rt.PendingUOPDelta != 3 || rt.PendingUOPPayload != "PART-OLD" {
+			t.Errorf("seat after the cancel = hold %d of %q, want 3 of PART-OLD", rt.PendingUOPDelta, rt.PendingUOPPayload)
+		}
+	})
+}
+
 // TestPinChangeover_PayloadUnknownLanding — a landing that did not carry the
 // cart's part reads as the matched claim's part, the outgoing one before the
 // cutover, so the incoming-tagged hold waits: the cart takes its own ticks

@@ -13,6 +13,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - A press counting the incoming part a minute past its CATID change completes the changeover
 - With no changeover open, a part one other style runs moves nothing: its draws at the positions whose part differs are held, and the strip's wrong-part item offers that changeover in one tap
 - A part standing since before a landing is run-out: it prepays the new cart, and nothing offers a changeover back
+- A changeover's start retags a run-out hold of the departing part to the incoming part; the cancel retags it back
 - Mark as running completes an open changeover past its gate and records the switch
 - 0 and negative CATIDs name no part; a CATID both styles run never fires
 - A counted tick carries the PLC's part and its style; walk, hourly and Core count it there (v39)
