@@ -584,3 +584,39 @@ present at the merge base is absent at the tip without a row here.
 - coverage Δ: lead (Phase 1 baseline → certification diff)
 - citations rewritten: none
 - verified at: `d912452e` (working tree)
+
+### STRENGTHEN — `TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire`
+- test: `TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire` · pkg `shingo/integration/scenarios` · run `-run '^TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire$'` · `integration/scenarios/two_robot_release_test.go:63` @ `22c81558` · tags `docker`
+- code: STRENGTHEN
+- assertion map: every old assertion kept, unchanged (step 1 counts `two_robot_release_test.go:169-172` → `:172-175`; one envelope per leg `:183-185` → `:186-188`; the supply's carries nothing `:188-191` → `:191-194`; the evac's disposition `:194-204` → `:197-207`; no OrderRelease after the pickup `:236-239` → `:250-253`). Added: the evac reads not departed before `HandleRaw` (`:236-238`) and departed after it (`:244-247`): the BinPickedUp reached `HandleBinPickedUpMessage` for the evac it names (`stampDepartureIfLeftCell`). Before, step 3's absence held as well for an envelope never decoded, filtered out or routed nowhere. Its reader, `pendingReleases`, is the one step 1 shows finding both legs' envelopes. Not caught here and caught by the multi-node row below: a supply released again at the pickup (this supply is already released at the click, and a second release sends nothing). The header's `SetBinPickedUpHandler` (`:58-60`, a name nothing declares) now names the subject route the harness and `cmd/shingoedge` `buildInboundRouter` share.
+- mutation: the pickup reaches no handler:
+  ```diff
+  --- a/shingo-edge/engine/handler_bin_picked_up.go
+  +++ b/shingo-edge/engine/handler_bin_picked_up.go
+   func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
+  +	if bp.OrderUUID != "" {
+  +		return
+  +	}
+  ```
+  · old test GREEN at base: `go test -count=1 -tags docker,lockcheck -run '^(TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire|TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode)$' ./scenarios/` (in `integration`) → `ok  shingo/integration/scenarios 5.276s` · survivor red at tip: same command → `two_robot_release_test.go:245: step 2: after its BinPickedUp the evac reads departed=false (err <nil>), want departed: the pickup never reached the handler`
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `02d36d96` with this commit's diff applied
+
+### STRENGTHEN — `TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode`
+- test: `TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode` · pkg `shingo/integration/scenarios` · run `-run '^TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode$'` · `integration/scenarios/changeover_release_multi_node_test.go:43` @ `22c81558` · tags `docker`
+- code: STRENGTHEN
+- assertion map: every old assertion kept, unchanged (two evac releases `changeover_release_multi_node_test.go:166-175` → `:172-181`; no OrderRelease after evac A's pickup `:196-199` → `:218-221`; none after evac B's `:217-220` → `:240-243`). Added: `departed` (`:189-197`) checks no evac departed before the pickups (`:214`), only evac A after A's (`:216`), both after B's (`:238`): each envelope reached the handler for its own evac and not the other. And after the pickups the operator's release of supply A sends one OrderRelease, supply A's (`:249-258`): the supplies the pickups left alone were releasable, so the two absences are the pickup's answer and not legs that could not have gone.
+- mutation: (1) the pickup reaches no handler (the diff in the row above) · old test GREEN at base: the command above → `ok` · survivor red at tip: → `changeover_release_multi_node_test.go:216: after evac A pickup: evac 2 reads departed=false, want true`. (2) the supply goes at the evac's pickup again (the chain "feat(edge): a release is an intent the act plans and a worker keeps (S5)" deleted):
+  ```diff
+  --- a/shingo-edge/engine/handler_bin_picked_up.go
+  +++ b/shingo-edge/engine/handler_bin_picked_up.go
+   	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil {
+  +		if task.NextMaterialOrderID != nil {
+  +			_ = e.ReleaseOrderWithLineside(*task.NextMaterialOrderID, ReleaseDisposition{CalledBy: "pickup"})
+  +		}
+  ```
+  · old test red at base: → `changeover_release_multi_node_test.go:197: after evac A pickup: got 1 envelopes, want 0` · survivor red at tip: → `changeover_release_multi_node_test.go:219: after evac A pickup: got 1 envelopes, want 0` (the two-robot test is green under it at base and tip, as its row says)
+- coverage Δ: lead (Phase 1 baseline → certification diff)
+- citations rewritten: none
+- verified at: `02d36d96` with this commit's diff applied

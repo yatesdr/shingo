@@ -21,6 +21,7 @@ import (
 
 	"shingo/protocol"
 
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 	edgeharness "shingoedge/testharness"
@@ -38,8 +39,12 @@ import (
 //     drifted to a wider WHERE that could collide).
 //   - HandleBinPickedUp dispatch under back-to-back BinPickedUp events
 //     for distinct evacs — verifies no shared state leaks between
-//     invocations.
+//     invocations: each pickup departs its own evac and not the other.
 //   - End-to-end through the wire on both pickup deliveries.
+//
+// The pickups' absences are pinned against two witnesses: each envelope
+// reached the handler (its evac reads departed), and a supply left alone was
+// releasable (the operator's release of supply A sends its envelope).
 func TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode(t *testing.T) {
 	t.Parallel()
 	const stationID = "edge.test"
@@ -178,6 +183,20 @@ func TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode(t *testing.T) {
 	// Drain the evac releases so what follows counts only the pickups' effect.
 	drainOutbox(t, edge)
 
+	// Each pickup reaches the handler for its own evac and no other: the lift at
+	// a node is its evac's departure (stampDepartureIfLeftCell). Without that
+	// the absences below would also hold for envelopes nobody read.
+	departed := func(when string, want map[int64]bool) {
+		t.Helper()
+		for _, o := range []*domain.Order{evacA, evacB} {
+			got, err := edge.DB.GetOrder(o.ID)
+			mustNil(t, err, "evac "+o.UUID)
+			if got.Departed != want[o.ID] {
+				t.Fatalf("%s: evac %d reads departed=%v, want %v", when, o.ID, got.Departed, want[o.ID])
+			}
+		}
+	}
+
 	// ── Pickup-confirm fires for evac A FIRST. Neither supply is released. ──
 	bpEnv, err := protocol.NewDataEnvelope(
 		protocol.SubjectBinPickedUp,
@@ -192,7 +211,9 @@ func TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode(t *testing.T) {
 		t.Fatalf("build BinPickedUp A envelope: %v", err)
 	}
 	encoded, _ := bpEnv.Encode()
+	departed("before the pickups", nil)
 	edge.Ingestor.HandleRaw(encoded)
+	departed("after evac A pickup", map[int64]bool{evacA.ID: true})
 
 	if releases = pendingReleases(t, edge); len(releases) != 0 {
 		t.Fatalf("after evac A pickup: got %d envelopes, want 0 — the pickup releases no supply, and "+
@@ -214,9 +235,25 @@ func TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode(t *testing.T) {
 	}
 	encoded, _ = bpEnv.Encode()
 	edge.Ingestor.HandleRaw(encoded)
+	departed("after evac B pickup", map[int64]bool{evacA.ID: true, evacB.ID: true})
 
 	if releases = pendingReleases(t, edge); len(releases) != 0 {
 		t.Fatalf("after evac B pickup: got %d envelopes, want 0 — the pickup releases no supply (%s)",
 			len(releases), supplyB.UUID)
+	}
+
+	// The supplies the pickups left alone were releasable all along: the
+	// operator's own release of supply A sends its envelope, and only its own.
+	// So the two absences above are the pickup's answer, not a supply that
+	// could not have gone.
+	if err := edge.Engine.ReleaseOrderWithLineside(supplyA.ID, disp); err != nil {
+		t.Fatalf("release supply A: %v", err)
+	}
+	if releases = pendingReleases(t, edge); len(releases) != 1 || releases[0].OrderUUID != supplyA.UUID {
+		got := []string{}
+		for _, r := range releases {
+			got = append(got, r.OrderUUID)
+		}
+		t.Fatalf("the operator's release of supply A sent %v, want exactly supply A (%s)", got, supplyA.UUID)
 	}
 }

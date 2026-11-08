@@ -49,15 +49,17 @@ import (
 //	        synthesize that envelope inline and feed it to Edge's
 //	        ingestor — same path as production.
 //
-//	Step 3: the pickup sends nothing more.
+//	Step 3: the pickup sends nothing more. The evac reads departed after
+//	        it, so the envelope reached the handler.
 //
 // Failure modes this catches that unit tests miss:
 //   - JSON round-trip on BinPickedUp (a type-shape change on the
 //     envelope would break decoding here even when handler logic is
 //     fine).
-//   - EdgeHandler dispatch — verifies the SetBinPickedUpHandler wiring
-//     matches main.go's wiring; if a refactor renames handlers without
-//     updating both, this scenario surfaces it.
+//   - Subject dispatch: the harness routes SubjectBinPickedUp to
+//     HandleBinPickedUpMessage as cmd/shingoedge/main.go's
+//     buildInboundRouter does; an envelope that reaches no handler leaves
+//     the evac undeparted.
 //   - End-to-end manifest contract on the supply leg through the wire,
 //     not just at the engine boundary.
 func TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire(t *testing.T) {
@@ -231,7 +233,18 @@ func TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode BinPickedUp envelope: %v", err)
 	}
+	if got, err := edge.DB.GetOrder(evacOrder.ID); err != nil || got.Departed {
+		t.Fatalf("step 2: before its BinPickedUp the evac reads departed (err %v), want not yet", err)
+	}
 	edge.Ingestor.HandleRaw(encoded)
+	// The envelope reached the handler, for the evac it names: the lift at the
+	// line is the evac's departure from the cell (stampDepartureIfLeftCell).
+	// Without it the absence below would also hold for an envelope that was
+	// never decoded or routed.
+	if got, err := edge.DB.GetOrder(evacOrder.ID); err != nil || !got.Departed {
+		t.Fatalf("step 2: after its BinPickedUp the evac reads departed=%v (err %v), want departed: "+
+			"the pickup never reached the handler", got != nil && got.Departed, err)
+	}
 
 	// ── Step 3: the pickup sends nothing more. ──
 	if releases := pendingReleases(t, edge); len(releases) != 0 {
