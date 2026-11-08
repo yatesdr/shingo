@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
+	"shingoedge/config"
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -59,6 +61,77 @@ func lastOriginState(t *testing.T, db *store.DB) protocol.DemandOriginState {
 		t.Fatal("no demand.origin message on the outbox")
 	}
 	return got
+}
+
+// tickerTaker is a clock that hands each NewTicker's interval to took and
+// returns a ticker that never fires: the loop that asked has started and waits.
+type tickerTaker struct {
+	clock.Clock
+	took chan time.Duration
+}
+
+func newTickerTaker() *tickerTaker {
+	return &tickerTaker{Clock: clock.Real(), took: make(chan time.Duration, 4)}
+}
+
+func (k *tickerTaker) NewTicker(d time.Duration) clock.Ticker {
+	k.took <- d
+	return clock.NewManual(time.Time{}).NewTicker(d)
+}
+
+// TestDemandReconciler_TheDefaultClock pins the clock the demand reconciler's
+// loop takes its ticker from, as an Edge runs it: with DemandReconcileClock
+// unset, the process default as it stands when the loop starts, not when the
+// engine was built, so a sim clock installed during boot paces the loop
+// (clock.Default), for an engine built by New and for one built bare; with it
+// set, the clock given and never the default. The keep-staged scenarios
+// (integration/scenarios kickClock) set it to fire the level keeper's pass
+// themselves; what they stand in for is this.
+//
+// Not parallel: it installs a default clock and restores it before any
+// parallel test in this package runs.
+func TestDemandReconciler_TheDefaultClock(t *testing.T) {
+	cfg := &config.Config{Namespace: "test", LineID: "test-line"}
+	given := newTickerTaker()
+	built := New(Config{AppConfig: cfg, DB: testEngineDB(t)})
+	givenTo := New(Config{AppConfig: cfg, DB: testEngineDB(t), DemandReconcileClock: given})
+	// Installed after the engines are built, as sim startup may.
+	prev := clock.Default()
+	def := newTickerTaker()
+	clock.SetDefault(def)
+	t.Cleanup(func() { clock.SetDefault(prev) })
+
+	for _, tc := range []struct {
+		name  string
+		e     *Engine
+		from  *tickerTaker
+		other *tickerTaker
+	}{
+		{"New", built, def, given},
+		{"bare", &Engine{}, def, given},
+		{"given", givenTo, given, def},
+	} {
+		tc.e.stopChan = make(chan struct{})
+		go tc.e.runDemandReconciler()
+		select {
+		case d := <-tc.from.took:
+			if d != demandReconcileInterval {
+				t.Errorf("%s engine: the loop's ticker is every %v, want demandReconcileInterval (%v)",
+					tc.name, d, demandReconcileInterval)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s engine: the loop took no ticker from the clock it should run on", tc.name)
+		}
+		close(tc.e.stopChan)
+		select {
+		case <-tc.other.took:
+			t.Errorf("%s engine: the loop took a ticker from the wrong clock as well", tc.name)
+		default:
+		}
+	}
+	if demandReconcileInterval != 60*time.Second {
+		t.Errorf("demandReconcileInterval = %v, want 60s", demandReconcileInterval)
+	}
 }
 
 // THE FIRST THING TO GET RIGHT IS NOT CLOSING THINGS.

@@ -48,8 +48,19 @@ func (e *Engine) startDemandReconciler() {
 	go e.runDemandReconciler()
 }
 
+// reconcilerClock is the clock the reconciler's loop takes its ticker from:
+// Config.DemandReconcileClock when set, else the process default, read now and
+// not at construction, because sim startup installs its clock during boot
+// (clock.Default). Pinned by TestDemandReconciler_TheDefaultClock.
+func (e *Engine) reconcilerClock() clock.Clock {
+	if e.reconcileClock != nil {
+		return e.reconcileClock
+	}
+	return clock.Default()
+}
+
 func (e *Engine) runDemandReconciler() {
-	ticker := clock.Default().NewTicker(demandReconcileInterval)
+	ticker := e.reconcilerClock().NewTicker(demandReconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {

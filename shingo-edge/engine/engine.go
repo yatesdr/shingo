@@ -136,6 +136,9 @@ type Engine struct {
 	// warlinkClient is the injected WarLink client (sim fake) carried from
 	// Config.Warlink to the NewManager call in Start(). Nil → real HTTP client.
 	warlinkClient plc.WarlinkClient
+	// reconcileClock is Config.DemandReconcileClock: what the demand
+	// reconciler's loop takes its ticker from (reconcilerClock).
+	reconcileClock clock.Clock
 
 	hourlyTracker  *HourlyTracker
 	reconciliation *ReconciliationService
@@ -299,6 +302,12 @@ type Config struct {
 	// default HTTP client (D3). Sim mode sets this to the fake WarLink client
 	// (T3.1); production leaves it nil so NewManager builds the real client.
 	Warlink plc.WarlinkClient
+	// DemandReconcileClock, when non-nil, is the clock the demand reconciler's
+	// loop takes its ticker from. Production leaves it nil: the loop reads
+	// clock.Default() when it starts, so a sim clock installed at boot paces it
+	// (pinned by TestDemandReconciler_TheDefaultClock). A test sets one to fire
+	// the level keeper's pass itself instead of waiting a period out.
+	DemandReconcileClock clock.Clock
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -317,15 +326,16 @@ func New(c Config) *Engine {
 		debugFn = func(string, ...any) {}
 	}
 	e := &Engine{
-		cfg:           c.AppConfig,
-		configPath:    c.ConfigPath,
-		db:            c.DB,
-		logFn:         logFn,
-		debugFn:       debugFn,
-		debugLogger:   c.DebugLogger,
-		warlinkClient: c.Warlink,
-		Events:        NewEventBus(),
-		stopChan:      make(chan struct{}),
+		cfg:            c.AppConfig,
+		configPath:     c.ConfigPath,
+		db:             c.DB,
+		logFn:          logFn,
+		debugFn:        debugFn,
+		debugLogger:    c.DebugLogger,
+		warlinkClient:  c.Warlink,
+		reconcileClock: c.DemandReconcileClock,
+		Events:         NewEventBus(),
+		stopChan:       make(chan struct{}),
 	}
 	// SEEDED FROM THE CLOCK, not from zero: this counter lives in memory and a
 	// browser outlives a restart of this process. Starting every run at a fresh
