@@ -6,7 +6,7 @@
 #
 #   dev  = bash scripts/gate.sh             fmt, then at once: modbuild, lint, the
 #          dev-tier guards (script pins only when their inputs are in the diff),
-#          the sim compile, the unit tests. Seconds to a
+#          the sim compile, the unit tests through Go's test cache. Seconds to a
 #          minute; run it on every change.
 #   push = bash scripts/gate.sh full        fmt, then at once: modbuild, lint, every
 #          guard but the script pins whose inputs are unchanged, the sim compile,
@@ -20,7 +20,7 @@
 # push and runs somewhere before origin):
 #
 #   tag set            dev                 push               cert             CI
-#   untagged+lockcheck run                 run                run              run, and -race
+#   untagged+lockcheck run (cached)        run                run              run, and -race
 #   docker,lockcheck   compile (lint)      run (scoped)       run (unscoped)   run, and -race shards
 #   sim                compile (sim vet)   run, no -race      run, -race       build; run -race (sim job)
 #   race (core engine, www, with docker)   —                  —                run       docker-race shards
@@ -377,8 +377,9 @@ untagged_only_modules() {
 # write_diff records, once per run, the paths this tree changes against its
 # base: `git diff --name-only <merge-base HEAD origin/main>` (commits since the
 # base, staged and unstaged edits, deletions) plus untracked files. With no
-# origin/main it records the single line `*`: every pin runs. A stale
-# origin/main widens the diff, which fails the same safe way.
+# origin/main it records the single line `*`: every pin runs and the unit step
+# does not trust the cache. A stale origin/main widens the diff, which fails
+# the same safe way.
 DIFF_FILE="$ROOT/.gate/diff.files"
 # ALWAYS origin/main, whatever `full BASE` scopes the docker suites against: the
 # wider diff is the safe one (more pins run).
@@ -407,6 +408,30 @@ diff_touches() {
     done
   done <"$DIFF_FILE"
   return 1
+}
+
+# diff_go_only — true when every path in the diff is a .go, go.mod or go.sum
+# under one of the five modules (an empty diff counts). The bare gate's unit
+# step trusts Go's test cache only then. The cache keys on what a test's own
+# process opens; a file a test reads through a subprocess (node, over the edge's
+# JS) or a census reads in a module the test does not import is invisible to it,
+# so any other path in the diff (JS, assets, YAML, templates, docs, scripts)
+# reruns everything. What is left uncovered — a .go file in one module read as
+# text by a census test in another that does not import it — `full` catches.
+diff_go_only() {
+  [ -e "$DIFF_FILE" ] || write_diff
+  local p
+  while IFS= read -r p; do
+    case "$p" in
+      '*') return 1 ;;
+      protocol/*.go|shared/*.go|shingo-core/*.go|shingo-edge/*.go|integration/*.go) ;;
+      protocol/go.mod|protocol/go.sum|shared/go.mod|shared/go.sum) ;;
+      shingo-core/go.mod|shingo-core/go.sum|shingo-edge/go.mod|shingo-edge/go.sum) ;;
+      integration/go.mod|integration/go.sum) ;;
+      *) return 1 ;;
+    esac
+  done <"$DIFF_FILE"
+  return 0
 }
 
 # guard_header <file> <key> — a guard's `# key: value` header line (first 30
@@ -619,6 +644,17 @@ step_test() {
   fi
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
+  # THE BARE GATE READS GO'S TEST CACHE; every other tier runs -count=1. The
+  # cache is content-keyed — the test binary and every file and env var the
+  # test's own process touched — so a package whose inputs did not change is
+  # not run again: Go's cache is the affected-packages tool. FAIL-SAFE: any
+  # path in the diff that is not Go under a module (diff_go_only) reruns
+  # everything, because a subprocess's reads (node over the edge's JS) are the
+  # cache's blind spot. A flake cached green re-rolls at `full`.
+  local count="-count=1" how=""
+  if [ "${GATE_TIER:-}" = dev ]; then
+    if diff_go_only; then count=""; else how="-count=1: the diff has non-Go files"; fi
+  fi
   # One background job per module; collect failures when the last lands. The
   # log stays per-module ($logdir/test-$m.log) so the excerpt printed on a
   # failure is that module's own, not another's interleaving.
@@ -627,7 +663,8 @@ step_test() {
   for m in $mods; do
     # -tags lockcheck: every lock goes through protocol/lockcheck's guard, which fails a
     # re-entry or a backwards take loudly (LOCKS.md). The docker and race steps carry it too.
-    ( cd "$ROOT/$m" && go test -tags lockcheck -count=1 ./... >"$logdir/test-$m.log" 2>&1
+    # shellcheck disable=SC2086 # count is one flag or none
+    ( cd "$ROOT/$m" && go test -tags lockcheck $count ./... >"$logdir/test-$m.log" 2>&1
       echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
@@ -639,7 +676,18 @@ step_test() {
       failed=1
     fi
   done
-  [ "$failed" -eq 0 ] && echo "ok   tests" || echo "FAIL tests"
+  # What the sentence says about the cache: reused out of run, from go test's
+  # own `ok pkg (cached)` lines.
+  if [ "${GATE_TIER:-}" = dev ] && [ -z "$how" ]; then
+    local reused ran
+    reused="$(for m in $mods; do cat "$logdir/test-$m.log"; done 2>/dev/null \
+      | grep -cE '^ok[[:space:]]+[^[:space:]]+[[:space:]]+\(cached\)')"
+    ran="$(for m in $mods; do cat "$logdir/test-$m.log"; done 2>/dev/null \
+      | grep -cE '^(ok|FAIL)[[:space:]]+[^[:space:]]+[[:space:]]')"
+    how="cached: $reused of $ran packages reused"
+  fi
+  echo "$how" >"$logdir/unit.summary"
+  [ "$failed" -eq 0 ] && echo "ok   tests${how:+ ($how)}" || echo "FAIL tests"
   return $failed
 }
 
@@ -1462,9 +1510,12 @@ timed() {
   if [ -n "$pat" ] && [ -n "$STEPS_LOG" ]; then
     for f in "$ROOT"/.gate/$pat; do
       { [ -e "$f" ] && [ "$f" -nt "$mark" ]; } || continue
+      # A package the bare gate took from Go's test cache is logged as `cached`,
+      # so the log does not read a reused package as one that was not there.
       awk -v sha="$GATE_SHA" -v mode="$GATE_MODE" -v step="$name" -v run="$GATE_RUN" '
         /^(ok|FAIL)[ \t]+[^ \t]+[ \t]+[0-9.]+s/ {
-          t = $3; sub(/s$/, "", t); print sha, mode, step ":" $2, t, run }' "$f" >>"$STEPS_LOG"
+          t = $3; sub(/s$/, "", t); print sha, mode, step ":" $2, t, run; next }
+        /^ok[ \t]+[^ \t]+[ \t]+\(cached\)/ { print sha, mode, step ":" $2, "cached", run }' "$f" >>"$STEPS_LOG"
     done
   fi
   rm -f "$mark"
@@ -1630,8 +1681,8 @@ case "${1:-all}" in
   all)
     # THE BARE GATE IS THE DEV TIER: fmt first (cheapest, and the only check that
     # still answers when the tree does not compile), then modbuild, lint, the
-    # dev-tier guards, the sim compile and the unit tests all at once, printed in
-    # that order afterwards. Every step runs even
+    # dev-tier guards, the sim compile and the unit tests (through Go's test
+    # cache) all at once, printed in that order afterwards. Every step runs even
     # after one fails: a gate that stops at the first problem makes you re-run
     # the slow parts once per problem.
     if timed step_fmt;  then note_step fmt;  else rc=1; fi
@@ -1648,7 +1699,10 @@ case "${1:-all}" in
     if fan_ok lint; then note_step lint; else rc=1; fi
     if fan_ok scripts; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"; else rc=1; fi
     if fan_ok simvet; then note_step "sim compile"; else rc=1; fi
-    if fan_ok unit; then note_step unit; else rc=1; fi
+    if fan_ok unit; then
+      u="$(cat "$ROOT/.gate/unit.summary" 2>/dev/null)"
+      note_step "unit${u:+ ($u)}"
+    else rc=1; fi
     ;;
   *) usage ;;
 esac
