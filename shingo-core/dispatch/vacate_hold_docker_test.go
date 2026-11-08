@@ -31,8 +31,8 @@ func vhLift(t *testing.T, db *store.DB, binID int64) {
 }
 
 // vhPlace is an arrival through THE ONE PLACEMENT (PlaceBinTx), which evicts a
-// ghost recorded on the node and clears lifted_at — and never touches
-// last_lift_at.
+// ghost recorded on the node — and never touches last_lift_at (nor lifted_at,
+// decision 44b).
 func vhPlace(t *testing.T, db *store.DB, binID int64, node string) {
 	t.Helper()
 	n, err := db.GetNodeByDotName(node)
@@ -139,8 +139,8 @@ func TestVacate_HeldAtTheTapReleasedOnTheLift(t *testing.T) {
 
 // TestVacate_FloorReleasesAfterTheBinLandsElsewhere: the floor reads the lift,
 // not a record. The partial is lifted and set down on the staging node before
-// any re-drive runs — the arrival clears lifted_at — and the 60 s floor still
-// sees the lift (last_lift_at) and releases, recording that it did.
+// any re-drive runs, and the 60 s floor still sees the lift (last_lift_at) and
+// releases, recording that it did.
 func TestVacate_FloorReleasesAfterTheBinLandsElsewhere(t *testing.T) {
 	t.Parallel()
 	r := newReleaseRig(t)

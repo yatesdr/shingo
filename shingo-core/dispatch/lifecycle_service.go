@@ -716,8 +716,10 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	// and the ingest the Edge sent at the release usually lands first but need
 	// not. An ingest one generation behind a bin whose generation ended at a
 	// lift (lifted_at set) counts the life the lift closed, and applies. One
-	// read, only on a mismatch. Residual: an ingest later than the bin's
-	// arrival (lifted_at cleared) is refused, as one later than any reset is.
+	// read, only on a mismatch. The stamp says the lift was the bin's latest
+	// bump (decision 44b: any other bump clears it, an arrival does not), so
+	// an ingest later than the bin's arrival still applies, and one later
+	// than a reset is refused.
 	countedEpoch := p.BinEpoch
 	if countedEpoch != 0 && bin.DeltaEpoch == countedEpoch+1 {
 		if at, err := s.db.BinLiftedAt(bin.ID); err == nil && at != nil {

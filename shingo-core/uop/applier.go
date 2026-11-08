@@ -15,6 +15,7 @@ import (
 	"shingo/protocol/clock"
 
 	"shingo/protocol/lockcheck"
+	"shingocore/domain"
 	"shingocore/internal/lockorder"
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -368,9 +369,19 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// flush window; a window straddling the lift stays on the carrier. A window
 	// with no start (an Edge that predates it) cannot be judged and keeps the
 	// stale path.
+	//
+	// THE STAMP OUTLIVES THE LANDING (decision 44b): lifted_at is cleared only
+	// by the next bump, never by an arrival, so a pre-lift window that reaches
+	// Core after the cart has been set down still applies at E−1. The
+	// current-generation arm is a different question — a window at the new
+	// generation that started after the lift was counted while the cart was
+	// in the air — and holds only while the bin stands at _TRANSIT: once it
+	// lands, the next seat's own stream runs at that generation and starts
+	// after the lift by construction.
 	liftEnded := false
+	inTransit := cur.node == domain.TransitNodeName
 	if cur.liftedAt.Valid && d.Epoch > 0 && !d.WindowStart.IsZero() &&
-		(d.Epoch == currentEpoch-1 || d.Epoch == currentEpoch) {
+		(d.Epoch == currentEpoch-1 || (d.Epoch == currentEpoch && inTransit)) {
 		if !d.WindowStart.Before(cur.liftedAt.Time) {
 			return s.refuseAfterLift(tx, station, d, currentEpoch, cur)
 		}
@@ -382,12 +393,19 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		if err := tx.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, d.BinID).Scan(&before); err != nil {
 			return fmt.Errorf("read bin %d for stale-epoch audit: %w", d.BinID, err)
 		}
+		var liftedAt *time.Time
+		if cur.liftedAt.Valid {
+			liftedAt = &cur.liftedAt.Time
+		}
 		metadata, err := json.Marshal(struct {
-			WireEpoch  int64 `json:"wire_epoch"`
-			BinEpoch   int64 `json:"bin_epoch"`
-			SequenceID int64 `json:"sequence_id"`
-			Delta      int   `json:"delta"`
-		}{d.Epoch, currentEpoch, d.SequenceID, d.Delta})
+			WireEpoch   int64      `json:"wire_epoch"`
+			BinEpoch    int64      `json:"bin_epoch"`
+			SequenceID  int64      `json:"sequence_id"`
+			Delta       int        `json:"delta"`
+			WindowStart time.Time  `json:"window_start"`
+			LiftedAt    *time.Time `json:"lifted_at"`
+			Node        string     `json:"node"`
+		}{d.Epoch, currentEpoch, d.SequenceID, d.Delta, d.WindowStart, liftedAt, cur.node})
 		if err != nil {
 			return fmt.Errorf("marshal stale-epoch audit metadata bin=%d: %w", d.BinID, err)
 		}
@@ -433,8 +451,9 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 			s.markRepaired(d.BinID, currentEpoch)
 		}
 		atomic.AddInt64(&s.droppedStaleEpoch, 1)
-		log.Printf("BinUOPDelta stale epoch DROPPED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d — routed to discrepancy audit; epoch refresh sent=%t",
-			d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta, repaired)
+		log.Printf("BinUOPDelta stale epoch DROPPED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d window_start=%s lifted_at=%s node=%q — routed to discrepancy audit; epoch refresh sent=%t",
+			d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta, d.WindowStart.Format(time.RFC3339Nano),
+			stampOrNone(cur.liftedAt), cur.node, repaired)
 		return fmt.Errorf("%w: generation %d is retired (bin at %d); recorded as a stale drop",
 			ErrInventoryDeltaSkipped, d.Epoch, currentEpoch)
 	case d.Epoch > currentEpoch:
@@ -1023,10 +1042,14 @@ type scopeCursor struct {
 	appliedNet       sql.NullInt64
 	appliedWindowEnd sql.NullTime
 	// liftedAt is the bin's lifted_at, read in the same statement (Lane H,
-	// D11 (ii)): set when its generation ended at a lift, NULL once it lands.
-	// Bin-level, not scope-level; it rides here because readBinScope is the
-	// one read the apply takes.
+	// D11 (ii)): set when its latest generation change was a lift, NULL once
+	// any other bump follows (decision 44b). Bin-level, not scope-level; it
+	// rides here because readBinScope is the one read the apply takes.
 	liftedAt sql.NullTime
+	// node is the name of the node the bin stands at, from the same statement
+	// ("" for none): the after-lift refusal of a current-generation window
+	// holds only while the bin is in transit.
+	node string
 	// binCount is the bin's uop_remaining as read, for the after_lift
 	// observation row (no second read).
 	binCount int
@@ -1072,6 +1095,14 @@ func (c scopeCursor) wentBackward(seq int64, windowEnd time.Time) bool {
 		windowEnd.Truncate(time.Microsecond).After(c.appliedWindowEnd.Time)
 }
 
+// stampOrNone formats an optional stamp for a log line.
+func stampOrNone(t sql.NullTime) string {
+	if !t.Valid {
+		return "none"
+	}
+	return t.Time.Format(time.RFC3339Nano)
+}
+
 // readBinScope reads the bin's current generation and Core's cursor in the
 // message's own scope, (station, bin, wire epoch), in one statement, and locks
 // the bin row. The lock is what the apply takes anyway at its UPDATE; taking
@@ -1083,13 +1114,14 @@ func readBinScope(tx *sql.Tx, station, scopeKey string, d *protocol.BinUOPDelta)
 		cur     scopeCursor
 		lastSeq sql.NullInt64
 	)
-	err := tx.QueryRow(`SELECT b.delta_epoch, dd.last_seq, dd.applied_net, dd.applied_window_end, b.lifted_at, b.uop_remaining
+	err := tx.QueryRow(`SELECT b.delta_epoch, dd.last_seq, dd.applied_net, dd.applied_window_end, b.lifted_at, b.uop_remaining,
+		       COALESCE((SELECT n.name FROM nodes n WHERE n.id = b.node_id), '')
 		FROM bins b
 		LEFT JOIN inventory_delta_dedup dd
 		  ON dd.station=$2 AND dd.scope_kind=$3 AND dd.scope_key=$4 AND dd.epoch=$5
 		WHERE b.id=$1
 		FOR UPDATE OF b`,
-		d.BinID, station, invDeltaScopeBin, scopeKey, d.Epoch).Scan(&epoch, &lastSeq, &cur.appliedNet, &cur.appliedWindowEnd, &cur.liftedAt, &cur.binCount)
+		d.BinID, station, invDeltaScopeBin, scopeKey, d.Epoch).Scan(&epoch, &lastSeq, &cur.appliedNet, &cur.appliedWindowEnd, &cur.liftedAt, &cur.binCount, &cur.node)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, cur, fmt.Errorf("BinUOPDelta target bin %d does not exist", d.BinID)
 	}

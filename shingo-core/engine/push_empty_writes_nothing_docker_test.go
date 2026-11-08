@@ -93,7 +93,8 @@ func TestPushEmpty_CoreWritesNothingTheCarrierCarries(t *testing.T) {
 		}
 	}
 	sort.Strings(changed)
-	want := []string{"anomaly_note", "delta_epoch", "last_lift_at", "node_id", "staged_at", "status", "updated_at"}
+	// lifted_at: the lift's stamp, which the landing keeps (decision 44b).
+	want := []string{"anomaly_note", "delta_epoch", "last_lift_at", "lifted_at", "node_id", "staged_at", "status", "updated_at"}
 	if !reflect.DeepEqual(changed, want) {
 		t.Errorf("the push changed %v on the carrier, want only %v. Before %v, after %v",
 			changed, want, before, after)

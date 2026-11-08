@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // Lane H, DECISIONS D11 — the generation ends at the lift, not the release.
@@ -132,7 +133,9 @@ func TestRelease_UnfencedReleaseStillBumps(t *testing.T) {
 // is continuous across the lift); one that started at or after it is refused
 // as after_lift: one ledger row, no exception, no anomaly, no refresh. A window
 // at the new generation that starts after the lift, while the carrier is in
-// transit, is refused the same way.
+// transit, is refused the same way. Landed at the next seat, the stamp stays
+// and the ended generation's post-lift window is still refused, and the next
+// seat's own window at the new generation applies (decision 44b).
 func TestApplier_AfterTheLiftATimeRule(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -202,14 +205,145 @@ func TestApplier_AfterTheLiftATimeRule(t *testing.T) {
 		t.Errorf("the lift broadcast %d uop_adjustment(s); its announcement is the pickup (named exception)", len(adj))
 	}
 
-	// The arrival ends the lift's window.
-	if _, err := binSvc.ApplyArrival(bin.ID, sd.StorageNode.ID, false, nil, order.ID); err != nil {
+	// A landed cart (decision 44b): the arrival keeps the stamp, the close of
+	// the generation the lift ended. A post-lift window of that generation is
+	// still not the cart's; at the next seat, its own stream at the new
+	// generation applies — the current-generation refusal holds only in transit.
+	next := liftPinSeat(t, db, "LINE2-IN-LIFT")
+	if _, err := binSvc.ApplyArrival(bin.ID, next, false, nil, order.ID); err != nil {
 		t.Fatalf("arrival: %v", err)
 	}
-	var stillLifted bool
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT lifted_at IS NOT NULL FROM bins WHERE id=$1`, bin.ID).Scan(&stillLifted), "lifted_at after arrival")
-	if stillLifted {
-		t.Error("lifted_at survived the arrival")
+	var stamp time.Time
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT lifted_at FROM bins WHERE id=$1`, bin.ID).Scan(&stamp), "lifted_at after arrival")
+	if !stamp.Equal(liftedAt) {
+		t.Errorf("lifted_at after the arrival = %s, want the lift's %s", stamp, liftedAt)
+	}
+	if err := deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 3, -4, -7, liftedAt.Add(time.Millisecond))); !errors.Is(err, ErrInventoryDeltaSkipped) {
+		t.Errorf("the post-lift window after the landing: err = %v, want refused", err)
+	}
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta("edge.next", liftNetDelta(bin.ID, e+1, 1, -5, -5, liftedAt.Add(time.Second))),
+		"the next seat's own window")
+	if got := binRemaining(t, db, bin.ID); got != 52 {
+		t.Errorf("after the next seat's window uop_remaining = %d, want 52 (57 - 5)", got)
+	}
+	if n := ledgerOps(t, db, bin.ID, "after_lift"); n != 3 {
+		t.Errorf("after_lift rows = %d, want 3", n)
+	}
+}
+
+// liftPinSeat creates a node a station binds at (a plain line node: not
+// synthetic, not storage, no lane parent) and returns its id.
+func liftPinSeat(t *testing.T, db *store.DB, name string) int64 {
+	t.Helper()
+	n := &nodes.Node{Name: name, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(n), "create "+name)
+	return n.ID
+}
+
+// TestApplier_APreLiftWindowAppliesAfterTheLanding — decision 44b. A window of
+// the generation a seat lift ended, started before the lift, is the lifted
+// cart's whenever it reaches Core: after the cart is set down in storage, and
+// after a storage lift (which ends no generation and keeps the stamp) and a
+// second set-down. It applies at E−1 each time; nothing drops as stale.
+func TestApplier_APreLiftWindowAppliesAfterTheLanding(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	manifest := announcingService(db)
+	binSvc := NewBinService(db, manifest)
+	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
+
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-LANDED", "PART-A", 60)
+	order := createTestOrder(t, db, sd.StorageNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+	e := binEpoch(t, db, bin.ID)
+	beforeLift := time.Now().UTC().Add(-time.Second)
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 1, -1, -1, beforeLift)), "seq 1")
+	if _, err := binSvc.Lift(bin.ID, PickupNotice{Station: pinStation, OrderUUID: "landed-pin", OrderID: order.ID, Location: sd.LineNode.Name}); err != nil {
+		t.Fatalf("lift: %v", err)
+	}
+	if _, err := binSvc.ApplyArrival(bin.ID, sd.StorageNode.ID, false, nil, order.ID); err != nil {
+		t.Fatalf("arrival in storage: %v", err)
+	}
+
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 2, -2, -3, beforeLift.Add(500*time.Millisecond))),
+		"a pre-lift window after the landing")
+	if got := binRemaining(t, db, bin.ID); got != 57 {
+		t.Errorf("after the pre-lift window uop_remaining = %d, want 57: it is the lifted cart's", got)
+	}
+
+	testutil.MustNoErr(t, binSvc.MoveToTransit(bin.ID), "a storage lift")
+	if got := binEpoch(t, db, bin.ID); got != e+1 {
+		t.Errorf("the storage lift left delta_epoch at %d, want %d: it ends no generation", got, e+1)
+	}
+	if _, err := binSvc.ApplyArrival(bin.ID, sd.StorageNode.ID, false, nil, 0); err != nil {
+		t.Fatalf("second arrival in storage: %v", err)
+	}
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 3, -3, -6, beforeLift.Add(800*time.Millisecond))),
+		"a pre-lift window after a storage lift")
+	if got := binRemaining(t, db, bin.ID); got != 54 {
+		t.Errorf("after the window past the storage lift uop_remaining = %d, want 54", got)
+	}
+	if n := ledgerOps(t, db, bin.ID, "stale_epoch_dropped"); n != 0 {
+		t.Errorf("stale_epoch_dropped = %d, want 0", n)
+	}
+	if n := ledgerOps(t, db, bin.ID, "lifted"); n != 1 {
+		t.Errorf("lifted rows = %d, want 1: the storage lift ended no generation", n)
+	}
+}
+
+// TestApplier_AfterAResetAtTheNextSeatALateWindowDrops — decision 44b. Any bump
+// other than a lift clears the stamp (bumpEpochRaw): after the cart lands at
+// the next seat and a reset there starts another generation, a late window of
+// the next seat's generation is a reset's, not the lift's, and drops as stale
+// with the epoch refresh — it is not refused as after the lift.
+func TestApplier_AfterAResetAtTheNextSeatALateWindowDrops(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	manifest := announcingService(db)
+	binSvc := NewBinService(db, manifest)
+	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
+
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-RESET", "PART-A", 60)
+	order := createTestOrder(t, db, sd.StorageNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+	e := binEpoch(t, db, bin.ID)
+	if _, err := binSvc.Lift(bin.ID, PickupNotice{Station: pinStation, OrderUUID: "reset-pin", OrderID: order.ID, Location: sd.LineNode.Name}); err != nil {
+		t.Fatalf("lift: %v", err)
+	}
+	var liftedAt time.Time
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT lifted_at FROM bins WHERE id=$1`, bin.ID).Scan(&liftedAt), "lifted_at")
+	next := liftPinSeat(t, db, "LINE3-IN-RESET")
+	if _, err := binSvc.ApplyArrival(bin.ID, next, false, nil, order.ID); err != nil {
+		t.Fatalf("arrival at the next seat: %v", err)
+	}
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta("edge.next", liftNetDelta(bin.ID, e+1, 1, -2, -2, liftedAt.Add(time.Second))),
+		"the next seat's own window")
+
+	if _, err := manifest.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {
+		t.Fatalf("a reset at the next seat: %v", err)
+	}
+	var stamped bool
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT lifted_at IS NOT NULL FROM bins WHERE id=$1`, bin.ID).Scan(&stamped), "lifted_at after the reset")
+	if stamped {
+		t.Error("lifted_at survived a reset: the stamp is the close of a lift's generation, and the latest bump was not a lift")
+	}
+	err := deltas.ApplyBinUOPDelta("edge.next", liftNetDelta(bin.ID, e+1, 2, -3, -5, liftedAt.Add(2*time.Second)))
+	if !errors.Is(err, ErrInventoryDeltaSkipped) {
+		t.Errorf("a late window of the reset generation: err = %v, want skipped", err)
+	}
+	if n := ledgerOps(t, db, bin.ID, "stale_epoch_dropped"); n != 1 {
+		t.Errorf("stale_epoch_dropped = %d, want 1", n)
+	}
+	if n := ledgerOps(t, db, bin.ID, "after_lift"); n != 0 {
+		t.Errorf("after_lift = %d, want 0: the generation was closed by a reset, not the lift", n)
+	}
+	var refreshes int
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM outbox WHERE msg_type=$1`,
+		"data."+protocol.SubjectBinEpochRefresh).Scan(&refreshes), "count epoch refreshes")
+	if refreshes != 1 {
+		t.Errorf("epoch refreshes in the outbox = %d, want 1 with the stale drop", refreshes)
 	}
 }
 

@@ -1487,7 +1487,7 @@ func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool, on
 	// The landing's fields come back from the move's own statement
 	// (helpers.ArrivalReturningSQL), so announcing it costs no read.
 	placed := helpers.Placed{BinID: binID}
-	err = helpers.ScanPlaced(tx.QueryRow(`UPDATE bins SET node_id=$1, lifted_at=NULL, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1) `+
+	err = helpers.ScanPlaced(tx.QueryRow(`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1) `+
 		helpers.ArrivalReturningSQL, toNodeID, binID, clock.Now().UTC()), &placed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("bin %d is already at node %d", binID, toNodeID)
@@ -1978,8 +1978,8 @@ type Lift struct {
 	Moved bool
 	// Bumped: the lift ended the carrier's generation (a streamed bin).
 	Bumped bool
-	// Epoch is delta_epoch as the statement left it; LiftedAt is lifted_at
-	// (set only when Bumped), at the database's microsecond.
+	// Epoch is delta_epoch as the statement left it; LiftedAt is the lifted_at
+	// this lift wrote (set only when Bumped), at the database's microsecond.
 	Epoch       int64
 	LiftedAt    time.Time
 	Count       int
@@ -2004,6 +2004,12 @@ type Lift struct {
 // _TRANSIT, which no station models, and the pickup message the caller writes
 // in this transaction, carrying the new epoch, is the announcement.
 //
+// A STORAGE LIFT KEEPS THE STAMP (decision 44b): lifted_at is the close of the
+// generation the last seat lift ended, and a lift that ends none does not move
+// it, so a late window of that generation still applies after the cart has
+// been set down in storage and lifted again. Bumped is whether THIS statement
+// wrote the stamp (lifted_at equal to its own now), not whether one is set.
+//
 // Idempotent like MoveToTransit: a bin already at the transit node is left
 // alone (Moved false). The anomaly note goes, as MoveToTransit's comment says.
 //
@@ -2019,14 +2025,15 @@ func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now
 	var (
 		l        Lift
 		liftedAt sql.NullTime
+		bumped   bool
 	)
 	err := tx.QueryRow(`UPDATE bins SET node_id=$1, anomaly_note='', updated_at=$3::timestamptz,
 			delta_epoch = delta_epoch + CASE WHEN `+streamed+` THEN 1 ELSE 0 END,
-			lifted_at = CASE WHEN `+streamed+` THEN $3::timestamptz ELSE NULL END,
+			lifted_at = CASE WHEN `+streamed+` THEN $3::timestamptz ELSE lifted_at END,
 			last_lift_at = $3::timestamptz
 		WHERE id=$2 AND (node_id IS NULL OR node_id != $1)
-		RETURNING delta_epoch, lifted_at, uop_remaining, payload_code`,
-		transitNodeID, binID, now, station).Scan(&l.Epoch, &liftedAt, &l.Count, &l.PayloadCode)
+		RETURNING delta_epoch, lifted_at, lifted_at IS NOT DISTINCT FROM $3::timestamptz, uop_remaining, payload_code`,
+		transitNodeID, binID, now, station).Scan(&l.Epoch, &liftedAt, &bumped, &l.Count, &l.PayloadCode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lift{}, nil
 	}
@@ -2034,7 +2041,7 @@ func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now
 		return Lift{}, fmt.Errorf("lift bin %d: %w", binID, err)
 	}
 	l.Moved = true
-	if liftedAt.Valid {
+	if bumped && liftedAt.Valid {
 		l.Bumped, l.LiftedAt = true, liftedAt.Time.UTC()
 	}
 	return l, nil
@@ -2090,9 +2097,10 @@ func LeftSince(db *sql.DB, qs []LeftQuery) ([]bool, error) {
 	return out, rows.Err()
 }
 
-// LiftedAt reads bins.lifted_at: when the bin's last generation ended at a
-// lift, or nil when it did not (or the bin has landed since). One read; the
-// produce ingest's fence takes it only on an epoch mismatch.
+// LiftedAt reads bins.lifted_at: when the bin's latest generation change was
+// a lift, or nil when it was not (a reset since clears it; a landing does
+// not). One read; the produce ingest's fence takes it only on an epoch
+// mismatch.
 func LiftedAt(db *sql.DB, binID int64) (*time.Time, error) {
 	var t sql.NullTime
 	if err := db.QueryRow(`SELECT lifted_at FROM bins WHERE id=$1`, binID).Scan(&t); err != nil {
@@ -2235,7 +2243,7 @@ func ClearAnomaly(db *sql.DB, binID int64) error {
 // hears of it, in this statement's transaction. Nil announces nothing and
 // runs the one statement alone, as it always did.
 func RecoverToNode(db *sql.DB, binID, toNodeID int64, onPlaced helpers.OnPlaced) error {
-	const q = `UPDATE bins SET node_id=$1, lifted_at=NULL, anomaly_at=NULL, anomaly_note='', updated_at=$3 WHERE id=$2 ` + helpers.ArrivalReturningSQL
+	const q = `UPDATE bins SET node_id=$1, anomaly_at=NULL, anomaly_note='', updated_at=$3 WHERE id=$2 ` + helpers.ArrivalReturningSQL
 	placed := helpers.Placed{BinID: binID}
 	if onPlaced == nil {
 		return helpers.ScanPlaced(db.QueryRow(q, toNodeID, binID, clock.Now().UTC()), &placed)

@@ -79,8 +79,12 @@ func loadedBinOffDefaults(t *testing.T, db *store.DB, nodeID int64, label string
 	return bin
 }
 
+// emptiedColumns is what every emptying statement writes. lifted_at is the
+// bump's (bumpEpochRaw clears the lift's stamp in its own statement, decision
+// 44b): an emptying is a reset, and the stamp says the latest generation
+// change was a lift.
 var emptiedColumns = []string{
-	"delta_epoch", "held_since", "loaded_at", "manifest", "manifest_confirmed", "payload_code",
+	"delta_epoch", "held_since", "lifted_at", "loaded_at", "manifest", "manifest_confirmed", "payload_code",
 	"totes_on_cart", "undeclared_carrier_at", "uop_remaining", "updated_at",
 }
 

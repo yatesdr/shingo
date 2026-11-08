@@ -188,12 +188,14 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 	}
 
 	// 2. The fact, and what the landing announces about it (ArrivalReturningSQL:
-	//    the placement stamp rides this statement, +0). An arrival ends the
-	//    lift's window: lifted_at clears here (Lane H, D11 (ii)), so a late
-	//    window of the lifted generation is judged by the stale guard again.
+	//    the placement stamp rides this statement, +0). An arrival leaves
+	//    lifted_at alone (decision 44b): the stamp is the close of the
+	//    generation the lift ended, and a window of that generation that
+	//    started before the lift is the lifted cart's whenever it reaches Core
+	//    (Lane H, D11 (ii)). Only the next bump clears it (bumpEpochRaw).
 	placed := Placed{BinID: p.BinID, Evicted: evicted}
 	if err := ScanPlaced(tx.QueryRow(
-		`UPDATE bins SET node_id=$1, lifted_at=NULL, updated_at=NOW() WHERE id=$2 `+ArrivalReturningSQL, p.ToNodeID, p.BinID), &placed); err != nil {
+		`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 `+ArrivalReturningSQL, p.ToNodeID, p.BinID), &placed); err != nil {
 		return Placed{}, fmt.Errorf("move bin %d: %w", p.BinID, err)
 	}
 

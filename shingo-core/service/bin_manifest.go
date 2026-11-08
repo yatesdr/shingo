@@ -87,10 +87,18 @@ func binTypeCodeInTx(tx *sql.Tx, id int64) string {
 // costs no statement. Every reset path writes an absolute uop_remaining in the
 // UPDATE immediately before this one, inside the same transaction, so the
 // value read here is the one that reset just wrote.
+//
+// THE BUMP CLEARS THE LIFT'S STAMP, in the same statement (+0, decision 44b).
+// bins.lifted_at means exactly "the latest generation change was a lift, at
+// this time": set by the lift (bins.LiftToTransitTx), cleared by any other
+// bump — a load, a clear, a declaration, a rebase — and by nothing else. A
+// window or an ingest one generation behind is then the life the lift closed
+// only when the lift was the last bump; after a reset at the next seat it is
+// a reset's, and drops as stale with the epoch refresh.
 func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, payload, nodeName string, addr bins.LifecycleAddress, err error) {
 	addrDest, address := bins.ScanLifecycleAddress()
 	if err := tx.QueryRow(
-		`UPDATE bins SET delta_epoch=delta_epoch+1 WHERE id=$1
+		`UPDATE bins SET delta_epoch=delta_epoch+1, lifted_at=NULL WHERE id=$1
 		 RETURNING delta_epoch, uop_remaining, COALESCE(payload_code, ''),
 		           COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), ''),
 		           `+bins.LifecycleAddressSQL,

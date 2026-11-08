@@ -4,10 +4,13 @@ package dispatch
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
@@ -132,5 +135,67 @@ func TestS1bIngest_ABinKeepsThePartItWasCountedAs(t *testing.T) {
 	if got.PayloadCode != counted.Code || got.UOPRemaining != 20 || !got.ManifestConfirmed {
 		t.Errorf("after the release: part=%s uop=%d confirmed=%v, want %s 20 true (the counted part, the shipped count)",
 			got.PayloadCode, got.UOPRemaining, got.ManifestConfirmed, counted.Code)
+	}
+}
+
+// s1bLift is the robot's pickup off the press (bins.LiftToTransitTx): a seat
+// lift, which ends the bin's generation and stamps lifted_at.
+func s1bLift(t *testing.T, d *Dispatcher, binID int64) {
+	t.Helper()
+	transit, err := d.db.GetNodeByName(domain.TransitNodeName)
+	testutil.MustNoErr(t, err, "transit node")
+	tx, err := d.db.Begin()
+	testutil.MustNoErr(t, err, "begin lift")
+	defer func() { _ = tx.Rollback() }()
+	_, err = d.db.LiftBinToTransitTx(tx, binID, transit.ID, "", time.Now().UTC())
+	testutil.MustNoErr(t, err, "lift")
+	testutil.MustNoErr(t, tx.Commit(), "commit lift")
+}
+
+// s1bPlace sets the bin down (store.PlaceBinTx, the one placement).
+func s1bPlace(t *testing.T, d *Dispatcher, binID int64, name string) {
+	t.Helper()
+	n := &nodes.Node{Name: name, Enabled: true}
+	testutil.MustNoErr(t, d.db.CreateNode(n), "create "+name)
+	tx, err := d.db.Begin()
+	testutil.MustNoErr(t, err, "begin place")
+	defer func() { _ = tx.Rollback() }()
+	_, err = d.db.PlaceBinTx(tx, store.BinPlacement{BinID: binID, ToNodeID: n.ID})
+	testutil.MustNoErr(t, err, "place")
+	testutil.MustNoErr(t, tx.Commit(), "commit place")
+}
+
+// An ingest one generation behind applies only when the lift was the bin's
+// latest bump (decision 44b): the robot lifted the finished bin off the press
+// and set it down before the release's ingest reached Core — it counts the
+// life the lift closed, and applies. After a reset there, the same ingest is
+// a reset's generation behind, and is refused.
+func TestS1bIngest_OneGenerationBehindAppliesOnlyWhenTheLiftWasTheLastBump(t *testing.T) {
+	t.Parallel()
+	d, bin, bp := s1bIngestFixture(t)
+	s1bLift(t, d, bin.ID)
+	s1bPlace(t, d, bin.ID, "SYN-MARKET-S1B")
+	d.HandleOrderIngest(testEnvelope(), &protocol.OrderIngestRequest{
+		OrderUUID: "uuid-s1b-landed", PayloadCode: bp.Code, BinID: bin.ID, BinEpoch: bin.DeltaEpoch,
+		SourceNode: "SYN-PRESS-S1B", Quantity: 31,
+	})
+	got, err := d.db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	if got.UOPRemaining != 31 || !got.ManifestConfirmed {
+		t.Errorf("an ingest after the lift and the landing: uop=%d confirmed=%v, want 31 true", got.UOPRemaining, got.ManifestConfirmed)
+	}
+
+	_, err = d.db.Exec(`UPDATE bins SET delta_epoch=delta_epoch+1, lifted_at=NULL WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "a reset (the bump bumpEpochRaw runs)")
+	reset, err := d.db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	d.HandleOrderIngest(testEnvelope(), &protocol.OrderIngestRequest{
+		OrderUUID: "uuid-s1b-reset", PayloadCode: bp.Code, BinID: bin.ID, BinEpoch: reset.DeltaEpoch - 1,
+		SourceNode: "SYN-PRESS-S1B", Quantity: 9,
+	})
+	got, err = d.db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	if got.UOPRemaining != 31 {
+		t.Errorf("an ingest a reset's generation behind: uop=%d, want 31 (refused)", got.UOPRemaining)
 	}
 }

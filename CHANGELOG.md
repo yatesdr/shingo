@@ -5,10 +5,11 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-11-03 — The cutover follows the PLC
 
-Edge v37-v43; Core changes only dev tooling (plantspec, seeddev, simcalc). Migrate a restored copy first. Roll back only to a ≥ v32 build (it re-adds v42's column and boots); open holds are not charged while rolled back. The first boot publishes every monitored identity tag on WarLink.
+Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantspec, seeddev, simcalc): deploy Core first, then the Edge. Migrate a restored copy first. Roll back only to a ≥ v32 build (it re-adds v42's column and boots); open holds are not charged while rolled back. The first boot publishes every monitored identity tag on WarLink.
 
 - One door completes every changeover; start and cancel run under its mutex
 - A release with no typed count declares the seat's count in the fence's instant; an untouched pre-fill and the changeover's evac send none, and both sides log every release fenced or not
+- Core: the lift's stamp is the generation's close: any other bump clears it, a landing or a storage lift does not, so a pre-lift draw reaching Core after the cart is set down applies; the stale drop records window_start, lifted_at and the node
 - A press counting the incoming part a minute past its CATID change completes the changeover
 - With no changeover open, a part one other style runs moves nothing: its draws at the positions whose part differs are held, and the strip's wrong-part item offers that changeover in one tap
 - A part standing since before a landing is run-out: it prepays the new cart, and nothing offers a changeover back
