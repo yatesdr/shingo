@@ -163,7 +163,7 @@ func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.Runti
 // durable row rather than a pointer scoped to a moment is the same reading
 // outboundMoveInFlight takes.
 //
-// LOADERS ARE EXEMPT, for both roles, as guardLineRequest, guardStyleTransition
+// LOADERS ARE EXEMPT, for both roles, as guardLineRequest, the changeover gate
 // and guardCatidMismatch exempt them. A loader window runs a multi-order queue
 // on purpose — CanAcceptOrders returns true for one while its orders are in
 // flight — and holding it to a one-bin-at-a-time rule would stall the empties
@@ -230,8 +230,8 @@ func positionWorkedBy(node *processes.Node, claim *processes.NodeClaim, rows []d
 		node.Name, o.ID)
 }
 
-// ChangeoverArmedError is returned by guardStyleTransition when a material
-// request is refused because a changeover is armed on the node's process. It
+// ChangeoverArmedError is returned by guardChangeover when a material request
+// is refused because a changeover is armed on the node's process. It
 // carries the process id and both style names so the HTTP handler can offer the
 // operator an inline exit — abandon the changeover, and the same request then
 // proceeds — instead of a dead-end refusal (2026-07-24). Error() builds the
@@ -258,42 +258,74 @@ func (e *Engine) styleName(id int64) string {
 	return fmt.Sprintf("style %d", id)
 }
 
-// guardStyleTransition refuses a material request for the OUTGOING style while a
-// changeover is armed on the node's process (A2, hop 2026-07-23). Once a target
-// style is set, the active-style claim this request resolved is the style the
-// cutover is replacing; firing outgoing-style produce/consume relief into a
-// half-cutover line is what stranded the Hopkinsville presses (LK41 relief raced
-// the KK21 cutover). The changeover's OWN evac/supply orders are created by
-// StartProcessChangeover, not through the RequestNodeMaterial / RequestProduceSwap
-// paths this guards, so they are unaffected.
+// The one changeover gate's refusals (changeoverHolds), the texts the doors
+// have always given.
+const (
+	holdParticipantLookup = "changeover in progress (participant lookup failed)"
+	holdIndexedOver       = "changeover in progress (indexed-over position)"
+	holdChangeover        = "changeover in progress"
+)
+
+// changeoverHolds is the one changeover gate (decision 43 as amended): whether
+// the open changeover co holds a request at node for claim — nil for the
+// sweep's participant gate (CanAcceptOrders), which asks no claim — and why.
+// Every door asks it: REQUEST and the produce door (guardChangeover, again
+// under the cell's lock) and the sweep. In order:
 //
-// Loaders (manual_swap) are exempt: they supply empties ACROSS a changeover and
-// must stay available — gating them on the process changeover is exactly the
-// Springfield regression (see CanAcceptOrders). Only line produce/consume relief
-// is transition-sensitive.
+//   - a loader claim is admitted: a loader supplies empties ACROSS a
+//     changeover on a process it shares, and gating it on the process is the
+//     Springfield regression;
+//   - the participant lookup failing holds (it fails CLOSED: once a changeover
+//     is resolved, a false "available" is the two-bins case, a false
+//     "unavailable" a transient refusal; the lookup is one indexed point query,
+//     so an error means the Edge DB is failing);
+//   - an indexed-over position holds: the index moves a bin across it, and it
+//     owns no task and no claim, so nothing else would refuse it (a same-bin
+//     press-index changeover never fans out a task there);
+//   - the departing style's claim — or, with no claim in hand, a participant —
+//     holds unless the changeover changes nothing at the position
+//     (changesNothingAt: the same parts under both styles, its task
+//     "unchanged"); a common position is supplied through a changeover open
+//     for hours, a same-part position it evacuates is not;
+//   - anything else is admitted: the incoming style's request, a position the
+//     changeover takes no part in.
 //
-// It refuses by position: a position the changeover changes nothing at — the
-// outgoing and incoming styles' claims there name the same parts, and the
-// changeover's task there, if any, is "unchanged" — is not refused
-// (changesNothingAt). Its part is the same under both styles, so relief there
-// is the next style's supply as much as this one's; refused, a common
-// position that runs out while a changeover stands open for hours got no cart
-// from Shingo at all, and the cell ran on carts nobody told it about.
-//
-// Edge-DB only, like guardNoActiveSwap — no Core round-trip. A read error is
-// treated as "no changeover" (fail-open): a transient read blip must not shut
-// down the line, and the changeover machinery has its own preflight/cutover gates.
-func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.NodeClaim) error {
-	return e.guardStyleTransitionIn(nil, node, claim)
+// On a door call's reads (guardReads): the changeover row, the participant
+// lookup, the process, the claims and the task are read once however many
+// times a door asks. The changeover's OWN evac/supply orders are created by
+// StartProcessChangeover, not through the doors, so they are unaffected.
+func (e *Engine) changeoverHolds(g *guardReads, co *processes.Changeover, node *processes.Node, claim *processes.NodeClaim) (bool, string) {
+	if claim != nil && claim.IsLoaderNode() {
+		return false, ""
+	}
+	isParticipant, role, err := g.participant(e)
+	if err != nil {
+		log.Printf("WARN changeover gate: participant lookup failed for node %s during active changeover %d: %v — failing CLOSED",
+			node.CoreNodeName, co.ID, err)
+		return true, holdParticipantLookup
+	}
+	if isParticipant && role == domain.ParticipantRoleIndexedOver {
+		return true, holdIndexedOver
+	}
+	departing := isParticipant
+	if claim != nil {
+		departing = co.FromStyleID == nil || claim.StyleID == *co.FromStyleID
+	}
+	if departing && (co.FromStyleID == nil || !e.changesNothingAt(g, co, node)) {
+		return true, holdChangeover
+	}
+	return false, ""
 }
 
-// guardStyleTransitionIn is guardStyleTransition on a door call's reads
-// (guardReads; nil reads afresh).
-func (e *Engine) guardStyleTransitionIn(g *guardReads, node *processes.Node, claim *processes.NodeClaim) error {
-	if node == nil || claim == nil {
-		return nil
-	}
-	if claim.IsLoaderNode() {
+// guardChangeover is the request doors' changeover gate (changeoverHolds) on
+// a door call's reads (nil reads afresh). The outer changeover read keeps its
+// fail-open posture: a read that fails is no changeover, as a transient blip
+// must not shut down the line (the changeover machinery has its own
+// preflight/cutover gates). Refused with a claim in hand, it is a
+// *ChangeoverArmedError, the inline exit the HTTP handler offers (abandon the
+// changeover, and the request proceeds). Edge-DB only, no Core round trip.
+func (e *Engine) guardChangeover(g *guardReads, node *processes.Node, claim *processes.NodeClaim) error {
+	if node == nil {
 		return nil
 	}
 	g = readsFor(g, node)
@@ -301,30 +333,25 @@ func (e *Engine) guardStyleTransitionIn(g *guardReads, node *processes.Node, cla
 	if co == nil {
 		return nil
 	}
-	// Block when the request's claim is the changeover's FROM (outgoing) style.
-	// When from-style is unrecorded, still block: pre-cutover the active style IS
-	// the outgoing one, so any line relief here is outgoing by construction (once
-	// the cutover completes the changeover is no longer active and this passes).
-	if co.FromStyleID == nil || claim.StyleID == *co.FromStyleID {
-		if co.FromStyleID != nil && e.changesNothingAt(g, co, node) {
-			return nil
-		}
-		toName := e.styleName(co.ToStyleID)
-		outName := e.styleName(claim.StyleID)
+	hold, reason := e.changeoverHolds(g, co, node, claim)
+	if !hold {
+		return nil
+	}
+	if reason == holdChangeover && claim != nil {
 		return &ChangeoverArmedError{
 			ProcessID:     node.ProcessID,
-			ToStyleName:   toName,
-			OutgoingStyle: outName,
+			ToStyleName:   e.styleName(co.ToStyleID),
+			OutgoingStyle: e.styleName(claim.StyleID),
 		}
 	}
-	return nil
+	return errors.New(reason)
 }
 
 // guardCatidMismatch refuses a material request for a line claim when the
 // press's live PLC part identity (WarLink CATID_01) is none of the active
 // style's part-identity set — its pin, else its parts' catalog CATIDs (A5,
 // 2026-07-23). It is a SIBLING trigger to
-// guardStyleTransition for the same outcome — block outgoing-style relief — but
+// the changeover gate for the same outcome — block outgoing-style relief — but
 // keyed on ground truth (the physical part on the press) rather than an armed
 // changeover. In the 07-23 incident the press was physically KK21 while shingo
 // fired LK41 relief; this check catches exactly that divergence at the source
@@ -336,14 +363,14 @@ func (e *Engine) guardStyleTransitionIn(g *guardReads, node *processes.Node, cla
 //     empty" rule.
 //   - A live CATID must have been observed and debounced. No monitor, no
 //     observation yet, or an unreadable tag ⇒ fail-open (no block), matching
-//     guardStyleTransition's read-blip policy: a transient PLC read must not
+//     the changeover gate's read-blip policy: a transient PLC read must not
 //     shut the line down.
 //
 // Loaders (manual_swap) are exempt — they supply empties ACROSS a changeover
-// and must stay available (the Springfield regression), same as
-// guardStyleTransition. Only line produce/consume relief is part-sensitive.
+// and must stay available (the Springfield regression), same as the
+// changeover gate. Only line produce/consume relief is part-sensitive.
 //
-// It refuses by position, as guardStyleTransition does: a position whose claim
+// It refuses by position, as the changeover gate does: a position whose claim
 // names the same parts under the style the PLC's part belongs to as under the
 // request's (samePartUnder, every style whose set holds the live CATID) is
 // not refused — after "Mark as running" onto a part the PLC is not making
@@ -471,15 +498,15 @@ func (e *Engine) readSamePart(g *guardReads, node *processes.Node, a, b int64) b
 	return sameCodes(x.AllowedPayloads(), y.AllowedPayloads())
 }
 
-// guardReads is one door call's reads for the changeover guards (decision
-// 48): the process's open changeover row, the process, each pair of styles'
-// claims at the node (samePartUnder) and the changeover's task there — each read
-// once however many guards ask: the sweep's participant gate (CanAcceptOrders),
-// A2, A5 and A2's re-ask under the cell's lock. A door makes one
-// (newGuardReads) and passes it down; nil reads afresh at each guard, as
-// before. The re-ask under the lock re-reads only the changeover row
-// (recheck): the same row keeps the rest, another starts over. Not shared
-// across door calls or goroutines.
+// guardReads is one door call's reads for the guards (decision 48): the
+// process's open changeover row, the node's participant row, the process, each
+// pair of styles' claims at the node (samePartUnder) and the changeover's task
+// there — each read once however many guards ask: the changeover gate at the
+// sweep and at the request (changeoverHolds), A5, and the gate's re-ask under
+// the cell's lock. A door makes one (newGuardReads) and passes it down; nil
+// reads afresh at each guard, as before. The re-ask under the lock re-reads
+// only the changeover row (recheck): the same row keeps the rest, another
+// starts over. Not shared across door calls or goroutines.
 type guardReads struct {
 	node *processes.Node
 
@@ -495,6 +522,11 @@ type guardReads struct {
 	taskFor int64 // the changeover id the task was read under, 0 for none
 	task    *processes.NodeTask
 	taskErr error
+
+	partFor  int64 // the changeover id the participant row was read under, 0 for none
+	partOf   bool
+	partRole string
+	partErr  error
 }
 
 func newGuardReads(node *processes.Node) *guardReads { return &guardReads{node: node} }
@@ -528,7 +560,22 @@ func (g *guardReads) recheck(e *Engine) {
 	g.coRead = false
 	if now := g.changeover(e); was == nil || now == nil || was.ID != now.ID {
 		g.taskFor, g.task, g.taskErr = 0, nil, nil
+		g.partFor, g.partOf, g.partRole, g.partErr = 0, false, "", nil
 	}
+}
+
+// participant is whether the node takes part in the open changeover, and its
+// role (task, indexed-over), read once per changeover for the door call.
+func (g *guardReads) participant(e *Engine) (bool, string, error) {
+	co := g.changeover(e)
+	if co == nil {
+		return false, "", nil
+	}
+	if g.partFor != co.ID {
+		g.partOf, g.partRole, g.partErr = e.db.IsChangeoverParticipant(g.node.ProcessID, g.node.CoreNodeName)
+		g.partFor = co.ID
+	}
+	return g.partOf, g.partRole, g.partErr
 }
 
 func (g *guardReads) process(e *Engine) (*processes.Process, error) {

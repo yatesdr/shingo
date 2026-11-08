@@ -237,7 +237,7 @@ func (e *Engine) lockCells(lines []string) func() {
 // startLocksLine is the one predicate for the lines a changeover's start may
 // hold the cell lock of: a line that keeps a spot, or a press (whose dependent
 // positions are where the start cancels a queued swap's clear and prime). A
-// request on such a line asks guardStyleTransition again under its lock, since
+// request on such a line asks the changeover gate again under its lock, since
 // it may have been let in only after the start armed the changeover.
 func startLocksLine(claim *processes.NodeClaim) bool {
 	return claim != nil && (spotNode(claim) != "" || claim.IsPressIndex())

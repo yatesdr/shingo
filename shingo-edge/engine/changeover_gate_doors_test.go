@@ -1,8 +1,8 @@
 // changeover_gate_doors_test.go — the changeover gates at every door, in one
 // table: the request doors (REQUEST's requestNodeFromClaim and the produce
-// door's produceRequest, which ask the same claim-keyed gate) and the sweep
-// (CanAcceptOrders). Each row is a position under an open changeover A -> B
-// and what each door answers there. The re-ask under the cell's lock is
+// door's produceRequest) and the sweep (CanAcceptOrders), all asking the one
+// gate (changeoverHolds). Each row is a position under an open changeover
+// A -> B and what each door answers there. The re-ask under the cell's lock is
 // TestGuards_TheReaskSeesAChangeoverArmedMeanwhile; A5 is its own guard and
 // its own pins; the common positions' supply through a changeover is
 // TestPinChangeover_ACommonPositionIsResuppliedWhileOpen.
@@ -18,14 +18,14 @@ import (
 )
 
 // gateAt is one door's changeover gate at node for claim: whether it refuses,
-// and the reason it gives. The request doors ask the claim-keyed gate, the
-// sweep the node's participant gate.
+// and the reason it gives. The request doors ask it with the claim in hand,
+// the sweep with none.
 func gateAt(eng *Engine, door string, node *processes.Node, claim *processes.NodeClaim) (bool, string) {
 	if door == "sweep" {
 		ok, why := eng.CanAcceptOrders(node.ID)
 		return !ok, why
 	}
-	if err := eng.guardStyleTransition(node, claim); err != nil {
+	if err := eng.guardChangeover(nil, node, claim); err != nil {
 		return true, err.Error()
 	}
 	return false, ""
@@ -79,8 +79,8 @@ type door struct {
 //   - the loader the process shares is admitted at every door (the
 //     Springfield regression);
 //   - the indexed-over position, which owns no task and no claim, is refused
-//     by the sweep and admitted by the request doors, which ask nothing of a
-//     position with no claim;
+//     at every door (the owner's ruling: REQUEST refuses it too; before the
+//     fold the request doors asked nothing of a position with no claim);
 //   - the incoming style's request at the position whose part changes (a
 //     keep-staged refill for B) is admitted by the request doors; the sweep,
 //     which asks no claim, refuses the participant;
@@ -107,7 +107,7 @@ func TestPinGate_EveryDoorAnswersAsOne(t *testing.T) {
 		{name: "the loader the process shares", node: "N-LOADER", claim: claim(a, "N-LOADER"),
 			request: door{}, sweep: door{}},
 		{name: "the indexed-over position", node: "N-INDEXED", claim: nil,
-			request: door{}, sweep: door{refused: true, says: "indexed-over"}},
+			request: door{refused: true, says: "indexed-over"}, sweep: door{refused: true, says: "indexed-over"}},
 		{name: "the incoming style's refill where the part changes", node: "N-MIRROR", claim: claim(b, "N-MIRROR"),
 			request: door{}, sweep: door{refused: true, says: "changeover in progress"}},
 		{name: "the common position", node: "N-COMMON", claim: claim(a, "N-COMMON"),

@@ -79,12 +79,12 @@ func TestGuards_ADoorCallReadsOnce(t *testing.T) {
 	g := newGuardReads(common)
 	ok, why := eng.canAcceptOrdersIn(g, common.ID)
 	gate := counter.Count()
-	e1 := eng.guardStyleTransitionIn(g, common, claim)
+	e1 := eng.guardChangeover(g, common, claim)
 	a2 := counter.Count() - gate
 	e2 := eng.guardCatidMismatchIn(g, common, claim)
 	a5 := counter.Count() - gate - a2
 	g.recheck(eng)
-	e3 := eng.guardStyleTransitionIn(g, common, claim)
+	e3 := eng.guardChangeover(g, common, claim)
 	again := counter.Count() - gate - a2 - a5
 	t.Logf("one door call: the gate %d, A2 %d, A5 %d, the re-ask %d — %d statements", gate, a2, a5, again, counter.Count())
 	if !ok || e1 != nil || e2 != nil || e3 != nil {
@@ -93,7 +93,7 @@ func TestGuards_ADoorCallReadsOnce(t *testing.T) {
 	if a2 != 0 || a5 != 2 || again != 1 {
 		t.Errorf("A2 %d, A5 %d, the re-ask %d statements; want 0, 2, 1 (the reads shared)", a2, a5, again)
 	}
-	if fresh, _ := eng.CanAcceptOrders(common.ID); !fresh || eng.guardStyleTransition(common, claim) != nil ||
+	if fresh, _ := eng.CanAcceptOrders(common.ID); !fresh || eng.guardChangeover(nil, common, claim) != nil ||
 		eng.guardCatidMismatch(common, claim) != nil {
 		t.Error("the fresh reads disagree with the shared ones")
 	}
@@ -101,7 +101,7 @@ func TestGuards_ADoorCallReadsOnce(t *testing.T) {
 	mirror := nodes["N-MIRROR"]
 	mclaim := claimOf(t, eng, a, "N-MIRROR")
 	var armed *ChangeoverArmedError
-	if err := eng.guardStyleTransitionIn(newGuardReads(mirror), mirror, mclaim); !errors.As(err, &armed) {
+	if err := eng.guardChangeover(newGuardReads(mirror), mirror, mclaim); !errors.As(err, &armed) {
 		t.Errorf("the mirror position under A: %v, want the changeover-armed refusal", err)
 	}
 }
@@ -116,13 +116,13 @@ func TestGuards_TheReaskSeesAChangeoverArmedMeanwhile(t *testing.T) {
 	mirror := nodes["N-MIRROR"]
 	claim := claimOf(t, eng, a, "N-MIRROR")
 	g := newGuardReads(mirror)
-	if err := eng.guardStyleTransitionIn(g, mirror, claim); err != nil {
+	if err := eng.guardChangeover(g, mirror, claim); err != nil {
 		t.Fatalf("no changeover open: %v", err)
 	}
 	openAB(t, eng, pid, a, b, map[string]string{"N-MIRROR": string(SituationSwap)})
 	g.recheck(eng)
 	var armed *ChangeoverArmedError
-	if err := eng.guardStyleTransitionIn(g, mirror, claim); !errors.As(err, &armed) {
+	if err := eng.guardChangeover(g, mirror, claim); !errors.As(err, &armed) {
 		t.Errorf("the re-ask after a changeover armed: %v, want the changeover-armed refusal", err)
 	}
 }
@@ -141,7 +141,7 @@ func TestChangesNothingAt_AnAbsentTaskIsAChange(t *testing.T) {
 	testutil.MustNoErr(t, err, "a changeover with no task at N-COMMON")
 	common := nodes["N-COMMON"]
 	var armed *ChangeoverArmedError
-	if err := eng.guardStyleTransition(common, claimOf(t, eng, a, "N-COMMON")); !errors.As(err, &armed) {
+	if err := eng.guardChangeover(nil, common, claimOf(t, eng, a, "N-COMMON")); !errors.As(err, &armed) {
 		t.Errorf("A2 at the common position with no task: %v, want the changeover-armed refusal", err)
 	}
 	if ok, why := eng.CanAcceptOrders(common.ID); ok {

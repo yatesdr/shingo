@@ -192,9 +192,10 @@ func (e *Engine) requestNodeFromClaim(g *guardReads, node *processes.Node, runti
 	// The guards read the changeover, the process, the claims and the task once
 	// for the call (guardReads, decision 48).
 	g = readsFor(g, node)
-	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
+	// The changeover gate (A2, hop 2026-07-23, folded with the participant
+	// gate: changeoverHolds): refuse outgoing-style relief while a changeover is
 	// armed on this process — don't let a produce/consume swap race the cutover.
-	if err := e.guardStyleTransitionIn(g, node, claim); err != nil {
+	if err := e.guardChangeover(g, node, claim); err != nil {
 		return nil, err
 	}
 	// A5 (hop 2026-07-23): refuse outgoing-style relief when the press's live
@@ -218,17 +219,14 @@ func (e *Engine) requestNodeFromClaim(g *guardReads, node *processes.Node, runti
 
 	// A CHANGEOVER CAN ARM WHILE THIS REQUEST WAITS FOR THE CELL. A changeover
 	// start holds the prime lock of a keep-staged line and of a press it changes
-	// for its whole body, so a request that passed the guard above can be let in
-	// only after the changeover is armed. Asked again under the lock, it is
-	// refused like any request against an armed changeover instead of building an
-	// outgoing-style swap that no changeover leg owns. The lines a start locks
-	// only (startLocksLine): a keep-staged line or a press. Only the changeover
-	// row is read again (recheck).
-	if startLocksLine(claim) {
-		g.recheck(e)
-		if err := e.guardStyleTransitionIn(g, node, claim); err != nil {
-			return nil, err
-		}
+	// for its whole body, so a request that passed the gate above can be let in
+	// only after the changeover is armed. Asked again under the lock, for every
+	// claim, it is refused like any request against an armed changeover instead
+	// of building an outgoing-style swap that no changeover leg owns. Only the
+	// changeover row is read again (recheck).
+	g.recheck(e)
+	if err := e.guardChangeover(g, node, claim); err != nil {
+		return nil, err
 	}
 	coming, err := e.guardLineRequest(node, runtime, claim)
 	if err != nil {
@@ -470,64 +468,21 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // canAcceptOrdersIn is CanAcceptOrders on a door call's guard reads (the
 // sweep's, which its request then shares; nil reads afresh).
 func (e *Engine) canAcceptOrdersIn(g *guardReads, nodeID int64) (bool, string) {
-	// Check changeover first — applies regardless of runtime state.
-	//
-	// Scope the gate to nodes actually PARTICIPATING in the changeover. A node
-	// that is not part of it — e.g. a bin loader that only supplies empties to
-	// the line — must stay available; gating on the whole process wrongly
-	// blocked the loader from calling an empty bin during a changeover on a
-	// press sharing its process (the Springfield field report).
-	//
-	// PARTICIPANTS, not tasks. The task set is too narrow: a same-bin-type
-	// press-index changeover never fans out, so its indexed-over positions own no
-	// task at all and were left OPEN to unrelated dispatch while the index
-	// motion was about to place a bin on them. Two bins on one node — the
-	// catastrophic family. Participants are the superset that includes them.
-	//
-	// FAIL POSTURE IS DELIBERATELY HYBRID, and the split is where the cost
-	// asymmetry inverts:
-	//
-	//   - Outer lookups (GetProcessNode, GetActiveProcessChangeover) stay
-	//     byte-identical FAIL-OPEN. An error there is indistinguishable from
-	//     "no changeover running", which is the overwhelmingly common case and
-	//     the PLC-tick path; closing it would idle the plant on a transient
-	//     read blip. This is also the Springfield-regression surface, untouched.
-	//   - Once an active changeover IS resolved, the participant lookup fails
-	//     CLOSED. A false "unavailable" there costs a blocked action during a
-	//     changeover window — transient, visible, now panel-named. A false
-	//     "available" is the two-bins case. The lookup is a single indexed
-	//     point query against a table written at plan time, so an error means
-	//     the Edge DB is failing — not a state in which to admit robot traffic
-	//     to a node that may be about to receive a bin.
-	//
-	// A TASK PARTICIPANT THE CHANGEOVER CHANGES NOTHING AT IS ADMITTED: the
-	// same parts under both styles and its task "unchanged" (changesNothingAt,
-	// the request guard's own test). No leg of the changeover moves a bin
-	// there, so nothing can land on it but its own supply, which is the
-	// incoming style's as much as the outgoing one's. Gated, a common position
-	// that ran out while a changeover stood open for hours got no cart from
-	// Shingo at all. An indexed-over position stays gated: the index moves a
-	// bin across it.
+	// The changeover first, regardless of runtime state: the one changeover
+	// gate (changeoverHolds) with no claim in hand. It holds the positions the
+	// changeover takes part in — an indexed-over one always, a task one unless
+	// the changeover changes nothing there — and admits a node that takes no
+	// part, e.g. a loader that supplies empties to the line (the Springfield
+	// field report). The outer reads (the node, the changeover row) stay
+	// FAIL-OPEN: an error there is indistinguishable from "no changeover
+	// running", the overwhelmingly common case; the participant lookup inside
+	// the gate fails CLOSED.
 	node, err := e.db.GetProcessNode(nodeID)
 	if err == nil {
 		g = readsFor(g, node)
 		if co := g.changeover(e); co != nil {
-			isParticipant, role, pErr := e.db.IsChangeoverParticipant(node.ProcessID, node.CoreNodeName)
-			if pErr != nil {
-				log.Printf("WARN CanAcceptOrders: participant lookup failed for node %s during active changeover %d: %v — failing CLOSED",
-					node.CoreNodeName, co.ID, pErr)
-				return false, "changeover in progress (participant lookup failed)"
-			}
-			if isParticipant {
-				if role == domain.ParticipantRoleIndexedOver {
-					// Distinct reason: this node owns no task, so an operator
-					// looking at it has nothing to work and would otherwise have
-					// no idea why it is refusing.
-					return false, "changeover in progress (indexed-over position)"
-				}
-				if co.FromStyleID == nil || !e.changesNothingAt(g, co, node) {
-					return false, "changeover in progress"
-				}
+			if hold, reason := e.changeoverHolds(g, co, node, nil); hold {
+				return false, reason
 			}
 		}
 		// A window/position of a Core-owned loader uses the multi-order queue even

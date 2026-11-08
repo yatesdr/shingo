@@ -80,9 +80,10 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// The guards read the changeover, the process, the claims and the task once
 	// for the call (guardReads, decision 48).
 	g := readsFor(ask.reads, node)
-	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
+	// The changeover gate (A2, hop 2026-07-23, folded with the participant
+	// gate: changeoverHolds): refuse outgoing-style relief while a changeover is
 	// armed on this process — don't let a produce swap race the cutover.
-	if err := e.guardStyleTransitionIn(g, node, claim); err != nil {
+	if err := e.guardChangeover(g, node, claim); err != nil {
 		return nil, err
 	}
 	// A5 (hop 2026-07-23): refuse outgoing-style relief when the press's live
@@ -104,15 +105,13 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Asked again under the lock, for the reason RequestNodeMaterial gives: a
-	// changeover start holds the lock of a keep-staged line and of a press it
-	// changes (startLocksLine), so this request may be let in only after the
-	// changeover is armed.
-	if startLocksLine(claim) {
-		g.recheck(e)
-		if err := e.guardStyleTransitionIn(g, node, claim); err != nil {
-			return nil, err
-		}
+	// Asked again under the lock, for every claim, for the reason
+	// RequestNodeMaterial gives: a changeover start holds the lock of a
+	// keep-staged line and of a press it changes (startLocksLine), so this
+	// request may be let in only after the changeover is armed.
+	g.recheck(e)
+	if err := e.guardChangeover(g, node, claim); err != nil {
+		return nil, err
 	}
 	coming, err := e.guardLineRequest(node, runtime, claim)
 	if err != nil {

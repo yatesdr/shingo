@@ -28,6 +28,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - One CATID names one style: the pin, the one-click and Confirm refuse a taken value
 - The request guards and the changeover's participant gate refuse by position: a position whose part both styles run is supplied through a changeover
 - The guards read a door call's changeover, claims and task once (21 statements to 12 at a common position); a position with no task is a change, and a failed read that turns a request away is logged
+- One changeover gate at every door (REQUEST, the produce door, the sweep): REQUEST refuses an indexed-over position too, a failed participant lookup refuses everywhere, and the re-ask under the cell's lock is for every claim
 - The reporting point's last poll is stamped on the engine's clock, so a station counter's rollback verdict fires on the sim's clock too
 - A changeover records the CATID at its start and at its watch's close (v38)
 - An A/B pair is two positions naming each other; one lit side is charged per tick

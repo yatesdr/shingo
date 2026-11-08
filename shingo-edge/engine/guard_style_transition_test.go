@@ -35,13 +35,13 @@ func TestGuardStyleTransition_ExemptsLoaderAndNonOutgoingStyle(t *testing.T) {
 
 	// Loader (manual_swap) claim is exempt even when it is the outgoing style.
 	loaderClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeManualSwap, StyleID: styleID}
-	if err := eng.guardStyleTransition(node, loaderClaim); err != nil {
+	if err := eng.guardChangeover(nil, node, loaderClaim); err != nil {
 		t.Errorf("manual_swap loader must stay available during a changeover: %v", err)
 	}
 
 	// A claim for a DIFFERENT (not outgoing) style is not blocked.
 	toClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeTwoRobot, StyleID: otherStyleID}
-	if err := eng.guardStyleTransition(node, toClaim); err != nil {
+	if err := eng.guardChangeover(nil, node, toClaim); err != nil {
 		t.Errorf("non-outgoing style must not be blocked: %v", err)
 	}
 
@@ -49,7 +49,7 @@ func TestGuardStyleTransition_ExemptsLoaderAndNonOutgoingStyle(t *testing.T) {
 	// names the target + outgoing style and carries the process id, so the UI can
 	// offer the abandon exit inline instead of a dead-end toast.
 	fromClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeTwoRobot, StyleID: styleID}
-	blockErr := eng.guardStyleTransition(node, fromClaim)
+	blockErr := eng.guardChangeover(nil, node, fromClaim)
 	var armed *ChangeoverArmedError
 	if !errors.As(blockErr, &armed) {
 		t.Fatalf("outgoing-style line relief must be blocked with *ChangeoverArmedError, got: %v", blockErr)
@@ -188,7 +188,7 @@ func TestGuardStyleTransition_RefusesByPosition(t *testing.T) {
 		node    string
 		refused bool
 	}{{"N-COMMON", false}, {"N-EVAC", true}, {"N-MIRROR", true}} {
-		err := eng.guardStyleTransition(nodes[row.node], claimOf(t, eng, a, row.node))
+		err := eng.guardChangeover(nil, nodes[row.node], claimOf(t, eng, a, row.node))
 		var armed *ChangeoverArmedError
 		if row.refused != errors.As(err, &armed) {
 			t.Errorf("%s under A with the changeover open: %v, refused %t wanted", row.node, err, row.refused)
