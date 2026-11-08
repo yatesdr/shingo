@@ -46,14 +46,15 @@ func TestResolveAnchor_TwoProcessesAgreeDespiteBootSkew(t *testing.T) {
 	time.Sleep(20 * time.Millisecond) // stand in for boot skew
 	b, _ := clock.BuildSimClock(epoch, anchor, 10, 0)
 
-	// Both read at the same instant; a per-process anchor would put them
-	// ~200ms apart here (20ms of skew at 10x) and further as speed rises.
-	skew := a.Now().Sub(b.Now())
-	if skew < 0 {
-		skew = -skew
-	}
-	if skew > 5*time.Millisecond {
-		t.Errorf("clocks disagree by %s; a shared anchor must make them identical", skew)
+	// Both read at ONE frozen wall instant, so the answer is exact: equal under
+	// a shared anchor, 200ms apart under a per-process one (20ms of skew at
+	// 10x). Reading two live clocks one after the other measured the host
+	// instead: at 10x a 0.5ms preemption between the reads was a 5ms "skew".
+	wall := time.Now()
+	clock.FreezeWall(a, wall)
+	clock.FreezeWall(b, wall)
+	if an, bn := a.Now(), b.Now(); !an.Equal(bn) {
+		t.Errorf("clocks disagree by %s at one wall instant; a shared anchor must make them identical", an.Sub(bn))
 	}
 }
 

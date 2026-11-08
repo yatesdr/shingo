@@ -369,7 +369,14 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	crsCheckReturn(t, fl, "old bin", oldRet, evacAMR, evac.ID, oldSlots, newSlots)
 	crsCheckReturn(t, fl, "new bin", newRet, supplyAMR, supply.ID, newSlots, oldSlots)
 
-	bus.PumpAll()
+	// The poll pass that dispatched each return sends its "returning" notice
+	// AFTER the dispatch the wait above sees (tryReturnCarriedBin, in Core's
+	// engine/cancel_return.go), so a single pump can run between the two and
+	// find nothing queued yet. Pump until the Edge holds both rows.
+	crsEventually(t, "the edge records a bin_return for each cancelled order", func() bool {
+		bus.PumpAll()
+		return crsHasNotices(t, edge, edgeEvac.UUID, edgeSupply.UUID)
+	})
 	crsCheckNotices(t, edge, map[string]crsNotice{
 		edgeEvac.UUID:   {protocol.BinReturnReturning, oldRet.DeliveryNode, oldBin.Label},
 		edgeSupply.UUID: {protocol.BinReturnReturning, newRet.DeliveryNode, newBin.Label},
@@ -553,6 +560,22 @@ func crsCheckNotices(t *testing.T, edge *edgeharness.Edge, want map[string]crsNo
 				u, g.State, g.Destination, g.BinLabel, w.state, w.destination, w.label)
 		}
 	}
+}
+
+// crsHasNotices reports whether the Edge holds a bin_return row for every one
+// of uuids, whatever its state; crsCheckNotices then says what each row holds.
+func crsHasNotices(t *testing.T, edge *edgeharness.Edge, uuids ...string) bool {
+	t.Helper()
+	got, err := edge.DB.BinReturnsForOrders(uuids)
+	if err != nil {
+		t.Fatalf("read edge bin_returns: %v", err)
+	}
+	for _, u := range uuids {
+		if _, ok := got[u]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // crsEventually waits for a condition the engine's 2-second robot poll makes
