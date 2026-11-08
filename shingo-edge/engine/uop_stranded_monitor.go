@@ -194,9 +194,19 @@ func (e *Engine) startStrandedMonitor() {
 	go sm.run()
 }
 
+// strandedMonitorClock is the clock the monitor's loop takes its ticker from:
+// Config.StrandedClock when set, else the process default, read when the loop
+// starts (as reconcilerClock).
+func (e *Engine) strandedMonitorClock() clock.Clock {
+	if e.strandedClock != nil {
+		return e.strandedClock
+	}
+	return clock.Default()
+}
+
 func (sm *strandedMonitor) run() {
 	sm.sweepAtBoot()
-	ticker := clock.Default().NewTicker(strandedScanInterval)
+	ticker := sm.eng.strandedMonitorClock().NewTicker(strandedScanInterval)
 	defer ticker.Stop()
 	for {
 		select {

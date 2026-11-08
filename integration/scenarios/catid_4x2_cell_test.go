@@ -37,7 +37,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -95,18 +94,41 @@ var (
 
 // ── the clock ───────────────────────────────────────────────────────────────
 
-// w6Clock is the process clock while the catid_4x2 scenarios run: the real
-// clock in every respect but three tickers of each Edge a cell starts, the PLC
-// poll's, the demand reconciler's and the parked-ticks monitor's, which it
-// hands to that cell (each is taken inside the Edge's start, so a loop that
-// takes its ticker late cannot take another cell's). The
-// scenarios run in parallel with each other and after every sequential
-// scenario of the package (t.Parallel), so it is installed once and left; a
-// ticker no cell is waiting for is a real one.
-type w6Clock struct {
-	mu       sync.Mutex
-	claim    *w6Tickers
-	starting sync.Mutex
+// w6LoopClock is one loop's clock on one Edge the cell starts: the PLC poll's,
+// the demand reconciler's or the parked-ticks monitor's, given to the Edge
+// through its Config (PollClock, DemandReconcileClock, StrandedClock). It is
+// the real clock but for the loop's ticker, which it hands the cell to fire
+// (passTicker). Nothing here is process-wide, so the scenarios run beside the
+// package's others; a restarted Edge is built with clocks of its own.
+type w6LoopClock struct {
+	mu sync.Mutex
+	tk *passTicker
+}
+
+func (k *w6LoopClock) Now() time.Time                         { return time.Now() }
+func (k *w6LoopClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// NewTicker is the loop's: the first ticker asked for is the cell's to fire.
+func (k *w6LoopClock) NewTicker(d time.Duration) clock.Ticker {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.tk == nil {
+		k.tk = &passTicker{}
+		return k.tk
+	}
+	return clock.Real().NewTicker(d)
+}
+
+// ticker is the loop's ticker once the loop has taken it, else nil.
+func (k *w6LoopClock) ticker() *passTicker {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.tk
+}
+
+// w6Clocks are one Edge's three loop clocks.
+type w6Clocks struct {
+	poll, sweep, stranded w6LoopClock
 }
 
 // w6Tickers are one Edge's driven tickers: the poll's, the reconciler's and
@@ -115,79 +137,13 @@ type w6Tickers struct {
 	poll, sweep, stranded *passTicker
 }
 
-var (
-	w6Clk     = &w6Clock{}
-	w6ClkOnce sync.Once
-)
-
-func installW6Clock() { w6ClkOnce.Do(func() { clock.SetDefault(w6Clk) }) }
-
-// calledFrom reports whether fn is on the caller's stack: how NewTicker knows
-// which of an Edge's loops asks for a ticker.
-func calledFrom(fn string) bool {
-	pcs := make([]uintptr, 16)
-	n := runtime.Callers(2, pcs)
-	frames := runtime.CallersFrames(pcs[:n])
-	for {
-		f, more := frames.Next()
-		if f.Function == fn {
-			return true
-		}
-		if !more {
-			return false
-		}
-	}
-}
-
-func (k *w6Clock) Now() time.Time                         { return time.Now() }
-func (k *w6Clock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-
-func (k *w6Clock) NewTicker(d time.Duration) clock.Ticker {
-	poll := calledFrom("shingoedge/plc.(*Manager).pollLoop")
-	sweep := !poll && calledFrom("shingoedge/engine.(*Engine).runDemandReconciler")
-	stranded := !poll && !sweep && calledFrom("shingoedge/engine.(*strandedMonitor).run")
-	if poll || sweep || stranded {
-		k.mu.Lock()
-		defer k.mu.Unlock()
-		if c := k.claim; c != nil {
-			switch {
-			case poll && c.poll == nil:
-				c.poll = &passTicker{}
-				return c.poll
-			case sweep && c.sweep == nil:
-				c.sweep = &passTicker{}
-				return c.sweep
-			case stranded && c.stranded == nil:
-				c.stranded = &passTicker{}
-				return c.stranded
-			}
-		}
-	}
-	return clock.Real().NewTicker(d)
-}
-
-// startWith runs start (an Edge's Start) with the clock handing the Edge's
-// three tickers to the caller, and returns them once each loop has taken its
-// own.
-func (k *w6Clock) startWith(t *testing.T, start func()) *w6Tickers {
+// started waits for each of the Edge's three loops to take its ticker, and
+// returns them.
+func (k *w6Clocks) started(t *testing.T) *w6Tickers {
 	t.Helper()
-	k.starting.Lock()
-	defer k.starting.Unlock()
-	c := &w6Tickers{}
-	k.mu.Lock()
-	k.claim = c
-	k.mu.Unlock()
-	defer func() {
-		k.mu.Lock()
-		k.claim = nil
-		k.mu.Unlock()
-	}()
-	start()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
-		k.mu.Lock()
-		ok := c.poll != nil && c.sweep != nil && c.stranded != nil
-		k.mu.Unlock()
-		if ok {
+		c := &w6Tickers{poll: k.poll.ticker(), sweep: k.sweep.ticker(), stranded: k.stranded.ticker()}
+		if c.poll != nil && c.sweep != nil && c.stranded != nil {
 			return c
 		}
 		if time.Now().After(deadline) {
@@ -455,10 +411,13 @@ func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient) (*edgeharness
 	// (w6Cell.publish) and the poll reads it there; WarLink's own verbs (the
 	// tag lists, publishing, a direct read) answer from the line.
 	cfg.WarLink.Enabled = false
-	eng := edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf, Warlink: wl})
+	clocks := &w6Clocks{}
+	eng := edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf, Warlink: wl,
+		PollClock: &clocks.poll, DemandReconcileClock: &clocks.sweep, StrandedClock: &clocks.stranded})
 	eng.SetReleasePointSource(releasefake.DB{DB: db})
 	eng.SetPreflightSource(w6Preflight{})
-	tickers := w6Clk.startWith(t, eng.Start)
+	eng.Start()
+	tickers := clocks.started(t)
 	t.Cleanup(eng.Stop) // a second Stop, after a restart's, is a no-op
 	// The inventory sink, as a plant runs it: a pickup clears the seat and a
 	// draw reaches Core's bin through it (flushed at a pickup, and by the
@@ -562,7 +521,6 @@ type w6Cell struct {
 // delivered by Core, the line empty, the Edge booted with both CATIDs seen.
 func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 	t.Helper()
-	installW6Clock()
 	c := &w6Cell{ksrCell: &ksrCell{t: t, role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot,
 		robots: map[string]string{}}, plc: newW6WarLink()}
 	for _, p := range o.station {

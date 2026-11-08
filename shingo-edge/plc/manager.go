@@ -130,6 +130,9 @@ type Manager struct {
 	// pointHold answers whether a point's count waits this pass
 	// (SetPointHold).
 	pointHold atomic.Pointer[func(plcName, tagName string) bool]
+	// pollClock is what the poll loop takes its ticker from (SetPollClock);
+	// nil is clock.Default() as the loop starts.
+	pollClock clock.Clock
 
 	warlinkConnected bool
 	warlinkError     error
@@ -700,13 +703,28 @@ func (m *Manager) Stop() {
 
 // --- Polling ---
 
+// SetPollClock gives the poll loop the clock it takes its ticker from; nil
+// (the default) is clock.Default() as the loop starts, so a sim clock
+// installed during boot paces it. Called before StartPolling, at the
+// composition root.
+func (m *Manager) SetPollClock(c clock.Clock) { m.pollClock = c }
+
+// pollTickerClock is the poll loop's clock: the one SetPollClock gave, else
+// the process default, read when the loop starts.
+func (m *Manager) pollTickerClock() clock.Clock {
+	if m.pollClock != nil {
+		return m.pollClock
+	}
+	return clock.Default()
+}
+
 func (m *Manager) pollLoop() {
 	defer m.wg.Done()
 	pollRate := m.counterPollRate
 	if pollRate <= 0 {
 		pollRate = config.DefaultPollRate
 	}
-	ticker := clock.Default().NewTicker(pollRate)
+	ticker := m.pollTickerClock().NewTicker(pollRate)
 	defer ticker.Stop()
 
 	for {

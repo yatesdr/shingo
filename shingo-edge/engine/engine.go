@@ -166,6 +166,12 @@ type Engine struct {
 	// reconcileClock is Config.DemandReconcileClock: what the demand
 	// reconciler's loop takes its ticker from (reconcilerClock).
 	reconcileClock clock.Clock
+	// pollClock and strandedClock are Config.PollClock and
+	// Config.StrandedClock: what the PLC poll loop (plc.Manager.SetPollClock)
+	// and the parked-ticks monitor's loop (strandedMonitorClock) take their
+	// tickers from.
+	pollClock     clock.Clock
+	strandedClock clock.Clock
 
 	hourlyTracker  *HourlyTracker
 	reconciliation *ReconciliationService
@@ -335,6 +341,12 @@ type Config struct {
 	// (pinned by TestDemandReconciler_TheDefaultClock). A test sets one to fire
 	// the level keeper's pass itself instead of waiting a period out.
 	DemandReconcileClock clock.Clock
+	// PollClock and StrandedClock are the same for the PLC poll loop and the
+	// parked-ticks monitor's loop: nil reads clock.Default() when the loop
+	// starts. A scenario that drives an Edge's passes itself gives that Edge
+	// clocks of its own, so nothing it runs is process-wide.
+	PollClock     clock.Clock
+	StrandedClock clock.Clock
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -361,6 +373,8 @@ func New(c Config) *Engine {
 		debugLogger:    c.DebugLogger,
 		warlinkClient:  c.Warlink,
 		reconcileClock: c.DemandReconcileClock,
+		pollClock:      c.PollClock,
+		strandedClock:  c.StrandedClock,
 		Events:         NewEventBus(),
 		stopChan:       make(chan struct{}),
 		cutoverPokes:   make(chan int64, 64),
@@ -441,6 +455,7 @@ func (e *Engine) Start() {
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg.WarLink, e.cfg.PollRate, e.cfg.Counter.JumpThreshold, plcEmit, e.warlinkClient)
 	e.plcMgr.SetIdentityChangeSource(e.identityChangedAt)
+	e.plcMgr.SetPollClock(e.pollClock)
 	e.plcMgr.SetPointHold(e.catchUpHeld)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
 
