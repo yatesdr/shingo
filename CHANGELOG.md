@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Core migrations v8–v175, Edge migrations v2–v44; each binary applies its own at boot. Deploy Core first, then the Edge.
+Deploy: Core migrations v8–v175, Edge migrations v2–v44 since v0.0.14. Migrate a restored copy first and read the boot lines. Core first, then the Edge.
 
 First versioned release since v0.0.14 (2026-03-21); the intervening changes are in git history and the Before v0.1.0 section.
 
@@ -26,6 +26,7 @@ First versioned release since v0.0.14 (2026-03-21); the intervening changes are 
 - Core's and the Edge's Logs pages show the running version and commit
 - `install-core.sh` and `install-edge.sh` take a release tag (`--tag vX.Y.Z`): they check it out, build it and stamp the binary with it
 - Release binaries carry their commit as well as their version
+- Releases also ship 32-bit ARM binaries (`shingocore-linux-arm`, `shingoedge-linux-arm`, armv7) for a Pi on a 32-bit OS
 - A plant spec with a `two_robot` claim and no outbound destination is refused at seed, not stranded at dispatch
 - The Edge installer's first config says the Edge mints its own station uid; Core's notification settings no longer claim to need a restart
 - Every gate checks the docs: a doc naming a test, symbol, file or link that no longer exists, or citing a line number, fails it

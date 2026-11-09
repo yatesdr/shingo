@@ -50,6 +50,11 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
+          # 32-bit ARM (armv7): a Raspberry Pi running a 32-bit OS reports
+          # armv7l and runs neither the amd64 nor the arm64 binary.
+          - goos: linux
+            goarch: arm
+            goarm: '7'
           - goos: darwin
             goarch: amd64
           - goos: darwin
@@ -79,6 +84,8 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          # Empty on every row but linux/arm; Go reads GOARM only for GOARCH=arm.
+          GOARM: ${{ matrix.goarm }}
         run: |
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
@@ -91,6 +98,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
         run: |
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
