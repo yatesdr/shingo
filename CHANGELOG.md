@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.1.0 — 2026-11-08 — Versioned releases, generated docs, the doc gate
+
 Deploy: Core migrations v8–v175, Edge migrations v2–v44 since v0.0.14. Migrate a restored copy first and read the boot lines. Core first, then the Edge.
 
 First versioned release since v0.0.14 (2026-03-21); the intervening changes are in git history and the Before v0.1.0 section.
