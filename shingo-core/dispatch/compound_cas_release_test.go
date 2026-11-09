@@ -103,9 +103,8 @@ func TestAdvanceCompound_CASLoserDoesNotClearWinnersOccupancy(t *testing.T) {
 // states the rule: a hold is only fail-closed if the thing held can be released.
 //
 // The trigger here raises on the status write itself, so the claim returns a
-// plain DB error rather than ConcurrentTransition. (C1: the claim is the hand's
-// `pending → dispatched` CAS, so the trigger fires on `dispatched`; it fired on
-// MoveToSourcing's `sourcing` write before.)
+// plain DB error rather than ConcurrentTransition. (The claim is the hand's
+// `pending → dispatched` CAS, so the trigger fires on `dispatched`.)
 //
 // MUTATION: widen the guard to `if false` (never release) and this fails — the
 // lane stays occupied by a child that was never dispatched.

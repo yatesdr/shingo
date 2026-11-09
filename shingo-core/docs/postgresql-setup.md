@@ -61,8 +61,8 @@ When ShinGo Core connects to an empty database, it:
 
 1. Creates all tables (`CREATE TABLE IF NOT EXISTS`)
 2. Creates indexes
-3. Seeds the synthetic node types `LANE` and `NGRP` (`store/migrations.go:1298-1306`). The older codes this document used to list are gone: `SUP`→`SMKT`→`NGRP`, `LAN`→`LANE`, `SHF`→`SHUF`, `CHG`→`CHRG`, `OFL`→`OVFL`, `STN`→`STAG` were renamed, and `STG` was deleted outright (`migrations.go:1280-1294`)
-4. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin`, `www/auth.go:77-89`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
+3. Seeds the synthetic node types `LANE` and `NGRP` (`migrateNodeTypes` in `store/migrations.go`)
+4. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin` in `www/auth.go`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
 
 On subsequent startups, migrations are idempotent and safe to re-run.
 
@@ -104,16 +104,16 @@ host    shingocore   shingocore   ::1/128          md5
 
 ```
 # Single host
-host    shingocore   shingocore   192.168.1.50/32  md5
+host    shingocore   shingocore   192.0.2.50/32    md5
 
 # Entire subnet
-host    shingocore   shingocore   192.168.1.0/24   md5
+host    shingocore   shingocore   192.0.2.0/24     md5
 ```
 
 **Using scram-sha-256** (PostgreSQL 14+ recommended):
 
 ```
-host    shingocore   shingocore   192.168.1.0/24   scram-sha-256
+host    shingocore   shingocore   192.0.2.0/24     scram-sha-256
 ```
 
 After editing, reload PostgreSQL:
@@ -135,7 +135,7 @@ Set `listen_addresses`:
 ```
 listen_addresses = '*'          # All interfaces
 # or
-listen_addresses = '192.168.1.10'  # Specific interface
+listen_addresses = '192.0.2.10'     # Specific interface
 ```
 
 Then restart PostgreSQL:
@@ -151,13 +151,19 @@ In your `shingocore.yaml`:
 ```yaml
 database:
   postgres:
-    host: 192.168.1.10
+    host: 192.0.2.10
     port: 5432
     database: shingocore
     user: shingocore
     password: your-secure-password
     sslmode: disable
 ```
+
+The block also takes the connection-pool limits `max_open_conns`,
+`max_idle_conns` and `conn_max_lifetime`; zero (the default) means the store's
+own fallback of 25 open, 10 idle, a 5-minute lifetime. They, like every
+database setting, apply after a restart. Their defaults and the rest of the
+keys are in [Configuration](configuration.md).
 
 ### SSL Modes
 
@@ -175,7 +181,7 @@ For factory LAN deployments, `disable` is typical. For connections over untruste
 Verify connectivity before starting ShinGo Core:
 
 ```sh
-psql -h 192.168.1.10 -U shingocore -d shingocore
+psql -h 192.0.2.10 -U shingocore -d shingocore
 ```
 
 If this connects successfully, ShinGo Core will be able to connect with the same parameters.

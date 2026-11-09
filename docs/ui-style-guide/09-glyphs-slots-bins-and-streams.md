@@ -3,16 +3,18 @@
 Verified against: b9210bce
 
 **A glyph is a picture of the press, not an icon.** Icons are monochrome
-affordances that take `currentColor` and live in the Lucide sprite (see Icons
-above). A swap-mode glyph is the opposite of all three: it carries colour **by
-rule**, it depicts a specific machine doing a specific thing, and it is never
-in the sprite. If you are tempted to add one to `shared/icons.svg`, the thing
-you have is not a glyph.
+affordances that take `currentColor` and live in the Lucide sprite (see
+[Icons](08-icons.md)). A swap-mode glyph is the opposite of all three: it carries
+colour **by rule**, it depicts a specific machine doing a specific thing, and it
+is never in the sprite. If you are tempted to add one to `shared/icons.svg`, the
+thing you have is not a glyph.
 
-Source: `operator-station/composer-glyphs.js` — `glyph(mode, size, {rest})`
-returns an inline SVG string and is the **only** renderer. The sprite form
-(`composer-glyphs.svg`) and the classes (`composer-glyphs.css`) ship with it.
-Locked 2026-09-10; the port files are the geometry's source of truth.
+Source: `shingo-edge/www/static/operator-station/composer-glyphs.js` —
+`glyph(mode, size, {rest})` returns an inline SVG string and is the **only**
+renderer; its classes are `composer-glyphs.css`. The two files are the
+geometry's source of truth and are not edited per surface: they read `--os-*`
+names with literal fallbacks, and each surface that loads them declares those
+names (`TestBothSurfacesDeclareTheGlyphFilesTokens`).
 
 ### The four parts
 
@@ -54,18 +56,15 @@ square.
 | `single_robot` | three slots on an equilateral triangle — press (grey bin in it), park (white bin in it), empty park — and three Robot 1 legs round it |
 | `sequential` | A holds the bin the line pulls from; B is where Robot 1 works — new bin up into B from below, empty out of B to the right |
 
-There is a fifth symbol, `#swap-empty`: the slot and the bar with nothing in
-them. It is what a cell with no choreography draws, and it is why a retired
-mode does not need a hidden option anywhere — an unrecognised mode draws the
-empty glyph and its name reads through beside it.
+Any other mode draws the empty glyph: a dashed rounded square in `--sub-3`, with
+the mode's name reading beside it. That is why a retired mode needs no hidden
+option anywhere — an unrecognised mode still draws, as nothing in particular.
 
-### Sizes, and where they appear
+### Size, and where it appears
 
-| Size | Where |
-|---|---|
-| 32 px | preset cards, picker rows |
-| 26 px | the HMI's HOW IT SWAPS segmented control (`rest` on the unselected three) |
-| 22 px | the desktop positions table's Swaps column |
+The desktop Processes page draws the glyph at 22 px: on the positions table's
+mode chip and in its picker (`rest` on the modes not chosen), in the
+free-position mode menu, and in the Recipes tab's shape cell.
 
 **Never below 16 px, never recoloured, never animated.** Below 16 the chevron
 pairs merge and the glyph stops being countable, which is the one property it
@@ -74,10 +73,9 @@ has that a label does not.
 The cell picture puts no glyph on its cards. It does not need one: each of its
 modules is laid out like its mode's glyph, at the size of the cell (below).
 
-
 ### The cell picture: one module per position
 
-The cell picture (`operator-station/operator-flow.js`, `renderFlowPicture`) is
+The cell picture (`shingo-edge/www/static/operator-station/operator-flow.js`, `renderFlowPicture`) is
 the glyph's grammar drawn at the size of a cell. It is not a map: the
 coordinates give the picture its **left and right** and its **front and
 back** — which spot stands beside which, which stands nearest the press — and
@@ -85,8 +83,8 @@ never its distances; **a gap on the floor is never an empty column.** A cell
 with a changeover is drawn by relation (the next section); every other cell —
 and a changeover cell the map cannot place — is drawn as modules: **a module
 is one position and everything its claim names, laid out like that mode's
-glyph.** The station's flow panel, the station composer and the desktop
-Flows tab all draw the same function.
+glyph.** The station's flow panel, the station's changeover modal and the desktop
+Styles tab all draw the same function.
 
 **One fixed template per swap mode.** The template says where a move sits;
 the model's legs say whether the move exists and which robot makes it. No
@@ -148,12 +146,12 @@ its own height back through `opts.height` and its own width — the frame's, or
 a wider relation grid's — through `opts.width`. Every host sets the svg's
 width, height and viewBox to that reported size, one to one, so a card is
 always 188 px on screen: the station's 1280 × 560 panel scrolls a taller
-picture, and a wider one sideways. The desktop Flows tab's `.pd-pic` frame (`drawPicture` in
+picture, and a wider one sideways. The desktop Styles tab's `.pd-pic` frame (`drawPicture` in
 `processes-desktop.js`) takes the picture's full height and never shrinks or
 scrolls vertically; the main column is the one vertical scroll at every window
 height, so the positions table can never cut the picture in half. The frame
 scrolls sideways only when one module is wider than it. Scaling the drawing to
-fit is what once put 9 px titles on the desktop.
+fit shrinks the titles to unreadable sizes on the desktop.
 
 **Colour is the robot here too.** The rule above holds at this size: Robot 1's
 teal and Robot 2's indigo go on the chevrons, the in/out corner marks, the
@@ -181,7 +179,7 @@ to `--text-strong`, so the bar shows in the light theme too. The
 not use — is drawn on the desktop only.
 
 **The draft draws the picture.** Where a flow is being edited (the desktop
-Flows tab, the station composer) the slots, captions and moves all come from
+Styles tab, the Spots step of the station's changeover modal) the slots, captions and moves all come from
 the draft — the same model state the legs come from — so a style that is not
 the running one draws its own staging, never the running style's. The
 read-only station panel builds the same model from the running claims and
@@ -208,14 +206,15 @@ slot or card its trip arrives at, in that trip's robot's colour: up to four
 waypoints read bottom to top in driving order, the rest counted, `Robot N via`
 at its foot.
 
-**A click selects; the picture never edits.** On the desktop a card click
+**On the desktop a click selects, and the picture never edits.** A card click
 selects the **whole module** — the accent outline on its card(s) and every
 slot it draws, nothing dimmed — and scrolls that position's table row into
 view; the row and the card are one selection. A second click on the selected
 card or row lets go, and so does Escape when no popover or sheet is open.
-Every change is made in the table's chips. On the station composer a tap on a
-card, or on a slot (which goes to the position it serves), opens that
-position's panel. The accent is the selection and the robot hue is the
+Every change is made in the table's chips. On the Spots step of the station's
+changeover modal a tap is the model's to decide (`spotsTap` in `composer-model.js`):
+a place of the recipe is selected, and a place marked "move here" takes the selected
+one. The accent is the selection and the robot hue is the
 chevron, as in Design tokens › Robot identity hues.
 
 ### The cell picture by relation

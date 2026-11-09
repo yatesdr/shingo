@@ -6,7 +6,7 @@ A permanent certification fixture for the Kanban feature: the `[kanban]` and `[k
 
 Two tiers:
 
-- **On every gate:** R1 and R5's loop, in the docker shards. `shingo-core/cmd/seeddev/kanban_rig_docker_test.go` (`TestKanbanRig_R1_SteadyLoop`, `TestKanbanRig_R5_Repayment`, `TestKanbanRig_R5_SMIsNotRepaid`) seeds the master whole, applies the slots' allowed types and drives the real keeper, doors and walk with no compose stack, in seconds. R1's test also asserts the statement counts, on the master as on the rig's own plant before it: keeper tick 3 with nothing short, snapshot build 9, intake door 8, parked arm 8. They hold on the master because every kanban in it is born at its pools. `TestKanbanRig_WalkCounts` logs them for the walk's states. They run plain moves in place of the press-index legs.
+- **On every gate:** R1 and R5's loop and the five presses steady, in the docker shards. `shingo-core/cmd/seeddev/kanban_rig_docker_test.go` (`TestKanbanRig_R1_SteadyLoop`, `TestKanbanRig_R5_Repayment`, `TestKanbanRig_R5_SMIsNotRepaid`, `TestKanbanRig_FivePressSteady`) seeds the master whole, applies the slots' allowed types and drives the real keeper, doors and walk with no compose stack, in seconds. R1's test also asserts the statement counts: keeper tick 3 with nothing short, snapshot build 9, intake door 8, parked arm 8. They hold on the master because every kanban in it is born at its pools. `TestKanbanRig_FivePressSteady` holds `[kanban5]` steady on its one kanban, every family at its pool, no order asked and the keeper tick at the one-press count whatever the presses. `TestKanbanRig_WalkCounts` holds the tick, the build and the door to their budgets (4, 10, 8) in the walk's four states. They run plain moves in place of the press-index legs.
 - **Before a merge to `main`:** `scripts/kanban-rig.sh R1` to `R6` on the stack is the certification pair, as line 2's (`[window]`) runs are.
 
 ## The plant
@@ -56,7 +56,7 @@ bash scripts/kanban-rig.sh R1      # R1..R6, W, W5, W6, P1..P6
 
 It refuses while `shingo-dev` is running, because it starts with `down -v`. `KANBAN_RIG_REPLACE=1` says that stack is yours to drop. `KANBAN_RIG_NO_BUILD=1` reuses the images. It takes the gate lock, so a gate and a run never overlap. It seeds with Core stopped, applies the slots' types, runs the injections, collects, prints the verdict and leaves the stack up. The exit code is the verdict's.
 
-Each run writes under `../kanban-rig-runs/<run>-<stamp>/` (or `KANBAN_RIG_OUT`): `verdict.txt`; `long-orders.tsv`, every order over 10 sim-min by id, payload and cause; `stranded.txt` and `soakstat.txt` from `cmd/soakstat`; `no-door.txt`; samples every 30 s of the kanban cards, the windows and the unloader's board. Sim-minutes here are at the rig's 10x, so one is 6 wall-seconds. `family-watch.tsv` and `cart-watch.tsv` read found by place and every cart every 3 s; `orders.tsv` and `order-history.tsv` keep the orders past the next run.
+Each run writes under `../kanban-rig-runs/<run>-<stamp>/` (or `KANBAN_RIG_OUT`): the verdict, one PASS or FAIL per criterion; every order over 10 sim-min by id, payload and cause; `cmd/soakstat`'s stranded table and full read; the carts on a window with no door; samples every 30 s of the kanban cards, the windows and the unloader's board; found by place and every cart every 3 s; and the orders and their history, kept past the next run. The header of `scripts/kanban-rig.sh` names each file and what it holds. Sim-minutes here are at the rig's 10x, so one is 6 wall-seconds.
 
 
 | Run | Length | Injection | Passes when | What it catches |
@@ -72,12 +72,12 @@ Every run also fails on a stranded order with no releaser (`soakstat -stranded`)
 
 ## The walk
 
-`scripts/kanban-rig.sh W`, `W5` and `W6` follow the carts one by one and hold the acceptance states: a step that cannot proceed fails, marks why, and the walk goes on to collect. Each adds samples every 3 wall-seconds.
+`scripts/kanban-rig.sh W`, `W5` and `W6` follow the carts one by one and hold the acceptance states: a step that cannot proceed fails, marks why, and the walk goes on to collect. Each adds samples every 3 wall-seconds (the script's header names the files):
 
-- `walk.tsv`: wall time, sim clock (Core `/api/sim/status`), and for every carrier but the weld's own 3: label, type, node, its group, claimed order.
-- `walk-orders.tsv`: each order touching K, the 4 positions or the 4 windows, live or moved in the last sim-minute: id, type, payload, source, delivery, status, queue cause, age in seconds on the orders' clock.
-- `walk-cards.jsonl`: K's card (`/api/nodes/kanban/levels`) and the unloader's board view, whose tiles carry each window's `assignment`.
-- `walk-log.txt`: the steps' marker lines.
+- every carrier but the weld's own 3: label, type, node, its group, claimed order, beside the wall time and the sim clock (Core `/api/sim/status`);
+- each order touching K, the 4 positions or the 4 windows, live or moved in the last sim-minute: id, type, payload, source, delivery, status, queue cause, age in seconds on the orders' clock;
+- K's card (`/api/nodes/kanban/levels`) and the unloader's board view, whose tiles carry each window's `assignment`;
+- the steps' marker lines.
 
 | Run | Steps |
 |---|---|
@@ -106,8 +106,8 @@ A return always lands: the level governs the keeper's asks, never a cart of the 
 
 ## The five presses
 
-The master's `[kanban5]`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 26 and 22, 48 slots admitting by family. Its plain supermarket is `[kanban]`'s `KP-SM` (the five-press rig plant had its own `P5-SM`, the same four carts; one raid target serves both loops). One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
+The master's `[kanban5]`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 26 and 22, 48 slots admitting by family. Its plain supermarket is `[kanban]`'s `KP-SM` (one raid target serves both loops). One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
 
 Runs: R1 on all five, steady, 20 wall-min; two presses leaving 45x48 in one cycle while a third returns; the all-bigs case on one press; a hand move between positions and the kanban; CANCEL on one press while another changes over; two presses STARTing onto big in one cycle.
 
-Both rigs, every run: found equals pool per family at every sample; the supermarket unchanged; no loop cart parked at a level; no window held past its unload and a tick; every START's gate opens; a keeper tick of at most 4 statements whatever the press count.
+Both rigs, every run: found equals pool per family at every sample; the supermarket unchanged; no loop cart parked at a level; no window held past its unload and a tick; every START's gate opens. The keeper tick's statement count does not grow with the press count (`TestKanbanRig_FivePressSteady`).

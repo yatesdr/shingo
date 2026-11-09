@@ -41,9 +41,8 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 	}
 	// Build the sim clock via the shared builder so Core and Edge construct it
 	// IDENTICALLY — they must agree on epoch/anchor/cap or their fast-forward clocks
-	// drift apart (clock.BuildSimClock owns that logic + the default 15× cap). Always
-	// a SimClock so the dev speed toggle (POST /api/sim/speed) re-paces live;
-	// SetDefault wires clock.Now() to sim time.
+	// drift apart (clock.BuildSimClock owns that logic + the default cap,
+	// clock.DefaultSimMaxSpeed). SetDefault wires clock.Now() to sim time.
 	// The anchor belongs to the RUN, not to the config file — a hardcoded
 	// epoch drifts (speed-1)x further from wall time every day it sits in the
 	// tree. clock.ResolveAnchor prefers the run's shared env anchor and is the
@@ -62,7 +61,7 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 	switch mode {
 	case clock.SimRunning:
 		log.Printf("[sim] live clock: running %.1f× wall, per-process anchor (set sim.anchor_wall in BOTH "+
-			"core+edge to stop clock drift; change speed live via POST /api/sim/speed)", clk.Speed())
+			"core+edge to stop clock drift; set sim.speed in every process's config, never via POST /api/sim/speed)", clk.Speed())
 	case clock.SimSyncedRunning:
 		// THE ONE THAT GENUINELY SUSTAINS THE MULTIPLIER. No clamp, so Now() and
 		// the tickers agree, and a shared anchor, so Core and Edge do too.
@@ -84,16 +83,12 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 			simEpoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	}
 	if clk.RequestedSpeed() > clk.Speed() {
-		log.Printf("[sim] REQUESTED %.0f x BUT RUNNING %.0f x - capped at the MEASURED ceiling.\n"+
-			"      Dev rig 2026-09-06, orders finished per WALL minute at steady state:\n"+
-			"        2x   9.83/wall-min  backlog +0  11 open  104 sim-s mean order life\n"+
-			"        5x  21.50/wall-min  backlog +2   9 open  102 sim-s  <- fastest that holds the 2x shape\n"+
-			"       10x   4.65/wall-min  backlog +6  33 open  <- HALF of 2x, at 0.44 load: not CPU\n"+
-			"      The binding leg is the Edge outbox drain (5s WALL, protocol/outbox/drainer.go:170):\n"+
-			"      at N x that is 5N SIMULATED seconds of backstop latency per hop. Dropping it to\n"+
-			"      500ms took 10x from 4.65 to 34.50/wall-min - measured - but the same interval is\n"+
-			"      also the dead-letter budget (MaxRetries x interval), so lowering it divides a REAL\n"+
-			"      broker's recovery window by the same factor. docs/dev-env/sim.md.",
+		log.Printf("[sim] REQUESTED %.0f x BUT RUNNING %.0f x - capped at sim.max_speed (<= 0: clock.DefaultSimMaxSpeed).\n"+
+			"      Past the cap the clock outruns the choreography and the loop wedges; above the\n"+
+			"      default cap is untested. sim.speed MUST MATCH core and every edge and is changed in\n"+
+			"      their config files, never through POST /api/sim/speed (a live change re-anchors one\n"+
+			"      process and breaks the core-edge sync). Changing it is a down -v, not a restart.\n"+
+			"      docs/dev-env/sim.md.",
 			clk.RequestedSpeed(), clk.Speed())
 	}
 	clock.SetDefault(clk)

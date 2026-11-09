@@ -1499,7 +1499,10 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 //     (pending → confirmed) in ONE transaction — both or neither. This atomicity
 //     is what closes the claim/confirm wedge (see the repo-root
 //     docs/reservations.md).
-//  3. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
+//  3. On ANY failure after Acquire → Release (best-effort). Nothing expires a
+//     hold by age; a pending row the Release missed stays the order's until the
+//     reconciliation sweep's ReapOrphanedReservations reclaims it once the
+//     order is terminal or gone (reservations.ReapOrphaned).
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
 	if err := reservations.Acquire(s.db, orderID, s.laneOwnerOf(orderID), binID, "ClaimForDispatch"); err != nil {
 		// ErrReservationConflict, ErrLaneDugByAnother, or a transient DB error —

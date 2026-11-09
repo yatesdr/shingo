@@ -463,13 +463,31 @@ Base URL: `http://<host>:8083`
 
 ## SSE Events
 
-**Endpoint:** `GET /events`
+**Endpoint:** `GET /events` — server-sent events for live browser updates. No
+authentication required. `EventHub.SetupEngineListeners` (`www/sse.go`) turns
+engine events into broadcasts; a few handlers broadcast directly.
 
-Server-sent events for real-time browser updates. No authentication required.
+`?topics=a,b` narrows a connection to the named events
+(`EventHub.AddClientFiltered`); without it a connection receives every event.
+`robot-update` is coalesced per connection — a newer frame replaces an unsent
+older one — and every other event is queued in order
+(`TestSSE_CoalescingTopicKeepsOnlyNewest`, `TestSSE_StateChangesAreNotCoalesced`).
 
-`order-update` is one event name carrying several shapes, discriminated by `type`. The order key is
-`order_id`, not `id` (`shingo-core/www/sse.go:250-257`); `node-update` uses `node_id`
-(`sse.go:343`).
+| Event | Data |
+|---|---|
+| `connected` | `{build, ts}`, sent once on connect. A changed `build` across a reconnect means Core restarted, and the page reloads. |
+| `heartbeat` | `{build, ts}`, every 30 s. |
+| `order-update` | `{type, order_id, …}`. One event name, several shapes, discriminated by `type`: `received`; `dispatched` (+`vendor_order_id`); `status_changed` (+`new_status`); `eta_update` (+`eta`); `completed`; `failed` (+`detail`); `cancelled` (+`reason`); `faulted` (+`detail`); `recovered` (+`robot_id`); `skipped` (+`detail`). The order key is `order_id`, not `id`. |
+| `mission-event` | `{order_id, vendor_order_id, old_state, new_state, robot_id}`, plus `blocks` / `errors` from the fleet snapshot and `robot_x`, `robot_y`, `robot_station`, `robot_battery` when the robot is known. |
+| `bin-update` | `{node_id, action, bin_id, actor, detail}`. There is no `payload-update`. |
+| `node-update` | `{node_id, action}`. |
+| `robot-update` | An array, one object per robot: `vehicle_id`, `state`, position (`x`, `y`, `angle`), battery and the flags the Robots page draws, plus the order line the robot is on. |
+| `cell-heartbeat` | `{station, process_id, style_id, recorded_at, ts}` per projected production tick. |
+| `sourcing-update` | `{changed}`, sent when a sourceability verdict changed, not on every recompute. |
+| `system-status` | `{fleet}`, `{messaging}` or `{database}`, each `connected` or `disconnected`. |
+| `cms-transaction` | The array of CMS transaction rows just recorded. |
+| `fire-alarm` | `{is_fire, actor}` (`www/handlers_firealarm.go`). |
+| `debug-log` | `{time, subsystem, message}` (`debuglog.Entry`), one per debug-log entry. |
 
 ```
 event: order-update
@@ -480,14 +498,11 @@ data: {"type": "dispatched", "order_id": 42, "vendor_order_id": "sg-42-abc123"}
 
 event: node-update
 data: {"node_id": 5, "action": "updated"}
-
-event: debug-log
-data: {"timestamp": "...", "subsystem": "dispatch", "message": "..."}
 ```
 
 ## Error Responses
 
-All error responses use this format:
+A JSON route that refuses answers with an `error` field:
 
 ```json
 {
@@ -495,8 +510,14 @@ All error responses use this format:
 }
 ```
 
+The config save adds `ok: false` and an `errors` map keyed by field
+(`configRefusal`). A `login` route reached without a session answers `401`
+`{"error": "unauthorized"}` under `/api`, and redirects to `/login` everywhere
+else (`(*Handlers).requireAuth`).
+
 HTTP status codes:
 - `400` — Bad request (missing/invalid parameters)
-- `401` — Unauthorized (not authenticated, for protected endpoints)
+- `401` — Unauthorized (an `/api` route behind `requireAuth`, no session)
 - `404` — Resource not found
+- `409` — Refused against the current state (a bin label that already exists, a station uid already enrolled)
 - `500` — Internal server error

@@ -52,11 +52,11 @@ func (db *DB) SetNodeDisplayName(nodeID int64, displayName string) error {
 // transient failure between them can never leave the slot claimed with its
 // reservation stuck pending.
 //
-// This is the sanctioned slot-claim path and forbidigo enforces it (.golangci.yml).
-// Live callers: the complex allocator (dispatch/allocator.go) and the storage
-// dropoff (dispatch/store_slot.go). The note here used to say there were no
-// production callers "until commit 4 wires it into confirmComplexPlan" — commit
-// 4 shipped, and it wired somewhere else.
+// This is the sanctioned slot-claim path. No lint rule enforces that; the guard
+// is ClaimSlotTx's claim seatbelt (reservations.HeldByOwnerSQL): a claim lands
+// only for an order holding a live slot reservation on the node, so a caller
+// that skipped the reserve claims nothing. Live callers: the complex allocator
+// (dispatch/allocator.go) and the storage dropoff (dispatch/store_slot.go).
 //
 // takenFirst is the picture the occupancy clause reads: the bins on the node that
 // this order's own earlier pickups take before it drops there (dispatch's

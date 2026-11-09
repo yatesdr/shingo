@@ -93,8 +93,9 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		styleProc[s.Name] = s.Process
 	}
 
-	// Set each process's active style. Without active_style_id, findActiveClaim
-	// returns nil and the counter-delta tick handler skips every node — no
+	// Set each process's active style. Without active_style_id the Edge's claim
+	// resolution (store.NodeClaimSet, requestedClaimAtNode) finds no claim and the
+	// counter-delta tick handler skips every node — no
 	// UOP tracking, no reorder/relief, no orders. This is the bootstrap key.
 	activeStyleByProcess := make(map[string]string)
 	for _, pr := range p.Processes {

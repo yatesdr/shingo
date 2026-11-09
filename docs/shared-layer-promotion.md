@@ -45,24 +45,26 @@ is the pattern it was modelled on.
 ## Where things live
 
 - **Infrastructure** → a `protocol/` sub-package. This is where the repo already
-  keeps it: `auth/`, `types/`, `debuglog/`, `backoff/`, `eventbus/`, `outbox/`,
-  `clock/`. Wire vocabulary belongs here too.
+  keeps it: `auth/`, `backoff/`, `clock/`, `debuglog/`, `eventbus/`, `liveness/`,
+  `lockcheck/`, `migrate/`, `outbox/`, `resend/`, `router/`, `testutil/`, `types/`.
+  Wire vocabulary belongs here too.
 - **Presentation, cross-surface answers, and cross-module test fixtures** →
   `shared/`.
 - **Neither creates a new `go.work` module.** Five is the number.
 
 ## The canonical statements
 
-Two packages in `shared/` already state the criterion better than a rule can,
-and are worth reading before promoting anything:
+Two packages in `shared/` state the criterion and its agreement test better than
+a rule can, and are worth reading before promoting anything:
 
 - `shared/windoworder/windoworder.go` — "It lives in `shared/` because both
   sides need the same answer and they compute it in separate modules... If the
   two order the windows differently, a carrier goes to a window nobody
   expected." That is clause 1 with a plant consequence attached.
-- `shared/loadervectors/loadervectors.go` — "THE VECTORS ARE THE PERMANENT
-  GATE, not a migration aid," and its argument for why a live both-implementations
-  comparison test dies in the commit it is meant to protect.
+- `shared/loadervectors/loadervectors.go` — the checked-in-vectors form of the
+  agreement test: "ADDING A CASE: add it here and Core must satisfy it. CHANGING
+  an expected result is a behaviour change to the plant." The cases are embedded,
+  so a missing file is a compile error rather than a skipped test.
 
 For what "correctly shared" looks like on the adapter side, see
 `shingo-core/engine/eventbus.go` (thin type aliases over `protocol/eventbus`,
@@ -80,8 +82,8 @@ drift guard (`protocol/wire_vocabulary_drift_test.go`) shipped with it.
 
 ## What `shared/` is not
 
-`shared/` began as UI assets and several places still describe it that way. It
-has held cross-surface answers (`windoworder`) and cross-module fixtures
-(`loadervectors`) for some time. It is still **not** the home for
-infrastructure — that is `protocol/` — and it is still not a place to put
-something because two files look alike.
+`shared/` holds the UI assets both services serve, cross-surface answers and
+rules (`windoworder`, `planttime`, `clockglobals`), and cross-module case tables
+and fixtures (`loadervectors`, `fedshape`, `comingvectors`, `scenefixtures`). It
+is **not** the home for infrastructure — that is `protocol/` — and it is not a
+place to put something because two files look alike.

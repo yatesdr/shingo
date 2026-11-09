@@ -16,7 +16,7 @@
         {{if not .Config.Timezone}}<span class="set-cnt warn"><i></i>no timezone set · showing {{.DisplayZone}}</span>{{end}}
     </div>
     <div class="set-fld">
-        <label for="cf-uid">Station UID<small>issued by Core at enrolment · replacing a box? enter the old station's UID · applies after a restart</small></label>
+        <label for="cf-uid">Station UID<small>minted by this Edge at first start · replacing a box? enter the old station's UID · applies after a restart</small></label>
         <div class="v"><input id="cf-uid" class="set-inp mid" type="text" data-field="station_uid" value="{{.Config.StationUID}}" placeholder="stn-…" spellcheck="false" autocomplete="off"></div>
     </div>
     <div class="set-fld">

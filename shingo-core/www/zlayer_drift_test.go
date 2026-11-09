@@ -10,7 +10,7 @@ import (
 )
 
 // TestNoRawZIndexInCoreAssets holds every stylesheet, page script and template
-// this surface ships to the layer scale in shared/tokens.css (D19).
+// this surface ships to the layer scale in shared/tokens.css.
 //
 // Core is where the ratchet was worst: style.css alone carried eleven raw
 // values across seven distinct numbers, including a 2000 field tip and a 9999

@@ -95,7 +95,8 @@ func (m SwapMode) String() string { return string(m) }
 //
 // Note: the edge-local "press_position" marker deliberately returns false —
 // per-position claims fan out to the single-position builder, not the
-// two-robot coordination path. See edge/engine/changeover.go:95-105.
+// two-robot coordination path. See the Edge engine's
+// FanOutPressIndexDifferentBinType and flowspec.SwapModePressPosition.
 func (m SwapMode) IsTwoRobot() bool {
 	return m == SwapModeTwoRobot || m == SwapModeTwoRobotPressIndex
 }

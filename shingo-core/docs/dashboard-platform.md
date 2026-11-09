@@ -2,9 +2,9 @@
 
 Verified against: b9210bce
 
-> **Naming, and where the seam is.** Owner decision 11 renamed the human-facing
-> concept to **wall displays**, so the PAGE routes are `/wall-display/{id}` and
-> `/wall-displays`. Everything else deliberately kept the old name: the
+> **Naming, and where the seam is.** The human-facing concept is **wall
+> displays**, so the PAGE routes are `/wall-display/{id}` and
+> `/wall-displays`. Everything else deliberately keeps the old name: the
 > `dashboards` table, the `/api/.../dashboards` namespace, `DashboardService`,
 > `domain.Dashboard`. A page rename is undoable with a redirect; an API rename
 > is not, and a table name is not something a passer-by reads off a screen.
@@ -49,20 +49,14 @@ So any redirect that lands on this route **must carry the query string**.
 Dropping it does not 404 and does not error; it quietly returns a framed page
 with a nav bar to a screen bolted to a wall. `GET /dashboard/{id}` 301s here
 preserving the query for exactly this reason
-(`TestWallDisplayMoved_PreservesQueryString`), and `/heartbeat`'s redirect had
-the same bug in the other direction — it never attached `?kiosk=1` at all.
+(`TestWallDisplayMoved_PreservesQueryString`).
 
 ### Where they are managed
 
-There is **no admin page**. Refactor #3 retired the standalone Manage table;
-wall displays are created and edited on the **hub at `/`** (the Dashboard page,
-`static/pages/dashboard-landing.js`). `GET /wall-displays` and `GET /dashboards`
-both redirect there. The retired `templates/dashboards.html` +
-`static/pages/dashboards.js` pair was deleted once nothing referenced it but the
-template-parse test.
-
-The old `/board` tab is gone; `/board` 301-redirects to `/dashboards`, which
-then redirects to `/`.
+There is **no admin page**: wall displays are created and edited on the **hub
+at `/`** (the Dashboard page, `static/pages/dashboard-landing.js`).
+`GET /wall-displays` and `GET /dashboards` both redirect there, and `/board`
+301-redirects to `/dashboards`.
 
 ### Defaults are seeded, not created
 
@@ -74,8 +68,7 @@ Robot Map". Idempotent and per-kind, so it never clobbers curation.
 Two consequences worth knowing before reasoning about this table: **every Core
 has a heartbeat display from first boot** (so code branching on "does one
 exist?" always takes the yes arm), and **most rows at a plant are seed rather
-than curation** — at the 2026-07-27 measurement Springfield had 4 rows and
-Hopkinsville 3, both carrying "Plant Heartbeat" under the seed's exact name.
+than curation**, carrying the seed's exact names.
 
 ---
 
@@ -100,9 +93,10 @@ monitor ──▶ GET /wall-display/{id}?kiosk=1   (chromeless page, config bake
 
 ### Server-side scoping + SSE as a change-ping
 
-Core's SSE hub is a **plant-wide broadcast** with no per-connection filtering,
-and order events carry only `order_id` (not `station_id`). So area-scoping lives
-in the **REST query**, not the event stream:
+Core's SSE hub is a **plant-wide broadcast**: a connection can narrow it by
+event name (`?topics=`), never by station, and order events carry only
+`order_id` (not `station_id`). So area-scoping lives in the **REST query**, not
+the event stream:
 
 - `GET /api/board/orders?dashboard={id}` resolves the dashboard's station set and
   filters server-side (`store.ListActiveBoardFiltered` → `station_id IN (...)`).
@@ -157,17 +151,16 @@ already public — **no backend was added** for this kind:
 
 Rendering is SVG with world coords mapped into the `viewBox`; the plant's long axis
 is auto-oriented to fill a landscape monitor. Nodes are colored and sized by their
-scene `class_name` — confirmed live as `ActionPoint`, `ChargePoint`, `ParkPoint`,
+scene `class_name` — `ActionPoint`, `ChargePoint`, `ParkPoint`,
 `LocationMark` (travel nodes), `GeneralLocation` — with action points enlarged and
 named and the numerous travel nodes kept small (a background path network).
-Verified against live Hopkinsville data:
-robots share the scene-point coordinate frame (so node/robot alignment is correct),
+Robots share the scene-point coordinate frame (so node/robot alignment is correct),
 and the fleet `Angle` is **radians** (converted to degrees for the heading marker).
 The one remaining best-effort path is destination highlighting / route lines, which
 depend on an order's node name resolving to a scene point
 (`point_name` / `label` / `instance_name`); robot color-by-status is robust
-regardless (it joins on `robot_id`). Area-scoping the *geometry* (vs. only the order
-highlights) is a future option via the `?area=` filter `/api/map/points` already supports.
+regardless (it joins on `robot_id`). The *geometry* is drawn plant-wide; only the
+order highlights are area-scoped (`/api/map/points` does take an `?area=` filter).
 
 ---
 
@@ -192,26 +185,15 @@ way — no schema, nav, or service change:
    (or a separate module) and draw onto a canvas/SVG. Reuse the same scoping +
    SSE-as-ping pattern; the `robot-update` event is your live position feed.
 4. **List the kind** in `dashboard-landing.js` `KINDS` so the hub's create/edit
-   form offers it. (This step named `dashboards.js` until that file was deleted
-   — it was the retired admin CRUD, and editing it changed nothing on screen.)
+   form offers it.
 
 No schema change, no nav change, no new service — `kind` + `config_json` carry
 the variation. That's the platform's whole reason for existing.
 
----
-
-## Future / not yet
-
-- **Standalone display host.** Today the platform lives in the Core binary. The
-  display's client talks only to public endpoints (`/api/board/orders`,
-  `/api/dashboards`, `/events`), so it can be lifted into its own service later
-  *if* operational pain shows up (dashboard tweaks shouldn't require redeploying
-  the dispatcher; many monitors shouldn't each hold a full-firehose SSE link).
-  Until then, in-core is correct — a dashboard owns no data of its own, so the
-  data owner serves it.
-- **Station picker.** The admin area filter is a comma-separated text input; a
-  picker sourced from known stations would be a nicety.
-- **`enabled` gating + `config_json` UI** are reserved but inert in v1.
+The platform lives in the Core binary, and that is deliberate: a dashboard owns
+no data of its own, so the data owner serves it. The display client talks only
+to public endpoints (`/api/board/orders`, `/api/dashboards`, `/events`), so
+nothing but the host ties it to Core.
 
 ---
 

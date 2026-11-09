@@ -86,8 +86,8 @@ func parseFlags() edgeFlags {
 		flag.PrintDefaults()
 		fmt.Fprintf(flag.CommandLine.Output(), "  --log-debug[=FILTER]\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "        Enable debug log file. FILTER is optional comma-separated subsystems:\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "        engine, plc, orders, changeover, kafka, edge_handler,\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "        heartbeat, outbox, protocol\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "        edge_handler, engine, heartbeat, inventory_delta, kafka, orders,\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "        outbox, plant_claims, plc, production_ticks, protocol, release\n")
 	}
 	flag.Parse()
 

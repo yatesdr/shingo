@@ -1511,8 +1511,8 @@ export function durationToText(goStr) {
 }
 
 // collectList reads a list section from the rows that are on the page, in
-// order, NOT by index: removing row 0 must never lose the rows after it (the
-// Core C1 wipe stopped at the first missing index). read(row) returns the
+// order, NOT by index: removing row 0 must never lose the rows after it (an
+// index walk stops at the first missing index). read(row) returns the
 // row's value; null, undefined and '' are left out (a blank new row).
 export function collectList(container, rowSelector, read) {
     if (!container) return [];

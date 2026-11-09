@@ -236,35 +236,14 @@ func testEnvelopeWithUOP(t *testing.T, uop *int) *protocol.Envelope {
 
 // ── Status-at-claim-time ──────────────────────────────────────────────────────
 //
-// CHANGE-DETECTOR — TECH DEBT. Not an invariant.
+// CHANGE-DETECTOR. Not an invariant.
 //
-// The two dispatch paths move the order to sourcing at different points relative
-// to bin claim:
-//
-//   Simple (planRetrieve/planRetrieveEmpty/planMove, since replaced by planTransport):
-//     MoveToSourcing is called BEFORE ClaimForDispatch.
-//     Order is in "sourcing" status when the bin claim fires.
-//
-//   Complex (DispatchPreparedComplex → ApplyComplexPlan):
-//     ApplyComplexPlan (claim) is at complex_dispatch.go:442.
-//     MoveToSourcing is at complex_dispatch.go:482 — AFTER claim.
-//     Order is in "queued" status when the bin claim fires.
-//
-// This asymmetry creates different crash-window behaviors. If a process crash
-// occurs between claim and MoveToSourcing:
-//   Simple path: the bin is claimed, the order is in "sourcing". AbandonStuckOrders
-//     sweeps ("queued","staged","sourcing","dispatched"), so this window is covered.
-//   Complex path: the bin is claimed, the order is in "queued". AbandonStuckOrders
-//     sweeps "queued" too, so the window is also covered — but the terminal cleanup
-//     path (FailOrderAtomic) must unclaim the bin correctly from "queued" status,
-//     which is a different code path than from "sourcing".
-//
-// If Phase 1 normalises the ordering (e.g. MoveToSourcing before claim on the
-// complex path too), this test will break and should be removed or updated to
-// reflect the new invariant.
-//
-// (C1: MoveToSourcing is gone. Both paths are pending or queued at claim time;
-// the hand's CAS writes dispatched. The simple subtest now pins `pending`.)
+// Neither dispatch path writes a status of its own when it claims: a simple
+// order is `pending` at claim time, a complex one is acquiring (pending or
+// queued; DispatchPreparedComplex's protocol.IsAcquiring guard), and the
+// hand's CAS writes `dispatched`. The simple subtest pins `pending` from inside
+// the post-find hook; the complex subtest pins its pre-condition and that the
+// dispatch does not end failed or skipped.
 
 func TestPhase0_StatusAtClaimTime(t *testing.T) {
 	// Simple path: capture order status inside postFindHook.
@@ -309,15 +288,13 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 		}
 	})
 
-	// Complex path: order is in "queued" when DispatchPreparedComplex enters and
-	// ApplyComplexPlan claims bins. MoveToSourcing fires at complex_dispatch.go:482,
-	// AFTER ApplyComplexPlan at complex_dispatch.go:442.
+	// Complex path: the order is "queued" when DispatchPreparedComplex enters and
+	// ApplyComplexPlan claims bins.
 	//
 	// We cannot inject a hook at exact claim time inside ApplyComplexPlan without
 	// modifying production code. Instead, we verify the observable pre-condition
-	// (DispatchPreparedComplex's guard at line 248 asserts StatusQueued) and the
-	// post-condition (order transitions through sourcing to dispatched, proving
-	// MoveToSourcing ran after claim).
+	// (the order is queued, which DispatchPreparedComplex's acquiring guard
+	// admits) and that the dispatch does not end failed or skipped.
 	t.Run("complex_queued_at_claim_time", func(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
@@ -347,10 +324,10 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 		}
 		testutil.MustNoErr(t, db.CreateOrder(order), "create complex order")
 
-		// CHANGE-DETECTOR: order must be in "queued" when DispatchPreparedComplex
-		// enters — the guard at complex_dispatch.go:248 enforces this. If this
-		// assertion fails, the call site changed to pass a non-queued order, which
-		// would be a broader lifecycle change.
+		// CHANGE-DETECTOR: the order is "queued" when DispatchPreparedComplex
+		// enters, which its acquiring guard admits. If this assertion fails, the
+		// fixture changed to pass a non-queued order, which would be a broader
+		// lifecycle change.
 		if order.Status != StatusQueued {
 			t.Fatalf("pre-condition: order.Status = %q, want %q (complex claim-path entry)",
 				order.Status, StatusQueued)
@@ -359,10 +336,7 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 		_ = d.DispatchPreparedComplex(order)
 
-		// After dispatch: order moved through sourcing → dispatched, proving
-		// MoveToSourcing ran AFTER the bin claim at complex_dispatch.go:482 > :442.
-		// TODO(Phase1): add a hook in ApplyComplexPlan to capture status at exact
-		// claim time, and update this assertion to verify queued→sourcing ordering.
+		// After dispatch the order is neither failed nor skipped.
 		got, err := db.GetOrder(order.ID)
 		testutil.MustNoErr(t, err, "get order post-dispatch")
 		if got.Status == StatusFailed || got.Status == StatusSkipped {

@@ -4,8 +4,7 @@ Verified against: b9210bce
 
 ### Markup
 
-Every form input is wrapped in a `.form-group` with an explicit `<label>`
-and the input class:
+Every form input is wrapped in a `.form-group` with an explicit `<label>`:
 
 ```html
 <div class="form-group">
@@ -15,14 +14,16 @@ and the input class:
 </div>
 ```
 
-The `.form-input` class is **mandatory** on inputs, selects, and textareas.
-This is the Edge convention; Core inputs need the class added during
-migration.
+Both apps style an input inside a `.form-group` without a class of its own:
+Edge's `shingoedge.css` styles `.form-group input` and `.form-group select`,
+and Core's `style.css` styles bare text, number, password and date inputs,
+selects and textareas. `.form-input` carries the same rule in both, for an
+input that sits outside a group.
 
-**The exception: a settings page** (§33) uses the settings shape
-(`.set-fld`, `.set-inp`, …) instead of `.form-group` / `.form-input`, and drafts
-and saves together with one Save, because a half-typed address must never be
-applied.
+**The exception: a settings page** (see [Settings pages](33-settings-pages.md))
+uses the settings shape (`.set-fld`, `.set-inp`, …) instead of `.form-group` /
+`.form-input`, and drafts and saves together with one Save, because a
+half-typed address must never be applied.
 
 ### Choice buttons
 
@@ -95,7 +96,7 @@ function validate(state) {
 async function save(state) {
   const v = validate(state);
   if (!v.ok) { showErrors(v.errors); return; }
-  await api.post('/api/style-node-claims', state);
+  await api.post(saveURL, toWire(state));
 }
 ```
 
@@ -113,44 +114,29 @@ async function save(state) {
 
 ### Anti-patterns to avoid
 
-- ❌ Reading element values inside the save function (`document.getElementById('foo').value.trim()` in `save()`)
-- ❌ Setting `element.style.display = 'none'` from event handlers
-- ❌ Storing state in `data-*` attributes for retrieval later
-- ❌ Multiple "reset", "populate", "save" functions that each touch the same 20 IDs
+- Reading element values inside the save function (`document.getElementById('foo').value.trim()` in `save()`)
+- Setting `element.style.display = 'none'` from event handlers
+- Storing state in `data-*` attributes for retrieval later
+- Multiple "reset", "populate", "save" functions that each touch the same 20 IDs
 
-### Worked example
+### Worked example: the flow composer
 
-The claim editor that used to be the canonical example here —
-`shingo-edge/www/static/js/pages/processes.js` — was **deleted in U9d**, and
-the reason it was is worth more than the example was. It demonstrated the
-conventions perfectly and was still the wrong shape: one state object, a pure
-`claimFieldVisibility(role, swap)` returning element-id → boolean, a pure
-validator, single-direction snapshot functions, one DOM-mutation entry point,
-and 528 characterization assertions holding all of it. What it could not fix is
-that it was **thirty fields on one modal**, and no amount of state discipline
-makes thirty fields answerable.
-
-What replaced it keeps every convention and moves the question. The desktop
-composer splits those thirty by whether the PICTURE DRAWS THEM: the fields a
-picture can show are edited on the picture and in a table under it, and the
-twelve it cannot are in one sheet per position that says, in its own footer,
-that nothing in it changes the flow. The state object is
-`operator-station/composer-model.js` — pure, no DOM, `reduce(state, action)`,
-shared unchanged with the operator HMI. The visibility table is gone entirely:
-`advancedShows()` asks **flowspec**, which is the same table the server
-validates against, so a control cannot be offered for a value the save would
-refuse.
-
-Copy from it:
+The flow composer (the desktop Processes page and the station's changeover
+screens) is the convention at full size. Its state object is
+`shingo-edge/www/static/operator-station/composer-model.js` — pure, no DOM,
+`reduce(state, action)` — and the fields it cannot draw on the picture are in
+one Advanced sheet per position, whose `advancedShows()` asks **flowspec**: the
+same table the server validates against, so a control cannot be offered for a
+value the save would refuse. Copy from it:
 
 - **One state object, shared between surfaces.** `composer-model.js` is the
   draft for the HMI and the desktop both. Two screens over one model is what
   makes "an engineer and an operator see the same flow" true rather than
   aspirational.
 - **The oracle is the server's own table, not a hand-written map.** flowspec is
-  exported from Go and embedded as `flowspec-data.js` under a drift test. A
-  visibility map maintained by hand is a second opinion about what the server
-  accepts, and it is always the stale one.
+  exported from Go and embedded as `flowspec-data.js`, held to the Go export by
+  `TestStationFlowspecFileMatchesGo`. A visibility map maintained by hand is a
+  second opinion about what the server accepts, and it is always the stale one.
 - **A pure `toCells(state)` is the wire.** The characterization test compares
   its output to bytes generated by Go's own `domain.Collapse`, so a shape change
   on the server fails the JS the same day.
@@ -158,11 +144,13 @@ Copy from it:
   says nothing about a column, and the server's carry-through keeps what is
   stored. A form that sends every field it knows about flattens the fields it
   does not show.
-- **`composer-fields.characterization.test.js`** pins the same (role ×
-  swap_mode) matrix the old suite did — 689 assertions, and its runner refuses
-  to pass below the 528 the retired suite reported. When a form is replaced,
-  port the suite before deleting the code, and make the replacement's floor the
-  original's count.
+- **A replacement checks at least what it replaced.**
+  `shingo-edge/www/static/js/pages/composer-fields.characterization.test.js`
+  (run by `TestComposerFieldsCharacterization`) walks the whole (role ×
+  swap_mode) matrix, and its runner refuses to pass below
+  `RETIRED_SUITE_ASSERTIONS`, the count of the suite it replaced. When a form is
+  replaced, port the suite before deleting the code, and make the replacement's
+  floor the original's count.
 
 The conventions above are the parts to copy when a new form needs
 this treatment. Two-field "save three values" modals don't need the

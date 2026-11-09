@@ -7,8 +7,11 @@ import (
 	"testing"
 )
 
-// A modal taller than the viewport used to bleed off both edges with nothing
-// able to scroll it, taking the footer — and therefore Save — with it.
+// TestModalDeclaresScrollContainment holds .modal to a max-height and a flex
+// column, so a modal taller than the viewport scrolls inside itself and its
+// footer — and therefore Save — stays on screen. Without them it bleeds off
+// both edges with nothing able to scroll it.
+//
 // .modal-overlay is position:fixed and vertically centred, and .modal declared
 // neither max-height nor overflow, so the overflow was symmetrical: header
 // above the top of the screen, footer below the bottom. Zooming the browser

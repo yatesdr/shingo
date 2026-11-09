@@ -12,8 +12,9 @@ import (
 type Address struct {
 	// Role is the sender or receiver class: RoleEdge or RoleCore.
 	Role string `json:"role"`
-	// Station is the station identity. For an edge, its station UID, minted
-	// by Core at enrollment. For Core, its configured station id. On a
+	// Station is the station identity. For an edge, its station UID, which
+	// the edge mints at first start and keeps in its config. For Core, its
+	// configured station id. On a
 	// dispatch to every edge, StationBroadcast ("*"). Empty is valid on a
 	// message to Core, which is a singleton.
 	Station string `json:"station"`

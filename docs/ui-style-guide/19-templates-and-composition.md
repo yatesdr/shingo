@@ -11,38 +11,39 @@ that's fine. Don't migrate.
 | Edge admin | `{{template "header" .}}` + `{{template "footer" .}}` (sandwich) | HTMX partial swaps need standalone named templates |
 | Operator HMI | Empty-shell HTML + JS render (no Go templates beyond the shell) | Fully client-rendered from JSON, single persistent connection |
 
-### Shared partials
+### Partials
 
-A small `templates/shared/` directory contains primitives that any surface
-can `{{template}}` in:
-
-- `status-badge.html` — `{{template "status-badge" .Status}}`
-- `fieldset-card.html` — wrap form sections
-- `form-field.html` — label + input + error layout
-
-Add to this directory **only when a concrete need surfaces** — a partial that
-two or more surfaces need to render identically. Don't speculatively populate.
+Each module keeps its partials in its own `templates/partials/`, embedded and
+parsed with its templates; there is no template directory the two modules
+share. A partial both render the same way is written once per module and held
+together by a test: `clock-globals.html` (the globals `utils.js` reads) is
+audited for both trees by `shared/clockglobals`. Add a partial when a fragment
+repeats within a module; don't populate ahead of need.
 
 ### Inline scripts
 
-**Don't.** Edge templates currently have significant inline `<script>` blocks
-(notably `material.html:39-251`). New code does not add inline scripts;
-existing inline scripts are extracted to `static/js/pages/<page>.js` when
-the file is touched.
+**Don't.** Page JS lives in the module's page scripts (`static/pages/<page>.js`
+on Core, `static/js/pages/<page>.js` on Edge), loaded as modules. Two inline
+scripts are by design, both because they must run before any module does: the
+theme pre-paint in each layout's head, and the clock globals partial
+(`window.PLANT_TZ`, `window.SHINGO_CLOCK`), which `utils.js` reads
+synchronously.
 
-The one allowed inline `<script>` pattern is data-handoff from server to
-client, and it should use JSON-in-attribute, not `window.foo = ...`:
+Data handed from the server to a page goes in a JSON attribute, not a
+`window.foo = ...` script:
 
 ```html
 <!-- GOOD -->
-<div id="page-data" data-claims='{{.ClaimsJSON}}'></div>
+<div id="page-data" data-orders='{{.OrdersJSON}}'></div>
 
 <!-- BAD — quote-fragile, no type safety -->
-<script>window.claimedByStation = {{json .ClaimedByStation}};</script>
+<script>window.orders = {{.Orders}};</script>
 ```
 
-The Go handler emits `ClaimsJSON` via `json.Marshal`; the page JS reads
-`JSON.parse(document.getElementById('page-data').dataset.claims)`.
+The Go handler emits `OrdersJSON` via `json.Marshal`; the page JS reads
+`JSON.parse(document.getElementById('page-data').dataset.orders)`. Edge's
+Manual message page is the worked example (`handlers_manual_message.go`,
+`manual-message.js`).
 
 ### Standalone pages, frames and the nav (Core)
 

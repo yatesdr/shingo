@@ -2,37 +2,29 @@
 
 Verified against: b9210bce
 
-The canonical reference for the Shingo UI surfaces (Core admin, Edge admin,
-Operator HMI). Captures the decisions reached during the UI consistency
-refactor. Subsequent changes land via PR against this document.
+The reference for the Shingo UI surfaces: Core admin, Edge admin and the
+Operator HMI. Each chapter below owns one subject and names the test that holds
+its rule, where one does.
 
-History: the working draft for this guide lived as `style-guide-v0.md` in
-`GitHub/shingo-ui-consistency/`. It moved here when all TBD entries were
-closed.
+## How to use this guide
 
-## How to use this document
+Read it top to bottom once; after that, go to the chapter that covers what you
+are touching. The guide picks defaults rather than listing options. When a
+convention gets in the way of a real task, change the chapter, not the code
+around it.
 
-Read top-to-bottom once. After that, jump to the section that covers what
-you're touching. The guide is opinionated — it picks defaults rather than
-listing options. When you find yourself fighting one of these conventions
-on a real task, open a PR against this document, not a workaround in the
-code.
+It covers UI consistency only. Backend rules are in
+[ground-rules.md](ground-rules.md), and the operator HMI's own interaction
+patterns are covered only where they share something with the admin surfaces.
 
-The guide covers UI consistency only. It does not cover backend code style
-(see [ground-rules.md](ground-rules.md)), Go architecture (design record,
-outside the repo), or the operator HMI's domain-specific interaction patterns
-beyond what's shared with the admin surfaces.
+## How it changes
 
-## How this document evolves
-
-- Changes go via PR against `shingo/docs/ui-style-guide.md`. The
-  "[deprecations tracker](ui-style-guide/33-settings-pages.md#deprecations-tracker)"
-  section is the feedback loop — anything you "had
-  to" do that contradicts the guide is either a deprecation candidate
-  (update the guide) or a missed convention (open an issue).
-
-This document is opinionated on purpose. When you find yourself fighting it,
-update it — don't work around it.
+A change lands in the chapter that owns the rule, under
+`docs/ui-style-guide/`, in the same commit as the code it describes. A rule
+that has a drift test names it, so changing the rule means changing the test.
+The contents list below is generated from the chapter files and their first
+headings (`shared/scripts/docgen`): a new chapter is a new numbered file, and
+it appears here the next time the generator runs.
 
 ## Contents
 
@@ -52,7 +44,7 @@ update it — don't work around it.
 1. [`13-forms.md`](ui-style-guide/13-forms.md) — Forms
 1. [`14-placement-boxes-the-box-is-the-form.md`](ui-style-guide/14-placement-boxes-the-box-is-the-form.md) — Placement boxes — the box is the form
 1. [`15-the-nodes-page-tiles-groups-sections.md`](ui-style-guide/15-the-nodes-page-tiles-groups-sections.md) — The Nodes page — tiles, groups, sections
-1. [`16-desktop-composer-patterns-u9.md`](ui-style-guide/16-desktop-composer-patterns-u9.md) — Desktop composer patterns (U9)
+1. [`16-desktop-composer-patterns-u9.md`](ui-style-guide/16-desktop-composer-patterns-u9.md) — Desktop composer patterns
 1. [`17-javascript-primitives.md`](ui-style-guide/17-javascript-primitives.md) — JavaScript primitives
 1. [`18-timestamps-plant-local-one-clock.md`](ui-style-guide/18-timestamps-plant-local-one-clock.md) — Timestamps — plant-local, one clock
 1. [`19-templates-and-composition.md`](ui-style-guide/19-templates-and-composition.md) — Templates and composition

@@ -70,7 +70,7 @@ Reference for the Seer RDS Core HTTP API endpoints used by Shingo. Extracted fro
 
 ## Base URL
 
-All endpoints are relative to the RDS Core base URL (e.g. http://192.168.1.100:8080).
+All endpoints are relative to the RDS Core base URL (e.g. http://192.0.2.10:8080).
 
 ## Response Envelope
 
@@ -80,8 +80,8 @@ Most endpoints return a JSON envelope:
 { "code": 0, "msg": "ok", "create_on": "2024-01-01T00:00:00Z" }
 ```
 
-- code == 0 ? success
-- code != 0 ? error; msg contains the error description
+- code 0: success
+- code non-zero: error; msg contains the error description
 
 Some endpoints (order detail lookups) return order fields at the top level alongside the envelope fields, rather than nested under data.
 
@@ -133,12 +133,10 @@ Creates a multi-block order with explicit location, operation, and bin task per 
 ```
 
 **Robot-selection hints (`keyRoute`, `keyTask`):** These are optional fields that
-help RDS pick which robot to assign. Shingo now SETS them per order when the
-originating claim configures them: `style_node_claims.key_route` / `.key_task`
-are carried to `orders.key_route` / `.key_task` at intake and onto the fleet
-request at dispatch. Blank on a claim — which is every claim until one is
-configured — still means "RDS auto-assigns", which is the behaviour of the whole
-plant today.
+help RDS pick which robot to assign. Shingo sets them per order when the
+originating claim configures them: the Edge's `style_node_claims.key_route` / `.key_task`
+are carried to Core's `orders.key_route` / `.key_task` at intake and onto the fleet
+request at dispatch. Blank on a claim — the default — means "RDS auto-assigns".
 
 Route points are validated at save time against the plant's SCENE, not against
 Shingo's node list: Shingo works in APs, so its nodes are a subset of the map,
@@ -359,51 +357,12 @@ RDS returns structured messages (errors/warnings/notices) on orders:
 
 GET /robotsStatus
 
-Returns status for all connected robots.
+Returns status for all connected robots: the envelope plus a `report` array, one object per robot.
 
-**Response:**
-
-```json
-{
-  "code": 0, "msg": "ok",
-  "report": [
-    {
-      "uuid": "abc-123",
-      "vehicle_id": "robot-1",
-      "connection_status": 1,        // 0=disconnected, 1=connected
-      "dispatchable": true,
-      "is_error": false,
-      "procBusiness": true,          // robot has active task
-      "network_delay": 12,
-      "basic_info": {
-        "ip": "192.168.1.50",
-        "model": "P30",
-        "version": "3.2.1",
-        "current_area": ["Area-A"],
-        "current_group": "default",
-        "current_map": "floor1"
-      },
-      "rbk_report": {
-        "x": 10.5, "y": 20.3, "angle": 90.0,
-        "battery_level": 85.0,
-        "charging": false,
-        "current_station": "P1",
-        "last_station": "P2",
-        "task_status": 1,
-        "blocked": false,
-        "emergency": false,
-        "reloc_status": 0,
-        "containers": [
-          { "container_name": "c1", "goods_id": "goods-1", "has_goods": true, "desc": "" }
-        ],
-        "available_containers": 0,
-        "total_containers": 1
-      },
-      "current_order": null
-    }
-  ]
-}
-```
+**Response:** the real key set is in two anonymised captures, one per plant, in
+`shingo-core/fleet/seerrds/testdata`. `TestWireKeysAreCarriedOrExplained` (`wiredrift_test.go`) reads them and
+fails on any wire key that is neither a field of `rds.RobotStatus` (or its nested structs) nor named, with a
+reason, in the test's not-carried list; `mapRobotStatus` turns the struct into `fleet.RobotStatus`.
 
 ### Set Dispatchable
 
@@ -417,7 +376,7 @@ Controls whether robots can receive new orders.
 { "vehicles": ["robot-1"], "type": "dispatchable" }
 ```
 
-	ype values: "dispatchable", "undispatchable_unignore", "undispatchable_ignore"
+`type` values: "dispatchable", "undispatchable_unignore", "undispatchable_ignore"
 
 ### Redo Failed Order
 
@@ -488,6 +447,32 @@ Switches a robot to a different map.
 GET /robotSmap?vehicle={vehicle}&map={mapName}
 
 Downloads a map file from a robot. Returns raw binary.
+
+The fleet adapter does not use it: it downloads a robot's map through the Robokit relay below
+(`Client.DownloadMap`).
+
+### Robokit Relay
+
+POST /generalRobokitAPI
+
+Relays one Robokit call to a named robot on a named Robokit port, over RDS's own connection to that robot. The
+plant network blocks every Robokit port but status from the Core box, so the relay is how Core reaches a robot's
+onboard map; the laser frame goes through it too, so Core never opens a connection to a robot.
+
+**Request:**
+
+```json
+{ "vehicle": "robot-1", "port": 19207, "code": 4011, "cmd": { "map_name": "floor1" } }
+```
+
+- `port` — the Robokit port: 19204 status, 19205 control, 19206 navigation, 19207 config.
+- `code` — the Robokit API number. The adapter sends 4011 (download map, config port) and 1009 (laser frame,
+  status port); `Client.GetRobotMapList` sends 1300 (which map a robot runs, and its hash).
+- `cmd` — the Robokit call's own body; omitted when it has none.
+
+**Response:** the robot's raw Robokit response. A failed relay still answers HTTP 200, with a non-zero `code`
+(or `ret_code`) and a `msg` in the body; a relay that did not reach the robot can answer 200 with a bare
+`{"code":0,"msg":"ok"}`. `Client.GeneralRobokitAPI` treats both as errors.
 
 ### Set Parameters (Temporary)
 
@@ -804,6 +789,42 @@ Sets the state of a simulated robot.
 
 ---
 
+## Fire Alarm
+
+### Get Fire Alarm Status
+
+GET /isFire
+
+Returns whether the fleet's fire alarm is raised.
+
+**Response:**
+
+```json
+{ "code": 0, "msg": "ok", "create_on": "2024-01-01T00:00:00Z", "is_fire": false }
+```
+
+`create_on` is when the alarm state last changed; RDS returns the epoch (`1970-01-01T00:00:00Z`) or nothing for
+an alarm never raised, which `Client.GetFireAlarmStatus` reports as no time.
+
+### Set Fire Alarm
+
+POST /fireOperations
+
+Raises or clears the fire alarm.
+
+**Request:**
+
+```json
+{ "on": true, "autoResume": true }
+```
+
+- `on` — true raises the alarm, false clears it.
+- `autoResume` — optional; sent only when true.
+
+The fleet adapter exposes both as `fleet.FireAlarmController`.
+
+---
+
 ## System
 
 ### Ping
@@ -852,7 +873,7 @@ Returns current license information.
 Shingo integrates with RDS through the shingo-core/rds client package and the shingo-core/fleet/seerrds adapter:
 
 - **rds.Client** — Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
-- **seerrds.Adapter** — Implements Shingo's fleet.TrackingBackend, fleet.RobotLister, fleet.NodeOccupancyProvider, and fleet.VendorProxy interfaces
+- **seerrds.Adapter** — Implements Shingo's fleet.TrackingBackend and the optional fleet interfaces RDS can serve: fleet.RobotLister, fleet.NodeOccupancyProvider, fleet.SceneSyncer, fleet.VendorProxy, fleet.FireAlarmController, fleet.RobotMapDownloader and fleet.LidarFrameReader among them
 - **rds.Poller** — Periodically polls active orders for state transitions and emits events through the engine pipeline
 
 ### Key patterns
@@ -862,14 +883,14 @@ Shingo integrates with RDS through the shingo-core/rds client package and the sh
 - The adapter pins the vehicle during ReleaseOrder to prevent RDS from re-dispatching to a different robot
 - State mapping from RDS to ShinGo dispatch status is in seerrds.MapState()
 - Container goods bindings track which robot is carrying what
-- The RDS explorer UI (/handlers_rds_explorer.go) allows sending arbitrary requests to the fleet backend
+- Robot maps and laser frames come through the Robokit relay (/generalRobokitAPI), on change and hourly respectively, never on the status poll
+- The RDS explorer page (shingo-core/www/handlers_rds_explorer.go) allows sending arbitrary requests to the fleet backend
 
 ### Source PDFs
 
-This reference was derived from two vendor PDFs. **Neither is in the repo** — reference PDFs are
-deliberately kept out of version control (see the "Planning docs and reference PDFs" block in
-`.gitignore`), and `git ls-files '*.pdf'` returns nothing on any branch. Ask for them rather than
-looking for them in a checkout.
+This reference was derived from two vendor PDFs. **Neither is in the repo** — vendor PDFs are kept
+out of version control, and `git ls-files '*.pdf'` lists nothing. Ask for them rather than looking
+for them in a checkout.
 
-- `RDSCore _HTTP API_AIVISON .pdf` — full RDS Core HTTP API documentation
-- `RDS UserManual-EN_AIVISON .pdf` — RDS user manual
+- "RDSCore _HTTP API_AIVISON .pdf" — full RDS Core HTTP API documentation
+- "RDS UserManual-EN_AIVISON .pdf" — RDS user manual

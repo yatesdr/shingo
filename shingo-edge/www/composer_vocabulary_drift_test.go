@@ -11,7 +11,7 @@ import (
 )
 
 // composer_vocabulary_drift_test.go — A FIELD IS CALLED WHAT THE CLAIM CALLS
-// IT, and there is ONE table of those words (owner ruling F3, 2026-09-12).
+// IT, and there is ONE table of those words (domain/flowspec).
 //
 // There were five. domain/flowspec's fieldLabels, domain's shapeFields, the
 // model's SHAPE_FIELDS, the model's COLUMN_LABEL and the desktop's

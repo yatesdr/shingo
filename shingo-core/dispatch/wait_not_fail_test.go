@@ -78,9 +78,7 @@ func TestLoaderSourceUnreadable_Waits(t *testing.T) {
 // NO MUTATION NOTE, because there is nothing here to mutate. This test builds no
 // order, calls no DispatchDirect and reads no status — it asserts against the
 // static transition table, and putting lifecycle.Fail back would not change one
-// line of it. A note claiming "the status assertion fires and the follow-on
-// MoveToSourcing assertion fires with it" stood here and named two assertions
-// this function has never contained.
+// line of it.
 func TestDispatchDirect_FleetRefusalIsNotTerminal(t *testing.T) {
 	t.Parallel()
 

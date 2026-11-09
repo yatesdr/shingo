@@ -50,29 +50,26 @@ pages import them from `/static/shared/utils.js`:
 | `closeSSEBus` | function | closeSSEBus — tear down the shared EventSource (page unload / tests). |
 | `durationFromText` | function | durationFromText is what the page sends for a duration box: the typed text ("45 min", or a Go string typed in) as a Go duration string. |
 | `durationToText` | function | durationToText is what the box shows for a stored Go duration: one box with its unit in it ("45 min", "10 s", "1 h", "1 h 30 min"), never "45m0s". |
-| `collectList` | function | collectList reads a list section from the rows that are on the page, in order, NOT by index: removing row 0 must never lose the rows after it (the Core C1 wipe stopped at the first missing index). |
+| `collectList` | function | collectList reads a list section from the rows that are on the page, in order, NOT by index: removing row 0 must never lose the rows after it (an index walk stops at the first missing index). |
 | `settingsPage` | function | settingsPage binds a settings page's draft, save bar and answers. |
 
 <!-- /generated -->
 
+`shared/esc.js` exports `esc`, the same escape with no imports and no DOM, for
+code that must not pull in all of `utils.js` (the station's renderers, the node
+tests).
+
 ### Module shape
 
-**Decided: ES modules.** All shared utilities and consuming JS use
-`import`/`export`. Script tags get `type="module"`. This matches the
-operator station's existing pattern. Core's bare globals and Edge's IIFE
-wrap get migrated to modules as part of the refactor.
-
-Rationale: operator station already uses modules successfully; the
-three-pattern divergence collapses to one; modern tooling (linters,
-formatters, possible future TypeScript, bundlers) assumes modules; AI
-agents parse explicit `import` statements more reliably than implicit
-`window.X` globals. The cost is a one-time pain (script tag changes,
-loading semantics shift to deferred-by-default) instead of perpetual
-maintenance of the divergence.
-
-Browser support: ES modules require Chromium 60+ / Firefox 60+ / Safari
-11+ (2017-2018 vintage). Modern plant kiosks should be fine; verify the
-oldest device in the field before shipping.
+**ES modules.** Shared utilities and page JS use `import`/`export`, and their
+script tags carry `type="module"`: an explicit import is a dependency a reader
+and a linter can see, where a `window.X` global is not. Edge admin page scripts
+import from `/static/js/shingoedge.js`, which re-exports `escapeHtml` and
+`delegateActions` from `utils.js` but carries its own `api`, `createSSE`,
+`showModal` / `hideModal`, `confirm` / `prompt` and `toast`. The classic scripts left
+are the ones that must run before any module: the theme pre-paint in each
+layout's head, the clock globals partial, vendored bundles, and the glyph file
+that ships verbatim (`composer-glyphs.js`).
 
 ### HTML construction
 
@@ -91,7 +88,7 @@ opt-out for pre-built safe HTML (`{ __html: true, value: safe }`).
 
 ### Avoid
 
-- ❌ Raw `innerHTML += '...'` with concatenated user data
-- ❌ Bare `fetch()` — use `api.*` for consistent error handling
-- ❌ Bare `EventSource` — use `createSSE` for reconnect + build-id detection
+- Raw `innerHTML += '...'` with concatenated user data
+- Bare `fetch()` — use `api.*` for consistent error handling
+- Bare `EventSource` — use `createSSE` for reconnect + build-id detection
 

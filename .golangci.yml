@@ -98,7 +98,7 @@ linters:
       # append `\(` because the parenthesis is syntax, not the identifier.
       forbid:
         - pattern: 'db\.UpdateOrderStatus'
-          msg: "Direct UpdateOrderStatus calls bypass the state machine. Use dispatch.LifecycleService typed methods (CancelOrder, ConfirmReceipt, Release, MarkInTransit, MarkStaged, MarkDelivered, Queue, MoveToSourcing, Dispatch, Fail, Acknowledge, BeginReshuffle, CompleteCompound, ResumeCompound, FailWithRef). See docs/order-state-machine/transitions.md."
+          msg: "Direct UpdateOrderStatus calls bypass the state machine. Use dispatch.LifecycleService typed methods (CancelOrder, ConfirmReceipt, Release, Acknowledge, Park, Dispatch, MarkInTransit, MarkStaged, MarkDelivered, MarkFaulted, MarkFaultedRecovered, Fail, FailWithRef, Skip, BeginReshuffle, CompleteCompound, ResumeCompound, Restart). See docs/order-state-machine/transitions.md."
         - pattern: 'db\.FailOrderAtomic'
           msg: "Direct FailOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.Fail."
         # Reservation-sourcing bypass guard. Bin claims must go through the

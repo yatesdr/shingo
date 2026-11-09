@@ -9,7 +9,7 @@ the node; the grid under the box already shows every node, and a slot can say
 what it still needs. The Nodes page's loader stations are the worked example
 (`shingo-core/www/static/pages/loaders.js`: `stationSlots`, `assignReason`,
 `settingsHtml`). The create card then asks only what the thing IS (see Choice
-buttons above) and hands off to the box.
+buttons in [Forms](13-forms.md)) and hands off to the box.
 
 ### Slots
 

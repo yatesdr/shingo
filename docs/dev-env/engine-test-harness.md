@@ -2,53 +2,63 @@
 
 Verified against: b9210bce
 
-How the simulation harness is built, for anyone who needs to add new tests or modify the simulator.
+How Core's engine tests drive a real Engine against the fleet simulator, for anyone who needs to add a test
+or modify the simulator.
 
 ## The simulation harness
 
-The engine test harness (`newTestEngine`) creates a real Shingo Engine connected to the simulator instead of RDS. When you call `sim.DriveState()` to advance a simulated robot, the following chain fires automatically:
+The engine test harness (`newTestEngine`, in `shingo-core/engine`'s docker-tagged tests) creates a real
+Shingo Engine on its own Postgres database, connected to the simulator (`simulator.New`) instead of RDS.
+When you call `sim.DriveState()` to advance a simulated robot, the following chain fires automatically:
 
 ```
-sim.DriveState("RUNNING")
-    → Simulator emits OrderStatusChanged event
-    → Engine's EventBus delivers event to handleVendorStatusChange
-    → Handler updates order status in database
-    → Handler notifies Edge (writes to outbox table, goes nowhere in tests)
+sim.DriveState(vendorOrderID, "RUNNING")
+    → Simulator emits an OrderStatusChanged event
+    → Engine's EventBus delivers it to handleVendorStatusChange
+    → Handler writes the order's new status
+    → Handler notifies Edge (writes to the outbox table, goes nowhere in tests)
 
-sim.DriveState("FINISHED")
+sim.DriveState(vendorOrderID, "FINISHED")
     → Same chain → status becomes "delivered"
+    → handleOrderDelivered → applyBinArrivalForOrder
+    → Each of the order's carts is set down at its last drop, its claim released
+    → EventOrderCompleted → handleOrderCompleted (finds nothing left to move)
 
 dispatcher.HandleOrderReceipt(...)     (simulates Edge confirmation)
-    → ConfirmReceipt → EventOrderCompleted
-    → handleOrderCompleted → ApplyBinArrival
-    → Bin moves to destination node in database
-    → Bin claim released
+    → ConfirmReceipt → status becomes "confirmed" → EventOrderCompleted
+    → handleOrderCompleted: advances a compound parent; re-applies any arrival still owed
 ```
 
-The key detail: the robot finishing (FINISHED) does not move the bin. The Edge station must confirm receipt first. This matches real production behavior and prevents inventory from updating before a human confirms the bin actually arrived.
+The key detail: the robot finishing (FINISHED) is what moves the bin, so the next order sees the occupancy
+the floor has; the Edge's receipt confirms the order and moves nothing that already landed
+(`TestRegression_BinMovesOnDelivered`, `TestRegression_CompletionIdempotentAfterDelivery`). A compound
+order's robot-internal children confirm themselves on delivery, since no operator stands at their
+destination.
 
-## Measuring a sim run: the soakstat ledger
-
-A running sim stack is measured by `shingo-core/cmd/soakstat`, which reads Core's database and never writes to it.
-- **The report** (every 5 minutes): the soak's measures and its invariants, including holds-at-rest.
-- **The ledger** (`soakstat -ledger FILE -sample N`, every 30 s): one JSON-lines sample of the books over time.
-  - Every live order, with what it holds in each book: reserved (pending rows), committed (hard, no fleet order yet), claimed (hard, fleet moving).
-  - Every storage slot: stored or lifted bin, claim, slot reservations, the orders naming it as a bare destination, whether it entombs a spoken-for slot, and its lane's dig lock and occupancy.
-  - It costs six statements per sample, one per table.
-
-The ledger's columns are documented once, at the top of `cmd/soakstat/ledger.go`. A hit (an order waiting while it holds something hard) is classified from the ledger after the run, so no hit needs reading by hand.
+A running sim stack is measured by `shingo-core/cmd/soakstat`, not by this harness
+([plants/README.md](../../plants/README.md), "Tooling"); its ledger's columns are documented at the top of
+`shingo-core/cmd/soakstat/ledger.go`.
 
 ## Concurrency testing infrastructure
 
-Concurrency tests verify the system under contention. The primary concern is the TOCTOU (time-of-check-time-of-use) race between `FindSourceBinFIFO` and `ClaimBin` — two orders can both find the same bin before either claims it. The PostFindHook enables deterministic race injection by pausing between find and claim. `simulator.ParallelGroup` provides barrier-synchronized goroutine launches for stress testing. These tests confirm that contention produces correct outcomes: no double-claims, no permanent failures, excess orders queued for retry.
+Concurrency tests verify the system under contention. The primary concern is the window between finding a
+source bin and acquiring it — two orders can both find the same bin before either holds it. The fulfillment
+scanner is the single place an order acquires its source (`(*Scanner).fulfill` in `shingo-core/fulfillment`,
+one scan at a time), and a race there must re-queue the loser, never drop it. These tests confirm that
+contention produces correct outcomes: no double-claims, no permanent failures, excess orders queued for
+retry.
 
 The simulator harness includes infrastructure for deterministic and statistical concurrency testing:
 
-**PostFindHook** — A test-only synchronization point installed on the `PlanningService` between `FindSourceBinFIFO` and `ClaimBin`. When set via `Dispatcher.SetPostFindHook(fn)`, the hook fires inside `planRetrieve` and `planRetrieveEmpty` after finding a bin but before claiming it. Tests use the hook to widen the TOCTOU race window and guarantee both goroutines enter it simultaneously.
+**PostFindHook** — A test-only synchronization point the fulfillment scanner fires between its find and
+its acquire. When set via `Dispatcher.SetPostFindHook(fn)`, the hook runs after a bin is found and before
+it is reserved. Tests use it to make a claim race deterministic: the hook takes the bin for another order,
+and the test asserts the order re-queues (`TestPhase0_DispositionTriad_ClaimFailed` in
+`shingo-core/dispatch`).
 
 ```go
 d.SetPostFindHook(func() {
-    // This runs between Find and Claim — widen the TOCTOU window
+    // This runs between Find and the acquire — widen the race window
     signalChan <- struct{}{} // let the other goroutine start
     <-waitForOther           // wait until the other goroutine claims
 })
@@ -62,92 +72,34 @@ simulator.ParallelGroup(20, func(i int) {
 })
 ```
 
-Test files:
-
-- `engine/engine_concurrent_test.go` — all concurrency tests (TC-71a-e)
-
 Run this domain's tests:
 
 ```bash
 cd shingo-core
-go test -v -run "TestConcurrent|TestRedirect|TestFulfillmentScanner" ./engine/ -timeout 120s
+go test -tags docker -count=1 -run "TestConcurrent|TestRedirect|TestFulfillmentScanner|TestPhase0_DispositionTriad" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 ## Important technical constraints
 
-**Receipt required for bin movement.** Tests that verify bin movement must call `HandleOrderReceipt` after driving to FINISHED. Without this step, the bin stays at its original location in the database.
+**The bin moves on FINISHED.** A test that checks where a bin is after delivery reads it after driving to
+FINISHED; `HandleOrderReceipt` is what confirms the order and advances a compound parent.
 
 **State changes fire events automatically.** When the simulator is wired into an Engine via `newTestEngine`, calling `DriveState` automatically fires events through the engine pipeline. Tests don't need to manually emit events.
 
-**Each test gets a fresh database.** All tests share a single Postgres container (started once per process via `sync.Once`), but each test gets its own `CREATE DATABASE`. This gives full isolation without the overhead of 90+ containers. The shared infrastructure lives in `internal/testdb/`.
+**Each test gets a fresh database.** A test process uses one Postgres server — its own container, or the
+one `scripts/gate.sh` starts and names in `$SHINGO_TEST_PG` — and builds one migrated template database;
+`testdb.Open` clones the template for each test (`CREATE DATABASE … TEMPLATE`), so every test is isolated
+without re-running the migrations. `testdb.OpenShared` gives every test that passes the same key (a test
+file's, `testdb.FileKey`) one database. The shared infrastructure lives in `shingo-core/internal/testdb`.
 
-## Files
+## Where the pieces are
 
-```
-shingo-core/
-├── internal/
-│   └── testdb/
-│       ├── testdb.go              # Open, SetupStandardData, CreateBinAtNode, Envelope
-│       ├── compound.go            # CompoundScenario, CompoundConfig, SetupCompound
-│       └── mock_backend.go        # MockBackend (NewFailingBackend/NewSuccessBackend), MockTrackingBackend
-├── engine/
-│   ├── engine_simulator_test.go   # Full-lifecycle + staged complex-order release
-│   ├── engine_claim_test.go       # Bin claim / poaching prevention (6 tests)
-│   ├── engine_linechangeover_test.go # Line changeover with missing/in-flight bins
-│   ├── engine_quality_test.go     # Quality-hold dispatch behavior
-│   ├── engine_terminal_test.go    # Terminal-state semantics (cancel, fail, terminate)
-│   ├── engine_reconciliation_test.go # Orphaned bin claim sweep
-│   ├── engine_concurrent_test.go  # Concurrency + malformed input + redirect + scanner
-│   ├── engine_compound_test.go    # 8 compound reshuffle tests (uses SetupCompound)
-│   └── engine_complex_test.go     # 12 complex order tests
-├── dispatch/
-│   ├── dispatcher_test.go         # 18 tests, uses testdb.NewFailingBackend
-│   ├── reshuffle_test.go          # 6 tests, uses testdb.NewSuccessBackend/NewFailingBackend
-│   ├── group_resolver_test.go     # 15 tests, helpers removed (~650 lines)
-│   ├── end_to_end_test.go         # 13 tests, uses testdb.NewTrackingBackend/CreateBinAtNode
-│   └── fleet_simulator_test.go    # 5 tests (~315 lines, unchanged)
-└── fleet/
-    └── simulator/
-        ├── simulator.go           # Fake fleet backend, TrackingBackend impl
-        ├── transitions.go         # DriveState, DriveFullLifecycle, etc.
-        ├── inspector.go           # GetOrder, HasOrder, FindOrderByLocation, etc.
-        ├── options.go             # Fault injection (WithCreateFailure, WithPingFailure)
-        └── concurrent.go          # ParallelGroup barrier launcher
-```
+- `shingo-core/fleet/simulator` — the fake fleet backend: the transitions (`DriveState`,
+  `DriveFullLifecycle`, `DriveToFailed`), the read-only inspector (`FindOrderByLocation` and its
+  siblings), fault injection (`WithCreateFailure`), and `ParallelGroup`.
+- `shingo-core/internal/testdb` — the database (`testdb.Open`), the fixtures (`testdb.SetupStandardData`,
+  `testdb.CreateBinAtNode`, the compound layout `testdb.SetupCompound`), and the mock fleet backends
+  (`testdb.NewFailingBackend`, `testdb.NewSuccessBackend`, `testdb.NewTrackingBackend`).
 
-| File | What it does |
-|------|-------------|
-| `internal/testdb/testdb.go` | Shared test infrastructure. Container reuse via `sync.Once`, per-test `CREATE DATABASE`, standard data setup, bin creation helpers. |
-| `internal/testdb/mock_backend.go` | Shared mock fleet backends. `NewFailingBackend()` (all ops error), `NewSuccessBackend()` (records orders), `NewTrackingBackend()` (satisfies `fleet.TrackingBackend`). Eliminates duplicate mock implementations across test files. |
-| `internal/testdb/compound.go` | Compound scenario builder. `SetupCompound` creates full NGRP → LANE → slots → shuffle → line → bins layout from a `CompoundConfig`. |
-| `fleet/simulator/simulator.go` | The fake fleet backend. Stores orders and blocks in memory. Implements TrackingBackend so the Engine can wire it up automatically. |
-| `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
-| `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder, HasOrder, FindOrderByLocation. Used by tests to inspect what the "fleet" received. |
-| `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
-| `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
-| `engine/engine_simulator_test.go` | Full-order-lifecycle and staged complex-order release tests. Real Engine + real DB + simulator. |
-| `engine/engine_claim_test.go` | Bin-claim contracts: silent-overwrite guard, store-order poach prevention, complex-order claim hand-off, store-order vs staged bin at core node. |
-| `engine/engine_linechangeover_test.go` | Line changeover with one bin already moved away, and changeover while a move-to-QH order is in flight. |
-| `engine/engine_quality_test.go` | Quality-hold bin handling — queued, not failed. |
-| `engine/engine_terminal_test.go` | Terminal-state semantics: cancel + return-claim transfer, fleet-failed return-claim transfer, cancel-after-delivered, terminate-rejects-confirmed, source-node auto-return. |
-| `engine/engine_reconciliation_test.go` | Orphaned bin claim detection + sweep. |
-| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. Uses PostFindHook for deterministic TOCTOU race reproduction. |
-| `engine/engine_complex_test.go` | Complex order lifecycle + production cycle pattern tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50, TC-55, TC-56, TC-57, TC-58, TC-59, TC-60. Strengthened with SourceNode, bin position, and lifecycle assertions. |
-| `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. All 8 tests use `testdb.SetupCompound()` for setup, reducing ~400 lines of boilerplate. |
-| `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, uses shared `testdb.NewFailingBackend()` instead of inline mock. |
-| `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, uses `testdb.NewSuccessBackend()` and `testdb.NewFailingBackend()`. |
-| `dispatch/group_resolver_test.go` | Group resolver tests. 15 tests, `createTestBinAtNode` wrapper to `testdb`. |
-| `dispatch/end_to_end_test.go` | End-to-end dispatcher tests. 13 tests, uses `testdb.NewTrackingBackend()` and `testdb.CreateBinAtNode()` for bin setup. Drives the dispatcher through complete retrieve/move/store/cancel/redirect/synthetic/reshuffle lifecycles. |
-| `dispatch/fleet_simulator_test.go` | Dispatcher-level scenario tests (TC-1, TC-3, TC-4, TC-5). Tests the outbound path only (what gets sent to the fleet). |
-| `dispatch/bin_lifecycle_test.go` | Bin lifecycle integration tests (TC-64a–c). Full depletion, partial consumption, concurrent retrieve_empty race. |
-| `dispatch/planning_test.go` | `extractRemainingUOP` unit tests (TC-65). Nil, empty, missing, zero, positive, malformed JSON. |
-| `service/bin_manifest_test.go` | BinManifestService unit tests (TC-62a–h). All manifest mutations, atomic clear+claim, lock rejection. |
-| `messaging/core_data_service_test.go` | Core data service tests (TC-69). Node list response includes NGRP node groups for station-scoped and global paths. Uses testcontainers Postgres. |
-
-Edge test files (in `shingo-edge/`, SQLite-based — no Docker required):
-
-| File | What it does |
-|------|-------------|
-| `engine/produce_swap_test.go` | Produce swap mode tests (TC-66a–f). All four swap modes, rejection guards. Includes `seedProduceNode` and `testEngine` helpers. |
-| `engine/wiring_test.go` | Edge wiring event handler tests (TC-67a–g, TC-70, TC-72a–e). Ingest/retrieve completion, counter delta, UOP reset, bin_loader move completion, payload catalog prune, A/B cycling. |
-| `engine/changeover_test.go` | Changeover automation tests (TC-74a–g, TC-76a–c). Wiring lifecycle, auto-staging, order failure/retry, cancel mid-staging, keep-staged. Includes `seedChangeoverScenario` and `startChangeover` helpers. |
+The Edge's engine tests (`shingo-edge/engine`) run on SQLite and need no Docker. `go test -list` names
+every test in a package.

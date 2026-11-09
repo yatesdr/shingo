@@ -43,22 +43,18 @@ it goes, so a later reading names wherever the robot went next rather than where
 it set the bin down. The frozen reading is then resolved — first as a Core node
 name, then through the scene's `GeneralLocation` rows, which carry the mapping
 from the point a robot reports (`AP102`) to the station it serves (`SMN_007`).
-At Springfield no reported point has ever been a node name, so the scene lookup
-is the one that answers.
 
 A set-down the watch saw at a station is an ARRIVAL: the robot put the bin
 there, which it could not have done onto a bin really standing there. So it is
 placed the way a delivery is, and a stale record at that node is evicted to
-`_TRANSIT` and surfaced, not obeyed (SPR 2026-10-08: CARRIER-0019's set-down at
-ALN_006 was refused over CARRIER-0031's stale record there).
+`_TRANSIT` and surfaced, not obeyed.
 
 Once the deck reads empty the bin is not on it, whatever else is true. Anything
 the watch will not place goes back to `_TRANSIT` as an anomaly that says WHY,
 and is never left recorded on a deck seen empty: left there, every later lift
-and set-down of that robot's other work read as this bin's (SPR 2026-10-08:
-CARRIER-0019 credited to SLN_005, CARRIER-0010 to SLN_006). The reasons need
-different responses: the point is not a station (and the note names what it is
-— a charge point, a park point, an aisle); the destination will not take this
+and set-down of that robot's other work would read as this bin's. The reasons
+need different responses: the point is not a station (and the note names what it
+is — a charge point, a park point, an aisle); the destination will not take this
 bin's type; Core restarted after the unload, so nobody watched it; Core was
 running but heard nothing from that robot across the drop; or the drop was
 watched but could not be placed before the observation aged out. The last three
@@ -94,9 +90,9 @@ empty reading after that, frozen as above; it places nothing, because the
 order's own arrival does. A later loaded reading forgets the set-down — a swap's
 supply sets its carrier down at staging and lifts it again. So when the order
 ends without arriving, Core already knows where the deck emptied, even if the
-robot has since driven on and reads busy with another task (SPR 2026-10-08: a
-bin set back on its slot before the cancel was otherwise left in transit and
-the slot read empty). Outcomes, in order:
+robot has since driven on and reads busy with another task: a bin set back on
+its slot before a cancel is placed there, not left in transit. Outcomes, in
+order:
 
 | Robot's deck at the end | Set-down seen during the order | Outcome |
 |---|---|---|
@@ -117,9 +113,9 @@ of a parked robot (no set-down seen) only suggests where the bin went, so it
 declines a node Core shows occupied.
 
 The terminal-event hook is the fast path; `ReconciliationService.Loop` re-runs
-the whole decision over every stranded bin on its sweep, which is the guarantee
-— and which also clears whatever was already stranded before any of this
-existed.
+the whole decision over every stranded bin on its sweep (`strandedBinSweep`),
+which is the guarantee, and which also clears a bin stranded while nothing was
+watching.
 
 ### Reservation layer
 
@@ -136,12 +132,17 @@ is written atomically with the reservation's `pending → confirmed` flip. So:
   side; source ownership is the reservation substrate. See
   [reservations.md](reservations.md) for the reserve→claim→confirm lifecycle.
 
-### Queue Reason
+### Queue reason, code and cause
 
-Free-text column on `orders` describing why an order is sitting in
-`queued` status. Set by the capacity gate when an order is held back;
-cleared on successful dispatch. Surfaced in order-status responses
-and the operator HMI's "IN QUEUE" label.
+Three columns on `orders` say why an order is sitting in `queued`:
+`queue_reason` (the operator sentence), `queue_code` (the wire vocabulary,
+`protocol.QueueCode`) and `queue_cause` (Core's engineer vocabulary,
+`dispatch.QueueCause`, which never crosses the wire). Every park writes them —
+the capacity gate's verdict is one writer among many — and `Park` refuses
+`→ queued` with no code (`WaitWithoutCause`). A transition into a moving status
+clears all three in the same write as the status. The reason surfaces in
+order-status responses and the operator HMI's "IN QUEUE" label; what ends each
+cause's wait is [queue-releasers.md](queue-releasers.md).
 
 ---
 
@@ -165,115 +166,95 @@ The RDS poller reads `OrderDetail.Blocks[i].State` on every poll. When
 a block transitions to FINISHED while the parent order is still
 RUNNING, the poller fires `EventBlockCompleted`. The engine handler
 classifies the block by `BinTask` (Load / Unload / Wait / Script /
-navigation) and routes pickup-shaped blocks through `MoveToTransit`.
+navigation) and routes pickup-shaped blocks through the bin service's lift
+(`BinService.Lift`), which moves the bin to `_TRANSIT` and writes the Edge's
+`BinPickedUp` notice in the same transaction; the handler then emits
+`EventBinEnteredTransit`.
 
-Idempotent against vendor retries: a `MoveToTransit` on a bin already
-at `_TRANSIT` is a no-op. The poller suppresses duplicate emits via a
-sticky-state diff.
+Idempotent against vendor retries: a lift of a bin already at `_TRANSIT` moves
+nothing. The poller suppresses duplicate emits via a sticky-state diff.
 
-### Multi-Pickup Orders
+### Which cart a pickup lifts
 
-Complex orders with multiple pickups (single-robot swap, two-robot
-swap, press-index) populate the `order_bins` junction table at intake.
-Per-pickup transit transitions look up the right bin via
-`(order_id, step_index, NodeName)`; single-pickup orders fall back to
-`order.BinID`.
+An order's carts are its `order_bins` rows, one per lift: the cart, the plan
+step that picks it up and the plan step that sets it down
+(`domain.Cart`), written where the order comes to hold the cart: the issue, the
+scanner's soft-acquire, an allocation (`ReplaceOrderBins`). A pickup block lifts
+the order's cart whose pick step happens at the
+block's location (`resolvePickupBinRow`, reading the step's node through
+`domain.StepNode`) and that still stands there. A pickup at a node where the plan
+grew a pickup after its rows were written lifts the one cart the order has
+claimed there and writes that lift's row (`RecordAppendedLift`). A block no row
+names lifts nothing: the cart moves to its drop at whole-order FINISHED.
 
 ---
 
 ## Dropoff Capacity Gate
 
-`dispatch.CheckDropoffCapacity(deliveryNode, excludeOrderID) → (blocked, reason)`
-is the single predicate every planner-mediated dispatch path runs
-before transitioning an order out of `queued`.
+`dispatch.CheckDropoffCapacity(db, deliveryNode, excludeOrderID) → (blocked, CapacityBlock)`
+is the single predicate every dispatch path that places a bin runs before it
+sends the order. The gate itself is `plan.DropoffCapacity`; a blocked verdict
+carries the cause (`CapacityBlock.Cause`) and the sentence's params, and the
+caller parks through the shared formatter with that cause, never a tag of its
+own.
 
 ```
 empty deliveryNode             → not blocked
-lookup error (typo'd name)     → not blocked (clearer error at dispatch)
+no such node (typo'd name)     → not blocked (clearer error at dispatch)
+node lookup errored            → blocked: capacity-check-failed
 synthetic LANE / _TRANSIT      → not blocked (lane planners gate; transit is
                                               never a real dropoff)
 synthetic NGRP                 → walk children; blocked iff every enabled
                                   non-synthetic child is occupied or has
-                                  in-flight order inbound
-concrete node, bin present     → blocked: "destination N occupied (X bin(s))"
-concrete node, in-flight bound → blocked: "destination N has X in-flight order(s) inbound"
+                                  an in-flight order inbound (ngrp-full),
+                                  or the group is at its level (ngrp-at-level)
+concrete node, bin present     → blocked: dropoff-occupied
+concrete node, in-flight bound → blocked: dropoff-inflight
 concrete node, free            → not blocked
 ```
 
 `excludeOrderID` excludes the calling order's own row from the
 in-flight count, which counts orders holding a claimed bin
-(`orders.InFlightForDropoffSQL`). Callers dispatching an order — the
-planners and the fulfillment scanner — pass its `order.ID`, so an order
-re-checking after it has claimed does not count itself. Callers with no
-order of their own to exclude pass 0: preview paths, and
-`shuffleSlotFree` asking whether a dig may park at a node.
+(`orders.InFlightForDropoffSQL`). Callers dispatching an order pass its
+`order.ID`, so an order re-checking after it has claimed does not count itself.
+Callers with no order of their own to exclude pass 0: the preview route.
 
 The gate is consulted at:
 
-- `Dispatcher.HandleComplexOrderRequest` — fresh complex-order intake
-- `PlanningService.planRetrieve` — simple retrieves (and `retrieve_empty`
-  transitively)
-- `PlanningService.planMove` — manual moves, side-cycle L2/U2,
-  auto-return when re-enabled, NGRP-return moves
-- `Scanner.tryFulfill` — every queued-order replay
+- `PlanningService.decideTransport` — the plain family's planner (retrieve,
+  retrieve_empty, move)
+- `Scanner.fulfill` — every acquire of a plain order, queued replays included
+- complex dispatch (`complex_dispatch.go`) — the delivery node when it is a
+  storage dropoff (`isStorageDropoff`), and each declared-exclusive dropoff step
+- the loader placements (`loader_place.go`) and placement by contents
+  (`place_by_contents.go`)
+- `Dispatcher.PreviewDropoffCapacity` — the read-only preview, with 0
 
 NGRP saturation: the gate walks children rather than deferring to the
 resolver. The resolver only picks free children at dispatch and fails
 on saturation; queueing-on-saturation requires gating before resolution.
 
----
+A dig's shuffle walk does not ask this gate: it asks `nodes.SlotTakeableSQL`,
+which also reads slot reservations.
 
-## Status-First Queueing
+### Two intakes for one dropoff
 
-Every order is issued `pending` (complex orders included, since C1). The
-fulfillment scanner is the single sync point that runs the capacity gate and
-moves `pending`/`queued` → `dispatched`. Each door holds the scanner's lock
-(`scan-mu`) across its issue, its apply and one acquire (`dispatch/door.go`),
-so the door's own acquire and a periodic pass never run side by side.
+The ladder an order climbs (`pending` → `dispatched`, or `pending` → `queued`
+with a cause) and the doors that hold the scanner's lock across their issue and
+one acquire are [order-lifecycle.md](order-lifecycle.md). What makes the gate
+safe under that lock: the in-flight tally counts an order that HOLDS a claimed
+bin bound for the dropoff (`orders.InFlightForDropoffSQL` — a holder, not a
+status), so of two concurrent intakes for one dropoff the first to claim is
+counted and the second sees in-flight=1 and waits.
 
-```
-HandleComplexOrderRequest (under scan-mu):   Scanner.AcquireLocked:
-  resolve steps                                 capacity gate
-  create order (status=pending)                 ├─ blocked: queue_code + reason on the row,
-  ack edge                                      │           pending → queued, station told once
-  already a wait? park with its cause           └─ green: DispatchPreparedComplex
-  else one acquire ────────same lock──────────▶            claim bins
-                                                           pending → dispatched
-                                                           ship blocks to fleet
-```
+### What re-asks a queued order
 
-`scan-mu` makes the claim the single point of serialization. Two
-concurrent intakes for the same dropoff can't both pass the gate: the
-in-flight tally counts an order that HOLDS a claimed bin bound for the
-dropoff (`orders.InFlightForDropoffSQL` — a holder, not a status), so
-the first to claim is counted and the second sees in-flight=1 and waits.
-
-Simple retrieves and moves take the same shape through
-`HandleOrderRequest`: a planner decision that is already a wait parks the
-order with its cause (`ParkAndTell`); otherwise the door asks for its one
-acquire under the same lock. A door does not emit `EventOrderQueued`.
-
----
-
-## Queue Retrigger Events
-
-The fulfillment scanner subscribes to events that signal capacity may
-have changed:
-
-| Event | Source | Effect |
-|---|---|---|
-| `EventBinUpdated` | bin moves, status changes | retrigger scan |
-| `EventOrderCompleted` | order confirmed | retrigger scan |
-| `EventOrderCancelled` | order cancelled | retrigger scan |
-| `EventOrderFailed` | order failed | retrigger scan |
-| `EventBinEnteredTransit` | per-pickup signal | retrigger scan (source slot freed) |
-| `EventOrderQueued` | fresh complex intake | synchronous scan |
-
-Slot vacancy from any of these unblocks queued orders without waiting
-for the original order to fully complete. The pickup-fires-source-free
-path matters in production: a downstream order can dispatch as soon as
-the upstream robot leaves its source, not when the upstream order
-delivers.
+The events that re-run the fulfillment scanner for a waiting order, and the
+periodic floor behind them, are the `acquiring` row of the wait-population
+table in [queue-releasers.md](queue-releasers.md) (generated from
+`waitPopulations`). `EventBinEnteredTransit` is among them: a downstream order
+can dispatch as soon as the upstream robot lifts its bin off the source, not
+when the upstream order delivers.
 
 ---
 
@@ -281,15 +262,14 @@ delivers.
 
 ### HMI duplicate prevention
 
-When any non-staged/non-delivered active order exists for a process
-node, the operator HMI's swap/finalize button renders disabled. The
-label tracks status:
+While a leg works a cell, the station card (`cellCardAction`) offers no new
+request; its disabled label says why:
 
-- `IN QUEUE` — order held by capacity gate
+- `IN QUEUE: <reason>` — Core holds the order, with its queue reason
 - `ROBOT IN TRANSIT` — order dispatched, robot moving
 - `WAITING FOR OTHER ROBOT` — a pair released as one, not yet releasable: the
   label says how many legs are parked, names the leg to watch, and lists every
-  distinct cause across the pair
+  distinct cause across the pair (`pairWaitingLabel`)
 
 ### Anomaly recovery
 
@@ -320,11 +300,12 @@ POST /api/dispatch/clear-anomaly                 → {bin_id, to_node_id}
 
 | Column | Purpose |
 |---|---|
-| `bins.anomaly_at TIMESTAMPTZ NULL` | Optional sort/observability for anomaly view |
-| `orders.queue_reason TEXT NOT NULL DEFAULT ''` | Why an order is in queued status |
+| `bins.anomaly_at TIMESTAMPTZ NULL` | Optional sort/observability for anomaly view (v15) |
+| `bins.anomaly_note TEXT` | Where the robot carrying a stranded bin last was (v96) |
+| `orders.queue_reason TEXT NOT NULL DEFAULT ''` | The operator sentence for why an order is queued (v16) |
+| `orders.queue_code`, `orders.queue_cause` | The wait's wire code and Core cause, NULL when the order is not waiting |
+| `order_bins (order_id, bin_id, pick_step, drop_step)` | An order's carts, one row per lift |
 | `nodes` row `name='_TRANSIT', is_synthetic=true` | The transit lane |
-
-Migrations v15 + v16 handle existing databases idempotently.
 
 ---
 
@@ -334,7 +315,6 @@ A few load-bearing predicates that govern this surface:
 
 ```
 "this order still owns the bin"     bin.claimed_by == order.id
-                                    (was: bin.NodeID == sourceNode.ID — broke under transit)
                                     Note: a pending/queued order may own the bin as a
                                     pending RESERVATION before claimed_by is set.
 
@@ -352,7 +332,6 @@ A few load-bearing predicates that govern this surface:
                                     (excluding caller's own order)
 ```
 
-The teleport-bug guard at `engine/wiring_completion.go` and the release-
-time fallback in `dispatch/complex.go` both use the claim-based
-predicate; the node-based predicate is only correct for pre-transit
-semantics and shouldn't be reintroduced.
+Ownership is the claim, never the bin's node: a bin in transit is on
+`_TRANSIT`, not at its source, so a node-based ownership test would read every
+carried bin as lost.

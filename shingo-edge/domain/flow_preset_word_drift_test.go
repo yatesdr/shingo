@@ -63,10 +63,10 @@ func TestSwapModeWordsMatchTheModel(t *testing.T) {
 	}
 }
 
-// TestSwapModeWordsAreTitleCase is which words the two tables hold (owner,
-// 2026-10-22: "make sure when we do it stuff isnt lowercase like 1 robot swap
-// 1 Robot Swap"). The test above only says the tables agree; this says what
-// they agree on, with the non-breaking hyphen kept (U+2011).
+// TestSwapModeWordsAreTitleCase is which words the two tables hold: title
+// case, "1‑Robot Swap" and never "1 robot swap". The test above only says the
+// tables agree; this says what they agree on, with the non-breaking hyphen
+// kept (U+2011).
 func TestSwapModeWordsAreTitleCase(t *testing.T) {
 	want := map[protocol.SwapMode]string{
 		protocol.SwapModeTwoRobotPressIndex: "2‑Robot Index",
@@ -96,8 +96,9 @@ func TestSwapModeWordsAreTitleCase(t *testing.T) {
 // (2026-09-12) — TestShapeFieldsAreRealClaimFields, which follows, is the
 // half of this that says WHICH words rather than only that the two lists agree
 // on them.
-// TestShapeFieldsAreRealClaimFields is owner ruling F3 (2026-09-12):
-// A FIELD IS CALLED WHAT THE CLAIM CALLS IT; INVENT NO SECOND NAME.
+
+// TestShapeFieldsAreRealClaimFields holds the rule A FIELD IS CALLED WHAT THE
+// CLAIM CALLS IT; INVENT NO SECOND NAME.
 //
 // The shape words were D1's column headings and the headings were invented —
 // `old bins to` for `outbound_destination`, `new bins from` for

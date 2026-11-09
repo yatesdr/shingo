@@ -4,57 +4,33 @@ Verified against: b9210bce
 
 A fully-local, Dockerized Shingo stack — core + edge + Postgres + Kafka, with
 simulated robots, PLCs, and operators — that runs the whole material flow
-unattended without a physical plant. `make dev && make dev-seed` brings it up and
-seeds a demo plant.
+unattended without a physical plant. How to bring it up, seed it, tune it and reset it is
+[README.dev.md](../../README.dev.md); this doc holds the rules the stack runs by. The plant it runs is
+`plants/master.yaml` ([plants/README.md](../../plants/README.md)); writing a section of it is
+[sim-plant-design.md](sim-plant-design.md).
 
 > **Simulation only — never for production.** All sim code is compiled out of
 > production builds and additionally gated at runtime. See [Safety](#safety).
 
-Companion doc: [`plant-model.md`](plant-model.md) — the plant the sim runs.
-
 ---
 
-## Goals — why it exists
+## The pieces
 
-The sim is a general-purpose dev/test tool *and* a data source. Its jobs:
-
-1. **Local dev environment** — run the full material flow on a laptop / server,
-   no plant required.
-2. **Test refactors** — a safe, repeatable place to confirm a change didn't break
-   the flow end-to-end (a regression safety net you can actually watch run).
-3. **Find general bugs** — exercising the whole system flushes out integration
-   bugs that unit tests miss (the 2026-06-07 deep dive surfaced several real ones).
-4. **Validate data flows** — confirm data moves correctly end-to-end:
-   PLC tick → edge → core → Kafka → DB → dashboards.
-5. **Feed dashboarding** — generate realistic, sustained data for *all* dashboards
-   (shop-floor + exec), which otherwise have nothing to show.
-6. **Foundation for deterministic-simulation testing (DST)** — the injected clock
-   + seeded PRNG are the groundwork for future high-speed deterministic runs.
-
-The common thread: every one of these needs a **realistic, sustained,
-metric-rich plant**. Making the demo plant deliver that is the active work — see
-[`plant-model.md`](plant-model.md).
-
----
-
-## What was built
-
-Built across the `local-dev-env` phases. Real where it matters, faked only at the
-hardware seams.
+Real where it matters, faked only at the hardware seams.
 
 | Piece | Where | What it does |
 |---|---|---|
 | Build-tag + runtime guards | `//go:build sim`, `SHINGO_ALLOW_SIM=1` | Sim code is absent from prod builds *and* refuses to run without the env flag; prints a NOT-FOR-PRODUCTION banner. |
-| Injectable clock | `protocol/clock` | All sim timing goes through an injected `Clock` (real today; the seam for the speed knob + DST). |
-| Docker stack | `docker-compose.dev.yml`, `Dockerfile.dev`, `Makefile` | postgres + kafka (KRaft) + core + edge + a one-shot seed service. |
-| Fleet simulator | `shingo-core/fleet/simulator` | Clock-driven robot moves with jitter + fault injection, monotonic IDs, eviction; `RobotLister` parity with the real fleet. |
-| Fake WarLink PLC | `shingo-edge/plc/simwarlink` | Emits counter ticks per process node; injected at `engine.New`, handshake-verified like a real PLC. |
-| Sim operator | `shingo-edge/engine/sim_operator.go` | Performs the operator's LOAD / CLEAR on a configurable delay when a bin is delivered to a `manual_swap` node. |
-| Plant spec + validator | `shingo-core/plantspec` | Declarative plant schema (zones, stations, processes, styles, claims, bins, demands, …) + validation. |
+| Injectable clock | `protocol/clock` | All sim timing goes through an injected `Clock`; `sim.speed` scales it (the speed ceiling below). |
+| Docker stack | `docker-compose.dev.yml`, `Dockerfile.dev`, `Makefile` | postgres + kafka (KRaft) + core + two edges + the one-shot seed services (`seed`, `seed-edge2`). |
+| Fleet simulator | `shingo-core/fleet/simulator` | Clock-driven robot moves with a transit draw and fault injection; a finite pool of named robots when `sim.fleet_size` is set; `fleet.RobotLister` like the real fleet. |
+| Fake WarLink PLC | `shingo-edge/plc/simwarlink` | Emits counter ticks per process node while the machine can cycle (`engine.SimMachineReady`); injected at `engine.New`, handshake-verified like a real PLC. |
+| Sim operator | `shingo-edge/engine/sim_operator.go` | What a person at the station does: RELEASE a staged swap, the receipt for a delivered swap leg, LOAD / CLEAR at `manual_swap` loaders and unloaders, the unloader panel's taps, and the scheduled changeovers (`sim_changeover.go`). [sim-plant-design.md](sim-plant-design.md) §4 has each. |
+| Plant spec + validator | `shingo-core/plantspec` | Declarative plant schema (zones, stations, processes, styles, claims, bins, demands, kanbans, …) + validation. |
 | The plant | `plants/master.yaml` | The one plant (compose's default `SHINGO_PLANT`), in tagged sections: the demo loop, the 4x2-shaped cell and the lane-stress corridor, the kanban cells, line 2 on Edge 2. `plants/README.md` maps each section to the scenario family that proves it. |
-| Kanban rig | `plants/master.yaml` `[kanban]`/`[kanban5]`, `scripts/kanban-rig.sh` | The Kanban certification cells, their runs and their walk (`docs/dev-env/kanban-rig.md`), on the master; the operator works their unloaders' panels (`sim.operators.unloader_taps`). |
+| Kanban rig | `plants/master.yaml` `[kanban]`/`[kanban5]`, `scripts/kanban-rig.sh` | The Kanban certification cells, their runs and their walk ([kanban-rig.md](kanban-rig.md)), on the master; the operator works their unloaders' panels (`sim.operators.unloader_taps`). |
 | Seed tool | `shingo-core/cmd/seeddev` | Loads + validates a plant spec, seeds core (Postgres, via store accessors) + edge (SQLite, raw SQL), cross-validates. |
-| Dev configs | `shingocore.dev.yaml`, `shingoedge.dev.yaml` | Sim knobs (`sim.enabled`, transit time, jitter, fault rate, per-process tick intervals, operator delays). Separate from prod configs. |
+| Dev configs | `shingocore.dev.yaml`, `shingoedge.dev.yaml`, `shingoedge.edge2.yaml` | Sim knobs (`sim.enabled`, speed, transit time, fleet, fault rate, per-process tick intervals, operator delays and changeovers). Separate from prod configs. |
 
 ---
 
@@ -66,18 +42,17 @@ hardware seams.
   fake PLC ─┼─▶ shingo-edge ──counter deltas / production.ticks─▶ Kafka ──▶ shingo-core ────┼─▶ dashboards
  (simwarlink)│   (SQLite)        ◀── orders / node-list sync ──              (Postgres)      │   (HTTP/SSE)
             │      ▲                                                            │            │
- sim operator│     │ LOAD/CLEAR on delivery                    fleet simulator ─┘            │
- (manual_swap)     │                                          (clock-driven robot moves)     │
+ sim operator│     │ RELEASE / LOAD / CLEAR                    fleet simulator ─┘            │
+            │      │                                          (clock-driven robot moves)     │
             └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Real vs faked.** Postgres and Kafka run for real in Docker; core and edge are
   the real binaries. Only the *hardware seams* are simulated: the PLC counters
-  (fake WarLink), the operator's manual swaps (sim operator), and the robot fleet
+  (fake WarLink), the operator at the station (sim operator), and the robot fleet
   (fleet simulator). Everything between them is production code.
 - **The injected clock** drives all sim timing (robot transit, counter ticks,
-  operator delays), so the whole sim can be sped up or — eventually — stepped
-  deterministically.
+  operator delays), so the whole sim can be sped up.
 - **The seed** (`make dev-seed`) loads `SHINGO_PLANT` (default `plants/master.yaml`), validates it, writes the
   core topology (nodes, bins, payloads, demand registry, every Edge it names enrolled) and each
   Edge's topology (processes, styles, claims, runtime states; `seeddev --edge` picks the Edge),
@@ -85,28 +60,14 @@ hardware seams.
 - **The material-flow loops** then run on their own: produce → finalize → swap;
   consume → drain → reorder; loader infeed; unloader / customer outfeed.
 - **The data flow** worth validating end-to-end: a fake PLC tick → edge counter
-  delta (applied to the bound bin's UOP) → `production.ticks` / `cell_part_events`
-  over Kafka → core → Postgres → the dashboard HTTP/SSE surfaces.
+  delta (applied to the bound bin's UOP) → `production.ticks` over Kafka → Core, which writes
+  `cell_part_events` → the dashboard HTTP/SSE surfaces.
 
 ---
 
-## Running it
+## Seed with Core STOPPED
 
-```sh
-make dev          # build images + bring up postgres, kafka, core, edge
-make dev-seed     # seed the demo plant (idempotent; --build to pick up edits)
-make dev-logs     # tail core + edge
-make dev-down     # stop (keep data volumes)
-make dev-reset    # stop + drop volumes (fresh DBs next up)
-```
-
-UIs (when bound to `0.0.0.0` via the dev configs): core on `:8083`
-(`/heartbeat`, dashboards), edge on `:8081`.
-
-### Seed with Core STOPPED
-
-`make dev-seed` stops Core across the seed and starts it afterwards (it seeded
-behind a running Core until 2026-10-28). Seeding behind a running Core is wrong
+`make dev-seed` stops Core across the seed and starts it afterwards. Seeding behind a running Core is wrong
 for a bring-up you intend to measure, because Core's engines are writing to the
 same tables the seeder is rewriting: the startup reconciliation sweep, the threshold monitor and the
 station service all run against a half-seeded topology and record what they find
@@ -137,12 +98,7 @@ startup sweeps against the seeded registry, and restarting the Edges reloads the
 runtime states the seed wrote behind their startup cache; `dev-seed` does the
 same.
 
-**Observed:** 0 orphan/adoption lines across core, edge and edge2 on the
-2026-09-06 bring-up with Core stopped; the run that produced this rule saw 4
-with Core up. A bring-up rule that lives only in one run's chat log will
-regress, which is why it is here.
-
-### Reading the Edge database: copy the WAL too
+## Reading the Edge database: copy the WAL too
 
 Edge SQLite runs in WAL mode, so **the main database file on its own is a stale
 snapshot**. Copying only `shingoedge.db` out of the container hands you rows
@@ -155,49 +111,34 @@ docker compose -f docker-compose.dev.yml cp edge:/data/shingoedge.db-wal /tmp/e.
 docker compose -f docker-compose.dev.yml cp edge:/data/shingoedge.db-shm /tmp/e.db-shm
 ```
 
-(Cost one wrong reading during the 2026-08-24 sim run: a 4 MB `-wal` sat beside
-a main file that had last been checkpointed minutes earlier.)
-
-### The sim operator releases everything on a timer
+## The sim operator releases everything on a timer
 
 `sim.operators.swap_release` defaults to **3 s of sim time**, which at
 `sim.speed: 10` is 0.3 s of wall clock. That is a good imitation of a person and
 a poor instrument: any scenario that needs to observe a HELD release — or to
 beat the sim operator to a release door and click it — has a third of a second
 to do it. Widen it (`swap_release: 300s` ≈ 30 s wall) and **rebuild the edge
-image**, since the config is baked in; restore it afterwards. The knob's own
-comment in `sim_operator.go` says the same thing.
+image**, since the config is baked in; restore it afterwards. Edge 2 runs 60 s
+(`shingoedge.edge2.yaml`), which is what makes line 2 the observable window. The knob's
+own comment (`swapReleaseDelay` in `sim_operator.go`) says the same thing.
 
-Pacing knobs live in the dev configs — `sim.transit_time` (core),
-`sim.processes[].tick_interval` + `sim.operators.*` (edge). `sim.speed` scales
-every sim duration (transit, ticks, operator / changeover delays) for
-fast-forward dev loops. An optional **finite-fleet** model (`sim.fleet_size`,
-plus `sim.transit_min`/`sim.transit_max` for realistic minutes-long crossings)
-lets the sim answer "how many robots does this plant need?" — orders queue for a
-free robot and the driver tracks utilization. It is off by default, so the demo
-runs as the legacy infinite fleet (one robot per active order). A live dev-mode
-top-strip is on the roadmap.
-
-### The speed ceiling is 10×
+## The speed ceiling is 10×
 
 `clock.DefaultSimMaxSpeed` (`protocol/clock/sim_clock.go`) refuses more, and
-Core and Edge cap at the same const so their fast-forward clocks cannot drift.
-It was 5× from 2026-09-06; on 2026-09-26 a pair on `lane-stress-packed` (5× twice,
-10× once, the same ~99 sim-minutes, read through the demand pairing) put 10×
-inside the 5×-vs-5× spread, so the rig runs at 10× and a run's wall minutes
-halve for the same sim span. Above 10× is untested.
+Core and Edge cap at the same const so their fast-forward clocks cannot drift. Above 10× is untested.
 
-The Edge outbox drain was named as the binding leg in 2026-09 and is not one
-today: the drainer rings on every enqueue, and on the rig a message leaves in
-about 60–70 ms on both sides. At 10× the waits (robot travel) do not grow with
-speed; the sub-second pipeline does (about 0.3 to 0.7 sim-s), and no wait reaches
-the scanner's 60 s floor (600 sim-s at 10×) more often than at 5×.
+`sim.speed` is set in the dev configs, 10 in `shingocore.dev.yaml` and every Edge's, and it must be
+identical in all of them: change it there, never through `POST /api/sim/speed`, which re-anchors one
+process and breaks the Core-Edge clock sync the shared anchor (`SHINGO_SIM_ANCHOR`,
+`scripts/sim-anchor.sh`) holds. Changing it is a `make dev-reset`, not a restart: sim-now is
+`epoch + speed × (wallNow − anchor)`, so a new speed retimes the world while the rows already written keep
+their stamps, and an in-flight order left stamped in the future never moves again.
 
 To measure a speed change, take rates per **wall** minute after three minutes of
 settle — per *sim* minute flatters a starving rig, reporting less work as if it
 were more.
 
-### Which loops scale with sim time
+## Which loops scale with sim time
 
 A periodic loop takes its cadence from `clock.Default()` when the work it paces
 is **simulated**, and calls `time` directly when the work is **real**. Read the
@@ -218,7 +159,13 @@ now()` fire. That is invisible on a plant, where both clocks are wall, and bites
 only on the rig — `bin_uop_ledger.applied_at` against `orders.created_at`
 returns clock drift, not a duration.
 
-### The 4x2-shaped cell, end to end
+## There is no downtime model
+
+The sim gives no machine random outages. A machine stops only when it is starved, full or holding no
+carrier (`engine.SimMachineReady`), off shift (when `sim.calendar` is enabled), or stopped by a case. A
+wait in a sim run is therefore something the code or the plant did, never a simulated breakdown.
+
+## The 4x2-shaped cell, end to end
 
 `integration/scenarios/catid_4x2_*_test.go` (`-tags docker`) run Core and an Edge in one process on a
 five-position, two-style weld (RUN and ALT share three parts and differ at two mirror positions, CATIDs
@@ -243,55 +190,12 @@ go test -tags docker -count=1 -run Catid4x2 ./scenarios/
 
 ---
 
-## Use cases
-
-- **Validate a refactor.** Bring the stack up, seed, watch the loops keep cycling
-  and the data keep flowing. If the flow stalls or the numbers go wrong, the
-  refactor broke something.
-- **Reproduce / flush a bug.** Run it sustained and inspect the live DBs (see the
-  2026-06-07 deep dive for the pattern). The sim reproduces real integration bugs.
-- **Validate a data flow.** Trace a PLC tick all the way to a dashboard chart and
-  confirm each hop is correct.
-- **Generate dashboard data.** A sustained, metric-rich run populates the
-  shop-floor + exec dashboards; running it *fast* yields time-series for trends.
-- **(future) Deterministic tests.** A manual clock + seeded PRNG for repeatable,
-  high-speed scenario runs.
-
----
-
 ## Safety
 
 - All sim files carry `//go:build sim`, so they are **absent from production
   builds** entirely.
 - At runtime, sim mode additionally requires `SHINGO_ALLOW_SIM=1`; otherwise it
   refuses to start. A NOT-FOR-PRODUCTION banner prints on startup.
-- The sim reads only `*.dev.yaml` configs and **never touches production config
-  files**.
+- The sim reads only the dev configs (`shingocore.dev.yaml`, `shingoedge.dev.yaml`,
+  `shingoedge.edge2.yaml`) and **never touches production config files**.
 - `-race` builds need cgo (WSL / CI); the Windows dev box runs the non-race suite.
-
----
-
-## Status
-
-The sim *infrastructure* (above) is built and verified end-to-end on a real Docker
-host. The **demo plant** is being rebuilt from a sterile, jam-prone fixture into a
-realistic, sustained, metric-rich plant.
-
-**`sim.speed` is live**, not pending — `SimConfig.Speed` at
-`shingo-core/config/config.go:262`, set to `5.0` in both dev configs
-(`shingocore.dev.yaml:166`, `shingoedge.dev.yaml:73`), with the 10× ceiling
-described under *The speed ceiling* above. **There is no downtime model**: the
-clustered random outages it gave the presses and welds were removed on 2026-10-26,
-because a single-feed weld turned every press outage into a long wait that read as
-a defect in every sim report. A machine stops in the sim only when it is starved,
-off shift, or stopped by a case.
-
-Still pending, and documented in [`plant-model.md`](plant-model.md) as it lands:
-the remaining data features (quality, customer-demand) and the sub-line →
-main-line WIP hierarchy.
-
-**Changeover is not on that list, and will not be.** Nothing in the sim cuts a
-changeover over; a changeover in a sim run is driven from outside, by pressing
-the button (`POST /api/processes/{id}/changeover/cutover`). The config keys that
-once implied otherwise — `operators.changeover_auto_cutover` and its companions —
-are gone. See the header of `shingo-edge/engine/sim_operator.go:33-39`.

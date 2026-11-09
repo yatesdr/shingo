@@ -2,12 +2,11 @@
 
 Verified against: b9210bce
 
-**Version:** 1
-**Last updated:** 2026-03-19
+**Protocol version:** 1
 
 ## Overview
 
-The Shingo wire protocol defines a JSON-based messaging format for communication between Shingo Core (central server / dispatch) and Shingo Edge (shop-floor client) nodes. Messages are transported over Kafka. The protocol supports the full order lifecycle for material transport, plus a generic data channel for edge lifecycle management (registration, heartbeat) and future data exchange (inventory queries, production stats, scheduling).
+The Shingo wire protocol defines a JSON-based messaging format for communication between Shingo Core (central server / dispatch) and Shingo Edge (shop-floor client) nodes. Messages are transported over Kafka. The protocol carries the full order lifecycle for material transport, plus a generic data channel for everything else: registration and heartbeat, the feeds Core keeps each edge's copies current with, inventory counts, and asks and their answers.
 
 This document specifies everything needed to implement a compatible producer or consumer in any language or system.
 
@@ -29,115 +28,101 @@ The protocol uses **two topics** for strict separation of traffic direction:
 
 Edges never see each other's order traffic. Core never sees its own replies echoed back.
 
+The topic names are the defaults; both services read them from `messaging.orders_topic` and
+`messaging.dispatch_topic`.
+
 ### Kafka Configuration
 
 | Parameter | Value |
 |-----------|-------|
-| Consumer group (Core) | `shingo-core` on `shingo.orders` |
-| Consumer group (Edge) | `shingo-edge-{station_uid}` on `shingo.dispatch`, always derived — there is no configurable override |
-| Start offset (new consumers) | **Earliest.** `kafka-go` `ReaderConfig.StartOffset` defaults to `FirstOffset` and neither service sets it, so a group id that changes replays the topic from the start of retention |
-| Message key | `station_uid` on Edge publishes; `dst.station` on Core publishes where the path knows one |
-| Partitions | **1** (`ensureTopics`), which makes the message key and the balancer inert today — see below |
-| Topic retention | broker default (no `ConfigEntries` are sent at topic creation) |
+| Consumer group (Core) | `messaging.kafka.group_id`, default `shingocore`, on `shingo.orders` |
+| Consumer group (Edge) | `shingo-edge-{station_uid}` on `shingo.dispatch`, always derived (`(*Config).KafkaGroupID`); there is no configurable override |
+| Start offset (new consumers) | **The first retained offset.** That is the kafka-go reader's default and neither service overrides it, so a new or changed group id replays the topic from the start of retention |
+| Message key | the station uid on Edge publishes (`PartitionKey`); Core publishes with no key |
+| Partitions | **1** (`ensureTopics`), which makes the message key and the balancer inert |
+| Balancer | `kafka.Hash` on both writers |
+| Topic retention | broker default (no topic configs are sent at creation) |
 
-Three corrections to what this table used to say, all of them the kind that
-matter only when somebody plans a change against them:
+A replay under a new group id is bounded by expiry: the ingestor drops an envelope past its `exp` before any
+handler runs. A no-expiry message (see [Subject-Specific TTLs](#subject-specific-ttls)) does reach its handler,
+which is why each of those handlers is safe on a repeat.
 
-- **Start offset was documented as "Latest (no replay of stale backlog on first
-  join)". It is Earliest.** Nothing in either service assigns `StartOffset`, and
-  the library's documented default is `FirstOffset`. The consequence is bounded
-  rather than dangerous — `Ingestor.HandleRaw` checks expiry BEFORE the station
-  filter, so a replayed dispatch envelope is dropped, not executed — but a new
-  consumer group does read the retained backlog and log every message of it.
-- **The message keys were documented as already set. They were not** until the
-  identity change; both `Publish` implementations sent `kafka.Message{Topic,
-  Value}` with no `Key`.
-- **And a key alone would not have done anything.** The writer balancer was
-  `kafka.LeastBytes`, which never reads `msg.Key` — it routes by accumulated
-  bytes per partition (`kafka-go` v0.4.50 `balancer.go:87-109`). It is
-  `kafka.Hash` now. With `NumPartitions: 1` both are still no-ops; raising the
-  partition count is what activates per-station ordering and per-edge partition
-  assignment, and it is a broker-side operation.
+The key and the `kafka.Hash` balancer do nothing while each topic has one partition. Raising the partition count
+is a broker-side operation; it is what turns the Edge's station-uid key into per-station ordering and per-edge
+partition assignment, and it turns Core's empty key into live reordering (see
+[Delivery guarantees](#delivery-guarantees)).
 
 **The consumer group is why a duplicate edge goes deaf.** One partition is
-assigned to exactly one group member, so two edges sharing a station id share a
+assigned to exactly one group member, so two edges sharing a station uid share a
 group and one of them receives no dispatch traffic at all while still
-heartbeating, registering and publishing. Distinct `station_uid`s are what
-prevent that today — not partitioning.
+heartbeating, registering and publishing. Distinct `station_uid`s prevent it,
+not partitioning.
 
 ---
 
 ## Delivery guarantees
 
-The Core → Edge outbox: what order things arrive in.
-
-Answered 2026-08-02, because the projection work needs it and nobody had
-checked. The short version is at the bottom if you only need the rule.
+What order Core → Edge messages arrive in, and when one does not arrive. The Edge's outbox runs the same
+drainer (`protocol/outbox`), so the hole and the exemptions below hold for Edge → Core as well. The short
+version is [the rule](#the-rule) at the bottom.
 
 ### The guarantee
 
 **Steady state it is FIFO, and stronger than per-station: it is global FIFO.**
 
 - One outbox table, dequeued by `ORDER BY id` on a `BIGSERIAL`
-  (`shingo-core/store/messaging/messaging.go`, `store/schema/postgres_ddl.go`).
-  `station_id` and `msg_type` are stored but appear in no `ORDER BY`, no
-  partition, and no priority.
-- One drainer goroutine, publishing the batch in a single loop, called inline so
-  cycles never overlap (`protocol/outbox/drainer.go`).
-- One topic, created with one partition (`shingo-core/messaging/client.go`). With
-  a single partition Kafka preserves total order regardless of key.
-- Edge consumes on one read loop per topic and dispatches synchronously through
-  the subject router — a map lookup and a middleware chain, not a queue per type.
-  **Edge does not reorder.**
+  (`ListPendingOutbox` in `shingo-core/store/messaging/messaging.go`; the table is in
+  `shingo-core/store/schema/postgres_ddl.go`). `station_id` and `msg_type` are stored but appear in no
+  `ORDER BY`, no partition, and no priority.
+- One drainer goroutine (`outbox.Drainer`), publishing the batch in a single loop, called inline so passes
+  never overlap.
+- One topic, created with one partition (`ensureTopics`). With a single partition Kafka preserves total order
+  regardless of key.
+- Edge consumes on one read loop per topic and dispatches synchronously through the subject router — a map
+  lookup and a middleware chain, not a queue per type. **Edge does not reorder.**
 
 ### The hole
 
-**The drainer does not head-of-line block.** On a publish error it increments the
-retry count and returns, and the caller moves to the next message. So message A
-failing while message B succeeds in the same pass delivers B first and A on a
-later cycle.
+**The drainer does not head-of-line block.** On a publish error it counts a retry and moves to the next
+message, so message A failing while message B succeeds in the same pass delivers B first and A on a later pass.
+What reorders is a *per-message* failure: a context timeout, an oversized payload, a broker error that recovers
+mid-pass.
 
-`IsConnected()` gates the whole cycle, so a clean disconnect is safe — nothing
-publishes at all. ⚠️ On EDGE that gate does not fire: `IsConnected()` there is
-`kafkaW != nil` and `Connect()` performs no I/O (`kafkago.TCP` resolves lazily),
-so it is true from the first connect until shutdown regardless of the network.
-It reports that a writer object exists, not that a broker is reachable — see
-`kafka_last_publish_ok` on edge `/status` for the latter. It must stay that way:
-`drain()` returns early on a false, so a "reachable now" answer would stop
-retrying at exactly the moment retrying is the point. What reorders is a *per-message* failure: a context timeout, an
-oversized payload, a broker error that recovers mid-pass.
+`IsConnected()` gates the whole pass, so on Core a disconnect before the first successful connect publishes
+nothing. On the Edge the gate never fires: `IsConnected()` there is `kafkaW != nil` and `Connect()` performs no
+I/O, so it is true from the first connect until shutdown regardless of the network. It reports that a writer
+exists, not that a broker is reachable — `kafka_last_publish_ok` on the edge's `/status` reports reachability.
+It stays that way on purpose: a pass returns early on a false, so a "reachable now" answer would stop retrying
+at exactly the moment retrying is the point.
 
-Worse, and the part to design against: once a message exhausts `MaxRetries` the
-`retries < N` filter drops it from the stream **permanently**, while everything
-behind it keeps flowing. That is not a delay, it is a hole.
+The part to design against: once a message has failed `outbox.MaxRetries` (10) publishes it is dead-lettered,
+and the `retries < N` filter drops it from the stream **permanently** while everything behind it keeps flowing.
+That is not a delay, it is a hole.
 
-Three things changed around this on 2026-08-22, none of which close the hole:
-
-- **The wake arm mutes on failure.** The drainer's doorbell fires a drain per
-  enqueue, and a drain retries *every* pending row — so under a transport
-  failure each enqueue spent one of the message's `MaxRetries`. A publish
-  failure now stands the wake arm down until a ticker drain succeeds, putting
-  the tolerance back at `MaxRetries × interval`.
-- **Dead letters are kept seven days**, delivered rows one. They shared a 24-hour
-  cutoff, which destroyed the evidence of a loss before anyone found it. The
-  purge is now two statements in one transaction rather than one with an `OR`.
-- **`MaxRetries` is still a COUNT**, so its real-world tolerance silently
-  rescales whenever the drain cadence changes — which is exactly what the
-  doorbell did to it. Expressing it as a duration is the open item.
+- **Exempt subjects.** The messages in `neverDeadLetter` — the bin UoP delta, the lineside bucket level, the
+  ingest, the bin pickup and landing, the release, the dropped hold and the ask's answer — spend no retry on a
+  failed publish; they are offered on every pass until the broker takes them. A message that panics the
+  publisher is still dead-lettered, exempt or not.
+- **The wake arm mutes on failure.** `(*Drainer).Notify` drains on each enqueue after a 50 ms settle
+  (`wakeSettle`), and a drain retries every pending row. After a failed publish the wake arm stands down until a
+  ticker pass succeeds, so a transport failure costs a row at most one retry per tick
+  (`messaging.outbox_drain_interval`, 5 s by default).
+- **`MaxRetries` is a count, not a duration.** How long a row takes to die depends on the tick and on how many
+  failing rows share its passes, since each failed publish can take the client's timeout.
+- **Dead letters are kept seven days** (`DeadLetterRetentionPeriod`), delivered rows one
+  (`MessageRetentionPeriod`); the purge runs every `PurgeCycleInterval` ticker passes.
 
 ### Two smaller caveats
 
-**The partition key is empty on Core.** `PartitionKey` is only ever assigned on
-Edge. Inert today because the topic has one partition — but raising the partition
-count turns this into live reordering, silently. The client's own comment already
-flags it.
+**The partition key is empty on Core.** `PartitionKey` is assigned only on the Edge. Core's empty key is inert
+while the topic has one partition; raising the partition count turns it into live reordering, silently.
 
-**`ORDER BY id` is not commit order.** Two concurrent transactions can commit in
-the opposite order to their assigned ids, and a drain landing in that window
-publishes the higher id first. Largely defused here because `EnqueueOutbox` takes
-`*sql.DB` and does a single autocommit INSERT — it never joins a caller's
-transaction — so two enqueues issued in sequence from one goroutine are ordered.
-It only bites when two things enqueue from different goroutines.
+**`ORDER BY id` is not commit order.** `EnqueueOutbox` writes on an `Execer`: the pool for an ordinary send, or
+the producing transaction for a message that must live or die with the work that caused it
+(`EnqueueDataToEdge` given a `*sql.Tx`). An id is assigned at the INSERT and becomes visible at the COMMIT, so a
+pass can publish a later id while an earlier one's transaction is still open; the earlier row goes on a later
+pass. Two pool enqueues issued in sequence from one goroutine stay ordered. The settle gives a transactional
+enqueue time to commit before the wake drain runs; it is best-effort, and the ticker is the backstop.
 
 ### The rule
 
@@ -145,10 +130,9 @@ If two messages about the same order are enqueued in sequence from one code path
 they arrive in that order. **Do not build on that alone.** A consumer must
 tolerate arriving second-first, because one failed publish is all it takes.
 
-For the order projection specifically: the reconcile is **day-one load-bearing,
-not a backstop**. "A status arrived for an order I have never seen" is a case
-that will happen, not an unreachable one, and it must be handled rather than
-logged as impossible.
+A consumer that mirrors orders treats "a status arrived for an order I have never seen" as an ordinary case,
+not an impossible one. The Edge's order reconcile (`order.status_request`, whose response carries `unlisted`)
+is load-bearing, not a backstop.
 
 ---
 
@@ -194,14 +178,26 @@ Every message on both topics is a single JSON object with the following structur
 {"role": "edge", "station": "stn-4f8a1c02b7e39d15"}
 ```
 
+A station uid is `stn-` and 16 hex digits. An edge with none mints its own at first boot and writes it to its
+config (`main.ensureIdentity`, `config.NewStationUID`), or an operator enrolls the station on Core first
+(`POST /api/edges/enroll`) and puts the uid Core minted on the box; see [Registration Flow](#registration-flow).
+
 <!-- generated: protocol struct Address -->
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
 | `role` | string |  | Role is the sender or receiver class: RoleEdge or RoleCore. |
-| `station` | string |  | Station is the station identity. For an edge, its station UID, minted by Core at enrollment. For Core, its configured station id. On a dispatch to every edge, StationBroadcast ("*"). Empty is valid on a message to Core, which is a singleton. |
+| `station` | string |  | Station is the station identity. For an edge, its station UID, which the edge mints at first start and keeps in its config. For Core, its configured station id. On a dispatch to every edge, StationBroadcast ("*"). Empty is valid on a message to Core, which is a singleton. |
 
 <!-- /generated -->
+
+### Signing
+
+Signing is optional and symmetric: with `messaging.signing_key` set (the same secret on Core and every edge),
+the sender wraps each encoded envelope as `{"env": <envelope>, "sig": "<hex HMAC-SHA256 of the env bytes>"}`
+(`protocol.Sign`), and a receiver with a key drops any message that is not wrapped, unsigned or wrongly signed
+before reading a header (`protocol.VerifyAndUnwrap`). With no key the envelope travels bare. The two sides must
+agree: a receiver with no key does not unwrap a signed message and handles nothing from it.
 
 ---
 
@@ -241,13 +237,18 @@ This requires parsing only the header's six top-level fields. The `p` (payload) 
 
 <!-- /generated -->
 
-**Actions in Phase 1:**
+**Actions in Phase 1**, in the order the reference ingestor (`(*Ingestor).HandleRaw`) runs them:
 
-1. **Version check** -- reject if `v` is not a recognized version.
-2. **Expiry check** -- drop if `exp` is in the past (current UTC time > `exp`).
+1. **Signature** -- when signing is enabled, verify and unwrap (see [Signing](#signing)).
+2. **Expiry check** -- drop if `exp` is set and in the past (current UTC time > `exp`); the zero time is no expiry.
 3. **Destination filter** -- apply topic-specific filtering rules (see [Filtering](#filtering)).
 
-If any check fails, discard the message. No payload bytes are deserialized.
+If any check fails, discard the message without deserializing the payload. The one exception is an expired
+message that passes the filter while the ingestor has an `OnExpired` hook: Core's decodes the message in full and
+answers an expired `edge.ask` as expired.
+
+A consumer should also reject a `v` it does not recognize. The reference ingestor does not read `v`: version 1 is
+the only one.
 
 ### Phase 2: Full Decode
 
@@ -411,11 +412,11 @@ Every row links its payload's field table below. The table is generated from `pr
 composition roots' handler registrations, so a subject added to the code without regenerating this doc fails the
 docgen drift test (`TestGeneratedBlocksAreCurrent`).
 
-**`production.downtime` is removed** (2026-10-26), with the sim's downtime model,
-its only sender, and Core's projection of it into `downtime_events`. The table and
-its dedup table stay in the schema, empty and unwritten.
-
-New subjects can be added by defining a constant and a data schema -- no protocol interface changes required.
+A new subject needs no envelope or type change: a `Subject…` constant in `protocol/types.go`, an entry in the
+receiving side's inbound list (`CoreInboundSubjects` or `EdgeInboundSubjects`), a payload struct, a handler on
+that side's subject router, and a TTL in `protocol/expiry.go` when the 5-minute default is wrong for it. Each
+composition root checks at boot that every subject in its inbound list has a handler, and refuses to start
+otherwise.
 
 ### Subject-Specific TTLs
 
@@ -465,52 +466,35 @@ A subject not listed gets the `data` type's TTL (5 min).
 
 <!-- /generated -->
 
-**Nine subjects carry NO expiry at all** (`protocol.NoExpiry`; the table above is generated
-from `protocol/expiry.go`, and `protocol/docs_drift_test.go` keeps this count in step with it). Every other data
-subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
-copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
-that never self-corrects. The lineside bucket level is a snapshot of one pile row, but its
-successor comes only when that pile next changes (for a stranded row, never), so a dropped one
-leaves Core's mirror wrong until then. Core applies a level only above the row's high-water
-`SequenceID`, so a late copy is a no-op. The production tick feed is sequenced like the bin
-delta — Core keys each tick on (cell, snapshot id, recorded_at), so a late copy is a no-op and
-a dropped one is a fake stop in MTBF and Lost. The two Core→Edge announcements (UoP adjustment,
-bin epoch refresh) are counts a station still holds after an outage longer than TypeData's
-5-minute TTL — dropped, every count that station reports under the superseded generation is
-discarded at Core until the next announcement. A bin's lift (`transit.bin_picked_up`, 2026-09-30)
-is the only trigger for the slot's clear, a changeover supply deferred to that lift, and a
-consolidation's Order B; each branch of the Edge's handler is safe on a late copy (see
-`protocol/expiry.go` for the audit and the one residual shape). A carrier's drop (`transit.bin_landed`,
-2026-10-10) is the only door that binds a carrier Core placed; a late copy is refused by the
-seat's placement stamp (`placed_seq`), so a redelivery binds nothing twice. A dropped produce
-hold (`inventory.hold_dropped`, 2026-10-20) is parts that left the count; its row is the only
-record of that, and Core writes it once per envelope id, so a late copy writes it late and a
-redelivery writes nothing. An ask's answer
-(`edge.answer`, 2026-10-19) carries what already happened at Core; the Edge applies it by its kind,
-so a late copy redraws rows that are at worst one snapshot old, and a repeat of an answer is
-applied twice to the same effect.
+**Nine subjects carry NO expiry at all** (`protocol.NoExpiry`; `protocol/docs_drift_test.go` keeps this count in
+step with `protocol/expiry.go`). Every other data subject is a snapshot whose successor carries the same truth
+seconds later, so discarding a late copy costs nothing. For these nine a dropped copy costs more than a late one,
+and each receiving handler is safe on a late or repeated copy:
 
-They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
-dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
-a superseded generation to the discrepancy audit instead of applying it. So a late copy is applied
-exactly once or recorded as a discrepancy; only *dropping* it leaves no record.
+| Subject | A dropped copy | Why a late or repeated copy is safe |
+|---|---|---|
+| `inventory.bin_uop_delta` | a permanently wrong count: it is an increment | Core dedups each scope on its high-water `SequenceID` (`inventory_delta_dedup`); a delta from a superseded epoch goes to the discrepancy audit, not the count |
+| `inventory.lineside_bucket_level` | Core's mirror of the pile row stays wrong until the pile next changes (for a stranded row, never) | Core applies a level only above the row's high-water `SequenceID` |
+| `production.ticks` | a fake stop in MTBF and Lost | Core keys each tick on (cell, snapshot id, recorded_at) |
+| `inventory.hold_dropped` | parts left the count and no row says so | Core writes the row once per envelope id |
+| `inventory.uop_adjustment`, `inventory.bin_epoch_refresh` | after an outage longer than 5 minutes the station counts under a generation that has ended, and Core discards every count it reports | an Edge bind moves a carrier's epoch forward only; a late adjustment does write its count over ticks counted after Core sent it |
+| `transit.bin_picked_up` | the slot's clear, a changeover supply deferred to the lift and a consolidation's Order B never run | each branch of the Edge's handler is idempotent or guarded (the clear needs the bin still bound at the slot); the audit is on `subjectTTLs` in `protocol/expiry.go` |
+| `transit.bin_landed` | a carrier Core placed is never bound at its seat: it is the only door that binds one | the seat keeps the placement stamp (`placed_seq`) of the landing it last bound and refuses one not newer |
+| `edge.answer` | the asking edge's rows and seat stay wrong until something else heals them | the answer is a fact already true at Core; applying it again redraws rows at worst one snapshot old |
 
-Measured at Springfield before the edge was hardwired: ~17 `bin_uop_delta` a day arrived past the
-five-minute default and were discarded at the ingestor, averaging 142 minutes late and peaking at
-23 hours — while the edge recorded every one as sent.
-
-⚠️ A zero TTL means **no `exp` on the wire**, not "expires now". `now.Add(0)` stamps `exp = now`,
-which reads as expired on the next tick — the exact inverse. Both stamping sites go through
+A no-expiry message carries the zero time (`"0001-01-01T00:00:00Z"`) in `exp`, which a receiver reads as never
+expiring — not `now`, which would read as already expired on the next tick. Both stamping sites go through
 `zeroOrDeadline`.
 
 ---
 
 ## Message Expiry (TTL)
 
-Every message carries an absolute expiry timestamp in the `exp` field. Receivers must check this before processing:
+Every message carries an absolute expiry timestamp in the `exp` field, the zero time for a message that never
+expires. Receivers must check it before processing:
 
 ```
-if current_utc_time > exp:
+if exp != zero_time and current_utc_time > exp:
     drop message (do not process)
 ```
 
@@ -565,12 +549,15 @@ These schemas are used as the `data` field inside `data`-type messages. See [Dat
 
 Sent by an edge node on startup and on every reconnect via `data` message with subject `edge.register`.
 
-**It is no longer an upsert.** Core resolves the station by `station_uid` and
-UPDATEs it; a uid Core has never enrolled is REFUSED and writes nothing. An edge
-cannot bring a station into existence by asserting a name — enrollment is a
-separate, deliberate act on Core (`POST /api/edges/enroll`,
-`shingo-core/www/router.go:415`). For the three-way split of station identity
-that this rests on, see [terminology.md § Station](terminology.md#station).
+Core resolves the station by its uid (`station_id`). A uid Core holds is updated in place (`registry.Register`):
+hostname, instance, version, timezone and schema version, with the hostname and instance compared against the
+station's binding so a second machine on one uid is recorded as a conflict. A uid Core has never seen is
+introduced as an unclaimed station (`registry.Introduce`: no display name, `claimed_at` empty) and then
+registered the same way; it runs meanwhile, its work attributed to its own uid, and Core's Stations page lists
+it as unclaimed until someone names it. An edge can create a new station this way but cannot become an existing
+one: that takes the existing station's uid on the box. The station identity terms are in
+[terminology.md](terminology.md). A non-empty `catalog` refreshes the station's cells in `edge_cells`; a cell it
+no longer lists is marked stale.
 
 ```json
 {
@@ -585,7 +572,7 @@ that this rests on, see [terminology.md § Station](terminology.md#station).
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the station UID, minted by Core at enrollment. Core resolves the station by it and refuses a uid it never enrolled. A plant from before station UIDs carries its old station string as its uid. |
+| `station_id` | string |  | StationID is the station UID, which the edge mints at first start and keeps in its config. Core resolves the station by it and introduces a uid it has never seen as an unclaimed station. A station from before station UIDs carries its old station string as its uid. |
 | `hostname` | string |  | Hostname is the OS hostname: attribute data and a weak duplicate signal, since two Pis flashed from one SD image share it. |
 | `instance` | string | omitempty | Instance is a random id drawn once per process at boot; absent means "cannot judge". It is the only field that separates two clones of one SD card, and Core alarms when a displaced instance returns — one machine cannot produce that, because a reboot draws a value it has never used and a live process keeps the one it holds. |
 | `version` | string |  | Version is the edge application's software version. |
@@ -619,18 +606,10 @@ that this rests on, see [terminology.md § Station](terminology.md#station).
 
 <!-- /generated -->
 
-`line_ids` is **RETIRED** (v66). It sent `[cfg.LineID]` regardless of any station
-override, so it was always `["line-1"]`, and its only consumer composed
-`station + "." + line` into a dashboard scope no order row could match. The
-column is dropped from `edge_registry` too.
-
-**Payload copies of the station are gone** from the since-removed
-`production.downtime` (`DowntimeEvent`) and the retired `lineside_bucket_delta` (which carried it twice in one
-envelope). `BinUOPDelta` still carries `station`, but no handler reads it: every handler reads
-`Envelope.Src.Station`. The old `if station == "" { station = env.Src.Station }`
-reconciliation was a rule with two possible answers that only ever produced one
-because a plant had exactly one station; distinct per-edge identity is precisely
-what makes the two copies able to disagree.
+The sending station is the envelope's `src.station`, which is what Core's handlers read. Two payloads also carry
+a `station` field: [`BinUOPDelta`](#binuopdelta)'s, which no handler reads, and
+[`LinesideLevelReport`](#linesidelevelreport)'s, which Core reads first, falling back to `src.station` when it is
+empty.
 
 #### EdgeHeartbeat
 
@@ -729,19 +708,17 @@ Sent on `bins.snapshot`: the bins at the nodes one edge watches, under feed key 
 receipt of its watch list, after a change at a watched node, and when its heartbeat quotes a different `bins`
 digest. The edge holds it in memory only.
 
-`NodeBinsSnapshot` (core -> one edge): `digest`, `rows` and `groups`. One row per watched name: `node`,
-`occupied`, `bin_id`, `bin_label`, `bin_type_code`, `bare`, `payload_code`, `manifest`, `manifest_confirmed`,
-`stocked`, `totes_on_cart`, `totes_per_layer`, `uop_capacity` (the part's), and for a held partial only (an
-unfinished carrier waiting in a partial home of its part) `held_since`, `held_for` and `held_uop`. A node Core does
-not know, or one with no bin, is `occupied: false` and nothing else. **No count is in a row** but a held partial's,
-which nothing draws from while it waits: `stocked` is the bin's count above zero, so a count that moves without
-crossing zero sends nothing. No time that moves and nothing about the asker is in it. Each group line is an outbound group,
-with levels, of a consume loader with a watched window: `group`, `wants` (`bin_type`, `layers`, `want`) and
-`assignments` (`node`, `bin_type`, `layers`, `group`, `none_short`). `layers` absent is the type at any height; a number is a wanted
-height in layers, and `0` is tops & bottoms (a tote cart with no totes on it), the type's own row, sent only where
-the group keeps one. `group`, only on a row that has it, names a source of the group the choice is for, the group
-itself being whole; `none_short`, likewise, says no group is short of this cart, with `bin_type` blank. Both are words
-for the card: the push still names the unloader's one outbound and Core chooses at its door, so an Edge that does not
+Rows come one per watched name, in the list's order, each watched group's member rows directly after it. A row's
+`state` is `unknown` (Core has no node by the name), `group`, `empty` or `occupied`; only an occupied row names the
+resident bin, and a group row carries its bin count and inbound orders. **No count is in a row** but a held
+partial's (`held_uop`), which nothing draws from while it waits: `stocked` and `partial` are thresholds of the
+count, so a count that moves without crossing one sends nothing. No time that moves and nothing about the asker is
+in it.
+
+Each group line is an outbound group, with levels, of a consume loader with a watched window. A `layers` absent
+is the type at any height; a number is a wanted height in layers, and `0` is tops & bottoms (a tote cart with no
+totes on it), sent only where the group keeps that row. On an assignment, `group` and `none_short` are words for
+the card: the push still names the unloader's one outbound and Core chooses at its door, so an Edge that does not
 know them ignores them, and Core deploys first. A plant with no levels sends `groups: []`.
 
 <!-- generated: protocol struct NodeBinsSnapshot -->
@@ -839,12 +816,13 @@ know them ignores them, and Core deploys first. A plant with no levels sends `gr
 
 #### EdgeStale
 
-Sent by core to notify an edge that it has been marked stale (missed heartbeats).
+Sent by core to notify an edge that it has been marked stale: no heartbeat for longer than
+`messaging.stale_edge_threshold` (see [Stale Edge Detection](#stale-edge-detection)).
 
 ```json
 {
   "station_id": "stn-4f8a1c02b7e39d15",
-  "message":    "Edge marked stale: no heartbeat for 180s"
+  "message":    "heartbeat timeout — marked stale by core"
 }
 ```
 
@@ -859,12 +837,14 @@ Sent by core to notify an edge that it has been marked stale (missed heartbeats)
 
 #### EdgeRegisterRequest
 
-Sent by core to request that an edge re-register (e.g., after core restart or edge registry cleanup).
+Sent by core to request that an edge re-register: in answer to a heartbeat from a uid Core holds no row for
+(reason `station not enrolled`), or to one edge or every edge (`station_id` `*`) from the dashboard's re-sync
+action (`(*Engine).RequestEdgeReregister`), so a changed cell catalog is picked up without a reconnect.
 
 ```json
 {
   "station_id": "stn-4f8a1c02b7e39d15",
-  "reason":     "Core restarted, edge registry cleared"
+  "reason":     "station not enrolled"
 }
 ```
 
@@ -879,10 +859,11 @@ Sent by core to request that an edge re-register (e.g., after core restart or ed
 
 #### NodeListRequest
 
-Sent by edge to request the core's authoritative node list.
+Sent by edge to request the core's authoritative node list. `scene_revision` is the revision of the scene
+geometry the edge already holds; Core leaves the geometry off a response whose revision matches it.
 
 ```json
-{}
+{"scene_revision": "9d1e"}
 ```
 
 <!-- generated: protocol struct NodeListRequest -->
@@ -895,7 +876,9 @@ Sent by edge to request the core's authoritative node list.
 
 #### NodeListResponse
 
-Core returns its node list. Used by edge to populate node dropdowns in the payload configuration UI.
+Core returns its node list with what the edge resolves against it: the loader aggregate, the payload / bin-type
+pairs, each bin type's carrier family and the vendor scene. It carries two feeds: `digest` is the `nodes` feed's
+digest and `scene_revision` is the `scene` feed's value.
 
 ```json
 {
@@ -914,7 +897,7 @@ Core returns its node list. Used by edge to populate node dropdowns in the paylo
 | `loaders` | [`LoaderInfo`](#loaderinfo)[] | omitempty | Loaders is the Core-owned bin-loader aggregate (each loader with its positions and payloads), which the Edge caches in core_loaders and its loader resolvers read. |
 | `payload_bin_types` | [`PayloadBinTypeInfo`](#payloadbintypeinfo)[] | omitempty |  |
 | `family` | object (string → string) | omitempty | Family is each bin type's carrier family, by bin-type code: two types are one physical cart exactly when their strings are equal, and a CLEAR offers only those. Per type, not per PayloadBinTypes row, because a type's family does not vary by payload. Bare markers are not in it: nobody chooses one. Absent from an older Core, and an older Edge ignores it; an Edge holding none does not filter its picker. |
-| `scene_points` | [`ScenePointInfo`](#scenepointinfo)[] | omitempty | ScenePoints and SceneEdges are the vendor map's own universe of locations and the drivable segments between them. Sibling slices for the same reason as the two above, and additive in the same way. SHINGO WORKS IN APs and always has, so the node list is only the subset of map points that Shingo gave a job to. A key route is expressed in the VENDOR's universe — a plain waypoint (class LM) is its primary use — so validating one against the node list refuses a correct route confidently. Core has mirrored the whole scene graph since the SEER adapter was written; it simply never sent it down. NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the "absence is never a finding" guards read the full name set on every sync, so names are never left off. The coordinates and handles are what the station's cell picture draws from, and they are the bulk of the message — so Core stamps SceneRevision on every response and sends the geometry only when the request's revision does not match it. An Edge that received geometry keeps it (durably) and quotes the revision back. |
+| `scene_points` | [`ScenePointInfo`](#scenepointinfo)[] | omitempty | ScenePoints and SceneEdges are the vendor map's own universe of locations and the drivable segments between them. Sibling slices for the same reason as the two above, and additive in the same way. SHINGO WORKS IN APs, so the node list is only the subset of map points that Shingo gives a job to. A key route is expressed in the VENDOR's universe — a plain waypoint (class LM) is its primary use — so it is validated against these names, never the node list, which would refuse a correct route. NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the "absence is never a finding" guards read the full name set on every sync, so names are never left off. The coordinates and handles are what the station's cell picture draws from, and they are the bulk of the message — so Core stamps SceneRevision on every response and sends the geometry only when the request's revision does not match it. An Edge that received geometry keeps it (durably) and quotes the revision back. |
 | `scene_edges` | [`SceneEdgeInfo`](#sceneedgeinfo)[] | omitempty | See `scene_points`. |
 | `scene_revision` | string | omitempty | SceneRevision identifies the scene the slices above were cut from. Empty when the scene could not be read in full, in which case the Edge must keep whatever geometry it already has. It is a hash of the rows, not a counter: two Cores, or one Core restarted, answer the same scene with the same revision. |
 | `digest` | string | omitempty | Digest is the FeedNodes digest of Nodes, Loaders, PayloadBinTypes and Family as this reply carries them (NodesDigest), on every path that builds the reply. An Edge holding that digest already applies none of the four. Absent from an older Core, whose replies apply as they always did. |
@@ -947,11 +930,11 @@ Core returns its node list. Used by edge to populate node dropdowns in the paylo
 | `replenishment` | string |  | Replenishment is LoaderReplenishmentOperator or LoaderReplenishmentThreshold. |
 | `outbound_dest` | string | omitempty |  |
 | `inbound_source` | string | omitempty |  |
-| `funnel_windows` | boolean | omitempty | FunnelWindows restricts a shared_window loader to ONE window at a time: empties funnel to its first window on a budget of 1 instead of spreading one bin per window. Stated as the restriction so the zero value — which is also what a Core predating this field sends — means "spread", the behaviour every loader has today. Ignored for dedicated_positions loaders. |
+| `funnel_windows` | boolean | omitempty | FunnelWindows restricts a shared_window loader to ONE window at a time: empties funnel to its first window on a budget of 1 instead of spreading one bin per window. Stated as the restriction so the zero value — which is also what a Core predating this field sends — means "spread". Ignored for dedicated_positions loaders. |
 | `leaves_bare` | boolean | omitempty | LeavesBare marks the stage-1 half of a two-stage unloader: its CLEAR leaves the cart with no bin on it, and Core stamps the cart's own bare marker, derived from the cart's type. The Edge posts a blank code there and shows a one-tap panel with no type on it — the marker is Core's bookkeeping and never reaches an operator. False — also what a Core predating this field sends — is an ordinary unloader. |
 | `takes_bare` | boolean | omitempty | TakesBare marks the stage-2 half of a two-stage unloader, LeavesBare's mirror: its windows take the bare carts stage 1 leaves, and a person there puts a bin back on. The Edge draws its windows as an unloader's (the cart cards, the held partial's card, the CLEAR) whatever its role, and never asks for anything into them: stage 1 or Core's stage-2 pull brings every cart. Core sets it for any loader some stage 1 names as its second stage. False, also what a Core predating this field sends, is any other loader. |
-| `auto_push` | boolean | omitempty | AutoPush re-pulls this unloader's next full when a CLEAR, a PUSH EMPTY or its own empty-out landing frees a window. It lives on the loader because the stored claim that used to carry it is retired and SynthClaim never set it. False — also what a Core predating this field sends — is what every Core-owned unloader does today. |
-| `pulled_directly` | boolean | omitempty | PulledDirectly marks a loader whose finished carriers the process pulls straight off its windows (a two-stage unloader's stage 2, or any loader but a stage 1): the Edge's CLEAR there sends the carrier nowhere, quietly, and the board says it waits for the line. False, also what a Core predating this field sends, is today's: the empty-out to OutboundDest. |
+| `auto_push` | boolean | omitempty | AutoPush re-pulls this unloader's next full when a CLEAR, a PUSH EMPTY or its own empty-out landing frees a window. It is the loader's own setting (bin_loaders.auto_push). False — also what a Core predating this field sends — re-pulls nothing. |
+| `pulled_directly` | boolean | omitempty | PulledDirectly marks a loader whose finished carriers the process pulls straight off its windows (a two-stage unloader's stage 2, or any loader but a stage 1): the Edge's CLEAR there sends the carrier nowhere, quietly, and the board says it waits for the line. False, also what a Core predating this field sends, is the empty-out to OutboundDest. |
 | `board_hides_idle` | boolean | omitempty | BoardHidesIdle: the station's board leaves off cards and homes with nothing to do (an operator-ordered station still shows an empty spot). BoardShowsAllParts: the board lists every part the station takes, not only what a running style needs. Display only. A Core predating these fields sends both false, so deploy Core first. |
 | `board_shows_all_parts` | boolean | omitempty | See `board_hides_idle`. |
 | `positions` | [`LoaderPosition`](#loaderposition)[] | omitempty | Positions are the loader's member homes: its windows (shared_window) or its dedicated positions. |
@@ -967,8 +950,8 @@ Core returns its node list. Used by edge to populate node dropdowns in the paylo
 |---|---|---|---|
 | `core_node_name` | string |  | CoreNodeName is the position's (or window's) node NAME, the Edge's key space. |
 | `payload_code` | string |  | PayloadCode is the payload a dedicated position is bound to; empty for a window, a buffer, or a position not yet assigned one (HomeKind tells the last two apart). |
-| `home_kind` | string | omitempty | HomeKind separates the two DIFFERENT things a blank PayloadCode can mean on a dedicated loader: a kept-partial BUFFER slot, and a HOME position the operator dragged in but has not assigned a payload to yet. Core has always distinguished them — bin_loader_homes.home_kind, which InSourcePool reads to keep an unassigned home OUT of the loader's source pool while a buffer stays in. It just never said so on the wire, so the Edge inferred "buffer" from an empty payload and reached the opposite answer for an unpinned home. Window-vs-dedicated is the parent loader's Layout; this resolves home-vs-buffer within a dedicated loader. Additive and unsentinelled, like Ordinal: a Core that predates the field sends nothing, every position decodes "", and the reader falls back to the empty-payload inference — exactly what it did before. See LoaderHomeKind* below. |
-| `ordinal` | integer | omitempty | Ordinal is where the operator put this window. An admin screen lets them drag a loader's windows into the order they want filled; Core persists that and this is how it reaches the plant. It used to go no further than Core. There was no field here and no column in the Edge's cache, so the arrangement was accepted, stored, synced downward, and discarded on arrival — the Edge re-sorted by name. Since the funnel case delivers to "the first window" and spreading fills free windows in order, that decided which window a carrier physically went to. Additive and unsentinelled: a Core that predates the field sends nothing, every position decodes 0, every comparison ties, and the reader falls through to its name ordering — which is exactly what it did before. See shingo/shared/windoworder for the rule both sides share. |
+| `home_kind` | string | omitempty | HomeKind separates the two DIFFERENT things a blank PayloadCode can mean on a dedicated loader: a kept-partial BUFFER slot, and a HOME position the operator dragged in but has not assigned a payload to yet. It is Core's bin_loader_homes.home_kind, which InSourcePool reads to keep an unassigned home OUT of the loader's source pool while a buffer stays in; an empty payload alone cannot tell the two apart. Window-vs-dedicated is the parent loader's Layout; this resolves home-vs-buffer within a dedicated loader. Additive and unsentinelled, like Ordinal: a Core that predates the field sends nothing, every position decodes "", and the reader falls back to the empty-payload inference. See LoaderHomeKind* below. |
+| `ordinal` | integer | omitempty | Ordinal is where the operator put this window: the order an admin screen lets them drag a loader's windows into, persisted by Core. It decides which window a carrier goes to, since the funnel case delivers to "the first window" and spreading fills free windows in order. Additive and unsentinelled: a Core that predates the field sends nothing, every position decodes 0, every comparison ties, and the reader falls through to its name ordering. See shingo/shared/windoworder for the rule both sides share. |
 
 <!-- /generated -->
 
@@ -982,7 +965,8 @@ Core returns its node list. Used by edge to populate node dropdowns in the paylo
 
 <!-- /generated -->
 
-The loader's UOP threshold is not on this wire (dropped 2026-10-28): it is Core's alone, and an older Core still sending `uop_threshold` is ignored on decode.
+The loader's UOP threshold is not on this wire: it is Core's alone, and an older Core's `uop_threshold` is ignored
+on decode.
 
 ##### PayloadBinTypeInfo
 
@@ -1095,29 +1079,28 @@ source of truth for the plant spec; this feed plumbs it onto Core. This is a
 
 One message is the FULL claim set for ONE process. Core replaces its mirror for
 that process on every message, so a series of messages (one per process) is a
-full snapshot. Edge publishes:
+full snapshot. Edge publishes (`PlantClaimsPublisher`):
 
-- on every plant-spec change (style or claim edit),
-- a periodic full snapshot (every few minutes), and
-- a full snapshot on boot/reconnect.
+- the edited process, on every plant-spec change (style or claim edit);
+- every process, at boot and on every `edge.registered` (which is how a restarted Core is refilled: it asks an
+  edge it does not know to re-register);
+- every process whose digest differs from the one Core quotes on the heartbeat ack (`claims`;
+  `(*PlantClaimsPublisher).ReconcileClaims`), which heals a lost or out-of-order report within a heartbeat or two;
+- every process on `plant_claims.snapshot_interval` (60 min by default), only while Core does not quote digests.
 
-The periodic + boot snapshots are how a late-joining or restarted Core rebuilds
-its mirror — no Kafka compaction is used. The message carries a `config_gen`
-stamp; Core keeps the newest per process and ignores an older snapshot landing
-after a newer one (the out-of-order guard).
+No Kafka compaction is used. `config_gen` is not set by any Edge (see the field).
 
 Loaders/unloaders are **excluded**: a `manual_swap` claim never appears in
 `claims`. They enter the sourceability computation as pool supply/demand via the
-Core-owned loader aggregate, not as style claims.
+Core-owned loader aggregate, not as style claims; their seats travel as `positions`.
 
-The value schema is **additive-only**. Future fields append with `omitempty`; an
-older Core ignores unknown fields, and an older Core that has not registered the
-`plant.claims` subject logs-and-drops the whole message (mixed-version no-op).
+The value schema is **additive-only**: an older Core ignores unknown fields, and an older Core that has not
+registered the `plant.claims` subject logs-and-drops the whole message (mixed-version no-op).
 
 ```json
 {
   "process_id": "SNF2",
-  "config_gen": 42,
+  "digest": "f407896ad88a27dd",
   "styles": [
     {
       "style_id": "SNF2-A",
@@ -1157,7 +1140,7 @@ older Core ignores unknown fields, and an older Core that has not registered the
 |---|---|---|---|
 | `style_id` | string |  | StyleID is the Edge plant-spec style identifier (the style's Name on Edge within ProcessID). Together (ProcessID, StyleID) is the sourceability computation key. |
 | `claims` | [`PlantClaim`](#plantclaim)[] |  | Claims is the set of sourceability-relevant node claims for this style. Manual_swap (loader/unloader) claims are excluded at the publisher; only the material-flow claims the netting reads appear. |
-| `active` | boolean | omitempty | Active marks the style the process is currently running — Edge's processes.active_style_id, which is the same field Edge already resolves node claims through (findActiveClaim keys on it). At most one style per process carries it. Additive: an older Core simply never sets its mirror column, and the sourcing page keeps saying no style is marked running. Absent on a report from an older Edge, which is indistinguishable from "this process has no active style set" — both mean Core must not claim to know what is running. |
+| `active` | boolean | omitempty | Active marks the style the process is currently running — Edge's processes.active_style_id, the field the Edge resolves node claims through. At most one style per process carries it. Additive: an older Core simply never sets its mirror column, and the sourcing page keeps saying no style is marked running. Absent on a report from an older Edge, which is indistinguishable from "this process has no active style set" — both mean Core must not claim to know what is running. |
 
 <!-- /generated -->
 
@@ -1175,7 +1158,7 @@ older Core ignores unknown fields, and an older Core that has not registered the
 | `partial_destination` | string | omitempty | PartialDestination is where the claim's carrier goes when it leaves the line unfinished: its part set, its count above 0 and below capacity (a node or a group). Blank = it goes where a full goes. Core judges "unfinished" from its own count and chooses the drop; this field only names WHERE. |
 | `allowed_payload_codes` | string[] |  | AllowedPayloadCodes is the effective payload set this claim accepts (ClaimAllowedPayloads on Edge). For most claims this is just [PayloadCode]; carried as the canonical set the netting reads. |
 | `uop_capacity` | integer |  | UOPCapacity is the bin capacity (UOP) for the claim's payload — the denominator context for time-to-empty. Read by the at-risk tier. |
-| `reorder_point` | integer |  | ReorderPoint is the role-dependent replenishment trigger, and BOTH roles read it as a UOP count. It said "produce: bin-count floor" and that semantics did not survive: the floor was the loader's, loader replenishment became Core-owned, and no reader of this field ever counted bins. On a produce cell the number is the UOP count at which the cell asks for its empty — honoured when it is strictly between zero and UOPCapacity, capacity otherwise. The single derivation is domain.NodeClaim.DemandLevel on Edge; nothing here reproduces it. MIRRORED, NOT YET READ. plantclaims.Replace inserts it into style_claims and no query on this side selects it back. It is carried for the fill-priority signal the computation is meant to grow, and until that reader exists the honest statement is that the column is a copy of Edge's value and nothing more. |
+| `reorder_point` | integer |  | ReorderPoint is the role-dependent replenishment trigger, and BOTH roles read it as a UOP count: a consume cell asks for material at it on the way down; a produce cell asks for its empty at it on the way up when it is strictly between zero and UOPCapacity, at capacity otherwise. protocol.ClaimDemandLevel is the one spelling of that rule, called by the Edge's trigger (domain.NodeClaim.DemandLevel) and by Core's inventory loop, which reads this mirrored value from style_claims. |
 | `inbound_source` | string | omitempty | InboundSource is the pool this claim's inbound material is picked up FROM — a node name or a group name; Core resolves either. Blank means not reported. |
 | `outbound_destination` | string | omitempty | OutboundDestination is where this claim's outbound material is dropped off TO — a node name or a group name, the same resolution as InboundSource. Blank means not reported. |
 | `paired_core_node` | string | omitempty | PairedCoreNode is the claim's partner position, and it carries TWO meanings depending on SwapMode — the partner side at a sequential (A/B) cell, the back press at a press-index cell. Mirrored verbatim rather than disambiguated here: the overload lives on Edge's NodeClaim (see its field comment and docs/terminology.md), and a mirror that renamed it per mode would be a second vocabulary for the same column. Blank means not reported. |
@@ -1209,9 +1192,9 @@ verdict with no Core round-trip at click time and it survives an HMI reload or a
 Edge reboot during a Core partition. Steady state publishes nothing (time-to-empty
 drift alone is not a change).
 
-`status` is the **gated** result: when the owner has not enabled the at-risk
-tier, a projected-empty style is published as `"green"` with `at_risk` omitted —
-so no screen ever shows an unvalidated yellow. The value schema is
+`status` is the **gated** result: with `sourceability.enable_at_risk` off (the
+default), a projected-empty style is published as `"green"` with `at_risk` omitted,
+so no screen shows a yellow the plant has not turned on. The value schema is
 **additive-only**; an older Edge that has not registered the `sourcing.state`
 subject logs-and-drops the whole message (mixed-version no-op).
 
@@ -1382,9 +1365,9 @@ from Core's. The Edge merges it per field and re-sends what it owns that Core is
 
 Sent on `edge.ask`: a question that wants an answer — a kind (`AskKinds`, `protocol/ask.go`) and that kind's
 request body (`protocol/door_bodies.go`; `loader.retrieve`'s `LoaderRetrieveRequest` is in `protocol/ask.go`).
-Core answers the kinds as asks only. It rides the edge outbox and expires after `AskTTL`; Core answers it with
-`edge.answer` (a reply carrying the ask's envelope ID as `cor`), and answers one that arrives expired with status
-408 and does nothing.
+An edge sends a kind only while Core's last heartbeat ack named it (`asks`). The ask rides the edge outbox and
+expires after `AskTTL` (25 s); Core answers it with `edge.answer` (a reply carrying the ask's envelope ID as
+`cor`), and answers one that arrives expired with status 408 (`AnswerExpired`) and does nothing.
 
 <!-- generated: protocol struct EdgeAsk -->
 
@@ -1500,7 +1483,7 @@ Sent on `inventory.uop_adjustment`: an operator's UoP correction on Core, pushed
 | `adjusted_at` | timestamp |  |  |
 | `released` | boolean | omitempty | Released, when true, means the bin was MOVED off CoreNodeName in Core (admin Move). Edge clears that node's active_bin_id so its PLC ticks stop attributing consumption to a bin that has left, instead of applying NewRemaining (which is ignored when Released). Reuses this Core→Edge channel rather than a separate subject. Older Edges ignore the field. |
 | `bound` | boolean | omitempty | Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin Move mirroring a physical relocation the robot-delivery path never recorded — manual fork-truck recovery, a failed delivery that left the bin unregistered). Edge binds that node's runtime to the bin: active_bin_id = BinID, active_bin_epoch = Epoch, remaining_uop_cached = NewRemaining — so its PLC ticks resume counting the arrived bin. The dual of Released; Core sets exactly one of the two per message. Core's Move guarantees the destination held no other bin, so Edge binds ahead of its active-bin guard and overwrites any stale pointer. Older Edges ignore the field. |
-| `epoch` | integer | omitempty | Epoch carries the bin's delta_epoch so a bind seeds active_bin_epoch correctly and subsequent BinUOPDeltas carry the right generation for Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node) and on a plain count correction (record_count): when the correction lands on a staged-but-unbound bin, Edge binds it with this epoch (P2-C5), so the resumed delta stream is accepted instead of dropped as epoch-0. Zero on the Released path and from older Cores. |
+| `epoch` | integer | omitempty | Epoch carries the bin's delta_epoch so a bind seeds active_bin_epoch correctly and subsequent BinUOPDeltas carry the right generation for Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node) and on a plain count correction (record_count): when the correction lands on a staged-but-unbound bin, Edge binds it with this epoch, so the resumed delta stream carries the bin's current generation. Zero on the Released path and from older Cores. |
 | `as_of_net` | integer | omitempty | AsOfNet and AsOfSeq are Core's applied_net and last_seq for (AsOfStation, BinID, Epoch), read in the transaction that wrote NewRemaining: how much of that station's running net Core had applied when it set the count. The station named, holding BinID at Epoch, rebases: remaining = NewRemaining + (flushed_net - AsOfNet) + unflushed and ignores an adjustment whose AsOfSeq is below the one it last took for the same (bin, epoch). Set only by a count, and only when exactly one station has an anchored cursor for the carrier in this generation; nil otherwise, and then the station writes NewRemaining as is, which is also what an Edge that predates the fields does. |
 | `as_of_seq` | integer | omitempty | See `as_of_net`. |
 | `as_of_station` | string | omitempty | AsOfStation is the station whose stream AsOfNet measures. Any other station modelling the node takes NewRemaining as is. |
@@ -1610,16 +1593,16 @@ Sent on `demand.origin`: the demand episodes the Edge owns, one whole episode ro
 | `revision` | integer |  | Revision is monotonic per origin, stamped by Edge on every change. It is the ONLY thing that decides whether an arriving message is newer than what Core holds — not a timestamp, which two services cannot agree on. |
 | `episode_key` | string |  | EpisodeKey is the computed identity. Core keys its partial unique index on it, so both services build it with the constructors in episode_key.go rather than formatting their own. |
 | `kind` | string |  |  |
-| `direction` | string (`ClaimRole`) | omitempty | Direction carries the cell's ROLE — produce or consume. Typed, and the two values are the claim's own; "supply"/"evacuate" were a second vocabulary for the same fact and are retired (see protocol/episode_key.go). The JSON key stays `direction` so the wire shape is unchanged; only the value domain moved, which migration 87 carries for stored rows. |
+| `direction` | string (`ClaimRole`) | omitempty | Direction carries the cell's ROLE — produce or consume, the claim's own two values (ClaimRole). The JSON key is `direction`; its values are a role, never "supply"/"evacuate" (see protocol/episode_key.go). |
 | `trigger` | string | omitempty |  |
 | `trigger_ref` | string | omitempty | TriggerRef is the claim key or ProcessChangeoverID behind the mint — forensic, not identity. |
-| `process_id` | string | omitempty | ProcessID is THE GRAIN for a cell episode: choreography spans nodes, the process does not. THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID. It was an int64 row id, which made Core hold two unjoinable identity systems for one set of processes — this field against process_styles.process_id and PlantClaimsReport.ProcessID, both of which are the name. See CellEpisodeKey in episode_key.go for the full argument and for the one exposure the change adds. |
+| `process_id` | string | omitempty | ProcessID is THE GRAIN for a cell episode: choreography spans nodes, the process does not. THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID: the same identity as process_styles.process_id and PlantClaimsReport.ProcessID, so Core joins the three. See CellEpisodeKey in episode_key.go. |
 | `core_node_name` | string | omitempty | CoreNodeName is the head node. Forensic, not the key. |
 | `payload_code` | string | omitempty |  |
 | `opened_at` | timestamp |  |  |
 | `opened_total` | integer |  | OpenedTotal is the reading at the falling edge — the number the decision was made from, whatever its quality. |
 | `threshold` | integer |  |  |
-| `expected_orders` | integer | omitempty | ExpectedOrders is the system's own stated intent, STAMPED ONCE at the falling edge and never recomputed or accumulated. NULLABLE, and that is deliberate. The threshold kind's formula divides by the payload catalog's UOPCapacity, and the sizing entry point (dispatch.BinsToReachThreshold, on Core) explicitly refuses `perBinCapacity &lt;= 0` — which means somebody has hit it. Neither 0 nor 1 is honest there: both render as a real ratio and invite a conclusion from a denominator that does not exist. A demand whose denominator is UNKNOWABLE is a different state from one whose denominator is 1, and the surface shows it as "—". For a cell episode it is len(plan orders) — what BuildConsumePlan said it would create — NOT the literal 1 that RequestNodeMaterial takes as a BIN count. Accumulating it per re-fire is the failure mode most likely to look correct in review: it would render 2026-07-21 as ratio 1.0. |
+| `expected_orders` | integer | omitempty | ExpectedOrders is the system's own stated intent, STAMPED ONCE at the falling edge and never recomputed or accumulated. NULLABLE, and that is deliberate. The threshold kind's formula divides by the payload catalog's UOPCapacity, and the sizing entry point (dispatch.BinsToReachThreshold, on Core) refuses `perBinCapacity &lt;= 0`. Neither 0 nor 1 is honest there: both render as a real ratio and invite a conclusion from a denominator that does not exist. A demand whose denominator is UNKNOWABLE is a different state from one whose denominator is 1, and the surface shows it as "—". For a cell episode it is len(plan orders) — what BuildConsumePlan said it would create — NOT the literal 1 that RequestNodeMaterial takes as a BIN count, and it is never accumulated per re-fire. |
 | `expected_unknown_reason` | string | omitempty | ExpectedUnknownReason says WHY the denominator is unknowable, when it is. A NULL with no reason is indistinguishable from a bug. |
 | `rerequest_count` | integer | omitempty | RerequestCount is operator pushes that JOINED this episode. |
 | `discretionary` | boolean | omitempty | Discretionary marks an operator request with no open episode on a node the system reads as fine. Either the ledger is wrong, or the reorder point is, or the operator knows something the count does not. FLAG, DO NOT CONCLUDE. |
@@ -1643,7 +1626,7 @@ Sent on `inventory.bin_uop_delta`: a bin's UoP moved.
 | `delta` | integer |  |  |
 | `reason` | string (`BinUOPDeltaReason`) |  |  |
 | `sequence_id` | integer |  |  |
-| `epoch` | integer |  | Epoch is the bin's delta_epoch as known to Edge at emit time. Bumps on every Core-controlled lifecycle boundary (set_for_production, clear). The dedup PK on Core is (station, scope_kind, scope_key, epoch); extending the key with epoch means a stale Edge seq counter (deploy reset, backup restore, cache loss) can't poison the new bin life's delta stream. Pre-epoch envelopes deserialize with Epoch=0, which Core treats as the pre-migration cohort (matches the backfilled epoch=1 on existing rows after the migration runs). |
+| `epoch` | integer |  | Epoch is the bin's delta_epoch as known to Edge at emit time. Bumps on every Core-controlled lifecycle boundary (set_for_production, clear). The dedup PK on Core is (station, scope_kind, scope_key, epoch); extending the key with epoch means a stale Edge seq counter (deploy reset, backup restore, cache loss) can't poison the new bin life's delta stream. Epoch 0 is the bootstrap/unknown sentinel (a fresh runtime, or an envelope from before the field), which Core always applies and never drops as stale. |
 | `window_start` | timestamp |  |  |
 | `window_end` | timestamp |  |  |
 | `net` | integer | omitempty | Net is the running total of every Delta this Edge has flushed for the scope (station, bin, epoch), this one included. Core applies Net minus what it has already applied for the scope, so a lost, late, duplicated or reordered message is healed by the next one. Nil from an Edge built before the field existed; Core then applies Delta exactly as it used to. |
@@ -1960,8 +1943,8 @@ Status change or ETA update for an in-progress order. May be sent multiple times
 | `node` | string | omitempty | Node is the process / delivery node the reason concerns, dot-named. |
 | `payload` | string | omitempty | Payload is the part number that could not be sourced, delivered or found. |
 | `peer` | integer | omitempty | Peer is the sibling order whose fate caused this one — swap legs unwound together, reshuffle children abandoned with their parent. |
-| `vendor_code` | integer | omitempty | VendorCode is the fleet's own numeric reason, as RDS reported it on the ORDER (OrderDetail.Errors[].Code) — not a robot's standing alarm, which is a different stream and is background rather than cause. Zero means the fleet gave no reason, which is the common case: ~94% of faulted orders carry no errors[] entry at all, so this field is absent far more often than it is present and its absence is information, not a gap. A reference, not a category. It is deliberately NOT a typed code vocabulary: one vendor code over 22 events is not a population to classify, and order_history.code stays empty on faulted rows. Classify at read time on ref->>'vendor_code' if a plant ever produces the variety. |
-| `vendor_desc` | string | omitempty | VendorDesc is the fleet's text for VendorCode, stored as received. No translation table until there is something to translate — the live values are "cannot replan" and "Robot Suspended", which need none. |
+| `vendor_code` | integer | omitempty | VendorCode is the fleet's own numeric reason, as RDS reported it on the ORDER (OrderDetail.Errors[].Code) — not a robot's standing alarm, which is a different stream and is background rather than cause. Zero means the fleet gave no reason, which is the common case for a faulted order, so its absence is information, not a gap. A reference, not a category. It is deliberately NOT a typed code vocabulary, and order_history.code stays empty on faulted rows; classify at read time on ref->>'vendor_code'. |
+| `vendor_desc` | string | omitempty | VendorDesc is the fleet's text for VendorCode, stored as received, with no translation table. |
 | `detail` | string | omitempty | Detail is free text for the cases the fields above do not cover. Deliberately last and deliberately optional: anything that ends up here repeatedly is a missing field, not a place to put prose. |
 
 <!-- /generated -->
@@ -1985,25 +1968,27 @@ Fleet reports that the robot has completed delivery at the destination node. The
 | `order_uuid` | string |  | OrderUUID is the edge's order UUID. |
 | `delivered_at` | timestamp |  | DeliveredAt is when the fleet reported the physical delivery. |
 | `staged_expire_at` | timestamp | omitempty | StagedExpireAt, when present, puts the order in staged (dwelling) until this time or until an order.release arrives. Absent on a delivery that does not stage. |
-| `bin_id` | integer | omitempty | BinID carries the bin's Core-side ID so Edge can attribute PLC tick deltas to the right bin in the Phase 1 bin-as-truth flow. Nil for multi-bin orders; Phase 1 emits bucket deltas only in that case and bin attribution waits for the multi-bin handling refinement. Older Core/Edge builds tolerate either side being nil. |
-| `uop_remaining` | integer | omitempty | UOPRemaining and DeltaEpoch are the bin's authoritative count and load-lifecycle epoch as of delivery, snapshotted by Core right after the bin lands at the destination (handleOrderDelivered, after applyBinArrivalForOrder). Edge seeds its runtime cache and stamps outgoing BinUOPDeltas from these — so the seed and the epoch ride the same Kafka message as the delivery itself, with no separate HTTP pull. UOPRemaining is a pointer so "no count was sent" (nil) is distinguishable from a genuinely-empty bin (0). NIL IS NOT ONLY AN OLD CORE, and reading it that way is how the Edge's own fallback got its wrong direction. Core sends the count when it named a bin AND could read that bin's row; a read that fails leaves this nil on a current build. A current Edge binds nothing from this message (the landing binds); for an older Core it binds through the landing verb with this count and never assumes a full carrier (engine.landFromOldCore). DeltaEpoch 0 is the pre-migration / unknown sentinel. Both are only meaningful for single-bin orders (BinID != nil). |
+| `bin_id` | integer | omitempty | BinID is the Core id of the carrier the order leaves at its process node: the order's one cart, or, for an order that carries several, the cart its plan sets down last at the process node (see BinDestNode). Nil when the order carries no cart at delivery, or when no cart of a multi-bin order rests at the process node. The Edge checks it against the carrier bound at that seat. |
+| `uop_remaining` | integer | omitempty | UOPRemaining and DeltaEpoch are BinID's count and delta_epoch, read by Core after the bin's arrival is applied (handleOrderDelivered). UOPRemaining is nil when no bin is named or Core could not read the bin's row, and 0 for a carrier counted empty. A current Edge binds nothing from them (the landing binds); for an older Core they bind through the landing verb, and a nil count binds nothing (engine.landFromOldCore). DeltaEpoch 0 is the unknown sentinel. Both are meaningful only when BinID is set. |
 | `delta_epoch` | integer | omitempty | See `uop_remaining`. |
-| `bin_payload_code` | string | omitempty | BinPayloadCode is the payload of the bin that just landed, read from the same row and at the same moment as UOPRemaining and DeltaEpoch above. It answers "what is this carrier", which the Edge cannot answer for itself: that side stores active_bin_id, an opaque Core id, and has no bins table. WITHOUT IT THE EDGE GUESSES, and the guess is the claim of whichever style the process is on — what the cell was ASKED FOR, not what is standing on it. Those agree until a changeover moves the cell on while a carrier is still there, which is Springfield SMN_029, 2026-09-02. This does not move the boundary. The Edge still decides where material goes; it stops inferring a fact Core was already holding. Pointer so "not established" (nil) is distinguishable from a carrier known to be empty (""), the same distinction UOPRemaining draws and for the same reason — and the Edge keeps that pair apart on its own side too, as RuntimeState.LinesidePayloadKnown. Only meaningful when BinID != nil. |
+| `bin_payload_code` | string | omitempty | BinPayloadCode is BinID's payload, read from the same row as UOPRemaining: what the carrier holds, which the Edge has no bins table to look up. It is not the active style's claim payload, which is what the cell asked for and differs from what stands there once a changeover moves the cell on under a carrier that stays. Pointer so "not established" (nil) is distinguishable from a carrier known to be empty (""); the Edge keeps the pair apart as RuntimeState.LinesidePayloadKnown. Meaningful only when BinID is set. |
 | `delivery_node` | string | omitempty | DeliveryNode is the Core dot-name of the destination. Populated for all orders so the Edge can bind the runtime cache even when the order was created on Core directly (no Edge order row). Broadcast to all edges when the order has no station (stationID==""); omitempty so older Edge builds ignore the field silently. |
-| `bin_dest_node` | string | omitempty | BinDestNode is the Core dot-name of the node the carried bin came to rest at — set ONLY for multi-tote deliveries (F1b), where BinID names the one order_bin destined for the consuming process node. It is the per-bin landing node, which for a swap is authoritative and unambiguous, unlike DeliveryNode (the last dropoff — the supermarket for the evac leg) or a steps-derived finalDropoff. Edge binds when BinDestNode == its process node's CoreNodeName. Empty for single-bin orders, whose existing delivery-gate (steps finalDropoff / DeliveryNode) is unchanged. |
-| `landing_sent` | boolean | omitempty | LandingSent says the Core that sent this also announces its carriers' drops on SubjectBinLanded. A new Edge binds nothing from a delivered that carries it. Without it the sender is an older Core that never sends a landing, and a new Edge routes the carrier fields above through its landing verb with no placement stamp: into an empty slot or onto the same bin only, never over a different bound carrier. Nothing else forbids a new Edge talking to an old Core (DESIGN-H S6), hence the flag. The flag, that adapter and the carrier fields above go on the cleanup sweep row the release after. |
+| `bin_dest_node` | string | omitempty | BinDestNode is the Core dot-name of the node BinID's cart comes to rest at, set only for an order that carries several carts. For a swap it is the authoritative per-bin landing node, unlike DeliveryNode (the last dropoff — the supermarket for the evac leg) or a steps-derived final dropoff. The Edge's check applies when BinDestNode equals its process node's CoreNodeName. Empty for a single-cart order, which the Edge gates on its steps' final dropoff or DeliveryNode. |
+| `landing_sent` | boolean | omitempty | LandingSent says the sending Core announces every carrier's drop on SubjectBinLanded, so the Edge binds nothing from this message. Unset, the sender is an older Core that sends no landing, and the Edge routes the carrier fields above through its landing verb with no placement stamp: into an empty slot or onto the same bin only, never over a different bound carrier. |
 
 <!-- /generated -->
 
 #### OrderError
 
-Order processing has failed. The order is in a terminal error state on the core side.
+Core failed the order (it is `failed` at Core), or refused the message it answers: an order request it did not
+take in, an ingest it could not book, or a release, cancel or redirect it could not apply to the order. See
+[Error Codes](#error-codes).
 
 ```json
 {
   "order_uuid":  "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "error_code":  "no_source",
-  "detail":      "No source payload found for type BIN-A"
+  "error_code":  "invalid_node",
+  "detail":      "delivery node \"line-1-station-a\" not found"
 }
 ```
 
@@ -2056,7 +2041,7 @@ Sent when the work turned out not to be needed: the order reached the terminal `
 
 #### ComplexOrderRequest
 
-Submits a multi-step transport order. Used by material handling cycles (sequential, two-robot, single-robot) where a single order involves multiple pickup, dropoff, and wait steps chained together. Core dispatches the steps as a block-based order to the fleet backend.
+Submits a multi-step transport order. Used wherever one order chains pickup, dropoff and wait steps: the swap modes' legs and the loader and unloader cycles. Core dispatches the steps as a block-based order to the fleet backend.
 
 ```json
 {
@@ -2086,7 +2071,7 @@ Submits a multi-step transport order. Used by material handling cycles (sequenti
 | `priority` | integer | omitempty | Priority: higher is more urgent; 0 by default. |
 | `process_node` | string | omitempty |  |
 | `steps` | [`ComplexOrderStep`](#complexorderstep)[] |  | Steps are the order's steps, executed in sequence. |
-| `sibling_order_uuid` | string | omitempty | SiblingOrderUUID is the edge UUID of the paired leg in a coordinated pair. BOTH legs carry it: every Edge door that makes a pair mints both uuids before it creates either, so each leg names its partner and neither goes out unpaired. Empty for non-swap orders — and for a RELAY, whose second leg collects what the first delivers (the Edge engine's stageSteps): its legs are linked on the Edge only, because a pair at Core would hold the feeder for a collector that cannot source until the feeder has gone. It did once ride only the second-created leg, because a leg could not name a sibling that did not exist yet. That made CREATION ORDER a correctness input: the first-created leg named nobody, so from its own side it was a solo order and could go to the fleet before its partner existed. Core now forms a pair from either leg's pointer alone (coordinatedPairLegs), and the intake back-link stays so a Core talking to an older Edge, which still sends the one-way shape, heals it on read. Which leg is created FIRST is NOT a role, so do not read one into it: it varies by mode and by the creating path. two_robot creates the supply leg first; a press-index CHANGEOVER does the same, but a steady-state press-index swap creates the evac leg (R1, which clears the press) first. The pointer says "these two legs are a pair", nothing more; a leg's role comes from its steps (see legTakesLineBin in Core's dispatch package). Core links both order rows on ingest — bidirectionally, via LinkSiblingsByEdgeUUID — so either leg can find the other: the pair rule admits both legs in one pass (coordinatedPairLegs), and the death rule resolves the survivor when one dies (HandleSwapPeerTerminal). |
+| `sibling_order_uuid` | string | omitempty | SiblingOrderUUID is the edge UUID of the paired leg in a coordinated pair. BOTH legs carry it: every Edge door that makes a pair mints both uuids before it creates either, so each leg names its partner and neither goes out unpaired. Empty for non-swap orders — and for a RELAY, whose second leg collects what the first delivers (the Edge engine's stageSteps): its legs are linked on the Edge only, because a pair at Core would hold the feeder for a collector that cannot source until the feeder has gone. Core forms a pair from either leg's pointer alone (coordinatedPairLegs), so neither leg is a solo order from its own side. An older Edge that names the sibling on one leg only is healed on read by the intake back-link. Which leg is created FIRST is NOT a role, so do not read one into it: it varies by mode and by the creating path. two_robot creates the supply leg first; a press-index CHANGEOVER does the same, but a steady-state press-index swap creates the evac leg (R1, which clears the press) first. The pointer says "these two legs are a pair", nothing more; a leg's role comes from its steps (see legTakesLineBin in Core's dispatch package). Core links both order rows on ingest — bidirectionally, via LinkSiblingsByEdgeUUID — so either leg can find the other: the pair rule admits both legs in one pass (coordinatedPairLegs), and the death rule resolves the survivor when one dies (HandleSwapPeerTerminal). |
 | `key_route` | string[] | omitempty | KeyRoute / KeyTask are SEER robot-SELECTION hints carried from the claim's Routing configuration through to fleet.CreateOrderRequest. See that type for the vendor semantics. Both empty on every order until a claim configures them, which is the pre-existing behaviour exactly. Additive and omitempty: an older Core ignores them, and an older Edge simply never sends them. |
 | `key_task` | string | omitempty | See `key_route`. |
 | `remaining_uop` | integer | omitempty | RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption. |
@@ -2104,11 +2089,11 @@ Submits a multi-step transport order. Used by material handling cycles (sequenti
 | `action` | string |  | "pickup", "dropoff", "wait" |
 | `node` | string | omitempty | node or group name (Core auto-resolves groups) |
 | `empty` | boolean | omitempty | Empty marks a pickup leg that must fetch an EMPTY carrier rather than a payload-matching full — the produce-node "bring an empty to fill" leg (the store dual of a consume node's full retrieve). When true on a pickup, Core resolves an NGRP source to a slot holding an empty bin and claims an empty carrier, instead of the default full-retrieve semantics. Pickup-only; ignored on dropoff/wait. Backward-compatible: absent/false preserves the prior always-full behavior, so an older Core that ignores the field behaves exactly as today. |
-| `payload_code` | string | omitempty | PayloadCode is the payload THIS STEP's bin selection resolves against, overriding the order's payload for this leg only. Empty means "use the order's", which is every leg of every order that does not need to say otherwise. ── WHY A LEG NEEDS ITS OWN ANSWER ──────────────────────────────────── A changeover swap is ONE order doing two jobs: it lifts the outgoing style's bin off the line and brings the incoming style's carrier back. The order carries the FROM-style payload, because its opening pickup has to find the bin that is actually there. Marking the refill leg Empty drops the full-bin content match — but NOT bin-type compatibility, which resolves against the order's payload through PayloadBinTypeAdvisoryClause. So a press changing from a payload on one carrier type to a payload on another was handed a carrier of the type it was LEAVING: wrong carrier one direction, and an unsatisfiable wait for a type the plant had none of in the other, which parked two supply legs until an operator abandoned them (sim 2026-08-24, N1-c). Setting it here is the smallest true statement: this leg is for that payload. The alternative was splitting the order in two, which doubles the robot trips for the common same-node case the single trip was chosen for. ── MIXED VERSIONS: CORE FIRST ──────────────────────────────────────── Additive and omitempty, like every other field added to this wire — but unlike the Core→Edge additions, an old receiver ignoring THIS one is not cosmetic: it silently reverts to the wrong-carrier behaviour above. Core and Edge deploy separately, so DEPLOY CORE FIRST. Pinned by TestComplexOrderStep_PayloadCode_MixedVersion, which asserts what an old Core does rather than leaving it to be discovered on a floor. |
+| `payload_code` | string | omitempty | PayloadCode is the payload THIS STEP's bin selection resolves against, overriding the order's payload for this leg only. Empty means "use the order's". A changeover swap is one order doing two jobs: it lifts the outgoing style's bin off the line and brings the incoming style's carrier back. The order carries the outgoing payload, so its opening pickup finds the bin that is there; the refill leg names the incoming payload here, so the carrier it fetches is one of a bin type that payload may ride on. DEPLOY CORE FIRST. Additive and omitempty, but an older Core ignoring it falls back to the order's payload, which on a changeover is the outgoing style's: the wrong carrier. TestComplexOrderStep_PayloadCode_MixedVersion pins what an older Core reads. |
 | `bin_id` | integer | omitempty | BinID names the one bin a pickup takes: the operator's pick of a held partial to finish, from the list a finish-later claim's REQUEST shows. Core lifts that bin where it stands, or the leg waits. 0 for every other pickup, which Core sources as before. |
-| `wait_kind` | string | omitempty | WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so the far side does not have to guess. ── WHY IT IS ON THE WIRE AT ALL ────────────────────────────────────── Core has always known: a wait it splices for a lane is stamped, and its release fence keys on that stamp. The Edge never received it. So a station holding a plan could not tell a wait it owns — "hold at staging until the line clears", which an operator ends — from one only Core's lane evaluator can advance, and the board either offered a button that could not work or offered nothing and explained nothing. The sim operator guessed with a three-strike retry cap and guessed wrong; a human at an HMI has strictly less to go on. Values are WaitKindStation ("station", station-owned) and, on a plan Core authors, WaitKindLane ("lane") and WaitKindVacate ("vacate"), both Core-owned. They are declared once, in waitkind.go. EMPTY IS NOT A FOURTH KIND. It means "authored before this field", and it is read as station-owned for exactly as long as pre-ruling orders are draining — the historical default, so nothing needs migrating. After the drain window an untagged wait is a defect, and the drift tests on both sides say so. |
+| `wait_kind` | string | omitempty | WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so the far side does not have to guess: a station can tell a wait it owns ("hold at staging until the line clears", which an operator ends) from one only Core's lane evaluator can advance, and Core's release fence keys on the same stamp. Values are WaitKindStation ("station", station-owned) and, on a plan Core authors, WaitKindLane ("lane") and WaitKindVacate ("vacate"), both Core-owned. They are declared once, in waitkind.go. EMPTY IS NOT A FOURTH KIND. It is an order authored before the field, read as station-owned while such orders drain; after the drain window an untagged wait is a defect, and the drift tests on both sides say so. |
 | `purpose` | string | omitempty | Purpose names the station decision a station wait belongs to: which RELEASE lets the robot past it (the Edge's release.Purpose: swap, ready, tooling_done). The Edge authors it with the wait and reads it back from its own steps; Core carries steps as it receives them and decides nothing on it. Absent on a lane wait and on any step that is not a wait. |
-| `exclusive_slot` | boolean | omitempty | ExclusiveSlot declares that this DROPOFF lands on a node that holds ONE bin at a time and must therefore be reserved before the robot is sent. ── WHY THE SENDER HAS TO SAY IT ────────────────────────────────────── Core gates its destination checks on node ROLE: a dropoff is reserved and capacity-checked when the node is a storage slot (a child of a LANE or NGRP), and skipped otherwise. The skip is deliberate and load-bearing — a two-robot SUPPLY leg delivers to a LINE node that a sibling EVAC clears, and gating that re-creates the deadlock 2b05dce fixed. A STAGING node is neither. It holds one bin like a slot, but it is seeded as a station with no parent, so Core's role test rejects it at the parent-nil guard and BOTH destination gates decline to act. Nothing reserves it and nothing checks it is free. Core cannot repair that by looking harder. Every station — line, press, weld, loader, unloader, staging, dest — carries the one STATION node type; the plantspec's Kind field is advisory and never persisted; and the staging designation lives in the EDGE cell config, which Core does not have. The sender is the only party that knows. ── THE INCIDENT THIS WAS ATTRIBUTED TO WAS NOT THIS BUG ───── This field and its fix are UNCHANGED and keep their standing. What is struck is the causal claim, which stood here and at fourteen other sites: "Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes unable to place at SLN_003, with the fleet reporting the robot RUNNING and no error. Order 4580 was cancelled by an admin after 2h05m. Nothing was broken — nothing had ever asked whether SLN_003 was free." The plant queries say otherwise. Order 4580's DESTINATION was ALN_004; SLN_003 was a mid-route waypoint, not the node it could not place at. The sibling order ran the identical route on the same robot and completed twelve minutes earlier. The fleet wedged. Whatever held AMR-04 for 48 minutes, an unreserved staging node was not it. It is quoted once, here, rather than at each of the fifteen sites that carried it: a false sentence reproduced fifteen times to mark its own deletion is the disease this round is treating. THE GAP IS STILL REAL AND STILL REACHABLE, which is why nothing else moves. A declared staging dropoff is reserved by nothing and checked by nothing; two orders can take the same node and the second robot arrives to find it full. That argument stands on the code above without an incident under it, and it is the argument the fix should always have carried — TestDeclaredStagingDropoffIsReserved and the two invariant walks are what hold it, not a story. This is WaitKind's mirror, and the same rule: carried across the wire so the far side does not have to guess. There it was Core knowing something the Edge could not infer; here it is the Edge knowing something Core cannot. DROPOFF-ONLY; ignored on pickup/wait. Backward-compatible: absent/false is exactly today's behaviour, so an older sender — and an older Core that ignores the field — behave as they do now. Setting it on a LINE node would re-create the 2b05dce deadlock, so senders must not. |
+| `exclusive_slot` | boolean | omitempty | ExclusiveSlot declares that this DROPOFF lands on a node that holds ONE bin at a time and must therefore be reserved before the robot is sent. Core reserves and capacity-checks a dropoff by node role: a storage slot (a child of a LANE or NGRP) is gated, anything else is not. A staging node holds one bin like a slot but is a parentless station, so without this flag nothing reserves it and two orders can take it, the second robot arriving to find it full. Only the sender knows a node is staging: every station carries the one STATION node type, the plantspec's Kind is never persisted, and the staging designation lives in the Edge cell config. WaitKind's mirror: there Core knows what the Edge cannot infer, here the Edge knows what Core cannot. Pinned by TestDeclaredStagingDropoffIsReserved. DROPOFF-ONLY; ignored on pickup/wait. Absent/false leaves the dropoff ungated, which is also what an older Core does with it. Never set it on a LINE node: a two-robot SUPPLY leg delivers to a line node its sibling EVAC clears, and gating that deadlocks the pair. |
 
 <!-- /generated -->
 
@@ -2167,9 +2152,9 @@ Signals that a staged (dwelling) order should resume execution. Sent by the oper
 
 #### OrderIngestRequest
 
-Reports a produced (filled) bin so Core records its inventory manifest. This is a **manifest-only** write: Core sets *and confirms* the bin's payload and produced count in one transaction, and dispatches **nothing** — no store order is created (that leg was removed with the retired simple-produce mode). It is fire-and-forget: Core processes the request asynchronously and does not reply on success; a failure is logged Core-side and returned as an `order.error`.
+Reports a produced (filled) bin so Core records its inventory manifest. This is a **manifest-only** write: Core sets *and confirms* the bin's payload and produced count in one transaction, and dispatches **nothing**: no order is created. It is fire-and-forget: Core processes the request asynchronously and does not reply on success; a failure is logged Core-side and returned as an `order.error`.
 
-Bin identity resolves two ways: a non-empty `bin_label` is looked up directly (manual ingest — an operator scanned a real tote); a blank `bin_label` falls back to `source_node`, and Core resolves the bin from what is parked at that node (headless produce-finalize, which tracks the bin by id, not label).
+Bin identity resolves in this order: a non-zero `bin_id` pins the exact bin (the release-time produce manifest, which names the departing bin by the id Core seeded at delivery); a non-empty `bin_label` is looked up directly (manual ingest — an operator scanned a real tote); otherwise Core resolves the bin from what is parked at `source_node`, preferring the bin whose payload matches.
 
 ```json
 {
@@ -2243,32 +2228,29 @@ Notifies the edge that an order has entered a dwelling (wait) state at a staging
 
 ## Error Codes
 
-The `error_code` field in `order.error` messages uses the following values:
+`error_code` on `order.error` (and on `order.skipped`) is not one closed list. It is one of two things:
 
-| Code | Meaning |
-|---|---|
-| `payload_type_error` | The requested payload type code is not registered in core. |
-| `invalid_node` | A referenced node name (delivery, pickup, redirect destination) does not exist. |
-| `no_source` | No available source payload found for the requested type (FIFO search failed). |
-| `no_payload` | No unclaimed payload of the requested type at the specified source node. |
-| `claim_failed` | Failed to claim/reserve a payload (concurrent contention). |
-| `node_error` | Internal error resolving a node record. |
-| `fleet_failed` | Fleet backend (robot dispatch) rejected the transport order. |
-| `missing_source` | A move or store order was submitted without a required source node. |
-| `no_storage` | No available storage destination node found. |
-| `redirect_failed` | Redirect could not be completed (e.g., no source node for re-dispatch). |
-| `unknown_type` | Unrecognized order type. |
-| `internal_error` | Catch-all for unexpected internal failures. |
+- **The terminal code** when the order failed or was skipped at Core: a `TermCode` value — `no_source_bin`,
+  `grace_timeout`, `same_node`, `lane_locked`, `not_needed` and the rest. The full set is `protocol.AllTermCodes`,
+  each constant's comment its meaning, and the string values are a persisted contract. Two failure paths write
+  their own string instead: `fleet_failed` (the fleet refused or failed the transport order) and `bin_taken` (a
+  station's move took the bin the order was named for).
+- **The refusing door's own code** when Core refused the message without ending the order, or refused an order
+  request or ingest before an order existed: `invalid_state` (a release or redirect the order's state does not
+  allow), `not_found`, `redirect_failed`, `invalid_node`, `manifest_sync_failed`, and the intake and ingest codes
+  (`payload_error`, `bin_error`, `stale_epoch`, `internal_error`).
+
+A consumer branches on the `TermCode` values it knows and shows `detail` for every code, known or not.
 
 ---
 
 ## Order Lifecycle
 
-**There is one status vocabulary, not two.** Core and Edge share the full set, and the canonical state machine is one table: `validTransitions` in `protocol/types.go:484-533`. Edge mirrors Core's vocabulary because `orders.ApplyCoreStatus` (`shingo-edge/orders/lifecycle_service.go:122`) writes Core's status onto the Edge row, so the operator sees the truth of whichever machine owns the order (`protocol/types.go:471-474`). The statuses below are the fifteen constants in `protocol/status.go:56-85`; one of them, `sourcing`, is history only since C1.
+**There is one status vocabulary, not two.** Core and Edge share the full set, and the canonical state machine is one table: `validTransitions` in `protocol/types.go`. Edge mirrors Core's vocabulary because `(*LifecycleService).ApplyCoreStatus` (in shingo-edge's `orders` package) writes Core's status onto the Edge row, so the operator sees the truth of whichever machine owns the order. The statuses below are the fifteen constants in `protocol/status.go` (`AllStatuses`); one of them, `sourcing`, is history only: no transition enters it, and it stays so old order rows render.
 
-**There is no `completed` status.** Terminal completion is `confirmed`. Terminal is *derived*, never hand-maintained — a status is terminal iff it has no outgoing edges in `validTransitions` (`protocol.IsTerminal`, `protocol/types.go:539-542`). That makes exactly four terminal statuses: `confirmed`, `failed`, `cancelled`, `skipped`.
+**There is no `completed` status.** Terminal completion is `confirmed`. Terminal is *derived*, never hand-maintained — a status is terminal iff it has no outgoing edges in `validTransitions` (`protocol.IsTerminal`). That makes exactly four terminal statuses: `confirmed`, `failed`, `cancelled`, `skipped`.
 
-See [order-lifecycle.md](order-lifecycle.md) for the per-status table of scope, writer and operator-facing meaning. What follows is the wire view: which message drives which transition.
+See [order-lifecycle.md](order-lifecycle.md) for the per-status table of scope, writer and operator-facing meaning, and [order-state-machine/transitions.md](order-state-machine/transitions.md) for the transition rules. What follows is the wire view: which message drives which transition.
 
 ### The spine
 
@@ -2370,27 +2352,39 @@ Edge registration and heartbeat messages are sent via the [Data Channel](#data-c
 
 ### Registration Flow
 
-1. Edge starts (or reconnects).
-2. Edge publishes `data` message with subject `edge.register` on `shingo.orders`.
-3. Core upserts the edge in `edge_registry` table, sets status to `"active"`.
-4. Core publishes `data` message with subject `edge.registered` on `shingo.dispatch` (with `cor` linking to the original message).
-5. Edge receives acknowledgement.
+1. Edge starts, or its Kafka connection comes back, and sends its boot burst on `shingo.orders`
+   (`(*Heartbeater).SendBootBurst`): `edge.register`, the node list and catalog requests, its bins watch list, and
+   one `edge.heartbeat`, so the first ack comes one round trip later rather than at the first 60-second tick.
+2. Core resolves the station by uid and updates its `edge_registry` row, introducing an unclaimed station first when
+   the uid is new (see [EdgeRegister](#edgeregister)); the status becomes `"active"`.
+3. Core publishes `edge.registered` on `shingo.dispatch`, with `cor` linking to the register. Its `message` names a
+   hostname or instance conflict when the registration found one, so the warning reaches the edge's own log.
+4. Core re-derives the station's demand registry from its loader aggregate and re-engages the threshold monitor
+   for it.
 
 ### Heartbeat Flow
 
-1. Edge publishes `data` message with subject `edge.heartbeat` every **60 seconds** on `shingo.orders`.
-2. Core updates `last_heartbeat` timestamp in `edge_registry`.
-3. Core publishes `data` message with subject `edge.heartbeat_ack` on `shingo.dispatch` (with server timestamp for clock sync).
+1. Edge publishes `edge.heartbeat` every **60 seconds** on `shingo.orders`.
+2. Core updates the station's `edge_registry` row (`registry.UpdateHeartbeat`): `last_heartbeat`, status
+   `"active"`, timezone, the tick shipper's lag and the edge's clock offset. A heartbeat never creates a row: from
+   a uid Core holds no row for, Core answers with `edge.register_request` instead.
+3. Core publishes `edge.heartbeat_ack` on `shingo.dispatch`: its clock, its digest for each feed the heartbeat
+   named, the plant-claims digests, the bins watch digest and the ask kinds it answers. Core sends each feed whose
+   digest differs from the edge's; the edge re-publishes its claims or its watch list where Core's copy differs.
 
 ### Stale Edge Detection
 
-Core runs a background check every **60 seconds**:
-- If an edge's `last_heartbeat` is older than **180 seconds** (3 missed heartbeats), its status is set to `"stale"`.
+Core checks every **60 seconds** (`(*CoreHandler).SweepStaleEdges`):
+- An `"active"` edge whose `last_heartbeat` is older than `messaging.stale_edge_threshold` (**15 minutes** by
+  default, `DefaultStaleEdgeThreshold`) is set to `"stale"` and sent `edge.stale`.
 - A new registration or heartbeat resets status to `"active"`.
+- Going stale changes nothing else Core holds for the station.
+
+The demand reconciler reads the same threshold to decide when a station's silence counts as evidence.
 
 ### Edge Registry Schema
 
-The core maintains an `edge_registry` table:
+Core records each station in `edge_registry`; the full Core schema is in [data-model.md](data-model.md).
 
 <!-- generated: shingo-core/store/schema/schema.snapshot.sql edge_registry -->
 
@@ -2446,8 +2440,8 @@ The core maintains an `edge_registry` table:
 
 ### Null and Missing Fields
 
-- Fields marked `omitempty` in the schemas above may be absent from the JSON when their value is the zero value for that type (`""` for strings, `0` for numbers, `false` for booleans).
-- Consumers should treat absent fields the same as zero-valued fields.
+- Fields marked `omitempty` (or `omitzero`) in the schemas above may be absent from the JSON when their value is the zero value for that type (`""` for strings, `0` for numbers, `false` for booleans).
+- Consumers treat an absent field as its zero value unless the field's description says otherwise. A few fields are optional values where absent means "not sent" and zero is a real answer (`uop_remaining` and `bin_payload_code` on `order.delivered`, `bin_watch` and `feeds` on the heartbeat ack, `net` on the bin delta); each says so in its description.
 - The `cor` envelope field is the only envelope-level field that may be absent.
 - The `p` (payload) field is always present and always a JSON object (never `null`).
 
@@ -2461,6 +2455,9 @@ The core maintains an `edge_registry` table:
 subscribe to topic ("shingo.orders" or "shingo.dispatch")
 
 on_message(raw_bytes):
+    if signing_key:                      # see Signing
+        raw_bytes = verify_and_unwrap(raw_bytes, signing_key) or return
+
     # Phase 1: header parse
     header = json_parse(raw_bytes)       # or parse only needed fields
     if header.v != 1:
@@ -2557,8 +2554,8 @@ An analytics system can subscribe to one or both topics to build a complete pict
 | Acknowledgement time | Time between `order.request` `ts` and `order.ack` `ts` (use `cor` or match `order_uuid`) |
 | Error rate | Count `order.error` / count `order.request` per time window |
 | Error breakdown | Group `order.error` by `error_code` |
-| Edge uptime | Track `data` messages with subject `edge.heartbeat` gaps per `station_id`; any gap > 180s = downtime period |
-| Active edges | Count distinct `station_id` from `data` messages with subject `edge.heartbeat` in last 180s |
+| Edge uptime | Track `data` messages with subject `edge.heartbeat` gaps per `station_id`; the interval is 60 s, and Core itself calls a station stale after `messaging.stale_edge_threshold` (15 min by default) |
+| Active edges | Count distinct `station_id` from `data` messages with subject `edge.heartbeat` in the last few heartbeat intervals |
 | Orders per edge | Group `order.request` by `src.station` |
 | Material demand | Group `order.request` by `payload_code` and `delivery_node` |
 | Robot utilization | Track `waybill_id` and `robot_id` from `order.waybill` messages |
@@ -2716,8 +2713,8 @@ shingo.dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
   "cor": "c8e5f6a7-8901-2345-bcde-678901abcdef",
   "p": {
     "order_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "error_code": "no_source",
-    "detail": "No source payload found for type BIN-A"
+    "error_code": "invalid_node",
+    "detail": "delivery node \"line-1-station-a\" not found"
   }
 }
 ```
@@ -2731,7 +2728,7 @@ The `v` field in the envelope is an integer protocol version. The current versio
 **Forward compatibility rules:**
 
 - Consumers must ignore unknown fields in both the envelope and payload objects. Do not fail on unexpected keys.
-- Consumers must reject envelopes with `v` values they do not recognize.
+- Consumers must reject envelopes with `v` values they do not recognize. (The reference ingestor does not read `v`: version 1 is the only one.)
 - New optional payload fields may be added in a minor update without incrementing `v`.
 - New message types (new `type` strings) may be added without incrementing `v`. Consumers should log and ignore unknown types.
 - New data channel subjects may be added without incrementing `v`. Handlers should log and ignore unknown subjects.

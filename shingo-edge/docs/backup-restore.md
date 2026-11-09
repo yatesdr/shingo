@@ -10,11 +10,12 @@ The procedures below are written for operators and engineers who may need to rec
 
 ShinGo Edge can create full, compressed station snapshots and store them in an S3-compatible object store.
 
-Each backup is a single `.tar.gz` archive containing:
+Each backup is a single `.tar.gz` archive of three entries (`backup.DBEntryName`, `backup.ConfigEntryName`,
+`backup.ManifestName`):
 
-- `shingoedge.db`
-- `shingoedge.yaml`
-- `manifest.json`
+- shingoedge.db, the SQLite database
+- shingoedge.yaml, the config
+- manifest.json, the station ID, creation time, app version and each file's size and SHA-256 (`backup.Manifest`)
 
 The backup represents the full local edge state at the time it was created. A restore replaces the local Edge config and SQLite database with the contents of a selected backup.
 
@@ -23,10 +24,9 @@ The backup represents the full local edge state at the time it was created. A re
 A backup includes:
 
 - Edge configuration
-- Production lines, styles, reporting points, nodes, material slots, shifts
+- Processes, styles and their claims, flows and recipes, nodes, operator screens, reporting points, shifts
 - Local order state
-- Operator screen layouts
-- Local counters, logs, and other persisted edge state in the SQLite database
+- Local counters, order history and other persisted edge state in the SQLite database
 
 This is intended to support full machine replacement after an edge computer failure.
 
@@ -45,46 +45,39 @@ The edge does not require ShinGo Core application involvement in the backup proc
 
 ## Enabling Automatic Backups
 
-Open the Edge web UI and go to `/config`, then scroll to the **Backups** card. There is no `/setup` page (`shingo-edge/www/router.go:231`, `www/templates/config.html:142`).
+Log into the Edge web UI, open `/config` and scroll to the **Backups** section. Until storage is set up, click
+**Set up storage…** to show its fields:
 
-Configure:
-
-- `Endpoint URL`
-- `Bucket`
-- `Region`
-- `Access Key`
-- `Secret Key`
-- `Use path-style S3` if required by the storage system
-- `Skip TLS verification` only if your environment requires it
-- retention counts:
-  - `Keep Hourly`
-  - `Keep Daily`
-  - `Keep Weekly`
-  - `Keep Monthly`
-- `Schedule Interval`
+- **Endpoint**: the S3-compatible endpoint URL
+- **Bucket and region**
+- **Keys**: the access key and the secret key. A blank secret keeps the saved one; **Remove** clears it.
+- **Path-style addresses**: most storage that is not Amazon's needs this on
+- **Skip the certificate check**: only for storage with a self-signed certificate
+- **Back up automatically**, and how often (**every**)
+- **How many to keep**: hourly, daily, weekly, monthly
 
 Recommended procedure:
 
-1. Enter storage settings.
-2. Click `Test Connection`.
-3. Confirm the UI shows a successful connection test.
-4. Enable `Automatic Backups`.
-5. Click `Save Backup Settings`.
-6. Click `Backup Now` to create an initial known-good backup.
+1. Enter the storage settings.
+2. Click **Test connection**. It tests what is typed, before anything is saved.
+3. Confirm the note reads "The storage answered."
+4. Turn on **Back up automatically** and set the interval.
+5. Click **Save** on the page's save bar.
+6. Click **Back up now** to create an initial known-good backup.
 
 Important notes:
 
-- Automatic backups should not be enabled until `Test Connection` succeeds.
-- Manual backups remain available even when automatic backups are disabled.
+- Automatic backups should not be enabled until **Test connection** succeeds.
+- **Back up now** works with automatic backups off.
 - Backup listings are scoped to the current station ID.
 
 ## Manual Backup
 
-From the **Backups** card on `/config`:
+From the **Backups** section on `/config`:
 
-1. Click `Backup Now`.
-2. Wait for the operation status to show success.
-3. Confirm that a new backup appears in the backup list.
+1. Click **Back up now**.
+2. Wait for the note to read "Backed up."
+3. Under **Restore from a backup**, click **Show backups** and confirm the new backup is listed.
 
 Use a manual backup:
 
@@ -98,25 +91,29 @@ Use a manual backup:
 When automatic backups are enabled, ShinGo Edge creates backups:
 
 - on the configured schedule interval
-- after successful setup/configuration changes, using debounced triggers
+- after successful setup/configuration changes, debounced so a burst of edits makes one backup
+  (`(*Service).RequestBackup`)
 
 Only one backup runs at a time.
 
-The backup status area on `/config` shows:
+The **Backups** title on `/config` carries the live words, in plant time:
 
-- whether automatic backups are enabled
-- whether a backup is currently running
-- last successful backup
-- last failed backup
-- next scheduled run
-- stale backup warnings
-- pending restore-on-restart status
+- `automatic` or `off`
+- `last HH:MM`, or `no backup yet`
+- `next HH:MM` while automatic backups are on
+- `last run failed` when the latest run failed
+- the warning tone when automatic backups are behind schedule or the last run failed
+
+`off · no storage set up` means no storage is configured. A backup staged for restore reads "pending restart"
+in the backup list.
 
 ## Retention
 
-Retention is managed by ShinGo Edge using time-bucket rules.
+Retention is managed by ShinGo Edge using time-bucket rules. After each backup, the newest backup is always
+kept, plus the newest backup in each of the most recent hourly, daily, weekly and monthly buckets, up to each
+bucket's count; the rest are deleted (`backup.retainedKeys`).
 
-Typical defaults:
+Defaults (the `backup.keep_*` keys in the [README](../README.md) key table):
 
 - `48` hourly
 - `14` daily
@@ -132,8 +129,9 @@ ShinGo Edge includes multiple safeguards:
 - backup listing is restricted to the current station ID prefix
 - each backup contains a manifest with the station ID
 - restore validation rejects a backup whose manifest station ID does not match the expected station
-- web restore requires the user to re-type the station ID before staging restore
-- CLI restore requires station ID confirmation before restore begins
+- web restore asks for the station ID before staging: the box opens holding this station's ID, and anything
+  else typed, or Cancel, stops the restore
+- CLI restore requires the station ID to be typed again before restore begins
 
 Do not bypass these checks casually. A cross-station restore can apply the wrong configuration, orders, and inventory state to a machine.
 
@@ -144,18 +142,17 @@ This is appropriate when the edge machine is still available and you intentional
 Procedure:
 
 1. Open `/config`.
-2. Scroll to the **Backups** card.
-3. Review the available backups for the station.
-4. Select the desired backup.
+2. Scroll to **Restore from a backup** (shown once storage is set up) and click **Show backups**.
+3. Review the backups listed for the station.
+4. Click **Restore on restart** on the desired backup.
 5. Confirm the station ID when prompted.
-6. Click `Restore On Restart`.
-7. Restart ShinGo Edge.
+6. Restart ShinGo Edge.
 
 Important:
 
 - The restore is staged first and applied on next startup.
 - The running process is not hot-swapped while online.
-- **Staging writes next to the config file**, not to a state directory of its own: `StageRestoreArchive` puts `pending-restore.tar.gz` in `<dir of config>/.shingoedge-backup/` (`shingo-edge/backup/restore.go:308-313`). On a deployed station the config lives under `/etc/shingo/`, which is root-owned, so the Edge process cannot create that directory and "Restore On Restart" fails to stage. Until the state directory moves, use the CLI restore below on a deployed station — it runs as whoever invokes it.
+- **Staging writes next to the config file**, not to a state directory of its own: `backup.StageRestoreArchive` puts `pending-restore.tar.gz` in `<dir of config>/.shingoedge-backup/`. On a deployed station the config lives under `/etc/shingo/`, which is root-owned, so the Edge process cannot create that directory and **Restore on restart** fails to stage. Use the CLI restore below on a deployed station — it runs as whoever invokes it.
 
 ## Restore A Failed Edge Machine To Replacement Hardware
 
@@ -227,7 +224,7 @@ The main recovery tasks after restore are:
 ## Operational Recommendations
 
 - Keep automatic backups enabled on production stations unless another backup method fully replaces them.
-- Run `Backup Now` after major setup changes.
+- Run **Back up now** after major setup changes.
 - Monitor stale-backup warnings in the UI.
 - Periodically test the restore workflow on a non-production machine.
 - Keep a secure record of:

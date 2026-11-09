@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestBurialExclusionOneSpelling is standing law 3's drift test for "is this slot
-// in front of a bin somebody is coming for".
+// TestBurialExclusionOneSpelling holds "is this slot in front of a bin
+// somebody is coming for" to one spelling.
 //
 // TWO CALLERS ASK IT. The store selector refuses to hand out a slot in front of a
 // hard-claimed bin (nodes/lanes.go findStoreSlot); the dig's shuffle-slot search

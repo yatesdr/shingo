@@ -22,22 +22,9 @@ The web UI is available at `http://localhost:8083`. Default login: `admin` / `ad
 
 ### Initial Setup
 
-The database connection is the only setting that must be configured before first launch. Create a minimal `shingocore.yaml` with the connection details:
+The database connection is the only setting that must be configured before first launch. Copy [`shingocore.example.yaml`](shingocore.example.yaml) to `shingocore.yaml` and set its `database.postgres` block; [PostgreSQL Setup](docs/postgresql-setup.md) covers the server side.
 
-```yaml
-database:
-  postgres:
-    host: 192.168.1.10
-    port: 5432
-    database: shingocore
-    user: shingocore
-    password: your-password
-    sslmode: disable
-```
-
-See [PostgreSQL Setup](docs/postgresql-setup.md) for server-side database configuration.
-
-All other settings — fleet connection, Kafka brokers, web server port — have sensible defaults and can be adjusted through the web UI at `/config`. The YAML file is application-managed and should not be edited by hand during normal operation.
+Every other key has a default. The fleet, messaging, notifications, fire-alarm, plant-timezone and database settings are edited on the `/config` page, which writes the file; the rest are YAML-only. [Configuration](docs/configuration.md) lists every key and says which settings apply only after a restart.
 
 On first startup, Shingo Core creates all database tables, indexes, and a default admin user automatically.
 
@@ -46,7 +33,7 @@ On first startup, Shingo Core creates all database tables, indexes, and a defaul
 ```sh
 make build      # Build for current platform
 make test       # Run unit + fake-backed tests (no Docker required)
-make test-all   # Run full suite including Postgres-backed tests (requires Docker)
+make test-all   # Run the Postgres-backed suite too (requires Docker)
 make all        # Cross-compile (linux/windows/macos)
 make fmt        # Format code
 make vet        # Static analysis
@@ -55,39 +42,28 @@ make vet        # Static analysis
 ### Docker-gated tests
 
 Test files that need a live Postgres carry `//go:build docker` on
-their first line (dispatch/, engine/, messaging/, service/, store/,
-www/, and `shingo-edge/store/outbox_test.go`). `make test` skips
-them by omitting the tag, so the default target runs fast and
-green on a machine without Docker. `make test-all` (or
-`go test -tags=docker ./...`) pulls them back in.
+their first line (most of them in dispatch/, engine/, messaging/,
+service/, store/, uop/ and www/). `make test` runs without the tag,
+so it needs no Docker. `make test-all` runs the tagged suite through
+`scripts/gate.sh docker`, which starts one shared Postgres container
+for every package.
 
 Behavioral contracts that don't need a DB — narrow-interface
-satisfaction, algorithm correctness for bin resolution, scanner
-flow — are covered by fake-backed tests in `material/`,
-`fulfillment/`, and `dispatch/binresolver/`. Those stay tag-free
-so they run on every push without Docker.
+satisfaction, bin-resolution algorithms, scanner flow — are covered
+by tag-free fake-backed tests in `material/`, `fulfillment/` and
+`dispatch/binresolver/`, so they run on every push without Docker.
 
 ## Debug Logging
 
-Enable subsystem-filtered debug output:
+Enable subsystem-filtered debug output to `shingo-debug.log`:
 
 ```sh
 ./shingocore --log-debug=dispatch,rds,kafka
 ```
 
-Without a filter (`--log-debug`), all subsystems are logged.
-
-| Subsystem | Description |
-|-----------|-------------|
-| `rds` | Fleet API requests and responses |
-| `kafka` | Kafka producer and consumer events |
-| `dispatch` | Order routing and dispatch decisions |
-| `protocol` | Wire protocol encode and decode |
-| `outbox` | Outbox drain cycles |
-| `core_handler` | Inbound message handling |
-| `reconciliation` | Drift detection and recovery signals |
-| `nodestate` | Node state cache operations |
-| `engine` | Engine lifecycle events |
+Without a filter (`--log-debug`), all subsystems are logged. The
+subsystem names, and how the file, stderr and the in-browser log
+differ, are in [Configuration](docs/configuration.md).
 
 ## Web Interface
 
@@ -130,19 +106,23 @@ See [UI Guide](docs/ui-guide.md) for detailed page descriptions.
 ## Reliability Notes
 
 - All Core-to-Edge business and control traffic is queued through the durable outbox.
-- Core tracks processed inbound envelope IDs in a durable inbox to suppress replayed mutating commands.
-- The diagnostics page includes reconciliation drift checks and recovery tooling for dead-lettered outbox messages.
-- The `/health` endpoint now reflects reconciliation severity in addition to dependency connectivity.
-- Fire alarm activate/clear commands are audit-logged with actor, timestamp, and auto-resume setting.
+- Core records processed inbound envelope IDs in a durable inbox, so a replayed order-channel message is dropped (`middleware.NewInboxDedup`).
+- The Logs page (`/diagnostics`) carries the reconciliation drift checks and the recovery tooling for dead-lettered outbox messages.
+- `GET /api/health` reports fleet, messaging and database connectivity beside the reconciliation summary; its `status` is that summary's verdict (`ok`, `degraded` or `critical`), not connectivity.
+- Fire alarm activate/clear commands are audit-logged with actor and auto-resume setting.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
 | [UI Guide](docs/ui-guide.md) | Web interface pages and features |
-| [API Reference](docs/api-reference.md) | REST API endpoints |
+| [API Reference](docs/api-reference.md) | HTTP routes, SSE events, error format |
+| [Configuration](docs/configuration.md) | Flags, debug subsystems, every YAML key |
 | [PostgreSQL Setup](docs/postgresql-setup.md) | Database server setup and connection |
 | [Architecture](docs/architecture.md) | Package layout, data flow, extension points |
+| [CMS Integration](docs/cms-integration.md) | The inventory-transaction feed to CMS |
+| [Wall Displays](docs/dashboard-platform.md) | Floor-facing kiosk displays |
+| [Deploy artifacts](deploy/README.md) | What the installers put on a plant box |
 | [Wire Protocol](../docs/wire-protocol.md) | Kafka messaging protocol specification |
 | [Terminology](../docs/terminology.md) | Domain terms and vendor mapping |
 

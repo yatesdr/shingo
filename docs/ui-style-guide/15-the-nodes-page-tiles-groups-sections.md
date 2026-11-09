@@ -6,13 +6,14 @@ Verified against: b9210bce
 
 **One node tile is one size everywhere**: 6.5rem x 2.75rem, set on `.node-tile`
 and nowhere else. The ungrouped grid, a group's nodes, a lane and a station box
-are all wrapping rows of that fixed box. A
-container never sizes the tile: a stretching grid made ungrouped tiles wide and
-a flex row made group tiles as wide as their text, so the same node was two
-shapes a scroll apart. A long name truncates with an ellipsis and the full name
-is the tile's `title`; it never wraps the tile taller. The one exception is
-tap-to-assign, where the height gives so the reason fits on the tile (see Armed
-slot above). Width always holds.
+are all wrapping rows of that fixed box. A container never sizes the tile: a
+stretching grid would make ungrouped tiles wide and a flex row would make group
+tiles as wide as their text, so the same node would be two shapes a scroll
+apart. A long name truncates with an ellipsis and the full name is the tile's
+`title`; it never wraps the tile taller. The one exception is tap-to-assign,
+where the height gives so the reason fits on the tile (see Armed slot in
+[Placement boxes](14-placement-boxes-the-box-is-the-form.md)). Width always
+holds.
 
 - **The name's ink is measured on its fill**, not white by habit. Empty tiles use
   `--chip-ink-muted` on `--bg-dark` (`--text-muted` there is 4.2:1 in light).

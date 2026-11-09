@@ -120,11 +120,9 @@ func TestTokensCSSHasRequiredSemantic(t *testing.T) {
 	}
 }
 
-// TestTokensCSSInfoDistinctFromPrimary catches the regression Round 1
-// flagged: Edge's previous dark-mode --info was the same #58a6ff as
-// --primary, making info callouts indistinguishable from primary CTAs.
-// The shared tokens explicitly pick a different cyan; this test pins
-// the rule "they must differ" rather than the specific hexes.
+// TestTokensCSSInfoDistinctFromPrimary holds --info and --primary to distinct
+// colours in both themes, so an info callout never reads as a primary CTA.
+// It pins the rule "they must differ" rather than the specific hexes.
 func TestTokensCSSInfoDistinctFromPrimary(t *testing.T) {
 	src := readShared(t, "tokens.css")
 	light := extractTheme(t, src, ":root")
@@ -179,7 +177,7 @@ func readShared(t *testing.T, name string) string {
 	return string(body)
 }
 
-// TestSourcingBadgeIsQueuedsAlias: `sourcing` has no badge of its own (C1). It
+// TestSourcingBadgeIsQueuedsAlias: `sourcing` has no badge of its own. It
 // left the order ladder, and an old history row that still says it renders as
 // the wait it was: .badge-sourcing is a selector in .badge-queued's rule, in
 // both themes, for one release, and is deleted with the alias.

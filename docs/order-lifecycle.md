@@ -2,12 +2,14 @@
 
 Verified against: b9210bce
 
-**What this is:** the order lifecycle status vocabulary as it exists in the code
-today — every status × who writes it × who reads it × what the operator sees.
-Grounded in `protocol/status.go` (the enum), `protocol/types.go`
-(`validTransitions` — the canonical state machine), the Core lifecycle
-(`shingo-core/dispatch/lifecycle.go`), the Edge lifecycle
-(`shingo-edge/orders/lifecycle_service.go`, `manager.go`), and the operator
+**What this is:** the order lifecycle status vocabulary — every status × who
+writes it × who reads it × what the operator sees — then the swap modes that
+shape a swap's legs, the departed-leg rule that says when a leg stops being its
+cell's business, and the wire crossing between the two machines. Grounded in
+`protocol/status.go` (the enum), `protocol/types.go` (`validTransitions` — the
+canonical state machine), the Core lifecycle (`shingo-core/dispatch/lifecycle.go`),
+the Edge lifecycle (`shingo-edge/orders/lifecycle_service.go`, `manager.go`),
+the swap builders (`shingo-edge/engine/material_orders.go`) and the operator
 HMI (`shingo-edge/www/static/operator-station/`). The code wins over this doc;
 if they disagree, fix the doc.
 
@@ -42,14 +44,14 @@ at the destination, period). Two are Edge-lifecycle words in practice:
   `shingo-core/engine/wiring_vendor_status.go`). So `acknowledged`, like
   `submitted`, is an Edge-lifecycle word in practice.
 
-Edge mirrors Core's **full** status vocabulary: a status Core pushes that Edge
-previously discarded (`dispatched`, `faulted`) is now stored on the Edge row by
-a single mapping function (`orders.ApplyCoreStatus`), so the operator is shown
-the truth of whichever machine owns the order at that moment.
+Edge mirrors Core's **full** status vocabulary: every status Core pushes,
+`dispatched` and `faulted` included, is stored on the Edge row by a single
+mapping function (`orders.ApplyCoreStatus`), so the operator is shown the truth
+of whichever machine owns the order at that moment.
 
 ---
 
-## The ladder (C1)
+## The ladder
 
 ```
 pending -> (acquiring) -> [whole hand] -> dispatched -> in_transit -> delivered -> confirmed
@@ -82,8 +84,8 @@ to `queued`, keeping its own cause or else `waiting_for_material`;
 `order_history` is not rewritten. An Edge talking to an older Core translates a
 `sourcing` push or snapshot to `queued` at the door (`HandleOrderUpdate`,
 `ApplyCoreStatusSnapshot`), keeping the push's code or else
-`waiting_for_material`. That translation, the constant and the
-`.badge-sourcing` alias go together after one release.
+`waiting_for_material`; the `.badge-sourcing` class is an alias of
+`.badge-queued` so an old row renders.
 
 ---
 
@@ -101,7 +103,7 @@ derived, not hand-maintained): **confirmed, failed, cancelled, skipped**.
 | Status | Scope | Terminal | Core writes | Edge writes | Crosses wire? | What the operator sees |
 |---|---|---|---|---|---|---|
 | `pending` | shared | no | every door — the INSERT (`orders.Create`) sets it; `ResumeCompound` / `Restart` (reshuffling → pending) | local create | no (each side's own zero value) | Submit button on Edge list; Core UI badge |
-| `sourcing` | history only | no (its row is `queued`'s) | nothing since C1 (v148 moved live rows to `queued`) | nothing — translated to `queued` at the door | an older Core's push or snapshot only | old history rows render as the `queued` badge (`.badge-sourcing` alias) |
+| `sourcing` | history only | no (its row is `queued`'s) | nothing (v148 moved live rows to `queued`) | nothing — translated to `queued` at the door | an older Core's push or snapshot only | old history rows render as the `queued` badge (`.badge-sourcing` alias) |
 | `queued` | shared | no | `Park` (cause first; via `ParkAndTell` at a door, the scanner's park, `DemoteAfterFleetRefusal`) | `ApplyCoreStatus` (Core's `order.update`) | yes (`order.update`, once per park, with the reason) | "IN QUEUE: \<queue_reason\>"; badge on both lists |
 | `submitted` | Edge-only (in practice) | no | not produced by the dispatcher | local create auto-submit, `SubmitOrder` | no (Edge-local) | Edge UI badge; absent from window cards |
 | `dispatched` | shared | no | `Dispatch` (the CAS claim, taken before the fleet create) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | Core filter chip; Edge mirrors when Core pushes it |
@@ -225,16 +227,18 @@ Notes on the Core machine:
   (`fleet_unavailable`, or the scanner's ngrp-resolve carve-out); an empty code
   is refused and nothing is undone. A redirect writes no status:
   `HandleOrderRedirect` refuses anything not pre-dispatch.
-- **Doors.** Each door (`HandleOrderRequest`, complex intake, loader
-  replenishment) holds the scanner's lock across its issue, its apply
-  and one acquire (`dispatch/door.go`), so a periodic pass never acquires a
-  half-applied row (a carried-bin recovery holds none: it is issued whole, its
-  robot pinned in the row, and dispatched in its own call). A door whose
-  decision is already a wait (dropoff gate, finder wait, unresolved group) parks
-  the order itself (`ParkAndTell`). The station is not told `queued` for an
-  order that never waited; a park sends one
-  `order.update` `queued` with the reason, and a door never emits
-  `EventOrderQueued`.
+- **Doors.** The wire door (`HandleOrderRequest`) and complex intake write
+  plan facts on the row after its INSERT, so each holds the scanner's lock
+  across its issue, its apply and its one acquire (`dispatch/door.go`), and a
+  periodic pass never acquires a half-applied row; the home clear's re-run
+  takes the same lock (`RerunClearsFor`). A door whose row is whole at its
+  INSERT holds no lock: a bin move and a Core ask
+  take their one acquire through `AcquireOne`, and a carried-bin recovery, its
+  robot pinned in the row, dispatches in its own call. A door whose decision is
+  already a wait (dropoff gate, finder wait, unresolved group) parks the order
+  itself (`ParkAndTell`). The station is not told `queued` for an order that
+  never waited; a park sends one `order.update` `queued` with the reason, and a
+  door asks for no scan pass of its own.
 
 ---
 
@@ -243,9 +247,8 @@ Notes on the Core machine:
 Edge owns the order envelope from local creation through operator confirmation.
 It mirrors Core's planning status when Core pushes it (via `ApplyCoreStatus`),
 and independently tracks its own submission lifecycle
-(`pending` → `submitted` → `acknowledged`). The statuses the mapping newly
-lets Edge store — `dispatched`, `faulted` — appear here because Core pushes
-them over `order.update`. Edge never stores `sourcing`: an older Core's
+(`pending` → `submitted` → `acknowledged`). `dispatched` and `faulted` appear
+here because Core pushes them over `order.update` and the mapping stores them. Edge never stores `sourcing`: an older Core's
 `sourcing` is `queued` by the time it reaches `ApplyCoreStatus`. The diagram is
 every edge of `validTransitions` between the statuses an order born `pending`
 can reach; who writes each status on Edge is the lifecycle table's Edge column.
@@ -342,8 +345,7 @@ Notes on the Edge machine:
   `order.delivered`, `order.error`, `order.skipped`, `order.cancelled`) that
   carry the extra fields (bin snapshot, expiry, reason) this generic mapping
   does not have. An older Core's `sourcing` is translated to `queued` before
-  this mapping (`HandleOrderUpdate`, `ApplyCoreStatusSnapshot`), for one
-  release.
+  this mapping (`HandleOrderUpdate`, `ApplyCoreStatusSnapshot`).
 - **A resumed parent** leaves `reshuffling` on Core for `pending`, and Core
   never pushes `pending`. The Edge hears where its acquire landed instead:
   `queued` through the park's one update, or `dispatched` (pushed for a
@@ -353,48 +355,94 @@ Notes on the Edge machine:
   path (`HandleDispatchReply` → `mirrorTransition`) validates against
   `validTransitions`; when the mirror has skipped steps it catches up in one
   forced move, ticketed as a `MIRROR JUMP` history row unless the jump is on
-  the expected-silence list. The generic push validates nothing — a dropped
-  intermediate `dispatched` push once froze the mirror while the robot was
-  already staged (SPR order 2399, 2026-07), which is why it forces.
+  the expected-silence list. The generic push validates nothing and forces:
+  a validating push would let one dropped intermediate push (a `dispatched`
+  that never arrived) freeze the mirror behind a robot that is already staged.
 
 ---
 
 ## Swap modes
 
-Material flow follows a circular pattern. A bin sits at a station. It is consumed (parts removed) or filled (parts added). When the bin is spent, two things happen: the outgoing bin leaves and a replacement arrives. This is one cycle, regardless of whether the station consumes or produces material.
-
-Both consume and produce payloads follow the same cycle path. The **role** determines which direction bins flow — full in / empty out (consume), or empty in / full out (produce). The **swap mode** determines the robot choreography.
+A bin sits at a station and is consumed (parts removed) or filled (parts
+added). When it is spent, the outgoing bin leaves and a replacement arrives:
+one cycle, whichever way the station works. The claim's **role** decides which
+way bins flow — full in / empty out (`consume`), empty in / full out
+(`produce`). The claim's **swap mode** decides the robot choreography.
 
 ### Triggering
 
-A cycle triggers when UOP remaining crosses the configured reorder point. Two trigger sources are available, controlled by the **AutoReorder** setting:
-
-- **AutoReorder ON** — The system monitors PLC counter deltas and triggers the cycle automatically when remaining drops below the reorder point.
-- **AutoReorder OFF** — The operator presses the REQUEST button on the operator canvas to trigger the cycle manually.
-
-Both consume and produce payloads use the same trigger mechanism. For consume payloads, remaining drops as parts are used. For produce payloads, remaining drops as bin capacity fills up.
+A cycle starts when an operator presses the station card's request, or, with
+the claim's `auto_reorder` on, when the Edge's level sweep (`sweepNodeLevel`)
+finds the cell's level breached and nothing already on its way to it. The
+level sweep is in [uop-threshold-replenishment.md](uop-threshold-replenishment.md).
 
 ### The modes
 
-A swap mode names a **step-list shape and nothing else** (`protocol/swap_mode.go:13-16`). Gates read the steps, or a property declared on the claim — never the mode name.
+A swap mode names a **step-list shape and nothing else** (the `SwapMode` type
+comment, `protocol/swap_mode.go`). Gates read the steps, or a property declared
+on the claim — never the mode name.
 
-Four modes may be configured on a style node claim — `protocol.ConfigurableSwapModes()` (`protocol/swap_mode.go:181-188`). A fifth, `manual_swap`, exists on the wire and in memory but is never stored. The mode applies equally to both roles.
+Four modes may be configured on a style node claim —
+`protocol.ConfigurableSwapModes()`. A fifth, `manual_swap`, exists on the wire
+and in memory but is never stored. The mode applies equally to both roles.
 
-**Sequential** (`sequential`) — One robot handles the swap in two phases. Order A drives to lineside empty, holds, waits for operator release, picks up the outgoing bin, and delivers it to the outbound destination — three steps (`BuildSequentialRemovalSteps`, `shingo-edge/engine/material_orders.go:468-479`). Order B is auto-created when Order A's status becomes `in_transit` (`handleSequentialBackfill`, `shingo-edge/engine/wiring_status_changed.go:36-41`) and delivers the replacement from the inbound source in two steps.
+**Sequential** (`sequential`) — One robot handles the swap in two phases. Order
+A drives to lineside empty, holds, waits for operator release, picks up the
+outgoing bin, and delivers it to the outbound destination — three steps
+(`BuildSequentialRemovalSteps`). Order B is auto-created when Order A's status
+becomes `in_transit` (`handleSequentialBackfill`) and delivers the replacement
+from the inbound source in two steps (`BuildSequentialBackfillSteps`).
 
-**Two Robot** (`two_robot`) — Two robots work concurrently. Robot A (resupply) picks the replacement from the inbound source, drops it at inbound staging, and holds *there*; Robot B (removal) drives to lineside and holds. Edge releases B first, then A (`BuildTwoRobotSwapSteps`, `material_orders.go:292-327`). Requires an inbound staging node **and** an outbound destination — the second is validated because the evac leg's dropoff is unrecoverable once the supply leg has shipped (`shingo-edge/engine/swap_dispatch.go:240-242`).
+**Two Robot** (`two_robot`) — Two robots work concurrently. Robot A (resupply)
+picks the replacement from the inbound source, drops it at inbound staging, and
+holds *there*; Robot B (removal) drives to lineside and holds. Edge releases B
+first, then A (`BuildTwoRobotSwapSteps`). `buildSwapDispatch` refuses the pair
+without an outbound destination: the evac leg's dropoff is unrecoverable once
+the supply leg has shipped.
 
-**Two Robot Press Index** (`two_robot_press_index`) — A press with two or three positions, where bins index forward through the press rather than swapping in place. Requires `paired_core_node` (the back position) and an outbound destination. Two-position layout: R1 `wait(A) → pickup(A) → dropoff(outbound) → pickup(source) → dropoff(B)`, R2 `wait(B) → pickup(B) → dropoff(A)`. Three-position layout adds `second_paired_core_node` as C and R2 runs `wait(B) → pickup(B) → dropoff(A) → pickup(C) → dropoff(B)`. Both robots fire on operator release; the fleet manager handles cross-leg sequencing on shared nodes (`BuildTwoRobotPressIndexSwapSteps`, `material_orders.go:329-346`). An `index_robot_supplies` flip moves the supermarket trip between R1 and R2 without moving the press pickup or dropoff.
+**Two Robot Press Index** (`two_robot_press_index`) — A press with two or three
+positions, where bins index forward through the press rather than swapping in
+place. Requires `paired_core_node` (the back position) and an outbound
+destination. Two-position layout: R1 `wait(A) → pickup(A) → dropoff(outbound) →
+pickup(source) → dropoff(B)`, R2 `wait(B) → pickup(B) → dropoff(A)`.
+Three-position layout adds `second_paired_core_node` as C: R1 backfills C, and
+R2 runs `wait(B) → pickup(B) → dropoff(A) → pickup(C) → dropoff(B)`. Both robots
+fire on operator release; the fleet manager handles cross-leg sequencing on
+shared nodes (`BuildTwoRobotPressIndexSwapSteps`). An `index_robot_supplies`
+flip moves the supermarket trip from R1 to R2 without moving the press pickup or
+dropoff.
 
-**Single Robot** (`single_robot`) — One robot executes a **nine**-step sequence using both staging nodes: pickup from inbound source → drop at inbound staging → drive to lineside and hold → pickup outgoing → park it at outbound staging → pickup replacement from inbound staging → deliver to lineside → pickup outgoing from outbound staging → deliver to outbound destination (`BuildSingleSwapSteps`, `material_orders.go:256-290`).
+**Single Robot** (`single_robot`) — One robot executes a **nine**-step sequence
+using both staging nodes: pickup from inbound source → drop at inbound staging →
+drive to lineside and hold → pickup outgoing → park it at outbound staging →
+pickup replacement from inbound staging → deliver to lineside → pickup outgoing
+from outbound staging → deliver to outbound destination (`BuildSingleSwapSteps`).
 
-**Manual Swap** (`manual_swap`) — not a choreography. It names a place a forklift driver works: a loader or unloader window. Core owns the topology and `domain.Loader.SynthClaim` stamps this mode onto an in-memory claim purely so the loader branches engage; nothing persists it, and `ConfigurableSwapModes` excludes it. Ask the loader question of the claim (`domain.NodeClaim.IsLoaderNode` on Edge, `plantspec.Claim.IsLoader` on Core), not of the mode field — a drift test enforces that those are the only two readers (`protocol/swap_mode.go:45-61`).
+**Manual Swap** (`manual_swap`) — not a choreography. It names a place a
+forklift driver works: a loader or unloader window. Core owns the topology and
+`domain.Loader.SynthClaim` stamps this mode onto an in-memory claim purely so
+the loader branches engage; nothing persists it, and `ConfigurableSwapModes`
+excludes it. Ask the loader question of the claim
+(`domain.NodeClaim.IsLoaderNode` on Edge, `plantspec.Claim.IsLoader` on Core),
+not of the mode field; `TestLoaderQuestionHasOneDerivationPoint` holds those
+two as the only readers.
 
-A sixth constant, `simple`, is defined but retired as a configurable mode: `UpsertClaim` and `plantspec.Validate` reject it, and it survives only as a runtime descriptor for the node-empty downgrade, where a claim with an empty head collapses to a plain delivery move (`protocol/swap_mode.go:77-81`). A **seventh** value, `press_position`, is the in-memory per-position fan-out marker and must never persist.
+A sixth constant, `simple`, is not a configurable mode: `UpsertClaim` and
+`plantspec.Validate` reject it, and it is only a runtime descriptor for the
+node-empty downgrade, where a claim with an empty head collapses to a plain
+delivery move (`protocol.SwapModeSimple`). A **seventh** value,
+`press_position`, is the in-memory per-position fan-out marker and must never
+persist.
 
-There is no default. `swap_mode` is `TEXT NOT NULL` with no DDL default (`shingo-edge/store/schema/sqlite_ddl.go:459`), and `UpsertClaim` rejects both a blank value and anything outside `ConfigurableSwapModes()` with `protocol.ErrInvalidSwapMode` — a 400, not a silent normalization (`shingo-edge/store/processes/claims.go:234,248-250`).
+There is no default. `swap_mode` is `TEXT NOT NULL` with no DDL default
+(`shingo-edge/store/schema/sqlite_ddl.go`), and `UpsertClaim` rejects both a
+blank value and anything outside `ConfigurableSwapModes()` with
+`protocol.ErrInvalidSwapMode` — a 400, not a silent normalization.
 
-The **wire and runtime** field that carries a swap mode on a dispatched order is still spelled `cycle_mode` (`SwapDispatch.CycleMode`, `shingo-edge/engine/swap_dispatch.go:23`). It holds a `protocol.SwapMode` value. The configured field on a claim is `swap_mode`; "cycle mode" is not a separate vocabulary.
+The **wire and runtime** field that carries a swap mode on a dispatched order is
+spelled `cycle_mode` (`SwapDispatch.CycleMode`, `shingo-edge/engine/swap_dispatch.go`).
+It holds a `protocol.SwapMode` value. The configured field on a claim is
+`swap_mode`; "cycle mode" is not a separate vocabulary.
 
 ### Roles
 
@@ -402,41 +450,54 @@ The **wire and runtime** field that carries a swap mode on a dispatched order is
 |---|---|---|
 | **Incoming bins** | Full (parts to use) | Empty (capacity to fill) |
 | **Outgoing bins** | Empty (spent) | Full (finished goods) |
-| **RetrieveEmpty flag** | `false` — retrieve a full bin | `true` — retrieve an empty bin |
+| **Inbound pickup** | a full bin of the claim's part | an empty carrier: the step is flagged `Empty` (`markInboundEmpty`) |
 
-The role is derived at order creation time from the payload's `role` field. Operators do not configure retrieval direction directly.
+The role is the claim's (`consume` or `produce`). Operators do not configure
+retrieval direction directly.
 
-### Operator Interactions
+### Operator interactions
 
-The operator canvas presents three actions for each payload:
+The station card (`cellCardAction`) offers one action at a time: a request when
+the cell is idle (REQUEST MATERIAL, REQUEST EMPTY or REQUEST SWAP), RELEASE
+while a leg is staged at the line, and CONFIRM when the replacement is delivered
+by a leg that does not auto-confirm (the confirm rule is under
+[Departed legs and cell-done](#departed-legs-and-cell-done)). A request is
+offered whether or not `auto_reorder` is on. What the cell's count reads once
+the replacement lands is the UOP model's: [uop-architecture.md](uop-architecture.md).
 
-- **REQUEST** — Triggers a material handling cycle (available as an early override even when AutoReorder is ON)
-- **RELEASE** — Signals the robot to pick up the outgoing bin (when the order is staged at lineside)
-- **CONFIRM** — Acknowledges delivery of the replacement bin; resets UOP remaining to capacity
+### Node configuration
 
-### Reset Behavior
+Each swap mode reads a set of node assignments off the claim. Nodes can be
+configured as a specific node, a node group (Core resolves to a physical node),
+or left blank for Core's global fallback. What each mode makes of each field is
+`flowspec.Steady` (`shingo-edge/domain/flowspec`): a **required** field left
+blank is refused at save, on the field (`validateSwapModeRouting`: "*mode*
+requires *field*"); a **forbidden** one is cleared at save; a **used** one is
+saved as entered. `buildSwapDispatch` refuses the staging, paired and
+destination blanks again at dispatch.
 
-UOP remaining resets when the replacement bin is delivered and confirmed, not when the outgoing bin is ingested by Core. The reset value comes from the payload catalog's UOP capacity, synced from Core via Kafka. PayloadCode is mandatory on every payload configuration — it is the lookup key for the catalog.
-
-### Node Configuration
-
-Each swap mode reads a set of node assignments off the claim. Nodes can be configured as a specific node, a node group (Core resolves to a physical node), or left blank for Core's global fallback. Which of them are *refused at dispatch* if blank is decided by `buildSwapDispatch` (`shingo-edge/engine/swap_dispatch.go:193-273`):
-
-| Claim field · editor label | Sequential | Two Robot | 2-Robot Press Index | Single Robot |
+| Claim field | Sequential | Two Robot | 2-Robot Press Index | Single Robot |
 |---|---|---|---|---|
-| `inbound_source` · **Inbound Source** | used | used | used | used |
-| `inbound_staging` · **Staging › Inbound** | — | **required** | — | **required** |
-| `outbound_staging` · **Staging › Outbound** | — | — | — | **required** |
-| `outbound_destination` · **Outbound Destination** | used | **required** | **required** | used |
-| `paired_core_node` · **Paired Node** | — | — | **required** (back position) | — |
-| `second_paired_core_node` · **Third Press Position** | — | — | optional (3-position layout) | — |
+| `inbound_source` | **required** | used | used | used |
+| `inbound_staging` | forbidden | **required** | used | **required** |
+| `outbound_staging` | forbidden | forbidden | used | **required** |
+| `outbound_destination` | **required** | **required** | **required** | **required** |
+| `paired_core_node` | **required** | forbidden | **required** (back position) | forbidden |
+| `second_paired_core_node` | forbidden | forbidden | used (3-position layout) | forbidden |
+| `payload_code` | **required** | **required** | **required** | **required** |
 
-- **Inbound Source**: where replacement bins come from (e.g. a supermarket node group). For a produce claim the inbound pickup is flagged Empty, so it pulls a fresh carrier rather than a full payload bin.
-- **Staging › Inbound**: new material stages here before delivery.
-- **Staging › Outbound**: old material parks here after removal (the single-robot shuffle's second hand).
-- **Outbound Destination**: where outgoing bins are sent (e.g. empty bin storage, wash area, or shipping). May be overridden at dispatch by the *resident* claim's value when the cell holds a style other than the one being requested (`shingo-edge/engine/swap_evac_dest.go`).
-
-The editor shows the same rule inline: "1-Robot requires both inbound and outbound staging. 2-Robot requires inbound staging" (`shingo-edge/www/templates/processes.html:569`).
+- **Inbound source**: where replacement bins come from (e.g. a supermarket node
+  group). For a produce claim the inbound pickup is flagged Empty, so it pulls a
+  fresh carrier rather than a full payload bin. A claim's `keep_staged_node`
+  (used in every swap mode) is fetched from instead, with a spare kept standing
+  on it.
+- **Inbound staging**: new material stages here before delivery.
+- **Outbound staging**: old material parks here after removal (the single-robot
+  shuffle's second hand).
+- **Outbound destination**: where outgoing bins are sent (e.g. empty bin
+  storage, wash area, or shipping). Overridden at dispatch by the *resident*
+  claim's value when the cell holds a style other than the one being requested
+  (`residentEvacDest`, `shingo-edge/engine/swap_evac_dest.go`).
 
 ---
 
@@ -456,13 +517,14 @@ positional rule cannot see:
    still holding a staging slot has not left, however far its robot has driven).
    `orders.cell_left_at` records it.
 2. **The leg's own PLACEMENT at the line position is recorded.** A leg that
-   leaves a bin on `claim.CoreNodeName` (`legPlacesBinAt` — the same predicate
-   that decides the confirm receipt) owes the cell a carrier, and it owes it
-   until the Edge has a bin bound at that cell. `active_bin_id` is the record.
+   leaves a bin on `claim.CoreNodeName` (`protocol.PlacesBinAt` over its steps —
+   the same predicate that decides the confirm receipt) owes the cell a carrier,
+   and it owes it until the Edge has a bin bound at that cell. `active_bin_id` is
+   the record.
 
 `orders.departed_at` is stamped only when both hold. `engine/leg_departure.go`
-derives all of it from the steps and **never from `claim.SwapMode`** — the
-positional rule this replaced is what broke.
+derives all of it from the steps and **never from `claim.SwapMode`**: a rule
+keyed on the mode is a claim about every future mode that nothing checks.
 
 **Why the second fact is not redundant.** For most legs the two land together
 and (2) is already true when (1) fires. They separate for `single_robot`: step 7
@@ -491,9 +553,9 @@ trigger is the safety net, not the path.
 A leg's last cell step is either a pickup with steps after it (stamped) or its
 own final step (terminal covers it; `departed_at` stays NULL for life). Any
 other shape is unprovable — not stamped, blocks until terminal, logged as
-`departure unprovable`. Two Core paths produce no stamp at all
-(`wiring_block_completed.go`, where `resolvePickupBin` cannot name the bin);
-fail-closed, the leg waits for terminal. A leg that left the cell's nodes with
+`departure unprovable`. A pickup Core cannot attribute to one of the order's
+carts (`resolvePickupBinRow`) lifts nothing and sends no `BinPickedUp`, so it
+stamps nothing; fail-closed, the leg waits for terminal. A leg that left the cell's nodes with
 its placement unrecorded gets its own sentence — *"left the cell at X but its
 own placement at Y is not recorded — the cell stays shut until it lands"* — so a
 cell held by this rule always says what it is waiting for.
@@ -510,9 +572,13 @@ AND not departed). They must never disagree:
 |---|---|
 | `CanAcceptOrders` | the runtime slots |
 | `hasActiveSwap` | the runtime slots |
-| `guardPositionSpokenFor` (row arm) | the durable rows at the node |
+| `positionWorkedBy` (the vacant-line gate, `gateLineRows`) | the durable rows at the node |
 | `sweepNodeLevel` (auto-reorder) | the durable rows at the node |
 | Station card (`cellCardAction`) | the orders it lists, as `!o.departed` |
+
+The two row readers excuse a keep-staged refill (`isSpotRefill`): a plain order
+bound for the claim's inbound staging that never touches the line and never
+departs.
 
 `cell_left_at` is NOT one of these. It is not an admission answer on its own —
 its only reader is `settleCellPlacement` — and a reader that asked it instead of
@@ -526,10 +592,11 @@ CONFIRM is the cycle's only receipt.
 
 **CONFIRM belongs to the leg that placed on the press**: a leg auto-confirms iff
 it leaves no bin on `claim.CoreNodeName`. Exactly one receipt per cycle, every
-mode, both flip states. The positional `AutoConfirmA`/`AutoConfirmB` literals it
-replaced were correct only by accident of which robot carried which half, and
-the `IndexRobotSupplies` flip broke the accident (Springfield press trial,
-2026-09-02: the operator was asked to sign for a tote at the supermarket).
+mode, both flip states. `confirmPolicy` derives each leg's
+`AutoConfirmA`/`AutoConfirmB` from that leg's steps, never from which robot it
+is: the `IndexRobotSupplies` flip moves the supermarket trip between R1 and R2,
+so a flag set by position would ask the operator to sign for a tote standing at
+the supermarket.
 
 A new swap mode is a new step builder and inherits all of it for free, or it
 fails one of three walkers in `shingo-edge/engine/swap_leg_standard_test.go`:
@@ -551,7 +618,7 @@ make its last cell step a pickup, or teach `legDepartsAt` a new proof event
 
 ## The wire crossing
 
-Core and Edge are two processes (Core on a Proxmox VM, Edge on a Pi at the
+Core and Edge are two processes (one Core for the plant, an Edge at each
 line). They communicate over Kafka order-channel envelopes. The two machines
 agree on the enum but each owns different transitions; the wire is where they
 reconcile.
@@ -564,7 +631,7 @@ reconcile.
 - `order.update` — carries `status` + `detail` + `queue_reason` (+ ETA into
   `in_transit`). Edge routes the status through `ApplyCoreStatus`
   (`HandleOrderUpdate` → `HandleCoreStatusPush`); `queued` /
-  `dispatched` / `in_transit` / `faulted` now update the Edge row, while ETA
+  `dispatched` / `in_transit` / `faulted` update the Edge row, while ETA
   and `queue_reason` are side-written regardless. A park sends one `queued`
   update with the reason; an order that never waited is not told `queued`. An
   older Core's `sourcing` is rewritten to `queued` (its code, or
@@ -586,7 +653,7 @@ reconcile.
   (`order.receipt`, confirmed with final count).
 
 ```mermaid
-flowDiagram LR
+flowchart LR
     subgraph Core[Core - planning machine]
         CPlan[pending / queued]
         CFleet[dispatched -> in_transit -> staged / delivered]

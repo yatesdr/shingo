@@ -2,13 +2,19 @@
 
 Verified against: b9210bce
 
-This document covers the continuous-review reorder-point system for loader L1 and cell autoreorder.
+This document covers the continuous-review reorder levels: Core's loader L1 threshold and the Edge's cell
+autoreorder.
 
-The model is *C-push*: Core observes combined in-loop UOP (bins + lineside buckets), compares against engineer-configured thresholds, and creates the L1 retrieve orders itself when replenishment is needed. A threshold of `0` means Core does not monitor that pair; what feeds the loader then depends on its replenishment mode (see the loader L1 threshold's default below).
+The loader side is *C-push*: Core observes combined in-loop UOP (bins + lineside piles), compares it against
+engineer-configured thresholds, and creates the L1 retrieve orders itself. A threshold of `0` means Core does not
+monitor that pair; what feeds the loader then depends on its replenishment mode (see the default below). This is
+the only automatic path for a loader's empties: there is no bin-count trigger and no Edge-side sizing.
 
-**There is one automatic path.** This document used to describe two, with a dedup contract between them, and that is the single most important thing to know is no longer true. The legacy bin-count `DemandSignal` route is retired entirely (2026-08): Core no longer emits it and no handler exists on Edge. There is no bin-count fallback, no `ReorderPoint` floor of 2 for loaders, and nothing that needs to "skip opted-in pairs".
-
-See [terminology.md](terminology.md) for `Bin`, `Payload`, `UOP`, and bucket terminology; [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this sits in; and [sweeps-and-monitors.md](sweeps-and-monitors.md) for the full list of what re-evaluates a threshold and when.
+See [terminology.md](terminology.md) for `Bin`, `Payload`, `UOP` and pile terminology;
+[uop-architecture.md](uop-architecture.md) for how the counts themselves are kept;
+[bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this
+sits in; and [sweeps-and-monitors.md](sweeps-and-monitors.md) for the full list of what re-evaluates a threshold and
+when.
 
 ---
 
@@ -18,31 +24,42 @@ The system manages two separate threshold knobs, in series along the supply path
 
 ### Loader L1 threshold (loop UOP)
 
-When **total in-loop UOP for a payload** drops below this value, Core creates an L1 retrieve_empty order (directly — no wire signal; Edge only executes).
+When **total in-loop UOP for a payload** drops below this value, Core creates an L1 retrieve_empty order (directly —
+no wire signal; Edge only executes).
 
-- *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the replenishment loop (`available`, `staged`, in-transit) and every **active** lineside pile of that payload. Excludes `flagged`, `maintenance`, `retired` bins. A pile is active from the pull until its process's next cutover (every active-style flip: the changeover cutover and the admin style flip); at the cutover every pile at the process's nodes becomes **stranded**, a count-anomaly record that never drains, never counts on either side and never revives when the style comes back. Stranded is a state on the row, set by the Edge, not a claims lookup at Core (the 2026-07-23 claims-derived rule is gone). Operators run out what they pull, so a leftover at cutover is most likely the size of a declaration error, not parts on the bench.
-- *Lives at*: Core-owned loader config — `bin_loader_homes.uop_threshold` per (loader position, payload), derived into `demand_registry.replenish_uop_threshold` by `BuildDemandRegistryFromAggregate` and re-derived on every loader config edit (`service/loader_service.go` `rederive()`). The Edge `loader_payload_thresholds` table was dropped 2026-07-21; the Edge page's loader-threshold section was deleted with it.
-- *Owned by*: Core. The loader aggregate (`bin_loaders` and its payload rows) is the source of truth, and `demand_registry.replenish_uop_threshold` is derived from it. Edge receives loader configuration on the node-list sync, not by pushing it up.
-- *Default*: `0` — Core doesn't monitor this loader/payload pair. What feeds it then depends on the loader's replenishment mode: an operator-driven loader is stocked by the window-free push (`rePushOwnLoader` / `SweepPushLoaders`); a threshold-mode loader with threshold 0 is fed by NOTHING, and the startup push logs a warning saying exactly that.
+- *In-loop UOP* is `SystemUOPForPayload`: `SUM(bins.uop_remaining)` over every bin of the payload, anywhere,
+  except `flagged`, `maintenance` and `retired` bins and a carrier stamped undeclared (nothing can fetch it), plus
+  `SUM(lineside_buckets.qty)` over the payload's **active** piles. A stranded pile never counts; when a pile is
+  active and when it strands is [uop-architecture.md](uop-architecture.md)'s.
+- *Lives at*: Core-owned loader config — `bin_loader_homes.uop_threshold` for a dedicated position, or
+  `bin_loader_payloads.uop_threshold` for a shared loader's payload — derived into
+  `demand_registry.replenish_uop_threshold` by `BuildDemandRegistryFromAggregate` and re-derived on every loader
+  config edit (`rederive` in `service/loader_service.go`).
+- *Owned by*: Core. Edge receives loader configuration on the node-list sync, not by pushing it up.
+- *Default*: `0` — Core doesn't monitor this loader/payload pair. What feeds it then depends on the loader's
+  replenishment mode: an operator-driven loader is stocked by the window-free push (`rePushOwnLoader` /
+  `SweepPushLoaders`); a threshold-mode loader with threshold 0 is fed by NOTHING, and Core's loader page says so
+  ("no threshold set — nothing will order for this loader").
 
-### Cell autoreorder (line-bin UOP)
+### Cell autoreorder (the claim's level)
 
-When **this specific line bin's `uop_remaining`** drops below this value, Edge fires a retrieve_full order against the cell's owning loader.
+When **the line bin's UOP** reaches the claim's level, the Edge asks for material for that node.
 
-- *Lives at*: `style_node_claims.reorder_point` column on Edge (pre-existing; the v6 work only formalized opt-in semantics).
-- *Evaluated at*: Edge, on the PLC counter delta path in `wiring_counter_delta.go` — which is essentially the only automatic evaluation site (see "Cell autoreorder evaluation" under Operational notes for what that does and does not mean).
-- *Default*: `0` — silent-inert via the explicit `ReorderPoint > 0` gate. The firing condition is `AutoReorder && ReorderPoint > 0 && newRemaining <= ReorderPoint`, including `newRemaining <= 0` — a level, not a (0, threshold] window.
+- *Lives at*: the Edge claim, `style_node_claims.reorder_point`, with `auto_reorder` deciding whether a breach
+  orders. The level is `NodeClaim.DemandLevel` (`protocol.ClaimDemandLevel`): a consume claim's reorder point; a
+  produce claim's reorder point when it is above 0 and below the pack, otherwise its UOP capacity.
+- *Evaluated at*: Edge, by the demand reconciler's level sweep (`sweepCellLevels` in `engine/demand_reconciler.go`)
+  once a period (`demandReconcileInterval`, 60s). The PLC tick only moves the count.
+- *Default*: `0` — a level of 0 is the opt-out on either role and evaluates nothing. Breach is `remaining <= level`
+  on a consume claim and `remaining >= level` on a produce one — a level, not a window: a count that overshoots it
+  is still breached.
 
-The two thresholds work together: cell autoreorder pulls a fresh bin from the loader's lane; the loader L1 threshold replenishes the loader's lane.
+The two thresholds work together: cell autoreorder pulls a fresh bin from the loader's lane; the loader L1
+threshold replenishes the loader's lane.
 
 ---
 
 ## C-push pipeline (no signal — Core orders directly)
-
-The wire signal this section used to describe (`LoopBelowThresholdSignal` on
-`demand.loop_below_threshold`, Edge sizing and firing the ask) was deleted
-2026-08-02 after a Springfield over-order showed the two halves counted
-different things. Core now owns the whole decision:
 
 ```
 Edge                                      Core
@@ -57,169 +74,109 @@ LinesideBucketLevel                   →   lineside_buckets
   and every row at Edge boot                state) row to the level;
                                             0 deletes it
 
-BinUpdatedEvent, BinUOPDelta, or      →   threshold_monitor subscribes
-LinesideBucketApplied                       to all three.
+bin updated, BinUOPDelta applied,     →   threshold monitor entry points:
+pile level applied                          handleBinUpdated,
+                                            OnBinUOPDelta, OnBucketApplied
                                             evaluatePayload(code):
                                               entries = lookup bindings
                                               uop    = SystemUOPForPayload
                                               if total < threshold:
                                                 allow(debounce 15s):
                                                   fireSignalCached:
-                                                    size ask, resolve
-                                                    free windows,
-                                                    create one order
-                                                    per free window
+                                                    ReplenishLoader
+                                                    sizes the ask, chooses
+                                                    free windows, creates
+                                                    one order per window
 ```
 
-The orders are created on Core; the Edge only executes them. See
-`fireSignalCached` in `engine/threshold_monitor.go` — the cutover comment
-there records the 2026-07-31 incident that ended the split.
+The orders are created on Core (`fireSignalCached` in `engine/threshold_monitor.go`); the Edge only executes them.
 
-Three separate Core subscriptions funnel into one evaluation, so a single bin move commonly trips more than one; the 15-second debounce is what absorbs that. The monitor also mints and closes **demand episodes** per binding (`engine/threshold_episodes.go`), and fired orders are stamped with the episode's origin — the episode is what dedups Core-side (see the loader decision below). See [sweeps-and-monitors.md](sweeps-and-monitors.md).
+Three entry points funnel into one evaluation, so a single bin move commonly trips more than one; the 15-second
+debounce is what absorbs that. The monitor also mints and closes **demand episodes** per binding
+(`engine/threshold_episodes.go`), and fired orders are stamped with the episode's origin — the episode is what
+dedups Core-side (see the loader decision below). See [sweeps-and-monitors.md](sweeps-and-monitors.md).
 
 ### Debounce policy
 
-15 seconds per `(station, core_node_name, payload)` tuple. The state is in-memory on Core — lost on restart. That's intentional: the startup sweep handles the restart case by re-evaluating every monitored binding with debounce bypassed.
+15 seconds (`thresholdDebounceWindow`) per place — `(core_node_name, payload)`, the key `placeKey` gives
+everything the monitor keys, so two registry rows for one place share one debounce budget. The state is in-memory
+on Core — lost on restart. That's intentional: the startup sweep handles the restart case by re-evaluating every
+monitored binding with debounce bypassed.
 
-`OnThresholdChanges` resets the debounce timer (and warm-up counter) for any binding whose threshold value changed during a registry sync, so an engineer-applied threshold engages on the next inventory event rather than waiting out a debounce window from a previous firing. It also closes the binding's open demand episode and evaluates immediately (`evaluatePayload`), so a config edit can itself fire. A failed read there evaluates nothing.
+`OnThresholdChanges` resets the debounce timer (and warm-up counter) for any binding whose threshold value changed
+during a registry sync, so an engineer-applied threshold engages on the next inventory event rather than waiting out
+a debounce window from a previous firing. It also closes the binding's open demand episode and evaluates immediately
+(`evaluatePayload`), so a config edit can itself fire. A failed read there evaluates nothing.
 
 ### Startup sweep
 
-On `Run()`, the monitor waits a brief grace period (3s — gives a reconnecting Edge time to drain `uop_backfill` deltas through the inventory_delta_dedup pipeline), then walks every binding with `threshold > 0`, computing `SystemUOPForPayload` once per distinct payload and ordering for any binding currently under threshold with `reason="warm_up_startup_sweep"`. The first order batch per binding bypasses debounce; subsequent firings during the warm-up window respect a per-binding counter (currently floor `2`, "at least 2 fires on cold start").
+On `Run()`, the monitor waits a brief grace period (3s — gives a reconnecting Edge time to drain `uop_backfill`
+deltas through the inventory_delta_dedup pipeline), then walks every binding with `threshold > 0`, computing
+`SystemUOPForPayload` once per distinct payload and ordering for any binding currently under threshold with
+`reason="warm_up_startup_sweep"`. The first order batch per binding bypasses debounce; subsequent firings during the
+warm-up window respect a per-binding counter (see [Warm-up cap](#warm-up-cap)).
 
-The strict deploy ordering is: `uop_backfill` from a reconnecting Edge must complete before the startup sweep reads `SystemUOPForPayload`. The 3s grace period is a safety belt; production deploys document the explicit ordering as a checklist item.
+The ordering rule: `uop_backfill` from a reconnecting Edge must complete before the startup sweep reads
+`SystemUOPForPayload`. The 3s grace period is a safety belt, not the guarantee.
 
 ---
 
 ## The loader decision
 
-The threshold monitor is not the only thing that puts a bin on a loader window.
-The operator's Request Empty and Request Full buttons, the push sweeps, the
-unloader's U1 and the manual retrieve at a loader window all target the same
-windows. Every one of them is decided on Core, by the same door as the
-threshold monitor: `dispatch.ReplenishLoader`
-(`shingo-core/dispatch/loader_replenish.go`). The Edge asks with
-`loader.retrieve` (`protocol/ask.go`), stating an origin — `operator` for a
-person, `side_cycle` for a release's full-in — and Core makes the orders; the
-threshold origin is Core's own and never comes over the wire. The Edge creates
-none of these orders itself, and its triggers only say when to ask. See
-[bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for
-the askers and the Edge's local pre-checks.
-
-`ReplenishLoader` reads what is coming, chooses the windows and inserts the
-orders under one per-loader lock (`loaderLock`), so two asks for the same loader
-cannot both read every window free and both order — the second reads the
-first's orders. What it subtracts depends on the origin: a threshold or a
-person's ask subtracts the demand episode's own outstanding orders; a release's
-full-in, which has no episode, subtracts the part's live orders across every
-window of the unloader and stops for a full of the part already standing on a
-target window. The window choice is `plan.LoaderWindows`: the loader's delivery
-targets, at most the budget (one bin per window or position, the window count
-for a spreading shared loader), each held when a carrier stands there, an order
-is on its way, another order's reservation speaks for it, or a carrier of the
-same kind is already asked for there.
-
-It also refuses to order when it cannot verify occupancy: every read fails
-closed. An unreadable occupancy check is not an empty window, and treating it
-as one is what produced the 2026-07-31 Springfield over-ordering incident.
-
-**Do not move any part of this decision back to the Edge, and do not split the
-read from the insert.** The 2026-07-31 incident came from Core deciding a loop
-was low while the Edge decided how much that meant, each counting different
-things. One caveat survives: an order a claim sends straight to a loader window
-(a changeover's retrieve, a cell's move) is still created on the Edge, outside
-this decision; Core holds the window against the asks once that order is there.
-Do not describe `ReplenishLoader` as the single creator of "every order that
-stocks a loader"; that claim was refuted by census and cost Springfield 241
-duplicate orders while it stood.
+Every carrier a loader or unloader takes — the threshold monitor's L1s, the operator's Request Empty and Request
+Full, the push sweeps, the unloader's U1, the manual retrieve at a loader window — is decided on Core by one door,
+`dispatch.ReplenishLoader`, under the loader's lock, failing closed on any read it cannot make. The threshold origin
+is Core's own and never comes over the wire. How it sizes, subtracts and chooses windows, and the one caveat (an
+order a claim sends straight to a window is still the Edge's), are
+[bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md)'s. **Do not move any part of this
+decision back to the Edge, and do not split the read from the insert.**
 
 ---
 
 ## The calculator
 
-The calculator lives on Core (`shingo-core/service/threshold_calculator.go`,
-lead-time helpers in `shingo-core/store/orders/lead_time_queries.go`),
-exposed at `POST /api/loader/calculate`. It is **uncalibrated**: on `/inventory`
-it is reached only from the UoP threshold column's ⓘ ("calculator
-(uncalibrated)"), and no row shows its number. It opens on the position with the
-shortest margin, with a picker for the others. Its suggestion is computed for
-every position from one read (`LeadTimesByPayload`: the same four inputs and two
-coverage counts, grouped by payload, pinned against the per-payload helpers)
-and `CalculateThresholds`, with the cycle taken from the 14-day median running
-rate (the median of the payload's positive `tte_samples` rates, kind
-threshold). There is no suggestion until the position has a completed L1 cycle
-in the window — a threshold `retrieve_empty` delivered to the position (any
-window of a shared loader) and confirmed — counted per position in the bindings
-read; a lead time from an order that never completed is not a lead time. **A
-suggestion is never one click into the live threshold**: it is prefilled in the
-calculator, the cycle and safety factor open to change and the calculation re-run
-through the endpoint, and one Confirm saves it (source `calculated`, or `manual`
-if the value was typed over). The window ends at Core's clock
-(`clock.Now()`), the one `order_history` is stamped with. The Edge
-replenishment page retains only the cell-autoreorder half; its loader
-section, calculator modal, Apply/Override/Recalculate-all controls and the
-`threshold_calculated` / `overridden_inputs` / `threshold_confidence` columns
-were deleted 2026-07-21 — the Edge write path terminated in a no-op stub.
+The calculator lives on Core (`shingo-core/service/threshold_calculator.go`, lead-time helpers in
+`shingo-core/store/orders/lead_time_queries.go`), exposed at `POST /api/loader/calculate`. It is **uncalibrated**:
+on `/inventory` it is reached only from the UoP threshold column's ⓘ ("calculator (uncalibrated)"), and no row shows
+its number. It opens on the position with the shortest margin, with a picker for the others. Its suggestion is
+computed for every position from one read (`LeadTimesByPayload`: the same four inputs and two coverage counts,
+grouped by payload, pinned against the per-payload helpers) and `CalculateThresholds`, with the cycle taken from the
+14-day median running rate (the median of the payload's positive `tte_samples` rates, kind threshold). There is no
+suggestion until the position has a completed L1 cycle in the window — a threshold `retrieve_empty` delivered to the
+position (any window of a shared loader) and confirmed — counted per position in the bindings read; a lead time from
+an order that never completed is not a lead time. **A suggestion is never one click into the live threshold**: it is
+prefilled in the calculator, the cycle and safety factor open to change and the calculation re-run through the
+endpoint, and one Confirm saves it (source `calculated`, or `manual` if the value was typed over). The window ends at
+Core's clock (`clock.Now()`), the one `order_history` is stamped with. The Edge replenishment page holds only the
+cell-autoreorder half.
 
-Two input differences from earlier revisions of this page: L1 queue measures
-`queued → dispatched` (Core never writes `acknowledged`, so the old pair was
-structurally zero), and the L2 store-transit input is no longer auto-fetched
-(no store orders exist) — it is 0 (the `/inventory` modal shows it as 0; the
-endpoint takes no L2 transit). Because L2 coverage is always zero,
-`scoreConfidence` can never return HIGH or MEDIUM; every suggestion currently
-reports LOW.
-
-Engineer-triggered. There is no nightly batch recompute — engineers see the calculation context every time they apply a value, and threshold thrash from auto-apply is impossible.
-
-The historical Edge modal this section used to document, for reference:
-
-```
-┌──────────────────────────────────────────────────┐
-│  Calculate threshold for Part A                  │
-│  Loader: SPRING-LOADER-01                        │
-│                                                  │
-│  Date range: [Last 14 days ▾]  [Run calculation] │
-│                                                  │
-│  Inputs (editable, pre-filled with observed):    │
-│    Cycle time:        [22.5]  engineer-supplied  │
-│    L1 queue:          [  0.8] 14d, n=47          │
-│    L1 transit:        [  4.2] 14d, n=47          │
-│    L2 fill time:      [ 16.8] 14d, n=47          │
-│    L2 transit:        [  6.1] 14d, n=45          │
-│    Market→cell:       [ 22.0] 14d, n=61          │
-│    Safety factor:     [  1.5] engineer-supplied  │
-│                                                  │
-│  Calculated:                                     │
-│    Threshold:    118 UOP                         │
-│    Cell reorder:  13 UOP                         │
-│    Confidence:    HIGH                           │
-│                                                  │
-│  Current value: 120 UOP (manual)                 │
-│                                                  │
-│  [Apply] [Override…] [Cancel]                    │
-└──────────────────────────────────────────────────┘
-```
-
-Every input is editable. Engineer edits flow through to the live-recomputed threshold + cell reorder shown below (the formula is mirrored in JS — no server round-trip per keystroke). Inputs the engineer changed away from the observed value are tracked on the threshold row in the `overridden_inputs` column and surface on the main table as `Overrides: <human-readable list>` under the source badge.
-
-*(The rest of this subsection describes the deleted Edge modal. Kept for provenance — the Core modal on `/inventory` reuses the same input set minus the changes noted above.)*
+Engineer-triggered. There is no nightly batch recompute — engineers see the calculation context every time they apply
+a value, and threshold thrash from auto-apply is impossible.
 
 ### Inputs
 
-All lead-time inputs are derived from `order_history` state transitions on Core via `shingo-core/store/orders/lead_time_queries.go`. Cycle time is supplied with the request; the `/inventory` page supplies 1 / the median of the payload's positive plant-wide consumption rates (`tte_samples.rate_per_sec`, kind threshold, in the window; not the latest: a sample's rate is a sliding window's count, and after a stop it decays to one unit per window before it reads 0), and its modal lets the engineer type another (automatic peak-cycle derivation from `hourly_counts` is a later round).
+All lead-time inputs are derived from `order_history` state transitions on Core via
+`shingo-core/store/orders/lead_time_queries.go`. Cycle time is supplied with the request; the `/inventory` page
+supplies 1 / the median of the payload's positive plant-wide consumption rates (`tte_samples.rate_per_sec`, kind
+threshold, in the window; not the latest: a sample's rate is a sliding window's count, and after a stop it decays to
+one unit per window before it reads 0), and its modal lets the engineer type another.
 
 | Input | Source | Helper |
 |---|---|---|
 | `cycle_seconds` | The request: on `/inventory`, 1 / the median measured rate; editable in its modal | `LeadTimesByPayload` (`RatePerSec`) |
-| `l1_queue_seconds` | `queued → dispatched` mean (Core never writes `acknowledged`, so the old `queued → acknowledged` pair was structurally zero) | `AvgL1QueueSeconds` |
+| `l1_queue_seconds` | `queued → dispatched` mean (Core never writes `acknowledged` on these orders) | `AvgL1QueueSeconds` |
 | `l1_transit_seconds` | `in_transit → delivered` mean (`retrieve_empty`) | `AvgL1TransitSeconds` |
 | `l2_load_seconds` | `delivered → confirmed` **median** (`retrieve_empty`) | `MedianL2LoadSeconds` |
-| `l2_transit_seconds` | no longer auto-fetched (no store orders exist); operator-editable modal input, default 0 | — |
+| `l2_transit_seconds` | not fetched (no store orders exist): 0, and the endpoint takes none | — |
 | `market_to_cell_seconds` | `in_transit → delivered` **p95** (`retrieve`) | `P95MarketToCellSeconds` |
 
-L2 load uses the median, not the mean, because the operator-fill segment is the only operator-driven step in the calculator and is exposed to long-tail outliers — end-of-shift confirms, weekend confirms, walked-away-from-station, Core's `ReconciliationService.AutoConfirmStuckDeliveredOrders` flipping stuck-delivered orders after a timeout. Median lets every outlier class fall out without filtering on a magic detail string, and is robust to outlier classes we haven't enumerated yet.
+L2 load uses the median, not the mean, because the operator-fill segment is the only operator-driven step in the
+calculator and is exposed to long-tail outliers — end-of-shift confirms, weekend confirms, walked-away-from-station,
+Core's `ReconciliationService.AutoConfirmStuckDeliveredOrders` flipping stuck-delivered orders after a timeout. Median
+lets every outlier class fall out without filtering on a magic detail string.
 
-`P95MarketToCellSeconds` returns the 95th-percentile retrieve duration, not the mean — reshuffle outliers (one-off long retrieves from blocked lanes) would otherwise pull the mean upward and oversize the cell reorder.
+`P95MarketToCellSeconds` returns the 95th-percentile retrieve duration, not the mean — reshuffle outliers (one-off
+long retrieves from blocked lanes) would otherwise pull the mean upward and oversize the cell reorder.
 
 ### Formula
 
@@ -230,27 +187,32 @@ l1_threshold = ceil(((l1_queue + l1_transit + l2_load + l2_transit)
 cell_reorder = ceil((market_to_cell / cycle_seconds) * safety_factor)
 ```
 
-No floor and no ceiling — the calculator returns the formula result verbatim. Safety/advisory concerns layered on top of the math (minimum-stock floors, over-capacity callouts) belong in the UI, not in the calculation. The Calculate modal and the loader-threshold row both render an informational **`≈ N bins`** annotation next to the threshold using the loader claim's bin capacity (`N = ceil(threshold / C)`); the annotation is suppressed when bin capacity is unresolvable. **Override** is the escape hatch for any value the engineer judges un-supportable.
+No floor and no ceiling — the calculator returns the formula result verbatim. Safety and advisory concerns layered on
+top of the math belong in the UI, not in the calculation; the engineer's typed value is the escape hatch for any
+result judged un-supportable.
 
 ### Confidence
 
-A coverage score over the data the calculator was able to observe in the date range:
+A coverage score over the data the calculator was able to observe in the date range (`scoreConfidence`):
 
 | Label | Condition |
 |---|---|
-| `HIGH` | window ≥ 14 days AND ≥ 20 completed L1 cycles AND ≥ 20 completed retrieves |
+| `HIGH` | window ≥ 14 days AND ≥ 20 each of completed L1 cycles, L2 samples and completed retrieves |
 | `MEDIUM` | window ≥ 7 days AND ≥ 10 of each |
 | `LOW` | anything below MEDIUM |
 
-`LOW` confidence is the only label reachable today (L2 coverage is always zero — see above), so as a practical matter **every suggestion reports LOW**. The engineer can still type a value; on Core the provenance is the uop_threshold audit_log row (see What gets persisted). The HIGH/MEDIUM thresholds are conservative for the initial Springfield roll-out and will be re-tuned post-calibration.
+The L2 sample count is always 0 (no store orders exist), so **every suggestion reports LOW**. The engineer can still
+type a value; on Core the provenance is the uop_threshold audit_log row (see What gets persisted).
 
 ### What gets persisted
 
-The calculation itself is not persisted — the engineer applies the suggestion (or types a value) in the `/inventory` row, which sets the threshold on the loader config (`bin_loader_homes.uop_threshold` or `bin_loader_payloads.uop_threshold` via the loader service's set-home / set-payload doors), which is where the value lives. Every change of the value writes one `audit_log` row (entity `loader_home` by position node, or `loader_payload` by loader; action `uop_threshold`; values `<payload> <old>` → `<payload> <new> <manual|calculated>`; the actor), whichever page made it. The threshold's hover on `/inventory` says who changed it, when and from what, with the threshold as time at the 14-day median running rate; a value set before any row existed says so. The Edge-side persistence columns this section used to document (`threshold_calculated`, `threshold_calculated_at`, `threshold_confidence`, `overridden_inputs` on a threshold row) were deleted 2026-07-21 along with the Edge loader-threshold UI; none of them exist on Core.
-
-### Recalculate all
-
-The bulk **Recalculate all** control was part of the deleted Edge modal; there is no equivalent on Core today. The `/inventory` calculator opens from the UoP threshold column's ⓘ on one position at a time (a picker moves it), and its suggestion is applied per (loader position, payload), only on Confirm.
+The calculation itself is not persisted — the engineer applies the suggestion (or types a value) in the `/inventory`
+row, which sets the threshold on the loader config (`bin_loader_homes.uop_threshold` or
+`bin_loader_payloads.uop_threshold` via the loader service's set-home / set-payload doors), which is where the value
+lives. Every change of the value writes one `audit_log` row (entity `loader_home` by position node, or
+`loader_payload` by loader; action `uop_threshold`; values `<payload> <old>` → `<payload> <new> <manual|calculated>`;
+the actor), whichever page made it. The threshold's hover on `/inventory` says who changed it, when and from what,
+with the threshold as time at the 14-day median running rate; a value set before any row existed says so.
 
 ---
 
@@ -261,7 +223,8 @@ The bulk **Recalculate all** control was part of the deleted Edge modal; there i
 | `0` or no row | Core never monitors. Nothing fires an L1 for that pair automatically; what feeds the loader depends on its replenishment mode (see the default above — operator-driven loaders get the push; threshold-mode loaders with 0 get nothing, loudly). |
 | `> 0` | Core monitors and creates orders on crossing. C-push owns L1 firing for that pair. |
 
-The `loader_payload_thresholds.source` audit table (and its `legacy`/`manual`/`calculated` semantics) is gone with the dropped Edge table. The surviving provenance analogue is `reorder_point_source` on the cell claim (`legacy`/`manual`/`calculated`, `shingo-edge/domain/process.go`).
+The cell claim carries its own provenance: `reorder_point_source` (`legacy` / `manual` / `calculated`) on
+`style_node_claims`.
 
 ---
 
@@ -269,55 +232,63 @@ The `loader_payload_thresholds.source` audit table (and its `legacy`/`manual`/`c
 
 ### Warm-up cap
 
-On startup sweep, bindings below threshold get a per-binding warm-up counter seeded to `2`. The first fire happens immediately (bypassing debounce); subsequent inventory events during the warm-up window also fire (bypassing debounce, decrementing the counter) so the first L1 round drives both a bin to the supermarket and a second bin in flight. After the counter hits zero, normal debounced operation takes over.
-
-The formula in the design brief is `max(2, ceil(threshold / C))` — the per-binding cap, not global. The implementation currently applies the `2` floor only; lifting `C` from claim config to apply the full formula is a later refinement.
+On startup sweep, bindings below threshold get a per-binding warm-up counter seeded to `2` (`warmUpFloor`). The first
+fire happens immediately (bypassing debounce); subsequent inventory events during the warm-up window also fire
+(bypassing debounce, decrementing the counter) so the first L1 round drives both a bin to the supermarket and a
+second bin in flight. After the counter hits zero, normal debounced operation takes over.
 
 ### Debounce reset on threshold change
 
-`OnThresholdChanges` is called from the loader config-edit path (`service/loader_service.go`, `rederive()` — after `store.DeriveDemandRegistry` returns its change list). The sync deletes the station's `demand_registry` rows and re-inserts the derivation in one transaction; the change list is a diff of threshold values against the rows it replaced. An empty derivation that skipped an input it could not resolve (a vanished home node, a shared window with no resolvable address) is refused while the station holds rows: nothing is written, no change is reported, and the derive line says `outcome=refused`. Edge (re)connect is a separate trigger and calls `Resync` instead: `HandleEdgeRegister` discards the sync's change list and re-engages the station's bindings wholesale. For every binding whose threshold value moved, the monitor `delete`s the debounce + warm-up state — so a freshly-applied threshold (engineer just clicked Apply) takes effect on the next inventory event rather than being suppressed by a residual debounce window from a previous firing under the old value.
+`OnThresholdChanges` is called from the loader config-edit path (`service/loader_service.go`, `rederive()` — after
+`store.DeriveDemandRegistry` returns its change list). The sync deletes the station's `demand_registry` rows and
+re-inserts the derivation in one transaction; the change list is a diff of threshold values against the rows it
+replaced. An empty derivation that skipped an input it could not resolve (a vanished home node, a shared window with
+no resolvable address) is refused while the station holds rows: nothing is written, no change is reported, and the
+derive line says `outcome=refused`. Edge (re)connect is a separate trigger and calls `Resync` instead:
+`HandleEdgeRegister` discards the sync's change list and re-engages the station's bindings wholesale. For every
+binding whose threshold value moved, the monitor `delete`s the debounce + warm-up state — so a freshly-applied
+threshold takes effect on the next inventory event rather than being suppressed by a residual debounce window from a
+previous firing under the old value.
 
 ### Cell autoreorder evaluation
 
-`wiring_counter_delta.go` evaluates autoreorder on the consume-tick path — and
-that is essentially the only automatic evaluation site. The produce-tick path
-evaluates the mirror-image relief level, and a sequential release runs the
-level sweep's own decision on the side that went dark at the moment the pair
-flips (`commitFlip`). There is NO periodic
-re-evaluation of a cell claim anywhere; the Edge reconciler only closes
-stranded episodes, it never fires.
+The level sweep (`sweepCellLevels`, run by `reconcileDemand` before the episode-close pass) walks every process's
+nodes each period and decides each claim on its own (`sweepNodeLevel`). The tick decides nothing about
+replenishment (`wiring_counter_delta.go` is an accumulator), so a cell that has stopped ticking — run dry, or a
+press at capacity — is still evaluated.
 
-The firing condition is `claim.AutoReorder && claim.ReorderPoint > 0 &&
-newRemaining <= claim.ReorderPoint`, evaluated only when a bin is bound, and
-it includes `newRemaining <= 0`. A threshold is a level, not a window:
-overshooting it (a batched consume flush that drains the bin to 0 or past it)
-fires on the very tick that lands there. The `newRemaining > 0` floor an
-earlier revision of this page documented is gone — it was the defect that
-starved a cell that drained past zero.
+For each node, every arm fails to inaction: a read it cannot make asks for nothing, and the next pass re-decides.
 
-Because the evaluation rides the tick, a cell that STOPS TICKING is never
-re-evaluated. If `CanAcceptOrders` refuses at the crossing tick (changeover in
-progress, an active/staged order in flight) or the order create errors, only
-the falling edge is stamped (`style_node_claims.below_reorder_since`); no
-demand episode opens and no order exists, and nothing retries until the next
-tick, an A/B flip, or an operator request. A cell that then drains out and
-stops cycling never asks again — the level trigger is only as live as the
-tick stream that evaluates it. (A PLC counter `reset` or `jump` is a tick
-like any other since close-out 2b: its delta is counted at the read.)
+1. A loader node is skipped (its count is an operator declaration, and its replenishment is Core's).
+2. The evaluator records the level whatever `auto_reorder` says (`evaluateCellLevel` / `evaluateProduceLevel` stamp
+   and clear `style_node_claims.below_reorder_since`), so a plant that has not armed ordering still has the record
+   of a cell running short.
+3. The ask is derived from the count (`remaining_uop_cached`), never from `below_reorder_since`, which records
+   where the level was when something last looked. Within the hysteresis band the flag can still be set while the
+   count is above the level; that orders nothing.
+4. If breached and `auto_reorder` is on, the dedup is the node: any live order of the node that works the cell
+   (`ListActiveOrdersByProcessNode`, filtered by `worksTheCell` so a departed leg or a keep-staged refill does not
+   count) means nothing is asked.
+5. `CanAcceptOrders` must admit the node (the changeover gate, an active or staged order).
+6. The ask is a consume node's material request or a produce node's swap, triggered `autoreorder`. A refusal is
+   logged; the level is still breached, so the next pass asks again.
 
-Three v6 additions, all still present:
-
-1. Explicit `claim.ReorderPoint > 0` gate makes opt-in semantic explicit.
-2. Diagnostic log line on every evaluation with the gate outcome, so engineers can see *why* nothing fires.
-3. Symmetric log on the produce-side tick path and a debug-level log when a tick is held during the no-bin gap (see below).
+A parked A/B side is evaluated on the same terms as every other node.
 
 ### Unbound-slot gap
 
-There's a gap between physical pickup of the old bin at the cell and delivery of the new bin to the slot during which no bin is bound (`active_bin_id` is nil) and `remaining_uop_cached` doesn't update — the new bin's UOP isn't credited until its `OrderDelivered` envelope binds it. Under the single-pointer hold-and-replay model, the bin portion of each tick during this gap accumulates in `pending_uop_delta` and replays onto the next bin when it binds; the cache value isn't touched while unbound, so autoreorder evaluation naturally doesn't fire against a stale count during the gap — firing then would over-order, since the in-flight bin lands shortly. The v6 addition is a debug log on the held-tick path.
+Between physical pickup of the old bin at the cell and delivery of the new one, no bin is bound: the pickup clears
+`active_bin_id` and zeroes `remaining_uop_cached` (`processes.LeaveAtPickup`), and the new bin's count arrives on its
+`OrderDelivered` envelope. The bin portion of each tick during the gap accumulates in `pending_uop_delta` and
+replays onto the next bin of the part when it binds. A level sweep in the gap reads the zeroed count; what keeps it
+from asking is the node dedup (step 4 above), while a live order of the node is bringing the replacement.
 
 ### Core's piles are a mirror
 
-The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed by levels, never by deltas: after every change the Edge sends the row's level, and Core sets its row to it under a per-row sequence guard. Core never writes a pile. A lost or late message cannot drift the mirror, because the next level replaces it, and the Edge re-sends every row at boot. This replaced a delta-fed copy keyed by style, which drifted high whenever the Edge re-stamped a pile's style (FINDINGS-lineside-bucket-drift, 2026-09-24).
+The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed by levels, never by deltas: after
+every change the Edge sends the row's level, and Core sets its row to it under a per-row sequence guard. Core never
+writes a pile. A lost or late message cannot drift the mirror, because the next level replaces it, and the Edge
+re-sends every row at boot.
 
 ---
 
@@ -325,72 +296,32 @@ The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed b
 
 ### Edge
 
-- `engine/operator_demand_loader.go`, `engine/operator_demand_unloader.go`,
-  `engine/loader_retrieve_ask.go` — the push sweeps and the other askers: when
-  to send a `loader.retrieve` ask; Core decides and creates the orders.
-- `engine/wiring_counter_delta.go` — cell autoreorder evaluation.
-- `engine/replenishment_admin.go` — the one surviving wrapper,
-  `UpdateCellReorder` (reorder_point / source / auto_reorder on
+- `engine/demand_reconciler.go` — the level sweep (`sweepCellLevels`): cell autoreorder evaluation and the ask.
+- `engine/operator_demand_loader.go`, `engine/operator_demand_unloader.go`, `engine/loader_retrieve_ask.go` — the
+  push sweeps and the other askers: when to send a `loader.retrieve` ask; Core decides and creates the orders.
+- `engine/replenishment_admin.go` — `UpdateCellReorder` (reorder_point / source / auto_reorder on
   style_node_claims).
-- `www/handlers_api_replenishment.go` + `www/static/js/pages/replenishment.js`
-  + `www/templates/replenishment.html` — cell-autoreorder admin UI only.
+- `www/handlers_api_replenishment.go` + `www/static/js/pages/replenishment.js` + `www/templates/replenishment.html`
+  — cell-autoreorder admin UI.
 
 ### Core
 
-- `engine/threshold_monitor.go` — `ThresholdMonitor` (debounce, warm-up,
-  startup sweep, demand episodes, order creation via `dispatch.ReplenishLoader`).
-- `dispatch/loader_replenish.go` + `dispatch/plan/loader_window_choice.go` —
-  `ReplenishLoader` (every loader's carriers, both directions, under the
-  per-loader `loaderLock`) and its window choice, `plan.LoaderWindows`.
-- `service/threshold_calculator.go` + `store/orders/lead_time_queries.go` —
-  the calculator and its Postgres lead-time helpers (`LeadTimesByPayload`: all
-  payloads in one read, for `/inventory`).
-- `service/inventory_loop.go` + `store/inventory/loop.go` — the `/inventory`
-  read. Supermarket positions: monitored bindings, in-loop UoP, time to empty
-  (cover, while a running line uses the part), the threshold with its
-  provenance, and On the way (orders to the position queued or in transit, not
-  yet delivered). A one-bin home at a threshold of a pack or more refills when
-  it empties and is not read as below, silently; ABOVE HOME CAPACITY (a
-  threshold over a multi-bin home's windows × pack) is the one badge. Lines
-  (an Edge process each): every claim of a running style, consume and produce
-  — in bin / pack, time left (until empty, or until full) at the node's rate
-  from sourceability's node rates, the cell reorder point (set on the named
-  station's Edge) and On the way (live orders that set a bin down at the node,
-  `protocol.OrderPlacesBinAt`). Each table opens on the rows that need a look,
-  least time left first: a position at or under its UoP threshold (a one-bin
-  home at a threshold of a pack or more: when that home is empty), above home
-  capacity, with its part's count in doubt or a bin on the way; a line past
-  its threshold (consume at or under its reorder point; produce at or over
-  `protocol.ClaimDemandLevel`, or over its pack), with its bin in doubt or a
-  bin on the way. The rest fold behind "Show N more"; when none qualifies the
-  table reads "All N … healthy". The doubt line names every counted bin below
-  zero or whose contents nobody confirmed ("not confirmed"), except the bin
-  filling at a produce seat: its count climbs from the Edge's ticks and is
-  confirmed at release.
+- `engine/threshold_monitor.go` — `ThresholdMonitor` (debounce, warm-up, startup sweep, demand episodes, order
+  creation via `dispatch.ReplenishLoader`).
+- `dispatch/loader_replenish.go` + `dispatch/plan/loader_window_choice.go` — `ReplenishLoader` and its window
+  choice, `plan.LoaderWindows`.
+- `service/threshold_calculator.go` + `store/orders/lead_time_queries.go` — the calculator and its Postgres lead-time
+  helpers.
+- `service/inventory_loop.go` + `store/inventory/loop.go` — the `/inventory` read (positions with their thresholds,
+  lines with their reorder points).
 - `service/inventory_system_count.go` — `SystemUOPForPayload`.
 - `store/demands/` — `demand_registry` CRUD including `replenish_uop_threshold`.
-- `store/loaders/` + `service/loader_service.go` — `bin_loader_homes.uop_threshold`
-  (where the threshold actually lives) and the `rederive()` registry sync.
-- `www/handlers_loader.go` — `POST /api/loader/calculate` (the calculator endpoint), and the set-home / set-payload doors the `/inventory` row saves through (`source` names a `calculated` save).
+- `store/loaders/` + `service/loader_service.go` — `bin_loader_homes.uop_threshold` and
+  `bin_loader_payloads.uop_threshold` (where the threshold lives) and the `rederive()` registry sync.
+- `www/handlers_loader.go` — `POST /api/loader/calculate` (the calculator endpoint), and the set-home / set-payload
+  doors the `/inventory` row saves through (`source` names a `calculated` save).
 
 ### Protocol
 
-- `protocol/payloads.go` — `LinesideBucketLevel`. (Threshold values now ride `LoaderInfo` on the node-list sync, not a ClaimSync payload. `LoopBelowThresholdSignal` was deleted — Core orders directly.)
-
----
-
-## Out of scope
-
-Tracked separately; not part of the v6 work:
-
-- **Statistical formulas** (mixed variability, z-scores) — Phase 3.
-- **EPEI / Run Frequency** for shared cells — Phase 3.
-- **Signal replenishment** — Phase 3.
-- **Capacity feasibility check** with OEE — Phase 3.
-- **Poisson formula** for low-volume styles — Phase 3.
-- **FG-out replenishment** — Phase 3.
-- **U1/U2 unloader-side** thresholds — Springfield doesn't run unloaders; defer.
-- **R3 iterate-all-claims** — Springfield is Case A (loader claim lists all payloads).
-- **Queued-retrieve safety net at Edge** — redundant with C-push.
-- **Diagnostics UI live stream** — structured logs are emitted; UI rendering deferred to Phase 1.5.
-- **Automatic peak-cycle derivation from `hourly_counts`** — the cycle is the median measured rate's, or typed, for now.
+- `protocol/payloads.go` — `LinesideBucketLevel`, and `LoaderInfo`, which carries threshold values on the node-list
+  sync.

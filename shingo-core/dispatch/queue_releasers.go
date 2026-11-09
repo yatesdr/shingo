@@ -59,9 +59,9 @@ package dispatch
 type WaitPopulation string
 
 const (
-	// PopAcquiring is the waiting orders (`queued`; {queued, sourcing} before C1):
-	// pre-dispatch, no robot committed. The
-	// fulfillment scanner is both its event consumer and its floor.
+	// PopAcquiring is the waiting orders (`queued`): pre-dispatch, no robot
+	// committed. The fulfillment scanner is both its event consumer and its
+	// floor.
 	PopAcquiring WaitPopulation = "acquiring"
 	// PopGateStaged is an order waiting at a lane wait (waitingAtLane): a robot
 	// committed to it, holding an unsealed waybill only Core can append to. A
@@ -175,7 +175,7 @@ var waitPopulations = []populationReleaser{
 	{
 		population: PopGateStaged,
 		owner:      OwnerCore,
-		// The GROUP pass since C2c (ruling 4: a waiter is keyed by its group).
+		// The GROUP pass: a waiter is keyed by its group, not its lane.
 		redriver: "Dispatcher.EvaluateGroupReleases",
 		events: []string{
 			"EventBlockCompleted", "EventBinEnteredTransit", "EventBinUpdated",
@@ -388,17 +388,15 @@ var causeReleasers = []causeReleaser{
 		populations: []WaitPopulation{PopAcquiring},
 		what: "the lane's hold is dropped — by the excavation finishing, or by the demand " +
 			"holding its mouth releasing it",
-		finding: "IT USED TO PROMISE A RESHUFFLE THAT MAY NEVER COME. The sentence read " +
-			"\"the other reshuffle finishes and drops its lane lock\", which is true for an " +
-			"EXCAVATION hold and false for a §R.101 source lock — a mouth row held by a " +
-			"demand, with no reshuffle running on anybody's behalf and nothing scheduled to " +
-			"end. An operator reading the old sentence was told to wait for something that " +
-			"did not exist. " +
-			"MG3-1b makes the wait rarer rather than shorter: empty selection now skips " +
-			"lanes a foreign dig holds, so an order reaches this park only when every " +
-			"compatible empty is inside one. When it does, the honest answer is that SOME " +
-			"hold has to go, and the row's DigOrderID says which excavation to look at — or " +
-			"is zero, which is itself the tell that no excavation is involved.",
+		finding: "THE HOLD IS NOT ALWAYS AN EXCAVATION. \"The other reshuffle finishes and " +
+			"drops its lane lock\" is true for an EXCAVATION hold and false for a demand's " +
+			"source lock — a mouth row held by a demand, with no reshuffle running on " +
+			"anybody's behalf and nothing scheduled to end, so that sentence would send an " +
+			"operator to wait for something that does not exist. " +
+			"Empty selection skips lanes a foreign dig holds, so an order reaches this park " +
+			"only when every compatible empty is inside one. When it does, the honest answer " +
+			"is that SOME hold has to go, and the row's DigOrderID says which excavation to " +
+			"look at — or is zero, which is itself the tell that no excavation is involved.",
 	},
 	{
 		// ONE ROW, ONE CONSTANT — and it took a deletion to get here. This row used
@@ -611,8 +609,8 @@ var causeReleasers = []causeReleaser{
 		what: "the deadlock is broken by hand: this dig's lane is released so the order holding the " +
 			"blocker can reach it, after which the blocker leaves and the dig re-plans. Do NOT go " +
 			"looking for a fault in the holding order — it is refused on THIS dig's own lane lock " +
-			"and is behaving correctly. Core does not break the cycle itself: §R.115 refused " +
-			"automatic dissolve for this family and that ruling stands",
+			"and is behaving correctly. Core does not break the cycle itself: automatic " +
+			"dissolve is refused for this family",
 	},
 	{
 		// THE ROBOT IS AT THE MARK AND THE DIGGING IS ITS OWN (§R.104).
@@ -778,7 +776,7 @@ var causeReleasers = []causeReleaser{
 			"Release. Core does not advance this one and must not: the precondition is a fact only " +
 			"the station can observe, so a floor here would send a robot into a working cell. A row " +
 			"standing under this cause for a long time is a DWELL to surface to a human, " +
-			"not a wait to re-drive; Core's hard release is the escape hatch until that exists",
+			"not a wait to re-drive; Core's hard release is the escape hatch",
 	},
 	{
 		cause:       CauseSwapPartnerFinished,
@@ -787,9 +785,9 @@ var causeReleasers = []causeReleaser{
 			"wait, nothing further is COMING: this leg's swap partner already ran its half and " +
 			"confirmed, so no second robot will arrive and no line will clear. A release the " +
 			"operator already pressed is kept on the row as the Edge's release intent and goes when the " +
-			"partner's end re-plans it (S5; the swap-survivor arm that released this without a click is " +
-			"deleted); otherwise a person presses, and Core's hard release is the escape hatch. Core does not advance it and must not — a station wait is unfloored by " +
-			"ruling, and a partner that finished does not change whose fact the precondition is. A " +
+			"partner's end re-plans it; otherwise a person presses, and Core's hard release is the " +
+			"escape hatch. Core does not advance it and must not — a station wait is never " +
+			"floored, and a partner that finished does not change whose fact the precondition is. A " +
 			"row standing under THIS cause is a dwell to surface immediately rather than a wait to " +
 			"wonder about",
 	},
@@ -841,8 +839,8 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseNGRPAtLevel,
 		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
 		what: "a carrier LEAVES the group — or somebody raises the level — or, with an overflow " +
-			"named, a slot frees there and the next pass sends the order to it (MG6-1, admission " +
-			"or parked). The second is the one an operator can act on",
+			"named, a slot frees there and the next pass sends the order to it (at admission " +
+			"or once parked). The second is the one an operator can act on",
 		finding: "IT CLEARS ON TWO DIFFERENT THINGS, which is why it is not CauseNGRPFull. " +
 			"A physically full group clears when a carrier leaves and on nothing else. This " +
 			"group has EMPTY POSITIONS — they are spoken for by a number somebody " +
@@ -851,7 +849,7 @@ var causeReleasers = []causeReleaser{
 			"board was wrong. " +
 			"NO OVERFLOW CONFIGURED IS THE UNCOMFORTABLE CASE, and it is stated rather than " +
 			"solved: the push parks holding its bin, which is backpressure into whatever was " +
-			"pushing. That is the residual MG6-1 names and does not remove.",
+			"pushing, and nothing removes it.",
 	},
 	{
 		cause:       CauseGroupHoldsEmptiesOnly,

@@ -312,18 +312,15 @@ type TermRef struct {
 	// VendorCode is the fleet's own numeric reason, as RDS reported it on the
 	// ORDER (OrderDetail.Errors[].Code) — not a robot's standing alarm, which
 	// is a different stream and is background rather than cause. Zero means the
-	// fleet gave no reason, which is the common case: ~94% of faulted orders
-	// carry no errors[] entry at all, so this field is absent far more often
-	// than it is present and its absence is information, not a gap.
+	// fleet gave no reason, which is the common case for a faulted order, so
+	// its absence is information, not a gap.
 	//
 	// A reference, not a category. It is deliberately NOT a typed code
-	// vocabulary: one vendor code over 22 events is not a population to
-	// classify, and order_history.code stays empty on faulted rows. Classify at
-	// read time on ref->>'vendor_code' if a plant ever produces the variety.
+	// vocabulary, and order_history.code stays empty on faulted rows; classify
+	// at read time on ref->>'vendor_code'.
 	VendorCode int `json:"vendor_code,omitempty"`
-	// VendorDesc is the fleet's text for VendorCode, stored as received. No
-	// translation table until there is something to translate — the live values
-	// are "cannot replan" and "Robot Suspended", which need none.
+	// VendorDesc is the fleet's text for VendorCode, stored as received, with
+	// no translation table.
 	VendorDesc string `json:"vendor_desc,omitempty"`
 	// Detail is free text for the cases the fields above do not cover.
 	// Deliberately last and deliberately optional: anything that ends up here

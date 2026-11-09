@@ -2,19 +2,17 @@
 
 Verified against: b9210bce
 
-A settings page is the shape the Edge Processes page's Settings tab drew first
-(reference shot `hmi-flow-composer-design-2026-09-02/desktop/reference/D5-settings.png`),
+A settings page is the shape of the Edge Processes page's Settings tab,
 shared so the Core and Edge Configuration pages are built from it too. The
 CSS is one set of rules in `shared/components.css`; the behaviour is
-`settingsPage` in `shared/utils.js`. Sizes and colours come from those rules,
-not from a mock-up.
+`settingsPage` in `shared/utils.js`. Sizes and colours come from those rules.
 
 ### What a settings page looks like
 
 1. **One page, one column, no cards and no tabs.** Sections separated by a
    `--sub-1` rule, capped at the Settings width (1040 px). Every section is
    visible by scrolling; the common ones fit one screen at 900 px.
-2. **Live state is words in the section title** (`Fleet · connected`), dot +
+2. **Live state is words in the section title** (`Notifications · email alerts on`), dot +
    muted text. Never a pill, never beside a switch. Warning hue only for a state
    that needs someone (`no timezone set · showing UTC`).
 3. **A row is a question.** Label in plain words that names what is being set;
@@ -29,7 +27,8 @@ not from a mock-up.
    `45m0s` on screen.
 6. **Two to four short answers are a segment, not a select.** A switch for
    on/off. No pop-over menu on a settings page.
-7. **A row that is off hides what depends on it** (computed from state, §13).
+7. **A row that is off hides what depends on it** (computed from state, see
+   [Forms](13-forms.md)).
    Rarely changed values sit behind one row that shows their current values in
    its sub-label and a `Change…` button.
 8. **A secret is never rendered.** Placeholder says `saved` or `none saved`;
@@ -38,8 +37,9 @@ not from a mock-up.
    after the last.
 10. **One Save for the page**, in the foot bar: `No unsaved changes` /
     `Unsaved changes`, `Discard`, `Save` (disabled until dirty). This is the
-    stated exception to §11's save-on-change: a settings page drafts and saves
-    together, because a half-typed address must never be applied. An action
+    stated exception to save-on-change ([Dialog UX](11-dialog-ux-confirmation-prompt-toast.md)):
+    a settings page drafts and saves together, because a half-typed address
+    must never be applied. An action
     that is not a setting (Test connection, Send a test, Refresh, Back up now,
     Change password) is its own button and does not touch the draft.
 11. **After a save that needs a restart**, a notice above the bar names the
@@ -60,27 +60,29 @@ would otherwise take the global `input` rule.
 | `.set-spacer` | pushes what follows to the right in a section title | `.pd-sect .pd-spacer` |
 | `.set-fld` | a row: `<label>` (with `<small>` sub-label) + `.v` value box (`.v.col` stacks) | `.pd-sfld` |
 | `.set-note` | a note under a row, in the value column | `.pd-note` (both definitions) |
-| `.set-err` | the error line under a row (added) | — |
-| `.set-inp` | a text box, 96 px floor; `.mid` 240 (added), `.wide` 420 | `.pd-inp`, `.pd-inp.wide` |
+| `.set-err` | the error line under a row | — (no `.pd-` twin) |
+| `.set-inp` | a text box, 96 px floor; `.mid` 240, `.wide` 420 | `.pd-inp`, `.pd-inp.wide` (no `.mid` twin) |
 | `.set-chk` (`.on`) | the switch | `.pd-chk` |
 | `.set-seg` (`button.on`) | a segment of two to four answers | `.pd-seg` |
 | `.set-btn` (`.primary`, `.quiet`, `.danger`) | a button | `.pd-btn` |
-| `.set-cnt` (`.ok`, `.warn` added) | the live words: `<span class="set-cnt ok"><i></i>connected</span>` | `.pd-cnt` |
+| `.set-cnt` (`.ok`, `.warn`) | the live words: `<span class="set-cnt ok"><i></i>connected</span>` | `.pd-cnt` (no `.warn` twin) |
 | `.set-dim` | muted text | `.pd-dim` |
 | `.set-chip` | a chip, e.g. one PLC seen | `.pd-chip` (the plain chip; `.set` / `.add` / `.need` stay Processes-only) |
 | `.set-notice` | the restart notice above the bar | `.pd-notice` |
 | `.set-refusal` | a refused or half-applied save, above the bar | `.pd-refusal` |
 | `.set-savebar` (`.prov`, `.prov.dirty`) | the foot bar | `.pd-savebar` |
 
-The `.pd-` names are the Processes page's and are deprecated for anything new
-(see [Deprecations tracker](#deprecations-tracker) below). The moved rules'
-type sizes and spacing are their own px values, off the token scales: they
-were moved verbatim and are not a pattern to copy.
+**The `.pd-` names are deprecated; the Processes page keeps them.**
+`processes-desktop.js` still draws with them and is not being renamed, and each
+`.pd-` rule in `components.css` is grouped with its neutral name, so the two
+cannot drift. New code uses the `.set-` names only. The rules' type sizes and
+spacing are their own px values, off the `--font-*` and `--sp-*` scales; outside
+the settings shape they are not a pattern to copy.
 
 **Why `.set-ui`.** Core's `style.css` loads after `components.css` and styles
 bare `label` and `input[type=text|password|number|date]` at specificity 0,1,1.
 Every neutral rule is `.set-ui .set-x` (0,2,0), so it wins. One reset on the
-neutral names restores what the moved rules inherit on the Edge and do not
+neutral names restores what the shared rules inherit on the Edge and do not
 declare: the 14 px base size (`--font-sm`) on `.set-ui`, `width: auto` on
 `.set-inp`, normal weight and no bottom margin on `label`, and `[hidden]` hiding
 again (an author `display` on `.set-fld` and the rest would otherwise beat the
@@ -92,27 +94,6 @@ takes its intrinsic width when that is larger: give a port box a small `size`
 attribute (e.g. `size="5"`) so it sits at the 96 px floor. Below 900 px the row
 stacks (label above control), the note and error lines lose their indent, and a
 `.wide` box takes the column.
-
-### Deprecations tracker
-
-Scheduled removals live here. The tracker is the block below — there is no
-separate deprecations file, and a link to one would be a link to nothing.
-
-```markdown
-### The Processes settings-shape names (`.pd-`) — superseded by `.set-` (U1, 2026-10-07)
-- **Moved:** the rules now live in `shared/components.css`, each grouped with its
-  neutral name (§33 has the map): `.pd-sect`, `.pd-sheet` (+ `.pd-settings`),
-  `.pd-sect .pd-spacer`, `.pd-sfld`, `.pd-note` (both definitions), `.pd-savebar`,
-  `.pd-btn` (+ `.quiet`, `.primary`, `.danger`), `.pd-inp` (+ `.wide`),
-  `.pd-chk`, `.pd-seg`, `.pd-cnt`, `.pd-notice`, `.pd-refusal`, `.pd-dim`, `.pd-chip`
-  (the plain chip only).
-- **Status:** the Processes page (`processes-desktop.js`) still uses the `.pd-`
-  names and is not being renamed; new code uses the `.set-` names only.
-- **Off the type scale:** these rules carry their own px sizes and spacing
-  (11.5 / 12 / 12.5 / 13 / 16 px type; 300 / 314 / 96 / 420 px geometry), not the
-  `--font-*` and `--sp-*` tokens. They were moved verbatim; outside the settings
-  shape, do not copy the values into new rules.
-```
 
 ### The behaviour: `settingsPage`
 

@@ -23,9 +23,13 @@ import (
 //     --chart-grid ended up derived from the text ramp: a token with no entry
 //     in the guide is a token nobody knows the rule for.
 //
-// The per-surface COPIES (--os-r1 / --os-r2 / --os-station in operator.css)
-// are held to these by shingo-edge/www/operator_tokens_drift_test.go. This
-// test is the other axis: the master against the prose.
+// The per-surface names (--os-robot-1 / --os-robot-2 / --os-station) are
+// aliases, not copies: operator.css declares them as var(--robot-1) and so on,
+// and processes-desktop.css declares the same names, so there is no second
+// value to drift. That both surfaces declare every --os-* name the glyph file
+// reads is TestBothSurfacesDeclareTheGlyphFilesTokens, in
+// shingo-edge/www/css_dead_token_test.go. This test is the other axis: the
+// master against the prose.
 
 // identityHues is the set, and the guide's table must carry every one.
 var identityHues = []string{"--robot-1", "--robot-2", "--station"}

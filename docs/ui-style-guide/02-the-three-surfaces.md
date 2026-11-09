@@ -12,22 +12,29 @@ These three surfaces have **intentionally different rendering models**. Do
 not try to converge them. Do try to share primitives (tokens, utilities,
 status vocabulary).
 
-**Known: the Operator HMI does not follow this guide, and never has.** Every
-consistency pass this document records — the token work, the shared component
-CSS, the status vocabulary, the icon sprite — landed on Core admin and, less
-completely, on Edge admin. The HMI got none of it. As of 2026-07-26,
-`operator-display.html` loads exactly one stylesheet, `operator.css`, and pulls
-in neither `shared/tokens.css`, `shared/components.css` nor
-`shared/status-classes.css`; `operator.css` declares its own parallel
-twenty-token `--os-*` palette in raw hex and then uses a further 122 hardcoded
-hex literals across 1,223 lines; there is no light theme and no icon sprite. It
-is a fourth design system that happens to share a repo with the other three, and
-it is the surface an operator looks at for an entire shift. Treat any HMI file
-you touch as un-migrated — the conventions below describe where it should end
-up, not where it is. The scoped item is queued in `PLAN-master-2026-07-26.md`
-(Stage 4).
+**The Operator HMI shares the tokens and little else.**
+`operator-display.html` links `shared/tokens.css` first, then the station's own
+`operator.css`, `flow-picture.css` and `composer-glyphs.css`. It loads neither
+`shared/components.css` nor `shared/status-classes.css`, injects no icon
+sprite, and pins `data-theme="dark"`: the HMI is a fixed dark surface with no
+light theme. `operator.css` declares its own `--os-*` palette in raw hex, and
+the station's rules mostly draw from that palette rather than from the shared
+tokens. Where the HMI and the desktop draw the same thing (the substrate ramp,
+the robot hues, the accent) its `--os-*` name is an alias of the shared token,
+never a copy (see [Design tokens](04-design-tokens.md)). A new HMI rule takes a
+shared token where one exists.
 
-The one rule the HMI *is* already held to is the no-emoji policy: Edge's
-`//go:embed static/*` is recursive, so `TestNoEmojiInTemplatesAndPageJS` walks
-`static/operator-station/` along with everything else.
+What the HMI is held to:
+
+- **No emoji.** Edge's `//go:embed static/*` takes in `static/operator-station/`,
+  so `TestNoEmojiInTemplatesAndPageJS` walks it.
+- **The layer scale.** `TestNoRawZIndexInEdgeAssets` scans the station's files
+  too, and the station's copy of the `--z-*` scale is held to the shared one by
+  `TestOperatorStationZLayerScaleMatchesShared`.
+- **The files both surfaces load resolve on both.** `flow-picture.css` carries
+  no literal colour (`TestTheStationPictureCarriesNoLiteralColour`);
+  `operator-flow.js` and `flow-picture.css` never name a bare `--os-*` token, only
+  `var(--os-x, var(--shared-x))` (`TestSharedRendererNamesBothSurfacesTokens`);
+  and the `--os-*` names the glyph file reads are declared by both surfaces
+  (`TestBothSurfacesDeclareTheGlyphFilesTokens`).
 

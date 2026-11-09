@@ -110,7 +110,6 @@ Every doc in `docs/`, `shingo-core/docs/` and `shingo-edge/docs/`, by its first 
 |---|---|
 | [The engine test harness](docs/dev-env/engine-test-harness.md) | `docs/dev-env/engine-test-harness.md` |
 | [The Kanban rig](docs/dev-env/kanban-rig.md) | `docs/dev-env/kanban-rig.md` |
-| [The Plant Model (what the sim runs)](docs/dev-env/plant-model.md) | `docs/dev-env/plant-model.md` |
 | [Designing a Sim Plant](docs/dev-env/sim-plant-design.md) | `docs/dev-env/sim-plant-design.md` |
 | [The Shingo Sim (local dev environment)](docs/dev-env/sim.md) | `docs/dev-env/sim.md` |
 | [Test population ledger](docs/testing/population-ledger.md) | `docs/testing/population-ledger.md` |
@@ -134,7 +133,7 @@ Every doc in `docs/`, `shingo-core/docs/` and `shingo-edge/docs/`, by its first 
 | [Forms](docs/ui-style-guide/13-forms.md) | `docs/ui-style-guide/13-forms.md` |
 | [Placement boxes — the box is the form](docs/ui-style-guide/14-placement-boxes-the-box-is-the-form.md) | `docs/ui-style-guide/14-placement-boxes-the-box-is-the-form.md` |
 | [The Nodes page — tiles, groups, sections](docs/ui-style-guide/15-the-nodes-page-tiles-groups-sections.md) | `docs/ui-style-guide/15-the-nodes-page-tiles-groups-sections.md` |
-| [Desktop composer patterns (U9)](docs/ui-style-guide/16-desktop-composer-patterns-u9.md) | `docs/ui-style-guide/16-desktop-composer-patterns-u9.md` |
+| [Desktop composer patterns](docs/ui-style-guide/16-desktop-composer-patterns-u9.md) | `docs/ui-style-guide/16-desktop-composer-patterns-u9.md` |
 | [JavaScript primitives](docs/ui-style-guide/17-javascript-primitives.md) | `docs/ui-style-guide/17-javascript-primitives.md` |
 | [Timestamps — plant-local, one clock](docs/ui-style-guide/18-timestamps-plant-local-one-clock.md) | `docs/ui-style-guide/18-timestamps-plant-local-one-clock.md` |
 | [Templates and composition](docs/ui-style-guide/19-templates-and-composition.md) | `docs/ui-style-guide/19-templates-and-composition.md` |

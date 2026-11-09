@@ -86,7 +86,7 @@
     <div class="v"><button type="button" class="set-chk{{if .Config.Notifications.SMTPTLS}} on{{end}}" role="switch" aria-checked="{{if .Config.Notifications.SMTPTLS}}true{{else}}false{{end}}" aria-labelledby="cfg-smtp-tls-l" data-switch="notif_smtp_tls"></button></div>
   </div>
   <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
-    <label for="cfg-smtp-user">Sign in<small>user and password · blank password keeps the saved one · applies after a restart</small></label>
+    <label for="cfg-smtp-user">Sign in<small>user and password · blank password keeps the saved one</small></label>
     <div class="v"><input class="set-inp mid" id="cfg-smtp-user" type="text" data-field="notif_smtp_user" value="{{.Config.Notifications.SMTPUser}}" placeholder="user" autocomplete="off"><input class="set-inp" type="password" size="14" aria-label="Mail server password" data-field="notif_smtp_password" data-secret="smtp" data-saved="{{if .V.SMTPPassSaved}}1{{end}}" value="" placeholder="{{if .V.SMTPPassSaved}}saved{{else}}none saved{{end}}" autocomplete="new-password">{{if .V.SMTPPassSaved}}<button type="button" class="set-btn quiet" data-action="removeSecret" data-secret-for="smtp">Remove</button>{{end}}</div>
   </div>
   <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>

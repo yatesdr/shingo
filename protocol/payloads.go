@@ -39,8 +39,8 @@ type CellCatalogEntry struct {
 // EdgeRegister is sent by an edge on startup.
 //
 // StationID CARRIES THE STATION UID, and the field is deliberately NOT
-// renamed. Address.Station is a routing selector whose VALUE is the identity
-// Core minted at enrollment, so the identity change is a change in what the
+// renamed. Address.Station is a routing selector whose VALUE is the station
+// uid the edge minted for itself, so the identity change is a change in what the
 // string means and who mints it — not in the field's name. Renaming would have
 // broken the one direction the rollout actually creates: Edge deploys before
 // Core, so for a window a NEW edge talks to an OLD core, which would read
@@ -62,9 +62,10 @@ type CellCatalogEntry struct {
 // from ListOrderStations() can match. A field that carries one constant into
 // one wrong answer is not vestigial, it is a defect with a schema.
 type EdgeRegister struct {
-	// StationID is the station UID, minted by Core at enrollment. Core
-	// resolves the station by it and refuses a uid it never enrolled. A plant
-	// from before station UIDs carries its old station string as its uid.
+	// StationID is the station UID, which the edge mints at first start and
+	// keeps in its config. Core resolves the station by it and introduces a
+	// uid it has never seen as an unclaimed station. A station from before
+	// station UIDs carries its old station string as its uid.
 	StationID string `json:"station_id"`
 	// Hostname is the OS hostname: attribute data and a weak duplicate signal,
 	// since two Pis flashed from one SD image share it.
@@ -446,17 +447,9 @@ type OrderUpdate struct {
 	FaultRef *TermRef `json:"fault_ref,omitempty"`
 }
 
-// OrderDelivered signals fleet delivery complete.
-//
-// Item 8 of the bin-as-truth refactor dropped the BinUOPRemaining
-// snapshot field. Pre-Item-8 the snapshot rode through this envelope
-// so Edge could reset the lineside counter from the bin's actual
-// contents on partial returns. Post-Item-8 the runtime cache is the
-// source of truth for "what's in the bin right now"; Edge always
-// resets to claim.UOPCapacity on delivery and the reconciler heals
-// to Core's authoritative value within the next 60s pass. The
-// trade-off — a brief "looks like full bin" UI on partial-back
-// returns until the heal — is SME-accepted.
+// OrderDelivered signals fleet delivery complete. It closes the order; the
+// carrier Core placed is bound by its BinLanded, not by this message, except
+// from a Core that sends no landing (see LandingSent).
 type OrderDelivered struct {
 	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
@@ -466,52 +459,33 @@ type OrderDelivered struct {
 	// this time or until an order.release arrives. Absent on a delivery that
 	// does not stage.
 	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
-	// BinID carries the bin's Core-side ID so Edge can attribute PLC
-	// tick deltas to the right bin in the Phase 1 bin-as-truth flow.
-	// Nil for multi-bin orders; Phase 1 emits bucket deltas only in
-	// that case and bin attribution waits for the multi-bin handling
-	// refinement. Older Core/Edge builds tolerate either side being
-	// nil.
+	// BinID is the Core id of the carrier the order leaves at its process
+	// node: the order's one cart, or, for an order that carries several, the
+	// cart its plan sets down last at the process node (see BinDestNode). Nil
+	// when the order carries no cart at delivery, or when no cart of a
+	// multi-bin order rests at the process node. The Edge checks it against
+	// the carrier bound at that seat.
 	BinID *int64 `json:"bin_id,omitempty"`
 
-	// UOPRemaining and DeltaEpoch are the bin's authoritative count and
-	// load-lifecycle epoch as of delivery, snapshotted by Core right
-	// after the bin lands at the destination (handleOrderDelivered, after
-	// applyBinArrivalForOrder). Edge seeds its runtime cache and stamps
-	// outgoing BinUOPDeltas from these — so the seed and the epoch ride
-	// the same Kafka message as the delivery itself, with no separate
-	// HTTP pull. UOPRemaining is a pointer so "no count was sent" (nil) is
-	// distinguishable from a genuinely-empty bin (0).
-	//
-	// NIL IS NOT ONLY AN OLD CORE, and reading it that way is how the Edge's
-	// own fallback got its wrong direction. Core sends the count when it named
-	// a bin AND could read that bin's row; a read that fails leaves this nil on
-	// a current build. A current Edge binds nothing from this message (the
-	// landing binds); for an older Core it binds through the landing verb with
-	// this count and never assumes a full carrier (engine.landFromOldCore).
-	//
-	// DeltaEpoch 0 is the pre-migration / unknown sentinel. Both are only
-	// meaningful for single-bin orders (BinID != nil).
+	// UOPRemaining and DeltaEpoch are BinID's count and delta_epoch, read by
+	// Core after the bin's arrival is applied (handleOrderDelivered).
+	// UOPRemaining is nil when no bin is named or Core could not read the
+	// bin's row, and 0 for a carrier counted empty. A current Edge binds
+	// nothing from them (the landing binds); for an older Core they bind
+	// through the landing verb, and a nil count binds nothing
+	// (engine.landFromOldCore). DeltaEpoch 0 is the unknown sentinel. Both
+	// are meaningful only when BinID is set.
 	UOPRemaining *int  `json:"uop_remaining,omitempty"`
 	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
 
-	// BinPayloadCode is the payload of the bin that just landed, read from
-	// the same row and at the same moment as UOPRemaining and DeltaEpoch
-	// above. It answers "what is this carrier", which the Edge cannot answer
-	// for itself: that side stores active_bin_id, an opaque Core id, and has
-	// no bins table.
-	//
-	// WITHOUT IT THE EDGE GUESSES, and the guess is the claim of whichever
-	// style the process is on — what the cell was ASKED FOR, not what is
-	// standing on it. Those agree until a changeover moves the cell on while a
-	// carrier is still there, which is Springfield SMN_029, 2026-09-02.
-	//
-	// This does not move the boundary. The Edge still decides where material
-	// goes; it stops inferring a fact Core was already holding. Pointer so "not
+	// BinPayloadCode is BinID's payload, read from the same row as
+	// UOPRemaining: what the carrier holds, which the Edge has no bins table
+	// to look up. It is not the active style's claim payload, which is what
+	// the cell asked for and differs from what stands there once a changeover
+	// moves the cell on under a carrier that stays. Pointer so "not
 	// established" (nil) is distinguishable from a carrier known to be empty
-	// (""), the same distinction UOPRemaining draws and for the same reason —
-	// and the Edge keeps that pair apart on its own side too, as
-	// RuntimeState.LinesidePayloadKnown. Only meaningful when BinID != nil.
+	// (""); the Edge keeps the pair apart as RuntimeState.LinesidePayloadKnown.
+	// Meaningful only when BinID is set.
 	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Populated for all
 	// orders so the Edge can bind the runtime cache even when the order was
@@ -520,25 +494,21 @@ type OrderDelivered struct {
 	// ignore the field silently.
 	DeliveryNode string `json:"delivery_node,omitempty"`
 
-	// BinDestNode is the Core dot-name of the node the carried bin came to rest
-	// at — set ONLY for multi-tote deliveries (F1b), where BinID names the one
-	// order_bin destined for the consuming process node. It is the per-bin
-	// landing node, which for a swap is authoritative and unambiguous, unlike
-	// DeliveryNode (the last dropoff — the supermarket for the evac leg) or a
-	// steps-derived finalDropoff. Edge binds when BinDestNode == its process
-	// node's CoreNodeName. Empty for single-bin orders, whose existing
-	// delivery-gate (steps finalDropoff / DeliveryNode) is unchanged.
+	// BinDestNode is the Core dot-name of the node BinID's cart comes to rest
+	// at, set only for an order that carries several carts. For a swap it is
+	// the authoritative per-bin landing node, unlike DeliveryNode (the last
+	// dropoff — the supermarket for the evac leg) or a steps-derived final
+	// dropoff. The Edge's check applies when BinDestNode equals its process
+	// node's CoreNodeName. Empty for a single-cart order, which the Edge gates
+	// on its steps' final dropoff or DeliveryNode.
 	BinDestNode string `json:"bin_dest_node,omitempty"`
 
-	// LandingSent says the Core that sent this also announces its carriers'
-	// drops on SubjectBinLanded. A new Edge binds nothing from a
-	// delivered that carries it. Without it the sender is an older Core
-	// that never sends a landing, and a new Edge routes the carrier fields
-	// above through its landing verb with no placement stamp: into an empty
-	// slot or onto the same bin only, never over a different bound carrier.
-	// Nothing else forbids a new Edge talking to an old Core (DESIGN-H S6),
-	// hence the flag. The flag, that adapter and the carrier fields above go on
-	// the cleanup sweep row the release after.
+	// LandingSent says the sending Core announces every carrier's drop on
+	// SubjectBinLanded, so the Edge binds nothing from this message. Unset,
+	// the sender is an older Core that sends no landing, and the Edge routes
+	// the carrier fields above through its landing verb with no placement
+	// stamp: into an empty slot or onto the same bin only, never over a
+	// different bound carrier.
 	LandingSent bool `json:"landing_sent,omitempty"`
 }
 
@@ -695,35 +665,18 @@ type ComplexOrderStep struct {
 	Empty bool `json:"empty,omitempty"`
 	// PayloadCode is the payload THIS STEP's bin selection resolves against,
 	// overriding the order's payload for this leg only. Empty means "use the
-	// order's", which is every leg of every order that does not need to say
-	// otherwise.
+	// order's".
 	//
-	// ── WHY A LEG NEEDS ITS OWN ANSWER ────────────────────────────────────
-	//
-	// A changeover swap is ONE order doing two jobs: it lifts the outgoing
+	// A changeover swap is one order doing two jobs: it lifts the outgoing
 	// style's bin off the line and brings the incoming style's carrier back.
-	// The order carries the FROM-style payload, because its opening pickup has
-	// to find the bin that is actually there. Marking the refill leg Empty
-	// drops the full-bin content match — but NOT bin-type compatibility, which
-	// resolves against the order's payload through PayloadBinTypeAdvisoryClause.
-	// So a press changing from a payload on one carrier type to a payload on
-	// another was handed a carrier of the type it was LEAVING: wrong carrier one
-	// direction, and an unsatisfiable wait for a type the plant had none of in
-	// the other, which parked two supply legs until an operator abandoned them
-	// (sim 2026-08-24, N1-c).
+	// The order carries the outgoing payload, so its opening pickup finds the
+	// bin that is there; the refill leg names the incoming payload here, so the
+	// carrier it fetches is one of a bin type that payload may ride on.
 	//
-	// Setting it here is the smallest true statement: this leg is for that
-	// payload. The alternative was splitting the order in two, which doubles the
-	// robot trips for the common same-node case the single trip was chosen for.
-	//
-	// ── MIXED VERSIONS: CORE FIRST ────────────────────────────────────────
-	//
-	// Additive and omitempty, like every other field added to this wire — but
-	// unlike the Core→Edge additions, an old receiver ignoring THIS one is not
-	// cosmetic: it silently reverts to the wrong-carrier behaviour above. Core
-	// and Edge deploy separately, so DEPLOY CORE FIRST. Pinned by
-	// TestComplexOrderStep_PayloadCode_MixedVersion, which asserts what an old
-	// Core does rather than leaving it to be discovered on a floor.
+	// DEPLOY CORE FIRST. Additive and omitempty, but an older Core ignoring it
+	// falls back to the order's payload, which on a changeover is the outgoing
+	// style's: the wrong carrier. TestComplexOrderStep_PayloadCode_MixedVersion
+	// pins what an older Core reads.
 	PayloadCode string `json:"payload_code,omitempty"`
 	// BinID names the one bin a pickup takes: the operator's pick of a held
 	// partial to finish, from the list a finish-later claim's REQUEST shows.
@@ -731,28 +684,18 @@ type ComplexOrderStep struct {
 	// pickup, which Core sources as before.
 	BinID int64 `json:"bin_id,omitempty"`
 	// WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so
-	// the far side does not have to guess.
-	//
-	// ── WHY IT IS ON THE WIRE AT ALL ──────────────────────────────────────
-	//
-	// Core has always known: a wait it splices for a lane is stamped, and its
-	// release fence keys on that stamp. The Edge never received it. So a station
-	// holding a plan could not tell a wait it owns — "hold at staging until the
-	// line clears", which an operator ends — from one only Core's lane evaluator
-	// can advance, and the board either offered a button that could not work or
-	// offered nothing and explained nothing. The sim operator guessed with a
-	// three-strike retry cap and guessed wrong; a human at an HMI has strictly
-	// less to go on.
+	// the far side does not have to guess: a station can tell a wait it owns
+	// ("hold at staging until the line clears", which an operator ends) from
+	// one only Core's lane evaluator can advance, and Core's release fence
+	// keys on the same stamp.
 	//
 	// Values are WaitKindStation ("station", station-owned) and, on a plan Core
 	// authors, WaitKindLane ("lane") and WaitKindVacate ("vacate"), both
 	// Core-owned. They are declared once, in waitkind.go.
 	//
-	// EMPTY IS NOT A FOURTH KIND. It means "authored before this field", and it
-	// is read as station-owned for exactly as long as pre-ruling orders are
-	// draining — the historical default, so nothing needs migrating. After the
-	// drain window an untagged wait is a defect, and the drift tests on both
-	// sides say so.
+	// EMPTY IS NOT A FOURTH KIND. It is an order authored before the field,
+	// read as station-owned while such orders drain; after the drain window an
+	// untagged wait is a defect, and the drift tests on both sides say so.
 	WaitKind string `json:"wait_kind,omitempty"`
 	// Purpose names the station decision a station wait belongs to: which
 	// RELEASE lets the robot past it (the Edge's release.Purpose: swap, ready,
@@ -763,62 +706,21 @@ type ComplexOrderStep struct {
 	// ExclusiveSlot declares that this DROPOFF lands on a node that holds ONE
 	// bin at a time and must therefore be reserved before the robot is sent.
 	//
-	// ── WHY THE SENDER HAS TO SAY IT ──────────────────────────────────────
+	// Core reserves and capacity-checks a dropoff by node role: a storage slot
+	// (a child of a LANE or NGRP) is gated, anything else is not. A staging
+	// node holds one bin like a slot but is a parentless station, so without
+	// this flag nothing reserves it and two orders can take it, the second
+	// robot arriving to find it full. Only the sender knows a node is staging:
+	// every station carries the one STATION node type, the plantspec's Kind is
+	// never persisted, and the staging designation lives in the Edge cell
+	// config. WaitKind's mirror: there Core knows what the Edge cannot infer,
+	// here the Edge knows what Core cannot. Pinned by
+	// TestDeclaredStagingDropoffIsReserved.
 	//
-	// Core gates its destination checks on node ROLE: a dropoff is reserved and
-	// capacity-checked when the node is a storage slot (a child of a LANE or
-	// NGRP), and skipped otherwise. The skip is deliberate and load-bearing — a
-	// two-robot SUPPLY leg delivers to a LINE node that a sibling EVAC clears,
-	// and gating that re-creates the deadlock 2b05dce fixed.
-	//
-	// A STAGING node is neither. It holds one bin like a slot, but it is seeded
-	// as a station with no parent, so Core's role test rejects it at the
-	// parent-nil guard and BOTH destination gates decline to act. Nothing
-	// reserves it and nothing checks it is free.
-	//
-	// Core cannot repair that by looking harder. Every station — line, press,
-	// weld, loader, unloader, staging, dest — carries the one STATION node type;
-	// the plantspec's Kind field is advisory and never persisted; and the
-	// staging designation lives in the EDGE cell config, which Core does not
-	// have. The sender is the only party that knows.
-	//
-	// ── THE INCIDENT THIS WAS ATTRIBUTED TO WAS NOT THIS BUG ─────
-	//
-	// This field and its fix are UNCHANGED and keep their standing. What is
-	// struck is the causal claim, which stood here and at fourteen other sites:
-	//
-	//	"Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes unable to
-	//	place at SLN_003, with the fleet reporting the robot RUNNING and no
-	//	error. Order 4580 was cancelled by an admin after 2h05m. Nothing was
-	//	broken — nothing had ever asked whether SLN_003 was free."
-	//
-	// The plant queries say otherwise. Order 4580's DESTINATION was ALN_004;
-	// SLN_003 was a mid-route waypoint, not the node it could not place at. The
-	// sibling order ran the identical route on the same robot and completed
-	// twelve minutes earlier. The fleet wedged. Whatever held AMR-04 for 48
-	// minutes, an unreserved staging node was not it.
-	//
-	// It is quoted once, here, rather than at each of the fifteen sites that
-	// carried it: a false sentence reproduced fifteen times to mark its own
-	// deletion is the disease this round is treating.
-	//
-	// THE GAP IS STILL REAL AND STILL REACHABLE, which is why nothing else
-	// moves. A declared staging dropoff is reserved by nothing and checked by
-	// nothing; two orders can take the same node and the second robot arrives to
-	// find it full. That argument stands on the code above without an incident
-	// under it, and it is the argument the fix should always have carried —
-	// TestDeclaredStagingDropoffIsReserved and the two invariant walks are what
-	// hold it, not a story.
-	//
-	// This is WaitKind's mirror, and the same rule: carried across the wire so
-	// the far side does not have to guess. There it was Core knowing something
-	// the Edge could not infer; here it is the Edge knowing something Core
-	// cannot.
-	//
-	// DROPOFF-ONLY; ignored on pickup/wait. Backward-compatible: absent/false is
-	// exactly today's behaviour, so an older sender — and an older Core that
-	// ignores the field — behave as they do now. Setting it on a LINE node would
-	// re-create the 2b05dce deadlock, so senders must not.
+	// DROPOFF-ONLY; ignored on pickup/wait. Absent/false leaves the dropoff
+	// ungated, which is also what an older Core does with it. Never set it on a
+	// LINE node: a two-robot SUPPLY leg delivers to a line node its sibling
+	// EVAC clears, and gating that deadlocks the pair.
 	ExclusiveSlot bool `json:"exclusive_slot,omitempty"`
 }
 
@@ -830,8 +732,8 @@ type ComplexOrderStep struct {
 // fleet routing) and DeliveryNode (last dropoff). For swap orders that
 // pick up at InboundSource and drop at the line, SourceNode is the
 // supermarket but ProcessNode is the line; Core uses ProcessNode (when
-// non-empty) to pick the bin claimed at the line for order.BinID and for
-// the late-bind manifest fallback at release. Empty for orders without a
+// non-empty) to pick the bin claimed at the line as the order's cart and
+// for the late-bind manifest fallback at release. Empty for orders without a
 // distinct line node — Core falls back to SourceNode behavior.
 type ComplexOrderRequest struct {
 	// OrderUUID is the order's id, a UUID v4 the edge generates.
@@ -855,13 +757,10 @@ type ComplexOrderRequest struct {
 	// are linked on the Edge only, because a pair at Core would hold the feeder
 	// for a collector that cannot source until the feeder has gone.
 	//
-	// It did once ride only the second-created leg, because a leg could not
-	// name a sibling that did not exist yet. That made CREATION ORDER a
-	// correctness input: the first-created leg named nobody, so from its own
-	// side it was a solo order and could go to the fleet before its partner
-	// existed. Core now forms a pair from either leg's pointer alone
-	// (coordinatedPairLegs), and the intake back-link stays so a Core talking to
-	// an older Edge, which still sends the one-way shape, heals it on read.
+	// Core forms a pair from either leg's pointer alone (coordinatedPairLegs),
+	// so neither leg is a solo order from its own side. An older Edge that
+	// names the sibling on one leg only is healed on read by the intake
+	// back-link.
 	//
 	// Which leg is created FIRST is NOT a role, so do not read one into it: it
 	// varies by mode and by the creating path. two_robot creates the supply leg
@@ -1169,12 +1068,11 @@ type NodeListResponse struct {
 	// locations and the drivable segments between them. Sibling slices for the
 	// same reason as the two above, and additive in the same way.
 	//
-	// SHINGO WORKS IN APs and always has, so the node list is only the subset
-	// of map points that Shingo gave a job to. A key route is expressed in the
-	// VENDOR's universe — a plain waypoint (class LM) is its primary use — so
-	// validating one against the node list refuses a correct route confidently.
-	// Core has mirrored the whole scene graph since the SEER adapter was
-	// written; it simply never sent it down.
+	// SHINGO WORKS IN APs, so the node list is only the subset of map points
+	// that Shingo gives a job to. A key route is expressed in the VENDOR's
+	// universe — a plain waypoint (class LM) is its primary use — so it is
+	// validated against these names, never the node list, which would refuse
+	// a correct route.
 	//
 	// NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the
 	// "absence is never a finding" guards read the full name set on every
@@ -1277,8 +1175,8 @@ type LoaderInfo struct {
 	// FunnelWindows restricts a shared_window loader to ONE window at a time:
 	// empties funnel to its first window on a budget of 1 instead of spreading one
 	// bin per window. Stated as the restriction so the zero value — which is also
-	// what a Core predating this field sends — means "spread", the behaviour every
-	// loader has today. Ignored for dedicated_positions loaders.
+	// what a Core predating this field sends — means "spread". Ignored for
+	// dedicated_positions loaders.
 	FunnelWindows bool `json:"funnel_windows,omitempty"`
 	// LeavesBare marks the stage-1 half of a two-stage unloader: its CLEAR
 	// leaves the cart with no bin on it, and Core stamps the cart's own bare
@@ -1297,17 +1195,15 @@ type LoaderInfo struct {
 	// other loader.
 	TakesBare bool `json:"takes_bare,omitempty"`
 	// AutoPush re-pulls this unloader's next full when a CLEAR, a PUSH EMPTY or
-	// its own empty-out landing frees a window. It lives on the loader because
-	// the stored claim that used to carry it is retired and SynthClaim never set
-	// it. False — also what a Core predating this field sends — is what every
-	// Core-owned unloader does today.
+	// its own empty-out landing frees a window. It is the loader's own setting
+	// (bin_loaders.auto_push). False — also what a Core predating this field
+	// sends — re-pulls nothing.
 	AutoPush bool `json:"auto_push,omitempty"`
 	// PulledDirectly marks a loader whose finished carriers the process pulls
 	// straight off its windows (a two-stage unloader's stage 2, or any loader
 	// but a stage 1): the Edge's CLEAR there sends the carrier nowhere,
 	// quietly, and the board says it waits for the line. False, also what a
-	// Core predating this field sends, is today's: the empty-out to
-	// OutboundDest.
+	// Core predating this field sends, is the empty-out to OutboundDest.
 	PulledDirectly bool `json:"pulled_directly,omitempty"`
 	// BoardHidesIdle: the station's board leaves off cards and homes with
 	// nothing to do (an operator-ordered station still shows an empty spot).
@@ -1338,41 +1234,31 @@ type LoaderPosition struct {
 	PayloadCode string `json:"payload_code"`
 	// HomeKind separates the two DIFFERENT things a blank PayloadCode can mean
 	// on a dedicated loader: a kept-partial BUFFER slot, and a HOME position the
-	// operator dragged in but has not assigned a payload to yet.
-	//
-	// Core has always distinguished them — bin_loader_homes.home_kind, which
-	// InSourcePool reads to keep an unassigned home OUT of the loader's source
-	// pool while a buffer stays in. It just never said so on the wire, so the
-	// Edge inferred "buffer" from an empty payload and reached the opposite
-	// answer for an unpinned home.
+	// operator dragged in but has not assigned a payload to yet. It is Core's
+	// bin_loader_homes.home_kind, which InSourcePool reads to keep an
+	// unassigned home OUT of the loader's source pool while a buffer stays in;
+	// an empty payload alone cannot tell the two apart.
 	//
 	// Window-vs-dedicated is the parent loader's Layout; this resolves
 	// home-vs-buffer within a dedicated loader.
 	//
 	// Additive and unsentinelled, like Ordinal: a Core that predates the field
 	// sends nothing, every position decodes "", and the reader falls back to
-	// the empty-payload inference — exactly what it did before. See
-	// LoaderHomeKind* below.
+	// the empty-payload inference. See LoaderHomeKind* below.
 	HomeKind string `json:"home_kind,omitempty"`
 	// The loader's UOP threshold is not on this wire: it is Core's alone (the
-	// threshold monitor orders from it, Core's pages report a missing one) and
-	// the Edge's copy fed nothing but a startup warning. Dropped 2026-10-28; an
+	// threshold monitor orders from it, Core's pages report a missing one). An
 	// older Core still sending uop_threshold is ignored on decode.
 
-	// Ordinal is where the operator put this window. An admin screen lets them
-	// drag a loader's windows into the order they want filled; Core persists
-	// that and this is how it reaches the plant.
-	//
-	// It used to go no further than Core. There was no field here and no column
-	// in the Edge's cache, so the arrangement was accepted, stored, synced
-	// downward, and discarded on arrival — the Edge re-sorted by name. Since
-	// the funnel case delivers to "the first window" and spreading fills free
-	// windows in order, that decided which window a carrier physically went to.
+	// Ordinal is where the operator put this window: the order an admin
+	// screen lets them drag a loader's windows into, persisted by Core. It
+	// decides which window a carrier goes to, since the funnel case delivers
+	// to "the first window" and spreading fills free windows in order.
 	//
 	// Additive and unsentinelled: a Core that predates the field sends nothing,
 	// every position decodes 0, every comparison ties, and the reader falls
-	// through to its name ordering — which is exactly what it did before. See
-	// shingo/shared/windoworder for the rule both sides share.
+	// through to its name ordering. See shingo/shared/windoworder for the rule
+	// both sides share.
 	Ordinal int `json:"ordinal,omitempty"`
 }
 
@@ -1670,9 +1556,9 @@ type BinUOPDelta struct {
 	// clear). The dedup PK on Core is (station, scope_kind, scope_key,
 	// epoch); extending the key with epoch means a stale Edge seq counter
 	// (deploy reset, backup restore, cache loss) can't poison the new
-	// bin life's delta stream. Pre-epoch envelopes deserialize with
-	// Epoch=0, which Core treats as the pre-migration cohort (matches
-	// the backfilled epoch=1 on existing rows after the migration runs).
+	// bin life's delta stream. Epoch 0 is the bootstrap/unknown sentinel
+	// (a fresh runtime, or an envelope from before the field), which Core
+	// always applies and never drops as stale.
 	Epoch       int64     `json:"epoch"`
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`
@@ -1808,9 +1694,9 @@ type UOPAdjustment struct {
 	// correctly and subsequent BinUOPDeltas carry the right generation for
 	// Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node)
 	// and on a plain count correction (record_count): when the correction lands
-	// on a staged-but-unbound bin, Edge binds it with this epoch (P2-C5), so the
-	// resumed delta stream is accepted instead of dropped as epoch-0. Zero on
-	// the Released path and from older Cores.
+	// on a staged-but-unbound bin, Edge binds it with this epoch, so the
+	// resumed delta stream carries the bin's current generation. Zero on the
+	// Released path and from older Cores.
 	Epoch int64 `json:"epoch,omitempty"`
 	// AsOfNet and AsOfSeq are Core's applied_net and last_seq for
 	// (AsOfStation, BinID, Epoch), read in the transaction that wrote
@@ -1924,9 +1810,8 @@ type PlantClaimsStyle struct {
 	// publisher; only the material-flow claims the netting reads appear.
 	Claims []PlantClaim `json:"claims"`
 	// Active marks the style the process is currently running — Edge's
-	// processes.active_style_id, which is the same field Edge already
-	// resolves node claims through (findActiveClaim keys on it). At most one
-	// style per process carries it.
+	// processes.active_style_id, the field the Edge resolves node claims
+	// through. At most one style per process carries it.
 	//
 	// Additive: an older Core simply never sets its mirror column, and the
 	// sourcing page keeps saying no style is marked running. Absent on a
@@ -1985,19 +1870,12 @@ type PlantClaim struct {
 	// denominator context for time-to-empty. Read by the at-risk tier.
 	UOPCapacity int `json:"uop_capacity"`
 	// ReorderPoint is the role-dependent replenishment trigger, and BOTH
-	// roles read it as a UOP count. It said "produce: bin-count floor" and
-	// that semantics did not survive: the floor was the loader's, loader
-	// replenishment became Core-owned, and no reader of this field ever
-	// counted bins. On a produce cell the number is the UOP count at which
-	// the cell asks for its empty — honoured when it is strictly between
-	// zero and UOPCapacity, capacity otherwise. The single derivation is
-	// domain.NodeClaim.DemandLevel on Edge; nothing here reproduces it.
-	//
-	// MIRRORED, NOT YET READ. plantclaims.Replace inserts it into
-	// style_claims and no query on this side selects it back. It is carried
-	// for the fill-priority signal the computation is meant to grow, and
-	// until that reader exists the honest statement is that the column is a
-	// copy of Edge's value and nothing more.
+	// roles read it as a UOP count: a consume cell asks for material at it on
+	// the way down; a produce cell asks for its empty at it on the way up when
+	// it is strictly between zero and UOPCapacity, at capacity otherwise.
+	// protocol.ClaimDemandLevel is the one spelling of that rule, called by
+	// the Edge's trigger (domain.NodeClaim.DemandLevel) and by Core's
+	// inventory loop, which reads this mirrored value from style_claims.
 	ReorderPoint int `json:"reorder_point"`
 
 	// ── THE CLAIM'S LEGS ──────────────────────────────────────────────
@@ -2131,11 +2009,9 @@ type DemandOriginState struct {
 	// rather than formatting their own.
 	EpisodeKey string `json:"episode_key"`
 	Kind       string `json:"kind"`
-	// Direction carries the cell's ROLE — produce or consume. Typed, and the two
-	// values are the claim's own; "supply"/"evacuate" were a second vocabulary
-	// for the same fact and are retired (see protocol/episode_key.go). The JSON
-	// key stays `direction` so the wire shape is unchanged; only the value
-	// domain moved, which migration 87 carries for stored rows.
+	// Direction carries the cell's ROLE — produce or consume, the claim's own
+	// two values (ClaimRole). The JSON key is `direction`; its values are a
+	// role, never "supply"/"evacuate" (see protocol/episode_key.go).
 	Direction ClaimRole `json:"direction,omitempty"`
 	Trigger   string    `json:"trigger,omitempty"`
 	// TriggerRef is the claim key or ProcessChangeoverID behind the mint —
@@ -2144,12 +2020,9 @@ type DemandOriginState struct {
 	// ProcessID is THE GRAIN for a cell episode: choreography spans nodes, the
 	// process does not.
 	//
-	// THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID. It was an int64 row
-	// id, which made Core hold two unjoinable identity systems for one set of
-	// processes — this field against process_styles.process_id and
-	// PlantClaimsReport.ProcessID, both of which are the name. See
-	// CellEpisodeKey in episode_key.go for the full argument and for the one
-	// exposure the change adds.
+	// THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID: the same identity
+	// as process_styles.process_id and PlantClaimsReport.ProcessID, so Core
+	// joins the three. See CellEpisodeKey in episode_key.go.
 	ProcessID string `json:"process_id,omitempty"`
 	// CoreNodeName is the head node. Forensic, not the key.
 	CoreNodeName string    `json:"core_node_name,omitempty"`
@@ -2164,17 +2037,15 @@ type DemandOriginState struct {
 	//
 	// NULLABLE, and that is deliberate. The threshold kind's formula divides by
 	// the payload catalog's UOPCapacity, and the sizing entry point
-	// (dispatch.BinsToReachThreshold, on Core) explicitly refuses
-	// `perBinCapacity <= 0` — which means somebody has hit it. Neither 0 nor
-	// 1 is honest there: both render as a real ratio and invite a conclusion
-	// from a denominator that does not exist. A demand whose denominator is
-	// UNKNOWABLE is a different state from one whose denominator is 1, and the
-	// surface shows it as "—".
+	// (dispatch.BinsToReachThreshold, on Core) refuses `perBinCapacity <= 0`.
+	// Neither 0 nor 1 is honest there: both render as a real ratio and invite
+	// a conclusion from a denominator that does not exist. A demand whose
+	// denominator is UNKNOWABLE is a different state from one whose
+	// denominator is 1, and the surface shows it as "—".
 	//
 	// For a cell episode it is len(plan orders) — what BuildConsumePlan said it
 	// would create — NOT the literal 1 that RequestNodeMaterial takes as a BIN
-	// count. Accumulating it per re-fire is the failure mode most likely to
-	// look correct in review: it would render 2026-07-21 as ratio 1.0.
+	// count, and it is never accumulated per re-fire.
 	ExpectedOrders *int `json:"expected_orders,omitempty"`
 	// ExpectedUnknownReason says WHY the denominator is unknowable, when it is.
 	// A NULL with no reason is indistinguishable from a bug.

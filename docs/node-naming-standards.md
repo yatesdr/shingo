@@ -18,13 +18,11 @@ Node IDs follow the VDA5050 standard `nodeId` field — a unique string identifi
 
 ### How Node Names Flow Through the System
 
-When an Edge station creates a material order, the node names from the StyleNodeClaim routing fields (`InboundSource`, `InboundStaging`, `CoreNodeName`, `OutboundStaging`, `OutboundDestination`) are embedded into `ComplexOrderStep` structs and sent to Core over Kafka. Core's `resolveStepNode()` function (`dispatch/complex.go`) then processes each step through a three-tier resolution pipeline:
-
-1. **Explicit Node**: The step specifies a concrete node name → Core calls `GetNodeByDotName()` to validate it exists, then checks if it's a synthetic NGRP. If not, uses it directly.
-2. **Node Group (NGRP)**: The step specifies an NGRP name → Core's GroupResolver applies the configured algorithm (FIFO, FAVL, LKND, DPTH) to select a concrete physical slot within the group.
-3. **Global Fallback (pickup only)**: The step has no node name (empty string) → Core resolves the pickup *source* from `payloadCode` — `FindSourceBinFIFO()` for a full carrier, `FindEmptyCompatibleBin()` for an empty one. There is no storage/dropoff fallback: a blank dropoff is a deferred destination that the step-resolver callers short-circuit and place after intake, so it never reaches this tier.
-
-This pipeline is transparent to Edge — a StyleNodeClaim's `InboundSource` can be a physical node (`SMN_004`), a node group (`SYN_Supermarket_1`), or blank. Core handles all three cases identically through `resolveStepNode()`.
+A claim's routing fields (`inbound_source`, `inbound_staging`, `core_node_name`, `outbound_staging`,
+`outbound_destination`) become the node names of the `ComplexOrderStep`s the Edge sends. Core resolves each step in
+`plan.Planner.ComplexSteps`: a concrete name is used as named, a node group is resolved to a physical slot by
+`binresolver.GroupResolver` under the group's algorithm (below), and a blank pickup is sourced plant-wide by payload.
+A claim's source can therefore be a physical node (`SMN_004`), a node group (`SYN_Supermarket_1`), or blank.
 
 ## Where Node Names Are Set
 
@@ -77,20 +75,6 @@ This means the type code in a node's name is for humans; the `node_type_id` fore
 | `UTN` | Utility Node | A node that acts as a catch-all for overflow, bank builds, or temporary zones. |
 | `PLK` | Pick Location Node | A node for part picks: supermarket decant, repack, or similar functions. |
 
-### Type Codes in Context: Order Routing
-
-When a StyleNodeClaim on Edge specifies `InboundSource: "SMN_034"`, Edge's `buildStep()` function (`engine/material_orders.go`) creates a `ComplexOrderStep{Action: "pickup", Node: "SMN_034"}`. Core receives this and resolves it:
-
-- `SMN_034` is a physical node → Core validates it exists via `GetNodeByDotName("SMN_034")` → uses it directly as the pickup location.
-
-When the claim specifies `InboundSource: "SYN_Supermarket_1"` (an NGRP):
-
-- Core detects `IsSynthetic == true` and `NodeTypeCode == "NGRP"` → delegates to GroupResolver → algorithm selects a specific slot (e.g., `SMN_034`) within the group.
-
-When the claim leaves `InboundSource` blank:
-
-- `buildStep()` returns `ComplexOrderStep{Action: "pickup"}` with no node → Core falls back to global resolution via `payloadCode`.
-
 ## Synthetic Nodes (Shingo-Managed)
 
 Synthetic nodes exist only within Shingo's data model. They have no corresponding VDA5050 waypoint or fleet manager entry and carry no physical (X, Y) coordinates. They are created and managed directly in Shingo to define dispatch behaviors, group physical nodes, and configure resolver algorithms.
@@ -117,29 +101,33 @@ Synthetic nodes form a two-level hierarchy:
 
 | Level | Type | Description |
 |-------|------|-------------|
-| 1 | **Node Group (NGRP)** | The top-level synthetic node. Accepts inbound orders and distributes them to child nodes based on the configured resolver algorithm (FIFO, FAVL, LKND, DPTH). Inheritable properties propagate to children unless overridden. |
+| 1 | **Node Group (NGRP)** | The top-level synthetic node. Accepts inbound orders and distributes them to child nodes based on the configured resolver algorithm (FIFO, COST, FAVL; LKND, DPTH). Inheritable properties propagate to children unless overridden. |
 | 2a | **Physical Child** | A physical floor node registered as a direct child of the NGRP. Addressable individually via dot notation. |
 | 2b | **Lane (LANE)** | A depth-aware synthetic child node. Represents a slot sequence within dense-pack storage. Manages buried-payload reshuffle logic. |
 
 In the Core database, this hierarchy is modeled via `parent_id` on the `nodes` table. A LANE's children are physical slot nodes with a `depth` value (1 = front/accessible, N = back/storage). The NGRP type is stored in the `node_types` table and checked by the GroupResolver when deciding how to resolve a step.
 
-#### How the GroupResolver Uses This Hierarchy
+#### Group algorithms
 
-When `resolveStepNode()` encounters an NGRP node, it delegates to the GroupResolver (`dispatch/group_resolver.go`), which queries the NGRP's children:
+A node group resolves to one of its children by the algorithms on its node properties (`retrieve_algorithm`,
+`store_algorithm`; the codes are the `Retrieve*` and `Store*` constants in
+`shingo-core/dispatch/binresolver/group_resolver.go`). An unset property takes the default, as does every property
+of a group whose `asrs_enabled` is `off`.
 
 **Retrieval algorithms** (select which bin to pick up):
 | Algorithm | Behavior |
 |-----------|----------|
-| **FIFO** | Selects the oldest bin by `loaded_at` timestamp. If the bin is buried (not at the front of a lane), triggers a reshuffle compound order to unbury it first. |
+| **FIFO** (default) | Strict FIFO — the globally oldest bin by `loaded_at`. If it is buried (not at the front of its lane), a reshuffle unburies it first. |
+| **COST** | Cost-optimized — the oldest *accessible* bin; reshuffles only when no bin is accessible. |
 | **FAVL** | First available — picks the first unclaimed bin at an accessible depth. No reshuffle. |
 
 **Storage algorithms** (select where to put a bin):
 | Algorithm | Behavior |
 |-----------|----------|
-| **LKND** | Like-kind consolidation — prefers lanes that already contain the same payload code, then falls back to the emptiest lane. |
+| **LKND** (default) | Like-kind consolidation — prefers lanes that already contain the same payload code, then falls back to the emptiest lane. |
 | **DPTH** | Depth-first packing — fills lanes from back to front, preferring lanes over direct children. |
 
-The algorithm is configured per NGRP via node properties (`retrieve_algorithm`, `store_algorithm`). A `LaneLock` mechanism prevents concurrent reshuffles on the same lane.
+How a lane's mouth is held while a reshuffle works it is [lanes.md](lanes.md)'s.
 
 ### Addressing
 
@@ -150,34 +138,19 @@ Child nodes within a group may be addressed directly using Shingo dot notation:
 | `SYN_Supermarket_1.SMN_004` | Direct physical child node |
 | `SYN_Supermarket_1.Lane_3` | Lane child node |
 
-Core's `GetNodeByDotName()` function (`store/nodes.go`) handles dot notation by splitting on the first dot and querying for the child node whose `parent_id` matches the parent name. This enables explicit targeting of a specific slot or lane within a group, bypassing the GroupResolver's algorithm.
+Core resolves dot notation in `nodes.GetByDotName` by splitting on the first dot and finding the child of that name
+under the named parent; a name with no dot is matched whole. A dot name targets one child explicitly, bypassing
+the group's algorithm.
 
-Individual slot nodes within a Lane are not directly addressable. Addressing a Lane slot directly would bypass the packing algorithm and is not permitted. Lane slot nodes do not appear in the node selection list.
+A claim's legs name a node group or a physical node, never a lane: the claim save refuses a lane as a source, a
+destination or a staging node (`protocol.MsgLaneIsNotASource`, `MsgLaneIsNotADestination`,
+`MsgLaneIsNotAStagingNode`), because a need that names a lane searches that lane only.
 
-## Staging is declared, not inferred
+## Staging nodes
 
-A **staging node** is a destination where both destination gates deliberately
-stand down: reserved by nothing, capacity-checked by nothing, and free for a
-second order to take while the first robot is still on its way.
-
-Core cannot infer which nodes those are, and the naming does not tell it. Every
-station carries the one `STATION` node type, and the plantspec's `Kind` is
-advisory and never persisted. The rule that actually decides it:
-
-> **A staging node is a station with NO PARENT.** The role test rejects it before
-> it ever reaches the LANE/NGRP question.
-
-The designation lives in the **Edge's cell config** — the sender declares it, and
-a fence walks every author on both sides to keep that true.
-
-> **Do not trust a name or a comment for this.** Five comments once promised
-> coverage that did not exist: the predicate's own name, its comment, and its
-> caller's comment all said staging was gated, so a reviewer checking got three
-> confirmations and no gate. Check the parent.
-
-Note that `SLN` (Staging Lane Node, above) is a *naming* convention for
-hot-swap lanes and is a different thing from this gate-standing-down sense. A
-node can be named `SLN` without being a declared staging node, and vice versa.
+What makes a node a staging node — and why its name does not — is
+[terminology.md](terminology.md#staging-declared)'s. `SLN` (Staging Lane Node, above) is a *naming* convention for
+hot-swap lanes: a node can be named `SLN` without being a declared staging node, and vice versa.
 
 ## Notes
 

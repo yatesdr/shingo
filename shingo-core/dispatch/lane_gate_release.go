@@ -241,7 +241,8 @@ func (d *Dispatcher) evaluateLaneReleases(laneID int64) []int64 {
 }
 
 // EvaluateGroupReleases runs one release pass over a node group's waiters: every
-// gate-staged order waiting at one of the group's lanes (C2c ruling 4).
+// gate-staged order waiting at one of the group's lanes (a waiter is keyed by
+// its group, not its lane).
 func (d *Dispatcher) EvaluateGroupReleases(groupID int64) {
 	d.evaluateGroupReleases(groupID)
 }

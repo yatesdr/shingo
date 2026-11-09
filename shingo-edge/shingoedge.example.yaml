@@ -1,0 +1,101 @@
+# ShinGo Edge Configuration
+# Copy to shingoedge.yaml and edit for your environment.
+#
+# Every key the Edge reads, at its shipped default (config.Defaults, rendered in
+# config/defaults.snapshot.txt); a key left out takes the same default. Saving a
+# setting from the web UI's /config page rewrites this file from the live
+# settings, so these comments do not survive the first save.
+
+# Identity. Empty: the Edge mints a uid at first start, writes it here, and Core
+# lists the station unclaimed until someone names it. Replacing the box of an
+# existing station? Put that station's uid here before the first start.
+station_uid: ""
+namespace: ""                           # a label only
+line_id: ""                             # a label only
+database_path: shingoedge.db            # the SQLite database file
+poll_rate: 1s                           # PLC counter loop period; read at boot
+timezone: ""                            # IANA zone, e.g. America/Chicago; empty takes the plant's zone from Core
+core_api: ""                            # sim builds only: Core's HTTP address for the sim operator
+
+warlink:
+  host: localhost
+  port: 8080
+  poll_rate: 2s                         # poll mode's period
+  enabled: true                         # false: no PLC tag values are read
+  mode: sse                             # sse (WarLink pushes changes) or poll
+
+web:
+  host: 0.0.0.0
+  port: 8081
+  session_secret: ""                    # empty: generated at start, written on the next save
+  auto_confirm: false                   # true: orders this station mints confirm their own delivery
+
+messaging:
+  kafka:
+    brokers:                            # required; host:port, the brokers Core uses
+      - 192.0.2.10:9092
+  dispatch_topic: shingo.dispatch       # Core -> Edge
+  orders_topic: shingo.orders           # Edge -> Core
+  outbox_drain_interval: 5s             # how often the outbox publishes pending messages
+  station_id: ""                        # identity override for a bench edge with no station_uid
+  signing_key: ""                       # optional HMAC-SHA256 envelope secret, shared with Core
+
+counter:
+  jump_threshold: 1000                  # a delta above this is labelled a jump; also the rollover bound
+
+backup:
+  enabled: false                        # automatic backups on the schedule below
+  schedule_interval: 1h0m0s
+  keep_hourly: 48
+  keep_daily: 14
+  keep_weekly: 8
+  keep_monthly: 12
+  s3:
+    endpoint: ""                        # e.g. https://s3.example.com
+    bucket: ""
+    region: us-east-1
+    access_key: ""
+    secret_key: ""
+    use_path_style: true                # most storage that is not Amazon's needs this
+    insecure_skip_tls_verify: false     # only for a self-signed certificate
+
+# Local-dev simulation. Read only by a sim build started with SHINGO_ALLOW_SIM=1.
+sim:
+  enabled: false
+  seed: 0                               # 0: derived from the time and logged
+  speed: 0                              # time multiplier; 0 is 1x
+  max_speed: 0                          # cap on speed; 0 is the default cap
+  epoch: 0001-01-01T00:00:00Z           # zero: the sim clock starts at wall-now
+  anchor_wall: 0001-01-01T00:00:00Z     # zero: each process anchors at its own boot
+  calendar:
+    enabled: false
+    shifts: []                          # entries: start, end ("HH:MM"), breaks [{start, end}]
+    weekend: []
+  processes: []                         # entries: plc_name, tag_name, tick_interval, uop_per_tick, station_tag, line_depth, identity_tag
+  operators:
+    enabled: false
+    loader_auto_load: 5s
+    unloader_auto_clear: 8s
+    swap_release: 3s
+    lineside_pull_percent: 0
+    pair_release: false
+    changeovers: []                     # entries: process, to_style, at
+    unloader_taps: []                   # entries: station, tap (lit or empty)
+
+logging:
+  stderr_subsystems:                    # what reaches the journal; [all] mirrors everything, [] nothing
+    - edge_handler
+    - engine
+    - heartbeat
+    - orders
+    - plant_claims
+    - plc
+    - production_ticks
+    - protocol
+    - release
+
+demand:
+  hysteresis_percent: null              # null: 10% of a claim's reorder point, at least 1 UOP
+
+plant_claims:
+  snapshot_interval: 1h0m0s             # full plant-claims republish period

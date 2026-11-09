@@ -112,9 +112,9 @@ func (e *Engine) robotRefreshLoop() {
 // question of why.
 const laneLivenessFloorInterval = 60 * time.Second
 
-// laneLivenessFloorLoop is F-22's floor: the periodic pass over the two wait
-// populations that had only event releasers — gate-staged dwellers and compound
-// legs Core has not yet handed to the fleet.
+// laneLivenessFloorLoop is the lane liveness floor: the periodic pass over the
+// two wait populations no other floor covers — gate-staged dwellers and
+// compound legs Core has not yet handed to the fleet.
 //
 // It is the third and fourth instances of a shape this system already had twice
 // (the fulfillment sweep, AdvanceStuckReshuffleParents), which is why it is

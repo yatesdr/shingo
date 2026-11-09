@@ -13,9 +13,10 @@ they are gone, so it is replaced by the plain assertion in the commit that fixes
 ## The rules
 
 1. **An order is issued holding exactly what its door declares,** softly: the cart it is for (a pending bin row;
-   `bin_id` and `named_bin_id` stamped in the INSERT) and the position it is bound to when that position is one
-   carrier's at a time (a pending slot row), position before cart, in the issue's transaction or nothing. What the
-   door does not know is the acquirer's. A hard claim is written only at a hand.
+   the cart's `order_bins` row and `named_bin_id` written with the INSERT) and the position it is bound to when that
+   position is one carrier's at a time (a pending slot row), position before cart, in the issue's transaction or
+   nothing. What the door does not know is the acquirer's. A hard claim is written only at a hand. The issue, door by
+   door: [order-builder-dispatch.md](order-builder-dispatch.md).
    Tests: `TestCensus_Issuers`, `TestIssueCensus_AtCommit` (dispatch and engine, one table:
    `testdb.IssueDoors`), `TestRule1_NoHardClaimWhileSourcing_Sweep`.
 

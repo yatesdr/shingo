@@ -10,7 +10,7 @@ import (
 )
 
 // TestNoRawZIndexInEdgeAssets holds Edge's stylesheets, page scripts and
-// templates to the layer scale in shared/tokens.css (D19).
+// templates to the layer scale in shared/tokens.css.
 func TestNoRawZIndexInEdgeAssets(t *testing.T) {
 	t.Parallel()
 	var scanned int

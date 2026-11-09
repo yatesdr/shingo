@@ -35,7 +35,7 @@ seeded with its own processes (`seeddev --edge`, `plantspec.Plant.ForEdge`).
 
 | Property | Family | Section |
 |---|---|---|
-| Changeover and counting: every reduction on the right cart, the holds, the production record, the deliveries | `integration/scenarios/catid_4x2_*_test.go` (S1-S8); `scripts/sim-4x2.sh` on the stack; the section's shape: plantspec `TestMaster4x2_*` | `[4x2]` |
+| Changeover and counting: every reduction on the right cart, the holds, the production record, the deliveries | `integration/scenarios/catid_4x2_*_test.go` (S1-S9); `scripts/sim-4x2.sh` on the stack; the section's shape: plantspec `TestMaster4x2_*` | `[4x2]` |
 | Lanes: the mouth gate, the dig walk, no air bubbles, two digs in one group | `shingo-core/cmd/seeddev` `TestLanesFamily_*` (docker); plantspec `TestCensus_*` (the frozen baseline's two bubbles replayed on the corridor), `TestMasterCorridor_*` | `[corridor]` |
 | Kanban: the loop, the families, the pools, a family never loses a cart while whole, the costs | `cmd/seeddev` `TestKanbanRig_*`, `TestKanbanPin_*`, `TestSeedKanbanPress_*`, `TestKanbanPressFixture_*`; plantspec `TestKanbanPress*Plant_*`; simcalc `TestKanbanPress_*`; `scripts/kanban-rig.sh` R1-R6, W, P1-P6 on the stack (`docs/dev-env/kanban-rig.md`) | `[kanban]`, `[kanban5]` |
 | Multi-cart: several carts on one order, the invariant after every injected state | `cmd/seeddev` `TestOrderCartsFixture_*` (docker) | `[multi-cart]` |

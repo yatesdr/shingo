@@ -2,58 +2,51 @@
 
 Verified against: b9210bce
 
-### Shared module structure
+### The shared module
 
-**Decided: its own Go module + Go workspace.**
+`shared/` is its own Go module in the workspace `go.work` declares; the root
+[README](../../README.md) lists every module. Core and Edge each require
+`shingo/shared` (and `shingo/protocol`) with a `replace` to the sibling
+directory, so an edit to `shared/` is in the next build with no version bump.
+`shared/` holds what Core and Edge must present or answer identically. It is not
+the home for shared infrastructure; that is `protocol/`.
 
-`shared/` was the third module when this section was written and the UI assets
-below were all of it. The workspace now lists five (`protocol`, `shared`,
-`shingo-core`, `shingo-edge`, `integration`), and `shared/` has since taken on
-cross-surface answers and cross-module test fixtures alongside the assets. It is
-still not the home for shared infrastructure — that is `protocol/`. See
-[`shared-layer-promotion.md`](../shared-layer-promotion.md).
+What it holds, by kind:
 
-```
-shingo/                          ← repo root
-├── go.work                      ← workspace file, lists all five modules
-├── protocol/
-│   └── go.mod                   ← wire protocol + shared infrastructure
-├── shingo-core/
-│   └── go.mod                   ← imports shingo/shared
-├── shingo-edge/
-│   └── go.mod                   ← imports shingo/shared
-└── shared/
-    ├── go.mod
-    ├── static.go                ← go:embed *.css *.js *.html
-    ├── tokens.css               ← semantic design tokens
-    ├── status-classes.css       ← per-status badge classes
-    ├── utils.js                 ← h, el, escapeHtml, api, modal, confirm, toast, SSE factory
-    ├── windoworder/             ← a cross-surface answer, not an asset
-    └── loadervectors/           ← cross-module fixtures pinning Core against Edge
-```
+- **UI assets**, at the top level and embedded by `static.go`
+  (`//go:embed *.css *.js *.svg`): `tokens.css` (the design tokens),
+  `status-classes.css` (one badge class per protocol status), `components.css`
+  (the component rules both apps share), `utils.js` (the JS primitives, see
+  [JavaScript primitives](17-javascript-primitives.md)), `esc.js` (the HTML
+  escape for string-built markup), `scene-geom.js` (the map projection) and
+  `icons.svg` (the icon sprite).
+- **Go helpers the UI drift tests and both `www` packages call**: chip and
+  class-selector reading (`chips.go`, `cssclasses.go`), contrast and
+  colour-vision maths (`contrast.go`, `cvd.go`), the emoji detector
+  (`emoji.go`), the layer scale (`zlayer.go`), and two HTTP helpers
+  (`shared.SetHTMLContentType`, `shared.SafeNextPath`).
+- **Cross-surface answers**, one package each: `planttime` (timestamps on the
+  plant clock), `clockglobals` (the page globals `utils.js` needs),
+  `windoworder` (the order of a loader's windows).
+- **Cross-module fixtures** pinning Core against Edge: `loadervectors`,
+  `comingvectors`, `fedshape`, `scenefixtures`.
+- **Repo tooling** under `scripts/` (Go, not shipped).
 
-The `go.work` file at the repo root declares all of them as a
-workspace. Local development picks up edits to `shared/` immediately; no
-version bumps or `replace` directives needed during normal work. Plant
-deploys (`git pull` + service restart + rebuild) work transparently — the
-workspace file is detected automatically by every `go` command. The
-self-contained Go binary embeds the shared static files at build time;
-there's no runtime dependency on the `shared/` directory.
+The binaries embed the shared assets at build time; nothing reads `shared/` at
+run time.
 
 ### Static file serving
 
-Each consumer module imports `shingo/shared` and serves its files at a
-predictable URL prefix (e.g. `/static/shared/utils.js`,
-`/static/shared/tokens.css`). The Go side wires this up via:
+Each consumer serves `shared.Files` under one prefix (`/static/shared/`):
 
 ```go
 import "shingo/shared"
 
-http.Handle("/static/shared/", http.StripPrefix("/static/shared/",
+r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
     http.FileServer(http.FS(shared.Files))))
 ```
 
-Template references use the prefixed path:
+Templates reference the assets by that prefix:
 
 ```html
 <link rel="stylesheet" href="/static/shared/tokens.css">
@@ -63,15 +56,8 @@ Template references use the prefixed path:
 ### Adding to shared/
 
 Promote a file to `shared/` only when **both** Core and Edge need it
-identically, and only when a disagreement between them would actually be a
-defect. Don't preemptively populate. The full criterion — all four clauses, and
-the rule that the drift guard ships in the promoting commit — is in
-[`docs/shared-layer-promotion.md`](../shared-layer-promotion.md); read it before
+identically, and only when a disagreement between them would be a defect.
+Don't populate it ahead of need. The full criterion, and the rule that the drift
+guard ships in the promoting commit, is in
+[shared-layer-promotion.md](../shared-layer-promotion.md); read it before
 promoting anything.
-
-For UI specifically the candidates are tokens, status-classes CSS and the JS
-utility module. Note that `shared/` is no longer UI-only: it also holds
-cross-surface answers (`windoworder`) and cross-module fixtures
-(`loadervectors`). Shared *infrastructure* does not go here — that is
-`protocol/`.
-

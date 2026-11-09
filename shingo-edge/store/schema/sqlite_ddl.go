@@ -655,23 +655,22 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     keep_staged_resumed_at TEXT NOT NULL DEFAULT '',
     -- pending_uop_payload is the part of the ticks held in pending_uop_delta,
     -- written by the hold's own statement and cleared with it. The hold
-    -- replays only onto a bound carrier of that part (Lane H R2, DECISIONS
-    -- D12); a different part's carrier takes none. '' is a hold from before
-    -- the column, which replays as it always did.
+    -- replays only onto a bound carrier of that part; a different part's
+    -- carrier takes none. '' is a hold from before the column, which replays
+    -- as it always did.
     pending_uop_payload TEXT NOT NULL DEFAULT '',
     -- released_empty: the bound carrier was released as empty (RELEASE EMPTY,
     -- an underpack, a release declaring 0). It is not charged afterwards: a
     -- consume tick drains the pile, then is held for the next carrier of the
-    -- part (Lane H R3, D12). Set by the release's count write, cleared when
-    -- the carrier leaves or another carrier binds. After the v17 column,
-    -- where the v19 ALTERs put both.
+    -- part. Set by the release's count write, cleared when the carrier leaves
+    -- or another carrier binds. After the v17 column, where the v19 ALTERs
+    -- put both.
     released_empty INTEGER NOT NULL DEFAULT 0,
     -- placed_seq: the placement stamp of the landing this seat last bound
-    -- (Core's bin_placement_seq, Lane H, DECISIONS D10). The landing's bind
-    -- refuses one not newer, so a redelivered or overtaken landing binds
-    -- nothing. Kept by every leave; a person's bind leaves it as it is. NULL
-    -- until the first landing. After released_empty, where the v20 ALTER puts
-    -- it.
+    -- (Core's bin_placement_seq). The landing's bind refuses one not newer,
+    -- so a redelivered or overtaken landing binds nothing. Kept by every
+    -- leave; a person's bind leaves it as it is. NULL until the first
+    -- landing. After released_empty, where the v20 ALTER puts it.
     placed_seq INTEGER
 );
 
@@ -802,17 +801,17 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- instant remaining UOP first went at-or-below reorder_point, cleared when
     -- it recovers above reorder_point + margin. NULL means "not below".
     --
-    -- It is the durable half of the demand episode's hot path. The level is
-    -- evaluated on every PLC consume tick, so the timestamp is held in memory
-    -- and written through only ON TRANSITION; this column exists because Edge
-    -- restarts (systemctl restart shingoedge) more often than anything else in
-    -- the system, and an in-memory-only edge means a restart mid-episode loses
-    -- it, the next tick mints a duplicate, and the first never closes.
+    -- It is the durable half of the demand episode. The level is evaluated
+    -- once a period by the demand reconciler's level sweep (sweepCellLevels),
+    -- and the timestamp is written only ON TRANSITION; this column exists
+    -- because Edge restarts (systemctl restart shingoedge) more often than
+    -- anything else in the system, and an in-memory-only edge means a restart
+    -- mid-episode loses it, the next pass mints a duplicate, and the first
+    -- never closes.
     --
     -- On the CLAIM rather than the episode because it is a per-claim level
     -- observation and the claim is the row the predicate already reads. The
-    -- episode itself is keyed per PROCESS and lives in demand_origins_open — see
-    -- O8 in demand-origin-design-2026-07-25.md.
+    -- episode itself is keyed per PROCESS and lives in demand_origins_open.
     below_reorder_since     TEXT,
     -- ── ATTRIBUTION ──────────────────────────────────────────────────────
     -- Every claim row says who wrote it and from where, because the HMI flow

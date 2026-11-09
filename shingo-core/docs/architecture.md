@@ -6,53 +6,55 @@ Developer reference for ShinGo Core internals. Covers package layout, data flow,
 
 ## Package Layout
 
-```
-shingo-core/
-  cmd/shingocore/       Entry point, flag parsing, component wiring
-  config/               YAML config loading, hot-reload support
-  domain/               Pure data types: Bin, Node, Payload, Order, and their children
-  engine/               Core orchestrator: lifecycle, event bus, order handlers
-  dispatch/             Order routing: dispatch to fleet, lifecycle state machine
-  dispatch/binresolver/ Slot-picking algorithms (FIFO/COST/FAVL, LKND/DPTH, lane locks)
-  fulfillment/          Queued-order fulfillment scanner (narrow Dispatcher/Resolver interfaces)
-  material/             Pure CMS-transaction mapping for bin movement across CMS boundaries
-  service/              Service layer (BinService, BinManifestService) — validation + mutation behind handlers
-  scenesync/            Reconciles the fleet backend's authoritative scene with shingo nodes and scene points
-  messaging/            Kafka producer/consumer, outbox drainer, InboxDedup decorator, CoreHandler
-  fleet/                Fleet backend interface (vendor-agnostic)
-  fleet/seerrds/        Seer RDS fleet.Backend adapter
-  fleet/simulator/      In-memory fleet.Backend for deterministic tests
-  rds/                  Seer RDS HTTP client (transport used by the seerrds adapter)
-  store/                Database: schema, migrations, queries, outbox/inbox tables
-  store/bins/           Bin, bin_types, and bin_manifest queries
-  store/nodes/          Node CRUD, lane/group queries, dot-notation resolution
-  store/orders/         Order CRUD, order_bins junction, history
-  store/payloads/       Payload templates, payload_manifest, node_payload assignments
-  internal/testdb/      Shared Postgres test harness and fixture builders (test-only)
-  www/                  Web server: router, handlers, templates, SSE
-```
+The top-level packages of `shingo-core/`; `go list ./...` from the module is the full list.
 
-Shared infrastructure (auth, types, debuglog, backoff, eventbus, outbox, bcrypt wrappers) lives in the
-separate `protocol/` module at the repo root and is imported by both core and edge.
+| Package | Holds |
+|---|---|
+| `cmd/shingocore/` | Entry point and composition root: flags, wiring, the two inbound dispatch tables (`routers.go`) |
+| `cmd/` (others) | Dev tools: `seeddev`, `soakstat`, `simcalc`, the schema and defaults snapshot writers |
+| `config/` | YAML config: `Defaults()`, `Load`, `Save`, per-section validation |
+| `domain/` | Pure data types: bins, nodes, payloads, orders and their children |
+| `engine/` | The orchestrator: lifecycle, the event bus and its subscribers (`wiring*.go`), service accessors |
+| `dispatch/` | Order routing and the lifecycle state machine; `dispatch/binresolver/` (slot picking), `dispatch/binsource/`, `dispatch/plan/`, `dispatch/eta/` |
+| `fulfillment/` | The queued-order fulfillment scanner, behind narrow Dispatcher/Resolver interfaces |
+| `service/` | Validation + mutation behind the handlers (`BinService`, `NodeService`, `InventoryService`, …) |
+| `messaging/` | Kafka client, outbox drainer, `CoreHandler`, `CoreDataService` (the Data-subject handlers); `messaging/middleware/` holds the inbox dedup |
+| `asks/` | Core's half of the ask pair: routes an Edge's ask to the door that answers it |
+| `store/` | Postgres: migrations, queries, outbox/inbox; one subpackage per table family (`store/bins`, `store/orders`, …) and `store/schema` for the baseline DDL |
+| `www/` | Web server: router, handlers, templates, SSE, and the ask door bodies (`Doors`) |
+| `fleet/` | The vendor-neutral fleet interface; `fleet/seerrds/` (the Seer RDS adapter), `fleet/simulator/` (in-memory, for tests and the sim) |
+| `rds/` | The Seer RDS HTTP client the adapter uses |
+| `scenesync/`, `scenemap/` | Mirroring the fleet's scene into nodes and scene points; parsing a robot's own map file |
+| `material/`, `cms/` | CMS-boundary transaction building (pure); the CMS wire, client and poster — see [CMS Integration](cms-integration.md) |
+| `kanban/`, `uop/` | Kanban loop arithmetic; the Core-side unit-of-production chokepoint |
+| `notify/` | E-mail alerts |
+| `plantspec/` | The declarative plant description `cmd/seeddev` loads |
+| `internal/testdb/`, `testharness/` | Shared Postgres test harness; its re-export for the integration module |
+
+Shared infrastructure lives in two sibling modules imported by both Core and Edge:
+`protocol/` (envelope types, auth, debuglog, backoff, eventbus, outbox, router, clock) and
+`shared/` (UI assets and the pure helpers promoted out of the binaries — see
+[Shared layer](../../docs/shared-layer-promotion.md)).
 
 ## Startup Sequence
 
-The `main()` function in `cmd/shingocore/main.go` initializes components in this order:
+`main()` in `cmd/shingocore/main.go` initializes components in this order:
 
 ```
-1. Parse flags, open the debug log
-2. Load YAML config
-3. Open database (auto-migrate schema)
-4. Connect to the fleet backend
-5. Connect to Kafka
-6. Create engine (wires all components)
-7. Start engine (starts event bus, fleet poller, periodic tasks)
-8. Start protocol ingestor (Kafka consumer on shingo.orders)
-9. Start outbox drainer (publishes to shingo.dispatch)
-10. Start web server
+1. Parse flags; log the build stamp; start pprof if asked; open the debug log
+2. Load YAML config; apply the stderr log gate
+3. Open the database (migrate the schema)
+4. Build the fleet backend (Seer RDS, or the simulator in a sim build) and ping it
+5. Connect to Kafka (a failed connect retries in the background)
+6. Create and start the engine (event bus, fleet poller, periodic tasks)
+7. Build CoreHandler, CoreDataService, the ask server and the two dispatch tables
+8. Start the protocol ingestor (Kafka consumer on messaging.orders_topic)
+9. Start the outbox drainer (publishes on messaging.dispatch_topic) and the inbox purge
+10. Start the web server
 ```
 
-Shutdown is graceful on `SIGINT`/`SIGTERM`: components stop in reverse order.
+Shutdown is on `SIGINT`/`SIGTERM` (`awaitShutdown`): the web layer stops first,
+then the deferred stops run in reverse order of start.
 
 ## Data Flow
 
@@ -61,37 +63,34 @@ Shutdown is graceful on `SIGINT`/`SIGTERM`: components stop in reverse order.
 ```
 Edge Station                    Kafka                         ShinGo Core
      |                            |                               |
-     |-- order.request --------->| shingo.orders                  |
+     |-- order.request --------->| orders topic                   |
      |                            |------>  Ingestor              |
      |                            |          |                    |
      |                            |          v                    |
-     |                            |      CoreHandler              |
+     |                            |      InboxDedup -> CoreHandler|
      |                            |          |                    |
      |                            |          v                    |
      |                            |      Dispatcher               |
-     |                            |       |    |                  |
-     |                            |       |    v                  |
-     |                            |       | Resolver              |
-     |                            |       |  (find source node,   |
-     |                            |       |   claim payload)      |
-     |                            |       |    |                  |
-     |                            |       v    v                  |
+     |                            |       (resolve source bin,    |
+     |                            |        claim it, plan legs)   |
+     |                            |          |                    |
+     |                            |          v                    |
      |                            |      Fleet Backend            |
      |                            |       (create RDS order)      |
      |                            |          |                    |
      |                            |          v                    |
-     |                            |      DB: update order status  |
+     |                            |      DB: order status         |
      |                            |          |                    |
      |                            |          v                    |
-     |                            |      EventBus: emit events   |
+     |                            |      EventBus: emit events    |
      |                            |          |                    |
      |                            |          v                    |
      |                     outbox | <---- Outbox: enqueue reply   |
      |                            |                               |
-     |<-- order.ack -------------|  shingo.dispatch               |
+     |<-- order.ack -------------|  dispatch topic                |
      |                            |                               |
      |                            |      Fleet Poller             |
-     |                            |       (polls RDS every 5s)    |
+     |                            |       (every rds.poll_interval)|
      |                            |          |                    |
      |                            |          v                    |
      |                            |      Status change detected   |
@@ -100,110 +99,107 @@ Edge Station                    Kafka                         ShinGo Core
      |<-- order.delivered -------|      Outbox: enqueue updates  |
 ```
 
+The statuses an order moves through, and what each leg does, are in
+[Order Lifecycle](../../docs/order-lifecycle.md).
+
 ### Message Ingest Pipeline
 
 ```
-Kafka Consumer (shingo.orders)
+Kafka consumer (messaging.orders_topic)
     |
     v
-Protocol Ingestor (two-phase decode)
+protocol.Ingestor (two-phase decode)
     |-- Phase 1: parse header (version, expiry, destination, src)
-    |-- Drop if expired or wrong destination
+    |-- Expired: dropped; an expired ask is answered as expired
+    |   ((*asks.Server).AnswerExpired, wired as Ingestor.OnExpired)
     |-- Phase 2: full payload decode
     |
     v
-InboxDedup (protocol.MessageHandler decorator)
-    |-- Inserts envelope ID into inbox table
-    |-- Drops replays before the inner handler sees them
-    |-- Gates the 8 order-channel methods; HandleData and reply-
-    |   channel methods pass through ungated (same shape the
-    |   per-handler shouldProcessInbound guard used to enforce)
-    |
-    v
-CoreHandler
-    |-- order.request  --> Dispatcher.HandleOrder()
-    |-- order.cancel   --> Dispatcher.HandleCancel()
-    |-- order.receipt  --> Engine.HandleReceipt()
-    |-- order.redirect --> Dispatcher.HandleRedirect()
-    |-- data (edge.register)   --> Engine.RegisterEdge()
-    |-- data (edge.heartbeat)  --> Engine.HandleHeartbeat()
+Protocol router (buildProtocolRouter), by envelope Type
+    |-- order channel: inbox dedup middleware, then a CoreHandler method
+    |       order.request / cancel / receipt / redirect / release / ingest,
+    |       complex order request  --> messaging.Dispatcher
+    |-- data: subject router (buildSubjectRouter), by Data subject
+    |       edge.register, edge.heartbeat, ... --> CoreDataService methods
+    |       edge.ask                            --> asks.Server --> www.Doors
+    |-- reply-channel Types: registered no-ops (Core sends them, never receives)
 ```
 
 `CoreHandler` holds the dispatcher behind the narrow `messaging.Dispatcher`
-interface (8 methods — one per order-channel handler) rather than the
-concrete `*dispatch.Dispatcher`. The composition root in
-`cmd/shingocore/main.go` wires the concrete dispatcher in; every other
-caller sees only the interface. This removes the `messaging → dispatch`
-import edge and lets tests stub the dispatcher surface without spinning
+interface — one method per order-channel message type — rather than the
+concrete `*dispatch.Dispatcher`. The composition root wires the concrete
+dispatcher in; a compile-time assertion in `messaging/dispatcher.go` fails the
+build if the two drift. Tests stub the dispatcher surface without spinning up
 the real lifecycle machinery.
+
+Both dispatch tables assert they are complete at build time:
+`TestProtocolRouter_CoversEveryEnvelopeType` and
+`TestSubjectRouter_CoversEveryInboundSubject` fail a table missing an envelope
+Type or an inbound subject, and `TestCensus_AskKinds` fails an ask kind no door
+answers. Boot repeats the same checks and refuses to start.
 
 ### Outbox Pattern
 
-Messages to edge stations are never sent directly to Kafka. Instead:
-
-```
-Handler logic
-    |
-    v
-DB: INSERT INTO outbox (topic, data, msg_type, station_id)
-    |
-    v
-OutboxDrainer (runs every 5s)
-    |-- SELECT from outbox WHERE sent_at IS NULL
-    |-- Publish each to Kafka
-    |-- UPDATE outbox SET sent_at = NOW()
-```
-
-This ensures at-least-once delivery even when Kafka is temporarily unavailable.
+Messages to edge stations are never sent directly to Kafka. Handler logic
+enqueues an outbox row, inside the caller's database transaction where it has
+one; the outbox drainer (`messaging.NewOutboxDrainer`) publishes it. Enqueue
+rings the drainer, so a message does not wait for the tick; the tick
+(`messaging.outbox_drain_interval`) is the retry and purge cadence. Delivery
+semantics — the retry ceiling, dead letters, ordering — are in
+[Wire Protocol](../../docs/wire-protocol.md).
 
 ### Inbox Pattern
 
-Mutating inbound messages from edge stations are deduplicated using the envelope `id`.
-The dedup is implemented once as a `protocol.MessageHandler` decorator
-(`messaging.InboxDedup`) wrapping `CoreHandler`:
+Order-channel messages from edge stations are deduplicated on the envelope
+`id`, once, by a router middleware (`middleware.NewInboxDedup`, applied with
+`UseFor` to the order-channel Types in `buildProtocolRouter`):
 
 ```
-Inbound envelope
+Inbound envelope (order channel)
     |
     v
-InboxDedup.shouldProcess()
-    |-- INSERT INTO inbox (msg_id, msg_type, station_id)
-    |-- duplicate key -> log + drop replay
+NewInboxDedup middleware
+    |-- INSERT INTO inbox (msg_id, msg_type, station_id) ON CONFLICT DO NOTHING
+    |-- already recorded -> drop the replay (logged under inbox_dedup)
+    |-- the insert failed  -> drop and log (forwarding could double-execute)
     |
     v
 CoreHandler -> messaging.Dispatcher (interface)
 ```
 
-This suppresses replayed cancels, receipts, redirects, requests, releases,
-ingest commands, and other mutating commands without relying on best-effort
-in-memory state. Replacing the per-handler `shouldProcessInbound` call that
-used to be copy-pasted across eight `HandleOrder*` methods keeps the gate
-in one place and makes it trivial to add a new order-channel message type
-without re-auditing dedup coverage.
+This suppresses replayed requests, cancels, receipts, redirects, releases and
+ingests without relying on in-memory state. Data and reply-channel Types pass
+through ungated. Adding an order-channel Type means adding it to the `UseFor`
+list. The inbox is purged daily (`(*store.DB).PurgeOldInbox`).
 
 ## Key Patterns
 
 ### EventBus
 
-Synchronous pub/sub within the engine process. Used to decouple order lifecycle handling from side effects (audit logging, payload tracking, edge notifications).
+Synchronous pub/sub within the engine process (`engine.EventBus`, over
+`protocol/eventbus`): subscribers run in registration order on the emitting
+goroutine, and a panicking subscriber is recovered and logged. Used to decouple
+order lifecycle handling from side effects (audit logging, bin tracking, edge
+notifications, SSE).
 
 ```go
-// Subscribe to specific event types
-engine.Events.SubscribeTypes(func(evt Event) {
-    ev := evt.Payload.(OrderCompletedEvent)
+// Subscribe with the payload type bound at the call site
+eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+    ev := evt.Payload
     // handle completion
 }, EventOrderCompleted)
 
 // Emit an event
-engine.Events.Emit(Event{
+e.Events.Emit(Event{
     Type:    EventOrderCompleted,
     Payload: OrderCompletedEvent{OrderID: 42},
 })
 ```
 
-Event types are the `Event*` constants in `engine/events.go:13-32` — `EventOrderReceived`, `EventOrderDispatched`, `EventOrderStatusChanged`, `EventOrderCompleted`, `EventOrderFailed`, `EventOrderSkipped`, `EventOrderCancelled`, `EventBinUpdated`, `EventNodeUpdated`, the four connectivity pairs, `EventRobotsUpdated`, `EventCMSTransaction`, `EventBlockCompleted`, `EventBinEnteredTransit` and the rest. Read the file rather than this list — it is the one that compiles.
-
-Event handlers are wired in `engine/wiring.go`.
+`SubscribeTyped` skips (and logs) an event whose payload is not the bound type.
+Event types are the `Event*` constants in `engine/events.go` — read the file
+rather than a list here; it is the one that compiles. Event handlers are wired
+in `engine/wiring.go` and its `wiring_*.go` siblings.
 
 ### Fleet Backend Interface
 
@@ -223,21 +219,28 @@ type Backend interface {
 }
 ```
 
-To add a new fleet vendor, implement `fleet.Backend` and wire it in `main.go`.
+The composition root holds a `fleet.TrackingBackend`: a `Backend` plus the
+order tracker the poller drives (`InitTracker`, `Tracker`).
 
 ### Adapter/Emitter Interfaces
 
 Each package defines its own emitter interface to avoid import cycles. The engine bridges them during initialization.
 
 ```
-dispatch.Emitter  -- emits order events via engine.Events
-store.DB          -- shared by engine, dispatch, handlers
-fleet.Backend     -- used by dispatch, engine
+dispatch.Emitter      -- emits order events via engine.Events
+fleet.TrackerEmitter  -- the tracker's status changes, into the engine
+store.DB              -- shared by engine, dispatch, handlers
+fleet.Backend         -- used by dispatch, engine
 ```
 
 ### Database
 
-The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. Schema is defined in `store/schema/postgres_ddl.go` (it lived at `store/schema_postgres.go` until Phase 6.0a). Migrations run automatically on startup.
+The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. The
+baseline schema is `store/schema/postgres_ddl.go`; versioned migrations in
+`store/migrations.go` run automatically on startup. The schema as a migrated
+database actually has it is committed as `store/schema/schema.snapshot.sql`
+(`TestSchemaSnapshotIsCurrent` fails when it goes stale); every table and
+column is in [Data Model](../../docs/data-model.md).
 
 ### sendToEdge Helper
 
@@ -248,51 +251,6 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 ```
 
 This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used for waybills, status updates, delivery notifications, and cancellations.
-
-## Database Schema
-
-### Core Tables
-
-| Table | Purpose |
-|-------|---------|
-| `nodes` | Physical locations (storage, line-side, staging, lane slots) |
-| `node_types` | Node type definitions (NGRP, LANE, SHF) |
-| `node_stations` | Node-to-station assignments |
-| `node_payloads` | Which payloads a node accepts |
-| `node_bin_types` | Which bin types a node/lane accepts |
-| `node_properties` | Key-value properties per node (e.g., `depth`) |
-| `bin_types` | Physical container class definitions |
-| `bins` | Tracked physical containers |
-| `payloads` | Container content templates (code, UOP capacity, manifest) |
-| `payload_bin_types` | Which bin types are compatible with a payload |
-| `payload_manifest` | Template manifest items per payload |
-| `orders` | Transport orders with full lifecycle state |
-| `order_history` | Status change log per order |
-| `cms_transactions` | Material movement transaction log |
-| `demand_registry` | Per-node demand entries (the old `demands` table went at v106) |
-| `demand_origins` | Demand-episode attribution for orders. Declared in migration v59 only, never in the baseline DDL |
-| `outbox` | Message queue for Kafka delivery |
-| `audit_log` | System-wide audit trail |
-| `admin_users` | Web UI authentication |
-| `edge_registry` | Connected edge station tracking |
-| `scene_points` | Fleet scene/map point cache |
-| `test_commands` | RDS command test history |
-
-See [Data Model](../../docs/data-model.md) for the full entity reference and relationship diagram.
-
-### Key Relationships
-
-```
-node_types ---< nodes ---< bins
-                  |
-                  +---< node_properties
-                  +---< node_stations
-                  +---< node_payloads ----> payloads ---< payload_manifest
-                  +---< node_bin_types ----> bin_types ---< payload_bin_types
-
-orders ---< order_history
-  |----> nodes, payloads, bins
-```
 
 ## SSE (Server-Sent Events)
 
@@ -310,91 +268,51 @@ EventHub.SetupEngineListeners()
 EventHub.Broadcast(eventType, data)
     |
     v
-Connected browsers (GET /events)
+Connected browsers (GET /events, optionally ?topics=...)
 ```
 
-Event types sent to browsers: `order-update`, `node-update`, `payload-update`, `robot-update`, `debug-log`
+The event names and their payloads are listed in
+[API Reference](api-reference.md).
 
 ## Reconciliation And Recovery
 
-Core maintains reconciliation checks for:
+Core runs reconciliation checks over orders, bins and the outbox — each check
+is an `issue` value that `reconciliation.ListAnomalies` (`store/reconciliation`)
+produces — and surfaces them through:
 
-- terminal orders that still claim bins
-- completed orders with no linked bin
-- confirmed orders with no `completed_at`
-- pending and dead-lettered outbox backlog
-
-These are surfaced through:
-
-- `/diagnostics` for operator/admin visibility
-- `/api/reconciliation` for programmatic inspection
-- `/api/outbox/deadletters` and `/api/outbox/replay` for controlled recovery of dead-lettered outbound messages
+- the Logs page (`/diagnostics`), Reconciliation and Recovery tabs
+- `GET /api/reconciliation` for programmatic inspection
+- `GET /api/outbox/deadletters` and `POST /api/outbox/replay` for controlled recovery of dead-lettered outbound messages
 
 ## Testing
 
-```sh
-make test                                           # unit + fake-backed (no Docker)
-make test-all                                       # full suite, includes //go:build docker tests
-go test -v ./dispatch -run TestHandleOrderRequest   # single test (no Docker path)
-go test -v -tags=docker ./store                     # store layer (requires Docker Desktop)
-```
-
-### Docker-gated tests
-
-Test files that require a live Postgres carry `//go:build docker` on their
-first line. Without the tag:
-
-- `go test ./...` (and `make test`) compiles and runs only the unit tests
-  and fake-backed tests. CI steps that don't provision Postgres stay green.
-- `go test -tags=docker ./...` (and `make test-all`) pulls the gated files
-  back in via `internal/testdb` and `testcontainers-go`.
-
-The gated packages are `dispatch/`, `engine/`, `messaging/`, `service/`,
-`store/` and `www/`. Any new test file that opens a Postgres connection — directly or transitively through
-`internal/testdb` — must carry the same tag, otherwise the default
-`go test ./...` build breaks.
-
-### Tag-free fake-backed coverage
-
-Behavioral contracts that don't need a DB live in `material/`,
-`fulfillment/`, and `dispatch/binresolver/`. Those test files are tag-free
-and run on every push without Docker:
-
-- `material/` — pure CMS-transaction mapping, no persistence
-- `fulfillment/` — scanner behavior tested against fake Dispatcher/Resolver
-  interfaces (narrow-interface win from Stage 9)
-- `dispatch/binresolver/` — slot-picking algorithm correctness against an
-  in-memory fake store
-
-Most of the architectural contract coverage now lives in these fake-backed
-suites; the Docker-gated tests cover integration shape and query behavior.
+How to run the suites, and which test files need Docker, is in the
+[module README](../README.md).
 
 ## Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| `github.com/go-chi/chi/v5` | HTTP router |
-| `github.com/gorilla/sessions` | Cookie-based sessions |
-| `github.com/jackc/pgx/v5/stdlib` | PostgreSQL driver |
-| `github.com/segmentio/kafka-go` | Kafka client |
-| `github.com/google/uuid` | UUID generation |
-| `golang.org/x/crypto/bcrypt` | Password hashing |
-| `gopkg.in/yaml.v3` | YAML config parsing |
+Direct dependencies are in `shingo-core/go.mod`: chi (HTTP router),
+gorilla/sessions (cookie sessions), pgx (Postgres driver), kafka-go, yaml.v3,
+x/crypto (bcrypt), and testcontainers for the Docker-backed tests.
 
 ## Extension Points
 
 ### Adding a New Fleet Vendor
 
-1. Implement `fleet.Backend` in a new package (e.g., `mir/`)
+1. Implement `fleet.TrackingBackend` in a new package under `fleet/`
 2. Add config fields in `config/config.go`
-3. Wire the backend in `cmd/shingocore/main.go` based on a config flag
+3. Choose the backend in `cmd/shingocore/main.go` based on that config
 
 ### Adding a New Web Page
 
-1. Create `www/templates/your-page.html` with `{{define "content"}}...{{end}}`
-2. Add it to the `pages` slice in `www/router.go`
-3. Create handler in `www/handlers_your_page.go`
-4. Register route in the router
+1. Create a template in `www/templates/` with `{{define "content"}}...{{end}}`.
+   `NewRouter` discovers every `templates/*.html` by glob and parses each
+   against the layout and partials; there is no list to add it to.
+2. Write its handler in a `www/handlers_*.go` file, rendering the template by
+   file name (`h.render(w, r, "<name>.html", data)`).
+3. Register the route in `NewRouter` — in the public group, or after
+   `h.requireAuth` for a page that needs a login.
+4. Add a nav link in `www/templates/layout.html` if the page belongs in the nav.
 
 ### Adding a New Event Type
 
@@ -404,6 +322,8 @@ suites; the Docker-gated tests cover integration shape and query behavior.
 
 ### Adding a New Data Channel Subject
 
-1. Define the subject constant and data struct in `protocol/types.go`
-2. Add a handler case in `messaging/core_handler.go`
-3. No protocol version bump needed — see [Wire Protocol](../docs/wire-protocol.md)
+1. Define the subject constant and data struct in the `protocol` module, and
+   add the subject to `protocol.CoreInboundSubjects`
+2. Register its handler in `buildSubjectRouter` (`cmd/shingocore/routers.go`);
+   `TestSubjectRouter_CoversEveryInboundSubject` fails until you do
+3. No protocol version bump needed — see [Wire Protocol](../../docs/wire-protocol.md)

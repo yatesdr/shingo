@@ -67,6 +67,12 @@ func TestValidate_CatchesProblems(t *testing.T) {
 		{"unknown claim node", func(p *Plant) { p.Claims[0].CoreNode = "NOPE" }, "unknown core_node"},
 		{"single_robot missing staging", func(p *Plant) { p.Claims[1].InboundStaging = "" }, "requires inbound_staging"},
 		{"manual_swap missing dest", func(p *Plant) { p.Claims[0].OutboundDestination = "" }, "requires outbound_destination"},
+		// buildSwapDispatch refuses a two_robot claim with no evac dropoff
+		// after the supply leg has shipped; the spec must refuse it first.
+		{"two_robot missing dest", func(p *Plant) {
+			p.Claims[1].SwapMode = "two_robot"
+			p.Claims[1].OutboundStaging = ""
+		}, "two_robot requires outbound_destination"},
 		{"simple retired", func(p *Plant) { p.Claims[2].SwapMode = "simple" }, "retired"},
 		{"no storage hierarchy", func(p *Plant) { p.Zones = nil }, "storage hierarchy missing"},
 		{"payload unknown bin type", func(p *Plant) { p.Payloads[0].BinType = "BOGUS" }, "unknown bin_type"},
@@ -96,6 +102,18 @@ func TestValidate_CatchesProblems(t *testing.T) {
 				t.Fatalf("expected error containing %q, got: %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// A two_robot claim with inbound staging and an evac dropoff is complete: the
+// refusal above is for the missing destination, not the mode.
+func TestValidate_TwoRobotWithDestinationPasses(t *testing.T) {
+	p := validPlant()
+	p.Claims[1].SwapMode = "two_robot"
+	p.Claims[1].OutboundStaging = ""
+	p.Claims[1].OutboundDestination = "SM-A"
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a complete two_robot claim was refused: %v", err)
 	}
 }
 

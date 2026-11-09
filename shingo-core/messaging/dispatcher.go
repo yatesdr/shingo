@@ -9,7 +9,7 @@ import (
 // Dispatcher is the narrow dispatch surface CoreHandler depends on.
 //
 // Declared consumer-side so *dispatch.Dispatcher satisfies it for
-// free (structural). The eight methods mirror the eight order
+// free (structural). The seven methods mirror the seven order
 // message types CoreHandler receives on the orders topic — any new
 // order handler on dispatch.Dispatcher requires a matching addition
 // here, which the compile-time assertion below catches immediately.

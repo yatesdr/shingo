@@ -36,7 +36,7 @@ import (
 // ── WHAT DOES HAPPEN, AND IT IS THE POINT ─────────────────────────────────
 //
 // A demoted order that keeps being refused writes NOTHING on its retries:
-// MoveToSourcing self-skips sourcing→sourcing, and setQueueReason
+// Park self-skips queued→queued, and setQueueReason
 // short-circuits an unchanged cause. So the staleness clock — MAX(order_history
 // .created_at), since the retrying-order fix — stays at the demote's own row,
 // and ListAnomalies raises the order after its bound. That is a REPORT, not a

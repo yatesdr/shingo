@@ -66,7 +66,7 @@ line 2 on Edge 2. The demo loop is a self-sustaining circle:
 3. **Kanban** — `SYN_PRESS_EMPTIES` keeps a level of empties beside the presses;
    its keeper tops it up and the surplus overflows to `SYN_MARKET`.
 4. **Loader legs** — `PLK_X1` (CLIP → WELD-3), `PLK_X2` (STUD → WELD-4), the two-window
-   BRKT loader `PLK_W1/W2` (→ WELD-2), and the dedicated SHIM home `PLK_H1` that `WELD-5`
+   BRKT loader `PLK_W1`/`PLK_W2` (→ WELD-2), and the dedicated SHIM home `PLK_H1` that `WELD-5`
    swaps against. The sim operator LOADs after `loader_auto_load`.
 5. **Reshuffle** — `SYN_MARKET`'s depth-3 lanes bury older bins behind newer ones, so FIFO
    picks fire unbury → retrieve → restock compounds.
@@ -80,9 +80,12 @@ Sim behavior lives in the dev configs (baked into the image — rebuild with
 `make dev` after editing, or mount your own over `/etc/shingo`):
 
 - **`shingo-core/shingocore.dev.yaml`** → `sim:` — `speed` (sim-time multiplier; every
-  process reads the shared anchor in `.env`), `transit_min` / `transit_max` (robot move
-  time), `fleet_size`, `fail_rate` (fault injection), `seed` (0 = derive + log; set it for
-  reproducible runs).
+  process reads the shared anchor in `.env`; identical in Core and every Edge, and changed only
+  with a `make dev-reset`: [`docs/dev-env/sim.md`](docs/dev-env/sim.md), "The speed ceiling"),
+  `transit_min` / `transit_max` (robot move time), `fleet_size` (0 = a robot per active order;
+  the dev config's 20 is a pool of named robots, AMR-01..AMR-20, that orders queue for, which is
+  what lets the sim answer how many robots a plant needs), `fail_rate` (fault injection), `seed`
+  (0 = derive + log; set it for reproducible runs).
 - **`shingo-edge/shingoedge.dev.yaml`** → `sim:` — `processes[].tick_interval` /
   `uop_per_tick` (how fast presses/lines count), and `operators.loader_auto_load` /
   `unloader_auto_clear` / `swap_release` (operator reaction delays) and
@@ -95,7 +98,6 @@ Sim behavior lives in the dev configs (baked into the image — rebuild with
 | `make dev-down` | stop the stack, keep data volumes |
 | `make dev-reset` | stop + delete volumes → fresh empty DBs on next `make dev` |
 | `make dev-seed` | (re-)seed `SHINGO_PLANT` (default master.yaml) into Core and both edges — idempotent per node name; `dev-reset` first when switching plants |
-| `make dev-wipe` | *(planned)* truncate operational data + re-seed, keep topology |
 | `make dev-logs` | tail core + edge logs |
 
 **The databases live in named Docker volumes — `pgdata` for Core's Postgres, `edge-data`
@@ -129,7 +131,7 @@ accordingly. `go tool cover -html=cover.out` for the per-line view.)
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Core/edge refuse to boot, log "SHINGO_ALLOW_SIM=1 not set" | The compose files set it; if running a binary by hand, `export SHINGO_ALLOW_SIM=1`. |
+| Core/edge refuse to boot, log "SHINGO_ALLOW_SIM=1 is not set" | The compose files set it; if running a binary by hand, `export SHINGO_ALLOW_SIM=1`. |
 | Edge log: no `plc connected` lines | The fake WarLink poller didn't start — check `sim.enabled: true` and that the edge log shows "starting WarLink poller explicitly". |
 | `make dev-seed` fails with "plantspec invalid" | The plant spec has a dangling reference / missing staging — the error lists every problem; fix `plants/master.yaml`. |
 | `make dev-seed` fails opening the edge SQLite | The edge container must be up + migrated first (run `make dev` before `make dev-seed`). |
@@ -138,9 +140,10 @@ accordingly. `go tool cover -html=cover.out` for the per-line view.)
 
 ## Internals
 
-- Architecture and the rest of the sim reference live in `docs/dev-env/sim.md`
-  (what is built, the speed ceiling, which loops scale with sim time) and
-  `docs/dev-env/plant-model.md` (the plant it runs).
+- Architecture and the rest of the sim reference live in [`docs/dev-env/sim.md`](docs/dev-env/sim.md)
+  (the pieces, the seed rule, the speed ceiling, which loops scale with sim time),
+  [`docs/dev-env/sim-plant-design.md`](docs/dev-env/sim-plant-design.md) (writing a section of the
+  plant) and [`plants/README.md`](plants/README.md) (the plant's sections).
 - Sim seams: `shingo-core/fleet/simulator` (driver), `shingo-edge/plc/simwarlink`
   (fake PLC), `shingo-edge/engine/sim_operator.go` (auto operator),
   `shingo-core/plantspec` + `shingo-core/cmd/seeddev` (plant spec + seeder).

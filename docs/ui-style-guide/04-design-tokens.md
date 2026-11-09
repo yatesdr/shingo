@@ -7,12 +7,15 @@ Verified against: b9210bce
 Tokens use **semantic names**, not visual ones. `--success` not
 `--green-bright`. `--surface` not `--card-bg`.
 
-### Shared base + per-surface values
+### Shared tokens, and the station's own
 
-There is **one shared token vocabulary** with **per-surface value overrides**.
-The Operator HMI specifically tunes color saturation for shop-floor lighting,
-so it redefines values within its own scope while keeping the same token
-names.
+There is **one shared token vocabulary**, `shared/tokens.css`, in two theme
+blocks. Core and Edge admin load it on every page; the Operator HMI loads it
+under its own stylesheet. The HMI changes no shared token's value. Its
+`operator.css` declares names of its own, `--os-*`: a palette for a dark touch
+panel and the aliases of the shared tokens it draws with; and it repeats the
+shared `--z-*` layer scale, value for value (see
+[The three surfaces](02-the-three-surfaces.md)).
 
 The shared tokens, both themes (`shared/tokens.css`; `—` means the dark theme
 keeps the light value):
@@ -206,6 +209,11 @@ The operator station's own `:root` block
 
 <!-- /generated -->
 
+A row that reads `var(--…)` is an alias of the shared token, so it cannot
+drift. The `--z-*` rows are a copy of the shared layer scale, held to it by
+`TestOperatorStationZLayerScaleMatchesShared`. The rest is the station's own
+palette.
+
 ### Rules
 
 1. **Never hardcode a hex value in a component CSS file.** Use a token.
@@ -213,25 +221,25 @@ The operator station's own `:root` block
 3. **If you need a new color, add a token first.** Don't introduce `#7c3aed`
    inline; add `--accent-test: #7c3aed` to tokens.css and reference it.
 4. **`--info` and `--primary` must remain visually distinct in all themes.**
-   This was a real bug — check both light and dark mode when adjusting.
-5. **Indigo is the UI accent, and never a status (P13).** `--accent` (and its
+   Check both light and dark when adjusting either; `TestTokensCSSInfoDistinctFromPrimary`
+   holds them apart.
+5. **Indigo is the UI accent, and never a status.** `--accent` (and its
    alias `--primary`) is for interactive chrome — links, focus, selection,
    primary action, section ticks. It **also** serves as **series-1** of the
-   curated chart palette (P19, see Data visualization); that overlap is fine. The
-   one hard line: indigo is **never a status hue** — status lives in the
-   `--status-*-dot` tokens and the `.badge-*` classes; don't cross the streams.
+   curated chart palette (see [Data visualization](06-data-visualization.md));
+   that overlap is fine. The one hard line: indigo is **never a status hue** —
+   status lives in the `--status-*-dot` tokens and the `.badge-*` classes; don't
+   cross the streams.
 
-### The substrate ramp (U8)
+### The substrate ramp
 
 **Static structure is drawn from `--sub-1` … `--sub-5`, and from nothing else.**
 
-"Structure recedes, state glows" (see Visual principles) says static structure
-carries no saturated colour. That principle was stated and **unenforced**: there
-was no steel token outside `--map-*`, so anyone implementing a table rule or a
-gridline reached for `--border` (`#30363d` — a neutral grey, not steel) or
-hardcoded an `rgba()` by eye. `--chart-grid` was the tell — it was
-`color-mix(in srgb, var(--text-muted) 25%, transparent)`, i.e. **gridlines
-derived from the text ramp**, because structure had nowhere else to come from.
+"Structure recedes, state glows" (see [Visual principles](07-visual-principles.md))
+says static structure carries no saturated colour. The ramp is the steel that
+structure is drawn in, so a table rule or a gridline never reaches for
+`--border` (a neutral grey, not steel), an `rgba()` picked by eye, or a step of
+the text ramp.
 
 The ramp **owns**: gridlines, axes, table rules, panel edges,
 empty/skeleton/disabled states, and tracks with **no** semantic fill.
@@ -244,41 +252,29 @@ empty/skeleton/disabled states, and tracks with **no** semantic fill.
 | `--sub-4` | tick marks, structural dots — marks that carry meaning (must clear 3:1) |
 | `--sub-5` | emphasis structure |
 
-`--chart-grid` **no longer exists.** It was absorbed as step 1 rather than left
-sitting beside the ramp: two token families for one property is how U5's two
-colliding `.chip` systems produced a 1.2:1 invisible chip, and a ramp that does
-not consolidate recreates that bug in a different property. Charts read
-`--sub-1` for gridlines.
+There is no separate grid token: charts read `--sub-1` for gridlines. One token
+family per property; a second family beside the ramp is two answers to one
+question, and the two drift apart.
 
 **Dark is the reference.** Steps 2–5 *are* the map's steel — `--map-bay-ring` /
-`--map-aisle` / `--map-node` / `--map-node-action` now alias them — because the
-map is the surface this whole look was generalized from. Step 1 is new,
-extrapolated below bay-ring for hairlines. (The map pins `data-theme="dark"` on
-`<html>`, so its aliases always resolve to the dark ramp.)
+`--map-aisle` / `--map-node` / `--map-node-action` alias them — because the map
+is the surface this look was generalized from. Step 1 sits below bay-ring, for
+hairlines. (The map pins `data-theme="dark"` on `<html>`, so its aliases always
+resolve to the dark ramp.)
 
 **Light is not a hue flip.** Inverting HSL lightness leaves the top of the ramp
-far too weak, because sRGB luminance is not symmetric about mid-grey. The
-first-pass flipped values put light step 4 at **2.33:1** — below the 3:1
-non-text-contrast floor — so a tick mark that reads in dark would have shipped
-invisible in light. Each light step keeps its dark counterpart's hue and
-saturation and has its **lightness solved** so its contrast against
-`--elev-surface` reproduces the dark step's:
-
-| Step | Dark hex | vs `#161b22` | Light hex | vs `#ffffff` |
-|---|---|---|---|---|
-| 1 | `#2b3543` | 1.39 | `#d4dbe4` | 1.40 |
-| 2 | `#3c4a5e` | 1.92 | `#b1bccd` | 1.92 |
-| 3 | `#45566e` | 2.31 | `#9cacc1` | 2.31 |
-| 4 | `#66768f` | 3.75 | `#76859d` | 3.74 |
-| 5 | `#7a8ba6` | 5.00 | `#5e718d` | 4.97 |
-
-Step-to-step separation is identical in both themes (1.38 / 1.20 / 1.62 / 1.33),
-which is the property that makes them the same ramp rather than two ramps that
-happen to share a hue. Steps 4 and 5 clear 3:1 in **both** themes.
+too weak, because sRGB luminance is not symmetric about mid-grey. Each light
+step keeps its dark counterpart's hue and saturation and has its **lightness
+solved** so its contrast against `--surface` reproduces the dark step's.
+`TestSubstrateRampContrast` holds the three properties that make it one ramp:
+steps 4 and 5 clear the 3:1 non-text floor in both themes (they carry meaning:
+tick marks, structural dots, emphasis), every step is stronger than the one
+before it, and each light step's ratio is within 0.05 of its dark twin's. Steps
+1–3 have no floor on purpose: a hairline at 3:1 is a border.
 
 **If a step moves, re-derive it the same way — never eyeball a light value.**
 
-### Robot identity hues (U8/U9)
+### Robot identity hues
 
 **A robot's colour is an identity, not a status and not the accent.**
 
@@ -290,17 +286,17 @@ Three tokens, theme-invariant, in `:root`:
 | `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
 | `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph — on the station; the desktop Processes page, which follows the light theme, draws these through `--os-station` mapped to `--text-strong` |
 
-**How this sits with P13 (indigo is the accent, never a status).** A robot hue
-is neither. It is an **identity**, in exactly the sense a chart series is one
-(P19): the mark means "this one, not that one", and it carries no judgement
+**How this sits with rule 5 (indigo is the accent, never a status).** A robot
+hue is neither. It is an **identity**, in exactly the sense a chart series is
+one: the mark means "this one, not that one", and it carries no judgement
 about whether anything is good, bad or late. So it gets its own token rather
 than borrowing the accent's or a status dot's, and the rules that follow are:
 
 - **Never `--accent` for a robot, and never a robot hue for a control.** Where a
-  robot line and an accent selection share a screen — the desktop composer's D1
-  is exactly that — **the accent is the border and the button, the robot is the
-  move.** Selecting a module outlines its cards in indigo; the chevrons leaving
-  them stay teal.
+  robot line and an accent selection share a screen — the desktop composer's
+  cell picture is exactly that — **the accent is the border and the button, the
+  robot is the move.** Selecting a module outlines its cards in indigo; the
+  chevrons leaving them stay teal.
 - **Never a robot hue for a status.** Status lives in `--status-*-dot` and the
   `.badge-*` classes, as always.
 - **`--status-staged-dot` (teal) and `--robot-1` (teal) never share a surface
@@ -329,9 +325,10 @@ steel. The tokens alias mark hues, so they follow the theme with them (both
 blocks of `tokens.css` declare them). `--viz-orange` sits near the warning
 hue; the tag's shape and its letter carry the difference.
 
-### The ink on a fill, and the scrim (U9)
+### The ink on a fill, and the scrim
 
-**Two tokens that did not exist, so every component wrote the literal instead.**
+**The ink on a fill and the backdrop behind a modal are tokens, never
+literals.**
 
 | Token | Value | What it is |
 |---|---|---|
@@ -340,58 +337,45 @@ hue; the tag's shape and its letter carry the difference.
 | `--on-success-fill` | `#ffffff` light / `#0d1117` dark | the name on a has-payload node tile (see The Nodes page) |
 | `--on-staged-fill` | `#0d1117` | the name on a staged node tile; the teal is theme-invariant, so its ink is too |
 
-`--accent-solid` was chosen for 6.14:1 against white and is theme-invariant, so
-its ink is one value in both themes and is **not** overridden in the dark block
-— the same reasoning as an identity hue, from the other end. The scrim *is*
+`--accent-solid` clears 6.14:1 against white and is theme-invariant, so its ink
+is one value in both themes and is **not** overridden in the dark block — the
+same reasoning as an identity hue, from the other end. The scrim *is*
 overridden, because the page it darkens changes: neutral black over
 `--elev-canvas` reads as a flat grey wash rather than a recess, so dark gets a
 deeper, cooler value.
 
-The light scrim is `.modal-overlay`'s own `rgba(0,0,0,.5)`, kept verbatim so
-nothing moved when the literal became a token. Core's overlay had been
-`rgba(0,0,0,.45)` — two scrims nobody had decided were different — and now
-matches Edge's.
+`shared/identity_hue_drift_test.go` holds both ends:
+`TestSurfaceInkTokensAreDeclared` (the ink is one value, the scrim is per
+theme), `TestStyleGuideQuotesTheSurfaceInkTokens` (this table quotes their
+values) and `TestSurfaceInkTokensAreReadByBothAdminSurfaces`, which asserts that
+`shingoedge.css` and Core's `style.css` read both tokens and `components.css`
+reads the ink, rather than spelling the colour out. A token nothing references
+is a token the next literal ignores.
 
-Rule 3 above ("if you need a new colour, add a token first") is the rule these
-two were added under, and the drift test is what makes it stick:
-`shared/identity_hue_drift_test.go` holds each token's value against this table
-**and** asserts that `shingoedge.css`, Core's `style.css` and
-`processes-desktop.css` reference the token rather than spelling the colour
-out. A token nothing references is a token the next literal ignores.
+**The station picture carries no literal colour.** `flow-picture.css` is the
+one stylesheet the station and the desktop both draw from, and both pages load
+`shared/tokens.css`, so every colour in it is a token
+(`TestTheStationPictureCarriesNoLiteralColour`). A literal there would be one
+theme's answer on a picture both themes draw.
 
-**There is no exception any more.** `flow-picture.css` used to carry literal
-colours in four declarations, moved verbatim out of `operator.css` by U9a's
-extraction, and the reason was that `operator-display.html` linked no shared
-stylesheet — so a `var(--scrim)` there resolved to nothing. It links
-`shared/tokens.css` now (and pins `data-theme="dark"`, the kiosk convention),
-which was the stated condition for retiring them. Two of the five values were
-`--text-strong`'s **dark** value spelled out, so on a light Processes page the
-position name rendered near-white on a white card.
-
-The same drift test survives inverted: `flow-picture.css` must carry **no**
-literal colour. A literal creeping back into the one stylesheet two surfaces
-share is worth catching in either direction.
-
-The station's hand-copied `--os-*` ramp went with it. `operator.css` declared
-its own copies of the substrate steps, the robot hues, the station hue and the
-accent, with a drift test holding each copy to the master in both directions;
-the copies are aliases now (`--os-sub-3: var(--sub-3)`), kept only because the
-locked swap-mode glyph file reads those names, and an alias cannot drift.
+The station's `--os-sub-*`, `--os-robot-*`, `--os-station` and `--os-accent*`
+are aliases of the shared tokens (the station table above). They exist because
+the swap-mode glyph file reads those names and is not edited per surface; the
+desktop declares the same names in `processes-desktop.css`, with `--os-station`
+mapped to `--text-strong` so the glyphs read on a light page.
 
 ### The loader-station outline
 
 `--loader-outline` (`#0a8f6a`, theme-invariant) is the teal a Core loader
 station is drawn in on the Nodes page: the box outline, each window tile's
-outline, and the 12-18% tints mixed from it. It was a literal repeated through
-Core's `style.css` until the station boxes were redrawn; it is an outline and a
-tint, never an ink, so it needs no dark override. An identity like a robot hue
-("this belongs to a station"), never a status. Ink on a fill of it is
+outline, and the 12-18% tints mixed from it. It is an outline and a tint, never
+an ink, so it needs no dark override. An identity like a robot hue ("this
+belongs to a station"), never a status. Ink on a fill of it is
 `--on-accent-solid`, the same white.
 
 ### Type scale
 
-Five named steps, defined in `tokens.css`, replace the ~12 ad-hoc `rem` sizes
-that had accreted across pages:
+Five named steps, defined in `tokens.css`:
 
 | Token | Size | Use |
 |---|---|---|
@@ -403,7 +387,8 @@ that had accreted across pages:
 
 Two weights only: `--fw-normal` (400) for labels and body, `--fw-bold` (600)
 for emphasis, headings, and numbers. Display heroes (KPI numbers at 2rem+) are
-**not** on this scale — they own their size via `.kpi-value` / `.ov-hero`.
+**not** on this scale — they own their size via `.kpi-value` /
+`.kpi-tile--hero`.
 
 **Numbers always get `tabular-nums`.** Any count, quantity, duration, or metric
 uses `font-variant-numeric: tabular-nums` (the `.tnum` utility) so digits align
@@ -412,9 +397,8 @@ column-to-column and don't jitter as live values tick.
 ### Spacing scale
 
 A 4px-base scale (`--sp-1` … `--sp-6` = 4/8/12/16/24/32px) for gap, margin, and
-padding. Use these instead of the 0.3 / 0.35 / 0.45 / 0.55rem soup. The existing
-`.gap-*` / `.mt-*` / `.mb-*` utilities keep their values; new spacing references
-the tokens.
+padding. New spacing references the tokens, never a one-off `rem`; the `.gap-*`
+/ `.mt-*` / `.mb-*` utilities keep their own values.
 
 ### Motion
 
@@ -425,8 +409,8 @@ and `--ease` (`cubic-bezier(0.4, 0, 0.2, 1)`).
 **Reduced-motion is law.** A `@media (prefers-reduced-motion: reduce)` block in
 `tokens.css` zeroes `--dur-fast` / `--dur-base`, so any animation that drives
 its timing from the tokens is disabled automatically for users who ask for it —
-no per-component opt-in. New animation MUST reference `var(--dur-*)` rather than
-a hardcoded `0.25s` to inherit this; existing hardcoded transitions migrate
-opportunistically. This is the mechanism behind "motion means motion" (see
-Visual principles).
+no per-component opt-in. Animation MUST reference `var(--dur-*)` rather than a
+hardcoded `0.25s` to inherit this; a hardcoded duration ignores the user's
+setting. This is the mechanism behind "motion means motion" (see
+[Visual principles](07-visual-principles.md)).
 

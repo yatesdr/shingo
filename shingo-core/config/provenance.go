@@ -197,8 +197,8 @@ type DisplayConfig struct {
 
 	// CycleSpreadMultiple sets where a key's tail begins:
 	// median + k × (p90 − median). Expressed against the key's OWN spread rather
-	// than as a percentage of its takt, because dispersion inverts between
-	// Springfield's fast and slow payload families and a percentage would
+	// than as a percentage of its takt, because dispersion inverts between a
+	// plant's fast and slow payload families and a percentage would
 	// over-trigger on one and under-trigger on the other.
 	CycleSpreadMultiple float64 `yaml:"cycle_spread_multiple"`
 

@@ -22,9 +22,9 @@ import (
 // =============================================================================
 // Concurrency tests — deterministic and stress
 //
-// The PostFindHook on PlanningService inserts a synchronization point
-// between FindSourceBinFIFO and ClaimBin, allowing tests to
-// guarantee the TOCTOU race in the planning path.
+// The post-find hook (Dispatcher.SetPostFindHook) fires in
+// (*Scanner).fulfill between the source find and the acquire, the one
+// find→acquire window, so a test can force a claim race there.
 // =============================================================================
 
 // --- TestConcurrent_ClaimSerialized_NoDoubleClaim ---

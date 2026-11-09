@@ -45,15 +45,17 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 Columns: [`bins`](#core-bins). Notes the schema does not say:
 
 - `label` is not scanned — see [terminology.md](terminology.md#label).
-- `node_id` is null while the bin is in transit.
+- `node_id` is where the bin stands. A lifted bin stands on `_TRANSIT` or on a robot's carrier node; a retired
+  bin stands nowhere (NULL).
 - `status` is the lifecycle state ([Bin Statuses](#bin-statuses)).
 - `claimed_by` is the order that has claimed the bin for transport, set with a `confirmed` **reservation** (see
   [Reservations](#reservations)). They can drift briefly: `ReleaseOrphanedClaims` clears the claim and leaves the
   reservation row for `ReapOrphanedReservations`.
 - `manifest` is the actual contents; `uop_remaining` the production cycles of material left.
 - `loaded_at` is when the manifest was confirmed, and drives FIFO ordering.
-- `staged_expires_at` is unused: staged bins no longer expire, so nothing sets it. The column is kept for when the
-  clear returns.
+- `staged_expires_at` is written NULL by every staging writer (`helpers.StagedSetSQL`): staging does not expire
+  (`resolveNodeStaging` stamps no expiry). A non-NULL value is an old stamp, which reconciliation reports and
+  never acts on.
 
 **Relationships:**
 - Belongs to one **BinType**
@@ -61,13 +63,11 @@ Columns: [`bins`](#core-bins). Notes the schema does not say:
 - Can be claimed by one **Order**
 
 **The UOP ledger and its two permanent tables.** Every count change on a bin
-writes a row to `bin_uop_ledger` (the raw stream, ~7,000 rows/day). The table was
-called `bin_uop_audit` until 2026-08-22 (migration v95, metadata-only rename): it
-holds every APPLIED delta with before/after totals, which is a ledger, and eight
-files read it as one. `bin_uop_exception` keeps its name — the exceptions really
-are the audit trail. Since 2026-08 the ledger's
-raw delta rows (`op = 'bin_uop_delta'`) carry a **90-day retention** — deleted by the daily Core
-sweep (`PurgeOldBinUOPDelta`). Two permanent tables carry what outlives them:
+writes a row to `bin_uop_ledger`: every applied delta with its before and after
+totals. Its raw delta rows (`op = 'bin_uop_delta'`) are kept 90 days
+(`binUOPDeltaRetentionDays`) and deleted by the daily Core sweep
+(`audit.PurgeOldBinUOPDelta`), after that day's roll-up; every other op is kept.
+Two permanent tables carry what outlives the raw rows:
 
 - `bin_uop_exception` — one row per exception-worthy event, never deleted:
   `negative_crossing` (a bin taken below zero; `deepest_uop`/`recovered_at` carry the
@@ -115,14 +115,17 @@ whether the node accepts orders; `depth` is a lane slot's position in its lane.
 
 ### NodeType
 
-Classification for nodes. Controls dispatch behavior.
+Classification for nodes. Controls dispatch behavior. The codes dispatch branches on are the `NodeClass*` constants
+in `protocol/constants.go`:
 
 | Code | Name | Synthetic | Purpose |
 |------|------|-----------|---------|
 | `NGRP` | Node Group | Yes | Groups lanes and/or direct children for dispatch resolution |
 | `LANE` | Lane | Yes | Linear sequence of slots in a supermarket |
+| `STOR` | Storage Slot | No | A standalone storage node: a storage dropoff by its type alone (`storageDropoffOf`) |
 
-Physical nodes (storage slots, line-side locations, staging areas) typically have no node type.
+The migrations seed `NGRP` and `LANE`. The plant seeder (`shingo-core/cmd/seeddev`) also creates `STOR` and
+`STATION`, the one type every station node carries; no rule reads `STATION`. A physical node may have no type.
 
 ### Order
 
@@ -132,7 +135,8 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 
 - `edge_uuid` is the UUID the requesting edge station assigned; `station_id` is that station.
 - `order_type` is an [Order Type](#order-types); `status` a [status](#order-statuses).
-- `delivery_node` — see the caveat below.
+- `delivery_node` — see the caveat below. `source_node` and `delivery_node` are node names, not keys: the table
+  has no reference to `nodes`.
 - `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string.
 - `named_bin_id` is the one bin the asker named the order for, if any — a constraint, not a record.
 - `parent_order_id` is the parent compound order (for reshuffle child orders); `sequence` the step sequence within
@@ -141,46 +145,27 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 The bins an order carries are not a column of the order: they are its rows in
 `order_bins` ([Order carts](#order-carts-order_bins)).
 
-#### `delivery_node` — read this before using it
+#### `delivery_node`
 
-It means what you expect for a **simple** order: one bin, one destination.
+For a plain order it is the destination: one bin, one place it rests. For a complex order (anything with a
+`steps_json`) it is a display value, and two facts follow:
 
-For a **complex** order (swaps, changeovers — anything with a `steps_json`) it does
-not, and there are two separate traps.
+- **Edge and Core hold different values under one name.** `ComplexOrderRequest` carries no delivery node; Core
+  derives its own at intake from the steps (`extractEndpoints`: the last pickup-or-dropoff). Never reason from one
+  side's column about the other's.
+- **Neither names where a leg's bin rests.** A complex leg has several dropoffs, auto-confirmed legs store `''`, and
+  a leg names where the robot finished — a 3-position press-index R2 sets the fresh bin on the press and ends at the
+  index node.
 
-**1. Edge and Core have different columns with the same name.** Edge does not send
-a delivery node for a complex order — `ComplexOrderRequest` has no such field. Core
-derives its own at intake from the steps, via `extractEndpoints` (the last
-pickup-or-dropoff). So `edge.orders.delivery_node` and `core.orders.delivery_node`
-are independent values that happen to share a name. Never reason from one about the
-other.
+So "does this order leave a bin at node N" has one rule, `protocol.OrderPlacesBinAt`: a complex order by
+`protocol.PlacesBinAt` over its steps, any other type by its delivery node. A leg's role is read the same way, off
+its steps (`legTakesLineBin` on Core for the evac shape; `ReleaseStagedOrders` on the Edge through
+`classifySwapLegsBySteps`). The Edge's column comment on `orders.delivery_node` ([Edge: `orders`](#edge-orders))
+says which column is authoritative for which shape.
 
-**2. Neither one identifies a leg's role, and both have been misread as if they
-did.** A complex leg has several dropoffs, so a single destination field cannot say
-where its bin came to rest. Auto-confirmed legs store `''` outright. And a leg that
-does store something names where the *robot* finished, which is not where the *bin*
-did — a 3-position press-index R2 sets the fresh bin on the press and then carries
-on to re-index the next position, so it "ends" at the index node while being the leg
-that supplied the press.
-
-Every decision that used to consult the column now reads the leg's steps instead:
-
-| Question | Where it is answered |
-|---|---|
-| Did this bin land at my node? | `finalDropoffNode(steps)` — Edge `wiring_delivered.go` |
-| Is this leg the supply or the evac? | `legPlacesBinAt(steps, node)` — Edge `swap_leg_role.go` |
-| When a leg dies, was it the pair's evac? | `legTakesLineBin(steps, node)` — Core `swap_leg_role.go`, read by `HandleSwapPeerTerminal` (`swap_peer.go`). No leg waits for its sibling's claim any more: a pair's legs are admitted in one pass or not at all (`complex_pair.go`) |
-| Should the sim operator sign for this leg? | `legTouchesNode(steps, node)` — Edge `sim_operator.go` |
-
-Core's `delivery_node` is still **load-bearing for robot routing**:
-`patchRedirectSegments` rewrites a staged order's final dropoff to it so a redirect
-reaches the robot. That works because every leg the Edge builds ends on a dropoff
-(pinned by `TestSwapBuilders_EveryLegEndsOnADropoff`). Do not redefine what the
-column holds without reading that first.
-
-One site still infers role positionally and is knowingly wrong for press-index:
-`ResolveSwapPair` (Edge `station_views.go`). It is masked by the produce-role
-release path and is marked for the planned `leg_role` field.
+Core's column is load-bearing for routing: `patchRedirectSegments` rewrites a staged order's final dropoff to it so
+a redirect reaches the robot, which holds because every leg the Edge builds ends on a dropoff
+(`TestSwapBuilders_EveryLegEndsOnADropoff`).
 
 ### Order carts (`order_bins`)
 
@@ -216,47 +201,28 @@ pair release, the scanner's forget. Who may change one: a transform that moves
 plan positions moves the rows with it (`ShiftOrderBinSteps`); the claim
 exchange rewrites a row whose cart is not lifted yet.
 
-A row carried over from the old `orders.bin_id` column for an order that ended
-before the rows existed (v173) has both steps NULL: the link is true, the steps
-are not known.
+A row with both steps NULL is a link whose steps are not known: the backfill
+for orders that ended before the table existed. The link is true.
 
 ### Reservations
 
-A soft, revocable hold recording that an order intends to use a resource (a
-source **bin** or a destination **slot**), set *before* any hard column
-(`claimed_by`) is written. Reservations close the gap between resolving a
-source and claiming it, and let an incomplete order retry by reconciling its
-holds rather than re-shopping. See [reservations.md](reservations.md) for the
-full mechanism.
+A soft, revocable hold recording that an order intends to use a resource, set *before* any hard column
+(`claimed_by`) is written. The mechanism is [reservations.md](reservations.md)'s; the lane kinds are
+[lanes.md](lanes.md)'s.
 
 Columns: [`reservations`](#core-reservations). Notes the schema does not say:
 
 - `resource_kind` is `bin` (a source bin), `slot` (a destination node), `mouth` (the right to work a lane), or
   `occupancy` (a robot is inside the lane now). `bin_id` is set for `bin` alone; `node_id`, the target node, for
-  every other kind.
+  every other kind, enforced by a `CHECK`.
 - `mode` is `inbound` \| `outbound` \| `dig` — the work direction, on **`mouth` rows only**; NULL on every other kind.
 - `state` is `pending` (held, not yet shipped) or `confirmed` (shipped — the claim moved with it).
 - `reserved_by` is an actor tag for forensics — also what identifies a `dig` row raised by an excavation from one
   raised by ordinary sourcing.
 
-`bin` and `slot` are the soft-until-complete substrate the paragraph above
-describes. `mouth` and `occupancy` share the table but are a different mechanism:
-no confirm step, an advisory lock rather than a unique index, and their own
-admission rule. See [reservations.md](reservations.md) §The lane mouth.
-
-Lifecycle: **Acquire** (write `pending`) → **Confirm** (`pending → confirmed`,
-paired with the hard-column write in one transaction) → **Release** (a hard
-`DELETE`; a reservation never reaches a terminal state). The partial unique
-indexes — `uq_reservations_bin_active` on `bin_id`, `uq_reservations_slot_active`
-on `node_id` — make Acquire exactly-one-winner **for `bin` and `slot` rows only**,
-so two orders can't both hold the same resource. `mouth` and `occupancy` have no
-such index. Rows are reaped when their owning order is terminal or gone
-(owner-liveness, never age). Migrations v42–v44, v69 (`mode` + read index), v76
-(`occupancy`).
-
-**Relationships:**
-- Belongs to one **Order**
-- Targets exactly one resource: one **Bin** (`resource_kind = 'bin'`) **or** one **Node** (every other kind), enforced by a `CHECK`
+The partial unique indexes `uq_reservations_bin_active` (on `bin_id`) and `uq_reservations_slot_active` (on
+`node_id`) make an acquire exactly-one-winner for `bin` and `slot` rows; `mouth` and `occupancy` rows have no such
+index. A release is a hard `DELETE`, and rows are reaped when their owning order is terminal or gone, never by age.
 
 ---
 
@@ -264,13 +230,17 @@ such index. Rows are reaped when their owning order is terminal or gone
 
 ### Bin Statuses
 
+The five values of `domain.BinStatus` (`domain.AllBinStatuses`). The column carries no CHECK, so sourcing reads an
+allow-list: only `available` and `staged` may be picked (`BinStatus.Sourceable`, twinned in SQL by
+`SourceableStatusSQL`), and a value outside the enum is refused.
+
 | Status | Description |
 |--------|-------------|
-| `available` | Normal operating state — eligible for dispatch |
-| `staged` | Temporarily placed at destination, awaiting operator confirmation |
-| `flagged` | Marked for attention — excluded from dispatch but remains in place |
-| `maintenance` | Pulled for repair — excluded from dispatch |
-| `retired` | Permanently removed from operations (record retained) |
+| `available` | Normal operating state — sourceable |
+| `staged` | At a non-storage node, where an operator is working at it (every arrival there stages, `resolveNodeStaging`); sourceable as a pickup, never counted as stock |
+| `flagged` | Marked for attention — stays where it is, not sourceable |
+| `maintenance` | Out for repair — not sourceable |
+| `retired` | Out of operations for good; retiring also clears its node (`BinService.Retire`). The record is kept |
 
 ### Order Statuses
 
@@ -346,7 +316,7 @@ Bins track whether their contents have been verified via `manifest_confirmed`:
 
 | State | Meaning |
 |-------|---------|
-| `false` | Payload assigned but contents not verified — bin is treated as empty by dispatch |
+| `false` | Contents not verified — not sourceable as stock. Nor is it an empty: an empty carrier is a bin with no `payload_code` (`EmptyCarrierWhere`) |
 | `true` | Operator has confirmed the manifest — bin is eligible for retrieval |
 
 When `manifest_confirmed` is set to `true`, `loaded_at` is also set — this timestamp drives FIFO ordering.
@@ -375,14 +345,15 @@ When multiple bins match a retrieve request, the system picks the one with the o
 The rule has one definition, `BinSourceableSQL` in
 `shingo-core/store/internal/helpers/bin_sourceable.go`, and every sourcing reader
 composes it. A bin is eligible for retrieval when:
-1. `manifest_confirmed = true` — contents have been verified
-2. `status = 'available'` — `staged` passes the status allow-list but is excluded
-   as stock, because an operator is working at it
-3. it stands at an enabled, non-synthetic node (not a robot deck or `_TRANSIT`)
-4. nobody holds it: no `claimed_by`, not `locked`, and no pending **reservation**
+1. it carries sourceable stock (`BinCarriesSourceableStockSQL`): the manifest is
+   confirmed, the count is above zero (`StockSQL`), it is not on quality hold, and
+   its status is `available` — `staged` passes the status allow-list but is
+   excluded as stock, because an operator is working at it
+2. it stands at an enabled, non-synthetic node (not a robot deck or `_TRANSIT`)
+3. nobody holds it: no `claimed_by`, not `locked`, and no pending **reservation**
    (see [reservations.md](reservations.md))
-5. where `payload_bin_types` declares carriers for the payload, the bin's type is
-   one of them
+4. where `payload_bin_types` declares carriers for the payload, the bin's type is
+   one of them (`PayloadBinTypeRuleArm`)
 
 ### Node Hierarchy
 
@@ -400,11 +371,13 @@ NGRP (Node Group)
   +-- DIRECT-CHILD (non-lane physical node)
 ```
 
-When an order targets a synthetic node (NGRP), the dispatch resolver walks the hierarchy to find the appropriate physical slot. For retrieves, it finds the oldest eligible bin across all children. For stores, it finds the deepest available slot, preferring consolidation (same payload in the same lane).
+When an order targets a synthetic node (NGRP), the group resolver (`binresolver.GroupResolver`) walks the hierarchy
+to a physical slot, by the group's `retrieve_algorithm` and `store_algorithm` properties; the codes are in
+[node-naming-standards.md](node-naming-standards.md).
 
 ### Lane Storage
 
-Lanes are linear sequences of slots where only the front slot (depth 1) is physically accessible. Storage is packed from the back (deepest first). See [Lanes](lanes.md#storage-logic) for detailed storage and reshuffle logic.
+Lanes are linear sequences of slots where only the front slot (depth 1) is physically accessible. Storage is packed from the back (deepest first). See [lanes.md](lanes.md) for storage and reshuffle logic.
 
 ### Bin Type Restrictions
 
@@ -412,54 +385,24 @@ Lanes can restrict which bin types they accept (via `node_bin_types`). During st
 
 ### Bin Loader Aggregate
 
-Core owns bin loaders as an aggregate (`bin_loaders` + `bin_loader_homes` + `bin_loader_payloads`), synced to the Edge cache (`core_loaders` + `core_loader_positions` + `core_loader_payloads`) and consumed by the Edge runtime as a first-class `domain.Loader`. A loader's **layout** (`shared_window` | `dedicated_positions`) is the single authoritative discriminator for how its homes behave — it is never inferred from "does it have positions" or "is the payload empty."
+Core owns bin loaders as an aggregate (`bin_loaders` + `bin_loader_homes` + `bin_loader_payloads`), synced to the
+Edge cache (`core_loaders` + `core_loader_positions` + `core_loader_payloads`) and consumed by the Edge runtime as a
+`domain.Loader`. The model is [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md)'s; the
+column facts that live here:
 
-**Window or dedicated position** is the parent loader's layout, never a column of the home:
-
-- A **window** (shared-window layout) carries no per-position payload — the shared set lives at the loader level — and shares the loader's single budget with its sibling windows.
-- A **dedicated** position carries one payload, which may be empty when the operator has not assigned one yet.
-
-**Home kind.** Within a dedicated loader a blank `payload_code` still means one of two things — a kept-partial
-**buffer** slot, or a **home** position not yet assigned a payload — and `home_kind` (`home` | `buffer`) says which:
-`bin_loader_homes.home_kind` on Core, `LoaderPosition.HomeKind` on the wire, `core_loader_positions.home_kind` in
-the Edge cache, where blank is a Core that predates the field.
+- A loader's `layout` (`shared_window` | `dedicated_positions`) is the one discriminator for how its homes behave,
+  never inferred from "does it have positions" or "is the payload empty". A window of a shared loader carries no
+  payload of its own (the set is `bin_loader_payloads`); a dedicated position carries one, blank until assigned.
+- `home_kind` (`home` | `buffer`) says what a dedicated home with a blank `payload_code` is: a **home** not yet
+  assigned a part, or a kept-partial **buffer** slot. It is `bin_loader_homes.home_kind` on Core,
+  `LoaderPosition.HomeKind` on the wire and `core_loader_positions.home_kind` in the Edge cache, where blank is a
+  Core that predates the field.
+- `min_stock` on `bin_loader_homes` and `bin_loader_payloads` (and the Edge cache) is dormant: written 0, read by
+  nothing.
 
 ### Typed Domain Identifiers (Edge runtime)
 
 The Edge `domain.Loader` and the surfaces built on it use newtypes — `LoaderID`, `NodeID`, `PayloadCode` — instead of bare strings, so the compiler rejects the bug class where an in-flight empty count is keyed by the wrong node string (process_node vs core_node). These are adopted on new surfaces only; legacy string call sites convert at the boundary (this is not a repo-wide rename).
-
----
-
-## Relationship Diagram
-
-```
-node_types --< nodes --< node_properties
-                 |
-                 |--< node_stations
-                 |--< node_payloads ---> payloads
-                 |--< node_bin_types --> bin_types
-                 |
-                 +--< bins
-                        |
-                        +--> bin_types --< payload_bin_types --> payloads
-                                                                    |
-                                                                    +--< payload_manifest
-
-orders --< order_history
-  |
-  |---> nodes (source_node_id, dest_node_id)
-  |--< order_bins ---> bins   (one row per lift: pick_step, drop_step)
-  +--< reservations (resource_kind bin→bins / slot→nodes)
-
-cms_transactions ---> nodes, bins, orders
-
-outbox                  (message queue)
-audit_log               (system-wide audit)
-admin_users             (authentication)
-edge_registry           (connected edge stations)
-scene_points            (fleet map cache)
-test_commands           (fleet testing)
-```
 
 ---
 
@@ -468,7 +411,8 @@ test_commands           (fleet testing)
 Every table and column, generated from the committed schema snapshots that `make schema-snapshot` writes in each
 module: Core's is `pg_dump --schema-only` of a fully migrated Postgres, the Edge's the DDL of a fully migrated
 SQLite database. Core's schema declares no column comments; the Edge's DDL keeps the comments its migrations wrote,
-shown in the Comment column.
+shown in the Comment column. Each index's References column is the relationship map: a reference there is a
+foreign key, and a column that names a node or an order by name (`orders.delivery_node`) is not one.
 
 ### Core tables (Postgres)
 
@@ -2474,9 +2418,9 @@ shown in the Comment column.
 | `active_pull` | `INTEGER` | yes | `1` |  |  |
 | `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 | `keep_staged_resumed_at` | `TEXT` | yes | `''` |  | keep_staged_resumed_at is when an operator last resumed this line's keep-staged keeper from the board after a cancel paused it ('' = never). Its own column because the claim's updated_at is the setup card's "flow saved" date, and a resume is not a change to the flow. Last, where the v17 ALTER puts it on an existing database. |
-| `pending_uop_payload` | `TEXT` | yes | `''` |  | pending_uop_payload is the part of the ticks held in pending_uop_delta, written by the hold's own statement and cleared with it. The hold replays only onto a bound carrier of that part (Lane H R2, DECISIONS D12); a different part's carrier takes none. '' is a hold from before the column, which replays as it always did. |
-| `released_empty` | `INTEGER` | yes | `0` |  | released_empty: the bound carrier was released as empty (RELEASE EMPTY, an underpack, a release declaring 0). It is not charged afterwards: a consume tick drains the pile, then is held for the next carrier of the part (Lane H R3, D12). Set by the release's count write, cleared when the carrier leaves or another carrier binds. After the v17 column, where the v19 ALTERs put both. |
-| `placed_seq` | `INTEGER` |  |  |  | placed_seq: the placement stamp of the landing this seat last bound (Core's bin_placement_seq, Lane H, DECISIONS D10). The landing's bind refuses one not newer, so a redelivered or overtaken landing binds nothing. Kept by every leave; a person's bind leaves it as it is. NULL until the first landing. After released_empty, where the v20 ALTER puts it. |
+| `pending_uop_payload` | `TEXT` | yes | `''` |  | pending_uop_payload is the part of the ticks held in pending_uop_delta, written by the hold's own statement and cleared with it. The hold replays only onto a bound carrier of that part; a different part's carrier takes none. '' is a hold from before the column, which replays as it always did. |
+| `released_empty` | `INTEGER` | yes | `0` |  | released_empty: the bound carrier was released as empty (RELEASE EMPTY, an underpack, a release declaring 0). It is not charged afterwards: a consume tick drains the pile, then is held for the next carrier of the part. Set by the release's count write, cleared when the carrier leaves or another carrier binds. After the v17 column, where the v19 ALTERs put both. |
+| `placed_seq` | `INTEGER` |  |  |  | placed_seq: the placement stamp of the landing this seat last bound (Core's bin_placement_seq). The landing's bind refuses one not newer, so a redelivered or overtaken landing binds nothing. Kept by every leave; a person's bind leaves it as it is. NULL until the first landing. After released_empty, where the v20 ALTER puts it. |
 
 #### Edge: `process_nodes`
 
@@ -2697,7 +2641,7 @@ shown in the Comment column.
 | `key_task` | `TEXT` | yes | `''` |  |  |
 | `auto_push` | `INTEGER` | yes | `0` |  |  |
 | `reorder_point_source` | `TEXT` | yes | `'legacy'` |  | How reorder_point was set (the Edge's auto-reorder, not Core's threshold). 'legacy' = default, never edited (silent-inert when 0). 'manual' = engineer typed a value. 'calculated' = applied from the unified calculator. |
-| `below_reorder_since` | `TEXT` |  |  |  | below_reorder_since is the FALLING EDGE of this claim's level: the instant remaining UOP first went at-or-below reorder_point, cleared when it recovers above reorder_point + margin. NULL means "not below".  It is the durable half of the demand episode's hot path. The level is evaluated on every PLC consume tick, so the timestamp is held in memory and written through only ON TRANSITION; this column exists because Edge restarts (systemctl restart shingoedge) more often than anything else in the system, and an in-memory-only edge means a restart mid-episode loses it, the next tick mints a duplicate, and the first never closes.  On the CLAIM rather than the episode because it is a per-claim level observation and the claim is the row the predicate already reads. The episode itself is keyed per PROCESS and lives in demand_origins_open — see O8 in demand-origin-design-2026-07-25.md. |
+| `below_reorder_since` | `TEXT` |  |  |  | below_reorder_since is the FALLING EDGE of this claim's level: the instant remaining UOP first went at-or-below reorder_point, cleared when it recovers above reorder_point + margin. NULL means "not below".  It is the durable half of the demand episode. The level is evaluated once a period by the demand reconciler's level sweep (sweepCellLevels), and the timestamp is written only ON TRANSITION; this column exists because Edge restarts (systemctl restart shingoedge) more often than anything else in the system, and an in-memory-only edge means a restart mid-episode loses it, the next pass mints a duplicate, and the first never closes.  On the CLAIM rather than the episode because it is a per-claim level observation and the claim is the row the predicate already reads. The episode itself is keyed per PROCESS and lives in demand_origins_open. |
 | `source` | `TEXT` | yes | `'admin'` |  | ── ATTRIBUTION ────────────────────────────────────────────────────── Every claim row says who wrote it and from where, because the HMI flow composer makes the claim table fully open: an operator on the floor writes the same rows an engineer writes on the desktop. All of these are SERVER-STAMPED — the client never sends them.  source is the writer: 'admin' (the desktop claim editor), 'hmi' (the station's flow composer), 'generated' (the retired Generate variants), 'cloned' (CloneStyle). DEFAULT 'admin' is right for every row that already exists: the desktop was the only writer there was. |
 | `called_by` | `TEXT` | yes | `''` |  | called_by is the session user (admin) or the station (hmi); '' on rows that predate attribution and on generated/cloned rows made by a caller with no session. |
 | `updated_at` | `TEXT` |  |  |  | updated_at is set on every upsert. NULL means never touched since attribution landed; it cannot carry a datetime('now') default because an ALTER cannot add a non-constant default to a populated table. |

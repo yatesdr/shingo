@@ -11,16 +11,16 @@ and records the two plant-verified vendor facts they rest on. Keep anchors as
 
 Tiers 3 and 4 are reservation-backed. The reservation substrate that powers them
 — soft holds on bins and slots, the reserve→claim→confirm lifecycle, and the
-forbidigo-enforced seatbelts — is documented in [reservations.md](reservations.md).
+claim seatbelts — is documented in [reservations.md](reservations.md).
 
 | # | Mechanism | Catches | Anchor (symbol) |
 |---|-----------|---------|-----------------|
-| 1 | Advisory dropoff-capacity gate | a plain/complex order dispatching into a full concrete storage slot (a STOR node or a child of a LANE/NGRP) or a saturated node group | `shingo-core/dispatch/capacity.go` — `CheckDropoffCapacity` (~:89) |
+| 1 | Advisory dropoff-capacity gate | a plain/complex order dispatching into a full concrete storage slot (a STOR node or a child of a LANE/NGRP) or a saturated node group | `shingo-core/dispatch/capacity.go` — `CheckDropoffCapacity` |
 | 2 | Pair admission (a coordinated pair is one job) | the two legs of a pair committing separately — an EVAC sent to lift the line bin while its supply cannot come (strands the line, ALN_003), or one leg sent while its partner is refused. Every leg clears its acquisition phases in one pass and then every fleet create follows, or no leg is sent; an incomplete pair (partner not received yet, or digging its own bin out) parks holding nothing, and a partner Core refused at intake fails the leg that names it | `shingo-core/dispatch/complex_pair.go` — `dispatchPairInOnePass`; what counts as the pair is `coordinatedPairLegs`; the waits are `parkPair` / `parkPairAwaitingPartner`, the refusal `failForRefusedPartner` |
-| 3 | Slot reservation (reserve-only) | two stores resolving the same slot both dispatching into it (store-vs-store); the Dispatcher-surface entry also settles the destination (group→child, re-aim off a dug lane) and its return value is the only node a caller may use | `shingo-core/dispatch/store_slot.go` — `ReserveStorageDropoff` / `claimStoreSlot` (~:168) — a `resource_kind = 'slot'` reservation row, see [reservations.md](reservations.md) |
-| 4 | Atomic slot claim (reservation-guarded CAS) | a slot claim racing occupancy / another claimant | `shingo-core/store/nodes/nodes.go` — `ClaimSlotTx` (~:92); the sanctioned path is `db.ConfirmSlotClaim` (claim + reservation `pending→confirmed` in one tx), enforced by forbidigo — see [reservations.md](reservations.md) §The claim seatbelt |
+| 3 | Slot reservation (reserve-only) | two stores resolving the same slot both dispatching into it (store-vs-store); the Dispatcher-surface entry also settles the destination (group→child, re-aim off a dug lane) and its return value is the only node a caller may use | `shingo-core/dispatch/store_slot.go` — `ReserveStorageDropoff` / `claimStoreSlot` — a `resource_kind = 'slot'` reservation row, see [reservations.md](reservations.md) |
+| 4 | Atomic slot claim (reservation-guarded CAS) | a slot claim racing occupancy / another claimant | `shingo-core/store/nodes/nodes.go` — `ClaimSlotTx`, the only slot-claim primitive: its CAS requires the order's slot reservation (`reservations.HeldByOwnerSQL`), and its one caller (`ConfirmSlotClaimWithPartnerTx`, under `db.ConfirmSlotClaim`) flips that reservation `pending→confirmed` in the same tx — see [reservations.md](reservations.md) §The claim seatbelt |
 | 5 | Swap peer-death handler | a two-robot swap leg dying mid-flight (collide two bins on the line, or strand it) | `shingo-core/dispatch/swap_peer.go` — `HandleSwapPeerTerminal` |
-| 6 | Arrival reconciliation (stale-ghost eviction) | a delivery landing on a node shingo still records as occupied — the record is a stale ghost, evicted to `_TRANSIT` + `anomaly_at` | `shingo-core/service/bin_service.go` — `ApplyArrival` (~:584); shared helper `shingo-core/store/internal/helpers/helpers.go` — `EvictStaleGhostBinsTx` |
+| 6 | Arrival reconciliation (stale-ghost eviction) | a delivery landing on a node shingo still records as occupied — the record is a stale ghost, evicted to `_TRANSIT` + `anomaly_at` | `shingo-core/service/bin_service.go` — `ApplyArrival`; shared helper `shingo-core/store/internal/helpers/helpers.go` — `EvictStaleGhostBinsTx` |
 
 ## The lane family (dispatch-time)
 
@@ -54,9 +54,7 @@ Note what the **gate** is not. A gate chooses only where an order waits —
 parked pre-dispatch, or dwelling at a point. Wait points live on the node
 group (`PropGroupWaitPoints`); `PropLaneGatePoint` on the lane is the legacy
 fallback and still wins where it is set. The physical questions above are asked
-on every lane-entry path unconditionally, gated or not. No lane-level marks are
-set at either plant today (verified 2026-08-31); group-level wait points are in
-use.
+on every lane-entry path unconditionally, gated or not.
 
 Tier 6 is the ONE reconciliation shared by every arrival-writer so they cannot
 drift: `ApplyArrival` (single-bin), `ApplyMultiBinArrival`
@@ -68,7 +66,7 @@ runs `EvictStaleGhostBinsTx`.
 
 The tier-1/tier-3 dropoff gate is applied ONLY to concrete storage slots
 (a STOR node, or a child of a LANE or NGRP: `storageDropoffOf`, one rule for the plain
-and the complex families since 2026-10-25), **never to a LINE node and never to staging**.
+and the complex families), **never to a LINE node and never to staging**.
 Gating the coordinated swap's LINE drop deadlocked a plant and was reverted in
 **`2b05dce`** — the exemption is load-bearing, not an oversight. A supply leg
 delivers to a line node a sibling evac clears; the fleet's shared-node
@@ -87,7 +85,7 @@ gate in `reserveComplexDestination` (`isStorageDropoff`) + its `2b05dce` regress
 1. **The vendor fleet manager DOES sequence two robots at a shared node.** A
    two-robot swap can rely on R2's dropoff waiting for R1's pickup at the shared
    node. Anchor: `shingo-edge/engine/material_orders.go` — `BuildTwoRobotPressIndexSwapSteps`
-   comment (~:165).
+   comment.
 2. **A delivery physically CANNOT complete onto an occupied slot, but RDS emits
    no fault code and does not track occupancy.** The proof of emptiness is the
    physical completion itself, not a vendor error. So when tier 6 finds a

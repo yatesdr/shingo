@@ -80,7 +80,7 @@ func buildSubjectRouter(svc *messaging.CoreDataService, askServer *asks.Server) 
 // (or, for TypeData, a closure into the subject router) and asserts the table
 // covers protocol.AllTypes().
 //
-// The 8 order-channel Types share the inbox-dedup middleware via UseFor;
+// The 7 order-channel Types share the inbox-dedup middleware via UseFor;
 // TypeData and the reply-channel Types pass through ungated, which matches the
 // order-channel scoping of the legacy InboxDedup decorator this replaced.
 func buildProtocolRouter(

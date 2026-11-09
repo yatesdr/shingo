@@ -53,14 +53,13 @@ func TestNoInlineEventHandlersInTemplates(t *testing.T) {
 	}
 }
 
-// TestNoMalformedDataActionInJS guards the bf5ed4b regression class: the
-// mechanical onclick="fn(arg)" -> data-action="fn:arg" migration left a
-// stray ")" (and in two cases a literal backslash-quote \') inside
-// data-action attribute values built by string concatenation in the page
-// JS. delegateActions splits the value on ":", so a trailing ")" rides
-// into the argument ("5)" instead of "5") and a literal \' is never
-// evaluated — both silently break the button. The template drift test
-// above only scans templates/*.html, which is why this shipped.
+// TestNoMalformedDataActionInJS refuses a stray ")" or a literal
+// backslash-quote \' inside a data-action attribute value built by string
+// concatenation in the page JS, the two shapes an onclick="fn(arg)" ->
+// data-action="fn:arg" rewrite leaves. delegateActions splits the value on
+// ":", so a trailing ")" rides into the argument ("5)" instead of "5") and a
+// literal \' is never evaluated — both silently break the button. The
+// template drift test above only scans templates/*.html.
 //
 // Signatures (scoped to lines that build a data-action attribute):
 //   - ')"   a JS string literal that opens with ")" right where the

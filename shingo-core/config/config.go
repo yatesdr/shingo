@@ -165,8 +165,8 @@ type DispatchConfig struct {
 type FutilityConfig struct {
 	// Threshold is how many futile terminals on one
 	// (station, process_node, payload) inside Window trip the record.
-	// Start at 20 — comfortably above the ~4/h worst legitimate case and far
-	// below the cascade's ~242/h.
+	// Default 20: above the rate a legitimate tuple reaches and far below a
+	// cascade's.
 	Threshold int `yaml:"threshold"`
 	// Window is the rolling window the count is taken over.
 	Window time.Duration `yaml:"window"`
@@ -262,16 +262,15 @@ type SimConfig struct {
 	Enabled     bool          `yaml:"enabled"`      // the sim switch; needs a sim build and SHINGO_ALLOW_SIM=1
 	Seed        int64         `yaml:"seed"`         // PRNG seed; 0 = derive from time and log it
 	Speed       float64       `yaml:"speed"`        // time multiplier: 2.0 = twice as fast. Default 1.0
-	MaxSpeed    float64       `yaml:"max_speed"`    // effective-speed cap; <=0 → default (10×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap.
+	MaxSpeed    float64       `yaml:"max_speed"`    // effective-speed cap; <=0 → default (clock.DefaultSimMaxSpeed, 10×). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap.
 	Epoch       time.Time     `yaml:"epoch"`        // sim clock start (fast-forward origin). Zero = wall-now
 	AnchorWall  time.Time     `yaml:"anchor_wall"`  // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts — only safe single-process).
 	TransitTime time.Duration `yaml:"transit_time"` // base per-block transit; default 5s
 	JitterPct   float64       `yaml:"jitter_pct"`   // ± fraction applied to transit; default 0.2
 	FailRate    float64       `yaml:"fail_rate"`    // 0.0–1.0 per-transition fault probability; default 0
 
-	// Finite-fleet model. Defaults preserve the legacy infinite-fleet
-	// behaviour (one synthetic robot per active order, flat transit), so a
-	// config that sets none of these runs exactly as before.
+	// Finite-fleet model. With none of these set the sim fleet is infinite:
+	// one synthetic robot per active order, flat transit.
 	FleetSize  int           `yaml:"fleet_size"`  // 0 = infinite fleet (default); >0 = finite robot pool, orders queue for a free robot
 	TransitMin time.Duration `yaml:"transit_min"` // min per-move transit; 0 falls back to transit_time ± jitter
 	TransitMax time.Duration `yaml:"transit_max"` // max per-move transit (uniform draw with transit_min); must exceed transit_min to take effect
@@ -308,8 +307,13 @@ type StagingConfig struct {
 	// next claim or by a person (engine resolveNodeStaging). The key is still
 	// read so an existing config file loads; a non-zero value is ignored, and
 	// Core logs that once at startup.
-	TTL                  time.Duration `yaml:"ttl"`                    // retired: ignored
-	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
+	TTL time.Duration `yaml:"ttl"` // retired: ignored
+
+	// SweepInterval is the reconciliation sweep's tick.
+	SweepInterval time.Duration `yaml:"sweep_interval"` // default 5m
+	// AutoConfirmDelivered is how long an order may sit at delivered with no
+	// receipt before the sweep confirms it; an order sent with
+	// SkipAutoConfirm is never confirmed this way.
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
 	// AbandonStuck cancels orders stuck past this age. It covers exactly TWO
 	// statuses — dispatched and staged — the ones where the fleet has the order
@@ -574,8 +578,8 @@ type RobotConfidenceConfig struct {
 	// SnapToleranceMetres is how far a sample may sit from a path segment and
 	// still be attributed to it by the nightly roll-up. Generous by
 	// necessity: scene_edges stores only segment endpoints, so a curved path
-	// is snapped against its chord, which at Springfield diverges from the
-	// driven lane by up to 1.30 m. Read-time only — changing it re-bins
+	// is snapped against its chord, which on a curve can sit more than a
+	// metre off the driven lane. Read-time only — changing it re-bins
 	// future roll-ups and never touches a stored sample.
 	SnapToleranceMetres float64 `yaml:"snap_tolerance_metres"`
 

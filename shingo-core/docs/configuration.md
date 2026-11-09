@@ -2,26 +2,13 @@
 
 Verified against: b9210bce
 
-ShinGo Core stores its configuration in a YAML file (default: `shingocore.yaml`). **No config file is written on first run.** If the file is absent, `config.Load` returns the in-memory defaults and creates nothing (`shingo-core/config/config.go:693-701`); the file appears only when someone saves from the web UI config page (`www/handlers_config.go:58`).
+ShinGo Core reads its configuration from a YAML file (default: `shingocore.yaml`). **No config file is written on first run.** If the file is absent, `config.Load` returns `config.Defaults()` and creates nothing; the file is written only by a save on the `/config` page (`PUT /api/config`, `apiConfigSave` in `www/handlers_config.go`), which is the one place Core writes it.
 
-> **The YAML file is application-managed and should not be edited by hand during normal operation.** Use the web UI config page (`/config`) to change runtime settings. The only exception is the initial database connection, which must be set before first launch — see [Initial Setup](#initial-setup). The YAML format is subject to change between versions.
+A save marshals the whole live config (`(*config.Config).Save`), so after the first save the file holds every key below and any comments in it are gone. Keys the page does not show (`cms`, `staging`, `display`, `sim` and the rest) are set by editing the file while Core is stopped; a save from the page keeps their values.
 
 ## Initial Setup
 
-The database connection is the only setting required before first launch. Create a minimal `shingocore.yaml`:
-
-```yaml
-database:
-  postgres:
-    host: 192.168.1.10
-    port: 5432
-    database: shingocore
-    user: shingocore
-    password: your-password
-    sslmode: disable
-```
-
-All other settings have sensible defaults and can be adjusted through the web UI after startup. See [PostgreSQL Setup](postgresql-setup.md) for server-side database configuration.
+The database connection is the only setting required before first launch. Copy [`shingocore.example.yaml`](../shingocore.example.yaml) to `shingocore.yaml` and set its `database.postgres` block. [PostgreSQL Setup](postgresql-setup.md) covers the server side.
 
 ## Command-Line Flags
 
@@ -32,6 +19,7 @@ All other settings have sensible defaults and can be adjusted through the web UI
 | `--help` | Print usage and exit |
 | `--log-debug[=FILTER]` | Enable debug logging. Optional comma-separated filter of subsystems. |
 | `--reset-db` | Wipe the database before starting. Requires interactive confirmation |
+| `--pprof-port PORT` | Serve Go's pprof endpoints on `127.0.0.1:PORT` (default 0: off) |
 
 ### Debug Subsystems
 
@@ -53,20 +41,37 @@ Without a filter (`--log-debug`), all subsystems are logged.
 `--log-debug` controls the optional **file** (`shingo-debug.log`) only. What
 reaches **stderr** — and therefore journald under systemd — is controlled by
 `logging.stderr_subsystems` in the YAML; see [logging](#logging) below. The
-in-memory ring buffer behind the browser log UI (`/logs`) is never filtered by
-either: every subsystem always lands there.
+in-memory ring buffer behind the Logs page (`/diagnostics`, Debug Log tab) is
+never filtered by either: every subsystem always lands there.
 
 ## Runtime Configuration
 
-Fleet (RDS) and messaging (Kafka) settings can be changed at runtime through the web UI config page (`/config`). Changes are saved to the YAML file and the affected subsystem is hot-reloaded without restart.
+The `/config` page has seven sections: Plant, Fleet, Messaging, Notifications,
+Fire alarm, Database and Account. Save sends only the changed sections to
+`PUT /api/config`; Account is the password change and saves nothing to the
+file. A save validates the posted sections against a copy of the live config,
+writes the file, swaps the copy in, then reconfigures what changed:
+
+- **Applied on save:** the fleet manager address, request timeout and the
+  fault grace Core itself enforces (`ReconfigureFleet`); the Kafka brokers and
+  group ID (`ReconfigureMessaging`); notifications (`ReconfigureNotifications`);
+  the fire-alarm switches, which are read where they are used.
+- **Applied after a restart:** the plant timezone, the robot status poll
+  interval, the orders and dispatch topics, the fault grace offered to Edges,
+  and every database setting. A changed database section is pinged before the
+  save writes it, and refused if it does not answer. `coreRestartFields` in
+  `www/config_sections.go` is the list; the page shows a restart notice naming
+  each one whose saved value differs from what the process started with.
+
+Core reads the file once, at boot (`config.Load`): a hand edit to any key takes
+effect at the next start.
 
 ## Config File Reference
 
 The table below is every key the YAML accepts: key and default from
 `config.Defaults()` (rendered to `shingo-core/config/defaults.snapshot.txt` by
 `make defaults-snapshot`), type and description from the field comments in
-`shingo-core/config`. `make docs-gen` regenerates it. This format may change
-between versions.
+`shingo-core/config`. The repository root's `make docs-gen` regenerates it.
 
 <!-- generated: shingo-core/config Config -->
 
@@ -103,14 +108,14 @@ between versions.
 | `demand.orphan_grace` | duration | `24h0m0s` | OrphanGrace is how long an order stamped `orphan` stays in the finding set before the sweep ages it out. |
 | `demand.reconcile_interval` | duration | `1m0s` | ReconcileInterval is the sweep cadence. Not a hot path — cost is bounded by open-episode count, which is one per place currently short of material — so a minute of latency on the rare miss costs nothing. <= 0 disables the sweep entirely, which leaves the notification paths as the only close mechanism; that is the pre-sweep behaviour and is deliberately reachable for a plant that wants to bisect a problem. |
 | `dispatch.futility.alert_throttle` | duration | `15m0s` | AlertThrottle suppresses repeat records for the same tuple. Modelled on ThresholdMonitor's swapContradictionWindow, which is 15m for the same reason: the condition persists, so the record should not repeat per-order. |
-| `dispatch.futility.threshold` | int | `20` | Threshold is how many futile terminals on one (station, process_node, payload) inside Window trip the record. Start at 20 — comfortably above the ~4/h worst legitimate case and far below the cascade's ~242/h. |
+| `dispatch.futility.threshold` | int | `20` | Threshold is how many futile terminals on one (station, process_node, payload) inside Window trip the record. Default 20: above the rate a legitimate tuple reaches and far below a cascade's. |
 | `dispatch.futility.window` | duration | `1h0m0s` | Window is the rolling window the count is taken over. |
 | `display.bar_steps` | int | `10` | BarSteps is how many steps the orphan-trend magnitude bars quantise to. |
 | `display.concern_after` | duration | `1h0m0s` | ConcernAfter is the duration at which an open episode is a problem. Also its own channel, distinct from WorryAfter's. |
 | `display.cycle_band_width` | float64 | `0.25` | CycleBandWidth is the histogram band width, in multiples of the key's own median. The band count follows from it — see domain.CycleBands. |
 | `display.cycle_flush_interval` | duration | `5s` | CycleFlushInterval is the Edge accumulator's delta flush cadence. A key whose median cycle is at or below it is measuring the transport, not the cell, and the page says so instead of printing the number as a takt. |
 | `display.cycle_min_samples` | int | `10` | CycleMinSamples is the fewest gaps a (station, payload, direction) key needs before its p90 and p99 are reported at all. |
-| `display.cycle_spread_multiple` | float64 | `3` | CycleSpreadMultiple sets where a key's tail begins: median + k × (p90 − median). Expressed against the key's OWN spread rather than as a percentage of its takt, because dispersion inverts between Springfield's fast and slow payload families and a percentage would over-trigger on one and under-trigger on the other. |
+| `display.cycle_spread_multiple` | float64 | `3` | CycleSpreadMultiple sets where a key's tail begins: median + k × (p90 − median). Expressed against the key's OWN spread rather than as a percentage of its takt, because dispersion inverts between a plant's fast and slow payload families and a percentage would over-trigger on one and under-trigger on the other. |
 | `display.min_bucket_orders` | int | `20` | MinBucketOrders is the smallest order count for which an orphan RATE is shown at full strength. Below it the rate is greyed and the raw orphan count carries the bucket. |
 | `display.min_expected_orders` | int | `2` | MinExpectedOrders is the smallest expected_orders for which a cost ratio is shown at full strength. Below it the ratio is greyed and the absolute order count carries the row. |
 | `display.orphan_bucket` | duration | `1h0m0s` | OrphanBucket is the time-bucket width for the orphan-rate trend. |
@@ -156,27 +161,27 @@ between versions.
 | `robot_confidence.low_confidence_threshold` | float64 | `0.5` | LowConfidenceThreshold is both the double-write cut for the forensic trail and clause 3 of the write rule. |
 | `robot_confidence.low_interval` | duration | `10s` | The three rate limits on the clauses that fire while a robot is stationary. Without them a robot sitting in a bad state would store a row every poll. (clause 3) |
 | `robot_confidence.raw_retention_days` | int | `14` | RawRetentionDays is how long full-resolution samples are kept. Two weeks is the shortest window that can answer "is this new?" from raw data; seven days gives one week and nothing to compare it against. |
-| `robot_confidence.snap_tolerance_metres` | float64 | `2` | SnapToleranceMetres is how far a sample may sit from a path segment and still be attributed to it by the nightly roll-up. Generous by necessity: scene_edges stores only segment endpoints, so a curved path is snapped against its chord, which at Springfield diverges from the driven lane by up to 1.30 m. Read-time only — changing it re-bins future roll-ups and never touches a stored sample. |
+| `robot_confidence.snap_tolerance_metres` | float64 | `2` | SnapToleranceMetres is how far a sample may sit from a path segment and still be attributed to it by the nightly roll-up. Generous by necessity: scene_edges stores only segment endpoints, so a curved path is snapped against its chord, which on a curve can sit more than a metre off the driven lane. Read-time only — changing it re-bins future roll-ups and never touches a stored sample. |
 | `robot_confidence.stuck_interval` | duration | `30s` | The three rate limits on the clauses that fire while a robot is stationary. Without them a robot sitting in a bad state would store a row every poll. (clause 4) |
 | `sim.anchor_wall` | timestamp | _(zero)_ | SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts — only safe single-process). |
 | `sim.enabled` | bool | `false` | the sim switch; needs a sim build and SHINGO_ALLOW_SIM=1 |
 | `sim.epoch` | timestamp | _(zero)_ | sim clock start (fast-forward origin). Zero = wall-now |
 | `sim.fail_rate` | float64 | `0` | 0.0–1.0 per-transition fault probability; default 0 |
-| `sim.fleet_size` | int | `0` | Finite-fleet model. Defaults preserve the legacy infinite-fleet behaviour (one synthetic robot per active order, flat transit), so a config that sets none of these runs exactly as before. (0 = infinite fleet (default); >0 = finite robot pool, orders queue for a free robot) |
+| `sim.fleet_size` | int | `0` | Finite-fleet model. With none of these set the sim fleet is infinite: one synthetic robot per active order, flat transit. (0 = infinite fleet (default); >0 = finite robot pool, orders queue for a free robot) |
 | `sim.jitter_pct` | float64 | `0.2` | ± fraction applied to transit; default 0.2 |
-| `sim.max_speed` | float64 | `0` | effective-speed cap; <=0 → default (10×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap. |
+| `sim.max_speed` | float64 | `0` | effective-speed cap; <=0 → default (clock.DefaultSimMaxSpeed, 10×). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap. |
 | `sim.seed` | int64 | `0` | PRNG seed; 0 = derive from time and log it |
 | `sim.speed` | float64 | `0` | time multiplier: 2.0 = twice as fast. Default 1.0 |
-| `sim.transit_max` | duration | `0s` | Finite-fleet model. Defaults preserve the legacy infinite-fleet behaviour (one synthetic robot per active order, flat transit), so a config that sets none of these runs exactly as before. (max per-move transit (uniform draw with transit_min); must exceed transit_min to take effect) |
-| `sim.transit_min` | duration | `0s` | Finite-fleet model. Defaults preserve the legacy infinite-fleet behaviour (one synthetic robot per active order, flat transit), so a config that sets none of these runs exactly as before. (min per-move transit; 0 falls back to transit_time ± jitter) |
+| `sim.transit_max` | duration | `0s` | Finite-fleet model. With none of these set the sim fleet is infinite: one synthetic robot per active order, flat transit. (max per-move transit (uniform draw with transit_min); must exceed transit_min to take effect) |
+| `sim.transit_min` | duration | `0s` | Finite-fleet model. With none of these set the sim fleet is infinite: one synthetic robot per active order, flat transit. (min per-move transit; 0 falls back to transit_time ± jitter) |
 | `sim.transit_time` | duration | `5s` | base per-block transit; default 5s |
 | `sourceability.enable_at_risk` | bool | `false` | EnableAtRisk lets a satisfiable-but-projected-empty style report YELLOW. Off, the plant sees green and red only. The at-risk tier is always COMPUTED; this only controls whether it surfaces as a status. |
 | `sourceability.horizon` | duration | `30m0s` | Horizon: a line projecting empty within this window is at risk. Default 30m. |
 | `sourceability.rate_window` | duration | `30m0s` | RateWindow is the look-back for the per-payload consumption rate that feeds time-to-empty. Default 30m. |
 | `staging.abandon_stuck` | duration | `1h0m0s` | AbandonStuck cancels orders stuck past this age. It covers exactly TWO statuses — dispatched and staged — the ones where the fleet has the order and nothing is moving: a leg handed over that never started (the long-weekend drain case), or a robot parked at a staging node. protocol.IsStuckSweepCandidate is the authority; this comment is not. (default 1h; 0 = disabled) |
 | `staging.abandon_stuck_operator_gated` | duration | `4h0m0s` | AbandonStuckOperatorGated is the SEPARATE, longer bound for a staged leg whose release is a HUMAN action rather than a system step — a coordinated two-robot swap parked at its wait point (dispatch.IsOperatorGatedStaging). (default 4h; 0 = never) |
-| `staging.auto_confirm_delivered` | duration | `5m0s` | TTL is RETIRED. Staged bins never expire; they are released only by the next claim or by a person (engine resolveNodeStaging). The key is still read so an existing config file loads; a non-zero value is ignored, and Core logs that once at startup. (0 = disabled) |
-| `staging.sweep_interval` | duration | `5m0s` | TTL is RETIRED. Staged bins never expire; they are released only by the next claim or by a person (engine resolveNodeStaging). The key is still read so an existing config file loads; a non-zero value is ignored, and Core logs that once at startup. (default 5m) |
+| `staging.auto_confirm_delivered` | duration | `5m0s` | AutoConfirmDelivered is how long an order may sit at delivered with no receipt before the sweep confirms it; an order sent with SkipAutoConfirm is never confirmed this way. (0 = disabled) |
+| `staging.sweep_interval` | duration | `5m0s` | SweepInterval is the reconciliation sweep's tick. (default 5m) |
 | `staging.ttl` | duration | `0s` | TTL is RETIRED. Staged bins never expire; they are released only by the next claim or by a person (engine resolveNodeStaging). The key is still read so an existing config file loads; a non-zero value is ignored, and Core logs that once at startup. (retired: ignored) |
 | `timezone` | string | _(empty)_ | Timezone is the plant's IANA zone for DISPLAY rendering (plant-local timestamps on every core page, via shared/planttime) and for the plant-local date-filter resolution. Empty resolves to UTC (planttime.DefaultZone, resolved by planttime.ResolveZone): visibly foreign rather than plausibly local, so an unset zone shows. Storage and the wire stay UTC regardless; this field never touches either. PLANT_TIMEZONE env still overrides it, so existing deployments don't move on upgrade; Edges are offered the same zone Core's screens use (www.OfferedPlantTimezone), as read at Core's boot. Read once at boot on both paths: a change applies after a restart. |
 | `web.host` | string | `0.0.0.0` | web server listen address |
@@ -210,20 +215,24 @@ Notes:
   stays out of the journal until someone opts it in. Core logs the effective
   list at boot (`shingocore: debug log mirroring to stderr: …`) so the omission
   is visible rather than silent.
-- **Muting is not disabling.** `rds` is off the default list because it was
-  125,817 lines/day at Springfield, against a journal whose retention had
-  collapsed to ~15 days. The poller still runs unchanged; only its tracing is
-  out of the journal.
-- **Nothing is lost to the UI.** The ring buffer behind `/logs` is unfiltered.
-- Retention itself is a separate, host-wide decision — see
-  `shingo-core/deploy/README.md`.
+- **Muting is not disabling.** `rds` is off the default list because the
+  fleet poller traces every poll, which would flood the journal. The poller
+  still runs unchanged; only its tracing is out of the journal.
+- **Nothing is lost to the UI.** The ring buffer behind the Logs page is
+  unfiltered (`TestStderrGate_RingBufferKeepsMutedSubsystems`).
+- The value semantics are pinned in `shingo-core/config/logging_test.go`
+  (`TestStderrSubsystems_AbsentUsesDefaults`,
+  `TestStderrSubsystems_AllMeansNoRestriction`,
+  `TestStderrSubsystems_EmptyAndNullMuteTheMirror`). Retention itself is a separate,
+  host-wide decision — see [Deploy artifacts](../deploy/README.md).
 
 ### dispatch.futility
 
-The rate-per-tuple futility detector: a net for the class of failure where the
-planner turns a bounded physical condition into unbounded orchestration work.
-Springfield 2026-07-21 produced 484 doomed swaps in under two hours, none of
-which reached a robot, while every surface stayed green.
+The rate-per-tuple futility detector (`dispatch.FutilityConfig`, installed by
+`InstallFutilityDetector` at boot): a net for the class of failure where the
+planner turns a bounded physical condition into unbounded orchestration work —
+orders planned and abandoned over and over for one tuple, none reaching a
+robot, while every surface stays green.
 
 ```yaml
 dispatch:
@@ -233,30 +242,29 @@ dispatch:
         alert_throttle: 15m
 ```
 
-**There is no `enabled` key.** The detector records at every site, always. It
-carried an `enabled` flag defaulting to `false` until 2026-09-01, which meant
-it recorded at no site at all — opting in requires knowing the detector is
-there. A `threshold` or `window` of zero describes nothing countable and
-disables it by being malformed; that is not a supported way to turn it off.
+**There is no `enabled` key.** The detector records at every site, always. A
+`threshold` or `window` of zero describes nothing countable and disables it by
+being malformed (`TestFutility_MalformedConfigReturnsNil`); that is not a
+supported way to turn it off.
 
 A "futile" terminal is an order that reached a terminal status without ever
 having reached `in_transit` — planned, then abandoned before a robot moved.
-Any order for the same tuple reaching `in_transit` resets the count.
+Any order for the same tuple reaching `in_transit` resets the count
+(`TestFutility_InTransitResetsTheTuple`).
 
-**Rate, not a run count.** A consecutive-run threshold is refuted by the
-plant's own history: over 120 days on real tuples, off the incident window,
-normal operation produced runs of 5 (×6), 6 (×2), 8, 9 (×3) and one of 26 —
-a power-law tail with no knee. Time separates them cleanly: the worst
-legitimate case ran ~4/h, the cascade ~242/h.
+**Rate, not a run count.** Normal operation produces runs of consecutive futile
+terminals with a long tail and no clean cut-off, so a run-length threshold
+either fires on ordinary days or misses the cascade. Counting per tuple inside
+a rolling `window` separates them (`TestFutility_LegitimateSlowRunDoesNotFire`,
+`TestFutility_CascadeFires`).
 
-**Absolute, not learned.** A 30-day trailing baseline would have been trained
-on the incident, and the database has a 2.5-week hole (2026-06-27 → 07-15)
-that mis-baselines anything computed across it.
+**Absolute, not learned.** The threshold is a fixed number, not a trailing
+baseline: a learned baseline is trained on whatever incidents its window holds.
 
-**Observe-only.** One log line and one `audit_log` row per trigger. No chip,
-no alert, no brake — a brake on an unmeasured threshold stops real work. The
-threshold above is a starting guess, and it stays observe-only until the
-records say where a real one belongs.
+**Observe-only.** One log line and one `audit_log` row per trigger, repeats for
+the same tuple suppressed for `alert_throttle`
+(`TestFutility_ThrottlesRepeats`). No chip, no alert, no brake — a brake on an
+unproven threshold stops real work.
 
 ### Duration Format
 

@@ -26,30 +26,19 @@ type Config struct {
 	saveMu lockcheck.Mutex[lockorder.ConfigSave] `yaml:"-"`
 
 	// StationUID is this edge's identity. It is opaque, it never changes, and
-	// it is the value that travels as protocol.Address.Station.
+	// it is the value that travels as protocol.Address.Station. Empty on a
+	// first start: main.ensureIdentity mints a random uid and persists it,
+	// and Core holds the station unclaimed until a human names it.
 	//
-	// AN OPERATOR PUTS IT HERE BY HAND, ONCE, AND THAT IS THE DESIGN RATHER
-	// THAN A MISSING FEATURE. Handing the uid over is exactly the step at
-	// which a human distinguishes the two hardware events Core cannot tell
-	// apart on its own: a NEW station (enroll, take the fresh uid) from
-	// REPLACEMENT HARDWARE for an existing one (do not enroll — copy the
-	// existing uid off Core onto the new Pi, and the station's whole history
-	// stays attached to it). A Pi that mints its own id can express the first
-	// and never the second.
-	//
-	// It rides the backup archive (backup/snapshot.go includes the config), so
-	// a restore is the other way a replacement box gets it back.
-	//
-	// Empty means the edge has never started: main.ensureIdentity mints a
-	// random uid on first start and persists it, and Core holds the station
-	// unclaimed until a human claims it. Nothing composes a default from other
-	// fields.
+	// Replacement hardware for an existing station takes THAT station's uid
+	// instead, put here by hand or restored with the backup archive
+	// (backup/snapshot.go includes the config), so the station's history
+	// stays attached. Nothing composes a default from other fields.
 	StationUID string `yaml:"station_uid"`
 
-	// Namespace / LineID are LABELS NOW, not identity. They no longer compose
-	// a station id and they no longer have defaults; they survive because
-	// existing plant configs carry them and silently dropping fields a plant
-	// has written is its own kind of surprise.
+	// Namespace / LineID are labels, not identity: nothing composes a station
+	// id from them, they have no defaults, and the engine only logs them at
+	// start. A plant config that carries them still loads.
 	Namespace string `yaml:"namespace"`
 	LineID    string `yaml:"line_id"`
 
@@ -235,7 +224,7 @@ type CounterConfig struct {
 	// JumpThreshold is read by plc.CalculateDelta twice: a delta above it is
 	// labelled "jump", and a backward read is taken as a 16/32-bit rollover
 	// only when the wrap delta is at or under it (otherwise it is a "reset").
-	// Neither label gates the count any more.
+	// The labels describe how the counter moved; every delta is counted.
 	JumpThreshold int64 `yaml:"jump_threshold"`
 }
 
@@ -272,7 +261,7 @@ type SimConfig struct {
 	Enabled    bool               `yaml:"enabled"`     // the sim switch; needs a sim build and SHINGO_ALLOW_SIM=1
 	Seed       int64              `yaml:"seed"`        // PRNG seed; 0 = derive from time and log it
 	Speed      float64            `yaml:"speed"`       // time multiplier: 2.0 = twice as fast. Default 1.0
-	MaxSpeed   float64            `yaml:"max_speed"`   // effective-speed cap; <=0 → default (10×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). Past this the clock outruns the real choreography and the loop wedges, so requests are clamped. Must match core. Set very high to effectively uncap.
+	MaxSpeed   float64            `yaml:"max_speed"`   // effective-speed cap; <=0 → default (clock.DefaultSimMaxSpeed, 10×). Past this the clock outruns the real choreography and the loop wedges, so requests are clamped. Must match core. Set very high to effectively uncap.
 	Epoch      time.Time          `yaml:"epoch"`       // sim clock start (fast-forward origin). Zero = wall-now
 	AnchorWall time.Time          `yaml:"anchor_wall"` // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts).
 	Calendar   SimCalendarConfig  `yaml:"calendar"`
@@ -576,14 +565,14 @@ func (c *Config) Save(path string) error {
 
 // stationID returns the station identity without locking (for internal use).
 //
-// THE UID, OR THE EXPLICIT OVERRIDE, AND NOTHING COMPOSED. The migration
-// window's third branch — Namespace + "." + LineID — is gone with the defaults
-// that fed it. An edge with neither value returns "" and mustHaveIdentity
-// refuses to start; there is no longer a string this function can invent.
+// THE UID, OR THE EXPLICIT OVERRIDE, AND NOTHING COMPOSED. An edge with
+// neither returns ""; at boot main.ensureIdentity mints and persists a uid
+// before anything reads this, and refuses to start only when it cannot mint
+// one.
 //
-// Messaging.StationID survives as a deliberate operator override for a
-// development or bench edge that is not enrolled against a Core. It is not a
-// default: somebody has to write it in the file.
+// Messaging.StationID is a deliberate operator override for a development or
+// bench edge with no station_uid. It is not a default: somebody has to write
+// it in the file.
 func (c *Config) stationID() string {
 	if c.StationUID != "" {
 		return c.StationUID
@@ -592,7 +581,8 @@ func (c *Config) stationID() string {
 }
 
 // StationID returns this edge's identity as it appears on the wire —
-// protocol.Address.Station. Its value IS the station uid once enrolled.
+// protocol.Address.Station. Its value is the station uid, or the bench
+// override.
 func (c *Config) StationID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

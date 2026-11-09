@@ -6,7 +6,7 @@
 //   - Full (from, to) matrix: every legal transition succeeds, every
 //     illegal one returns IllegalTransition.
 //   - Typed methods (CancelOrder, ConfirmReceipt, Release, MarkInTransit,
-//     MarkStaged, MarkDelivered, Queue, MoveToSourcing, Dispatch, Fail,
+//     MarkStaged, MarkDelivered, Park, Dispatch, Fail,
 //     BeginReshuffle, CompleteCompound, Acknowledge): each writes the
 //     correct target status.
 //   - Idempotency: CancelOrder on terminal status is a no-op;

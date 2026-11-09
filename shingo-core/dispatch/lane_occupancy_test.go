@@ -228,10 +228,10 @@ func blockOccupancyFor(t *testing.T, db *store.DB, orderID int64) {
 //     it is in;
 //  2. the child is still PENDING, so a later re-drive picks it up. A hold is
 //     only fail-closed if the thing held can be released. GetNextChildOrder
-//     selects status='pending', and no transition out of `sourcing` returns to
-//     pending, so a child held one line further down — after MoveToSourcing —
-//     is invisible to every re-drive and its parent sits in `reshuffling`
-//     forever. That is a wedge, not a hold.
+//     selects status='pending', and nothing returns a child to pending once its
+//     status has moved on, so a child held one line further down — after the
+//     hand's `pending → dispatched` CAS — is invisible to every re-drive and
+//     its parent sits in `reshuffling` forever. That is a wedge, not a hold.
 //
 // DESIGN §16 rule 7: the take is the FIRST refusal this call can hit. Everything
 // upstream is satisfied on purpose — the child is pending with both nodes set,

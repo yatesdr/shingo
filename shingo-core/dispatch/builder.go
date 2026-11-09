@@ -99,9 +99,10 @@ type Need struct {
 	// or the issue is refused.
 	//
 	// Cart is the one carrier the order is for: its pending bin row is taken in
-	// the issue's transaction, and bin_id and named_bin_id are stamped in the
-	// INSERT ("an order for one carrier"). 0: the acquire finds one, and the
-	// planner's pick rides the row as orders.plan.
+	// the issue's transaction, its order_bins row is written with the INSERT
+	// (HoldFromBirth), and named_bin_id is stamped on the order ("an order for
+	// one carrier"). 0: the acquire finds one, and the planner's pick rides the
+	// row as orders.plan.
 	Cart int64
 	// Window is the drop when it is one carrier's at a time (a loader window, a
 	// storage slot): it IS the order's delivery, so a need names it or
@@ -127,10 +128,10 @@ type Need struct {
 
 // Leg is a compound's child as its issue writes it: its parent
 // (orders.parent_order_id), its turn among the parent's legs (sequence), and,
-// for a dig's leg, the bin it moves. A dig leg's bin is stamped as bin_id and
-// held by its parent's lane, with no bin row: one bin may be two legs' (an
-// unbury followed by a retrieve of the same bin) and the bin index admits one
-// active row. Its claim is its hand's. A leg that holds its bin by a row (the
+// for a dig's leg, the bin it moves. A dig leg's bin is its order_bins row,
+// written with the INSERT (HoldFromBirth), and is held by its parent's lane
+// with no reservation row: one bin may be two legs' (an unbury followed by a
+// retrieve of the same bin) and the bin index admits one active row. Its claim is its hand's. A leg that holds its bin by a row (the
 // home clear's) declares it as the need's Cart, and Bin is 0.
 type Leg struct {
 	Parent   int64

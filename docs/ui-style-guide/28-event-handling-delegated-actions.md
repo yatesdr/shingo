@@ -2,7 +2,7 @@
 
 Verified against: b9210bce
 
-**Decided: no inline event handlers in templates. Every
+**No inline event handlers in templates. Every
 DOM event is mediated through `data-action[-event]` attributes and a
 per-page `delegateActions` call.**
 
@@ -38,8 +38,8 @@ per-page `delegateActions` call.**
 | `data-action-keydown` | `keydown` | Per-key handling (Enter/Escape commit/cancel) |
 | `data-action-submit` | `submit` | Form-level — handler can call `evt.preventDefault()` |
 
-Add a new event type by extending the `eventRe` in
-`shingo-edge/www/inline_onclick_drift_test.go` and adding the
+Add a new event type by extending the `eventRe` in both
+`inline_onclick_drift_test.go` files (`shingo-core/www`, `shingo-edge/www`) and adding the
 `data-action-<event>` mapping to `delegateActions` in
 `shared/utils.js`.
 
@@ -48,8 +48,8 @@ Add a new event type by extending the `eventRe` in
 - `data-action="verb"` → handler called as `verb(el, evt)`
 - `data-action="verb:arg"` → handler called as `verb("arg", el, evt)`
 - `data-action="verb:a:b"` → handler called as `verb("a", "b", el, evt)`
-- The dispatcher binds `this` to the matched element so the old
-  `onclick="foo(this)"` semantics survive unchanged.
+- The dispatcher binds `this` to the matched element, as an inline
+  handler's `this` would be.
 - JSON-shaped or multi-key payloads go in `data-*` attributes that
   the handler reads off `this.dataset`. The element is also the
   first positional argument.
@@ -101,31 +101,33 @@ delegateActions(document.body, {
 ```
 
 Page scripts that need a different handler set for an HTMX-swapped
-sub-container can call `delegateActions(swapTarget, {…})` with a
-scoped root. The dataset sentinel prevents double-binding when the
-swap target survives a re-fill.
+sub-container call `delegateActions` with that container as the root
+instead of `document.body`. The dataset sentinel prevents double-binding
+when the container survives a re-fill.
 
 ### Delegation over inline onclick
 
-Inline `onclick=` is forbidden for new code. Reasons:
+Inline `onclick=` is forbidden. Reasons:
 
-1. Handler functions must be `window`-global to be reachable, blocking ES
-   module adoption.
+1. Handler functions must be `window`-global to be reachable, which an ES
+   module's functions are not.
 2. The handler isn't visible at the JS module level (grep finds the HTML
    call, not the binding).
 3. CSP-friendly code disallows inline event handlers.
 
 ### Async handlers
 
-Event handlers that await something must be `async`:
+A handler that awaits something is `async`. The dispatcher calls it and does
+not wait, so the dispatcher's own `try`/`catch` never sees a rejection: an
+async handler reports its own failures (a toast).
 
 ```js
-list.addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-action="delete"]');
-  if (!btn) return;
+async function deleteItem(id) {
   if (!await confirm('Sure?')) return;
-  await api.delete('/api/items/' + btn.dataset.id);
-});
+  await api.delete('/api/items/' + id);
+}
+
+delegateActions(document.body, { deleteItem });   // data-action="deleteItem:42"
 ```
 
 ### Pinning a click

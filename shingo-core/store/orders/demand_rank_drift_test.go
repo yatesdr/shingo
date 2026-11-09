@@ -20,8 +20,9 @@ const rankHome = "store/orders/demand_rank.go"
 // `priority DESC` with `created_at` nearby, in either qualified form.
 var rankSpelling = regexp.MustCompile(`(?i)priority\s+DESC`)
 
-// TestNoThirdSpellingOfTheDemandRanking is blocking_drift_test's guard applied
-// to §9's seam.
+// TestNoThirdSpellingOfTheDemandRanking refuses a hand-spelled demand ordering
+// (priority, then oldest) anywhere but rankHome: blocking_drift_test's guard
+// applied to the demand-ranking seam.
 //
 // The demand ranking is one seam (§9): first-come-first-served today,
 // time-to-empty later, and the whole value of that is that the change lands in

@@ -38,7 +38,7 @@ import (
 //
 //  1. restore `d.failOrder(order, env, "fleet_failed", err.Error())` inside
 //     dispatchToFleet  → assertion (a): leg `failed`, parent `failed`.
-//  2. drop the MoveToSourcing rollback in parkLegOnFleetRefusal
+//  2. drop the DemoteAfterFleetRefusal call in parkLegOnFleetRefusal
 //     → assertion (b): leg stranded at `dispatched`, and (d) never dispatches.
 //  3. revert GetNextChild to `status='pending'`
 //     → assertion (d): the willing fleet never sees the leg; it stays parked.

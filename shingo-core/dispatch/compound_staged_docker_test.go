@@ -17,7 +17,7 @@ import (
 //
 // A staged parent OWNS ITS OWN DIGS, so its dig legs failing is a fact about the
 // demand's own excavation, not about the demand. The fork in
-// AdvanceCompoundOrder had two dispositions — Queue and Cancel — and both are
+// AdvanceCompoundOrder had two dispositions — Park and Cancel — and both are
 // wrong here: `{staged → queued}` is refused by the state machine (the old arm
 // ran, errored, and left the row stranded at the mark), and Cancel ends a demand
 // whose own work is not what failed (§R.91).
@@ -49,7 +49,7 @@ func failADigLeg(t *testing.T, db *store.DB, d *Dispatcher, parentID int64) {
 // standing, raise a replacement chapter rather than a tail.
 //
 // MUTATION (verified): delete the staged arm in the fork, restoring the old
-// Queue-then-unlock. The cause assertion fires first (the row keeps the summon's
+// Park-then-unlock. The cause assertion fires first (the row keeps the summon's
 // stale staged-own-dig — "my dig is running", which just stopped being true) —
 // and the lane assertion fires with it: unlockLaneForCompound drops the corridor
 // the robot is standing in.

@@ -109,6 +109,7 @@ func printUsage() {
 	fmt.Println("  protocol      Protocol envelope decode/encode")
 	fmt.Println("  outbox        Outbox drain cycles and delivery")
 	fmt.Println("  core_handler  Inbound message handler dispatch")
+	fmt.Println("  inbox_dedup   Inbound duplicate-message gate (inbox_messages)")
 	fmt.Println("  engine        Engine wiring, vendor status changes")
 	fmt.Println()
 	fmt.Println("--log-debug gates the FILE only. What reaches stderr (journald under")

@@ -366,11 +366,11 @@ func (p *Plant) Validate() error {
 		// checks (shingo-edge/engine/swap_dispatch.go) so a spec that validates
 		// won't strand at dispatch. single_robot needs BOTH staging nodes (and
 		// they must be distinct — same node collides the new + old bins);
-		// two_robot needs inbound staging; two_robot_press_index needs
-		// paired_core_node + outbound_destination (no staging — the live press
-		// uses this); sequential (A/B) needs neither. (Previously this required
-		// both staging nodes for ALL multi-step modes, which wrongly rejected
-		// press_index / two_robot / sequential.)
+		// two_robot needs inbound staging + outbound_destination (the evac
+		// leg's only dropoff; blank, the supply leg ships and the evac leg is
+		// refused, leaving the pair half-dispatched); two_robot_press_index
+		// needs paired_core_node + outbound_destination (no staging);
+		// sequential (A/B) needs neither.
 		switch protocol.SwapMode(c.SwapMode) {
 		case protocol.SwapModeSimple:
 			// "simple" is retired as a configurable mode (the Edge upsert
@@ -387,6 +387,9 @@ func (p *Plant) Validate() error {
 		case protocol.SwapModeTwoRobot:
 			if c.InboundStaging == "" {
 				add("%s: two_robot requires inbound_staging", where)
+			}
+			if c.OutboundDestination == "" {
+				add("%s: two_robot requires outbound_destination", where)
 			}
 		case protocol.SwapModeTwoRobotPressIndex:
 			if c.PairedCoreNode == "" {

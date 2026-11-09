@@ -262,7 +262,7 @@ func (op *simOperator) scheduleConfirm(orderID, nodeID int64) {
 // CanAcceptOrders reports "active/staged order in progress", blocking the next
 // relief until the cell/press overfills (PLN_003 → hundreds of uop over cap).
 // Issuing the Edge receipt here (ConfirmDelivery) is the design's "Edge receipt"
-// confirm path (sim.md §5): it transitions the Edge order AND notifies Core, so
+// confirm path (sim-plant-design.md §5): it transitions the Edge order AND notifies Core, so
 // both sides reach `confirmed` and the swap loop self-clears.
 //
 // Scope guards keep it to exactly the legs that need it:
