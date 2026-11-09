@@ -1,9 +1,45 @@
 # Changelog
 
-One line per change. If a change needs a paragraph to explain, the paragraph
-belongs in the commit message or in `docs/` — this file is the index.
+One section per release, newest first. `## Unreleased`, on top, is what the
+next release carries; `make release` renames it to the release's heading,
+`## vX.Y.Z — YYYY-MM-DD — title`.
 
-## 2026-11-08 — Post-merge tidy
+Every release section opens with its `Deploy:` line: the migrations it applies,
+per binary (`Core v176`, `Edge v45–v46`; a range is allowed), which binary goes
+first, or `no migration`. Then one bullet per change, one line each, in the
+words of the person running the plant. A change that needs a paragraph has it in
+its commit message or in `docs/`; this file is the index.
+
+`scripts/check-changelog.sh` holds `## Unreleased` to this: once anything a
+binary is built from has changed since the last tag, the section opens with
+`Deploy:`, and that line names every migration added since the tag.
+
+## Unreleased
+
+Deploy: Core migrations v8–v175, Edge migrations v2–v44; each binary applies its own at boot. Deploy Core first, then the Edge.
+
+First versioned release since v0.0.14 (2026-03-21); the intervening changes are in git history and the Before v0.1.0 section.
+
+- A release is cut with `make release VERSION=vX.Y.Z`: from a clean `main` that matches origin and passes the cert gate, at no lower a version than its changes call for; it commits, tags and pushes
+- A GitHub release's notes are its version's section of this changelog
+- A change to what a binary is built from is refused without an `## Unreleased` entry whose `Deploy:` line names every migration added since the last release
+- Core's and the Edge's Logs pages show the running version and commit
+- `install-core.sh` and `install-edge.sh` take a release tag (`--tag vX.Y.Z`): they check it out, build it and stamp the binary with it
+- Release binaries carry their commit as well as their version
+- A plant spec with a `two_robot` claim and no outbound destination is refused at seed, not stranded at dispatch
+- The Edge installer's first config says the Edge mints its own station uid; Core's notification settings no longer claim to need a restart
+- Every gate checks the docs: a doc naming a test, symbol, file or link that no longer exists, or citing a line number, fails it
+- Tables the code already states (wire messages, schemas, config keys, routes, pages, loops, state diagrams) are generated into the docs by `make docs-gen`
+- Every doc names the commit it was last verified against; `make docs-verify` restamps them at the end of a change
+- `docs/ground-rules.md` says where a doc goes, how docs and comments cite, the gate and how a release is cut
+- 20 docs that were pointer lists, finished proposals, duplicates or links outside the repo are gone; what was worth keeping lives in the doc that covers it
+- `shingo-edge/shingoedge.example.yaml` lists every Edge key at its shipped default; Core's defaults are rendered to a committed snapshot as the Edge's are
+
+## Before v0.1.0
+
+The dated merge log this file was until the first versioned release, newest first.
+
+### 2026-11-08 — Post-merge tidy
 
 Core v175; Edge v44 (a backfill, no schema change). Deploy Core first, then the Edge.
 
@@ -13,7 +49,7 @@ Core v175; Edge v44 (a backfill, no schema change). Deploy Core first, then the 
 - START reads its own row back under the door and by its id: a switch in between leaves it its row
 - Core: a pull-parts clear of a cart below 0 is recorded `released_overpack` with the declared count and the overpack
 
-## 2026-11-03 — The cutover follows the PLC
+### 2026-11-03 — The cutover follows the PLC
 
 Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantspec, seeddev, simcalc): deploy Core first, then the Edge. Migrate a restored copy first. Roll back only to a ≥ v32 build (it re-adds v42's column and boots); open holds are not charged while rolled back. The first boot publishes every monitored identity tag on WarLink.
 
@@ -69,7 +105,7 @@ Edge v37-v43; Core changes the lift's stamp (no schema) and dev tooling (plantsp
 - Its ledger is carts + logged + written off = loads; it prints lost at the lift (asserted 0, never summed), every partial release fenced and the lowest cart; its person releases with the pre-fill and cancels a staged swap of the replaced part
 - A wait in scripts/sim-4x2.sh takes its budget again while the cell still moves (a slow host is slow, not stopped); a STOP on a wait that ran out writes the forensics, the Edge's and Core's logs, the line with its readiness answer (GET /api/sim/line "ready") and the gate; the final ledger quotes each overpack Core recorded
 
-## 2026-11-03 — An order's carts are its rows
+### 2026-11-03 — An order's carts are its rows
 
 Core v173-174, then kanban's v169-172 (2026-11-01, below). Before a deploy, migrate a restored copy and read v173's and v174's boot lines. Ship Core and Edge together.
 
@@ -79,7 +115,7 @@ Core v173-174, then kanban's v169-172 (2026-11-01, below). Before a deploy, migr
 - v174 waits while v173's `live_pick_step_ambiguous` list names a live order, re-runs each boot, and finishes once it is empty
 - `plants/order-carts.yaml` is the multi-cart fixture: a press-index swap and a single-robot relay
 
-## 2026-11-01 — At the station, recipes follow Settings
+### 2026-11-01 — At the station, recipes follow Settings
 
 No migration. Edge only.
 
@@ -91,7 +127,7 @@ No migration. Edge only.
 - A tap on the search box raises the touch keyboard
 - An on-deck spot with nowhere to go can't be tapped
 
-## 2026-11-01 — Kanban: a loop of carts around a process
+### 2026-11-01 — Kanban: a loop of carts around a process
 
 Core v169-172, on order-carts' v173-174 (run `store.KanbanMigrationCensusSQL` and `store.FamilyCensusSQL` first), Edge one literal. Ship Core and Edge together.
 
@@ -119,7 +155,7 @@ Core v169-172, on order-carts' v173-174 (run `store.KanbanMigrationCensusSQL` an
 - A plant file's change now runs the tests that seed it, in CI and in `gate.sh scope`
 - A kanban's Supports offer every position of a claim, paired ones included
 
-## 2026-11-01 — A kanban is called a kanban
+### 2026-11-01 — A kanban is called a kanban
 
 Core v171, Edge no migration. Ship Core and Edge together: until both are up, a claim save naming a kanban as its inbound source is not refused on the Edge.
 
@@ -131,21 +167,21 @@ Core v171, Edge no migration. Ship Core and Edge together: until both are up, a 
 - The old "kanban" of UOP reorder is now "threshold replenishment", and the Edge's retired `/kanbans` redirects are gone
 - A short row held by its keeper says so in its title, instead of claiming asks are out
 
-## 2026-11-01 — The changeover load directive is gone
+### 2026-11-01 — The changeover load directive is gone
 
 Core v170, Edge v36, either order: a missing wire field reads as off.
 
 - The "tell this station which carrier to load" checkbox is gone; no card ever showed it
 - An opted-in loader's empty request is attributed to the cell episode, not the changeover
 
-## 2026-10-30 — The wall map can be turned
+### 2026-10-30 — The wall map can be turned
 
 No migration. Core only.
 
 - The Robot Map has a Rotate button: each tap turns the map 90 degrees, and that screen remembers it
 - Until a screen is rotated, the map orients itself as it does today
 
-## 2026-10-30 — A recipe follows the process's Settings
+### 2026-10-30 — A recipe follows the process's Settings
 
 One Edge migration, no recipe takes a new version. Deploy the Edge alone.
 
@@ -156,7 +192,7 @@ One Edge migration, no recipe takes a new version. Deploy the Edge alone.
 - Removing a routing node no longer refuses: it goes, and warns the recipes it orphans and the styles still on it
 - Removing a position warns only about the recipes whose current version names it, with a count
 
-## 2026-10-30 — Inventory: positions and lines, opening on what needs a look
+### 2026-10-30 — Inventory: positions and lines, opening on what needs a look
 
 No migration. The Edge carries only CSS (the unused tab and meter rules leave).
 
@@ -176,7 +212,7 @@ No migration. The Edge carries only CSS (the unused tab and meter rules leave).
 - The local gate's race step runs the docker tests, as CI's docker-race shards do
 - Every tab bar in Core and the Edge is the one shared pattern at one size; Bins, Orders, Diagnostics and Test orders moved to it
 
-## 2026-10-29 — Partials to stage 2, the miscount tolerance, stage 2 is produce
+### 2026-10-29 — Partials to stage 2, the miscount tolerance, stage 2 is produce
 
 Core first, then the Edge at once: Core 168 makes stage 2 produce, and an Edge before v33 drops a produce stage 2
 with no parts. Edge v33–v34. The day the Edge lands, a strict claim declares nothing until the plant types a
@@ -198,7 +234,7 @@ percentage.
 - A consume side's stage 2 puts a full on (FULL ON, count at the pack) or a partial; both sides offer all three
 - Stage 1's button reads BIN OFF on either side
 
-## 2026-10-28 — The loader board, fitted to a 10-inch tablet
+### 2026-10-28 — The loader board, fitted to a 10-inch tablet
 
 Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
 
@@ -221,7 +257,7 @@ Edge-only; no migrations. Core then Edge at SPR to keep both on one commit.
 - demo-sim.yaml gets demo.yaml's PANEL-D; edge2's drain gets Core auto_push
 - The dev configs and plant notes say what the code does today; jitter_pct goes
 
-## 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
+### 2026-10-27 — Press tranche 2, the route strip, and positions from Settings
 
 Core then Edge in one window; Core 164–167, Edge v29–v30. SPR runs c350a1ba; the Settings positions work is not deployed.
 
@@ -252,7 +288,7 @@ Core then Edge in one window; Core 164–167, Edge v29–v30. SPR runs c350a1ba;
 - The Bins page lays a type's dimensions out W, L, H
 - Tests: the press scenario matrix, the order census, bind and availability tables
 
-## 2026-10-26 — Changeovers at two-buffer cells, and FIFO kept honest
+### 2026-10-26 — Changeovers at two-buffer cells, and FIFO kept honest
 
 Core, Edge and protocol; no migration. Not deployed. UOPAdjustment gains two optional fields.
 
@@ -264,7 +300,7 @@ Core, Edge and protocol; no migration. Not deployed. UOPAdjustment gains two opt
 - A person's restamp in Core tells the station what the carrier now holds
 - A correction keeps a carrier's place in FIFO: same part, within 20 minutes
 
-## 2026-10-24 — Recipe groups, and the cell picture by relation
+### 2026-10-24 — Recipe groups, and the cell picture by relation
 
 Edge only; no migration. Not deployed; lands on `main` with 2026-10-22's spots v0.
 
@@ -288,7 +324,7 @@ Edge only; no migration. Not deployed; lands on `main` with 2026-10-22's spots v
 - Today's picture orders a north–south station north first
 - A dock note names a lane two cells share once
 
-## 2026-10-22 — The floor picks only the pairings an engineer set up
+### 2026-10-22 — The floor picks only the pairings an engineer set up
 
 Edge only; no migration. Not deployed.
 
@@ -308,7 +344,7 @@ Edge only; no migration. Not deployed.
 - A recipe naming a node the cell lost is refused at preview and mint, by name
 - Its card and the desktop rail say why; the HMI shows it and does not offer it
 
-## 2026-10-21 — A position changes from the desktop
+### 2026-10-21 — A position changes from the desktop
 
 Edge only; no migration. Not deployed.
 
@@ -319,7 +355,7 @@ Edge only; no migration. Not deployed.
 - A change that would leave a bin on a node the style stops naming (head, pair, third, staging) is refused, naming the bin and the Core move to make first
 - A move onto a node holding another part's bin is refused the same way
 
-## 2026-10-21 — A recipe suggests the spots the cell last ran it on
+### 2026-10-21 — A recipe suggests the spots the cell last ran it on
 
 Edge only; no migration. Not deployed.
 
@@ -328,7 +364,7 @@ Edge only; no migration. Not deployed.
 - The HMI's Spots screen and the desktop's Use a recipe both take the suggestion; the step is never skipped
 - A suggested node the screen does not draw is left out
 
-## 2026-10-21 — An order's whole route, and the words for a parked leg
+### 2026-10-21 — An order's whole route, and the words for a parked leg
 
 Core only (web pages and the parked sentence); no migration. Not deployed.
 
@@ -338,7 +374,7 @@ Core only (web pages and the parked sentence); no migration. Not deployed.
 - A leg parked for the station's RELEASE reads "Parked at <node> — the station must release it."
 - The orders page's summary chip for that code reads "Waiting for partner or release"
 
-## 2026-10-21 — A new counter starts counting from its first read
+### 2026-10-21 — A new counter starts counting from its first read
 
 Edge only; no migration. Not deployed.
 
@@ -347,7 +383,7 @@ Edge only; no migration. Not deployed.
 - A process whose counter moves to another tag has the style's own reporting point re-pointed to it, which seeds again
 - The old tag no longer keeps counting onto the same style beside the new one
 
-## 2026-10-20 — Between bins, and the A/B strand: strokes wait for the next bin, and a parked leg no longer blocks a dig
+### 2026-10-20 — Between bins, and the A/B strand: strokes wait for the next bin, and a parked leg no longer blocks a dig
 
 Core and Edge; no migration. Not deployed.
 
@@ -358,7 +394,7 @@ Core and Edge; no migration. Not deployed.
 - A release checks the order's plan before it appends, so a re-pointed pickup is never sent stale
 - On a sequential changeover the pulling side's leg is created when its partner delivers, and held while the partner is in error
 
-## 2026-10-20 — Strict pack: a produce bin stops counting at its pack
+### 2026-10-20 — Strict pack: a produce bin stops counting at its pack
 
 Core and Edge (Edge v26; no Core migration). Deploy Core before Edge. Deployed at SPR 2026-10-20.
 
@@ -377,7 +413,7 @@ Core and Edge (Edge v26; no Core migration). Deploy Core before Edge. Deployed a
 - Strict pack on with no resolvable pack is logged once per claim
 - Sim builds only: `/api/sim/overrun` lets a sim PLC keep stroking past a full or absent bin (test equipment)
 
-## 2026-10-19 — Pick a part: the floor describes, Shingo finds the engineer's recipe
+### 2026-10-19 — Pick a part: the floor describes, Shingo finds the engineer's recipe
 
 Edge v25; Core binary (seeder and plantspec) only, no Core migration. Deploy Edge; Core at leisure. Not deployed.
 
@@ -405,7 +441,7 @@ Edge v25; Core binary (seeder and plantspec) only, no Core migration. Deploy Edg
 - A suggested press-index recipe never puts an on-deck spot in front
 - Words: Recipe is spots and robot moves, Style is a recipe with its parts; Presets is now Recipes
 
-## 2026-10-16 — A produce line's partials go home and come back; one door off every line position
+### 2026-10-16 — A produce line's partials go home and come back; one door off every line position
 
 Core and Edge (Core 159–160, Edge v24). Deploy Core before Edge. Not deployed.
 
@@ -432,7 +468,7 @@ Core and Edge (Core 159–160, Edge v24). Deploy Core before Edge. Not deployed.
 - The integration cell's Edge registers like a plant's and gets landings
 - Pins: every door off a produce line, keep-staged changeover shapes, the recovery table
 
-## 2026-10-15 — Air-knife cleaning on the Robots page; board display settings; robot dispatchability
+### 2026-10-15 — Air-knife cleaning on the Robots page; board display settings; robot dispatchability
 
 Core and Edge (Core 157–158, Edge v23). Not deployed.
 
@@ -446,7 +482,7 @@ Core and Edge (Core 157–158, Edge v23). Not deployed.
 - Each robot's cleaning is a switch on the Cleaning tab's table; Clean ignores the schedule
 - Only a yaml timezone writes the plant location, as before
 
-## 2026-10-14 — Restarted changeovers leave finished nodes alone; stranded staging carriers go home
+### 2026-10-14 — Restarted changeovers leave finished nodes alone; stranded staging carriers go home
 
 Core and Edge (Core 156, Edge v22). Local main; not deployed.
 
@@ -472,7 +508,7 @@ Core and Edge (Core 156, Edge v22). Local main; not deployed.
 - A press changeover with a bare position plans each position on its own, as REQUEST does
 - The three CI failures on the last push are fixed
 
-## 2026-10-13 — One planner, one order ladder, lanes and drops by one rule, changeovers that finish
+### 2026-10-13 — One planner, one order ladder, lanes and drops by one rule, changeovers that finish
 
 Core and Edge (Core 155, Edge v21). Local main; not pushed or deployed.
 
@@ -541,7 +577,7 @@ Core and Edge (Core 155, Edge v21). Local main; not pushed or deployed.
 - Sim builds: the operator clears a carrier at 0, pulls a pack's last parts lineside, and runs a scheduled changeover START to CUTOVER
 - Rig: soakstat prints the stranded-orders table first, fixture balance, lineside divergences and the Edge's statements per order
 
-## 2026-10-10 — UI cleanup and versioned feeds land
+### 2026-10-10 — UI cleanup and versioned feeds land
 
 Core and Edge (Core 143, Edge v18). Local main; not pushed or deployed.
 
@@ -563,7 +599,7 @@ Core and Edge (Core 143, Edge v18). Local main; not pushed or deployed.
 - Production keeps one stream; debug log only on Diagnostics
 - Sourcing writes only rows that changed
 
-## 2026-10-08 — Keep-staged keeper, bins placed where they are set down
+### 2026-10-08 — Keep-staged keeper, bins placed where they are set down
 
 Core and Edge (Edge v17). Pushed; deployed to Springfield at e801c9e5.
 
@@ -577,7 +613,7 @@ Core and Edge (Edge v17). Pushed; deployed to Springfield at e801c9e5.
 - Core's own orders are named on the orders board
 - Gate: docker modules run at once; keep-staged tests faster
 
-## 2026-10-07 — A faster gate
+### 2026-10-07 — A faster gate
 
 Tooling only. Pushed.
 
@@ -585,7 +621,7 @@ Tooling only. Pushed.
 - Each gate step prints its time
 - Comment-reference and JS parse checks run faster
 
-## 2026-10-06 — Edge process setup: fixes, plain words, a cleaner cell picture
+### 2026-10-06 — Edge process setup: fixes, plain words, a cleaner cell picture
 
 Edge only (Edge v16), plus a gate lock. Not pushed or deployed.
 
@@ -602,7 +638,7 @@ Edge only (Edge v16), plus a gate lock. Not pushed or deployed.
 - A part taken off a saved flow now saves
 - One gate per machine, with a lock that names its holder
 
-## 2026-10-05 — Core UI: one plant clock, Overview numbers that add up
+### 2026-10-05 — Core UI: one plant clock, Overview numbers that add up
 
 Core 142. Pushed; not deployed.
 
@@ -616,7 +652,7 @@ Core 142. Pushed; not deployed.
 - HTML escaping covers quotes
 - UI style guide split into per-section files
 
-## 2026-10-04 — One answer per button, keep-staged in every mode
+### 2026-10-04 — One answer per button, keep-staged in every mode
 
 Core first, then Edge (Core 141, Edge v14–v15). Not pushed or deployed.
 
@@ -640,7 +676,7 @@ Core first, then Edge (Core 141, Edge v14–v15). Not pushed or deployed.
 - Live orders bound for a line are read through an index (Edge v14)
 - A keep-staged line's orders are read without its history (Edge v15)
 
-## 2026-10-03 — Keep-staged spare, slot reservations, single-robot recovery
+### 2026-10-03 — Keep-staged spare, slot reservations, single-robot recovery
 
 Core first, then Edge (Edge v13). Not pushed or deployed.
 
@@ -664,7 +700,7 @@ Core first, then Edge (Edge v13). Not pushed or deployed.
 - A cancelled single-robot changeover clears the staging it left
 - Loader placement skips slots other orders hold
 
-## 2026-10-02 — A cancelled order's bin goes home
+### 2026-10-02 — A cancelled order's bin goes home
 
 Core first, then Edge (Core 140, Edge v12). Not pushed or deployed.
 
@@ -674,7 +710,7 @@ Core first, then Edge (Core 140, Edge v12). Not pushed or deployed.
 - Sim robots carry a deck, honour the vehicle pin and inject faults
 - A buried source at intake is left to the scanner
 
-## 2026-10-01 — Release layer, fact owners, stage 2 pulled directly
+### 2026-10-01 — Release layer, fact owners, stage 2 pulled directly
 
 Core first, then Edge (Core 137–139, Edge v1–v11). Deployed SPR and HK at 6378a6c6.
 
@@ -727,7 +763,7 @@ Core first, then Edge (Core 137–139, Edge v1–v11). Deployed SPR and HK at 63
 - Intent worker reads through a partial index (Edge v11)
 - CI: lint pins Go 1.25.0; citation guard same on every OS
 
-## 2026-09-29 — FG light curtain, display fits the screen
+### 2026-09-29 — FG light curtain, display fits the screen
 
 Edge only; no migrations.
 
@@ -736,7 +772,7 @@ Edge only; no migrations.
 - Flow composer: set position role, add/remove parts
 - Negative count picks the empty robot group; plain help text
 
-## 2026-09-28 — Vacated-slot swap rule
+### 2026-09-28 — Vacated-slot swap rule
 
 No migrations. Deployed SPR at cae7f8cf.
 
@@ -744,7 +780,7 @@ No migrations. Deployed SPR at cae7f8cf.
 - Two-stage stage 1 gets a group of its windows
 - Node group as screen position is its nodes
 
-## 2026-09-25 — Lineside piles as levels, quality containment, and the two-stage unloader
+### 2026-09-25 — Lineside piles as levels, quality containment, and the two-stage unloader
 
 Piles now mirror to Core as levels, quality containment lands, a loader return with nowhere safe to go
 waits, and the two-stage unloader runs end to end with Core moving carts into stage 2. Deploy Core first,
@@ -779,7 +815,7 @@ then the Edge (Core migrations 131–136, Edge `core_loaders.leaves_bare`; no Co
 - Per-part loader keeps fulls on its own spots
 - Nodes page: one tile size, one card style
 
-## 2026-09-24 — One count per carrier, a count feed that heals itself, and stranded bins told the truth
+### 2026-09-24 — One count per carrier, a count feed that heals itself, and stranded bins told the truth
 
 Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps working against the new Core).
 
@@ -855,7 +891,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - A dedicated loader's home draws empties from its own loader's buffers: Springfield's supermarket
   refills had queued "Waiting for an empty bin" beside empties on those buffers
 
-## 2026-09-23 — The half loader, and an unloader that refills itself
+### 2026-09-23 — The half loader, and an unloader that refills itself
 
 - A move of an empty carrier is not judged by the part's carrier rule — Hopkinsville 2233/2234
   parked "Waiting for material" with the carrier standing at the source
@@ -903,7 +939,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - `Dockerfile.dev` builds from a git worktree; the sim operator no longer CLEARs a node whose
   delivery went elsewhere
 
-## 2026-09-22 — The Allowed Bin Types fence, in service
+### 2026-09-22 — The Allowed Bin Types fence, in service
 
 - The per-node Allowed Bin Types fence refuses things now: five of seven store call sites passed a
   nil carrier type, so it never had. The resolver derives the type from the order it is placing
@@ -917,7 +953,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - An operator's move of an empty carrier onto a drain window is not a selection (Hopkinsville 2213)
 - `PUSH AS <type>`: the empty-carrier panel lets the operator correct a carrier's type on the way out
 
-## 2026-09-21 — A quiet Edge keeps its thresholds
+### 2026-09-21 — A quiet Edge keeps its thresholds
 
 - Core no longer wipes a silent Edge's `demand_registry`: those rows are Core's own derivation from
   Core's own loader config, and the wipe closed live demands `threshold_removed` that nobody removed
@@ -942,7 +978,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
   stranded scan and the counter walk 3N+1 to a flat 4 — the cost that matters on a Pi
 - `idx_payload_catalog_code`, so the catalog lookup those walkers share stops scanning
 
-## 2026-09-21 — The plant's own velocity, at the grain the cell runs at
+### 2026-09-21 — The plant's own velocity, at the grain the cell runs at
 
 - Every line's time-to-empty read the plant-wide payload rate; two cells sharing a payload at
   different velocities got the same projection, so the fast cell's would have read late
@@ -960,7 +996,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - A lineside drain leaves a row of its own (migration 120): it is consumption at a node from a pile
   rather than a bin event, and the bucket row deletes at qty 0, so no history survived there
 
-## 2026-09-21 — One sourcing predicate, and a disabled node is dead to automation
+### 2026-09-21 — One sourcing predicate, and a disabled node is dead to automation
 
 - Thirteen implementations of "may this bin be sourced" disagreed; they are one predicate now, in
   `store/internal/helpers`, with the four divergences ruled on rather than quietly reconciled
@@ -981,7 +1017,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - A payload with no declared carriers is never flagged, counted or named: Springfield declares
   carriers for one payload of 128, and flagging the other 127 would bury the one case worth walking to
 
-## 2026-09-15 — A drained bin may go to a smaller robot than a full one
+### 2026-09-15 — A drained bin may go to a smaller robot than a full one
 
 - A payload names a second robot group and a fill threshold; at or below it, the bin dispatches to
   that group instead — so a 600kg robot can answer a heavy bin that is nearly empty
@@ -1001,7 +1037,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
   is the column that skipped its foreign key, and an orphaned bin silently dispatches to any robot
 - Unconfigured plants dispatch byte-identically: every new column defaults to off
 
-## 2026-09-13 — The flow composer: one model, two screens, a per-press switch
+### 2026-09-13 — The flow composer: one model, two screens, a per-press switch
 
 - An operator edits the press flow at the station; an engineer composes the same flow on the desktop
   Processes page, and both screens run one shared state object
@@ -1022,7 +1058,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - Every `/static` asset the pages name must answer with bytes and arrive gzipped
 - About 40 seconds off the edge test suite: one hostname, one fixture built once instead of ten times
 
-## 2026-09-13 — `docs/` is reference again
+### 2026-09-13 — `docs/` is reference again
 
 - Reports are out of `docs/` — censuses, a coverage map, seven test-case ledgers — with their durable
   sentences folded back into the reference docs first
@@ -1037,7 +1073,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - Dangling links removed, and nine code comments citing moved docs repointed
 - `docs/` is 28% smaller, and what is left is true
 
-## 2026-09-11 — A dig stops parking on its own delivery
+### 2026-09-11 — A dig stops parking on its own delivery
 
 - `planUnbury` excludes the requesting order's own destination, which had wedged held-bin orders in
   `reshuffling`
@@ -1048,7 +1084,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - A reserve miss says which miss it was
 - Three test binaries stop leaving databases in the temp dir
 
-## 2026-09-10 — One coordinated swap, and the last dispatch-time gate goes
+### 2026-09-10 — One coordinated swap, and the last dispatch-time gate goes
 
 - A coordinated swap dispatches both legs in one pass or neither
 - One position takes one inbound carrier at a sequential changeover — the double supply is gone
@@ -1060,7 +1096,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - An unannounced line rebind raises a recovery action
 - `changeover_auto_cutover` and `cutover_delay` deleted — two settings nothing read
 
-## 2026-09-09 — The loader question is asked by name
+### 2026-09-09 — The loader question is asked by name
 
 - A swap mode names a step-list shape, not a node kind
 - `manual_swap` is retired as a persisted swap mode; stored loader claims are quarantined
@@ -1070,7 +1106,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - A supply parked on a dry source survives its evac's death
 - A comment's `file:line` citation must now resolve in CI
 
-## 2026-09-08 — One plant clock, and the Hopkinsville CMS feed
+### 2026-09-08 — One plant clock, and the Hopkinsville CMS feed
 
 - A plant's clock is set once on Core rather than per box, and five pages stop rendering times on the
   viewer's clock
@@ -1082,7 +1118,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - RELEASE FULL said the bin was empty and a changeover believed it
 - soakstat measures residence in visits, and overlapping residence at one node is an invariant
 
-## 2026-09-07 — The acceptance families fixed: a held emission, a bounded witness
+### 2026-09-07 — The acceptance families fixed: a held emission, a bounded witness
 
 - A simulator resolver miss holds the transition instead of dropping it — parity
   with the RDS poller, which always retried (acceptance Family A)
@@ -1105,7 +1141,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - A witness absent from the history read keeps; the safe direction in a filter
   whose philosophy was "the set only grew"
 
-## 2026-09-06 — One clock everywhere, carrier identity, the CMS ledger, departed legs
+### 2026-09-06 — One clock everywhere, carrier identity, the CMS ledger, departed legs
 
 - Both binaries render one plant-local clock through `shared/planttime`, at first paint
 - Every surface converted: templates, Go views, 15 `toLocale` sites, three duplicate `formatTime` copies deleted
@@ -1161,7 +1197,7 @@ Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps workin
 - The append-mode probe asserts on the line's tail, not its head
 - Docs-truth pass over the round-14 range — ten of eleven docs carried a flat falsehood
 
-## 2026-08-31 — Wait causes and their releasers, the lane gate's group model, and a fixture that had been lying
+### 2026-08-31 — Wait causes and their releasers, the lane gate's group model, and a fixture that had been lying
 
 **Every wait names its own releaser.** The through-line of this range: an order
 that is waiting should say what it is waiting for and what will end it, and the
@@ -1185,8 +1221,7 @@ release-disposition fix is the one that mattered: a consume node's release now
 declares what is physically in the bin on every swap mode, so carriers clear
 themselves and the SM pool is a circle without an unloader in it. One PANEL-B
 failure remains open at this tip — a recurrence of the known tick-gated-reorder
-family (W3), not a new wedge — see
-`FINDING-W3-recurrence-tick-gated-reorder-2026-08-31.md`.
+family (W3), not a new wedge (report outside the repo).
 
 - Every order's timeline starts at its own creation, atomically
 - A wait's cause lands on that wait's own history row
@@ -1224,7 +1259,7 @@ family (W3), not a new wedge — see
 - The gate runs the sim-tagged tests, with the race detector
 - No source comment cites a commit SHA from this branch
 
-## 2026-08-25 — Cancelled-order bin placement, changeover tooling, claim routing
+### 2026-08-25 — Cancelled-order bin placement, changeover tooling, claim routing
 
 **Where a cancelled order's bin went.** The deployed build could not name the
 place a robot set a bin down: the point a robot reports is map furniture
@@ -1232,8 +1267,8 @@ place a robot set a bin down: the point a robot reports is map furniture
 time at Springfield, and the operator got a note pointing at wherever the robot
 had driven to next. This corrects the 2026-08-22 entry's claim that the
 RDS-point-to-node mapping is IDENTITY — that is the simulator's case, not the
-plant's; at a plant the scene's own bin locations carry the translation. See
-`FINDING-cancelled-order-bin-placement-2026-08-24.md`.
+plant's; at a plant the scene's own bin locations carry the translation (report
+outside the repo).
 
 - Map a robot's reported point to the station it serves
 - Resolve a reported point, and name every refusal
@@ -1350,7 +1385,7 @@ them; each exclusion retired names the condition that let it go.
 - The release tests share one real-step fixture
 - The settled-order release test stops contradicting its pin
 
-## 2026-08-22 — Faults: the reason on the row, the clock on the screen
+### 2026-08-22 — Faults: the reason on the row, the clock on the screen
 
 - A faulted order recorded the word and nothing else. All 730 faulted history rows in a 30-day Springfield window carry the identical detail `fleet state: FAILED`, `code` NULL, and a `ref` that says where and had nowhere to say why — while the fleet's own reason rode `ev.Snapshot.Errors` through five layers to the one line that never looked at it. `TermRef` gains `vendor_code` / `vendor_desc` and `MarkFaulted` takes the ref.
 - `MarkFaultedRecovered` is now the recovery path. It had no callers: the fleet reporting RUNNING mapped to `in_transit` and wrote "fleet reported in transit", the same row an order that was never in trouble writes — so 706 of 730 faults, the ones that recover, recorded nothing about themselves. The recovery row carries the dwell and the reason it recovered from.
@@ -1378,7 +1413,7 @@ them; each exclusion retired names the condition that let it go.
 - `BinService.MarkAnomaly` finally has a non-test caller. Its comment claimed the failure path called it; the failure path stamps `anomaly_at` inline in SQL instead, so the comment described a real effect through a call site that did not exist.
 - Migration heads: Core v96, Edge v36.
 
-## 2026-08-22 — Messaging durability: outbox mute, expiry by class, snapshot cleanup, ledger rename
+### 2026-08-22 — Messaging durability: outbox mute, expiry by class, snapshot cleanup, ledger rename
 
 - The outbox doorbell was also a retry-cadence change and nobody noticed: a drain retries EVERY pending row, so under a transport failure each enqueue spent one of the message's `MaxRetries`. A publish failure now stands the wake arm down until a ticker drain succeeds, restoring the `MaxRetries × interval` tolerance — ~50 s at Springfield's interval, against ~20 s observed and ~0.5 s at the settle window's limit.
 - `inventory.bin_uop_delta` and `inventory.lineside_bucket_delta` carry no expiry. Every other data subject is a snapshot whose successor carries the same truth seconds later; these are increments, and a dropped one is a permanently wrong count. Before the edge was hardwired, ~17 deltas a day arrived past the 5-minute default and were discarded at Core's ingestor — averaging 142 minutes late, peaking at 23 hours — while the edge recorded every one as sent. Safe to arrive late because Core dedups on `SequenceID` and routes a superseded generation to the discrepancy audit.
@@ -1400,7 +1435,7 @@ them; each exclusion retired names the condition that let it go.
 - Deferred, so nobody goes looking: `MaxRetries` is still a COUNT, so its real-world tolerance silently rescales with the drain cadence — expressing it as a duration is the open item. The active-dial half of the Kafka liveness probe is unbuilt. The active-order partial index and the edge single-connection instrumentation exist as design documents, not code.
 - Migration heads: Core v95, Edge v35 (unchanged).
 
-## 2026-08-19 — Permanent UOP records, wave-1 fixes, synthetic destinations
+### 2026-08-19 — Permanent UOP records, wave-1 fixes, synthetic destinations
 
 - `bin_uop_exception` (v93) is the permanent ledger for the four exception kinds — `negative_crossing`, `stale_epoch`, `payload_mismatch`, `boundary` — written in the same transaction as its raw twin. It carries no retention, ever, because the raw stream it is derived from now expires.
 - `bin_uop_delta_daily` (v94) is the permanent daily roll-up, grain (day, bin, epoch_seq, payload_code, reason, actor) at ~10 rows/day. After retention it is the only permanent record of daily part flow.
@@ -1425,7 +1460,7 @@ them; each exclusion retired names the condition that let it go.
 - A best-effort container reap could panic out of a path documented never to fail the run, and inside a `sync.Once`, so one unresolvable docker socket failed every test in the binary.
 - Migration heads: Core v94, Edge v35.
 
-## 2026-08-18 — Maintained node groups
+### 2026-08-18 — Maintained node groups
 
 - A node group can be told to hold a level of empty carriers per carrier type, and Core orders the difference on a tick (`node_maintain_levels`, `node_maintain_supports`).
 - The level is a subtraction of three separately-counted populations — resident, already asked for, already inbound — because collapsing any two lets a group over- or under-fill with nothing reporting an error.
@@ -1454,7 +1489,7 @@ them; each exclusion retired names the condition that let it go.
 - Three node-tree walks became one definition, two pages stopped loading their script twice, and a parentage cycle became uncreatable.
 - Migration heads: Core v91, Edge v35. The maintained-group surface is inert until a group is enabled; v91 is the buffer_dest drop.
 
-## 2026-08-17 — Lane campaign (work dated 2026-08-16, merged 08-17)
+### 2026-08-17 — Lane campaign (work dated 2026-08-16, merged 08-17)
 
 - The lane mouth is a durable reservation (`resource_kind='mouth'`) with a work direction — `inbound`, `outbound`, or `dig`; the rows own the hold, not an in-process lock.
 - A dig's lane claim drops when the last blocker leaves the lane, handing the corridor to the order collecting the uncovered bin rather than releasing it into open contention.
@@ -1474,19 +1509,19 @@ them; each exclusion retired names the condition that let it go.
 - New lane-stress rigs (`plants/lane-stress.yaml`, `lane-stress-packed.yaml`) plus `soakstat`, `soak-watch.sh`, and a sharded CI suite.
 - The sim rig's clock ran at two speeds; every measurement taken before the fix was against the wrong timeline.
 
-## 2026-08-11 — CI and notification tuning
+### 2026-08-11 — CI and notification tuning
 
 - GitHub Actions updated to Node 24 compatible versions.
 - Fault notification throttle removed and the buffer reduced to one minute.
 
-## 2026-08-10 — Per-AMR confidence grain
+### 2026-08-10 — Per-AMR confidence grain
 
 - The localization map filters to one robot's world, on a per-lane-per-robot grain (v83).
 - A watch band added between fair and poor.
 - Fixed the robot-filter dropdown, which fetched the wrong endpoint and read the wrong field.
 - `lane_robot_rows` is appended rather than inserted in the schema snapshot.
 
-## 2026-08-07 — Localization board, install-script fixes
+### 2026-08-07 — Localization board, install-script fixes
 
 - The robots page stops being a stub and becomes the localization board, drawing the overlay `www` now serves.
 - A lane was a 1.3-pixel click target; clicking one now does something.
@@ -1498,7 +1533,7 @@ them; each exclusion retired names the condition that let it go.
 - `install-*.sh` reads the config path off the systemd unit rather than a filesystem scan.
 - Threaded fault/cleared notification emails, time-faulted display, and a test-chain button.
 
-## 2026-08-06 — Scene map
+### 2026-08-06 — Scene map
 
 - Core fetches and versions the scene map RDS refuses to expose, via `POST /generalRobokitAPI`.
 - Scene areas and reflectors that RDS throws away are parsed and stored.
@@ -1507,7 +1542,7 @@ them; each exclusion retired names the condition that let it go.
 - The scene-drawing substrate is extracted so a second map need not copy it.
 - A map edit now has a magnitude and an owner.
 
-## 2026-08-05 — Robot localization confidence
+### 2026-08-05 — Robot localization confidence
 
 - Confidence is sampled off the robot poll Core already makes, rather than a new feed.
 - Migration 77 adds the confidence tables, with daily roll-ups kept forever and raw samples aged out.
@@ -1517,11 +1552,11 @@ them; each exclusion retired names the condition that let it go.
 - An unnameable lane is quarantined rather than renamed, and an unpolled scene is not an empty one.
 - The roll-up cannot hang off a 24-hour ticker on an 11-hour process.
 
-## 2026-08-04 — Email notifications
+### 2026-08-04 — Email notifications
 
 - SMTP notifier, config UI and query module added; STARTTLS certificate verification skipped for corporate SMTP.
 
-## 2026-08-03 — ClaimSync deleted, operator-station and changeover fixes
+### 2026-08-03 — ClaimSync deleted, operator-station and changeover fixes
 
 - `ClaimSync` is deleted — the Core half had no sender left, and had been unreachable the whole time.
 - The operator station asks the partner leg rather than the oldest order in the room.
@@ -1532,7 +1567,7 @@ them; each exclusion retired names the condition that let it go.
 - A demand that already asked for a carrier must not ask again.
 - Fixed a health endpoint 500 from an uncast staleness bound.
 
-## 2026-08-02 — Core owns loader replenishment
+### 2026-08-02 — Core owns loader replenishment
 
 - Core owns each loader's replenishment settings; the Edge's half is deleted.
 - Every loader empty routes through one reservation seam, and every order through one path into the orders table.
@@ -1543,14 +1578,14 @@ them; each exclusion retired names the condition that let it go.
 - A child order gets its own payload, source and reason.
 - An Edge database refuses to migrate over a live one.
 
-## 2026-07-31 — Operator station and release path
+### 2026-07-31 — Operator station and release path
 
 - The operator station says WHY the other robot has not come, and stops rebuilding the modal under a finger.
 - One swap-pair resolver, which verifies the pair.
 - The Edge mirrors Core's order status instead of validating it.
 - A swap leg waiting on an operator is not a forgotten robot, so the abandon sweep leaves it alone.
 
-## 2026-07-30 — Changeover cancellation and supply refusals
+### 2026-07-30 — Changeover cancellation and supply refusals
 
 - A changeover cancels the orders it makes pointless, and blocks only when a robot is actually doing something.
 - An acknowledged order for the old style no longer outlives the changeover.
@@ -1559,7 +1594,7 @@ them; each exclusion retired names the condition that let it go.
 - Refusals are notice-only — they never load and never gate demand.
 - A starving cell reads red on a dedicated home, against the configured threshold.
 
-## 2026-07-29 — Node report, sourcing, loader board
+### 2026-07-29 — Node report, sourcing, loader board
 
 - A bin already standing in the process counts, so sourcing stops calling it missing.
 - The changeover picker colours its style buttons with Core's sourcing verdict.
@@ -1571,7 +1606,7 @@ them; each exclusion retired names the condition that let it go.
 - An edge may introduce itself, but only a human says which station it is.
 - Install scripts: the build stamp fell through to dev/unknown under sudo.
 
-## 2026-07-28 — Edge identity, foreign-key repair, demand forensics
+### 2026-07-28 — Edge identity, foreign-key repair, demand forensics
 
 - Core mints Edge identity, making the duplicate-station failure inexpressible; enrollment becomes mandatory.
 - Two Edges took turns owning one registry row, and the statement that allowed it deleted the evidence.
@@ -1583,13 +1618,13 @@ them; each exclusion retired names the condition that let it go.
 - The retention ladder gets its permanent rung, bounding the tables that grow forever.
 - Wall displays are named after what a passer-by reads off them.
 
-## 2026-07-27 — PLC cutover removal
+### 2026-07-27 — PLC cutover removal
 
 - PLC-driven cutover removed: its tag was never wired, and its flag hid the operator's CUTOVER button.
 - Edge re-derives PLC status periodically in SSE mode, so a missed transition heals itself.
 - `install-edge.sh` takes its backup after the stop, not before it.
 
-## 2026-07-24 — Loader HMI performance, one order view
+### 2026-07-24 — Loader HMI performance, one order view
 
 - The 44s bin-loader view fixed: the per-node claim walk is gone and `loadView`'s timeout is widened.
 - The manual-swap claim walk collapses from ~53 queries to 2.
@@ -1605,14 +1640,14 @@ them; each exclusion retired names the condition that let it go.
 - The Edge throttles its station liveness write and caps the raw-message log preview.
 - The "N rejected deltas" count drills into which carriers.
 
-## 2026-07-22 — Nodes page cleanup, map token promotion, template-var check
+### 2026-07-22 — Nodes page cleanup, map token promotion, template-var check
 
 - Node tiles move onto the shared palette, which lets the dark-mode overrides drop and renames the undefined `var(--card-bg)`.
 - The dead "Check Occupancy" block, which errored on live plants, is removed.
 - Map floor-plan colours and the map JS's two local hex palettes move into `shared/tokens.css`, with no visual change.
 - New `TestNoUndefinedCSSVarsInTemplates` fails CI when a template references a `var(--foo)` no stylesheet defines.
 
-## 2026-07-22 — Inventory page rebuilt (v2), exception-first
+### 2026-07-22 — Inventory page rebuilt (v2), exception-first
 
 - New `GET /api/inventory/monitor-totals` returns DB on-hand, the monitor's cached total, thresholds and description per payload.
 - `ThresholdMonitor.Snapshot()` reads the monitor's in-memory totals and bindings under its lock.
@@ -1621,14 +1656,14 @@ them; each exclusion retired names the condition that let it go.
 - The old bins table moved to `/bins`; consumption, produced and cycle-time moved to the per-payload drill and Missions.
 - The consumption drill shows window totals rather than a daily trend, because consumption is recorded per part number and does not map one-to-one to a payload.
 
-## 2026-07-22 — Map: zoom/pan and truthful route rendering
+### 2026-07-22 — Map: zoom/pan and truthful route rendering
 
 - Wheel-zoom at the cursor and left-drag to pan, with a Recenter button that resumes auto-follow.
 - Route comets point along the leg the robot is actually driving, inferred from proximity to the source and locked in at pickup.
 - Empty runs draw hollow dots and loaded runs solid; a stopped robot shows a static line, a faulted one a red line.
 - The map has no automated UI test — the leg inference needs a running scene to confirm visually.
 
-## 2026-07-22 — UI refresh groundwork: tokens, icons, cleanups
+### 2026-07-22 — UI refresh groundwork: tokens, icons, cleanups
 
 - Design tokens add a five-step type scale, a 4px spacing scale, teal and diverging ramps, and motion tokens with a reduced-motion rule.
 - A ~22-icon Lucide subset is vendored as one SVG sprite, inlined once into the Core layout.
@@ -1637,7 +1672,7 @@ them; each exclusion retired names the condition that let it go.
 - The chart palette is reordered so two adjacent series no longer collapse for red-weak viewers.
 - New `TestNoEmojiInTemplatesAndPageJS` fails on any emoji in a template or page script.
 
-## 2026-06-12 — Bin-loader multi-window refactor (C0–C4a)
+### 2026-06-12 — Bin-loader multi-window refactor (C0–C4a)
 
 - **C0** adds `domain.Loader`, a first-class Edge aggregate whose two constructors make invalid states unconstructible.
 - **C0** adds typed `LoaderID` / `NodeID` / `PayloadCode` newtypes as a compile-time guard against counts keyed on the wrong node string.
@@ -1649,7 +1684,7 @@ them; each exclusion retired names the condition that let it go.
 - **C3** makes the reservation seam Loader-first, retiring the `manualSwapNode` shim as the unit of resolution.
 - **C4a** activates multi-window delivery behind a default-off flag: one demand of N yields exactly N empties, one per window, never 2N.
 
-## 2026-05-17 — Test infrastructure cleanup (Phases 1–6)
+### 2026-05-17 — Test infrastructure cleanup (Phases 1–6)
 
 - Stripped the `TC-*` test-comment scheme and renamed 25 `TestTC##_*` functions to `Test<Subject>_<Behavior>` form.
 - Deleted `shingo-core/docs/test-catalog.md`; it covered 70 of 262 tests and admitted in-doc it was outpaced.
@@ -1662,12 +1697,12 @@ them; each exclusion retired names the condition that let it go.
 - Added a local-only `make test-explain` target for the bins-store EXPLAIN-plan regression harness.
 - Fixed the TC-60 "10-step swap" discrepancy in the fleet-simulator docs — the code is a 9-step sequence.
 
-## 2026-05-06 — Dispatch coverage, retrieve-algorithm collapse
+### 2026-05-06 — Dispatch coverage, retrieve-algorithm collapse
 
 - Collapsed the FIFO/COST/FAVL retrieve variants into one algorithm parameterized by sort key.
 - Closed test gaps in `classifyEmptyGroup`, lane-lock acquire/release, and store-strategy routing.
 
-## 2026-05-05 — UOP runtime cache, side-cycle guards, debug log UI
+### 2026-05-05 — UOP runtime cache, side-cycle guards, debug log UI
 
 - The runtime UOP cache binds to release-click and `OrderDelivered` rather than operator confirm, which had let the HMI show stale UOP for the whole delivery window.
 - A `skip_auto_confirm` flag stops reconciliation re-confirming side-cycle orders the swap dispatcher already confirmed.
@@ -1676,7 +1711,7 @@ them; each exclusion retired names the condition that let it go.
 - Loader payload cards render NO DEMAND instead of a false QUEUED badge.
 - Debug log gains colour grouping by source and level, JSON expand on click, and a plant-floor-readable palette.
 
-## 2026-05-04 — Failed order recovery, Edge as UOP authority
+### 2026-05-04 — Failed order recovery, Edge as UOP authority
 
 - `failed` is no longer terminal: orders enter a non-terminal `faulted` status with a grace period during which the robot can resume without operator intervention.
 - Bins become the source of truth for `remaining_uop` with Edge as sole writer; Core's re-deriving reconciler is deleted.
@@ -1685,18 +1720,18 @@ them; each exclusion retired names the condition that let it go.
 - Operator HMI keypad and release prompt scaled for 7" displays; failure toasts carry the actual error string.
 - Stripped UTF-8 BOMs from Go sources, which Go 1.25 rejects.
 
-## 2026-05-03 — Coverage reporting, fuzz targets, changeover floor
+### 2026-05-03 — Coverage reporting, fuzz targets, changeover floor
 
 - CI coverage reporting plumbed through all three modules with merged HTML uploaded as an artifact.
 - Store tests moved from the facade into the per-aggregate sub-packages so coverage numbers mean something.
 - Protocol fuzz targets added for envelope decode, order validation, and waybill round-trip.
 - Mode-aware changeover step builders consolidated so phase 2 reuses phase 1 rather than diverging.
 
-## 2026-05-02 — UOP bin-as-truth refactor
+### 2026-05-02 — UOP bin-as-truth refactor
 
 - Bins gain `remaining_uop_cached` so HMI rendering and dispatch read one column, retiring the compute-from-claim path from hot paths.
 
-## 2026-05-01 — Bin transit state, forklift-scale loader, migration hardening
+### 2026-05-01 — Bin transit state, forklift-scale loader, migration hardening
 
 - `bin_transit_state` gives Core explicit visibility into the delivery cycle (`parked → claimed → en_route → at_destination → released`), replacing inference from order status plus bin node.
 - A UOP audit at each transition flags drift before it reaches the operator.
@@ -1705,7 +1740,7 @@ them; each exclusion retired names the condition that let it go.
 - Startup self-heal repairs migrations that left broken state from before the per-version wrapping.
 - Complex orders bypass the dropoff-capacity gate, which was designed for simple deliveries and blocked them spuriously.
 
-## 2026-04-30 — Press-index, typed constants, two-robot release polish
+### 2026-04-30 — Press-index, typed constants, two-robot release polish
 
 - An optional `second_paired_core_node` supports press cells with a back-side material position.
 - Two-robot release auto-picks the correct bin from the manifest when a lane holds mixed payloads.
@@ -1714,14 +1749,14 @@ them; each exclusion retired names the condition that let it go.
 - The Plan/Apply pattern is formalized for swap dispatch — `Plan` resolves without side effects, `Apply` commits.
 - `/static/*` is cache-busted per restart via ETag, so operators no longer hard-refresh after a deploy.
 
-## 2026-04-29 — Side-cycle relocation, replenishment, press-index
+### 2026-04-29 — Side-cycle relocation, replenishment, press-index
 
 - The L1 side-cycle trigger moves from `OrderDelivered` to release-click, making it a decision the operator can abort.
 - The delivery envelope carries the bin's `uop_remaining`, so replenishment uses the arrived UOP rather than a later lookup.
 - New `two_robot_press_index` mode pre-stages material at the back while the previous cycle finishes at the front.
 - `NODE_GROUP` and its direct physical children are treated uniformly as storage slots by the dispatcher.
 
-## 2026-04-28 — Side-cycle hardening, floor-jam guards, JS cleanup
+### 2026-04-28 — Side-cycle hardening, floor-jam guards, JS cleanup
 
 - `payload_bin_types` becomes advisory rather than strict-enforce, matching how the plant actually uses it.
 - The L2 outbound move always auto-confirms, instead of waiting at `delivered` for a click that was not coming.
@@ -1732,7 +1767,7 @@ them; each exclusion retired names the condition that let it go.
 - Dead code deleted: the `ConfirmNodeManifest` stack, `forceTransitionOrder`, `DeleteLinesideBucket`, `operator-canvas/`.
 - Release endpoints require `called_by`, and unhandled dispositions log at WARN with the resolved mode.
 
-## 2026-04-27 — Architecture finishing pass, side-cycle bin loader
+### 2026-04-27 — Architecture finishing pass, side-cycle bin loader
 
 - The depguard ratchet is drained: import rules tightened to the post-Stages-1-9 architecture and remaining violations fixed.
 - Kanban auto-request is deleted entirely; side-cycle subsumes it and surfaces line demand on the loader UI.
@@ -1741,54 +1776,54 @@ them; each exclusion retired names the condition that let it go.
 - Confirm binds to the actual delivery receipt rather than order status, fixing the two-robot teleport.
 - SEER battery level (0.0–1.0) is scaled at the mapper for 0–100 display.
 
-## 2026-04-26 — Stage 10: order state machine, Phase 6/7 parity
+### 2026-04-26 — Stage 10: order state machine, Phase 6/7 parity
 
 - The order state machine moves behind a typed `Lifecycle` facade with explicit pre/post-conditions on every transition.
 - Compile-time exhaustive switching on the `Status` enum catches missed transitions.
 - The Edge module gains the same narrow-interface treatment Core got in Stages 5–9.
 
-## 2026-04-25 — Two-robot release consolidation
+### 2026-04-25 — Two-robot release consolidation
 
 - Robot A and Robot B receive their release in a single transaction.
 - A stuck-cycle guard fires after a configurable timeout when the fan-out hangs.
 - An admin disposition path lets engineering unstick a cycle from diagnostics without restarting Core.
 
-## 2026-04-24 — Dispatch skip-reason visibility
+### 2026-04-24 — Dispatch skip-reason visibility
 
 - Skip-reason logs route through the ring buffer so "why didn't this dispatch" is answerable from the web UI.
 
-## 2026-04-23 — Two-robot release manifest, supply-bin guard
+### 2026-04-23 — Two-robot release manifest, supply-bin guard
 
 - Fixed the two-robot manifest stuck at `SMN_003` via a bin-lookup fallback plus a runtime-reset guard.
 - Supply-bin status is tracked per order so partial failures roll back without dragging siblings down.
 - The bin manifest binds at operator release-click rather than order creation, so payload can be reassigned up to release.
 
-## 2026-04-22 — Lineside inventory, multi-payload manual_swap
+### 2026-04-22 — Lineside inventory, multi-payload manual_swap
 
 - Edge tracks inventory per lineside slot and resets the bucket counter on release.
 - A process's PLC reporting-point change updates the tag binding without a service restart.
 - Every node with active demand highlights on the operator board, not just the most recent.
 - Fixed multi-payload `manual_swap` loading, which rejected loads the claim's allowed list permitted.
 
-## 2026-04-21 — Architecture overhaul Phases 1–5, demand sync
+### 2026-04-21 — Architecture overhaul Phases 1–5, demand sync
 
 - Module-boundary cleanup, naming alignment, depguard rules, and initial shared-lifecycle extraction across core, edge and protocol.
 - `core/demand_registry` reaps stale entries when an edge stops reporting, ending phantom demand from a powered-off station.
 - Edge pushes claim upserts and deletes to Core on UI action rather than waiting for the next heartbeat.
 - A cleared bin can satisfy a `manual_swap` request at a concrete lineside node.
 
-## 2026-04-19 — Two-robot single-click release, toolchain downgrade
+### 2026-04-19 — Two-robot single-click release, toolchain downgrade
 
 - One operator click releases both robots in a two-robot swap, resolving siblings via the durable claim pointer.
 - Rolled Go 1.26.2 back to 1.25.0 across all modules — 1.26.2 rejected BOM-prefixed sources that Windows editors had introduced.
 
-## 2026-04-18 — E-Maint robot telemetry stub
+### 2026-04-18 — E-Maint robot telemetry stub
 
 - `/api/telemetry/e-maint` and `/download` expose per-robot maintenance telemetry (odometer, runtime, jack/lift, voltage, current, controller state).
 - `fleet.RobotStatus` gains 14 telemetry fields, populated by the SEER mapper.
 - An E-Maint tab on Diagnostics renders from the in-memory robot cache.
 
-## 2026-04-18 — Architecture refactor: Stages 1–9 (shingo-core)
+### 2026-04-18 — Architecture refactor: Stages 1–9 (shingo-core)
 
 - **Stage 1** replaces `engine.DB()` with 116 named single-purpose query methods on `EngineAccess`, so handlers stop picking arbitrary queries off a shared handle.
 - **Stage 2A** lifts pure data types into a persistence-free `domain/` package, with aliases keeping every call site compiling.
@@ -1803,19 +1838,19 @@ them; each exclusion retired names the condition that let it go.
 - **Stage 9** adds consumer-side narrow interfaces, extracts `scenesync/`, and gates 39 Postgres-backed test files behind `//go:build docker`.
 - `protocol.RawHeader` gains `Src`, letting routing identify the sender without a full payload decode.
 
-## 2026-04-17 — Toolchain bump, dead-symbol flagging
+### 2026-04-17 — Toolchain bump, dead-symbol flagging
 
 - Go 1.25.0 and x/crypto v0.48.0 pinned uniformly across all three modules.
 - New `protocol/version_test.go` fails if Go or x/crypto versions drift apart again.
 - Six callsite-free symbols annotated `TODO(dead-code)` for a later pruning pass rather than removed.
 
-## 2026-04-16 — Traffic page, fire alarm toggle
+### 2026-04-16 — Traffic page, fire alarm toggle
 
 - Operators configure heartbeat/PLC bindings and count-groups from a Traffic tab instead of editing YAML.
 - Core count-group changes persist to `shingocore.yaml` and hot-reload the Runner without a restart.
 - The fire alarm feature and its auto-resume default are togglable from the web UI.
 
-## 2026-04-15 — Count-group light alerts, fire alarm pass-through
+### 2026-04-15 — Count-group light alerts, fire alarm pass-through
 
 - Core polls RDS per count group and emits Kafka commands Edge translates into PLC tag writes, for advanced-zone safety lighting.
 - N-of-M hysteresis (on 2, off 3) prevents flicker, with ON biased to commit faster than OFF.
@@ -1824,14 +1859,14 @@ them; each exclusion retired names the condition that let it go.
 - Fire alarm activate/clear relays to RDS via `/isFire` and `/fireOperations`; RDS owns all robot logic.
 - Both features are config-gated, with an empty group list starting no polling goroutine.
 
-## 2026-04-14 — Order failure hardening, bin protection
+### 2026-04-14 — Order failure hardening, bin protection
 
 - Refuse to create or move bins onto already-occupied physical nodes, preventing stacking.
 - Lineside bins are protected from poaching by staging logic.
 - Edge is notified on order failure; the broken auto-return is disabled pending redesign.
 - Async order failures persist as a sticky toast on the operator HMI instead of disappearing.
 
-## 2026-04-13 — Wait block, operator UX, route visibility
+### 2026-04-13 — Wait block, operator UX, route visibility
 
 - Replaced pre-position dropoff with the RDS native Wait block, eliminating dummy location visits.
 - Operators can load an empty bin already at the node without waiting for a delivery order.
@@ -1840,50 +1875,50 @@ them; each exclusion retired names the condition that let it go.
 - `ListPendingOutbox` and `ListDeadLetterOutbox` were missing `sent_at` in SELECT and Scan, misaligning row scans.
 - seerrds mappers import status constants from `protocol` rather than `dispatch`, removing an adapter-to-orchestration import.
 
-## 2026-04-12 — Cross-module deduplication
+### 2026-04-12 — Cross-module deduplication
 
 - Duplicated types and helpers extracted into shared packages across core, edge and protocol.
 - Inline test assertions replaced with `testdb` helpers across core tests.
 
-## 2026-04-11 — Structural refactoring
+### 2026-04-11 — Structural refactoring
 
 - Characterization tests added to lock behavior before five structural refactors across core and edge.
 - Shared helpers extracted from changeover and demand code.
 
-## 2026-04-10 — Bin loader/unloader multi-order queue
+### 2026-04-10 — Bin loader/unloader multi-order queue
 
 - Loader and unloader nodes support queued multi-order workflows with automatic kanban-style demand generation.
 - Fixed bin arrival on delivery, a cancel guard, and transition idempotency, all found in plant testing.
 
-## 2026-04-09 — Bin loader stabilization, URL encoding
+### 2026-04-09 — Bin loader stabilization, URL encoding
 
 - Fixed wrong UOP count, a missing confirm step, and stale HMI state after load operations.
 - Bin movement auto-confirm works, with a claim-level auto-confirm setting for loader nodes.
 - `bin_loader` retrieve-empty orders skip the staging step.
 - Fixed URL encoding for PLC names, tag names, node names with spaces, and manifest paths in Edge HTTP clients.
 
-## 2026-04-08 — Migration repairs, node guards
+### 2026-04-08 — Migration repairs, node guards
 
 - Migrations v11–v13 repair `payload_bin_types`, `payload_manifest` and `node_payloads` foreign keys referencing the stale `blueprints` table.
 - Reparent and delete guards use structural error classification to prevent orphaning nodes.
 - Payload template save no longer silently discards bin-type and manifest errors.
 
-## 2026-04-07 — Diagnostics and move-order fixes
+### 2026-04-07 — Diagnostics and move-order fixes
 
 - Fixed diagnostics tabs not displaying content, from a CSS `hide` class conflicting with tab switching.
 - Fixed move orders from an NGRP source not updating bin location — `planMove` was missing group resolution.
 
-## 2026-04-06 — Edge cancel, operator HMI fixes
+### 2026-04-06 — Edge cancel, operator HMI fixes
 
 - Fixed cancel notification delivery to edge stations.
 - Added cache-busting to prevent stale operator HMI state after actions.
 - Fixed the CONFIRM button not appearing after delivery.
 
-## 2026-04-05 — Operator HMI simplification
+### 2026-04-05 — Operator HMI simplification
 
 - Removed the rarely-used release-empty and release-partial actions, adding a manifest-confirm action for verification at delivery.
 
-## 2026-04-01 — Changeover automation, production hardening
+### 2026-04-01 — Changeover automation, production hardening
 
 - Automated style changeover lands (Phases 1–5): abort in-flight orders, A/B cycle material slots, dispatch new material, confirm completion.
 - Bins staged at lineside are preserved across a changeover when the payload is shared between styles.
@@ -1893,30 +1928,30 @@ them; each exclusion retired names the condition that let it go.
 - Orders queue on `claim_failed` rather than failing permanently.
 - Staged order vehicles are pinned on release so RDS does not re-dispatch to a different robot.
 
-## 2026-03-30 — FIFO retrieval, bin dispatch fixes
+### 2026-03-30 — FIFO retrieval, bin dispatch fixes
 
 - Strict FIFO retrieval enforced across all paths, with a COST mode added for NGRP lanes.
 - `planRetrieveEmpty` detects buried empty bins and triggers a reshuffle to reach them.
 - Bins are claimed at dispatch time, preventing races; staged bins at core nodes become claimable.
 - `.gitattributes` added and all files normalized to LF.
 
-## 2026-03-29 — Compound order fixes
+### 2026-03-29 — Compound order fixes
 
 - Cancelling a compound parent cascades to all children.
 - `maybeCreateReturnOrder` correctly sets `SourceNode`.
 - Added the `order_bins` junction table for complex orders moving multiple bins.
 
-## 2026-03-28 — FIFO, concurrency testing
+### 2026-03-28 — FIFO, concurrency testing
 
 - Oldest eligible bin always retrieved first from NGRP lanes.
 - Fleet-simulator framework added for deterministic multi-robot scenario testing, with 9 initial tests.
 
-## 2026-03-27 — Dispatch safety
+### 2026-03-27 — Dispatch safety
 
 - Refuse to dispatch when no bin is available at the source node.
 - Bin claims released when the fleet reports order failure.
 
-## 2026-03-26 — Performance, SSE stability, UI polish
+### 2026-03-26 — Performance, SSE stability, UI polish
 
 - PostgreSQL connection pool limits added and made configurable from the Config page.
 - Order enrichment and robot handlers read the in-memory cache, eliminating N+1 fleet round-trips.
@@ -1927,13 +1962,13 @@ them; each exclusion retired names the condition that let it go.
 - The Completed tab splits into Delivered (amber) and Confirmed (green).
 - Form elements get explicit background and color, fixing dark controls rendering in light mode.
 
-## 2026-03-25 — Universal node naming alignment
+### 2026-03-25 — Universal node naming alignment
 
 - `pickup_node` / `PickupNode` renamed to `source_node` / `SourceNode` across protocol, schema, Go structs, handlers, dispatch, UI and docs — a wire-breaking change requiring core and edge to deploy together.
 - Complex-order test form fields renamed to match style/cell vocabulary (`InboundSource`, `InboundStaging`, `OutboundStaging`, `OutboundDestination`).
 - `outbound_source` renamed to `outbound_destination` on `style_node_claims` — it was a dropoff destination, not a source.
 
-## 2026-03-24 — Queued order fulfillment
+### 2026-03-24 — Queued order fulfillment
 
 - Orders that cannot be immediately fulfilled become `queued` rather than failed, and Core fulfills them FIFO as inventory frees.
 - An event-driven fulfillment scanner triggers on bin arrival, manifest clear, and order completion, with a 60s safety sweep and startup recovery.
@@ -1943,7 +1978,7 @@ them; each exclusion retired names the condition that let it go.
 - `payload_code` added to Core's orders table (v8) so the scanner can match without re-resolving the original request.
 - Loader tiles show AWAITING STOCK in amber while a queued order is active.
 
-## 2026-03-24 — Bin loader nodes, Core telemetry API, NodeGroup removal
+### 2026-03-24 — Bin loader nodes, Core telemetry API, NodeGroup removal
 
 - New `bin_loader` claim role for nodes where forklifts load untracked material into existing bins.
 - Allowed payload codes on `style_node_claims` restrict which payloads a loader accepts.
@@ -1953,14 +1988,14 @@ them; each exclusion retired names the condition that let it go.
 - `NodeGroup` removed from `ComplexOrderStep` — Core auto-detects NGRP nodes as simple orders already did.
 - Four edge claim source columns collapse to two (`inbound_source`, `outbound_destination`).
 
-## 2026-03-23 — Delivery cycle modes: sequential, single robot, two robot
+### 2026-03-23 — Delivery cycle modes: sequential, single robot, two robot
 
 - Two source/destination routing columns added to `style_node_claims`, separate from staging areas, each accepting a node or a group.
 - Sequential mode staggers two robots, auto-creating Order B when Order A goes `in_transit`.
 - The single-robot swap sequence corrected from 7 to 10 steps.
 - Two-robot validation requires only `InboundStaging`, since the removal robot goes direct to `OutboundDestination`.
 
-## 2026-03-21 — Lifecycle, messaging, and recovery hardening
+### 2026-03-21 — Lifecycle, messaging, and recovery hardening
 
 - Core persists inbound message IDs and suppresses replayed mutating commands before they reach dispatch.
 - Delivery receipts fail closed and duplicate receipts are ignored.
@@ -1971,7 +2006,7 @@ them; each exclusion retired names the condition that let it go.
 - Edge requests authoritative order status from Core on startup and re-registration.
 - Dispatch planning routes through registered per-order-type planners instead of a hardcoded switch.
 
-## 2026-03-21 — Edge production hardening, domain rename
+### 2026-03-21 — Edge production hardening, domain rename
 
 - Edge domain model renamed to match usage: `Payload`→`MaterialSlot`, `ProductionLine`→`Process`, `JobStyle`→`Style`, `LocationNode`→`Node`, `Resupply`/`Removal`→`PrimaryOrder`/`SecondaryOrder`, with automatic `ALTER TABLE RENAME` on startup.
 - API routes renamed to match (`/api/payloads/*`→`/api/material-slots/*`, `/api/lines/*`→`/api/processes/*`, and so on).

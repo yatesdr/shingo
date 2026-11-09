@@ -199,6 +199,30 @@ func TestDiagnostics_CoreLinkNotes(t *testing.T) {
 	}
 }
 
+// TestDiagnostics_ShowsTheRunningBuild: the Logs page names the version and
+// commit WithBuild records, and shows no stamp when there is none.
+func TestDiagnostics_ShowsTheRunningBuild(t *testing.T) {
+	t.Parallel()
+	h := &Handlers{}
+	WithBuild("v0.1.0", "1a2b3c4d")(h)
+	tmpl := template.Must(template.New("").Funcs(templateFuncs()).
+		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
+	render := func(version, commit string) string {
+		var buf bytes.Buffer
+		data := map[string]any{"Page": "logs", "BuildVersion": version, "BuildCommit": commit}
+		if err := tmpl.ExecuteTemplate(&buf, "diagnostics.html", data); err != nil {
+			t.Fatalf("render diagnostics.html: %v", err)
+		}
+		return buf.String()
+	}
+	if got := render(h.buildVersion, h.buildCommit); !strings.Contains(got, "v0.1.0 &middot; 1a2b3c4d") {
+		t.Error("the Logs page does not show the running build v0.1.0 · 1a2b3c4d")
+	}
+	if got := render("", ""); strings.Contains(got, "The running build") {
+		t.Error("the Logs page shows a build stamp with no build recorded")
+	}
+}
+
 // TestCoreLinkSummary_BeforeAck: no ack yet says so, and still shows drops.
 func TestCoreLinkSummary_BeforeAck(t *testing.T) {
 	t.Parallel()

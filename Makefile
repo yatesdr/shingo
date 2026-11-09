@@ -156,3 +156,13 @@ docs-gen: ## Regenerate every generated block in the docs
 
 docs-verify: ## Restamp every doc the citation readers pass to HEAD; the docs with findings keep theirs (exit 1)
 	@bash scripts/docs-verify.sh
+
+# ── Cutting a release ────────────────────────────────────────────────
+#
+# shared/scripts/release does the work and holds the refusals; this target
+# only passes VERSION and TITLE through. Where make is not installed, run the
+# recipe's line from shared/ by hand.
+.PHONY: release
+
+release: ## Cut a release from a clean, pushed main: make release VERSION=vX.Y.Z [TITLE="..."] (runs the cert gate, then commits, tags and pushes)
+	cd shared && go run ./scripts/release -root .. -version "$(VERSION)" -title "$(TITLE)"

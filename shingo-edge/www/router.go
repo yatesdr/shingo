@@ -104,11 +104,21 @@ type Handlers struct {
 	// case the loop drains the set and does nothing.
 	onPlantSpecChange    func(processID int64)
 	onPlantSpecChangeAll func()
+
+	// buildVersion and buildCommit are the running binary's stamp (main's
+	// Version and Commit), for the Logs page. Empty in tests that build
+	// Handlers directly.
+	buildVersion, buildCommit string
 }
 
 // RouterOption changes the router NewRouter builds. The shipped Edge passes
-// none.
+// WithBuild.
 type RouterOption func(*Handlers)
+
+// WithBuild records the running build, shown on the Logs page.
+func WithBuild(version, commit string) RouterOption {
+	return func(h *Handlers) { h.buildVersion, h.buildCommit = version, commit }
+}
 
 // WithCoalescingWindows sets the router's two coalescing windows: how long the
 // boards' nudge waits for the rest of its burst (EventHub.nudgeWindow, shipped

@@ -26,6 +26,8 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"ReconAnomalies": reconAnomalies,
 		"Deadletters":    deadletters,
 		"CoreLink":       h.diagnosticsCoreLink(),
+		"BuildVersion":   h.buildVersion,
+		"BuildCommit":    h.buildCommit,
 	}
 	if f, ok := h.orchestration.(frozenReporter); ok {
 		data["Frozen"] = f.Frozen()

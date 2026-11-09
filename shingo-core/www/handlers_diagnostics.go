@@ -30,6 +30,7 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	entries, logPage := pageLogEntries(h.debugLog.Entries(subsystem), page)
+	version, commit, _ := runningBuild()
 	data := map[string]any{
 		"Page":                "logs", // DO NOT change — drives nav active state
 		"Entries":             entries,
@@ -41,6 +42,8 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"RecoveryActions":     recoveryActions,
 		"FireAlarmEnabled":    cfg.FireAlarm.Enabled,
 		"FireAlarmAutoResume": cfg.FireAlarm.AutoResumeDefault,
+		"BuildVersion":        version,
+		"BuildCommit":         commit,
 	}
 	h.render(w, r, "diagnostics.html", data)
 }

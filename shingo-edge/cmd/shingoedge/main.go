@@ -789,7 +789,7 @@ func main() {
 	})
 
 	// ── HTTP server & shutdown ──────────────────────────────────────────
-	h, router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
+	h, router, stopWeb := www.NewRouter(eng, dbg, backupSvc, www.WithBuild(Version, Commit))
 
 	// ── Plant-claims publisher (sourceability feed, Edge → Core) ───────
 	// Publishes the plant-spec claim set so Core can mirror what every

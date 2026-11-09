@@ -60,6 +60,13 @@ func SetBuildInfo(version, commit string, bootAt time.Time) {
 	buildInfo.version, buildInfo.commit, buildInfo.bootAt = version, commit, bootAt
 }
 
+// runningBuild is the build SetBuildInfo recorded.
+func runningBuild() (version, commit string, bootAt time.Time) {
+	buildInfo.mu.RLock()
+	defer buildInfo.mu.RUnlock()
+	return buildInfo.version, buildInfo.commit, buildInfo.bootAt
+}
+
 // goroutineRing is the 12-slot in-memory history behind the sparkline.
 //
 // Twelve points, no schema, resets on restart — and that is the whole design.
@@ -292,9 +299,7 @@ const (
 // core count, dead letters present, completion anomalies present. Each has a
 // reason string, because a red dot with no sentence is a puzzle, not a signal.
 func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
-	buildInfo.mu.RLock()
-	version, commit, bootAt := buildInfo.version, buildInfo.commit, buildInfo.bootAt
-	buildInfo.mu.RUnlock()
+	version, commit, bootAt := runningBuild()
 
 	// WALL clock, deliberately, not clock.Now(). Process uptime is a
 	// wall-clock fact: under the sim's 10x fast-forward clock.Now() made

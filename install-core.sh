@@ -29,6 +29,12 @@ set -euo pipefail
 #                            overwrite an unknown setup (the safety check
 #                            for "running process but no discoverable config"
 #                            is an error exit, not a confirm).
+#   --tag <vX.Y.Z>, vX.Y.Z   Install that release: fetch the tags, check the
+#                            tag out (a detached HEAD), build it, and stamp the
+#                            binary's version with the tag. Without it the
+#                            installer pulls the branch it is on, as it always
+#                            has; on the detached HEAD a tag install leaves, it
+#                            stops and says so instead of pulling.
 
 # Remember the invocation before the arg loop consumes it and before the `cd`
 # below, so the re-exec after `git pull` is faithful.
@@ -50,6 +56,8 @@ CORE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "Americ
 # instruction: without this there is no way to set the zone in an unattended
 # install, which is the plant-rollout case.
 CORE_TIMEZONE_EXPLICIT=no
+# The release to install; empty = pull the current branch.
+INSTALL_TAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
@@ -57,13 +65,20 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)          ASSUME_YES=yes; shift ;;
         --timezone)        CORE_TIMEZONE="$2"; CORE_TIMEZONE_EXPLICIT=yes; shift 2 ;;
         --timezone=*)      CORE_TIMEZONE="${1#*=}"; CORE_TIMEZONE_EXPLICIT=yes; shift ;;
+        --tag)             INSTALL_TAG="$2"; shift 2 ;;
+        --tag=*)           INSTALL_TAG="${1#*=}"; shift ;;
+        v[0-9]*)           INSTALL_TAG="$1"; shift ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml] [--yes] [--timezone IANA_ZONE]"
+            echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml] [--yes] [--timezone IANA_ZONE] [--tag vX.Y.Z | vX.Y.Z]"
             exit 1
             ;;
     esac
 done
+if [ -n "$INSTALL_TAG" ] && ! [[ "$INSTALL_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: '$INSTALL_TAG' is not a release tag (vMAJOR.MINOR.PATCH, e.g. v0.1.0)."
+    exit 1
+fi
 
 if [[ $EUID -ne 0 ]]; then
     echo "Must run as sudo/root"
@@ -192,16 +207,62 @@ config_from_unit() {
 # fetched. The sentinel keeps the second run from pulling again, so it cannot
 # loop. Verified at 72 KB with a mid-run pull: args preserved, one pass, the
 # post-pull logic is what executes.
+#
+# A TAG IS CHECKED OUT, NOT PULLED, and the same rule holds: the tag's own
+# installer finishes the run, so it is the one that matches the tag's unit,
+# deploy files and build. That installer is re-executed with these same
+# arguments, --tag among them, so it must take --tag: one that does not (any
+# tag before the installers took one) is refused here, before anything has
+# changed, rather than half-run. A tag install leaves HEAD detached at the tag,
+# where `git pull` has no branch to pull; a later run without --tag says so
+# instead.
 if [ -z "${SHINGO_INSTALL_REEXEC:-}" ]; then
     self_before=$(sha256sum "$SELF" | cut -d' ' -f1)
-    echo "==> Pulling latest changes..."
-    git pull
+    if [ -n "$INSTALL_TAG" ]; then
+        echo "==> Fetching tags..."
+        git fetch --tags origin
+        if ! git rev-parse -q --verify "refs/tags/${INSTALL_TAG}^{commit}" >/dev/null; then
+            echo "ERROR: no tag $INSTALL_TAG on origin."
+            exit 1
+        fi
+        # Read into a variable, not piped to grep -q: grep exiting at the first
+        # match would SIGPIPE git show, and pipefail would read that as "no".
+        tag_installer=$(git show "refs/tags/${INSTALL_TAG}:install-core.sh" 2>/dev/null || true)
+        case "$tag_installer" in
+            *'--tag)'*) ;;
+            *)
+                echo "ERROR: $INSTALL_TAG has no install-core.sh that takes --tag (it predates"
+                echo "       tag installs), so it cannot install itself this way. Nothing has changed."
+                exit 1
+                ;;
+        esac
+        echo "==> Checking out $INSTALL_TAG..."
+        git checkout -q --detach "refs/tags/${INSTALL_TAG}"
+        fetched="checkout of $INSTALL_TAG"
+    else
+        if ! git symbolic-ref -q HEAD >/dev/null; then
+            echo "ERROR: the checkout is on a detached HEAD ($(git describe --tags --always 2>/dev/null || echo unknown)),"
+            echo "       which a tag install leaves, so there is no branch to pull. Install a"
+            echo "       release with --tag vX.Y.Z, or go back to the branch first: git checkout main"
+            exit 1
+        fi
+        echo "==> Pulling latest changes..."
+        git pull
+        fetched=pull
+    fi
     self_after=$(sha256sum "$SELF" | cut -d' ' -f1)
     if [ "$self_before" != "$self_after" ]; then
-        echo "==> That pull updated the installer -- restarting with the new version."
+        echo "==> That $fetched updated the installer -- restarting with the new version."
         export SHINGO_INSTALL_REEXEC=1
         exec bash "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
     fi
+fi
+# Whichever run gets here builds what HEAD is, so a tag install proves HEAD is
+# the tag before it stamps the binary with the tag's name.
+if [ -n "$INSTALL_TAG" ] && \
+   [ "$(git rev-parse HEAD)" != "$(git rev-parse -q --verify "refs/tags/${INSTALL_TAG}^{commit}" || true)" ]; then
+    echo "ERROR: HEAD is not $INSTALL_TAG; refusing to build it under that name."
+    exit 1
 fi
 
 # ----------------------------------------------------------------------
@@ -414,6 +475,13 @@ echo "==> Building binary..."
 GIT_STAMP=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")
 BUILD_VERSION=$("${GIT_STAMP[@]}" describe --tags --always --dirty 2>/dev/null || echo dev)
 BUILD_COMMIT=$("${GIT_STAMP[@]}" rev-parse --short HEAD 2>/dev/null || echo unknown)
+# A tag install is stamped with the tag itself (HEAD was proved to be it
+# above), not with describe's pick among the tags on that commit; -dirty, as
+# describe would add, when the checkout carries local edits.
+if [ -n "$INSTALL_TAG" ]; then
+    BUILD_VERSION="$INSTALL_TAG"
+    "${GIT_STAMP[@]}" diff --quiet HEAD -- 2>/dev/null || BUILD_VERSION="${INSTALL_TAG}-dirty"
+fi
 echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
 (cd "$REPO_ROOT/shingo-core" && "$GO_BIN" build \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \

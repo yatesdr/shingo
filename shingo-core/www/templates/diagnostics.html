@@ -14,6 +14,7 @@
   <div class="flex flex-between mb-2">
     <h1>Logs</h1>
     <div class="flex gap-1 items-center">
+      <span class="text-muted-sm" title="The running build: its version (the release tag, or git describe) and its commit">{{.BuildVersion}} &middot; {{.BuildCommit}}</span>
       <select id="log-filter" data-action-change="debugFilter" style="font-size:0.85rem;padding:2px 6px;">
         <option value="">All subsystems</option>
         {{range .Subsystems}}
