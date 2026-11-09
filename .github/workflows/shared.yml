@@ -2,6 +2,9 @@ name: Shared
 
 on:
   push:
+    # main is tested once per push, by auto-release.yml, which calls this
+    # workflow as one of its gates; any other branch runs it here.
+    branches-ignore: [main]
     paths:
       - "shared/**"
       - "protocol/**"

@@ -1,8 +1,11 @@
 name: Auto Release
 
-# Every push to main whose CHANGELOG.md `## Unreleased` has content becomes a
-# release, in this one run: plan → the gates → cut → build → publish. Nobody
-# runs `make release`; the human step is at the plant (`install-*.sh --tag`).
+# The one run for every push to main: plan → the gates → cut → build →
+# publish. The gates (the seven test workflows, which skip pushes to main on
+# their own triggers) always run, so main is tested exactly once per push; cut,
+# build and publish run only when CHANGELOG.md `## Unreleased` has content, and
+# then the push becomes a release. Nobody runs `make release`; the human step
+# is at the plant (`install-*.sh --tag`).
 #
 # ONE RUN, NOT A TAG-TRIGGERED SECOND ONE. A commit or tag pushed with
 # GITHUB_TOKEN triggers no workflow, so the tag `cut` pushes cannot start a
@@ -64,34 +67,27 @@ jobs:
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  # ── The gates: the workflows a push runs, on this sha ──────────────────
+  # ── The gates: the seven test workflows, on this sha, on every push ────
   protocol:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/protocol.yml
   core:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/core.yml
   edge:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/edge.yml
   shared:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/shared.yml
   integration:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/integration.yml
   lint:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/lint.yml
   guards:
     needs: plan
-    if: needs.plan.outputs.release == 'yes'
     uses: ./.github/workflows/guards.yml
 
   cut:
@@ -207,9 +203,13 @@ jobs:
         working-directory: shared
         run: go run ./scripts/release -root .. -notes "$TAG" > ../release-notes.md
 
+      # Only the build job's binaries: the gate workflows upload artifacts of
+      # their own (test-shard plans and logs) into this same run, and v0.1.1
+      # shipped them as release assets before this pattern.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: binaries-*
           merge-multiple: true
 
       - name: SHA256SUMS

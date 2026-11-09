@@ -6,6 +6,9 @@ name: Core
 # commit. A gate whose own edits do not run it cannot report on them.
 on:
   push:
+    # main is tested once per push, by auto-release.yml, which calls this
+    # workflow as one of its gates; any other branch runs it here.
+    branches-ignore: [main]
     paths:
       - "shingo-core/**"
       - "protocol/**"

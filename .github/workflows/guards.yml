@@ -10,7 +10,8 @@ name: Guards
 # the guards police. No path filter here, deliberately: a guard that skips
 # the files it guards is not a guard. js.yml was deleted rather than merged
 # because its one job is also a scripts/check-*.sh invocation, now covered
-# here on every push and PR.
+# here on every PR and every push to a branch, and on main as one of
+# auto-release.yml's gates.
 #
 # gate.sh's scripts step globs the same set locally, so a guard runs in
 # exactly one place remotely and one place locally — never a job here per
@@ -19,6 +20,9 @@ name: Guards
 
 on:
   push:
+    # main is tested once per push, by auto-release.yml, which calls this
+    # workflow as one of its gates; any other branch runs it here.
+    branches-ignore: [main]
   pull_request:
   workflow_call:
 

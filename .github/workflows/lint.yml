@@ -2,6 +2,9 @@ name: Lint
 
 on:
   push:
+    # main is tested once per push, by auto-release.yml, which calls this
+    # workflow as one of its gates; any other branch runs it here.
+    branches-ignore: [main]
     # Skip doc-only changes — lint runs Go-only rules, so a README
     # tweak shouldn't burn a CI minute. Match this set against
     # core.yml / edge.yml / protocol.yml's path filters so the lint

@@ -2,6 +2,9 @@ name: Protocol
 
 on:
   push:
+    # main is tested once per push, by auto-release.yml, which calls this
+    # workflow as one of its gates; any other branch runs it here.
+    branches-ignore: [main]
     paths:
       - "protocol/**"
       # Trigger on this file too. core.yml carries the reasoning: "a gate

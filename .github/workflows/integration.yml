@@ -8,6 +8,9 @@ name: Integration
 # uncovered — the docker-tagged build path needs explicit coverage here.
 on:
   push:
+    # main is tested once per push, by auto-release.yml, which calls this
+    # workflow as one of its gates; any other branch runs it here.
+    branches-ignore: [main]
     paths:
       - "integration/**"
       - "shingo-core/**"
@@ -93,6 +96,11 @@ jobs:
         run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
 
       - name: Test (Docker integration, race)
+        # Branches and PRs only. On main this suite runs as a gate of every
+        # release, where its race pass is the longest single step; the race
+        # detector still covers Core's engine and www (core.yml's docker-race
+        # shards) and Edge's (edge.yml's), on main too.
+        if: github.ref != 'refs/heads/main'
         working-directory: integration
         # Promoted to gating in Phase 2 (2026-05-22), matching
         # core.yml / edge.yml.
