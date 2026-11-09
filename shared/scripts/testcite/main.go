@@ -16,7 +16,7 @@
 // spelled Test...); deadident owns whether such a symbol is live.
 //
 // GRAVESTONES ARE EXEMPT, by the words touching the name. A comment that says
-// a test is gone records history on purpose (AGENTS.md: retire by rewriting,
+// a test is gone records history on purpose (docs/ground-rules.md: retire by rewriting,
 // and say so). The word just before the name is one of was, were, called,
 // "used to be", replaces, replaced, inverts, inverted, ports, previously,
 // formerly, deleted, removed, "at base"; or the words just after it are

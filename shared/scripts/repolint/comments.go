@@ -167,7 +167,7 @@ func commentReferences(t *tree) result {
 // EXPIRY: then "when", the symbol, "is gone" (the symbol may be backticked and
 // the phrase may wrap). The run fails when nothing in the five modules declares
 // that symbol any more, so the scar is retired in the same edit that deletes the
-// symbol (AGENTS.md: correct the scar in the same edit that changes the
+// symbol (docs/ground-rules.md: correct the scar in the same edit that changes the
 // behaviour). No date-based expiry: a date fails the gate for a reason outside
 // the diff.
 //

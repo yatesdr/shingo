@@ -87,7 +87,7 @@ Every doc in `docs/`, `shingo-core/docs/` and `shingo-edge/docs/`, by its first 
 | [Bin Loader / Unloader](docs/bin-loader-unloader-architecture.md) | `docs/bin-loader-unloader-architecture.md` |
 | [Bin Transit State](docs/bin-transit-state.md) | `docs/bin-transit-state.md` |
 | [Data Model](docs/data-model.md) | `docs/data-model.md` |
-| [Ground rules for the order layer](docs/ground-rules.md) | `docs/ground-rules.md` |
+| [Ground rules](docs/ground-rules.md) | `docs/ground-rules.md` |
 | [Lanes — mouths, digs, admission and liveness](docs/lanes.md) | `docs/lanes.md` |
 | [Node Naming Standards](docs/node-naming-standards.md) | `docs/node-naming-standards.md` |
 | [Order-Building & Source Dispatch](docs/order-builder-dispatch.md) | `docs/order-builder-dispatch.md` |

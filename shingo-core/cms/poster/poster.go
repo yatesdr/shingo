@@ -254,7 +254,7 @@ func (p *Poster) Run(ctx context.Context) {
 // errors, the process dies between the two — the transaction rows sit with
 // posting_id NULL forever. Nothing retries, because the only thing that would
 // have was the notification that already failed, and you cannot wire up an
-// absence. AGENTS.md: pair every notification path with a sweep that checks the
+// absence. docs/ground-rules.md: pair every notification path with a sweep that checks the
 // condition directly, and the notification becomes a latency optimisation
 // rather than the guarantee.
 //

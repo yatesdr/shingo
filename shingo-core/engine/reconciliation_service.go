@@ -57,7 +57,7 @@ type ReconciliationService struct {
 	// deck. Late-bound in engine.New like the callbacks above.
 	//
 	// THIS IS THE GUARANTEE; the terminal-event hook is the fast path
-	// (AGENTS.md). A hook fires once and can be missed — a crash between the
+	// (docs/ground-rules.md). A hook fires once and can be missed — a crash between the
 	// terminalize and the event, an Edge-driven cancel Core never saw as an
 	// event, a bin stranded by a code path nobody has thought of. This sweep
 	// asks the question of the world instead of of an event, so it also clears

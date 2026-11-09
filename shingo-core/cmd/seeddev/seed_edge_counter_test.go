@@ -26,7 +26,7 @@ import (
 //
 // SYMBOLS, NOT LINES. This comment cited both of those by line number when it
 // was written. One rebase later ReportingPoint had moved ten lines and the
-// citation landed on Demand's doc instead — AGENTS.md's "cite a SYMBOL for
+// citation landed on Demand's doc instead — docs/ground-rules.md's "cite a symbol for
 // anything you expect to survive" earning itself inside the very branch that
 // exists to delete comments that stopped being true.
 

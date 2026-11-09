@@ -4849,7 +4849,7 @@ func v155DemandForecastPlan(tx *sql.Tx) error {
 // is in migrateAddBaselineColumns.
 //
 // node_maintain_layer_levels is a new table and is declared HERE ONLY, not in
-// the baseline (root AGENTS.md, "a new table gets exactly one home";
+// the baseline (docs/ground-rules.md, "a new table gets exactly one home";
 // migrationOnlyTables names it). One row per (group, carrier type, layers):
 // how many carts of that type standing that many layers high the group wants.
 // It is communication, not a cap: the cap stays node_maintain_levels, and the

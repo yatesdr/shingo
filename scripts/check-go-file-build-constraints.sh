@@ -15,8 +15,8 @@
 # the windows one had been running on developer laptops and silently skipped in
 # Linux CI for as long as it had existed.
 #
-# This is the "a killed run and a passing run produce identical evidence"
-# family from AGENTS.md, at the file level: an excluded test and a passing one
+# This is "a check must know whether it had the input to check"
+# (docs/ground-rules.md), at the file level: an excluded test and a passing one
 # both produce no failure.
 #
 # NOT ONLY TESTS. A non-test file fails the other way round: the platform that

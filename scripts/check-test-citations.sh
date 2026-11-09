@@ -3,7 +3,7 @@
 # check-test-citations.sh — a test a Go comment cites must still exist.
 #
 # A comment that names a test is read as "this is pinned": the scar's PIN
-# (AGENTS.md), a "covered by ..." in a DUP argument, a `PIN:` marker. A rename,
+# (docs/ground-rules.md), a "covered by ..." in a DUP argument, a `PIN:` marker. A rename,
 # a fold or a deletion leaves the comment claiming coverage nothing provides,
 # and no build fails. Every Test... named in a Go comment of the five modules,
 # and every PIN: Test/Fuzz/Benchmark marker, must name a test function in one of
