@@ -113,6 +113,7 @@ func (c *Cache) Start(stopChan <-chan struct{}) error {
 	return err
 }
 
+// run refreshes the cache every refreshInterval until stopChan closes.
 func (c *Cache) run(stopChan <-chan struct{}) {
 	t := clock.Default().NewTicker(refreshInterval)
 	defer t.Stop()

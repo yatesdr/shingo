@@ -8,6 +8,20 @@ Shingo Edge provides a browser-based operator interface at `http://<host>:8081`.
 
 These pages are the primary interface for production line operators.
 
+<!-- generated: shingo-edge/www/router.go pages public -->
+
+| Path | Template (in `shingo-edge/www/templates/`) | Title | Auth |
+|---|---|---|---|
+| `/` | `production.html` | Production | public |
+| `/changeover` | `changeover.html` | Changeover | public |
+| `/containment` | `containment.html` | Quality Containment | public |
+| `/login` | `login.html` | Login | public |
+| `/operator/station/{id}` | `operator-display.html` |  | public |
+| `/orders` | `orders.html` | Orders | public |
+| `/production` | `production.html` | Production | public |
+
+<!-- /generated -->
+
 ### Material
 
 **Route:** `/material`
@@ -110,20 +124,18 @@ These pages require authentication.
 **There is no `/setup` page.** Edge station configuration is a set of separate
 pages, each with its own route (`shingo-edge/www/router.go`):
 
-| Page | Route |
-|---|---|
-| Production lines | `/processes` |
-| Job styles and their node claims | `/styles` |
-| Process nodes | `/process-nodes` |
-| Process groups | `/process-groups` |
-| Payload catalog | `/payload-catalog` |
-| WarLink / PLCs | `/plcs` |
-| Shifts | `/shifts` |
-| Operator stations | `/operator-stations` |
-| Core node list | `/core-nodes` |
-| Replenishment | `/replenishment` |
-| Orders | `/orders` |
-| App config, including **Backups** | `/config` |
+<!-- generated: shingo-edge/www/router.go pages login -->
+
+| Path | Template (in `shingo-edge/www/templates/`) | Title | Auth |
+|---|---|---|---|
+| `/config` | `config.html` | Configuration | login |
+| `/diagnostics` | `diagnostics.html` | Logs | login |
+| `/manual-message` | `manual-message.html` | Kafka Direct | login |
+| `/manual-order` | `manual-order.html` | Manual Order | login |
+| `/processes` | `processes.html` | Processes | login |
+| `/replenishment` | `replenishment.html` | Replenishment | login |
+
+<!-- /generated -->
 
 What each covers:
 

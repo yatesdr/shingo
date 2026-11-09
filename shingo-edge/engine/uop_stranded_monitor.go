@@ -41,6 +41,8 @@ func (e *Engine) strandedMonitorClock() clock.Clock {
 	return clock.Default()
 }
 
+// run sweeps once at boot, then scans every node each strandedScanInterval
+// until the engine stops.
 func (sm *strandedMonitor) run() {
 	sm.sweepAtBoot()
 	ticker := sm.eng.strandedMonitorClock().NewTicker(strandedScanInterval)

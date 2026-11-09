@@ -160,7 +160,7 @@ type DisplayConfig struct {
 	// order count carries the row.
 	MinExpectedOrders int `yaml:"min_expected_orders"`
 
-	// OrphanBucket is the time-bucket width for the orphan-rate trend (5.7).
+	// OrphanBucket is the time-bucket width for the orphan-rate trend.
 	//
 	// It is a DISPLAY constant and not merely a query scope, which is the
 	// distinction episodeWindow sits on the other side of. A window states
@@ -173,7 +173,7 @@ type DisplayConfig struct {
 	OrphanBucket time.Duration `yaml:"orphan_bucket"`
 
 	// MinBucketOrders is the smallest order count for which an orphan RATE is
-	// shown at full strength (5.7). Below it the rate is greyed and the raw
+	// shown at full strength. Below it the rate is greyed and the raw
 	// orphan count carries the bucket.
 	//
 	// The same rule as MinExpectedOrders, one surface along, and it is here for

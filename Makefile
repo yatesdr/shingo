@@ -140,6 +140,15 @@ gate-test:
 
 # ── Docs ─────────────────────────────────────────────────────────────
 #
+# The docs' generated blocks (shared/scripts/docgen): every table a doc copies
+# from the code is emitted from its source of truth between
+# `<!-- generated: ... -->` markers. Run after changing a source; the drift
+# test (TestGeneratedBlocksAreCurrent) fails the gate on a stale block.
+.PHONY: docs-gen
+
+docs-gen: ## Regenerate every generated block in the docs
+	@cd shared && go run ./scripts/docgen -root ..
+
 # The gate only READS the "Verified against: <sha>" stamps
 # (scripts/check-doc-citations.sh); this is the one place they are written.
 # Run once at the end of a stream, then commit the restamp.

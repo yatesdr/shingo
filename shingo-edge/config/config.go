@@ -25,9 +25,8 @@ type Config struct {
 	// BEFORE mu, never while holding it.
 	saveMu lockcheck.Mutex[lockorder.ConfigSave] `yaml:"-"`
 
-	// StationUID is this edge's identity, minted by Core at enrollment. It is
-	// opaque, it never changes, and it is the value that travels as
-	// protocol.Address.Station.
+	// StationUID is this edge's identity. It is opaque, it never changes, and
+	// it is the value that travels as protocol.Address.Station.
 	//
 	// AN OPERATOR PUTS IT HERE BY HAND, ONCE, AND THAT IS THE DESIGN RATHER
 	// THAN A MISSING FEATURE. Handing the uid over is exactly the step at
@@ -51,10 +50,11 @@ type Config struct {
 	// a station id and they no longer have defaults; they survive because
 	// existing plant configs carry them and silently dropping fields a plant
 	// has written is its own kind of surprise.
-	Namespace    string        `yaml:"namespace"`
-	LineID       string        `yaml:"line_id"`
-	DatabasePath string        `yaml:"database_path"`
-	PollRate     time.Duration `yaml:"poll_rate"`
+	Namespace string `yaml:"namespace"`
+	LineID    string `yaml:"line_id"`
+
+	DatabasePath string        `yaml:"database_path"` // the SQLite database file
+	PollRate     time.Duration `yaml:"poll_rate"`     // the PLC counter loop's poll period; read at boot
 
 	Timezone string `yaml:"timezone"` // IANA timezone for shift/hourly bucketing (e.g. "America/Chicago")
 
@@ -163,37 +163,44 @@ func (c *Config) HysteresisMargin(reorderPoint int) int {
 
 // WarLinkConfig defines the WarLink connection.
 type WarLinkConfig struct {
-	Host     string        `yaml:"host"        json:"host"`
-	Port     int           `yaml:"port"        json:"port"`
-	PollRate time.Duration `yaml:"poll_rate"   json:"poll_rate"`
-	Enabled  bool          `yaml:"enabled"     json:"enabled"`
-	Mode     string        `yaml:"mode"        json:"mode"` // "sse" (default) or "poll"
+	Host     string        `yaml:"host"        json:"host"`      // the WarLink service's host
+	Port     int           `yaml:"port"        json:"port"`      // the WarLink service's HTTP port
+	PollRate time.Duration `yaml:"poll_rate"   json:"poll_rate"` // the WarLink poll period (<= 0: 2s)
+	Enabled  bool          `yaml:"enabled"     json:"enabled"`   // false: the WarLink poller does not run
+	Mode     string        `yaml:"mode"        json:"mode"`      // "sse" (default) or "poll"
 }
 
 // WebConfig defines the web server settings.
 type WebConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host string `yaml:"host"` // web server listen address
+	Port int    `yaml:"port"` // web server port
+	// SessionSecret signs the login session cookie. An unset one is generated
+	// at random (Defaults, Load), and the next Config.Save writes it down.
+	//
 	// snapshot:"secret" keeps this out of the defaults rendering. It is
 	// GENERATED per Defaults() call, so rendering it would both leak a
 	// credential into git and make the snapshot differ from itself every run.
 	SessionSecret string `yaml:"session_secret" snapshot:"secret"`
-	AutoConfirm   bool   `yaml:"auto_confirm"`
+
+	// AutoConfirm makes the orders this station mints confirm their own
+	// delivery: OR'ed with each claim's own auto_confirm wherever the Edge
+	// mints an order.
+	AutoConfirm bool `yaml:"auto_confirm"`
 }
 
 // MessagingConfig defines the messaging backend.
 type MessagingConfig struct {
 	Kafka               KafkaConfig   `yaml:"kafka"`
-	DispatchTopic       string        `yaml:"dispatch_topic"`
-	OrdersTopic         string        `yaml:"orders_topic"`
-	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"`
-	StationID           string        `yaml:"station_id"`
-	SigningKey          string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
+	DispatchTopic       string        `yaml:"dispatch_topic"`        // the topic Core publishes to edges on
+	OrdersTopic         string        `yaml:"orders_topic"`          // the topic this edge publishes to Core on
+	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"` // how often the outbox drainer publishes pending messages
+	StationID           string        `yaml:"station_id"`            // an identity override for a bench edge with no station_uid (Config.StationID)
+	SigningKey          string        `yaml:"signing_key"`           // optional HMAC-SHA256 shared secret for envelope signing
 }
 
 // KafkaConfig defines Kafka broker settings.
 type KafkaConfig struct {
-	Brokers []string `yaml:"brokers"`
+	Brokers []string `yaml:"brokers"` // Kafka broker addresses, host:port
 
 	// GroupID is the consumer group this edge joins. RUNTIME-ONLY — the
 	// `yaml:"-"` is the fix, not an omission.
@@ -228,44 +235,48 @@ type CounterConfig struct {
 	// JumpThreshold is read by plc.CalculateDelta twice: a delta above it is
 	// labelled "jump", and a backward read is taken as a 16/32-bit rollover
 	// only when the wrap delta is at or under it (otherwise it is a "reset").
-	// Neither label gates the count any more (close-out 2b).
+	// Neither label gates the count any more.
 	JumpThreshold int64 `yaml:"jump_threshold"`
 }
 
 // BackupConfig defines edge backup behavior and storage.
 type BackupConfig struct {
-	Enabled          bool           `yaml:"enabled" json:"enabled"`
-	ScheduleInterval time.Duration  `yaml:"schedule_interval" json:"schedule_interval"`
-	KeepHourly       int            `yaml:"keep_hourly" json:"keep_hourly"`
-	KeepDaily        int            `yaml:"keep_daily" json:"keep_daily"`
-	KeepWeekly       int            `yaml:"keep_weekly" json:"keep_weekly"`
-	KeepMonthly      int            `yaml:"keep_monthly" json:"keep_monthly"`
-	S3               BackupS3Config `yaml:"s3" json:"s3"`
+	Enabled          bool          `yaml:"enabled" json:"enabled"`                     // automatic backups on the schedule below
+	ScheduleInterval time.Duration `yaml:"schedule_interval" json:"schedule_interval"` // the automatic backup period
+
+	// Retention: how many backups are kept per time bucket (see
+	// shingo-edge/docs/backup-restore.md, Retention).
+	KeepHourly  int `yaml:"keep_hourly" json:"keep_hourly"`
+	KeepDaily   int `yaml:"keep_daily" json:"keep_daily"`
+	KeepWeekly  int `yaml:"keep_weekly" json:"keep_weekly"`
+	KeepMonthly int `yaml:"keep_monthly" json:"keep_monthly"`
+
+	S3 BackupS3Config `yaml:"s3" json:"s3"`
 }
 
 // BackupS3Config defines an S3-compatible storage target.
 type BackupS3Config struct {
-	Endpoint              string `yaml:"endpoint" json:"endpoint"`
-	Bucket                string `yaml:"bucket" json:"bucket"`
-	Region                string `yaml:"region" json:"region"`
-	AccessKey             string `yaml:"access_key" json:"access_key"`
-	SecretKey             string `yaml:"secret_key" json:"secret_key"`
-	UsePathStyle          bool   `yaml:"use_path_style" json:"use_path_style"`
-	InsecureSkipTLSVerify bool   `yaml:"insecure_skip_tls_verify" json:"insecure_skip_tls_verify"`
+	Endpoint              string `yaml:"endpoint" json:"endpoint"`                                 // the S3-compatible endpoint URL
+	Bucket                string `yaml:"bucket" json:"bucket"`                                     // the bucket archives go to
+	Region                string `yaml:"region" json:"region"`                                     // the bucket's region
+	AccessKey             string `yaml:"access_key" json:"access_key"`                             // S3 access key
+	SecretKey             string `yaml:"secret_key" json:"secret_key"`                             // S3 secret key
+	UsePathStyle          bool   `yaml:"use_path_style" json:"use_path_style"`                     // path-style bucket addressing rather than virtual-hosted
+	InsecureSkipTLSVerify bool   `yaml:"insecure_skip_tls_verify" json:"insecure_skip_tls_verify"` // skip the endpoint's certificate check
 }
 
 // SimConfig configures the local-dev production/operator simulation (edge side).
 // Sim code is behind //go:build sim AND requires SHINGO_ALLOW_SIM=1 at runtime;
 // this struct only carries the knobs. See implementation-brief.md.
 type SimConfig struct {
-	Enabled    bool               `yaml:"enabled"`
+	Enabled    bool               `yaml:"enabled"`     // the sim switch; needs a sim build and SHINGO_ALLOW_SIM=1
 	Seed       int64              `yaml:"seed"`        // PRNG seed; 0 = derive from time and log it
 	Speed      float64            `yaml:"speed"`       // time multiplier: 2.0 = twice as fast. Default 1.0
 	MaxSpeed   float64            `yaml:"max_speed"`   // effective-speed cap; <=0 → default (10×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). Past this the clock outruns the real choreography and the loop wedges, so requests are clamped. Must match core. Set very high to effectively uncap.
 	Epoch      time.Time          `yaml:"epoch"`       // sim clock start (fast-forward origin). Zero = wall-now
 	AnchorWall time.Time          `yaml:"anchor_wall"` // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts).
 	Calendar   SimCalendarConfig  `yaml:"calendar"`
-	Processes  []SimProcessConfig `yaml:"processes"`
+	Processes  []SimProcessConfig `yaml:"processes"` // the fake PLC counters the fake WarLink advances
 	Operators  SimOperatorsConfig `yaml:"operators"`
 }
 
@@ -312,8 +323,8 @@ func (s SimConfig) Scaled(d time.Duration) time.Duration {
 // published from boot and is the tag a program change writes, so a process
 // without one cannot take a program change.
 type SimProcessConfig struct {
-	PLCName      string        `yaml:"plc_name"`
-	TagName      string        `yaml:"tag_name"`
+	PLCName      string        `yaml:"plc_name"`      // the PLC the counter is on
+	TagName      string        `yaml:"tag_name"`      // the counter tag the Edge's process counts
 	TickInterval time.Duration `yaml:"tick_interval"` // default 3s (applied at consumption)
 	UOPPerTick   int64         `yaml:"uop_per_tick"`  // default 1 (applied at consumption)
 	StationTag   string        `yaml:"station_tag"`   // "" = no station counter
@@ -336,7 +347,7 @@ type SimProcessConfig struct {
 // driveChangeovers, unloader_taps in unloaderTapAt. Check that before adding
 // another.
 type SimOperatorsConfig struct {
-	Enabled           bool          `yaml:"enabled"`
+	Enabled           bool          `yaml:"enabled"`             // the sim operator's switch
 	LoaderAutoLoad    time.Duration `yaml:"loader_auto_load"`    // default 5s
 	UnloaderAutoClear time.Duration `yaml:"unloader_auto_clear"` // default 8s
 	// SwapRelease is the simulated reaction time between a swap reaching its
@@ -353,9 +364,10 @@ type SimOperatorsConfig struct {
 	// the lineside bucket to release a bin empty: at a release with the tracked
 	// count at or under this percent of the pack (rounded up), the remainder is
 	// captured to the pile and the bin goes empty; above it, a count release.
-	// 0 = never (a count release always). The owner's floor fact, 2026-10-10:
-	// operators pull the last few parts lineside so the weld runs through the
-	// exchange. Read by simOperator.consumeDisposition.
+	// 0 = never (a count release always). Read by simOperator.consumeDisposition.
+	//
+	// The floor practice it imitates: operators pull the last few parts
+	// lineside so the weld runs through the exchange.
 	LinesidePullPercent int `yaml:"lineside_pull_percent"`
 	// PairRelease routes a staged swap through ReleaseStagedOrders — the
 	// operator's RELEASE button — instead of releasing each leg on its own.
@@ -407,9 +419,9 @@ const (
 // the process and the style to change it to, by name, and the sim time after
 // the sim operator starts at which the operator presses START.
 type SimChangeover struct {
-	Process string        `yaml:"process"`
-	ToStyle string        `yaml:"to_style"`
-	At      time.Duration `yaml:"at"`
+	Process string        `yaml:"process"`  // the process, by name
+	ToStyle string        `yaml:"to_style"` // the style to change it to, by name
+	At      time.Duration `yaml:"at"`       // sim time after the sim operator starts
 }
 
 // Defaults returns a Config with sane defaults.
@@ -429,7 +441,9 @@ type SimChangeover struct {
 // only the journal is quieter.
 type LoggingConfig struct {
 	// StderrSubsystems is the allow-list of debuglog subsystems mirrored to
-	// stderr:
+	// stderr (under systemd, the journal).
+	//
+	// Semantics:
 	//
 	//   absent          — the DefaultStderrSubsystems() list below
 	//   ["all"]         — mirror everything (the incident escape hatch:

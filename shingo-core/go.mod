@@ -1,3 +1,4 @@
+// Central server. Receives orders from edge stations, resolves source and destination nodes, dispatches to the robot fleet, and tracks fulfillment. PostgreSQL.
 module shingocore
 
 go 1.25.0

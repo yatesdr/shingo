@@ -72,6 +72,8 @@ func (e *Engine) checkConnectionStatus() {
 	}
 }
 
+// connectionHealthLoop runs checkConnectionStatus every 30 seconds until the
+// engine stops.
 func (e *Engine) connectionHealthLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()

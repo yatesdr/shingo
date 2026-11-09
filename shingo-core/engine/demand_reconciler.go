@@ -84,6 +84,8 @@ func (e *Engine) startDemandReconciler() {
 	go e.runDemandReconciler()
 }
 
+// runDemandReconciler runs reconcileDemandEpisodes every demand reconcile
+// interval until the engine stops.
 func (e *Engine) runDemandReconciler() {
 	ticker := clock.Default().NewTicker(e.demandReconcileInterval())
 	defer ticker.Stop()

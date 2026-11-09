@@ -8,8 +8,13 @@ import (
 // Data is the payload for TypeData messages.
 // Subject selects the sub-schema; Body carries the subject-specific data.
 type Data struct {
-	Subject string          `json:"subject"`
-	Body    json.RawMessage `json:"data"`
+	// Subject selects the body's schema: a Subject constant, dotted
+	// ("edge.heartbeat").
+	Subject string `json:"subject"`
+	// Body is the subject's payload. It stays raw JSON until the handler
+	// registered for Subject decodes it, so an unhandled subject never has its
+	// body read.
+	Body json.RawMessage `json:"data"`
 }
 
 // --- Edge lifecycle data schemas ---
@@ -57,10 +62,21 @@ type CellCatalogEntry struct {
 // from ListOrderStations() can match. A field that carries one constant into
 // one wrong answer is not vestigial, it is a defect with a schema.
 type EdgeRegister struct {
+	// StationID is the station UID, minted by Core at enrollment. Core
+	// resolves the station by it and refuses a uid it never enrolled. A plant
+	// from before station UIDs carries its old station string as its uid.
 	StationID string `json:"station_id"`
-	Hostname  string `json:"hostname"`
-	Instance  string `json:"instance,omitempty"`
-	Version   string `json:"version"`
+	// Hostname is the OS hostname: attribute data and a weak duplicate signal,
+	// since two Pis flashed from one SD image share it.
+	Hostname string `json:"hostname"`
+	// Instance is a random id drawn once per process at boot; absent means
+	// "cannot judge". It is the only field that separates two clones of one
+	// SD card, and Core alarms when a displaced instance returns — one machine
+	// cannot produce that, because a reboot draws a value it has never used and
+	// a live process keeps the one it holds.
+	Instance string `json:"instance,omitempty"`
+	// Version is the edge application's software version.
+	Version string `json:"version"`
 	// Timezone is the edge's resolved plant display zone (IANA name, e.g.
 	// "America/Chicago"), sent so Core can show each station's clock zone on
 	// the /edges page. Empty on an unconfigured edge — the table shows the
@@ -86,6 +102,7 @@ type EdgeRegister struct {
 
 // EdgeHeartbeat is sent periodically by an edge.
 type EdgeHeartbeat struct {
+	// StationID is the heartbeating station's UID, as registered.
 	StationID string `json:"station_id"`
 	// Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads
 	// it once at boot (not live), so the wire value flips only when a
@@ -111,14 +128,20 @@ type EdgeHeartbeat struct {
 
 // EdgeRegistered acknowledges edge registration.
 type EdgeRegistered struct {
+	// StationID echoes the registered station's UID.
 	StationID string `json:"station_id"`
-	Message   string `json:"message,omitempty"`
+	// Message is a human-readable status message.
+	Message string `json:"message,omitempty"`
 }
 
 // EdgeHeartbeatAck acknowledges a heartbeat.
 type EdgeHeartbeatAck struct {
-	StationID string    `json:"station_id"`
-	ServerTS  time.Time `json:"server_ts"`
+	// StationID echoes the heartbeating station's UID.
+	StationID string `json:"station_id"`
+	// ServerTS is Core's clock when it answered. The edge compares it with its
+	// own and shows the offset on /status; the offset includes Core's outbox
+	// delay.
+	ServerTS time.Time `json:"server_ts"`
 	// Timezone is the plant's IANA zone as EXPLICITLY CONFIGURED on Core, and
 	// empty when Core has not been told either. It is deliberately not Core's
 	// RESOLVED zone: resolving folds in Core's own default, so an unconfigured
@@ -167,15 +190,29 @@ type EdgeHeartbeatAck struct {
 
 // OrderRequest is a new transport order from edge.
 type OrderRequest struct {
-	OrderUUID     string    `json:"order_uuid"`
-	OrderType     OrderType `json:"order_type"`
-	PayloadCode   string    `json:"payload_code,omitempty"`
-	PayloadDesc   string    `json:"payload_desc,omitempty"`
-	Quantity      int64     `json:"quantity"`
-	DeliveryNode  string    `json:"delivery_node,omitempty"`
-	SourceNode    string    `json:"source_node,omitempty"`
-	Priority      int       `json:"priority,omitempty"`
-	RetrieveEmpty bool      `json:"retrieve_empty,omitempty"`
+	// OrderUUID is the order's id, a UUID v4 the edge generates; every later
+	// message about the order carries it.
+	OrderUUID string `json:"order_uuid"`
+	// OrderType is one of retrieve, retrieve_empty, move or complex. Intake
+	// refuses a type no planner serves (TermUnknownType).
+	OrderType OrderType `json:"order_type"`
+	// PayloadCode is the registered payload Core sources material by.
+	PayloadCode string `json:"payload_code,omitempty"`
+	// PayloadDesc is a human-readable description of the payload.
+	PayloadDesc string `json:"payload_desc,omitempty"`
+	// Quantity is the number of items or units asked for.
+	Quantity int64 `json:"quantity"`
+	// DeliveryNode is where to deliver; required for a retrieve and a move.
+	DeliveryNode string `json:"delivery_node,omitempty"`
+	// SourceNode is where to pick up. Required for a move. Optional for a
+	// retrieve or retrieve_empty, where it names a supermarket group to pull
+	// from; blank is Core's global FIFO search.
+	SourceNode string `json:"source_node,omitempty"`
+	// Priority: higher is more urgent; 0 by default.
+	Priority int `json:"priority,omitempty"`
+	// RetrieveEmpty asks for an empty carrier rather than a full one. An older
+	// Edge's retrieve with this set is promoted to retrieve_empty at intake.
+	RetrieveEmpty bool `json:"retrieve_empty,omitempty"`
 	// Want is the height the empty is wanted at, stated by the asker: none
 	// (the zero value, omitted) lets Core derive it where the carrier is set
 	// down, as it always has; a stated one is taken exactly — that height or
@@ -196,7 +233,7 @@ type OrderRequest struct {
 	// leg (L2/U2) while the bin is still empty/full.
 	SkipAutoConfirm bool `json:"skip_auto_confirm,omitempty"`
 	// OriginID / OriginClass attribute this order to the demand episode that
-	// asked for it. SEAM 2, Edge -> Core. Additive omitempty; SiblingOrderUUID
+	// asked for it, Edge -> Core. Additive omitempty; SiblingOrderUUID
 	// on ComplexOrderRequest is the exact template.
 	//
 	// An order arriving with no OriginID from an Edge that predates this lands
@@ -270,8 +307,11 @@ const (
 
 // OrderCancel cancels an existing order.
 type OrderCancel struct {
+	// OrderUUID names the order to cancel.
 	OrderUUID string `json:"order_uuid"`
-	Reason    string `json:"reason"`
+	// Reason is the human-readable cancellation reason, or
+	// CancelReasonAcceptHalfSwap.
+	Reason string `json:"reason"`
 }
 
 // CancelReasonAcceptHalfSwap marks a supply-leg cancel where the operator
@@ -284,14 +324,20 @@ const CancelReasonAcceptHalfSwap = "accept_half_swap"
 
 // OrderReceipt confirms delivery acceptance.
 type OrderReceipt struct {
-	OrderUUID   string `json:"order_uuid"`
+	// OrderUUID names the delivered order.
+	OrderUUID string `json:"order_uuid"`
+	// ReceiptType is always "confirmed" today.
 	ReceiptType string `json:"receipt_type"`
-	FinalCount  int64  `json:"final_count"`
+	// FinalCount is the quantity actually received, which may differ from the
+	// quantity ordered.
+	FinalCount int64 `json:"final_count"`
 }
 
 // OrderRedirect changes the delivery destination.
 type OrderRedirect struct {
-	OrderUUID       string `json:"order_uuid"`
+	// OrderUUID names the order to redirect.
+	OrderUUID string `json:"order_uuid"`
+	// NewDeliveryNode is the new destination node's name.
 	NewDeliveryNode string `json:"new_delivery_node"`
 }
 
@@ -299,25 +345,36 @@ type OrderRedirect struct {
 
 // OrderAck confirms order acceptance.
 type OrderAck struct {
-	OrderUUID     string `json:"order_uuid"`
-	ShingoOrderID int64  `json:"shingo_order_id"`
-	SourceNode    string `json:"source_node,omitempty"`
+	// OrderUUID echoes the edge's order UUID.
+	OrderUUID string `json:"order_uuid"`
+	// ShingoOrderID is Core's own id for the order.
+	ShingoOrderID int64 `json:"shingo_order_id"`
+	// SourceNode is the node Core chose as the source, when it has one.
+	SourceNode string `json:"source_node,omitempty"`
 }
 
 // OrderWaybill assigns a robot.
 type OrderWaybill struct {
+	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
+	// WaybillID is the fleet vendor's transport order id.
 	WaybillID string `json:"waybill_id"`
-	RobotID   string `json:"robot_id,omitempty"`
-	ETA       string `json:"eta,omitempty"`
+	// RobotID is the assigned robot.
+	RobotID string `json:"robot_id,omitempty"`
+	// ETA is the estimated time of arrival: RFC 3339, or free text.
+	ETA string `json:"eta,omitempty"`
 }
 
 // OrderUpdate provides a status change.
 type OrderUpdate struct {
+	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
-	Status    string `json:"status"`
-	Detail    string `json:"detail,omitempty"`
-	ETA       string `json:"eta,omitempty"`
+	// Status is the order's status at Core (a Status value).
+	Status string `json:"status"`
+	// Detail is a human-readable status detail.
+	Detail string `json:"detail,omitempty"`
+	// ETA is the updated estimated time of arrival, when there is one.
+	ETA string `json:"eta,omitempty"`
 	// QueueReason carries the blocking signal from Core's orders.queue_reason when
 	// Status is "queued" — e.g. "no bin of requested payload in node group AMR
 	// Supermarket". Omitted (not cleared) for non-queued updates; omitempty means
@@ -401,8 +458,13 @@ type OrderUpdate struct {
 // trade-off — a brief "looks like full bin" UI on partial-back
 // returns until the heal — is SME-accepted.
 type OrderDelivered struct {
-	OrderUUID      string     `json:"order_uuid"`
-	DeliveredAt    time.Time  `json:"delivered_at"`
+	// OrderUUID is the edge's order UUID.
+	OrderUUID string `json:"order_uuid"`
+	// DeliveredAt is when the fleet reported the physical delivery.
+	DeliveredAt time.Time `json:"delivered_at"`
+	// StagedExpireAt, when present, puts the order in staged (dwelling) until
+	// this time or until an order.release arrives. Absent on a delivery that
+	// does not stage.
 	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
 	// BinID carries the bin's Core-side ID so Edge can attribute PLC
 	// tick deltas to the right bin in the Phase 1 bin-as-truth flow.
@@ -469,8 +531,8 @@ type OrderDelivered struct {
 	BinDestNode string `json:"bin_dest_node,omitempty"`
 
 	// LandingSent says the Core that sent this also announces its carriers'
-	// drops on SubjectBinLanded (Lane H, H.7). A new Edge binds nothing from a
-	// delivered that carries it (H.5). Without it the sender is an older Core
+	// drops on SubjectBinLanded. A new Edge binds nothing from a
+	// delivered that carries it. Without it the sender is an older Core
 	// that never sends a landing, and a new Edge routes the carrier fields
 	// above through its landing verb with no placement stamp: into an empty
 	// slot or onto the same bin only, never over a different bound carrier.
@@ -576,9 +638,15 @@ const (
 
 // OrderError signals order failure.
 type OrderError struct {
+	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
+	// ErrorCode is the machine-readable error category: a TermCode value when
+	// the order reached a terminal status, or the refusing door's own code
+	// (invalid_state, not_found, redirect_failed, ...) when Core refused the
+	// message.
 	ErrorCode string `json:"error_code"`
-	Detail    string `json:"detail"`
+	// Detail is the human-readable error description.
+	Detail string `json:"detail"`
 	// Rows is Core's current bins rows for the nodes the refusal is about (a
 	// move's source, when its named bin is not there), for the Edge to write
 	// into its bins copy before it shows Detail. Absent on every other error;
@@ -592,15 +660,20 @@ type OrderError struct {
 // (the source was emptied externally before the order dispatched). Wire
 // shape mirrors OrderError so handlers stay parallel.
 type OrderSkipped struct {
+	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
+	// ErrorCode is the terminal code (a TermCode value) the skip ended with.
 	ErrorCode string `json:"error_code"`
-	Detail    string `json:"detail"`
+	// Detail is the human-readable reason.
+	Detail string `json:"detail"`
 }
 
 // OrderCancelled confirms order cancellation.
 type OrderCancelled struct {
+	// OrderUUID is the cancelled order's UUID.
 	OrderUUID string `json:"order_uuid"`
-	Reason    string `json:"reason"`
+	// Reason is the cancellation reason, echoed from the cancel.
+	Reason string `json:"reason"`
 }
 
 // --- Complex order payloads ---
@@ -709,7 +782,7 @@ type ComplexOrderStep struct {
 	// staging designation lives in the EDGE cell config, which Core does not
 	// have. The sender is the only party that knows.
 	//
-	// ── THE INCIDENT THIS WAS ATTRIBUTED TO WAS NOT THIS BUG (§R.112) ─────
+	// ── THE INCIDENT THIS WAS ATTRIBUTED TO WAS NOT THIS BUG ─────
 	//
 	// This field and its fix are UNCHANGED and keep their standing. What is
 	// struck is the causal claim, which stood here and at fourteen other sites:
@@ -761,18 +834,24 @@ type ComplexOrderStep struct {
 // the late-bind manifest fallback at release. Empty for orders without a
 // distinct line node — Core falls back to SourceNode behavior.
 type ComplexOrderRequest struct {
-	OrderUUID   string             `json:"order_uuid"`
-	PayloadCode string             `json:"payload_code,omitempty"`
-	PayloadDesc string             `json:"payload_desc,omitempty"`
-	Quantity    int64              `json:"quantity"`
-	Priority    int                `json:"priority,omitempty"`
-	ProcessNode string             `json:"process_node,omitempty"`
-	Steps       []ComplexOrderStep `json:"steps"`
+	// OrderUUID is the order's id, a UUID v4 the edge generates.
+	OrderUUID string `json:"order_uuid"`
+	// PayloadCode is the payload Core sources material by.
+	PayloadCode string `json:"payload_code,omitempty"`
+	// PayloadDesc is a human-readable description of the payload.
+	PayloadDesc string `json:"payload_desc,omitempty"`
+	// Quantity is the number of items or units asked for.
+	Quantity int64 `json:"quantity"`
+	// Priority: higher is more urgent; 0 by default.
+	Priority    int    `json:"priority,omitempty"`
+	ProcessNode string `json:"process_node,omitempty"`
+	// Steps are the order's steps, executed in sequence.
+	Steps []ComplexOrderStep `json:"steps"`
 	// SiblingOrderUUID is the edge UUID of the paired leg in a coordinated pair.
 	// BOTH legs carry it: every Edge door that makes a pair mints both uuids
 	// before it creates either, so each leg names its partner and neither goes
 	// out unpaired. Empty for non-swap orders — and for a RELAY, whose second
-	// leg collects what the first delivers (Edge engine/relay_pair.go): its legs
+	// leg collects what the first delivers (the Edge engine's stageSteps): its legs
 	// are linked on the Edge only, because a pair at Core would hold the feeder
 	// for a collector that cannot source until the feeder has gone.
 	//
@@ -808,7 +887,7 @@ type ComplexOrderRequest struct {
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 	// OriginID / OriginClass attribute this order to the demand episode that
-	// asked for it. SEAM 2, Edge -> Core, same shape as OrderRequest's.
+	// asked for it, Edge -> Core, same shape as OrderRequest's.
 	//
 	// BOTH legs of a swap pair carry the SAME OriginID: one fire of
 	// applyConsumePlan is one demand served by two order rows, and counting it
@@ -895,6 +974,7 @@ type UOPDisposition struct {
 // caller is a system-internal path (wiring completion fallbacks, restore,
 // etc.); Core defaults to "system" in that case.
 type OrderRelease struct {
+	// OrderUUID names the staged order to release.
 	OrderUUID    string          `json:"order_uuid"`
 	RemainingUOP *int            `json:"remaining_uop,omitempty"`
 	Disposition  *UOPDisposition `json:"disposition,omitempty"`
@@ -905,8 +985,8 @@ type OrderRelease struct {
 	// any other is a logged no-op. Absent = an Edge that predates it, which
 	// gets today's behaviour.
 	StationWait *int `json:"station_wait,omitempty"`
-	// AsOf fences the bin's count stream at the declaration (Lane H,
-	// DECISIONS D11 (i)): RemainingUOP is the count as of this point in the
+	// AsOf fences the bin's count stream at the declaration:
+	// RemainingUOP is the count as of this point in the
 	// station's (bin, epoch) delta stream. Core writes the declared count with
 	// no generation bump and moves its dedup cursor for the scope to it, so a
 	// delta flushed before the release and delivered after it is at or below
@@ -935,8 +1015,10 @@ type ReleaseFence struct {
 
 // OrderStaged notifies edge that an order is dwelling at a staging node.
 type OrderStaged struct {
+	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
-	Detail    string `json:"detail,omitempty"`
+	// Detail is a human-readable status detail.
+	Detail string `json:"detail,omitempty"`
 	// StationWait is the wait's ordinal among the order's STATION waits (0 is
 	// the first). Both sides agree on it, where the raw wait index does not:
 	// Core splices lane waits into a plan and the Edge's copy has none. Absent
@@ -960,9 +1042,14 @@ type OrderStaged struct {
 // falls back to SourceNode, and Core resolves the bin from what is parked at
 // that node (headless produce-finalize, which tracks the bin by id, not label).
 type OrderIngestRequest struct {
-	OrderUUID   string `json:"order_uuid"`
+	// OrderUUID is a UUID v4 per message, a correlation id only: an ingest
+	// creates no order.
+	OrderUUID string `json:"order_uuid"`
+	// PayloadCode is the payload whose manifest the bin is booked under.
 	PayloadCode string `json:"payload_code"`
-	BinLabel    string `json:"bin_label"` // optional: blank => resolve the bin by SourceNode
+	// BinLabel is the label of the bin to ingest (a manual ingest: a person
+	// scanned a real tote). Blank: Core resolves the bin by SourceNode.
+	BinLabel string `json:"bin_label"`
 	// BinID pins the exact Core bin (0 = absent → BinLabel/SourceNode
 	// resolution). Exists for the release-time produce manifest: by the time
 	// Core processes a deferred ingest, a press-index R2 may already have
@@ -975,9 +1062,15 @@ type OrderIngestRequest struct {
 	// audit row otherwise. The ingest neither expires nor dead-letters, so a
 	// late one must not re-stamp a bin that has since been emptied and
 	// refilled. 0 = absent (the manual HTTP door), today's behaviour.
-	BinEpoch   int64                `json:"bin_epoch,omitempty"`
-	SourceNode string               `json:"source_node"`
-	Quantity   int64                `json:"quantity"` // operator-measured produced count (UOP); 0 => payload capacity
+	BinEpoch int64 `json:"bin_epoch,omitempty"`
+	// SourceNode is where the filled bin is parked; required when BinLabel is
+	// blank, since Core then resolves the bin from what stands there.
+	SourceNode string `json:"source_node"`
+	// Quantity is the operator-measured produced count (UOP); 0 is the
+	// payload's capacity.
+	Quantity int64 `json:"quantity"`
+	// Manifest lists the bin's items explicitly; absent, Core uses the
+	// payload's manifest template.
 	Manifest   []IngestManifestItem `json:"manifest,omitempty"`
 	ProducedAt string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
 	// DeclaredQty is the count a station's RELEASE FULL declared for a bin it
@@ -1005,9 +1098,9 @@ type OrderIngestRequest struct {
 
 // IngestManifestItem describes a single item in an ingest manifest.
 type IngestManifestItem struct {
-	PartNumber  string `json:"part_number"`
-	Quantity    int64  `json:"quantity"`
-	Description string `json:"description,omitempty"`
+	PartNumber  string `json:"part_number"`           // the part's identifier
+	Quantity    int64  `json:"quantity"`              // the count of this part
+	Description string `json:"description,omitempty"` // a human-readable part description
 }
 
 // --- Node list data schemas ---
@@ -1025,16 +1118,17 @@ type NodeListRequest struct {
 }
 
 // NodeInfo describes a single node in the core's node list.
-//
-// Kanban is true for a group Core keeps a level of empties in (a group
-// with a level), so the Edge can refuse that group as a full-bin
-// source when a claim is saved, as Core refuses it for a loader. Omitted when
-// false, and an older Core never sends it: absent reads as false, so an Edge
-// talking to such a Core refuses nothing on this account.
 type NodeInfo struct {
-	Name     string `json:"name"`
+	// Name is the node's name.
+	Name string `json:"name"`
+	// NodeType is the node type code (NGRP, LANE); empty for a physical node.
 	NodeType string `json:"node_type"`
-	Kanban   bool   `json:"kanban,omitempty"`
+	// Kanban is true for a group Core keeps a level of empties in (a group
+	// with a level), so the Edge can refuse that group as a full-bin
+	// source when a claim is saved, as Core refuses it for a loader. Omitted when
+	// false, and an older Core never sends it: absent reads as false, so an Edge
+	// talking to such a Core refuses nothing on this account.
+	Kanban bool `json:"kanban,omitempty"`
 	// AcceptsPartials marks a window of a loader whose windows take partly
 	// filled carriers (accept_partials), and every group above one. A claim's
 	// partial home may not be one: the two say opposite things about the same
@@ -1058,7 +1152,11 @@ type PayloadBinTypeInfo struct {
 // omitted until Core authors loaders, so this is additive — a pre-cutover Edge
 // ignores the unknown field.
 type NodeListResponse struct {
-	Nodes           []NodeInfo           `json:"nodes"`
+	// Nodes is Core's node list.
+	Nodes []NodeInfo `json:"nodes"`
+	// Loaders is the Core-owned bin-loader aggregate (each loader with its
+	// positions and payloads), which the Edge caches in core_loaders and its
+	// loader resolvers read.
 	Loaders         []LoaderInfo         `json:"loaders,omitempty"`
 	PayloadBinTypes []PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
 	// Family is each bin type's carrier family, by bin-type code: two types are one physical
@@ -1157,6 +1255,7 @@ type SceneEdgeInfo struct {
 // (Core resolves its position_node_id → name when building this). layout =
 // shared_window | dedicated_positions; replenishment = operator | threshold.
 type LoaderInfo struct {
+	// Name is the loader's display name.
 	Name string `json:"name"`
 	// LoaderKey is the loader's IDENTITY — the opaque token Core mints from
 	// bin_loaders.id as "loader:<id>". It is the Edge cache key that groups a loader's
@@ -1164,9 +1263,14 @@ type LoaderInfo struct {
 	// loader has no node id of its own (a multi-window loader spans many nodes); its
 	// delivery targets are the explicit member nodes in Positions. domain.LoaderID
 	// stays a string newtype so a future UUID swap is invisible.
-	LoaderKey     string `json:"loader_key"`
-	Role          string `json:"role"`
-	Layout        string `json:"layout"`
+	LoaderKey string `json:"loader_key"`
+	// Role is produce (a loader) or consume (an unloader): ClaimRole's values.
+	Role string `json:"role"`
+	// Layout is LoaderLayoutSharedWindow or LoaderLayoutDedicatedPositions:
+	// the one discriminator between a window and a dedicated position.
+	Layout string `json:"layout"`
+	// Replenishment is LoaderReplenishmentOperator or
+	// LoaderReplenishmentThreshold.
 	Replenishment string `json:"replenishment"`
 	OutboundDest  string `json:"outbound_dest,omitempty"`
 	InboundSource string `json:"inbound_source,omitempty"`
@@ -1210,10 +1314,13 @@ type LoaderInfo struct {
 	// BoardShowsAllParts: the board lists every part the station takes, not
 	// only what a running style needs. Display only. A Core predating these
 	// fields sends both false, so deploy Core first.
-	BoardHidesIdle     bool                `json:"board_hides_idle,omitempty"`
-	BoardShowsAllParts bool                `json:"board_shows_all_parts,omitempty"`
-	Positions          []LoaderPosition    `json:"positions,omitempty"`
-	Payloads           []LoaderPayloadInfo `json:"payloads,omitempty"`
+	BoardHidesIdle     bool `json:"board_hides_idle,omitempty"`
+	BoardShowsAllParts bool `json:"board_shows_all_parts,omitempty"`
+	// Positions are the loader's member homes: its windows (shared_window) or
+	// its dedicated positions.
+	Positions []LoaderPosition `json:"positions,omitempty"`
+	// Payloads is the shared allowed set, on a shared_window loader only.
+	Payloads []LoaderPayloadInfo `json:"payloads,omitempty"`
 }
 
 // LoaderPosition is one home of a loader. For a dedicated_positions loader it is
@@ -1222,8 +1329,13 @@ type LoaderInfo struct {
 // set rides LoaderInfo.Payloads). Which of the two a position is comes from the
 // parent loader's Layout, the one discriminator.
 type LoaderPosition struct {
+	// CoreNodeName is the position's (or window's) node NAME, the Edge's key
+	// space.
 	CoreNodeName string `json:"core_node_name"`
-	PayloadCode  string `json:"payload_code"`
+	// PayloadCode is the payload a dedicated position is bound to; empty for a
+	// window, a buffer, or a position not yet assigned one (HomeKind tells the
+	// last two apart).
+	PayloadCode string `json:"payload_code"`
 	// HomeKind separates the two DIFFERENT things a blank PayloadCode can mean
 	// on a dedicated loader: a kept-partial BUFFER slot, and a HOME position the
 	// operator dragged in but has not assigned a payload to yet.
@@ -1246,6 +1358,7 @@ type LoaderPosition struct {
 	// threshold monitor orders from it, Core's pages report a missing one) and
 	// the Edge's copy fed nothing but a startup warning. Dropped 2026-10-28; an
 	// older Core still sending uop_threshold is ignored on decode.
+
 	// Ordinal is where the operator put this window. An admin screen lets them
 	// drag a loader's windows into the order they want filled; Core persists
 	// that and this is how it reaches the plant.
@@ -1304,21 +1417,21 @@ const (
 
 // LoaderPayloadInfo is one entry in a shared_window loader's allowed payload set.
 type LoaderPayloadInfo struct {
-	PayloadCode string `json:"payload_code"`
+	PayloadCode string `json:"payload_code"` // one payload of the allowed set
 }
 
 // --- Production data schemas ---
 
 // EdgeStale is sent by core to notify an edge that it has been marked stale.
 type EdgeStale struct {
-	StationID string `json:"station_id"`
-	Message   string `json:"message"`
+	StationID string `json:"station_id"` // the stale station's UID
+	Message   string `json:"message"`    // a human-readable detail
 }
 
 // EdgeRegisterRequest is sent by core to ask an edge to re-register.
 type EdgeRegisterRequest struct {
-	StationID string `json:"station_id"`
-	Reason    string `json:"reason"`
+	StationID string `json:"station_id"` // the station that should re-register
+	Reason    string `json:"reason"`     // why it should
 }
 
 // --- Payload Catalog ---
@@ -1328,11 +1441,11 @@ type CatalogPayloadsRequest struct{}
 
 // CatalogPayloadInfo describes a single payload template in the catalog.
 type CatalogPayloadInfo struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Code        string `json:"code"`
-	Description string `json:"description"`
-	UOPCapacity int    `json:"uop_capacity"`
+	ID          int64  `json:"id"`           // Core's payload id
+	Name        string `json:"name"`         // the payload template's name
+	Code        string `json:"code"`         // the unique payload code
+	Description string `json:"description"`  // a human-readable description
+	UOPCapacity int    `json:"uop_capacity"` // production cycles a full load supports
 	// CATID is the payload's part identity from its Core manifest: the
 	// DISTINCT part numbers, comma-joined (a single-part payload sends one
 	// value; a multi-part kit sends the full list). The edge splits it back
@@ -1352,6 +1465,7 @@ type CatalogPayloadInfo struct {
 
 // CatalogPayloadsResponse carries the core's payload catalog.
 type CatalogPayloadsResponse struct {
+	// Payloads is Core's payload catalog.
 	Payloads []CatalogPayloadInfo `json:"payloads"`
 	// Digest is the FeedCatalog digest of Payloads (CatalogDigest). Absent from
 	// an older Core.
@@ -1933,8 +2047,12 @@ type PlantClaim struct {
 // Value schema is ADDITIVE-only — an older Edge ignores unknown fields, and one
 // that does not register the subject logs-and-drops the whole message.
 type SourcingStateReport struct {
-	States   []SourcingState `json:"states"`
-	Snapshot bool            `json:"snapshot,omitempty"`
+	// States are the per-(process, style) verdicts.
+	States []SourcingState `json:"states"`
+	// Snapshot true is a full replace of the edge's slice (the edge drops rows
+	// not in it); false or absent is a change delta of only the styles whose
+	// verdict moved.
+	Snapshot bool `json:"snapshot,omitempty"`
 }
 
 // SourcingState is one (process, style)'s sourceability verdict on the wire.
@@ -1942,8 +2060,10 @@ type SourcingStateReport struct {
 // yellow-computed style arrives here as "green" with AtRisk empty, so no screen
 // ever shows an unvalidated yellow.
 type SourcingState struct {
+	// ProcessID is the process key, plant.claims' process_id.
 	ProcessID string `json:"process_id"`
-	StyleID   string `json:"style_id"`
+	// StyleID is the style key within the process.
+	StyleID string `json:"style_id"`
 	// Status is "green", "yellow", "red", or "not_configured".
 	//
 	// "not_configured" means the style has no sourceability claims, so there is
@@ -1964,15 +2084,16 @@ type SourcingState struct {
 	AtRisk []SourcingAtRisk `json:"at_risk,omitempty"`
 	// Reason is the operator-facing generated sentence (Core owns the wording;
 	// the HMI displays it verbatim and never invents text).
-	Reason     string    `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// ComputedAt is when Core computed the verdict.
 	ComputedAt time.Time `json:"computed_at"`
 }
 
 // SourcingAtRisk is one line's time-to-empty projection on the wire.
 type SourcingAtRisk struct {
-	PayloadCode        string  `json:"payload_code"`
-	Node               string  `json:"node,omitempty"`
-	TimeToEmptySeconds float64 `json:"time_to_empty_seconds"`
+	PayloadCode        string  `json:"payload_code"`          // the payload projecting empty
+	Node               string  `json:"node,omitempty"`        // the line (node) the projection is for
+	TimeToEmptySeconds float64 `json:"time_to_empty_seconds"` // projected seconds until the line empties (lower fills first)
 }
 
 // DemandOriginState is the WHOLE episode row, sent on every change.

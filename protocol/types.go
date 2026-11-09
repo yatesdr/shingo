@@ -509,7 +509,7 @@ type OrderType string
 const (
 	OrderTypeRetrieve      OrderType = "retrieve"       // pull a loaded bin matching a payload to a destination
 	OrderTypeRetrieveEmpty OrderType = "retrieve_empty" // pull an empty bin compatible with a payload to a destination
-	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
+	OrderTypeStore         OrderType = "store"          // never a kind of order (the bin resolver's put mode); nothing mints it, kept unread
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
 	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows

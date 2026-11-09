@@ -36,6 +36,8 @@ update it — don't work around it.
 
 ## Contents
 
+<!-- generated: docs/ui-style-guide -->
+
 1. [`02-the-three-surfaces.md`](ui-style-guide/02-the-three-surfaces.md) — The three surfaces
 1. [`03-code-organization.md`](ui-style-guide/03-code-organization.md) — Code organization
 1. [`04-design-tokens.md`](ui-style-guide/04-design-tokens.md) — Design tokens
@@ -60,3 +62,5 @@ update it — don't work around it.
 1. [`28-event-handling-delegated-actions.md`](ui-style-guide/28-event-handling-delegated-actions.md) — Event handling — delegated actions
 1. [`31-mission-detail-stages.md`](ui-style-guide/31-mission-detail-stages.md) — Mission detail — stages
 1. [`33-settings-pages.md`](ui-style-guide/33-settings-pages.md) — Settings pages
+
+<!-- /generated -->

@@ -1,3 +1,4 @@
+// End-to-end tests: Edge and Core wired in one test process, their envelopes routed between them without a broker.
 module shingo/integration
 
 go 1.25.0

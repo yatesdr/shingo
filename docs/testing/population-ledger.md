@@ -873,3 +873,30 @@ No assertion read any of the twelve.
 - coverage Δ: 0 (the test reads a source file; it covers no statement of the package)
 - citations rewritten: `scripts/check-test-error-discard-ratchet.sh` (its three rules no longer cite the deleted test as the convention's home); `engine/recovery.go` (drops "see engine_db_methods.go"); `shingo-core/docs/engine_db_methods_residual.md` deleted with it
 - verified at: the commit that adds this row
+
+### FOLD — `TestWireProtocolDocSubjectsMatchCode`
+- test: `TestWireProtocolDocSubjectsMatchCode` · pkg `shingo/protocol` · run `-run '^TestWireProtocolDocSubjectsMatchCode$'` · `protocol/docs_drift_test.go:31` @ `b9210bce` · tags `none`
+- code: FOLD (the doc's Known Subjects table is now emitted from `protocol.AllSubjects()` by `shared/scripts/docgen`, so the table and the code cannot disagree, and `TestGeneratedBlocksAreCurrent` fails a stale block)
+- assertion map: (1) every `AllSubjects()` value is a row and every row is a subject → the generated block is `AllSubjects()`, one row each, and the generator refuses a value no Subject constant holds; (2) `order.skipped` is never a subject row → a row can only come from `AllSubjects()`, which holds no message type
+- mutation: at the tip, `"mutation.subject"` added to `CoreInboundSubjects()`: `go test -count=1 -run '^TestGeneratedBlocksAreCurrent$' ./scripts/docgen/` (shared) → `docs/wire-protocol.md:369: protocol/types.go AllSubjects: no Subject constant holds "mutation.subject"`, `FAIL`; restored
+- coverage Δ: 0 (a doc-reading test; it covered no protocol statement beyond `AllSubjects`, which `TestGeneratedBlocksAreCurrent` calls)
+- citations rewritten: `protocol/docs_drift_test.go` header; `docs/ui-style-guide/24-drift-detection.md` (generated inventory)
+- verified at: the commit that adds this row
+
+### FOLD — `TestWireProtocolDocNoExpiryRowsMatchCode`
+- test: `TestWireProtocolDocNoExpiryRowsMatchCode` · pkg `shingo/protocol` · run `-run '^TestWireProtocolDocNoExpiryRowsMatchCode$'` · `protocol/docs_drift_test.go:74` @ `b9210bce` · tags `none`
+- code: FOLD (the Subject-Specific TTL table is now emitted from `protocol.DataTTLFor` by `shared/scripts/docgen`; `TestGeneratedBlocksAreCurrent` fails a stale block)
+- assertion map: the `**none**` rows equal the subjects whose `DataTTLFor` is `NoExpiry`, both ways → the generated TTL block renders every subject's `DataTTLFor`, `NoExpiry` included, so a change to the set changes the block
+- mutation: at the tip, `SubjectEdgeAnswer` given `30 * time.Second` in `protocol/expiry.go`: `go test -count=1 -run '^TestGeneratedBlocksAreCurrent$' ./scripts/docgen/` (shared) → `docs/wire-protocol.md:425: the block generated from "protocol/expiry.go DataTTLFor" is stale; run make docs-gen`, `FAIL`; restored
+- coverage Δ: 0 (a doc-reading test)
+- citations rewritten: `protocol/docs_drift_test.go` header; `docs/ui-style-guide/24-drift-detection.md` (generated inventory)
+- verified at: the commit that adds this row
+
+### FOLD — `TestWireProtocolDocNoExpiryProseCountsTheTable`
+- test: `TestWireProtocolDocNoExpiryProseCountsTheTable` · pkg `shingo/protocol` · run `-run '^TestWireProtocolDocNoExpiryProseCountsTheTable$'` · `protocol/docs_drift_test.go:109` @ `b9210bce` · tags `none`
+- code: FOLD (into `TestWireProtocolDocNoExpiryProseCountsTheSet`, which counts the prose against `protocol/expiry.go`'s NoExpiry set instead of against the table, now that the table is generated)
+- assertion map: the "N subjects carry NO expiry at all" sentence names the count → the same sentence, the same count word, counted from `DataTTLFor(s) == NoExpiry` over `AllSubjects()`
+- mutation: at the tip, `SubjectEdgeAnswer` given `30 * time.Second` in `protocol/expiry.go`: `go test -count=1 -run '^TestWireProtocolDocNoExpiryProseCountsTheSet$' .` (protocol) → `prose says "**Nine subjects carry NO expiry at all** …" but 8 subjects are NoExpiry in protocol/expiry.go`, `FAIL`; restored
+- coverage Δ: 0 (a doc-reading test)
+- citations rewritten: none outside `protocol/docs_drift_test.go`
+- verified at: the commit that adds this row

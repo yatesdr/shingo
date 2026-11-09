@@ -14,78 +14,197 @@ The Operator HMI specifically tunes color saturation for shop-floor lighting,
 so it redefines values within its own scope while keeping the same token
 names.
 
-```css
-/* shared/tokens.css — applies to Core and Edge admin */
-:root {
-  /* Surfaces */
-  --bg: #f8f9fa;
-  --surface: #ffffff;
-  --border: #dee2e6;
-  /* Text */
-  --text: #212529;
-  --text-muted: #6c757d;
-  /* UI accent (Indigo) — reserved for interactive chrome, never a status. */
-  --accent: #4f4fd6;            /* foreground: text/links/focus/active */
-  --accent-hover: #3e3ec0;
-  --accent-solid: #4f4fd6;      /* filled buttons/badges under white text (P15) */
-  --accent-solid-hover: #3e3ec0;
-  /* Semantic — --primary aliases the accent so every CTA/link/tab adopts it. */
-  --primary: var(--accent);
-  --primary-hover: var(--accent-hover);
-  --success: #198754;
-  --danger: #dc3545;
-  --warning: #ffc107;
-  --info: #0dcaf0;  /* must remain distinct from --primary in all themes */
-  /* Robot identity hues (U8) — see "Robot identity hues" below. An identity,
-   * like a chart series; never the accent, never a status. */
-  --robot-1: #22c9ae;
-  --robot-2: #8a7bff;
-  --station: #f2f5f8;
-  /* Elevation steps (cards read one shade lighter than their background). */
-  --elev-canvas: #eceef2; --elev-base: #f4f6f8; --elev-surface: #ffffff; --elev-raised: #ffffff;
-  /* Geometry */
-  --radius: 0.375rem;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
+The shared tokens, both themes (`shared/tokens.css`; `—` means the dark theme
+keeps the light value):
 
-[data-theme="dark"] {
-  --bg: #161b22;
-  --surface: #1c2128;
-  /* ... etc ... */
-  --info: #39d2f5;  /* NOT #58a6ff — that's --primary in dark */
-}
-```
+<!-- generated: shared/tokens.css -->
 
-```css
-/* operator-station/operator.css — shop-floor-tuned values */
-:root {
-  /* Shared semantic names, operator-tuned values */
-  --success: #22a84e;   /* brighter for fluorescent-lit floor */
-  --danger: #c0392b;
-  --warning: #b8860b;
-  --primary: #2970d6;
-  /* Operator-specific structural tokens */
-  --os-touch-min: 56px;
-  --os-header-h: 72px;
-  --os-footer-h: 40px;
-  --os-btn-radius: 14px;
-}
-```
+| Token | Light (`:root`) | Dark (`[data-theme="dark"]`) |
+|---|---|---|
+| `--bg` | `var(--elev-base)` | `var(--elev-base)` |
+| `--bg-dark` | `#e9ecef` | `#0d1117` |
+| `--surface` | `var(--elev-surface)` | `var(--elev-surface)` |
+| `--border` | `#dee2e6` | `#30363d` |
+| `--elev-canvas` | `#eceef2` | `#0b0f16` |
+| `--elev-base` | `#f4f6f8` | `#0d1117` |
+| `--elev-surface` | `#ffffff` | `#161b22` |
+| `--elev-raised` | `#ffffff` | `#1f2733` |
+| `--text` | `#212529` | `#c9d1d9` |
+| `--text-muted` | `#68717a` | `#8b949e` |
+| `--text-strong` | `#11161c` | `#e6edf3` |
+| `--accent` | `#4f4fd6` | `#7c7cf0` |
+| `--accent-hover` | `#3e3ec0` | `#9a9af5` |
+| `--accent-glow` | `color-mix(in srgb, var(--accent) 55%, transparent)` | — |
+| `--accent-solid` | `#4f4fd6` | — |
+| `--accent-solid-hover` | `#3e3ec0` | — |
+| `--on-accent-solid` | `#ffffff` | — |
+| `--on-success-fill` | `#ffffff` | `#0d1117` |
+| `--on-staged-fill` | `#0d1117` | — |
+| `--scrim` | `rgba(0, 0, 0, .5)` | `rgba(4, 6, 9, .62)` |
+| `--loader-outline` | `#0a8f6a` | — |
+| `--primary` | `var(--accent)` | `var(--accent)` |
+| `--primary-hover` | `var(--accent-hover)` | `var(--accent-hover)` |
+| `--primary-dark` | `var(--accent-hover)` | `var(--accent-hover)` |
+| `--success` | `#198754` | `#3fb950` |
+| `--danger` | `#dc3545` | `#f85149` |
+| `--warning` | `#ffc107` | `#d29922` |
+| `--info` | `#0dcaf0` | `#39d2f5` |
+| `--viz-primary` | `#1b2027` | `#eaf0f6` |
+| `--viz-secondary` | `var(--text-muted)` | — |
+| `--viz-accent` | `var(--accent)` | — |
+| `--viz-indigo` | `var(--accent)` | — |
+| `--viz-violet` | `#7c3aed` | `#b07cf5` |
+| `--viz-sky` | `#0284c7` | `#38bdf8` |
+| `--viz-teal` | `#0d9488` | `#2dd4bf` |
+| `--viz-amber` | `#b45309` | `#facc5b` |
+| `--viz-orange` | `#c2410c` | `#f97316` |
+| `--viz-coral` | `#e11d48` | `#fb7185` |
+| `--viz-green` | `#059669` | `#34d399` |
+| `--group-1` | `var(--viz-sky)` | `var(--viz-sky)` |
+| `--group-2` | `var(--viz-orange)` | `var(--viz-orange)` |
+| `--chip-ink-ok` | `#04714f` | `var(--viz-green)` |
+| `--chip-ink-near` | `#984608` | `var(--viz-amber)` |
+| `--chip-ink-below` | `#b6173a` | `var(--viz-coral)` |
+| `--chip-ink-muted` | `#5c646c` | `#949ca6` |
+| `--chip-ink-err` | `#ffffff` | `#1b0508` |
+| `--viz-seq-1` | `#d5f5ef` | `#0c322e` |
+| `--viz-seq-2` | `#7fd9c9` | `#14564e` |
+| `--viz-seq-3` | `#2db3a0` | `#1c8074` |
+| `--viz-seq-4` | `#0d9488` | `#2dd4bf` |
+| `--viz-seq-5` | `#0b5f57` | `#7ff0e1` |
+| `--viz-div-neg-2` | `#c81e4a` | `#fb7185` |
+| `--viz-div-neg-1` | `#e9607c` | `#cc6b7d` |
+| `--viz-div-mid` | `#b7bcc4` | `#6e7681` |
+| `--viz-div-pos-1` | `#34a594` | `#2ca89a` |
+| `--viz-div-pos-2` | `#0d8b7f` | `#2dd4bf` |
+| `--status-pending-dot` | `#8b95a5` | — |
+| `--status-queued-dot` | `#7aa2f0` | — |
+| `--status-dispatched-dot` | `#4f9bff` | — |
+| `--status-in-transit-dot` | `#34c3e0` | — |
+| `--status-staged-dot` | `#15b8a0` | — |
+| `--status-reshuffling-dot` | `#df6fb4` | — |
+| `--status-blocked-dot` | `#f85149` | — |
+| `--status-delivered-dot` | `#3fb950` | — |
+| `--status-faulted-bg` | `#fed7aa` | `#4a2606` |
+| `--status-faulted-ink` | `#9a3412` | `#fdba74` |
+| `--status-faulted-border` | `#fdba74` | `#6b2c06` |
+| `--status-failed-bg` | `#fecaca` | `#450a0a` |
+| `--status-failed-ink` | `#991b1b` | `#f87171` |
+| `--status-failed-border` | `#fca5a5` | `#5c1515` |
+| `--sub-1` | `#d4dbe4` | `#2b3543` |
+| `--sub-2` | `#b1bccd` | `#3c4a5e` |
+| `--sub-3` | `#9cacc1` | `#45566e` |
+| `--sub-4` | `#76859d` | `#66768f` |
+| `--sub-5` | `#5e718d` | `#7a8ba6` |
+| `--map-floor` | `#131a24` | — |
+| `--map-aisle` | `var(--sub-3)` | — |
+| `--map-node` | `var(--sub-4)` | — |
+| `--map-node-action` | `var(--sub-5)` | — |
+| `--map-bay-ring` | `var(--sub-2)` | — |
+| `--map-bay-glyph` | `#6b7a90` | — |
+| `--map-robot-idle` | `#8b949e` | — |
+| `--map-dock-charge` | `#e3b341` | — |
+| `--map-dock-park` | `#d98c4a` | — |
+| `--robot-1` | `#22c9ae` | — |
+| `--robot-2` | `#8a7bff` | — |
+| `--station` | `#f2f5f8` | — |
+| `--map-class-1` | `#6cb0ff` | — |
+| `--map-class-2` | `#56d364` | — |
+| `--map-class-3` | `#e3b341` | — |
+| `--map-class-4` | `#d2a8ff` | — |
+| `--map-class-5` | `#ff9b72` | — |
+| `--map-class-6` | `#79c0ff` | — |
+| `--map-class-7` | `#f0883e` | — |
+| `--kpi-up` | `var(--viz-green)` | — |
+| `--kpi-down` | `var(--viz-coral)` | — |
+| `--font-xs` | `0.75rem` | — |
+| `--font-sm` | `0.875rem` | — |
+| `--font-base` | `1rem` | — |
+| `--font-lg` | `1.25rem` | — |
+| `--font-xl` | `1.5rem` | — |
+| `--fw-normal` | `400` | — |
+| `--fw-bold` | `600` | — |
+| `--sp-1` | `0.25rem` | — |
+| `--sp-2` | `0.5rem` | — |
+| `--sp-3` | `0.75rem` | — |
+| `--sp-4` | `1rem` | — |
+| `--sp-5` | `1.5rem` | — |
+| `--sp-6` | `2rem` | — |
+| `--dur-fast` | `120ms` | — |
+| `--dur-base` | `250ms` | — |
+| `--ease` | `cubic-bezier(0.4, 0, 0.2, 1)` | — |
+| `--z-raised` | `1` | — |
+| `--z-sticky` | `10` | — |
+| `--z-tooltip` | `20` | — |
+| `--z-dropdown` | `30` | — |
+| `--z-chrome` | `40` | — |
+| `--z-modal` | `50` | — |
+| `--z-modal-over` | `60` | — |
+| `--z-popover` | `70` | — |
+| `--z-toast` | `80` | — |
+| `--radius` | `6px` | — |
+| `--shadow` | `0 1px 3px rgba(0, 0, 0, 0.1)` | `0 1px 3px rgba(0, 0, 0, 0.3)` |
+| `--shadow-sm` | `0 1px 3px rgba(0, 0, 0, 0.1)` | `0 1px 3px rgba(0, 0, 0, 0.3)` |
+| `--shadow-md` | `0 4px 6px rgba(0, 0, 0, 0.1)` | `0 4px 6px rgba(0, 0, 0, 0.4)` |
+| `--shadow-lg` | `0 4px 6px rgba(0, 0, 0, 0.1)` | `0 4px 6px rgba(0, 0, 0, 0.4)` |
+| `--route-here` | `var(--accent)` | `var(--accent)` |
+| `--route-on-here` | `#ffffff` | `#0d1117` |
+| `--route-passed` | `var(--text-muted)` | `var(--text-muted)` |
+| `--route-remaining` | `var(--text)` | `var(--text)` |
+| `--route-chip` | `var(--bg-dark)` | `#21262d` |
+| `--route-chip-ink` | `var(--text)` | `var(--text)` |
 
-### Rename mapping (one-time)
+<!-- /generated -->
 
-The original operator tokens used visual names. Rename to semantic:
+The operator station's own `:root` block
+(`shingo-edge/www/static/operator-station/operator.css`):
 
-| Old | New |
+<!-- generated: shingo-edge/www/static/operator-station/operator.css -->
+
+| Token | Value |
 |---|---|
-| `--os-green-bright` | `--success` (redefined in operator scope) |
-| `--os-blue` | `--primary` (redefined in operator scope) |
-| `--os-red` | `--danger` (redefined in operator scope) |
-| `--os-amber` | `--warning` (redefined in operator scope) |
-| `--os-bg` | `--bg` (redefined in operator scope) |
-| `--os-surface` | `--surface` (redefined in operator scope) |
-| `--os-touch-min`, `--os-header-h`, `--os-footer-h`, `--os-btn-radius` | unchanged — structural, not semantic |
+| `--os-bg` | `#101418` |
+| `--os-header-bg` | `#1a2230` |
+| `--os-footer-bg` | `#151c26` |
+| `--os-surface` | `#1b232d` |
+| `--os-border` | `#2a3545` |
+| `--os-text` | `#ffffff` |
+| `--os-text-muted` | `#8a96a4` |
+| `--os-text-dim` | `#5a6575` |
+| `--os-green` | `#1a7a3d` |
+| `--os-green-bright` | `#22a84e` |
+| `--os-amber` | `#b8860b` |
+| `--os-red` | `#c0392b` |
+| `--os-blue` | `#2970d6` |
+| `--os-purple` | `#7b5ea7` |
+| `--os-orange` | `#d4712a` |
+| `--os-gray` | `#3a3f47` |
+| `--os-gray-light` | `#4a5060` |
+| `--os-btn-radius` | `14px` |
+| `--os-grid-gap` | `10px` |
+| `--os-header-h` | `72px` |
+| `--os-footer-h` | `40px` |
+| `--z-raised` | `1` |
+| `--z-sticky` | `10` |
+| `--z-tooltip` | `20` |
+| `--z-dropdown` | `30` |
+| `--z-chrome` | `40` |
+| `--z-modal` | `50` |
+| `--z-modal-over` | `60` |
+| `--z-popover` | `70` |
+| `--z-toast` | `80` |
+| `--os-station` | `var(--station)` |
+| `--os-robot-1` | `var(--robot-1)` |
+| `--os-robot-2` | `var(--robot-2)` |
+| `--os-sub-3` | `var(--sub-3)` |
+| `--os-sub-4` | `var(--sub-4)` |
+| `--os-sub-5` | `var(--sub-5)` |
+| `--os-accent-solid` | `var(--accent-solid)` |
+| `--os-accent-solid-hover` | `var(--accent-solid-hover)` |
+| `--os-accent` | `var(--accent)` |
+| `--os-touch-min` | `56px` |
+
+<!-- /generated -->
 
 ### Rules
 
@@ -170,13 +289,6 @@ Three tokens, theme-invariant, in `:root`:
 | `--robot-1` | `#22c9ae` | Robot 1 — its chevrons and words on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
 | `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
 | `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph — on the station; the desktop Processes page, which follows the light theme, draws these through `--os-station` mapped to `--text-strong` |
-
-The operator station keeps its own copies — `--os-r1`, `--os-r2`,
-`--os-station` — for the reason the z-layer and substrate copies exist:
-`operator-display.html` links only `operator.css`, so a `var(--robot-1)` there
-resolves to nothing and a robot's chevrons silently disappear. Both copies move
-together, and `TestOperatorStationRobotColoursMatchShared` /
-`TestOperatorStationStationHueMatchesShared` fail if one moves alone.
 
 **How this sits with P13 (indigo is the accent, never a status).** A robot hue
 is neither. It is an **identity**, in exactly the sense a chart series is one

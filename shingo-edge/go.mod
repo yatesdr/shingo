@@ -1,3 +1,4 @@
+// Shop-floor client. Runs at each production line: tracks PLC counters, keeps lineside material, runs the operator screens, and talks to Core over Kafka.
 module shingoedge
 
 go 1.25.0

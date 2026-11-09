@@ -71,7 +71,7 @@ type Config struct {
 
 	// Timezone is the plant's IANA zone for DISPLAY rendering (plant-local
 	// timestamps on every core page, via shared/planttime) and for the
-	// plant-local date-filter resolution (Q-004). Empty resolves to UTC
+	// plant-local date-filter resolution. Empty resolves to UTC
 	// (planttime.DefaultZone, resolved by planttime.ResolveZone): visibly foreign rather than
 	// plausibly local, so an unset zone shows. Storage and the wire stay UTC
 	// regardless; this field never touches either. PLANT_TIMEZONE env still
@@ -189,7 +189,9 @@ type FutilityConfig struct {
 // subsystem is still fully readable in the UI; only the journal is quieter.
 type LoggingConfig struct {
 	// StderrSubsystems is the allow-list of debuglog subsystems mirrored to
-	// stderr. Semantics:
+	// stderr (under systemd, the journal).
+	//
+	// Semantics:
 	//
 	//   absent          — the DefaultStderrSubsystems() list below
 	//   ["all"]         — mirror everything (the incident escape hatch:
@@ -236,23 +238,28 @@ type FireAlarmConfig struct {
 	AutoResumeDefault bool `yaml:"auto_resume_default"` // default checkbox state for auto-resume on clear
 }
 
+// NotificationsConfig is the e-mail alert sender (notify.Notifier). It sends
+// only when enabled AND smtp_host, from_address and at least one recipient are
+// set.
 type NotificationsConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	SMTPHost        string   `yaml:"smtp_host"`
-	SMTPPort        int      `yaml:"smtp_port"`
-	SMTPTLS         bool     `yaml:"smtp_tls"`
-	SMTPUser        string   `yaml:"smtp_user"`
-	SMTPPassword    string   `yaml:"smtp_password"`
-	FromAddress     string   `yaml:"from_address"`
-	Recipients      []string `yaml:"recipients"`
-	ThrottleMinutes int      `yaml:"throttle_minutes"`
+	Enabled      bool     `yaml:"enabled"`       // master switch for e-mail alerts
+	SMTPHost     string   `yaml:"smtp_host"`     // SMTP server hostname or IP
+	SMTPPort     int      `yaml:"smtp_port"`     // SMTP server port
+	SMTPTLS      bool     `yaml:"smtp_tls"`      // send over TLS (notify.TLSSend) rather than plain SMTP
+	SMTPUser     string   `yaml:"smtp_user"`     // SMTP login user
+	SMTPPassword string   `yaml:"smtp_password"` // SMTP login password
+	FromAddress  string   `yaml:"from_address"`  // the From: address alerts are sent as
+	Recipients   []string `yaml:"recipients"`    // addresses every alert goes to
+	// ThrottleMinutes is saved and shown by the config page; no sender reads
+	// it.
+	ThrottleMinutes int `yaml:"throttle_minutes"`
 }
 
 // SimConfig configures the local-dev fleet simulator (core side). Sim code is
 // behind //go:build sim AND requires SHINGO_ALLOW_SIM=1 at runtime; this struct
 // only carries the knobs. See docs/dev-env/sim.md.
 type SimConfig struct {
-	Enabled     bool          `yaml:"enabled"`
+	Enabled     bool          `yaml:"enabled"`      // the sim switch; needs a sim build and SHINGO_ALLOW_SIM=1
 	Seed        int64         `yaml:"seed"`         // PRNG seed; 0 = derive from time and log it
 	Speed       float64       `yaml:"speed"`        // time multiplier: 2.0 = twice as fast. Default 1.0
 	MaxSpeed    float64       `yaml:"max_speed"`    // effective-speed cap; <=0 → default (10×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap.
@@ -262,7 +269,7 @@ type SimConfig struct {
 	JitterPct   float64       `yaml:"jitter_pct"`   // ± fraction applied to transit; default 0.2
 	FailRate    float64       `yaml:"fail_rate"`    // 0.0–1.0 per-transition fault probability; default 0
 
-	// Finite-fleet model (G16). Defaults preserve the legacy infinite-fleet
+	// Finite-fleet model. Defaults preserve the legacy infinite-fleet
 	// behaviour (one synthetic robot per active order, flat transit), so a
 	// config that sets none of these runs exactly as before.
 	FleetSize  int           `yaml:"fleet_size"`  // 0 = infinite fleet (default); >0 = finite robot pool, orders queue for a free robot
@@ -283,9 +290,11 @@ func (s SimConfig) Scaled(d time.Duration) time.Duration {
 // always-on read that tells every process which styles it can change over to.
 type SourceabilityConfig struct {
 	// EnableAtRisk lets a satisfiable-but-projected-empty style report YELLOW.
-	// Default false: the plant sees green/red only until the owner validates the
-	// consumption-rate window on real audit data, then flips this on. The at-risk
-	// tier is always COMPUTED; this only controls whether it surfaces as a status.
+	// Off, the plant sees green and red only. The at-risk tier is always
+	// COMPUTED; this only controls whether it surfaces as a status.
+	//
+	// Default false until the owner validates the consumption-rate window on
+	// real audit data.
 	EnableAtRisk bool `yaml:"enable_at_risk"`
 	// RateWindow is the look-back for the per-payload consumption rate that feeds
 	// time-to-empty. Default 30m.
@@ -349,21 +358,24 @@ type DatabaseConfig struct {
 }
 
 type PostgresConfig struct {
-	Host            string        `yaml:"host"`
-	Port            int           `yaml:"port"`
-	Database        string        `yaml:"database"`
-	User            string        `yaml:"user"`
-	Password        string        `yaml:"password"`
-	SSLMode         string        `yaml:"sslmode"`
+	Host     string `yaml:"host"`     // PostgreSQL server hostname or IP
+	Port     int    `yaml:"port"`     // PostgreSQL server port
+	Database string `yaml:"database"` // database name
+	User     string `yaml:"user"`     // database user
+	Password string `yaml:"password"` // database password
+	SSLMode  string `yaml:"sslmode"`  // disable, require, verify-ca or verify-full
+
+	// The connection-pool limits store.OpenWithoutMigrate applies. Zero (the
+	// shipped value) means its own fallback: 25 open, 10 idle, a 5m lifetime.
 	MaxOpenConns    int           `yaml:"max_open_conns"`
 	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
 type RDSConfig struct {
-	BaseURL      string        `yaml:"base_url"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	Timeout      time.Duration `yaml:"timeout"`
+	BaseURL      string        `yaml:"base_url"`      // the fleet backend's (Seer RDS) API base URL
+	PollInterval time.Duration `yaml:"poll_interval"` // how often the poller reads RDS for order status changes
+	Timeout      time.Duration `yaml:"timeout"`       // HTTP timeout on each RDS API call
 	// FaultGrace is how long an order sits in `faulted` after RDS reports
 	// FAILED before Core gives up and fails it. A robot that recovers
 	// inside the window (FAILED->RUNNING) clears the deadline and the
@@ -463,18 +475,22 @@ func (r RDSConfig) Validate() error {
 }
 
 type WebConfig struct {
-	Host          string `yaml:"host"`
-	Port          int    `yaml:"port"`
+	Host string `yaml:"host"` // web server listen address
+	Port int    `yaml:"port"` // web server port
+	// SessionSecret signs the login session cookie. Nothing generates it: the
+	// shipped value is a fixed placeholder literal, and an empty value falls
+	// back to a second literal in www (newSessionStore). Set it on every
+	// deployment.
 	SessionSecret string `yaml:"session_secret"`
 }
 
 type MessagingConfig struct {
 	Kafka               KafkaConfig   `yaml:"kafka"`
-	OrdersTopic         string        `yaml:"orders_topic"`
-	DispatchTopic       string        `yaml:"dispatch_topic"`
-	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"`
-	StationID           string        `yaml:"station_id"`
-	SigningKey          string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
+	OrdersTopic         string        `yaml:"orders_topic"`          // the topic edges publish to Core on
+	DispatchTopic       string        `yaml:"dispatch_topic"`        // the topic Core publishes to edges on
+	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"` // how often the outbox drainer publishes pending messages
+	StationID           string        `yaml:"station_id"`            // this Core's station identity on the wire
+	SigningKey          string        `yaml:"signing_key"`           // optional HMAC-SHA256 shared secret for envelope signing
 	// StaleEdgeThreshold is how long an edge can go without a heartbeat
 	// before core marks it stale and announces it. It is also the horizon
 	// the demand reconciler reads to decide whether a station's silence is
@@ -486,8 +502,8 @@ type MessagingConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers []string `yaml:"brokers"`
-	GroupID string   `yaml:"group_id"`
+	Brokers []string `yaml:"brokers"`  // Kafka broker addresses, host:port
+	GroupID string   `yaml:"group_id"` // Kafka consumer group Core joins
 	// DialTimeout bounds the per-broker reachability probe in Connect.
 	// Zero means the 5s production default. A config that names unreachable
 	// brokers pays this per broker, serially — which is why it is a knob at
@@ -860,9 +876,9 @@ type CMSConfig struct {
 	AccessKey string `yaml:"access_key"`
 	SecretKey string `yaml:"secret_key"`
 
-	Timeout      time.Duration `yaml:"timeout"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	MaxAttempts  int           `yaml:"max_attempts"`
+	Timeout      time.Duration `yaml:"timeout"`       // HTTP timeout on each call to the middleware
+	PollInterval time.Duration `yaml:"poll_interval"` // the poster's backstop tick, and the base of its retry backoff
+	MaxAttempts  int           `yaml:"max_attempts"`  // retryable send failures before a posting is failed
 	// SettleWindow is how long an inflight posting is left alone before the
 	// reconciler asks the middleware about it. A POST that succeeded may not
 	// be queryable for a moment afterwards, and asking too early gets "no such
@@ -892,8 +908,10 @@ type CMSConfig struct {
 	// stop existing.
 	HealthWindow time.Duration `yaml:"health_window"`
 
-	// The vocabulary CMS expects. Placeholders until SCO confirms them; every
-	// one is a config edit rather than a code change for exactly that reason —
+	// The vocabulary CMS expects on every posted row. Each is a config edit
+	// rather than a code change.
+	//
+	// Placeholders until SCO confirms them, which is the reason for that —
 	// including department and operation, which were hardcoded "" in the
 	// translator and would otherwise have been the two exceptions to that
 	// promise.

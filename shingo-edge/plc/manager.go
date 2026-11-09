@@ -345,6 +345,8 @@ func (m *Manager) StopWarLinkPoller() {
 	}
 }
 
+// warlinkPollLoop is the poll-mode goroutine: one WarLink fetch now, then one
+// each WarLink poll rate until the poller or the manager stops.
 func (m *Manager) warlinkPollLoop() {
 	defer m.warlinkWg.Done()
 
@@ -712,6 +714,8 @@ func (m *Manager) pollTickerClock() clock.Clock {
 	return clock.Default()
 }
 
+// pollLoop reads every polled reporting point each counter poll interval until
+// the manager stops.
 func (m *Manager) pollLoop() {
 	defer m.wg.Done()
 	pollRate := m.counterPollRate

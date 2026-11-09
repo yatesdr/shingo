@@ -1,3 +1,4 @@
+// The wire contract and the infrastructure both servers run: the JSON envelope, message types and payloads, statuses, TTL expiry, and the outbox, clock, debuglog, auth and migrate packages.
 module shingo/protocol
 
 go 1.25.0

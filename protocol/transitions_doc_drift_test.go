@@ -151,7 +151,7 @@ func readRepoFile(t *testing.T, path string) string {
 // sectionAfter returns the body between the bare text line `marker` and the
 // next blank-then-heading or table end. The pointer table sits under a
 // plain sentence ("Where the machine actually lives:"), not a markdown
-// heading, so docs_drift_test.go's heading-based section() cannot find it.
+// heading, so a heading-based section reader cannot find it.
 func sectionAfter(t *testing.T, doc, marker string) string {
 	t.Helper()
 	lines := strings.Split(doc, "\n")

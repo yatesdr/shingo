@@ -4,11 +4,43 @@ Verified against: b9210bce
 
 ShinGo Core provides a web-based management interface at `http://<host>:8083`. All pages support light and dark mode via the theme toggle in the navigation bar.
 
-This guide covers the pages an operator or engineer reaches from the nav. It is
-not the full route list — `shingo-core/www/router.go` registers around forty-six
-`GET` pages, including narrower diagnostic surfaces (`/orphans`,
-`/reconciliation`, `/cms-health`, `/buckets`, `/footprint`, `/cycle-time`,
-`/material-flags`, …). The router is the roster; this is the tour.
+This guide covers the pages an operator or engineer reaches from the nav. The
+roster below is every route that renders a page, generated from
+`shingo-core/www/router.go` and the templates each handler renders; the
+sections after it are the tour. The full route list, `/api` included, is in
+[API Reference](api-reference.md).
+
+<!-- generated: shingo-core/www/router.go pages -->
+
+| Path | Template (in `shingo-core/www/templates/`) | Title | Auth |
+|---|---|---|---|
+| `/` | `dashboard.html` | Dashboard | public |
+| `/bins` | `bins.html` | Bins | login |
+| `/config` | `config.html` | Configuration | login |
+| `/cycle-time` | `cycle-time.html` | Cycle time | public |
+| `/demand-episodes` | `demand-episodes.html` | Demand episodes | public |
+| `/demand-episodes/{originID}` | `demand-episode.html` |  | public |
+| `/diagnostics` | `diagnostics.html` | Logs | login |
+| `/edges` | `edges.html` | Stations | login |
+| `/fleet-explorer` | `rds_explorer.html` | Fleet Explorer | login |
+| `/heartbeat` | `heartbeat.html` | Production Heartbeat — Shingo | public |
+| `/inventory` | `inventory.html` | Inventory | public |
+| `/inventory/count-history` | `count-history.html` |  | public |
+| `/login` | `login.html` | Login | public |
+| `/material-flags` | `material-flags.html` | Material flags | public |
+| `/missions` | `missions.html` | Mission Telemetry | public |
+| `/missions/{orderID}` | `mission-detail.html` |  | public |
+| `/nodes` | `nodes.html` | Nodes | public |
+| `/orders` | `orders.html` | Orders | public |
+| `/orphans` | `orphans.html` | Orphan reconciliation | public |
+| `/overview` | `overview.html` | Operations Overview | public |
+| `/payloads` | `payloads.html` | Payloads | login |
+| `/robots` | `robots.html` | Robots | public |
+| `/sourcing` | `sourcing.html` | Sourcing | login |
+| `/test-orders` | `test-orders.html` | Test Orders | login |
+| `/wall-display/{id}` | `dashboard-display.html`, `dashboard-frame.html`, `dashboard-map.html`, `dashboard-node-report.html`, `heartbeat.html` |  | public |
+
+<!-- /generated -->
 
 ## Public Pages
 

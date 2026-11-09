@@ -4,6 +4,70 @@ Verified against: b9210bce
 
 Reference for the Seer RDS Core HTTP API endpoints used by Shingo. Extracted from the RDS Core HTTP API PDF and the shingo-core/rds client implementation.
 
+## Endpoint index
+
+<!-- generated: shingo-core/rds endpoints -->
+
+52 endpoints through 53 `rds` client funcs; the fleet adapter reaches 26 of the funcs (26 endpoints). **Adapter** is `yes` when `shingo-core/fleet/seerrds` calls the func, directly or through another `rds` func (the poller included).
+
+| Endpoint | Method | `rds` func | Adapter |
+|---|---|---|---|
+| `/addBlocks` | POST | `Client.AddBlocks` | yes |
+| `/binCheck` | POST | `Client.CheckBins` | yes |
+| `/binDetails` | GET | `Client.GetBinDetails` | yes |
+| `/blockDetailsById` | GET | `Client.GetBlockDetails` | no |
+| `/blockGroupStatus` | GET | `Client.GetMutexGroupStatus` | no |
+| `/callDoor` | POST | `Client.CallDoor` | no |
+| `/callLift` | POST | `Client.CallLift` | no |
+| `/callTerminal` | POST | `Client.CallTerminal` | no |
+| `/clearAllContainersGoods` | POST | `Client.ClearAllContainerGoods` | yes |
+| `/clearContainer` | POST | `Client.UnbindContainerGoods` | yes |
+| `/clearGoods` | POST | `Client.UnbindGoods` | yes |
+| `/devicesDetails` | GET | `Client.GetDevicesStatus` | no |
+| `/disableDoor` | POST | `Client.DisableDoor` | no |
+| `/disableLift` | POST | `Client.DisableLift` | no |
+| `/dispatchable` | POST | `Client.SetDispatchable` | yes |
+| `/downloadScene` | GET | `Client.DownloadScene` | no |
+| `/fireOperations` | POST | `Client.SetFireAlarm` | yes |
+| `/generalRobokitAPI` | POST | `Client.GeneralRobokitAPI` | yes |
+| `/getBlockGroup` | POST | `Client.OccupyMutexGroup` | no |
+| `/getProfiles` | POST | `Client.GetProfiles` | no |
+| `/getSimRobotStateTemplate` | GET | `Client.GetSimStateTemplate` | no |
+| `/gotoSitePause` | POST | `Client.PauseNavigation` | yes |
+| `/gotoSiteResume` | POST | `Client.ResumeNavigation` | yes |
+| `/isFire` | GET | `Client.GetFireAlarmStatus` | yes |
+| `/licInfo` | GET | `Client.GetLicenseInfo` | no |
+| `/lock` | POST | `Client.PreemptControl` | yes |
+| `/manualFinished` | POST | `Client.ManualFinish` | yes |
+| `/markComplete` | POST | `Client.MarkComplete` | no |
+| `/orderDetails` | GET | `Client.GetOrderDetails` | yes |
+| `/orderDetailsByBlockId` | GET | `Client.GetOrderByBlockID` | no |
+| `/orderDetailsByExternalId` | GET | `Client.GetOrderByExternalID` | no |
+| `/orders` | GET | `Client.ListOrders` | no |
+| `/ping` | GET | `Client.Ping` | yes |
+| `/redoFailedOrder` | POST | `Client.RedoFailed` | yes |
+| `/releaseBlockGroup` | POST | `Client.ReleaseMutexGroup` | no |
+| `/reloadParams` | POST | `Client.RestoreParamDefaults` | no |
+| `/reLocConfirm` | POST | `Client.ConfirmRelocalization` | yes |
+| `/robotSmap` | GET | `Client.GetRobotMap` | no |
+| `/robotsStatus` | GET | `Client.GetRobotsStatusFull` | yes |
+| `/saveParams` | POST | `Client.SetParamsPerm` | no |
+| `/scene` | GET | `Client.GetScene` | yes |
+| `/setContainerGoods` | POST | `Client.BindContainerGoods` | yes |
+| `/setLabel` | POST | `Client.SetLabel` | no |
+| `/setOrder` | POST | `Client.CreateJoinOrder` | no |
+| `/setOrder` | POST | `Client.CreateOrder` | yes |
+| `/setParams` | POST | `Client.SetParamsTemp` | no |
+| `/setPriority` | POST | `Client.SetPriority` | yes |
+| `/switchMap` | POST | `Client.SwitchMap` | yes |
+| `/syncScene` | POST | `Client.SyncScene` | no |
+| `/terminate` | POST | `Client.TerminateOrder` | yes |
+| `/unlock` | POST | `Client.ReleaseControl` | yes |
+| `/updateSimRobotState` | POST | `Client.UpdateSimState` | no |
+| `/uploadScene` | POST | `Client.UploadScene` | no |
+
+<!-- /generated -->
+
 ## Base URL
 
 All endpoints are relative to the RDS Core base URL (e.g. http://192.168.1.100:8080).

@@ -14,7 +14,7 @@ COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 # Build flags
 LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT)"
 
-.PHONY: all clean linux windows macos build run test test-explain schema-snapshot
+.PHONY: all clean linux windows macos build run test test-explain schema-snapshot defaults-snapshot
 
 # Default target
 all: clean linux windows macos
@@ -87,6 +87,18 @@ test-all:
 # command's name when the file goes stale.
 schema-snapshot:
 	go run ./cmd/schemasnapshot ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
+
+# Regenerate the committed rendering of the SHIPPED defaults,
+# config/defaults.snapshot.txt, the same machinery as shingo-edge's target of
+# the same name. The defaults are how Core behaves when nobody has said
+# otherwise; with the rendering committed, retuning one is a diff somebody can
+# question. It pins the shipped default, not a plant's yaml.
+#
+# No Docker, no database. TestDefaultsSnapshotIsCurrent fails with this
+# command's name when the file goes stale; the docs' configuration key table
+# (make docs-gen) reads the file.
+defaults-snapshot:
+	go run ./cmd/defaultssnapshot
 
 # Run the bins-store EXPLAIN-plan regression harness. Tagged
 # //go:build explain so it stays out of the default and docker test
@@ -166,6 +178,7 @@ help:
 	@echo "  make clean     - Remove build artifacts"
 	@echo "  make install   - Install to GOPATH/bin"
 	@echo "  make test      - Run tests"
+	@echo "  make defaults-snapshot - Regenerate config/defaults.snapshot.txt"
 	@echo "  make deps      - Update dependencies"
 	@echo "  make fmt       - Format code"
 	@echo "  make vet       - Vet code"

@@ -61,8 +61,12 @@ package protocol
 // operator stations draw. Digest is BinWatchDigest(Nodes); Core quotes it back
 // on EdgeHeartbeatAck.BinWatch as it arrived and never recomputes it.
 type BinWatchList struct {
-	Digest string   `json:"digest"`
-	Nodes  []string `json:"nodes"`
+	// Digest is BinWatchDigest(Nodes). Core quotes it back on
+	// EdgeHeartbeatAck.BinWatch as it arrived and never recomputes it.
+	Digest string `json:"digest"`
+	// Nodes are the Core node names this edge's operator stations draw,
+	// sorted, each once.
+	Nodes []string `json:"nodes"`
 }
 
 // NodeBinsSnapshot is the bins at one Edge's watched nodes. ListDigest is the
@@ -71,10 +75,17 @@ type BinWatchList struct {
 // so the heartbeat compare tells a snapshot built for an older list from one
 // built for the current list.
 type NodeBinsSnapshot struct {
-	Digest     string          `json:"digest,omitempty"`
-	ListDigest string          `json:"list_digest"`
-	Rows       []NodeBinsRow   `json:"rows"`
-	Groups     []NodeBinsGroup `json:"groups"`
+	// Digest is NodeBinsDigest of ListDigest, Rows and Groups, computed over
+	// the value sent: the bins feed's digest.
+	Digest string `json:"digest,omitempty"`
+	// ListDigest is the Digest of the BinWatchList this answers, as it arrived.
+	ListDigest string `json:"list_digest"`
+	// Rows are one per watched name, in the list's order, each watched
+	// group's member rows directly after it.
+	Rows []NodeBinsRow `json:"rows"`
+	// Groups are the outbound groups, with levels, of the consume loaders
+	// that have a watched window; [] for a plant with no levels.
+	Groups []NodeBinsGroup `json:"groups"`
 }
 
 // The values of NodeBinsRow.State.

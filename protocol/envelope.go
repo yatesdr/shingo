@@ -10,31 +10,53 @@ import (
 
 // Address identifies a message source or destination.
 type Address struct {
-	Role    string `json:"role"`
+	// Role is the sender or receiver class: RoleEdge or RoleCore.
+	Role string `json:"role"`
+	// Station is the station identity. For an edge, its station UID, minted
+	// by Core at enrollment. For Core, its configured station id. On a
+	// dispatch to every edge, StationBroadcast ("*"). Empty is valid on a
+	// message to Core, which is a singleton.
 	Station string `json:"station"`
 }
 
 // Envelope is the universal message wrapper for all ShinGo communication.
 type Envelope struct {
-	Version   int             `json:"v"`
-	Type      string          `json:"type"`
-	ID        string          `json:"id"`
-	Src       Address         `json:"src"`
-	Dst       Address         `json:"dst"`
-	Timestamp time.Time       `json:"ts"`
-	ExpiresAt time.Time       `json:"exp"`
-	CorID     string          `json:"cor,omitempty"`
-	Payload   json.RawMessage `json:"p"`
+	// Version is the protocol version (Version). A consumer rejects an
+	// envelope whose version it does not know.
+	Version int `json:"v"`
+	// Type is the message type (a Type constant); it selects the schema of
+	// Payload.
+	Type string `json:"type"`
+	// ID is the message's unique id: a UUID v4, lowercase hex with hyphens.
+	ID string `json:"id"`
+	// Src is the sender.
+	Src Address `json:"src"`
+	// Dst is the intended recipient.
+	Dst Address `json:"dst"`
+	// Timestamp is when the message was created, RFC 3339 in UTC.
+	Timestamp time.Time `json:"ts"`
+	// ExpiresAt is the absolute time after which a receiver drops the message
+	// unprocessed, RFC 3339 in UTC. The zero time ("0001-01-01T00:00:00Z") is
+	// no expiry (NoExpiry), never "expired".
+	ExpiresAt time.Time `json:"exp"`
+	// CorID links a reply to the message it answers, by that message's ID
+	// (an order.ack's cor is its order.request's id). Omitted when empty.
+	CorID string `json:"cor,omitempty"`
+	// Payload is the type's body, always a JSON object. It stays raw bytes
+	// through the header decode and is decoded only once routing has chosen a
+	// handler.
+	Payload json.RawMessage `json:"p"`
 }
 
-// RawHeader is the minimal decode for routing decisions before full payload decode.
+// RawHeader is the minimal decode for routing decisions before full payload
+// decode: the envelope without its timestamp, correlation id and payload.
 type RawHeader struct {
-	Version   int       `json:"v"`
-	Type      string    `json:"type"`
-	ID        string    `json:"id"`
-	Src       Address   `json:"src"`
-	Dst       Address   `json:"dst"`
-	ExpiresAt time.Time `json:"exp"`
+	Version   int       `json:"v"`    // as Envelope.Version
+	Type      string    `json:"type"` // as Envelope.Type
+	ID        string    `json:"id"`   // as Envelope.ID
+	Src       Address   `json:"src"`  // as Envelope.Src
+	Dst       Address   `json:"dst"`  // as Envelope.Dst
+	ExpiresAt time.Time `json:"exp"`  // as Envelope.ExpiresAt; checked before any payload byte is read
 }
 
 // NewEnvelope creates an outbound envelope with default TTL.

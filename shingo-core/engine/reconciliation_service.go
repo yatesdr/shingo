@@ -92,6 +92,11 @@ func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*messaging.Ou
 	return s.db.ListDeadLetterOutbox(limit)
 }
 
+// Loop runs the reconciliation passes every interval until stopCh closes: the
+// summary (logged when not ok), auto-confirm of stuck delivered orders and
+// abandonment of stuck orders (each when its timeout is set), the stuck
+// reshuffle-parent re-drive, the orphaned-reservation reap, the stranded-bin
+// sweep and the shadow logs.
 func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout, abandonTimeout, abandonOperatorGatedTimeout time.Duration) {
 	if interval <= 0 {
 		// Its one caller passes cfg.Staging.SweepInterval (engine_lifecycle.go).

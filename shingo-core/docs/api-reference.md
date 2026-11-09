@@ -2,299 +2,464 @@
 
 Verified against: b9210bce
 
-All endpoints return JSON. Protected endpoints require authentication via session cookie (log in through the web UI).
+The `/api` endpoints return JSON; the routes outside `/api` are pages and form posts. Protected endpoints require authentication via session cookie (log in through the web UI).
 
 Base URL: `http://<host>:8083`
 
-## Public Endpoints
+## Routes
 
-No authentication required. Read-only.
+<!-- generated: shingo-core/www/router.go routes -->
 
-### Nodes
+247 routes (124 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/nodes` | List all nodes |
-| `GET` | `/api/nodes/inventory` | Node inventory (payloads at each node) |
-| `GET` | `/api/nodes/occupancy` | Fleet occupancy cross-reference |
-| `GET` | `/api/nodes/detail?id=<ID>` | Single node detail |
-| `GET` | `/api/nodestate` | Node state cache |
-| `GET` | `/api/map/points` | Fleet scene map points |
-| `GET` | `/api/map/edges` | Fleet scene path segments (advanced curves) between map points |
-| `GET` | `/api/stations` | Selectable stations for pickers and filters (from orders + edge registry). `[{"id","label"}]` — `id` is the opaque station identity a caller submits and stores; `label` is `edge_registry.display_name`, for display only |
+### Pages and forms
 
-#### GET /api/nodes
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/` | `handleDashboard` | public |
+| `GET` | `/admin/cells` | `handleCellsAdmin` | login |
+| `POST` | `/bin-types/create` | `handleBinTypeCreate` | login |
+| `POST` | `/bin-types/delete` | `handleBinTypeDelete` | login |
+| `POST` | `/bin-types/update` | `handleBinTypeUpdate` | login |
+| `GET` | `/bins` | `handleBins` | login |
+| `POST` | `/bins/create` | `handleBinCreate` | login |
+| `POST` | `/bins/retire` | `handleBinRetire` | login |
+| `GET` | `/board` | (redirect to `/dashboards`) | public |
+| `GET` | `/board/{kind}` | `handleBoardKindRedirect` | public |
+| `GET` | `/config` | `handleConfig` | login |
+| `POST` | `/config/password` | `handleConfigPassword` | login |
+| `POST` | `/config/test-alert` | `handleConfigTestAlert` | login |
+| `POST` | `/config/test-email` | `handleConfigTestEmail` | login |
+| `GET` | `/cycle-time` | `handleCycleTime` | public |
+| `GET` | `/dashboard-active-orders` | `handleDashboardActiveOrders` | public |
+| `GET` | `/dashboard/{id}` | `handleWallDisplayMoved` | public |
+| `GET` | `/dashboards` | `handleWallDisplaysMoved` | public |
+| `GET` | `/demand-episodes` | `handleDemandEpisodes` | public |
+| `GET` | `/demand-episodes/{originID}` | `handleDemandEpisodeDetail` | public |
+| `GET` | `/diagnostics` | `handleDiagnostics` | login |
+| `GET` | `/edges` | `handleEdgesAdmin` | login |
+| `GET` | `/events` | `SSEHandler` | public |
+| `GET` | `/fleet-explorer` | `handleFleetExplorer` | login |
+| `GET` | `/heartbeat` | `handleHeartbeatKiosk` | public |
+| `GET` | `/inventory` | `handleInventory` | public |
+| `GET` | `/inventory/count-history` | `handleInventoryCountHistory` | public |
+| `GET` | `/login` | `handleLoginPage` | public |
+| `POST` | `/login` | `handleLogin` | public |
+| `GET` | `/logout` | `handleLogout` | public |
+| `GET` | `/material-flags` | `handleMaterialFlags` | public |
+| `GET` | `/missions` | `handleMissions` | public |
+| `GET` | `/missions/{orderID}` | `handleMissionDetail` | public |
+| `GET` | `/nodes` | `handleNodes` | public |
+| `POST` | `/nodes/create` | `handleNodeCreate` | login |
+| `POST` | `/nodes/delete` | `handleNodeDelete` | login |
+| `POST` | `/nodes/sync-fleet` | `handleNodeSyncFleet` | login |
+| `POST` | `/nodes/sync-scene` | `handleSceneSync` | login |
+| `POST` | `/nodes/update` | `handleNodeUpdate` | login |
+| `GET` | `/orders` | `handleOrders` | public |
+| `GET` | `/orders/detail` | `handleOrderDetail` | public |
+| `GET` | `/orders/rows` | `handleOrdersRows` | public |
+| `GET` | `/orphans` | `handleOrphans` | public |
+| `GET` | `/overview` | `handleOverview` | public |
+| `GET` | `/payloads` | `handlePayloadsPage` | login |
+| `POST` | `/payloads/containment` | `handlePayloadContainment` | login |
+| `POST` | `/payloads/create` | `handlePayloadCreate` | login |
+| `POST` | `/payloads/delete` | `handlePayloadDelete` | login |
+| `POST` | `/payloads/update` | `handlePayloadUpdate` | login |
+| `GET` | `/robots` | `handleRobots` | public |
+| `GET` | `/sourcing` | `handleSourcing` | login |
+| `ANY` | `/static/*` | (static files) | public |
+| `ANY` | `/static/shared/*` | (static files) | public |
+| `GET` | `/test-orders` | `handleTestOrders` | login |
+| `GET` | `/wall-display/{id}` | `handleWallDisplay` | public |
+| `GET` | `/wall-displays` | `handleWallDisplaysMoved` | public |
 
-Returns all registered nodes.
+### `/api/audit`
 
-```json
-[
-  {
-    "id": 1,
-    "name": "STG-001",
-    "is_synthetic": false,
-    "zone": "warehouse-a",
-    "enabled": true,
-    "depth": 0,
-    "created_at": "2026-03-04T10:00:00Z",
-    "updated_at": "2026-03-04T10:00:00Z",
-    "node_type_id": 1,
-    "parent_id": 7,
-    "node_type_code": "STG",
-    "parent_name": "SMKT-A"
-  }
-]
-```
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/audit/bin/{id}` | `apiAuditBinTimeline` | public |
+| `GET` | `/api/audit/discrepancies` | `apiAuditDiscrepancies` | public |
 
-#### GET /api/nodes/occupancy
+### `/api/bin-types`
 
-Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags discrepancies.
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/bin-types` | `apiListBinTypes` | public |
 
-```json
-[
-  {
-    "location_id": "BIN-001",
-    "node_name": "STG-001",
-    "fleet_occupied": true,
-    "in_shingo": true,
-    "discrepancy": ""
-  }
-]
-```
+### `/api/bins`
 
-### Orders
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `POST` | `/api/bins/action` | `apiBinAction` | login |
+| `GET` | `/api/bins/available` | `apiListAvailableBins` | public |
+| `POST` | `/api/bins/bulk-action` | `apiBulkBinAction` | login |
+| `POST` | `/api/bins/bulk-register` | `apiBulkRegisterBins` | login |
+| `GET` | `/api/bins/by-node` | `apiBinsByNode` | public |
+| `GET` | `/api/bins/detail` | `apiBinDetail` | public |
+| `POST` | `/api/bins/request-move` | `apiRequestBinMove` | login |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/orders` | List orders (supports `?status=<STATUS>` filter) |
-| `GET` | `/api/orders/detail?id=<ID>` | Single order — the bare row, no history |
-| `GET` | `/api/orders/enriched?id=<ID>` | The order plus its history |
+### `/api/board`
 
-#### GET /api/orders
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/board/orders` | `handleBoardOrders` | public |
 
-```json
-[
-  {
-    "id": 42,
-    "edge_uuid": "a1b2c3d4-...",
-    "station_id": "plant-a.line-1",
-    "order_type": "retrieve",
-    "payload_code": "BIN-A",
-    "source_node": "STG-007",
-    "delivery_node": "LSL-001",
-    "status": "in_transit",
-    "vendor_order_id": "sg-42-abc123",
-    "robot_id": "AMR-003",
-    "priority": 0,
-    "created_at": "2026-03-04T10:00:00Z"
-  }
-]
-```
+### `/api/buckets`
 
-### Robots
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/buckets` | `apiBuckets` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/robots` | All robots with live status |
+### `/api/cells`
 
-#### GET /api/robots
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/cells` | `apiCellsList` | public |
+| `POST` | `/api/cells` | `apiCellUpsert` | login |
+| `GET` | `/api/cells/catalog` | `apiCellsCatalog` | public |
+| `GET` | `/api/cells/processes` | `apiCellProcesses` | login |
+| `DELETE` | `/api/cells/{id}` | `apiCellDelete` | login |
+| `GET` | `/api/cells/{id}/heartbeat` | `apiCellHeartbeat` | public |
+| `GET` | `/api/cells/{id}/state` | `apiCellState` | public |
+| `GET` | `/api/cells/{id}/stops` | `apiCellStops` | public |
 
-`fleet.RobotStatus` (`shingo-core/fleet/optional.go:131`) carries **no JSON tags**, so it serializes
-with Go's default PascalCase field names — not snake_case like the rest of this API. Callers must
-match the case exactly.
+### `/api/cms-health`
 
-```json
-[
-  {
-    "VehicleID": "AMR-003",
-    "Connected": true,
-    "Available": true,
-    "Busy": true,
-    "Emergency": false,
-    "Blocked": false,
-    "IsError": false,
-    "BatteryLevel": 85.0,
-    "Charging": false,
-    "CurrentMap": "plant-map-1",
-    "Model": "<vendor model>",
-    "IP": "192.0.2.10",
-    "X": 12.5,
-    "Y": 3.2,
-    "Angle": 1.57
-  }
-]
-```
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/cms-health` | `apiCMSHealth` | public |
 
-### Payloads
+### `/api/cms-transactions`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/payloads` | List all payload templates |
-| `GET` | `/api/payloads/detail?id=<ID>` | Single payload with details |
-| `GET` | `/api/payloads/manifest?id=<ID>` | Template manifest items for a payload |
-| `GET` | `/api/payloads/templates/bin-types?id=<ID>` | Compatible bin types for a payload |
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/cms-transactions` | `apiListCMSTransactions` | public |
 
-#### GET /api/payloads
+### `/api/config`
 
-```json
-[
-  {
-    "id": 1,
-    "code": "BRK-ROTOR-KIT",
-    "description": "Brake Rotor Kit",
-    "uop_capacity": 24
-  }
-]
-```
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `PUT` | `/api/config` | `apiConfigSave` | login |
+| `POST` | `/api/config/test-database` | `apiConfigTestDatabase` | login |
 
-### Bins
+### `/api/containment`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/bins/by-node?id=<ID>` | Bins at a specific node. The param is `id`, not `node_id` |
-| `GET` | `/api/bins/available` | List available (unoccupied) bins |
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `POST` | `/api/containment/payload` | `apiSetPayloadContainment` | login |
 
-### Demand episodes
+### `/api/core`
 
-The `/api/demands` CRUD surface is gone — the quota table went at migration v106
-(`shingo-core/www/router.go:158-159`). The demand grain is now the **episode**:
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/core/health` | `apiCoreHealth` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/demand-episodes` | Open and recent demand episodes |
-| `GET` | `/demand-episodes/{originID}` | One episode and every order it spawned |
+### `/api/dashboards`
 
-### Health
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/dashboards` | `apiListDashboards` | public |
+| `POST` | `/api/dashboards` | `apiCreateDashboard` | login |
+| `DELETE` | `/api/dashboards/{id}` | `apiDeleteDashboard` | login |
+| `GET` | `/api/dashboards/{id}` | `apiGetDashboard` | public |
+| `PUT` | `/api/dashboards/{id}` | `apiUpdateDashboard` | login |
+| `GET` | `/api/dashboards/{id}/cells` | `apiDashboardCells` | public |
+| `GET` | `/api/dashboards/{id}/node-report` | `apiDashboardNodeReport` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/health` | System health check |
+### `/api/dispatch`
 
-#### GET /api/health
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/dispatch/anomalies` | `apiListTransitAnomalies` | public |
+| `POST` | `/api/dispatch/clear-anomaly` | `apiClearTransitAnomaly` | login |
+| `GET` | `/api/dispatch/preview-capacity` | `apiPreviewDropoffCapacity` | public |
 
-```json
-{
-  "status": "ok",
-  "database": true,
-  "fleet": true,
-  "messaging": true
-}
-```
+### `/api/edges`
 
-## Protected Endpoints
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/edges` | `apiEdges` | login |
+| `POST` | `/api/edges/claim` | `apiEdgeClaim` | login |
+| `POST` | `/api/edges/enroll` | `apiEdgeEnroll` | login |
+| `POST` | `/api/edges/rebind` | `apiEdgeRebind` | login |
+| `POST` | `/api/edges/rename` | `apiEdgeRename` | login |
+| `POST` | `/api/edges/reregister` | `apiEdgeReregister` | login |
 
-Authentication required (session cookie).
+### `/api/fire-alarm`
 
-### Node Management
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/fire-alarm/status` | `apiFireAlarmStatus` | login |
+| `POST` | `/api/fire-alarm/trigger` | `apiFireAlarmTrigger` | login |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/nodes/create` | Create a node (form post) |
-| `POST` | `/nodes/update` | Update a node (form post) |
-| `POST` | `/nodes/delete` | Delete a node (form post) |
-| `POST` | `/nodes/sync-fleet` | Sync nodes from fleet scene data |
-| `POST` | `/nodes/sync-scene` | Sync zones from fleet areas |
+### `/api/fleet`
 
-### Node Properties
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `POST` | `/api/fleet/proxy` | `apiFleetProxy` | login |
+| `GET` | `/api/fleet/robot-groups` | `apiRobotGroups` | public |
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/nodes/properties/set` | `{"node_id": 1, "key": "k", "value": "v"}` | Set a key-value property |
-| `POST` | `/api/nodes/properties/delete` | `{"node_id": 1, "key": "k"}` | Delete a property |
+### `/api/footprint`
 
-### Payload Management
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/footprint` | `apiFootprint` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/payloads/create` | Create payload (form post) |
-| `POST` | `/payloads/update` | Update payload (form post) |
-| `POST` | `/payloads/delete` | Delete payload (form post) |
-| `POST` | `/api/payloads/create` | Create payload (JSON) |
-| `POST` | `/api/payloads/update` | Update payload (JSON) |
-| `POST` | `/api/payloads/manifest/create` | Add a template manifest item (JSON) |
-| `POST` | `/api/payloads/manifest/update` | Update a template manifest item (JSON) |
-| `POST` | `/api/payloads/manifest/delete` | Delete a template manifest item (JSON) |
-| `POST` | `/api/payloads/confirm-manifest` | Confirm a bin's manifest (JSON) |
-| `POST` | `/api/payloads/templates/bin-types` | Set compatible bin types (JSON) |
+### `/api/health`
 
-### Bin Management
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/health` | `apiHealthCheck` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/bins/create` | Create bin (form post) |
-| `POST` | `/bins/retire` | Retire a bin (form post). There is no bin delete — a bin is retired, not removed |
-| `POST` | `/bin-types/create` | Create bin type (form post) |
-| `POST` | `/bin-types/update` | Update bin type (form post) |
-| `POST` | `/bin-types/delete` | Delete bin type (form post) |
-| `POST` | `/api/bins/action` | Bin status action (JSON: flag, maintain, retire, activate) |
-| `POST` | `/api/bins/bulk-register` | Bulk register bins (JSON) |
+### `/api/inventory`
 
-### Bin Payload Assignment
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/inventory/anomaly-summary` | `apiInventoryAnomalySummary` | public |
+| `GET` | `/api/inventory/export` | `apiInventoryExport` | login |
+| `GET` | `/api/inventory/invariant` | `apiInventoryInvariant` | public |
+| `GET` | `/api/inventory/ledger-exceptions` | `apiInventoryLedgerExceptions` | public |
+| `GET` | `/api/inventory/loop` | `apiInventoryLoop` | public |
+| `GET` | `/api/inventory/rejected-deltas` | `apiInventoryRejectedDeltas` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/bins/assign-payload` | Assign payload to bin (sets payload code, populates manifest) |
-| `POST` | `/api/bins/confirm-manifest` | Confirm manifest (sets manifest_confirmed, loaded_at) |
-| `POST` | `/api/bins/clear-payload` | Clear payload assignment from bin |
-| `POST` | `/api/bins/bulk-register` | Bulk register bins (JSON) |
+### `/api/loader`
 
-### Node Group Management
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `POST` | `/api/loader/calculate` | `apiCalculateThreshold` | login |
+| `POST` | `/api/loader/create` | `apiCreateLoader` | login |
+| `POST` | `/api/loader/create-two-stage` | `apiCreateTwoStageLoader` | login |
+| `POST` | `/api/loader/delete` | `apiDeleteLoader` | login |
+| `GET` | `/api/loader/list` | `apiListLoaders` | public |
+| `POST` | `/api/loader/remove-home` | `apiRemoveLoaderHome` | login |
+| `POST` | `/api/loader/remove-payload` | `apiRemoveLoaderPayload` | login |
+| `POST` | `/api/loader/remove-quota` | `apiRemoveLoaderQuota` | login |
+| `POST` | `/api/loader/reorder-homes` | `apiReorderLoaderHomes` | login |
+| `POST` | `/api/loader/set-home` | `apiSetLoaderHome` | login |
+| `POST` | `/api/loader/set-payload` | `apiSetLoaderPayload` | login |
+| `POST` | `/api/loader/set-quota` | `apiSetLoaderQuota` | login |
+| `POST` | `/api/loader/set-window-bin-types` | `apiSetWindowBinTypes` | login |
+| `POST` | `/api/loader/update` | `apiUpdateLoader` | login |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/nodegroup/create` | Create supermarket node group (JSON) |
-| `GET` | `/api/nodegroup/layout?id=<ID>` | Get group layout (lanes, slots) |
-| `POST` | `/api/nodegroup/delete` | Delete node group (JSON) |
-| `POST` | `/api/nodegroup/add-lane` | Add lane to group (JSON) |
-| `POST` | `/api/nodegroup/reorder-lane` | Reorder lane slots (JSON) |
+### `/api/map`
 
-### Order Management
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/map/areas` | `apiSceneAreas` | public |
+| `GET` | `/api/map/diffs` | `apiSceneDiffs` | public |
+| `GET` | `/api/map/edges` | `apiSceneEdges` | public |
+| `GET` | `/api/map/marks` | `apiSceneMarks` | public |
+| `GET` | `/api/map/points` | `apiScenePoints` | public |
+| `GET` | `/api/map/reflectors` | `apiSceneReflectors` | public |
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/orders/terminate` | `{"order_id": 123}` | Cancel order (fleet + local) |
-| `POST` | `/api/orders/priority` | `{"order_id": 123, "priority": 5}` | Set order priority |
+### `/api/missions`
 
-### Robot Management
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/missions` | `apiListMissions` | public |
+| `GET` | `/api/missions/active` | `apiMissionsActive` | public |
+| `GET` | `/api/missions/alerts` | `apiMissionsAlerts` | public |
+| `GET` | `/api/missions/breakdown` | `apiMissionBreakdown` | public |
+| `GET` | `/api/missions/dwell` | `apiMissionDwell` | public |
+| `GET` | `/api/missions/failures` | `apiMissionFailures` | public |
+| `GET` | `/api/missions/faults` | `apiMissionFaults` | public |
+| `GET` | `/api/missions/stats` | `apiMissionStats` | public |
+| `GET` | `/api/missions/stats/v2` | `apiMissionStatsV2` | public |
+| `GET` | `/api/missions/timeseries` | `apiMissionTimeseries` | public |
+| `GET` | `/api/missions/{orderID}` | `apiGetMission` | public |
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/robots/availability` | `{"vehicle_id": "AMR-003", "available": true}` | Set robot availability |
-| `POST` | `/api/robots/retry` | `{"vehicle_id": "AMR-003"}` | Retry failed task |
-| `POST` | `/api/robots/force-complete` | `{"vehicle_id": "AMR-003"}` | Force complete current task |
+### `/api/nodegroup`
 
-### Test Orders (Kafka)
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `POST` | `/api/nodegroup/add-lane` | `apiAddLane` | login |
+| `POST` | `/api/nodegroup/create` | `apiCreateNodeGroup` | login |
+| `POST` | `/api/nodegroup/delete` | `apiDeleteNodeGroup` | login |
+| `GET` | `/api/nodegroup/layout` | `apiGetGroupLayout` | login |
+| `POST` | `/api/nodegroup/reorder-lane` | `apiReorderLaneSlots` | login |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/test-orders` | List test orders |
-| `GET` | `/api/test-orders/detail?id=<ID>` | Test order detail |
-| `POST` | `/api/test-orders/submit` | Submit test order via Kafka |
-| `POST` | `/api/test-orders/cancel` | Cancel test order |
-| `POST` | `/api/test-orders/receipt` | Send delivery receipt |
-| `GET` | `/api/test-orders/robots` | Available robots for testing |
-| `GET` | `/api/test-orders/scene-points` | Scene points for testing |
+### `/api/nodes`
 
-### Test Orders (Direct to Fleet)
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/nodes` | `apiListNodes` | public |
+| `GET` | `/api/nodes/bin-types` | `apiGetNodeBinTypes` | public |
+| `POST` | `/api/nodes/bin-types` | `apiSetNodeBinTypes` | login |
+| `GET` | `/api/nodes/detail` | `apiNodeDetail` | public |
+| `GET` | `/api/nodes/inventory` | `apiNodePayloads` | public |
+| `GET` | `/api/nodes/kanban` | `apiKanban` | public |
+| `POST` | `/api/nodes/kanban/check-types` | `apiKanbanCheckTypes` | login |
+| `GET` | `/api/nodes/kanban/families` | `apiKanbanFamilies` | public |
+| `POST` | `/api/nodes/kanban/level` | `apiKanbanLevelSet` | login |
+| `POST` | `/api/nodes/kanban/level/remove` | `apiKanbanLevelRemove` | login |
+| `GET` | `/api/nodes/kanban/levels` | `apiKanbanLevels` | public |
+| `POST` | `/api/nodes/kanban/pools` | `apiKanbanPoolsSet` | login |
+| `POST` | `/api/nodes/kanban/settings` | `apiKanbanSettingsSet` | login |
+| `POST` | `/api/nodes/kanban/sources` | `apiKanbanSourcesSet` | login |
+| `POST` | `/api/nodes/kanban/supports` | `apiKanbanSupportsSet` | login |
+| `GET` | `/api/nodes/lane-gate-points` | `apiLaneGatePoints` | public |
+| `GET` | `/api/nodes/lane-waiting` | `apiLaneWaiting` | public |
+| `GET` | `/api/nodes/occupancy` | `apiNodeOccupancy` | public |
+| `GET` | `/api/nodes/process-options` | `apiKanbanProcessOptions` | public |
+| `POST` | `/api/nodes/properties/delete` | `apiNodePropertyDelete` | login |
+| `POST` | `/api/nodes/properties/set` | `apiNodePropertySet` | login |
+| `POST` | `/api/nodes/reparent` | `apiReparentNode` | login |
+| `POST` | `/api/nodes/{id}/display-name` | `apiNodeDisplayNameSet` | login |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/test-orders/direct` | List direct fleet orders |
-| `POST` | `/api/test-orders/direct` | Submit order directly to fleet backend |
+### `/api/nodestate`
 
-### RDS Commands
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/nodestate` | `apiNodeState` | public |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/test-commands/submit` | Send raw RDS command |
-| `GET` | `/api/test-commands` | List previous commands |
-| `GET` | `/api/test-commands/status?id=<ID>` | Check command status |
+### `/api/orders`
 
-### Fleet Proxy
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/orders` | `apiListOrders` | public |
+| `GET` | `/api/orders/detail` | `apiGetOrder` | public |
+| `GET` | `/api/orders/enriched` | `apiGetOrderEnriched` | public |
+| `POST` | `/api/orders/hard-release` | `apiHardReleaseOrder` | login |
+| `POST` | `/api/orders/priority` | `apiSetOrderPriority` | login |
+| `POST` | `/api/orders/reissue-terminate` | `apiReissueTerminate` | login |
+| `POST` | `/api/orders/spot` | `apiManualOrderSubmit` | login |
+| `POST` | `/api/orders/terminate` | `apiTerminateOrder` | login |
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/fleet/proxy` | `{"method": "GET", "path": "/robots"}` | Proxy request to fleet backend |
+### `/api/outbox`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/outbox/deadletters` | `apiListDeadLetterOutbox` | public |
+| `POST` | `/api/outbox/replay` | `apiReplayOutbox` | login |
+
+### `/api/parts`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/parts` | `apiListParts` | public |
+| `POST` | `/api/parts/catid` | `apiSetPartCATID` | login |
+| `GET` | `/api/parts/lookup` | `apiGetPart` | public |
+
+### `/api/payloads`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/payloads` | `apiListPayloads` | public |
+| `GET` | `/api/payloads/by-node` | `apiPayloadsByNode` | public |
+| `POST` | `/api/payloads/confirm-manifest` | `apiConfirmManifest` | login |
+| `GET` | `/api/payloads/detail` | `apiGetPayload` | public |
+| `GET` | `/api/payloads/events` | `apiListPayloadEvents` | login |
+| `GET` | `/api/payloads/manifest` | `apiListManifest` | public |
+| `POST` | `/api/payloads/manifest/create` | `apiCreateManifestItem` | login |
+| `POST` | `/api/payloads/manifest/delete` | `apiDeleteManifestItem` | login |
+| `POST` | `/api/payloads/manifest/update` | `apiUpdateManifestItem` | login |
+| `GET` | `/api/payloads/templates` | `apiListPayloads` | public |
+| `GET` | `/api/payloads/templates/bin-types` | `apiGetPayloadBinTypes` | public |
+| `POST` | `/api/payloads/templates/bin-types` | `apiSavePayloadBinTypes` | login |
+| `GET` | `/api/payloads/templates/check-sequence` | `apiCheckLoadSequence` | login |
+| `POST` | `/api/payloads/templates/create` | `apiCreatePayloadTemplate` | login |
+| `POST` | `/api/payloads/templates/import` | `apiImportPayloadTemplates` | login |
+| `GET` | `/api/payloads/templates/manifest` | `apiGetPayloadManifestTemplate` | public |
+| `GET` | `/api/payloads/templates/sequences` | `apiListLoadSequences` | login |
+| `POST` | `/api/payloads/templates/update` | `apiUpdatePayloadTemplate` | login |
+
+### `/api/plant`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/plant/timezone` | `apiPlantTimezone` | public |
+
+### `/api/reconciliation`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/reconciliation` | `apiReconciliation` | public |
+
+### `/api/recovery`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/recovery/actions` | `apiListRecoveryActions` | public |
+| `POST` | `/api/recovery/repair` | `apiRepairAnomaly` | login |
+
+### `/api/robots`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/robots` | `apiRobotsStatus` | public |
+| `POST` | `/api/robots/availability` | `apiRobotSetAvailability` | login |
+| `GET` | `/api/robots/cleaning` | `apiRobotCleaning` | public |
+| `POST` | `/api/robots/cleaning/clean-now` | `apiRobotCleanNow` | login |
+| `POST` | `/api/robots/cleaning/opt-out` | `apiRobotCleaningOptOut` | login |
+| `POST` | `/api/robots/cleaning/setup` | `apiRobotCleaningSetup` | login |
+| `POST` | `/api/robots/control` | `apiRobotControl` | login |
+| `GET` | `/api/robots/fleet` | `apiRobotsFleet` | public |
+| `POST` | `/api/robots/force-complete` | `apiRobotForceComplete` | login |
+| `GET` | `/api/robots/hours` | `apiRobotHours` | public |
+| `GET` | `/api/robots/lane-change` | `apiLaneChange` | public |
+| `GET` | `/api/robots/localization` | `apiLocalizationBoard` | public |
+| `POST` | `/api/robots/move` | `apiRobotMoveTo` | login |
+| `POST` | `/api/robots/retry` | `apiRobotRetryFailed` | login |
+
+### `/api/sim`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `POST` | `/api/sim/cancel-fails` | `apiSimCancelFails` (sim build) | public |
+| `POST` | `/api/sim/create-fails` | `apiSimCreateFails` (sim build) | public |
+| `POST` | `/api/sim/robot/deck` | `apiSimRobotDeck` (sim build) | public |
+| `POST` | `/api/sim/robot/fault` | `apiSimRobotFault` (sim build) | public |
+| `GET` | `/api/sim/robots` | `apiSimRobots` (sim build) | public |
+| `POST` | `/api/sim/speed` | `apiSimSetSpeed` (sim build) | public |
+| `GET` | `/api/sim/status` | `apiSimStatus` (sim build) | public |
+
+### `/api/sourceability`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/sourceability/events` | `apiSourceabilityEvents` | public |
+
+### `/api/stations`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/stations` | `apiStations` | public |
+
+### `/api/telemetry`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/telemetry/e-maint` | `apiEMaintRobotTelemetry` | public |
+| `GET` | `/api/telemetry/e-maint/download` | `apiEMaintRobotTelemetryDownload` | public |
+
+### `/api/test-commands`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/test-commands` | `apiTestCommandsList` | login |
+| `POST` | `/api/test-commands/cancel` | `apiTestCommandCancel` | login |
+| `GET` | `/api/test-commands/status` | `apiTestCommandStatus` | login |
+| `POST` | `/api/test-commands/submit` | `apiTestCommandSubmit` | login |
+
+### `/api/test-orders`
+
+| Method | Path | Handler | Auth |
+|---|---|---|---|
+| `GET` | `/api/test-orders` | `apiTestOrdersList` | login |
+| `POST` | `/api/test-orders/cancel` | `apiTestOrderCancel` | login |
+| `GET` | `/api/test-orders/detail` | `apiTestOrderDetail` | login |
+| `GET` | `/api/test-orders/direct` | `apiDirectOrdersList` | login |
+| `POST` | `/api/test-orders/direct` | `apiDirectOrderSubmit` | login |
+| `POST` | `/api/test-orders/direct/complex` | `apiDirectComplexOrderSubmit` | login |
+| `POST` | `/api/test-orders/direct/receipt` | `apiDirectOrderReceipt` | login |
+| `POST` | `/api/test-orders/direct/release` | `apiDirectOrderRelease` | login |
+| `POST` | `/api/test-orders/receipt` | `apiTestOrderReceipt` | login |
+| `GET` | `/api/test-orders/robots` | `apiTestRobots` | login |
+| `GET` | `/api/test-orders/scene-points` | `apiTestScenePoints` | login |
+| `POST` | `/api/test-orders/submit` | `apiTestOrderSubmit` | login |
+| `POST` | `/api/test-orders/submit/complex` | `apiKafkaComplexOrderSubmit` | login |
+
+<!-- /generated -->
 
 ## SSE Events
 

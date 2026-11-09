@@ -39,6 +39,8 @@ func (e *Engine) startLinesideReporter() {
 	go e.runLinesideReporter()
 }
 
+// runLinesideReporter sends this Edge's lineside report every
+// linesideReportInterval until the engine stops (reportLinesideLevels).
 func (e *Engine) runLinesideReporter() {
 	ticker := time.NewTicker(linesideReportInterval)
 	defer ticker.Stop()

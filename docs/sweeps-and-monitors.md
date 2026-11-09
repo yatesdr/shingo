@@ -8,9 +8,11 @@ canonical list: `[[terminology]]` defines what a floor is and points here for th
 passes, `[[lanes]]` points here for their order, and
 `[[uop-threshold-replenishment]]` points here for what re-evaluates a threshold.
 
-Tickers unrelated to replenishment (SSE keepalives, reconnect jitter, partition
-maintenance, PLC polling, backups, retention) are out of scope; none couples to
-this machinery.
+The two loop tables are generated from each service's `Engine.Start` and list
+every loop it starts, replenishment or not. Tickers started elsewhere and
+unrelated to replenishment (SSE keepalives, reconnect jitter, partition
+maintenance, backups, retention) are out of scope; none couples to this
+machinery.
 
 ## Core — threshold decision
 
@@ -34,18 +36,42 @@ The threshold monitor reads `demand_registry` and `demand_origins` on every eval
 
 **Every fire path reads Core's count, and the Edge's lineside report decides nothing.** The report is a per-carrier checksum: `HandleLinesideLevelReport` (`messaging/lineside_report_handler.go`) upserts it and, when a row moved, `service/lineside_divergence.go` compares it against Core's replica and opens or closes `report_divergence` episodes in `bin_uop_exception` (listed on `/inventory`). It triggers no evaluation. From 2026-07-24 until the seat-count ruling of 2026-09-23 the report did decide (`lineside_decision_mode`, default `edge_reports`, in `engine/threshold_monitor_lineside.go`); the knob and the file are deleted, and rolling back is the previous build.
 
-## Core — sweeps
+## Core — background loops
+
+Every loop Core's `Engine.Start` starts, in the order it starts them.
+
+<!-- generated: shingo-core/engine Engine.Start -->
+
+| Loop | Where | Started by | Cadence | What it does |
+|---|---|---|---|---|
+| `afterQueue.run` | `shingo-core/engine/after.go` | `Engine.Start` | no ticker | run serves the queue until stop closes. |
+| `DriverStarter.StartDriver` | `shingo-core/fleet/fleet.go` | `Engine.Start` | set by the implementation | DriverStarter is an optional interface implemented by fleet backends whose driver goroutine must launch AFTER the engine's event handlers are wired (the sim driver, which emits FINISHED events immediately, would fire into a dead handler before wireEventHandlers). |
+| `Scanner.StartPeriodicSweep` | `shingo-core/fulfillment/scanner.go` | `Engine.Start` | 60s | StartPeriodicSweep runs the scanner every interval as a safety net. |
+| `laneLivenessFloorLoop` | `shingo-core/engine/engine_background.go` | `Engine.Start` | 60s (`laneLivenessFloorInterval`) | laneLivenessFloorLoop is F-22's floor: the periodic pass over the two wait populations that had only event releasers — gate-staged dwellers and compound legs Core has not yet handed to the fleet. |
+| `OrderTracker.Start` | `shingo-core/fleet/tracker.go` | `Engine.Start` | set by the implementation | OrderTracker tracks active vendor orders and emits status change events. |
+| `connectionHealthLoop` | `shingo-core/engine/engine_connection.go` | `Engine.Start` | 30s | connectionHealthLoop runs checkConnectionStatus every 30 seconds until the engine stops. |
+| `robotRefreshLoop` | `shingo-core/engine/engine_background.go` | `startRobotPollLoops` | 2s (`robotPollInterval`) | robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated only when the robot state has actually changed. |
+| `cleaningLoop` | `shingo-core/engine/cleaning.go` | `startRobotPollLoops` | 60s (`cleaningTickInterval`) | cleaningLoop runs the cleaning tick every minute until the engine stops. |
+| `lidarHoursLoop` | `shingo-core/engine/robot_lidar.go` | `startRobotPollLoops` | computed by `nextLidarRound` | lidarHoursLoop runs one round per UTC hour (nextLidarRound) for as long as the engine runs. |
+| `claimSweepLoop` | `shingo-core/engine/engine_background.go` | `startClaimAndTerminateSweeps` | config `staging.sweep_interval`, else 5m (`config.DefaultStagingSweepInterval`) | claimSweepLoop periodically releases claims an order no longer owns. |
+| `terminateChaseLoop` | `shingo-core/engine/fleet_terminate_chase.go` | `startClaimAndTerminateSweeps` | 60s (`terminateChaseInterval`) | terminateChaseLoop runs chaseUnterminatedOrders every minute. |
+| `mapSyncLoop` | `shingo-core/engine/engine_map_sync.go` | `Engine.Start` | 5m (`mapSyncInterval`) | mapSyncLoop evaluates both gates on a slow ticker. |
+| `runDemandReconciler` | `shingo-core/engine/demand_reconciler.go` | `startDemandReconciler` | config `demand.reconcile_interval` | runDemandReconciler runs reconcileDemandEpisodes every demand reconcile interval until the engine stops. |
+| `ReconciliationService.Loop` | `shingo-core/engine/reconciliation_service.go` | `Engine.Start` | config `staging.sweep_interval`, else 5m (`config.DefaultStagingSweepInterval`) | Loop runs the reconciliation passes every interval until stopCh closes: the summary (logged when not ok), auto-confirm of stuck delivered orders and abandonment of stuck orders (each when its timeout is set), the stuck reshuffle-parent re-drive, the orphaned-reservation reap, the stranded-bin sweep and the shadow logs. |
+| `Cache.run` | `shingo-core/dispatch/eta/medians.go` | `Cache.Start` | 10m (`refreshInterval`) | run refreshes the cache every refreshInterval until stopChan closes. |
+| `ThresholdMonitor.Run` | `shingo-core/engine/threshold_monitor.go` | `Engine.Start` | once, after 3s | Run performs the startup sweep then returns. |
+| `SourceabilityMonitor.Run` | `shingo-core/engine/sourceability_monitor.go` | `Engine.Start` | 2m (`sourceabilityFullInterval`) | Run does a startup full recompute, then runs the periodic full recompute until ctx is cancelled. |
+| `KanbanKeeper.Run` | `shingo-core/engine/kanban_keeper.go` | `Engine.Start` | 30s (`keeperTickInterval`) | Run ticks until ctx is cancelled. |
+| `Poster.Run` | `shingo-core/cms/poster/poster.go` | `runCMSPoster` | `Poster.cfg.PollInterval` | Run drains until ctx is done. |
+
+<!-- /generated -->
+
+Started outside `Engine.Start`, so not in the table above:
 
 | Mechanism | Where | Started by | Cadence |
 |---|---|---|---|
-| demand reconciler | `engine/demand_reconciler.go` | boot | `Demand.ReconcileInterval` (0 disables) |
-| `AbandonStuckOrders` + 4 sibling passes | `engine/reconciliation_service.go` | boot | `Staging.SweepInterval` (5m) |
-| `stagedBinSweepLoop` | `engine/engine_background.go` | boot | `Staging.SweepInterval` |
-| fulfillment scanner | `fulfillment/scanner.go` | boot + 5 events | 60s ticker plus event triggers |
-| `SourceabilityMonitor` | `engine/sourceability_monitor.go` | boot + bus | 2m full, 300ms debounce |
 | `staleEdgeLoop` | `messaging/core_handler.go` | boot | 60s |
-| RDS grace poller | `rds/poller.go` | boot | configured interval |
-| `laneLivenessFloorLoop` — 3 passes, see below | `engine/engine_background.go` | boot | 60s (`laneLivenessFloorInterval`) |
+| RDS grace poller (the RDS backend's `OrderTracker`) | `rds/poller.go` | `OrderTracker.Start` | configured interval |
 
 ### The lane liveness floor — three passes, one tick
 
@@ -88,19 +114,35 @@ none of them will notice a problem on their own if the path is never taken.
 | `noteDestNodeDrift` / `DestNodeDriftTally` | `engine/bin_state_drift.go` | an order's destination node disagreeing with its bins' |
 | `refuseArrival` / `ArrivalRefusal` | `engine/arrival_guard.go` | an arrival that cannot be applied, carrying a reason and context |
 
-## Edge
+## Edge — background loops
+
+Every loop Edge's `Engine.Start` starts, in the order it starts them.
+
+<!-- generated: shingo-edge/engine Engine.Start -->
+
+| Loop | Where | Started by | Cadence | What it does |
+|---|---|---|---|---|
+| `Manager.sseLoop` | `shingo-edge/plc/sse.go` | `Manager.StartWarLinkPoller` | no ticker | sseLoop is the top-level goroutine for SSE mode. |
+| `Manager.warlinkPollLoop` | `shingo-edge/plc/manager.go` | `Manager.StartWarLinkPoller` | `WarLinkConfig.PollRate`, else 2s | warlinkPollLoop is the poll-mode goroutine: one WarLink fetch now, then one each WarLink poll rate until the poller or the manager stops. |
+| `Manager.pollLoop` | `shingo-edge/plc/manager.go` | `Manager.StartPolling` | config `poll_rate`, else 1s (`config.DefaultPollRate`) | pollLoop reads every polled reporting point each counter poll interval until the manager stops. |
+| `Watch.Run` | `protocol/liveness/liveness.go` | `Engine.Start` | 5s (`checkEvery`) | Run reads the loops every 5 s until stop closes. |
+| `strandedMonitor.run` | `shingo-edge/engine/uop_stranded_monitor.go` | `startStrandedMonitor` | 60s (`strandedScanInterval`) | run sweeps once at boot, then scans every node each strandedScanInterval until the engine stops. |
+| `runDemandReconciler` | `shingo-edge/engine/demand_reconciler.go` | `startDemandReconciler` | 60s (`demandReconcileInterval`) | runDemandReconciler runs reconcileDemand every demandReconcileInterval until the engine stops. |
+| `runLinesideReporter` | `shingo-edge/engine/lineside_reporter.go` | `startLinesideReporter` | 60s (`linesideReportInterval`) | runLinesideReporter sends this Edge's lineside report every linesideReportInterval until the engine stops (reportLinesideLevels). |
+| `catidMonitor.run` | `shingo-edge/engine/plc_catid_monitor.go` | `startCatidMonitor` | 500ms (`plcPollInterval`) | run is the monitor's goroutine: a read every plcPollInterval on the process clock, each stamped with it, so every time the monitor writes (a read, a confirm, the declaration's window, a refusal, the verify deadline) is on the clock the engine stamps its rows and changeovers with. |
+| `catidMonitor.runSlotWatch` | `shingo-edge/engine/catid_slot_watch.go` | `startCatidMonitor` | 1m (`slotWatchInterval`) | runSlotWatch is the watch's goroutine: a pass a minute of the process clock until the engine stops. |
+| `startIntentWorker` | `shingo-edge/engine/release_act.go` | `Engine.Start` | 15s (`intentFloor`) | startIntentWorker runs the worker goroutine, the 15 s floor, and the boot sweep of every node holding an intent. |
+
+<!-- /generated -->
+
+## Edge — boot and per-event passes, and loops started elsewhere
 
 | Mechanism | Where | Started by | Cadence |
 |---|---|---|---|
 | `SweepPushLoaders` / `rePushOwnLoader` | `engine/operator_demand_loader.go` / `engine/wiring_completion.go` | register ack / window free (CLEAR, L2 landing) | one-shot / per event, own loader only |
 | `SweepPushUnloaders` / `rePushOwnUnloader` | `engine/operator_demand_unloader.go` / `engine/wiring_completion.go` | register ack / window free (CLEAR, PUSH EMPTY, U2 pickup; U2 landing as fallback) | one-shot / per event, own unloader only |
 | `MaybeCreateUnloaderFullIn` | `engine/operator_demand_unloader.go` | produce release carrying `capture_lineside` (changeover evac at 0, sim operator, API client; not the station HMI) | per event |
-| `recordL1Burst` | `engine/loader_burst.go` | every in-bin order | 60s window, >8 warns |
-| stranded-carrier monitor | `engine/uop_stranded_monitor.go` | Start | 60s |
-| demand reconciler | `engine/demand_reconciler.go` | Start | 60s |
-| lineside reporter | `engine/lineside_reporter.go` | Start | 60s — one SELECT and one snapshot enqueue, under the accumulator's flush lock; counts stated as of each carrier's flushed seq |
 | plant-claims snapshot | `messaging/plant_claims_publisher.go` | Start | **60m** (was 5m until 2026-08-22); skipped while Core speaks feeds |
-| CATID monitor | `engine/plc_catid_monitor.go` | Start | 500ms |
 | `restoreChangeoverState` | `engine/changeover_restore.go` | Start | boot once |
 | `applyHoldAndReplay` | `engine/wiring_counter_delta.go` | counter delta with no bound bin | per tick |
 | `StartupReconcile` | `engine/reconciliation.go` | boot + reconnect | per connect |

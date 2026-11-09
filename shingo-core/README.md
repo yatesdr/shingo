@@ -91,21 +91,39 @@ Without a filter (`--log-debug`), all subsystems are logged.
 
 ## Web Interface
 
-Shingo Core provides a management interface for fleet operations, inventory, and system administration. Key pages:
+Shingo Core provides a management interface for fleet operations, inventory, and system administration. Its pages, generated from `shingo-core/www/router.go`:
 
-| Page | Route | Description |
-|------|-------|-------------|
-| Dashboard | `/` | Real-time system overview with active orders and fleet status |
-| Nodes | `/nodes` | Registered locations, supermarket visualization, fleet sync |
-| Orders | `/orders` | Transport order list with status tracking and timeline |
-| Robots | `/robots` | Live fleet status with availability and task controls |
-| Bins | `/bins` | Physical container management, payload assignment, lifecycle |
-| Payloads | `/payloads` | Payload template definitions and manifest configuration |
-| Demand | `/demand` | Material demand planning and order generation |
-| Test Orders | `/test-orders` | Order submission for testing (Kafka and direct fleet) |
-| Diagnostics | `/diagnostics` | Debug logs, CMS transactions, reconciliation, recovery actions, and fire alarm control |
-| Configuration | `/config` | Runtime settings (fleet, messaging) |
-| Fleet Explorer | `/fleet-explorer` | Raw API explorer for the fleet backend |
+<!-- generated: shingo-core/www/router.go pages -->
+
+| Path | Template (in `shingo-core/www/templates/`) | Title | Auth |
+|---|---|---|---|
+| `/` | `dashboard.html` | Dashboard | public |
+| `/bins` | `bins.html` | Bins | login |
+| `/config` | `config.html` | Configuration | login |
+| `/cycle-time` | `cycle-time.html` | Cycle time | public |
+| `/demand-episodes` | `demand-episodes.html` | Demand episodes | public |
+| `/demand-episodes/{originID}` | `demand-episode.html` |  | public |
+| `/diagnostics` | `diagnostics.html` | Logs | login |
+| `/edges` | `edges.html` | Stations | login |
+| `/fleet-explorer` | `rds_explorer.html` | Fleet Explorer | login |
+| `/heartbeat` | `heartbeat.html` | Production Heartbeat — Shingo | public |
+| `/inventory` | `inventory.html` | Inventory | public |
+| `/inventory/count-history` | `count-history.html` |  | public |
+| `/login` | `login.html` | Login | public |
+| `/material-flags` | `material-flags.html` | Material flags | public |
+| `/missions` | `missions.html` | Mission Telemetry | public |
+| `/missions/{orderID}` | `mission-detail.html` |  | public |
+| `/nodes` | `nodes.html` | Nodes | public |
+| `/orders` | `orders.html` | Orders | public |
+| `/orphans` | `orphans.html` | Orphan reconciliation | public |
+| `/overview` | `overview.html` | Operations Overview | public |
+| `/payloads` | `payloads.html` | Payloads | login |
+| `/robots` | `robots.html` | Robots | public |
+| `/sourcing` | `sourcing.html` | Sourcing | login |
+| `/test-orders` | `test-orders.html` | Test Orders | login |
+| `/wall-display/{id}` | `dashboard-display.html`, `dashboard-frame.html`, `dashboard-map.html`, `dashboard-node-report.html`, `heartbeat.html` |  | public |
+
+<!-- /generated -->
 
 See [UI Guide](docs/ui-guide.md) for detailed page descriptions.
 

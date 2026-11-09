@@ -65,6 +65,8 @@ one place an order rests short of the fleet, and it always carries a cause
 (`transition` refuses `→ queued` with an empty `queue_code`:
 `WaitWithoutCause`).
 
+What ends each wait, cause by cause, is in [queue-releasers.md](queue-releasers.md).
+
 **Acquiring** is the act between `pending` and `dispatched` — asking for the
 whole hand — never a stored status. `protocol.IsAcquiring` = {`pending`,
 `queued`} is the scanner's population; `IsWaiting` = {`queued`}.
@@ -130,73 +132,86 @@ fleet (`dispatched` → `in_transit` → `staged` / `delivered`); faulted is a
 grace-period branch; reshuffling is the compound-parent loop. Every edge below
 is a row in `protocol.validTransitions` (the full table, under a drift test, is
 in [order-state-machine/transitions.md](order-state-machine/transitions.md)).
+The diagram draws the statuses a `LifecycleService` method writes; an edge's
+label is the actions `actionMap` fires on it, and an unlabelled edge is a pure
+transition (status write and audit only).
+
+<!-- generated: shingo-core/dispatch/lifecycle.go actionMap -->
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: every door (the INSERT sets it)
+    [*] --> pending
 
-    pending --> dispatched: the hand's CAS (every order's first hand)
-    pending --> queued: Park (hand not whole; cause on the row first)
-    pending --> reshuffling: BeginReshuffle (buried source; dig pivot)
-    pending --> cancelled: CancelOrder
-    pending --> failed: Fail
-    pending --> skipped: Skip
+    pending --> queued
+    pending --> dispatched
+    pending --> reshuffling
+    pending --> cancelled: fireCancelled
+    pending --> failed: fireFailed
+    pending --> skipped: fireSkipped
 
-    note right of pending
-        sourcing is history: no edge enters it.
-        v148 moved live rows to queued.
-    end note
+    queued --> acknowledged
+    queued --> dispatched
+    queued --> in_transit
+    queued --> reshuffling
+    queued --> cancelled: fireCancelled
+    queued --> failed: fireFailed
+    queued --> skipped: fireSkipped
 
-    queued --> dispatched: the hand's CAS (a later acquire)
-    queued --> reshuffling: BeginReshuffle (buried source; dig pivot)
-    queued --> cancelled: CancelOrder
-    queued --> failed: Fail
-    queued --> skipped: Skip (no source bins)
+    acknowledged --> dispatched
+    acknowledged --> in_transit
+    acknowledged --> staged
+    acknowledged --> cancelled: fireCancelled
+    acknowledged --> faulted: fireFaulted
+    acknowledged --> failed: fireFailed
 
-    dispatched --> in_transit: MarkInTransit (fleet RUNNING)
-    dispatched --> delivered: MarkDelivered
-    dispatched --> queued: DemoteAfterFleetRefusal (fleet refused the create; fleet_unavailable or the ngrp carve-out)
-    dispatched --> faulted: MarkFaulted (RDS FAILED)
-    dispatched --> cancelled: CancelOrder
-    dispatched --> failed: Fail
+    dispatched --> in_transit
+    dispatched --> staged
+    dispatched --> delivered: fireCompleted
+    dispatched --> queued
+    dispatched --> cancelled: fireCancelled
+    dispatched --> faulted: fireFaulted
+    dispatched --> failed: fireFailed
 
-    in_transit --> staged: MarkStaged (fleet WAITING)
-    in_transit --> delivered: MarkDelivered
-    in_transit --> faulted: MarkFaulted
-    in_transit --> cancelled: CancelOrder
-    in_transit --> failed: Fail
+    in_transit --> delivered: fireCompleted
+    in_transit --> staged
+    in_transit --> cancelled: fireCancelled
+    in_transit --> faulted: fireFaulted
+    in_transit --> failed: fireFailed
 
-    staged --> in_transit: Release (operator)
-    staged --> delivered: MarkDelivered
-    staged --> faulted: MarkFaulted
-    staged --> cancelled: CancelOrder
-    staged --> failed: Fail
+    staged --> in_transit
+    staged --> delivered: fireCompleted
+    staged --> cancelled: fireCancelled
+    staged --> faulted: fireFaulted
+    staged --> failed: fireFailed
 
-    faulted --> in_transit: MarkFaultedRecovered (fleet recovers)
-    faulted --> delivered: MarkDelivered (operator finishes)
-    faulted --> failed: Fail (grace expires)
-    faulted --> cancelled: CancelOrder
+    faulted --> in_transit: fireFaultedRecovered
+    faulted --> delivered: fireCompleted
+    faulted --> failed: fireFailed
+    faulted --> cancelled: fireCancelled
 
-    reshuffling --> confirmed: CompleteCompound (simple-retrieve)
-    reshuffling --> pending: ResumeCompound / Restart (dig finished or dissolved; then one acquire)
-    reshuffling --> cancelled: CancelOrder
-    reshuffling --> failed: Fail
+    delivered --> confirmed: fireCompleted
+    delivered --> cancelled: fireCancelled
+    delivered --> failed: fireFailed
 
-    delivered --> confirmed: ConfirmReceipt (Edge receipt)
-    delivered --> cancelled: CancelOrder
-    delivered --> failed: Fail
+    reshuffling --> confirmed: fireCompleted
+    reshuffling --> pending: fireResumed
+    reshuffling --> cancelled: fireCancelled
+    reshuffling --> failed: fireFailed
 
-    confirmed --> [*]
-    failed --> [*]
     cancelled --> [*]
+    failed --> [*]
     skipped --> [*]
+    confirmed --> [*]
 ```
+
+<!-- /generated -->
 
 Notes on the Core machine:
 
-- **`acknowledged` is not drawn** — `MapState` never produces it; Core's vendor
-  ladder starts at `dispatched`. The `acknowledged → {...}` edges exist in the
-  shared table (Edge uses them) but Core never enters the state.
+- **`acknowledged` is drawn because `Acknowledge` can write it, and it never
+  does** — `MapState` never produces it; Core's vendor ladder starts at
+  `dispatched`. The `acknowledged → {...}` edges exist in the shared table
+  (Edge uses them) but Core never enters the state.
 - **`submitted` is not drawn** — Edge's word; Core never writes it.
 - **Reshuffle loop:** `reshuffling → pending` (`ResumeCompound`, `Restart`) is a
   complex parent going back to the ladder's start when its dig finished or was
@@ -231,78 +246,86 @@ and independently tracks its own submission lifecycle
 (`pending` → `submitted` → `acknowledged`). The statuses the mapping newly
 lets Edge store — `dispatched`, `faulted` — appear here because Core pushes
 them over `order.update`. Edge never stores `sourcing`: an older Core's
-`sourcing` is `queued` by the time it reaches `ApplyCoreStatus`.
+`sourcing` is `queued` by the time it reaches `ApplyCoreStatus`. The diagram is
+every edge of `validTransitions` between the statuses an order born `pending`
+can reach; who writes each status on Edge is the lifecycle table's Edge column.
+
+<!-- generated: protocol/types.go validTransitions -->
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: local create
+    [*] --> pending
 
-    pending --> submitted: auto-submit at creation / SubmitOrder
-    pending --> queued: ApplyCoreStatus (Core push)
-    pending --> dispatched: ApplyCoreStatus
-    pending --> reshuffling: snapshot reconcile
-    pending --> cancelled: AbortOrder
-    pending --> failed: ReplyError
-    pending --> skipped: HandleSkipped
+    pending --> submitted
+    pending --> queued
+    pending --> dispatched
+    pending --> reshuffling
+    pending --> cancelled
+    pending --> failed
+    pending --> skipped
 
-    submitted --> acknowledged: ReplyAck (Core intake ACK)
-    submitted --> queued: ApplyCoreStatus
-    submitted --> cancelled: AbortOrder / ReplyCancelled
-    submitted --> failed: ReplyError
-    submitted --> skipped: HandleSkipped
+    submitted --> acknowledged
+    submitted --> queued
+    submitted --> cancelled
+    submitted --> failed
+    submitted --> skipped
 
-    acknowledged --> in_transit: ReplyWaybill (waybill + ETA)
-    acknowledged --> dispatched: ApplyCoreStatus (Core push)
-    acknowledged --> faulted: ApplyCoreStatus
-    acknowledged --> cancelled: ReplyCancelled / AbortOrder
-    acknowledged --> failed: ReplyError
+    queued --> acknowledged
+    queued --> dispatched
+    queued --> in_transit
+    queued --> reshuffling
+    queued --> cancelled
+    queued --> failed
+    queued --> skipped
 
-    queued --> acknowledged: ReplyAck (order.ack)
-    queued --> dispatched: ApplyCoreStatus
-    queued --> in_transit: ApplyCoreStatus
-    queued --> reshuffling: snapshot reconcile
-    queued --> cancelled: ReplyCancelled / AbortOrder
-    queued --> failed: ReplyError
-    queued --> skipped: HandleSkipped
+    acknowledged --> dispatched
+    acknowledged --> in_transit
+    acknowledged --> staged
+    acknowledged --> cancelled
+    acknowledged --> faulted
+    acknowledged --> failed
 
-    dispatched --> in_transit: ApplyCoreStatus / ReplyWaybill
-    dispatched --> delivered: ReplyDelivered
-    dispatched --> queued: ApplyCoreStatus (fleet refusal)
-    dispatched --> faulted: ApplyCoreStatus
-    dispatched --> cancelled: ReplyCancelled
-    dispatched --> failed: ReplyError
+    dispatched --> in_transit
+    dispatched --> staged
+    dispatched --> delivered
+    dispatched --> queued
+    dispatched --> cancelled
+    dispatched --> faulted
+    dispatched --> failed
 
-    in_transit --> staged: ReplyStaged / RollbackForRetry (release bounced)
-    in_transit --> delivered: ReplyDelivered / HandleDelivered
-    in_transit --> faulted: ApplyCoreStatus
-    in_transit --> cancelled: ReplyCancelled / AbortOrder
-    in_transit --> failed: ReplyError
+    in_transit --> delivered
+    in_transit --> staged
+    in_transit --> cancelled
+    in_transit --> faulted
+    in_transit --> failed
 
-    staged --> in_transit: ReleaseOrder (operator)
-    staged --> delivered: ReplyDelivered
-    staged --> faulted: ApplyCoreStatus
-    staged --> cancelled: ReplyCancelled / AbortOrder
-    staged --> failed: ReplyError
+    staged --> in_transit
+    staged --> delivered
+    staged --> cancelled
+    staged --> faulted
+    staged --> failed
 
-    faulted --> in_transit: ApplyCoreStatus
-    faulted --> delivered: HandleDelivered / snapshot reconcile
-    faulted --> failed: ReplyError / snapshot reconcile
-    faulted --> cancelled: ReplyCancelled / snapshot reconcile
+    faulted --> in_transit
+    faulted --> delivered
+    faulted --> failed
+    faulted --> cancelled
 
-    delivered --> confirmed: ConfirmDelivery (operator)
-    delivered --> cancelled: ReplyCancelled
-    delivered --> failed: ReplyError
+    delivered --> confirmed
+    delivered --> cancelled
+    delivered --> failed
 
-    reshuffling --> confirmed: snapshot reconcile
-    reshuffling --> pending: snapshot reconcile
-    reshuffling --> cancelled: snapshot reconcile
-    reshuffling --> failed: snapshot reconcile
+    reshuffling --> confirmed
+    reshuffling --> pending
+    reshuffling --> cancelled
+    reshuffling --> failed
 
-    confirmed --> [*]
-    failed --> [*]
     cancelled --> [*]
+    failed --> [*]
     skipped --> [*]
+    confirmed --> [*]
 ```
+
+<!-- /generated -->
 
 Notes on the Edge machine:
 

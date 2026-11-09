@@ -88,32 +88,128 @@ either way.
 | `--restore` | Interactive restore from S3-compatible backup storage before startup |
 | `--log-debug[=FILTER]` | Enable debug logging with optional subsystem filter |
 
+## Configuration Keys
+
+Every key `shingoedge.yaml` accepts: key and default from `config.Defaults()`
+(rendered to `shingo-edge/config/defaults.snapshot.txt` by `make defaults-snapshot`),
+type and description from the field comments in `shingo-edge/config`. `make docs-gen`
+regenerates it. Durations take Go duration strings (`5s`, `1h0m0s`).
+
+<!-- generated: shingo-edge/config Config -->
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `backup.enabled` | bool | `false` | automatic backups on the schedule below |
+| `backup.keep_daily` | int | `14` | Retention: how many backups are kept per time bucket (see shingo-edge/docs/backup-restore.md, Retention). |
+| `backup.keep_hourly` | int | `48` | Retention: how many backups are kept per time bucket (see shingo-edge/docs/backup-restore.md, Retention). |
+| `backup.keep_monthly` | int | `12` | Retention: how many backups are kept per time bucket (see shingo-edge/docs/backup-restore.md, Retention). |
+| `backup.keep_weekly` | int | `8` | Retention: how many backups are kept per time bucket (see shingo-edge/docs/backup-restore.md, Retention). |
+| `backup.s3.access_key` | string | _(unset)_ | S3 access key |
+| `backup.s3.bucket` | string | _(empty)_ | the bucket archives go to |
+| `backup.s3.endpoint` | string | _(empty)_ | the S3-compatible endpoint URL |
+| `backup.s3.insecure_skip_tls_verify` | bool | `false` | skip the endpoint's certificate check |
+| `backup.s3.region` | string | `us-east-1` | the bucket's region |
+| `backup.s3.secret_key` | string | _(unset)_ | S3 secret key |
+| `backup.s3.use_path_style` | bool | `true` | path-style bucket addressing rather than virtual-hosted |
+| `backup.schedule_interval` | duration | `1h0m0s` | the automatic backup period |
+| `core_api` | string | _(empty)_ | SimCoreAPI is Core's address for the sim operator's oracle reads (GET /api/nodes, /api/bins/by-node: engine/sim_core_oracle.go), read by sim builds only. The Edge reaches Core by the ask pair and Core's feeds; it has no HTTP client to Core. |
+| `counter.jump_threshold` | int64 | `1000` | JumpThreshold is read by plc.CalculateDelta twice: a delta above it is labelled "jump", and a backward read is taken as a 16/32-bit rollover only when the wrap delta is at or under it (otherwise it is a "reset"). Neither label gates the count any more. |
+| `database_path` | string | `shingoedge.db` | the SQLite database file |
+| `demand.hysteresis_percent` | float64 | _(unset)_ | HysteresisPercent is the recovery margin, as a percentage of the claim's reorder_point. A cell episode opens when remaining UOP falls to or below reorder_point and closes only once it climbs back ABOVE reorder_point + margin. |
+| `line_id` | string | _(empty)_ | Namespace / LineID are LABELS NOW, not identity. They no longer compose a station id and they no longer have defaults; they survive because existing plant configs carry them and silently dropping fields a plant has written is its own kind of surprise. |
+| `logging.stderr_subsystems` | list of string | `[edge_handler engine heartbeat orders plant_claims plc production_ticks protocol release]` | StderrSubsystems is the allow-list of debuglog subsystems mirrored to stderr (under systemd, the journal). |
+| `messaging.dispatch_topic` | string | `shingo.dispatch` | the topic Core publishes to edges on |
+| `messaging.kafka.brokers` | list of string | _(empty)_ | Kafka broker addresses, host:port |
+| `messaging.orders_topic` | string | `shingo.orders` | the topic this edge publishes to Core on |
+| `messaging.outbox_drain_interval` | duration | `5s` | how often the outbox drainer publishes pending messages |
+| `messaging.signing_key` | string | _(unset)_ | optional HMAC-SHA256 shared secret for envelope signing |
+| `messaging.station_id` | string | _(empty)_ | an identity override for a bench edge with no station_uid (Config.StationID) |
+| `namespace` | string | _(empty)_ | Namespace / LineID are LABELS NOW, not identity. They no longer compose a station id and they no longer have defaults; they survive because existing plant configs carry them and silently dropping fields a plant has written is its own kind of surprise. |
+| `plant_claims.snapshot_interval` | duration | `1h0m0s` | SnapshotInterval is the safety snapshot's period: the full claims set is republished this often even when no edit triggered a publish, so a Core that missed one converges. It runs only while Core does not quote the digests back on the heartbeat ack; a Core that does is healed per process on the ack instead. <= 0 uses DefaultPlantClaimsSnapshotInterval. |
+| `poll_rate` | duration | `1s` | the PLC counter loop's poll period; read at boot |
+| `sim.anchor_wall` | timestamp | _(zero)_ | SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts). |
+| `sim.calendar.enabled` | bool | `false` | default false (backward-compatible) |
+| `sim.calendar.shifts` | list | _(empty)_ | ordered by start time; default 3×8h |
+| `sim.calendar.shifts[].breaks` | list | — | breaks within this shift |
+| `sim.calendar.shifts[].breaks[].end` | string | — | "HH:MM" 24h |
+| `sim.calendar.shifts[].breaks[].start` | string | — | "HH:MM" 24h |
+| `sim.calendar.shifts[].end` | string | — | "HH:MM" 24h, e.g. "14:00" |
+| `sim.calendar.shifts[].start` | string | — | "HH:MM" 24h, e.g. "06:00" |
+| `sim.calendar.weekend` | list of weekday | _(empty)_ | days with no production; default [Saturday, Sunday] |
+| `sim.enabled` | bool | `false` | the sim switch; needs a sim build and SHINGO_ALLOW_SIM=1 |
+| `sim.epoch` | timestamp | _(zero)_ | sim clock start (fast-forward origin). Zero = wall-now |
+| `sim.max_speed` | float64 | `0` | effective-speed cap; <=0 → default (10×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). Past this the clock outruns the real choreography and the loop wedges, so requests are clamped. Must match core. Set very high to effectively uncap. |
+| `sim.operators.changeovers` | list | _(empty)_ | Changeovers are the changeovers the sim operator runs as a person at the station does: when the sim clock reaches At after the operator started, it presses START for Process to ToStyle, then each RELEASE the screen offers, and CUTOVER once the changeover's own gate says can_complete with no blockers. Read by simOperator.driveChangeovers. Empty: none. |
+| `sim.operators.changeovers[].at` | duration | — | sim time after the sim operator starts |
+| `sim.operators.changeovers[].process` | string | — | the process, by name |
+| `sim.operators.changeovers[].to_style` | string | — | the style to change it to, by name |
+| `sim.operators.enabled` | bool | `false` | the sim operator's switch |
+| `sim.operators.lineside_pull_percent` | int | `0` | LinesidePullPercent is how much of a pack the consume operator pulls into the lineside bucket to release a bin empty: at a release with the tracked count at or under this percent of the pack (rounded up), the remainder is captured to the pile and the bin goes empty; above it, a count release. 0 = never (a count release always). Read by simOperator.consumeDisposition. |
+| `sim.operators.loader_auto_load` | duration | `5s` | default 5s |
+| `sim.operators.pair_release` | bool | `false` | PairRelease routes a staged swap through ReleaseStagedOrders — the operator's RELEASE button — instead of releasing each leg on its own. |
+| `sim.operators.swap_release` | duration | `3s` | SwapRelease is the simulated reaction time between a swap reaching its wait (status "staged") and the operator pushing Release. Default 3s. |
+| `sim.operators.unloader_auto_clear` | duration | `8s` | default 8s |
+| `sim.operators.unloader_taps` | list | _(empty)_ | UnloaderTaps says what the operator taps at an unloader's windows, per operator station. A station not listed keeps the plain CLEAR, and leaves an empty cart standing. |
+| `sim.operators.unloader_taps[].station` | string | — | an operator station's code |
+| `sim.operators.unloader_taps[].tap` | string | — | SimTapLit or SimTapEmpty |
+| `sim.processes` | list | _(empty)_ | the fake PLC counters the fake WarLink advances |
+| `sim.processes[].identity_tag` | string | — | "" = no program change |
+| `sim.processes[].line_depth` | int | — | loads between station and counter; 0 = none |
+| `sim.processes[].plc_name` | string | — | the PLC the counter is on |
+| `sim.processes[].station_tag` | string | — | "" = no station counter |
+| `sim.processes[].tag_name` | string | — | the counter tag the Edge's process counts |
+| `sim.processes[].tick_interval` | duration | — | default 3s (applied at consumption) |
+| `sim.processes[].uop_per_tick` | int64 | — | default 1 (applied at consumption) |
+| `sim.seed` | int64 | `0` | PRNG seed; 0 = derive from time and log it |
+| `sim.speed` | float64 | `0` | time multiplier: 2.0 = twice as fast. Default 1.0 |
+| `station_uid` | string | _(empty)_ | StationUID is this edge's identity. It is opaque, it never changes, and it is the value that travels as protocol.Address.Station. |
+| `timezone` | string | _(empty)_ | IANA timezone for shift/hourly bucketing (e.g. "America/Chicago") |
+| `warlink.enabled` | bool | `true` | false: the WarLink poller does not run |
+| `warlink.host` | string | `localhost` | the WarLink service's host |
+| `warlink.mode` | string | `sse` | "sse" (default) or "poll" |
+| `warlink.poll_rate` | duration | `2s` | the WarLink poll period (<= 0: 2s) |
+| `warlink.port` | int | `8080` | the WarLink service's HTTP port |
+| `web.auto_confirm` | bool | `false` | AutoConfirm makes the orders this station mints confirm their own delivery: OR'ed with each claim's own auto_confirm wherever the Edge mints an order. |
+| `web.host` | string | `0.0.0.0` | web server listen address |
+| `web.port` | int | `8081` | web server port |
+| `web.session_secret` | string | _(set; redacted)_ | SessionSecret signs the login session cookie. An unset one is generated at random (Defaults, Load), and the next Config.Save writes it down. |
+
+<!-- /generated -->
+
 ## Operator Interface
 
 Shingo Edge provides a browser-based interface for production line operators and supervisors.
 
 ### Operator Pages
 
-| Page | Route | Description |
-|------|-------|-------------|
-| Material | `/material` | Current material inventory, stock levels, and consumption state |
-| Orders | `/orders` | Active transport orders with status tracking and delivery confirmation |
-| Manual Order | `/manual-order` | Create retrieve, store, and move orders manually |
-| Changeover | `/changeover` | Production line changeover workflow |
-| Production | `/production` | Hourly production counts and shift reporting |
+<!-- generated: shingo-edge/www/router.go pages public -->
+
+| Path | Template (in `shingo-edge/www/templates/`) | Title | Auth |
+|---|---|---|---|
+| `/` | `production.html` | Production | public |
+| `/changeover` | `changeover.html` | Changeover | public |
+| `/containment` | `containment.html` | Quality Containment | public |
+| `/login` | `login.html` | Login | public |
+| `/operator/station/{id}` | `operator-display.html` |  | public |
+| `/orders` | `orders.html` | Orders | public |
+| `/production` | `production.html` | Production | public |
+
+<!-- /generated -->
 
 ### Administration Pages
 
-| Page | Route | Description |
-|------|-------|-------------|
-| Processes | `/processes` | Production lines, including each line's PLC counter tag (its reporting point) |
-| Styles | `/styles` | Job styles and their node claims |
-| Payload catalog | `/payload-catalog` | Payload templates for this station |
-| PLCs | `/plcs` | Discovered PLCs, WarLink connection, tag reads |
-| Shifts | `/shifts` | Shift windows for production bucketing |
-| Operator stations | `/operator-stations` | Station definitions and node assignment |
-| Config | `/config` | App config, Kafka, and **Backups** |
-| Diagnostics | `/diagnostics` | System health, Kafka and PLC connectivity |
+<!-- generated: shingo-edge/www/router.go pages login -->
+
+| Path | Template (in `shingo-edge/www/templates/`) | Title | Auth |
+|---|---|---|---|
+| `/config` | `config.html` | Configuration | login |
+| `/diagnostics` | `diagnostics.html` | Logs | login |
+| `/manual-message` | `manual-message.html` | Kafka Direct | login |
+| `/manual-order` | `manual-order.html` | Manual Order | login |
+| `/processes` | `processes.html` | Processes | login |
+| `/replenishment` | `replenishment.html` | Replenishment | login |
+
+<!-- /generated -->
 
 There is no `/setup` page — configuration is these separate pages.
 
