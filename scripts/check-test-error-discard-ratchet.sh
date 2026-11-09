@@ -31,8 +31,7 @@
 # to touch a test file. A ratchet blocks only the thing worth blocking — a NEW
 # one — and it does so in the diff that adds it.
 #
-# THE THREE RULES (same as engine_db_methods_freeze_test.go, which is where
-# this repo's ratchet convention lives):
+# THE THREE RULES (this repo's ratchet convention):
 #
 #   count >  FROZEN  → FAIL. A new silent discard was added. Use testutil.Must.
 #   count <  FROZEN  → FAIL. Sites were converted and the constant was left

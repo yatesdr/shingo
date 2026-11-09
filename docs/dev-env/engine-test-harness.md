@@ -1,4 +1,4 @@
-# Architecture Reference
+# The engine test harness
 
 Verified against: b9210bce
 
@@ -40,6 +40,8 @@ The ledger's columns are documented once, at the top of `cmd/soakstat/ledger.go`
 
 ## Concurrency testing infrastructure
 
+Concurrency tests verify the system under contention. The primary concern is the TOCTOU (time-of-check-time-of-use) race between `FindSourceBinFIFO` and `ClaimBin` — two orders can both find the same bin before either claims it. The PostFindHook enables deterministic race injection by pausing between find and claim. `simulator.ParallelGroup` provides barrier-synchronized goroutine launches for stress testing. These tests confirm that contention produces correct outcomes: no double-claims, no permanent failures, excess orders queued for retry.
+
 The simulator harness includes infrastructure for deterministic and statistical concurrency testing:
 
 **PostFindHook** — A test-only synchronization point installed on the `PlanningService` between `FindSourceBinFIFO` and `ClaimBin`. When set via `Dispatcher.SetPostFindHook(fn)`, the hook fires inside `planRetrieve` and `planRetrieveEmpty` after finding a bin but before claiming it. Tests use the hook to widen the TOCTOU race window and guarantee both goroutines enter it simultaneously.
@@ -58,6 +60,17 @@ d.SetPostFindHook(func() {
 simulator.ParallelGroup(20, func(i int) {
     d.HandleOrderRequest(env, &protocol.OrderRequest{...})
 })
+```
+
+Test files:
+
+- `engine/engine_concurrent_test.go` — all concurrency tests (TC-71a-e)
+
+Run this domain's tests:
+
+```bash
+cd shingo-core
+go test -v -run "TestConcurrent|TestRedirect|TestFulfillmentScanner" ./engine/ -timeout 120s
 ```
 
 ## Important technical constraints

@@ -11,8 +11,8 @@ Verified against: b9210bce
 `shingo-core/store/internal/helpers/lane_reachability.go`. This document is the
 human-readable rendering; if they diverge, the code wins.
 
-Related: `[[reservations]]`, `[[material-flow]]`, `[[storage-protections]]`,
-`[[queued-order-fulfillment]]`, `[[terminology]]`.
+Related: `[[reservations]]`, `[[storage-protections]]`,
+`[[queue-releasers]]`, `[[order-lifecycle]]`, `[[terminology]]`.
 
 ---
 
@@ -47,6 +47,99 @@ did not agree. Everything now routes through `LaneBlockerPredicate`:
 
 If you need to ask this question, use one of those. An eighth spelling is a bug
 whether or not it happens to agree today.
+
+## Storage Logic
+
+### Contiguous Packing
+
+Bins in a lane are packed from the back. Occupied slots form a continuous block from the deepest position forward. No empty gaps exist between bins. New bins are placed in the deepest available empty slot.
+
+```
+Empty lane:    [ ][ ][ ][ ][ ]    Store first bin ->  [ ][ ][ ][ ][A]
+                                  Store second bin -> [ ][ ][ ][B][A]
+                                  Store third bin ->  [ ][ ][C][B][A]
+```
+
+Bin A is the oldest (first in, deepest position). FIFO retrieval takes A first.
+
+### Store Order Resolution
+
+When a store order targets a supermarket:
+
+1. Find all lanes with available space
+2. Prefer lanes already holding the same payload (consolidation)
+3. Among those, prefer the lane with the deepest target slot (most packed)
+4. If no lane holds that payload, select any lane with space
+5. Place the bin in the deepest accessible empty slot
+6. Skip lanes that restrict bin types incompatible with the incoming bin
+
+### Retrieve — Direct Access
+
+When a station requests a bin of a specific payload:
+
+1. Locate the oldest bin of that payload across all lanes (by `loaded_at` timestamp)
+2. If the bin is at the front of its lane (no blocking bins), retrieve directly
+3. Deliver to the requesting station
+
+### Retrieve — Reshuffle
+
+If the oldest bin is blocked:
+
+1. **Unbury**: park each blocking bin in another slot in the group, shallowest first
+2. **Retrieve**: pick up the target bin and deliver it
+
+There is no third step. **Blockers are never restocked** — they lie where the
+unbury parked them, and a parked blocker is ordinary findable inventory where it
+sits. Parking is deepest-first, which is what keeps the lane packed without a
+restock.
+
+```
+Before:   [C][B][A]    Target: A (oldest)
+
+Unbury:   Park C, then B, into the group's free slots
+Pick:     Retrieve A -> deliver to station
+
+After:    [ ][ ][ ]    B and C stay where they were parked
+```
+
+The old restore-blockers subsystem did move them back. It was retired (migration
+`v70` dropped `pending_restocks`) because it left permanent air bubbles whenever
+it was off — empty slots buried behind bins, reachable by nothing.
+
+### Reshuffle Failure
+
+If a leg fails mid-reshuffle the compound stalls with a leg still open. The
+stalled-chapter watchdog (`Dispatcher.SweepStalledChapters`, 60s) is what notices
+and acts — it classifies the stall and either re-plans the chapter or records the
+residue. Recovery is not a manual lane-unlock: the hold is a reservation row keyed
+to the dig, and it clears on the same rule as any other dig.
+
+### Flagged Bins in Lanes
+
+Flagged bins occupy slots and block like any other bin, and stores can occur in
+front of them. They are excluded from sourcing and from inventory counts by
+status (`status NOT IN ('flagged','maintenance','retired')`).
+
+A dig that has to move one parks it like any other blocker. There is no special
+depth-1 placement for maintenance access — that behaviour belonged to the restock
+step and went with it.
+
+### Sizing a group for headroom
+
+**Size it for headroom, not just for capacity.** A group needs at least one full
+lane's worth of slots free, because that is where a dig puts its blockers. A group
+filled to the brim cannot conduct an excavation at all — the blockers have nowhere
+to stand — and every dig admitted against it is a dig that will park.
+
+The shuffle-row minimum ([Shuffle Row](terminology.md#shuffle-row)) sizes the
+*deepest single dig*. It does not give the group headroom, and the two are
+different numbers. A group sized only to the shuffle-row minimum can still be
+packed tight enough that digs contend with each other for somewhere to put
+blockers.
+
+The related rule for the bins themselves: a partially filled lane should be packed
+from the back, empties contiguous at the mouth. A hole behind a bin is a slot no
+robot can reach and no dig can create room in.
 
 ## The mouth — who may work this lane
 
@@ -182,7 +275,7 @@ be reached.
   deleted it). When a group has nowhere to put blockers, planning refuses the
   reshuffle as transient congestion (`ErrNoShuffleSlot`) and retries later.
 - **Blockers are never restocked.** They lie where the unbury parked them and
-  become ordinary findable inventory. See `[[material-flow]]`.
+  become ordinary findable inventory. See [Retrieve — Reshuffle](#retrieve--reshuffle) above.
 
 ### When the dig's lane claim drops
 

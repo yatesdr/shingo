@@ -469,8 +469,8 @@ func TestDrain_BeforeSendFailureIsRetriedThenGivesUp(t *testing.T) {
 		t.Errorf("posts = %d, want 3 (MaxAttempts) — the budget must bound the retries", tr.postCount())
 	}
 	// Failed, not dropped. The Kafka outbox discards after ten attempts and
-	// docs/outbox-ordering.md calls that a hole; an inventory ledger cannot
-	// have one, so the row stays for a person.
+	// docs/wire-protocol.md (Delivery guarantees) calls that a hole; an
+	// inventory ledger cannot have one, so the row stays for a person.
 	if !strings.Contains(got.LastError, "gave up") {
 		t.Errorf("last_error = %q, want it to say the poster gave up and why", got.LastError)
 	}

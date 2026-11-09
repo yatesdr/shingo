@@ -27,3 +27,6 @@ Makefile   text eol=lf
 *.png      binary
 *.jpg      binary
 *.exe      binary
+
+# Generated schema snapshots: the schema of record, not counted as a language
+*.snapshot.sql linguist-generated=true

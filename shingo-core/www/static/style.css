@@ -778,7 +778,7 @@ textarea { resize: vertical; min-height: 60px; }
  * shingo-edge/www/static/css/shingoedge.css by the PLC-tag autocomplete, where
  * "tag" means a PLC tag. Those sheets never load together so nothing would
  * break — but minting a second meaning for an existing class name is the
- * naming drift docs/ui-style-guide.md's glossary calls a defect ("Station"
+ * naming drift docs/terminology.md's glossary calls a defect ("Station"
  * meaning two things at two scales), and this change exists precisely because
  * two components sharing one name is expensive. Hence `.tag-field`. */
 .tag-field { position: relative; }

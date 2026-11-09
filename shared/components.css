@@ -1067,7 +1067,7 @@ nav {
  * exactly as it did.
  *
  * Type sizes and spacing in the moved rules are their own px values, off the
- * token scales. They were moved, not changed (25-deprecations-tracker.md). */
+ * token scales. They were moved, not changed (33-settings-pages.md). */
 .pd-btn, .set-ui .set-btn {
     height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--sub-2);
     background: var(--surface-2, var(--surface)); color: var(--text);

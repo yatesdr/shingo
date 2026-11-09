@@ -10,9 +10,32 @@ History: the working draft for this guide lived as `style-guide-v0.md` in
 `GitHub/shingo-ui-consistency/`. It moved here when all TBD entries were
 closed.
 
+## How to use this document
+
+Read top-to-bottom once. After that, jump to the section that covers what
+you're touching. The guide is opinionated — it picks defaults rather than
+listing options. When you find yourself fighting one of these conventions
+on a real task, open a PR against this document, not a workaround in the
+code.
+
+The guide covers UI consistency only. It does not cover backend code style
+(see [ground-rules.md](ground-rules.md)), Go architecture (design record,
+outside the repo), or the operator HMI's domain-specific interaction patterns
+beyond what's shared with the admin surfaces.
+
+## How this document evolves
+
+- Changes go via PR against `shingo/docs/ui-style-guide.md`. The
+  "[deprecations tracker](ui-style-guide/33-settings-pages.md#deprecations-tracker)"
+  section is the feedback loop — anything you "had
+  to" do that contradicts the guide is either a deprecation candidate
+  (update the guide) or a missed convention (open an issue).
+
+This document is opinionated on purpose. When you find yourself fighting it,
+update it — don't work around it.
+
 ## Contents
 
-1. [`01-how-to-use-this-document.md`](ui-style-guide/01-how-to-use-this-document.md) — How to use this document
 1. [`02-the-three-surfaces.md`](ui-style-guide/02-the-three-surfaces.md) — The three surfaces
 1. [`03-code-organization.md`](ui-style-guide/03-code-organization.md) — Code organization
 1. [`04-design-tokens.md`](ui-style-guide/04-design-tokens.md) — Design tokens
@@ -32,16 +55,8 @@ closed.
 1. [`18-timestamps-plant-local-one-clock.md`](ui-style-guide/18-timestamps-plant-local-one-clock.md) — Timestamps — plant-local, one clock
 1. [`19-templates-and-composition.md`](ui-style-guide/19-templates-and-composition.md) — Templates and composition
 1. [`20-css-conventions.md`](ui-style-guide/20-css-conventions.md) — CSS conventions
-1. [`21-event-handling.md`](ui-style-guide/21-event-handling.md) — Event handling
 1. [`22-tabs.md`](ui-style-guide/22-tabs.md) — Tabs
-1. [`23-domain-glossary.md`](ui-style-guide/23-domain-glossary.md) — Domain glossary
 1. [`24-drift-detection.md`](ui-style-guide/24-drift-detection.md) — Drift detection
-1. [`25-deprecations-tracker.md`](ui-style-guide/25-deprecations-tracker.md) — Deprecations tracker
-1. [`26-pending-removal.md`](ui-style-guide/26-pending-removal.md) — Pending removal
-1. [`27-tbd-log-closed.md`](ui-style-guide/27-tbd-log-closed.md) — TBD log (closed)
 1. [`28-event-handling-delegated-actions.md`](ui-style-guide/28-event-handling-delegated-actions.md) — Event handling — delegated actions
-1. [`29-how-this-document-evolves.md`](ui-style-guide/29-how-this-document-evolves.md) — How this document evolves
-1. [`30-reference-the-synthesis-docs.md`](ui-style-guide/30-reference-the-synthesis-docs.md) — Reference: the synthesis docs
 1. [`31-mission-detail-stages.md`](ui-style-guide/31-mission-detail-stages.md) — Mission detail — stages
-1. [`32-fleet-figures-busy.md`](ui-style-guide/32-fleet-figures-busy.md) — Fleet figures — busy
 1. [`33-settings-pages.md`](ui-style-guide/33-settings-pages.md) — Settings pages

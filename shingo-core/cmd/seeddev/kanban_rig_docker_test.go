@@ -31,7 +31,7 @@ import (
 // docker shards, on every gate. plants/master.yaml seeded whole by seedCore, the real
 // keeper, doors and walk, with no compose stack; the runs drive the [kanban] and
 // [kanban5] sections. scripts/kanban-rig.sh R1..R6 on the stack is the certification
-// pair before a merge (docs/fleet-simulator/kanban.md).
+// pair before a merge (docs/dev-env/kanban-rig.md).
 //
 // WHAT IS REAL. The orders come in through the wire's door (HandleOrderRequest) as the
 // Edge sends them. The fleet is the simulator, its orders driven to FINISHED, and each

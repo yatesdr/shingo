@@ -865,3 +865,11 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row (the same paths run under the new name)
 - citations rewritten: none
 - verified at: the commit that adds this row
+### DEAD — `TestEngineDbMethodsFrozen`
+- test: `TestEngineDbMethodsFrozen` · pkg `shingocore/engine` · run `-run '^TestEngineDbMethodsFrozen$'` · `shingo-core/engine/engine_db_methods_freeze_test.go:30` @ `b9210bce` · tags `none`
+- code: DEAD (the ratchet reached its floor; its own header says "When the count hits zero, this test and engine_db_methods.go both get deleted", and the count was 0)
+- assertion map: the one assertion, the count of `func (e *Engine)` declarations in `engine_db_methods.go` equals `frozenPassthroughCount` (0), goes with the file it counted, which held only its header comment. Nothing survives it and nothing needs to: the file it read is gone, and the boundary it stood for (a www handler reaches the store through a service, not an Engine passthrough) is the `ServiceAccess` / `EngineOrchestration` split, whose widths `TestServiceAccessWidth` and `TestEngineOrchestrationWidth` pin.
+- mutation: the read-by-nothing proof, then one it catches, both at base with the two files restored. (1) a passthrough added outside the file, `func (e *Engine) MutationPassthrough() *store.DB { return e.db }` appended to `engine/engine_accessors.go`: `go test -count=1 -run '^TestEngineDbMethodsFrozen$' ./engine/` → `ok  shingocore/engine 1.811s` (not in its scope; `engine_accessors.go` already declares `func (e *Engine) DB() *store.DB`). (2) the same method appended to `engine/engine_db_methods.go`: same command → `engine_db_methods_freeze_test.go:40: passthrough count grew: 1 > 0 (add to a service interface instead)`, `FAIL shingocore/engine`.
+- coverage Δ: 0 (the test reads a source file; it covers no statement of the package)
+- citations rewritten: `scripts/check-test-error-discard-ratchet.sh` (its three rules no longer cite the deleted test as the convention's home); `engine/recovery.go` (drops "see engine_db_methods.go"); `shingo-core/docs/engine_db_methods_residual.md` deleted with it
+- verified at: the commit that adds this row

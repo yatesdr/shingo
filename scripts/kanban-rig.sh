@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bash scripts/kanban-rig.sh <R1..R6|W|W5|W6|P1..P6> — one run of the Kanban certification rig
 # on the visible dev stack: compose project shingo-dev, plants/master.yaml (R and W: its [kanban]
-# section; P1..P6: its [kanban5]), Core :8083, Edge :8081. docs/fleet-simulator/kanban.md says
+# section; P1..P6: its [kanban5]), Core :8083, Edge :8081. docs/dev-env/kanban-rig.md says
 # what each run injects and catches. The master's other sections run beside the loop, so every
 # order count below is the loop's own (orders_count).
 #

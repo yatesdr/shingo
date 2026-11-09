@@ -52,7 +52,7 @@ hardware seams.
 | Sim operator | `shingo-edge/engine/sim_operator.go` | Performs the operator's LOAD / CLEAR on a configurable delay when a bin is delivered to a `manual_swap` node. |
 | Plant spec + validator | `shingo-core/plantspec` | Declarative plant schema (zones, stations, processes, styles, claims, bins, demands, …) + validation. |
 | The plant | `plants/master.yaml` | The one plant (compose's default `SHINGO_PLANT`), in tagged sections: the demo loop, the 4x2-shaped cell and the lane-stress corridor, the kanban cells, line 2 on Edge 2. `plants/README.md` maps each section to the scenario family that proves it. |
-| Kanban rig | `plants/master.yaml` `[kanban]`/`[kanban5]`, `scripts/kanban-rig.sh` | The Kanban certification cells, their runs and their walk (`docs/fleet-simulator/kanban.md`), on the master; the operator works their unloaders' panels (`sim.operators.unloader_taps`). |
+| Kanban rig | `plants/master.yaml` `[kanban]`/`[kanban5]`, `scripts/kanban-rig.sh` | The Kanban certification cells, their runs and their walk (`docs/dev-env/kanban-rig.md`), on the master; the operator works their unloaders' panels (`sim.operators.unloader_taps`). |
 | Seed tool | `shingo-core/cmd/seeddev` | Loads + validates a plant spec, seeds core (Postgres, via store accessors) + edge (SQLite, raw SQL), cross-validates. |
 | Dev configs | `shingocore.dev.yaml`, `shingoedge.dev.yaml` | Sim knobs (`sim.enabled`, transit time, jitter, fault rate, per-process tick intervals, operator delays). Separate from prod configs. |
 
@@ -217,6 +217,29 @@ Go insert passes `clock.Now()` and on wall time if it lets the DDL's `DEFAULT
 now()` fire. That is invisible on a plant, where both clocks are wall, and bites
 only on the rig — `bin_uop_ledger.applied_at` against `orders.created_at`
 returns clock drift, not a duration.
+
+### The 4x2-shaped cell, end to end
+
+`integration/scenarios/catid_4x2_*_test.go` (`-tags docker`) run Core and an Edge in one process on a
+five-position, two-style weld (RUN and ALT share three parts and differ at two mirror positions, CATIDs
+1001/1002 pinned) whose PLC is `simwarlink.Line`, turned one machine cycle and one Edge poll pass at a
+time. Each shape checks the carts against the line's loads, the holds ledger, and the production record
+(counter_snapshots, hourly, what Core received), and that every order lands confirmed: S1 a steady run on
+the load station's counter and on the cell counter, S2 the late cutover (the declaration on a green gate,
+the counted-part force on a red one), S3 the early cutover, S4 a jump with no changeover (nothing moves; the
+wrong-part item offers the changeover, untapped and tapped), S5 an unmapped part (Charge and Write off), S6
+a mixed cell, S7 a restart, S8 the PLC moving its count to a sibling MES slot (the slot watch's item, the
+click that re-points and counts the strokes since the move), S9 the hand-placed cart; and
+`TestPinChangeover_ACommonPositionIsResuppliedWhileOpen` a common position supplied through an open
+changeover. `make dev-sim-4x2 SHAPE=S3` (`scripts/sim-4x2.sh`; `VARIANT=tap` taps S4's and S9's item) runs
+one shape on the dev stack for a person to watch and prints the same ledger line, and beside it
+`lost at the lift N` (Core's stale drops on a cart released in the window and the draws a release's count
+undid), asserted 0 and never summed.
+
+```bash
+cd integration
+go test -tags docker -count=1 -run Catid4x2 ./scenarios/
+```
 
 ---
 

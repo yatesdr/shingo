@@ -395,7 +395,7 @@ Backoff is exponential on the poll interval, capped at 15 minutes — the cap is
 what makes `max_attempts` a bounded amount of TIME rather than an unbounded one.
 
 **Nothing is ever discarded.** The Kafka outbox drops a message after ten
-attempts, which `docs/outbox-ordering.md` calls "not a delay, a hole". An
+attempts, which [Delivery guarantees](../../docs/wire-protocol.md#delivery-guarantees) calls "not a delay, a hole". An
 inventory ledger cannot have a hole.
 
 ---

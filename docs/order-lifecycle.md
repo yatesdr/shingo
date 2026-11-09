@@ -51,6 +51,13 @@ the truth of whichever machine owns the order at that moment.
 
 ## The ladder (C1)
 
+```
+pending -> (acquiring) -> [whole hand] -> dispatched -> in_transit -> delivered -> confirmed
+                       -> [not whole]  -> QUEUED (with a cause) -> [hand whole] -> dispatched -> ...
+                                                                -> [cancelled by operator] -> cancelled
+dispatched -> [fleet refused the create] -> QUEUED (fleet_unavailable) -> ...
+```
+
 Every order is issued `pending`. Its first hand takes it `pending → dispatched`
 in one transaction when the whole hand is had; otherwise it parks
 `pending → queued`, with the cause written on the row first. `queued` is the
@@ -61,6 +68,9 @@ one place an order rests short of the fleet, and it always carries a cause
 **Acquiring** is the act between `pending` and `dispatched` — asking for the
 whole hand — never a stored status. `protocol.IsAcquiring` = {`pending`,
 `queued`} is the scanner's population; `IsWaiting` = {`queued`}.
+`IsAcquiring(s)` / `AcquiringStatusSQLList()` in `protocol/status.go` define
+it; the scanner's re-check and the complex dispatch entry guard both gate on
+it. See [order-builder-dispatch.md](order-builder-dispatch.md).
 
 **`sourcing` is not a status an order can be in.** `protocol.StatusSourcing`
 stays as a constant so old `order_history` rows still render; no edge enters
@@ -323,6 +333,87 @@ Notes on the Edge machine:
   the expected-silence list. The generic push validates nothing — a dropped
   intermediate `dispatched` push once froze the mirror while the robot was
   already staged (SPR order 2399, 2026-07), which is why it forces.
+
+---
+
+## Swap modes
+
+Material flow follows a circular pattern. A bin sits at a station. It is consumed (parts removed) or filled (parts added). When the bin is spent, two things happen: the outgoing bin leaves and a replacement arrives. This is one cycle, regardless of whether the station consumes or produces material.
+
+Both consume and produce payloads follow the same cycle path. The **role** determines which direction bins flow — full in / empty out (consume), or empty in / full out (produce). The **swap mode** determines the robot choreography.
+
+### Triggering
+
+A cycle triggers when UOP remaining crosses the configured reorder point. Two trigger sources are available, controlled by the **AutoReorder** setting:
+
+- **AutoReorder ON** — The system monitors PLC counter deltas and triggers the cycle automatically when remaining drops below the reorder point.
+- **AutoReorder OFF** — The operator presses the REQUEST button on the operator canvas to trigger the cycle manually.
+
+Both consume and produce payloads use the same trigger mechanism. For consume payloads, remaining drops as parts are used. For produce payloads, remaining drops as bin capacity fills up.
+
+### The modes
+
+A swap mode names a **step-list shape and nothing else** (`protocol/swap_mode.go:13-16`). Gates read the steps, or a property declared on the claim — never the mode name.
+
+Four modes may be configured on a style node claim — `protocol.ConfigurableSwapModes()` (`protocol/swap_mode.go:181-188`). A fifth, `manual_swap`, exists on the wire and in memory but is never stored. The mode applies equally to both roles.
+
+**Sequential** (`sequential`) — One robot handles the swap in two phases. Order A drives to lineside empty, holds, waits for operator release, picks up the outgoing bin, and delivers it to the outbound destination — three steps (`BuildSequentialRemovalSteps`, `shingo-edge/engine/material_orders.go:468-479`). Order B is auto-created when Order A's status becomes `in_transit` (`handleSequentialBackfill`, `shingo-edge/engine/wiring_status_changed.go:36-41`) and delivers the replacement from the inbound source in two steps.
+
+**Two Robot** (`two_robot`) — Two robots work concurrently. Robot A (resupply) picks the replacement from the inbound source, drops it at inbound staging, and holds *there*; Robot B (removal) drives to lineside and holds. Edge releases B first, then A (`BuildTwoRobotSwapSteps`, `material_orders.go:292-327`). Requires an inbound staging node **and** an outbound destination — the second is validated because the evac leg's dropoff is unrecoverable once the supply leg has shipped (`shingo-edge/engine/swap_dispatch.go:240-242`).
+
+**Two Robot Press Index** (`two_robot_press_index`) — A press with two or three positions, where bins index forward through the press rather than swapping in place. Requires `paired_core_node` (the back position) and an outbound destination. Two-position layout: R1 `wait(A) → pickup(A) → dropoff(outbound) → pickup(source) → dropoff(B)`, R2 `wait(B) → pickup(B) → dropoff(A)`. Three-position layout adds `second_paired_core_node` as C and R2 runs `wait(B) → pickup(B) → dropoff(A) → pickup(C) → dropoff(B)`. Both robots fire on operator release; the fleet manager handles cross-leg sequencing on shared nodes (`BuildTwoRobotPressIndexSwapSteps`, `material_orders.go:329-346`). An `index_robot_supplies` flip moves the supermarket trip between R1 and R2 without moving the press pickup or dropoff.
+
+**Single Robot** (`single_robot`) — One robot executes a **nine**-step sequence using both staging nodes: pickup from inbound source → drop at inbound staging → drive to lineside and hold → pickup outgoing → park it at outbound staging → pickup replacement from inbound staging → deliver to lineside → pickup outgoing from outbound staging → deliver to outbound destination (`BuildSingleSwapSteps`, `material_orders.go:256-290`).
+
+**Manual Swap** (`manual_swap`) — not a choreography. It names a place a forklift driver works: a loader or unloader window. Core owns the topology and `domain.Loader.SynthClaim` stamps this mode onto an in-memory claim purely so the loader branches engage; nothing persists it, and `ConfigurableSwapModes` excludes it. Ask the loader question of the claim (`domain.NodeClaim.IsLoaderNode` on Edge, `plantspec.Claim.IsLoader` on Core), not of the mode field — a drift test enforces that those are the only two readers (`protocol/swap_mode.go:45-61`).
+
+A sixth constant, `simple`, is defined but retired as a configurable mode: `UpsertClaim` and `plantspec.Validate` reject it, and it survives only as a runtime descriptor for the node-empty downgrade, where a claim with an empty head collapses to a plain delivery move (`protocol/swap_mode.go:77-81`). A **seventh** value, `press_position`, is the in-memory per-position fan-out marker and must never persist.
+
+There is no default. `swap_mode` is `TEXT NOT NULL` with no DDL default (`shingo-edge/store/schema/sqlite_ddl.go:459`), and `UpsertClaim` rejects both a blank value and anything outside `ConfigurableSwapModes()` with `protocol.ErrInvalidSwapMode` — a 400, not a silent normalization (`shingo-edge/store/processes/claims.go:234,248-250`).
+
+The **wire and runtime** field that carries a swap mode on a dispatched order is still spelled `cycle_mode` (`SwapDispatch.CycleMode`, `shingo-edge/engine/swap_dispatch.go:23`). It holds a `protocol.SwapMode` value. The configured field on a claim is `swap_mode`; "cycle mode" is not a separate vocabulary.
+
+### Roles
+
+| | Consume | Produce |
+|---|---|---|
+| **Incoming bins** | Full (parts to use) | Empty (capacity to fill) |
+| **Outgoing bins** | Empty (spent) | Full (finished goods) |
+| **RetrieveEmpty flag** | `false` — retrieve a full bin | `true` — retrieve an empty bin |
+
+The role is derived at order creation time from the payload's `role` field. Operators do not configure retrieval direction directly.
+
+### Operator Interactions
+
+The operator canvas presents three actions for each payload:
+
+- **REQUEST** — Triggers a material handling cycle (available as an early override even when AutoReorder is ON)
+- **RELEASE** — Signals the robot to pick up the outgoing bin (when the order is staged at lineside)
+- **CONFIRM** — Acknowledges delivery of the replacement bin; resets UOP remaining to capacity
+
+### Reset Behavior
+
+UOP remaining resets when the replacement bin is delivered and confirmed, not when the outgoing bin is ingested by Core. The reset value comes from the payload catalog's UOP capacity, synced from Core via Kafka. PayloadCode is mandatory on every payload configuration — it is the lookup key for the catalog.
+
+### Node Configuration
+
+Each swap mode reads a set of node assignments off the claim. Nodes can be configured as a specific node, a node group (Core resolves to a physical node), or left blank for Core's global fallback. Which of them are *refused at dispatch* if blank is decided by `buildSwapDispatch` (`shingo-edge/engine/swap_dispatch.go:193-273`):
+
+| Claim field · editor label | Sequential | Two Robot | 2-Robot Press Index | Single Robot |
+|---|---|---|---|---|
+| `inbound_source` · **Inbound Source** | used | used | used | used |
+| `inbound_staging` · **Staging › Inbound** | — | **required** | — | **required** |
+| `outbound_staging` · **Staging › Outbound** | — | — | — | **required** |
+| `outbound_destination` · **Outbound Destination** | used | **required** | **required** | used |
+| `paired_core_node` · **Paired Node** | — | — | **required** (back position) | — |
+| `second_paired_core_node` · **Third Press Position** | — | — | optional (3-position layout) | — |
+
+- **Inbound Source**: where replacement bins come from (e.g. a supermarket node group). For a produce claim the inbound pickup is flagged Empty, so it pulls a fresh carrier rather than a full payload bin.
+- **Staging › Inbound**: new material stages here before delivery.
+- **Staging › Outbound**: old material parks here after removal (the single-robot shuffle's second hand).
+- **Outbound Destination**: where outgoing bins are sent (e.g. empty bin storage, wash area, or shipping). May be overridden at dispatch by the *resident* claim's value when the cell holds a style other than the one being requested (`shingo-edge/engine/swap_evac_dest.go`).
+
+The editor shows the same rule inline: "1-Robot requires both inbound and outbound staging. 2-Robot requires inbound staging" (`shingo-edge/www/templates/processes.html:569`).
 
 ---
 

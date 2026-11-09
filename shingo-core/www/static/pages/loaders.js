@@ -865,8 +865,8 @@ function settingsHtml(item, s2) {
   // saves stage 2; a stage 1 always sends its carts on to stage 2.
   if (pair) first += settingCheck(Number(s2.loader.id), 'pulledDirectly', !!s2.loader.pulled_directly, 'Pulled directly by the process');
   else first += settingCheck(lid, 'pulledDirectly', !!state.pulledDirectly, 'Pulled directly by the process');
-  // "Cart" is the operator's word for a two-stage unloader's carrier (style
-  // guide glossary); every other station says carrier.
+  // "Cart" is the operator's word for a two-stage unloader's carrier
+  // (docs/terminology.md); every other station says carrier.
   const noun = pair ? 'cart' : 'carrier';
   let win = '';
   if (shape.dedicated) win += settingCheck(lid, 'dedicated', state.dedicated, 'One spot per part (each window takes one part only)');

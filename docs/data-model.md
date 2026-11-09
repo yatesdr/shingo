@@ -48,7 +48,7 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 
 | Field | Description |
 |-------|-------------|
-| `label` | Unique identifier (e.g., `SHG:0042`). Not scanned — see material-flow.md |
+| `label` | Unique identifier (e.g., `SHG:0042`). Not scanned — see [terminology.md](terminology.md#label) |
 | `bin_type_id` | Physical container class |
 | `node_id` | Current floor location (nullable — bin may be in transit) |
 | `status` | Lifecycle state (see [Bin Statuses](#bin-statuses)) |
@@ -379,7 +379,7 @@ When an order targets a synthetic node (NGRP), the dispatch resolver walks the h
 
 ### Lane Storage
 
-Lanes are linear sequences of slots where only the front slot (depth 1) is physically accessible. Storage is packed from the back (deepest first). See [Material Flow](material-flow.md) for detailed storage and reshuffle logic.
+Lanes are linear sequences of slots where only the front slot (depth 1) is physically accessible. Storage is packed from the back (deepest first). See [Lanes](lanes.md#storage-logic) for detailed storage and reshuffle logic.
 
 ### Bin Type Restrictions
 

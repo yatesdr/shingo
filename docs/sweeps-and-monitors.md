@@ -73,7 +73,7 @@ would be exactly the cry-wolf the reconciliation sweeps warn about.
 The floor interval is a **maximum wait**, not a poll interval: the events are the
 primary release path and the floor is the backstop for when one does not fire.
 The histogram of floor releases grouped by cause is therefore a ranked worklist
-of missing emitters — see `[[queued-order-fulfillment]]` for the releaser
+of missing emitters — see `[[queue-releasers]]` for the releaser
 doctrine that makes it readable.
 
 ## Core — per-event instruments (not sweeps)

@@ -73,8 +73,9 @@ would otherwise take the global `input` rule.
 | `.set-savebar` (`.prov`, `.prov.dirty`) | the foot bar | `.pd-savebar` |
 
 The `.pd-` names are the Processes page's and are deprecated for anything new
-(§25). The moved rules' type sizes and spacing are their own px values, off the
-token scales: they were moved verbatim and are not a pattern to copy.
+(see [Deprecations tracker](#deprecations-tracker) below). The moved rules'
+type sizes and spacing are their own px values, off the token scales: they
+were moved verbatim and are not a pattern to copy.
 
 **Why `.set-ui`.** Core's `style.css` loads after `components.css` and styles
 bare `label` and `input[type=text|password|number|date]` at specificity 0,1,1.
@@ -91,6 +92,27 @@ takes its intrinsic width when that is larger: give a port box a small `size`
 attribute (e.g. `size="5"`) so it sits at the 96 px floor. Below 900 px the row
 stacks (label above control), the note and error lines lose their indent, and a
 `.wide` box takes the column.
+
+### Deprecations tracker
+
+Scheduled removals live here. The tracker is the block below — there is no
+separate deprecations file, and a link to one would be a link to nothing.
+
+```markdown
+### The Processes settings-shape names (`.pd-`) — superseded by `.set-` (U1, 2026-10-07)
+- **Moved:** the rules now live in `shared/components.css`, each grouped with its
+  neutral name (§33 has the map): `.pd-sect`, `.pd-sheet` (+ `.pd-settings`),
+  `.pd-sect .pd-spacer`, `.pd-sfld`, `.pd-note` (both definitions), `.pd-savebar`,
+  `.pd-btn` (+ `.quiet`, `.primary`, `.danger`), `.pd-inp` (+ `.wide`),
+  `.pd-chk`, `.pd-seg`, `.pd-cnt`, `.pd-notice`, `.pd-refusal`, `.pd-dim`, `.pd-chip`
+  (the plain chip only).
+- **Status:** the Processes page (`processes-desktop.js`) still uses the `.pd-`
+  names and is not being renamed; new code uses the `.set-` names only.
+- **Off the type scale:** these rules carry their own px sizes and spacing
+  (11.5 / 12 / 12.5 / 13 / 16 px type; 300 / 314 / 96 / 420 px geometry), not the
+  `--font-*` and `--sp-*` tokens. They were moved verbatim; outside the settings
+  shape, do not copy the values into new rules.
+```
 
 ### The behaviour: `settingsPage`
 

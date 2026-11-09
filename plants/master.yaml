@@ -501,7 +501,7 @@ zones:
   # A permanent sim fixture, not a model of a plant: a two-off press (one press, left and
   # right, four positions, an unloader that re-types carts) and a weld, every name, part and
   # number synthetic. The runs, what each catches and how to drive them:
-  # docs/fleet-simulator/kanban.md and scripts/kanban-rig.sh. Pinned by plantspec
+  # docs/dev-env/kanban-rig.md and scripts/kanban-rig.sh. Pinned by plantspec
   # TestKanbanPressPlant_* and cmd/seeddev TestKanbanPressFixture_* / TestSeedKanbanPress_*;
   # its loop runs in the docker shards as cmd/seeddev TestKanbanRig_*.
   #
@@ -628,7 +628,7 @@ zones:
   #
   # A permanent sim fixture, not a model of a plant. Five two-off presses of the shape of
   # [kanban]'s KP-PRESS, every name, part and number synthetic. Pinned by plantspec
-  # TestKanbanPress5Plant_*; its runs: docs/fleet-simulator/kanban.md and scripts/kanban-rig.sh P1..P6.
+  # TestKanbanPress5Plant_*; its runs: docs/dev-env/kanban-rig.md and scripts/kanban-rig.sh P1..P6.
   #
   # ONE KANBAN, BECAUSE ONE UNLOADER. bin_loaders.outbound_dest holds one name, so five presses
   # sharing an unloader can only be one kanban: supports are all 20 positions, mix 2/2/2/2 once.

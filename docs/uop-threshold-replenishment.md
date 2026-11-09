@@ -8,7 +8,7 @@ The model is *C-push*: Core observes combined in-loop UOP (bins + lineside bucke
 
 **There is one automatic path.** This document used to describe two, with a dedup contract between them, and that is the single most important thing to know is no longer true. The legacy bin-count `DemandSignal` route is retired entirely (2026-08): Core no longer emits it and no handler exists on Edge. There is no bin-count fallback, no `ReorderPoint` floor of 2 for loaders, and nothing that needs to "skip opted-in pairs".
 
-See [material-flow.md](material-flow.md) for `Bin`, `Payload`, `UOP`, and bucket terminology; [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this sits in; and [sweeps-and-monitors.md](sweeps-and-monitors.md) for the full list of what re-evaluates a threshold and when.
+See [terminology.md](terminology.md) for `Bin`, `Payload`, `UOP`, and bucket terminology; [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this sits in; and [sweeps-and-monitors.md](sweeps-and-monitors.md) for the full list of what re-evaluates a threshold and when.
 
 ---
 

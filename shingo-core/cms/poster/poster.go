@@ -3,10 +3,10 @@
 // Drainer-shaped, after messaging/outbox: a doorbell for latency, a ticker as
 // the backstop, a mute to protect the retry budget, and a panic boundary per
 // posting. It borrows that SHAPE and none of its code — the Kafka outbox drops
-// a message after ten attempts, which docs/outbox-ordering.md calls "not a
-// delay, a hole". An inventory ledger cannot have a hole, so nothing here
-// discards a posting: a row that runs out of attempts becomes `failed` and
-// stays for a person.
+// a message after ten attempts, which docs/wire-protocol.md (Delivery
+// guarantees) calls "not a delay, a hole". An inventory ledger cannot have a
+// hole, so nothing here discards a posting: a row that runs out of attempts
+// becomes `failed` and stays for a person.
 //
 // AMR DISPATCH NEVER WAITS ON THIS. If the middleware is unreachable for a
 // shift, bins keep moving and rows accumulate; the backlog is a number on the
