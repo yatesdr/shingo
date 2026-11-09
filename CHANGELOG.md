@@ -20,6 +20,7 @@ Deploy: no migration.
 
 - Every merge to main is released by itself: the number is computed from the changes, the checks run, and the binaries for every platform (32-bit ARM included) are published with a `SHA256SUMS` and this changelog's section as the notes
 - The release run's checks no longer cancel one another, which left v0.1.0 tagged but never published
+- The README banner is redrawn
 
 ## v0.1.0 — 2026-11-08 — Versioned releases, generated docs, the doc gate
 
