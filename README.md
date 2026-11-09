@@ -1,10 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/shingo-banner-dark.svg">
-  <source srcset="docs/assets/shingo-banner-light.svg">
-  <img alt="Shingo" src="docs/assets/shingo-banner-dark.svg">
-</picture>
-
-# Shingo
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/shingo-banner-dark.svg"><source srcset="docs/assets/shingo-banner-light.svg"><img alt="Shingo" src="docs/assets/shingo-banner-dark.svg"></picture>
 
 Verified against: ae059495
 
