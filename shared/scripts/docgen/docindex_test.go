@@ -22,7 +22,7 @@ func docidxWrite(t *testing.T, root string, files map[string]string) {
 
 // Each grouping rule and heading rule, pinned on a row that only exists if
 // it fired: a subdirectory of docs/ that is not named goes to Shared, the
-// named ones to Development and the style guide, a chapter's ## heading is
+// named ones to the style guide and Development, a chapter's ## heading is
 // its title, a # inside a code fence is not, a doc with no heading is listed
 // by its file name, and a heading cannot break the table.
 func TestDocidx_GroupsAndHeadings(t *testing.T) {
@@ -32,7 +32,6 @@ func TestDocidx_GroupsAndHeadings(t *testing.T) {
 		"docs/state/b.md":               "```\n# not this\n```\n\n# Bravo [x]\n",
 		"docs/dev-env/sim.md":           "# The sim\n",
 		"docs/testing/ledger.md":        "# Ledger\n",
-		"docs/fleet-simulator/arch.md":  "# Harness\n",
 		"docs/ui-style-guide.md":        "# Style guide\n",
 		"docs/ui-style-guide/01-how.md": "## How to use it ##\n",
 		"shingo-core/docs/c.md":         "no heading at all\n",
@@ -48,10 +47,6 @@ func TestDocidx_GroupsAndHeadings(t *testing.T) {
 		"### Shared",
 		"| [Alpha \\| one](docs/a.md) | `docs/a.md` |",
 		"| [Bravo \\[x\\]](docs/state/b.md) | `docs/state/b.md` |",
-		"### Development",
-		"| [The sim](docs/dev-env/sim.md) |",
-		"| [Harness](docs/fleet-simulator/arch.md) |",
-		"| [Ledger](docs/testing/ledger.md) |",
 		"### UI style guide",
 		"| [Style guide](docs/ui-style-guide.md) |",
 		"| [How to use it](docs/ui-style-guide/01-how.md) |",
@@ -59,6 +54,9 @@ func TestDocidx_GroupsAndHeadings(t *testing.T) {
 		"| [c.md](shingo-core/docs/c.md) |",
 		"### Shingo Edge",
 		"| [Edge doc](shingo-edge/docs/e.md) |",
+		"### Development",
+		"| [The sim](docs/dev-env/sim.md) |",
+		"| [Ledger](docs/testing/ledger.md) |",
 	}
 	at := 0
 	for _, w := range order {

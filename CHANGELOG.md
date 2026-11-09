@@ -34,6 +34,7 @@ First versioned release since v0.0.14 (2026-03-21); the intervening changes are 
 - `docs/ground-rules.md` says where a doc goes, how docs and comments cite, the gate and how a release is cut
 - 20 docs that were pointer lists, finished proposals, duplicates or links outside the repo are gone; what was worth keeping lives in the doc that covers it
 - `shingo-edge/shingoedge.example.yaml` lists every Edge key at its shipped default; Core's defaults are rendered to a committed snapshot as the Edge's are
+- The README is the front page: what shingo is, where it runs, how to run, deploy and release it, and an index of every doc
 
 ## Before v0.1.0
 

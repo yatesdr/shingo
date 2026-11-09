@@ -7,10 +7,10 @@ package main
 // The groups are by directory, and the directory is the rule:
 //
 //	Shared          docs/*.md and any docs/ subdirectory not named below
-//	Development     docs/dev-env/, docs/testing/, docs/fleet-simulator/
 //	UI style guide  docs/ui-style-guide.md and its chapters, docs/ui-style-guide/
 //	Shingo Core     shingo-core/docs/
 //	Shingo Edge     shingo-edge/docs/
+//	Development     docs/dev-env/, docs/testing/
 //
 // A doc is listed by its first heading, or its file name when it has none.
 
@@ -45,14 +45,14 @@ var docidxGroups = []struct {
 	{"Shared", func(p string) bool {
 		return strings.HasPrefix(p, "docs/") && !docidxDev(p) && !docidxStyle(p)
 	}},
-	{"Development", docidxDev},
 	{"UI style guide", docidxStyle},
 	{"Shingo Core", func(p string) bool { return strings.HasPrefix(p, "shingo-core/docs/") }},
 	{"Shingo Edge", func(p string) bool { return strings.HasPrefix(p, "shingo-edge/docs/") }},
+	{"Development", docidxDev},
 }
 
 func docidxDev(p string) bool {
-	for _, d := range []string{"docs/dev-env/", "docs/testing/", "docs/fleet-simulator/"} {
+	for _, d := range []string{"docs/dev-env/", "docs/testing/"} {
 		if strings.HasPrefix(p, d) {
 			return true
 		}

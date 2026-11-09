@@ -1,22 +1,14 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/shingo-banner-dark.svg">
+  <source srcset="docs/assets/shingo-banner-light.svg">
+  <img alt="Shingo" src="docs/assets/shingo-banner-dark.svg">
+</picture>
+
 # Shingo
 
 Verified against: b9210bce
 
 Material tracking and automated transport system for manufacturing plants. Shingo manages the flow of bins and materials between warehouse storage and production line stations using autonomous mobile robots. Named from the Japanese 信号 ("signal" / "instruction"), Shingo bridges the robot fleet manager and production processes, coordinating material requests and delivery.
-
-## Modules
-
-<!-- generated: go.work -->
-
-| Module | Go module | Description |
-|---|---|---|
-| [**integration**](integration/) | `shingo/integration` | End-to-end tests: Edge and Core wired in one test process, their envelopes routed between them without a broker. |
-| [**protocol**](protocol/) | `shingo/protocol` | The wire contract and the infrastructure both servers run: the JSON envelope, message types and payloads, statuses, TTL expiry, and the outbox, clock, debuglog, auth and migrate packages. |
-| [**shared**](shared/) | `shingo/shared` | What Core and Edge must present or answer identically: UI tokens, status classes and JS utilities, cross-surface answers and cross-module test fixtures; also the repo's Go tooling under scripts/. |
-| [**shingo-core**](shingo-core/) | `shingocore` | Central server. Receives orders from edge stations, resolves source and destination nodes, dispatches to the robot fleet, and tracks fulfillment. PostgreSQL. |
-| [**shingo-edge**](shingo-edge/) | `shingoedge` | Shop-floor client. Runs at each production line: tracks PLC counters, keeps lineside material, runs the operator screens, and talks to Core over Kafka. |
-
-<!-- /generated -->
 
 ## Concepts
 
@@ -34,7 +26,7 @@ Operators request material by payload type. Shingo Core locates the oldest eligi
 
 ### Changeover Automation
 
-When a production line switches styles, Shingo orchestrates the material changeover automatically. Core aborts in-flight orders on affected nodes, A/B cycles material slots between old and new styles, dispatches fresh material, and confirms completion. Bins at lineside are left in place when the payload is shared between styles. (The keep-staged option, which would also keep a spare on inbound staging across a changeover, is withheld from plant configuration; see `docs/ui-style-guide.md`.)
+When a production line switches styles, Shingo orchestrates the material changeover automatically. Core aborts in-flight orders on affected nodes, A/B cycles material slots between old and new styles, dispatches fresh material, and confirms completion. Bins at lineside are left in place when the payload is shared between styles.
 
 ### Plant Integration
 
@@ -42,7 +34,7 @@ Edge integrates with plant-floor PLCs through **WarLink**, its PLC client. Reads
 
 ### Decoupled Architecture
 
-Core and edge communicate asynchronously over Kafka. Each edge station operates independently; if connectivity to core is lost, the edge continues tracking local state and queues outbound messages for later delivery.
+Core and edge communicate asynchronously over Kafka. Each edge station operates independently; if connectivity to core is lost, the edge continues tracking local state and queues outbound messages for later delivery. They exchange JSON envelopes on two topics, `shingo.orders` (Edge to Core) and `shingo.dispatch` (Core to Edge); [docs/wire-protocol.md](docs/wire-protocol.md) is the contract.
 
 ## Philosophy
 
@@ -52,27 +44,53 @@ Core and edge communicate asynchronously over Kafka. Each edge station operates 
 - **Operator-confirmed manifests.** A bin becomes eligible for automated retrieval when an operator confirms what was loaded into it. Confirmation is the verification step; there is no scan-at-pickup gate.
 - **Vendor-agnostic fleet integration.** The fleet backend is abstracted behind an interface. The current implementation targets Seer RDS; other vendors can be added without changes to the dispatch layer.
 
-## Structure
+## Where it runs
 
-```
-shingo/
-  protocol/       shared Go module (shingo/protocol)
-  shingo-core/    central server (module: shingocore)
-  shingo-edge/    shop-floor client (module: shingoedge)
-  docs/           shared reference documentation
-```
+Shingo is live at two plants, Springfield and Hopkinsville. At each plant:
 
-## Getting Started
+- **Shingo Core** runs on a Linux server and keeps its state in PostgreSQL. Core and the Edges meet on a Kafka broker.
+- **Shingo Edge** runs on a Raspberry Pi at each production line, with its own SQLite database, serving that line's operator screens.
+- The robots are an AMR fleet managed by **Seer RDS**; Core is the only thing that talks to it.
+- Each Edge reads and writes its line's PLC through **WarLink**.
 
-Each module builds independently. Requires Go 1.25 or later.
+## Modules
+
+<!-- generated: go.work -->
+
+| Module | Go module | Description |
+|---|---|---|
+| [**integration**](integration/) | `shingo/integration` | End-to-end tests: Edge and Core wired in one test process, their envelopes routed between them without a broker. |
+| [**protocol**](protocol/) | `shingo/protocol` | The wire contract and the infrastructure both servers run: the JSON envelope, message types and payloads, statuses, TTL expiry, and the outbox, clock, debuglog, auth and migrate packages. |
+| [**shared**](shared/) | `shingo/shared` | What Core and Edge must present or answer identically: UI tokens, status classes and JS utilities, cross-surface answers and cross-module test fixtures; also the repo's Go tooling under scripts/. |
+| [**shingo-core**](shingo-core/) | `shingocore` | Central server. Receives orders from edge stations, resolves source and destination nodes, dispatches to the robot fleet, and tracks fulfillment. PostgreSQL. |
+| [**shingo-edge**](shingo-edge/) | `shingoedge` | Shop-floor client. Runs at each production line: tracks PLC counters, keeps lineside material, runs the operator screens, and talks to Core over Kafka. |
+
+<!-- /generated -->
+
+## Run it locally
 
 ```sh
-cd shingo-core && make build
-cd shingo-edge && go build ./...
-cd protocol    && go test ./...
+make dev        # the sim stack in Docker: Postgres, Kafka, Core and two Edges, simulated robots and PLCs
+make dev-seed   # seed the sim plant (plants/master.yaml)
+# Core: http://localhost:8083   Edges: http://localhost:8081, http://localhost:8082
 ```
 
-See [shingo-core/README.md](shingo-core/README.md) and [shingo-edge/README.md](shingo-edge/README.md) for setup and usage instructions.
+Docker is the only prerequisite. [README.dev.md](README.dev.md) covers tuning, the knobs and troubleshooting; [plants/README.md](plants/README.md) the sim plants.
+
+## Deploy to a plant
+
+The installers build from source at a release tag, install the unit and its log and journal retention, and restart the service:
+
+```sh
+sudo bash install-core.sh --tag vX.Y.Z    # on the Core server, first
+sudo bash install-edge.sh --tag vX.Y.Z    # then on each Edge
+```
+
+First-time setup, configuration and the operator pages are in [shingo-core/README.md](shingo-core/README.md) and [shingo-edge/README.md](shingo-edge/README.md); what the Core installer puts on the host is in [shingo-core/deploy/README.md](shingo-core/deploy/README.md).
+
+## Releases and versioning
+
+Core and Edge share one version, `v0.MINOR.PATCH`, and a release tags both. A **MINOR** release adds a migration, changes the wire protocol or adds or removes a config key: migrate first and ship both binaries together, Core before the Edges. A **PATCH** release needs neither: install it and restart. Each release's section in [CHANGELOG.md](CHANGELOG.md) opens with its `Deploy:` line, the migrations to apply and the order to install in, followed by one line per change; the GitHub release carries the same text. Both Logs pages (`/diagnostics`) show the running version and commit.
 
 ## Documentation
 
@@ -103,16 +121,6 @@ Every doc in `docs/`, `shingo-core/docs/` and `shingo-edge/docs/`, by its first 
 | [UOP Architecture](docs/uop-architecture.md) | `docs/uop-architecture.md` |
 | [UOP-Threshold Replenishment](docs/uop-threshold-replenishment.md) | `docs/uop-threshold-replenishment.md` |
 | [Shingo Wire Protocol Specification](docs/wire-protocol.md) | `docs/wire-protocol.md` |
-
-### Development
-
-| Document | File |
-|---|---|
-| [The engine test harness](docs/dev-env/engine-test-harness.md) | `docs/dev-env/engine-test-harness.md` |
-| [The Kanban rig](docs/dev-env/kanban-rig.md) | `docs/dev-env/kanban-rig.md` |
-| [Designing a Sim Plant](docs/dev-env/sim-plant-design.md) | `docs/dev-env/sim-plant-design.md` |
-| [The Shingo Sim (local dev environment)](docs/dev-env/sim.md) | `docs/dev-env/sim.md` |
-| [Test population ledger](docs/testing/population-ledger.md) | `docs/testing/population-ledger.md` |
 
 ### UI style guide
 
@@ -163,16 +171,26 @@ Every doc in `docs/`, `shingo-core/docs/` and `shingo-edge/docs/`, by its first 
 | [Backup and Restore](shingo-edge/docs/backup-restore.md) | `shingo-edge/docs/backup-restore.md` |
 | [UI Guide](shingo-edge/docs/ui-guide.md) | `shingo-edge/docs/ui-guide.md` |
 
+### Development
+
+| Document | File |
+|---|---|
+| [The engine test harness](docs/dev-env/engine-test-harness.md) | `docs/dev-env/engine-test-harness.md` |
+| [The Kanban rig](docs/dev-env/kanban-rig.md) | `docs/dev-env/kanban-rig.md` |
+| [Designing a Sim Plant](docs/dev-env/sim-plant-design.md) | `docs/dev-env/sim-plant-design.md` |
+| [The Shingo Sim (local dev environment)](docs/dev-env/sim.md) | `docs/dev-env/sim.md` |
+| [Test population ledger](docs/testing/population-ledger.md) | `docs/testing/population-ledger.md` |
+
 <!-- /generated -->
 
-## Messaging
+## Contributing
 
-Core and edge communicate over Kafka using a JSON envelope protocol with dual topics:
+[docs/ground-rules.md](docs/ground-rules.md) holds the rules a change is held to:
 
-- `shingo.orders` — edge to core (order requests, registration, heartbeats)
-- `shingo.dispatch` — core to edge (acknowledgements, status updates, delivery notifications)
-
-See [docs/wire-protocol.md](docs/wire-protocol.md) for the full specification.
+- **The gate.** `bash scripts/gate.sh` on every change, `bash scripts/gate.sh full` before a push; CI runs the same steps.
+- **Where things go.** `docs/` for anything naming both Core and Edge or a wire contract, `<module>/docs/` for one binary's operator and dev material; design records stay outside the repo.
+- **Symbols, not lines.** Docs and comments cite symbols and tests, never line numbers; the gate fails a citation that no longer resolves. Tables the code already states are generated (`make docs-gen`).
+- **The changelog.** Every change lands with its line under `## Unreleased` in operator language, opened by the `Deploy:` line.
 
 ## License
 
