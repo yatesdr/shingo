@@ -1,6 +1,6 @@
 # Bin Transit State
 
-Verified against: 2cbdbd5b
+Verified against: ae059495
 
 This document covers how Shingo tracks bins while they're physically in
 flight, and how dropoff capacity gates dispatch.
