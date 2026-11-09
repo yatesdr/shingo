@@ -1,6 +1,6 @@
 ## Placement boxes — the box is the form
 
-Verified against: b9210bce
+Verified against: 2cbdbd5b
 
 When most of what configures a thing is **which nodes and groups it uses**, draw
 it as a box on the page that holds the nodes, with one slot per place, instead of

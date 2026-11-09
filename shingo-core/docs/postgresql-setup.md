@@ -1,6 +1,6 @@
 # PostgreSQL Setup
 
-Verified against: b9210bce
+Verified against: 2cbdbd5b
 
 This guide covers setting up PostgreSQL for ShinGo Core, from server installation through connection configuration.
 

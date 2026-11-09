@@ -1,6 +1,6 @@
 # Bin & Slot Reservations
 
-Verified against: b9210bce
+Verified against: 2cbdbd5b
 
 **Source of truth:** `shingo-core/store/reservations/` (`reservations.go` for the
 bin/slot lifecycle, `mouth.go` for lane holds and occupancy, `blocking.go` and
