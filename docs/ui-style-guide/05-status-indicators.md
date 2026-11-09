@@ -1,6 +1,6 @@
 ## Status indicators
 
-Verified against: ae059495
+Verified against: aa62233b
 
 ### Signal theme
 

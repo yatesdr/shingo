@@ -1,6 +1,6 @@
 # Shingo UI Style Guide
 
-Verified against: ae059495
+Verified against: aa62233b
 
 The reference for the Shingo UI surfaces: Core admin, Edge admin and the
 Operator HMI. Each chapter below owns one subject and names the test that holds

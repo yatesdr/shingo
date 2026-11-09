@@ -1,6 +1,6 @@
 ## Desktop composer patterns
 
-Verified against: ae059495
+Verified against: aa62233b
 
 The Edge Processes page (`shingo-edge/www/static/js/pages/processes-desktop.js`)
 is the engineer's half of the flow composer: a process list, and per process
