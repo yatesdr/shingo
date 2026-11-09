@@ -23,7 +23,11 @@ permissions:
 # See core.yml for rationale — coalesce burst pushes; the latest
 # commit is the only run that matters.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The file name is in the group because a CALLED workflow sees the CALLER's
+  # github.workflow: without it, the seven gates auto-release.yml calls share
+  # one group and cancel one another as each starts (it cancelled v0.1.0's
+  # release run whole).
+  group: ${{ github.workflow }}-lint-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

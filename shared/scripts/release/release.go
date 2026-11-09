@@ -14,12 +14,70 @@ import (
 // Release cuts one release. Gate and Now are fields so a test stands in for
 // the cert gate and the clock; main sets the real ones.
 type Release struct {
-	Root    string
+	Root string
+	// Version is the release to cut; "" cuts the least version the changes
+	// since the last tag allow (Plan.Version).
 	Version string
 	Title   string
-	Out     io.Writer
-	Gate    func(root string) error
-	Now     func() time.Time
+	// CI skips the cert gate, and only the gate: the auto-release workflow's
+	// gate jobs ran on this same sha before its cut job starts. Every other
+	// refusal stands.
+	CI   bool
+	Out  io.Writer
+	Gate func(root string) error
+	Now  func() time.Time
+
+	// beforePush, when set, runs just before the push: a test's way to land a
+	// push on origin between the last check and the release's own.
+	beforePush func()
+}
+
+// Plan is what a release cut from the tree now would be.
+type Plan struct {
+	Last     string // the last v* tag, "" when there is none
+	Version  Version
+	Bump     Bump
+	Reasons  []string
+	Content  bool     // `## Unreleased` holds something to release
+	Problems []string // the changelog check's findings
+}
+
+// PlanRelease reads the tree at root and writes nothing: the last tag, the
+// least version and bump the changes since it allow and why (Required), and
+// whether `## Unreleased` has content. With no v* tag the first release is
+// v0.1.0.
+func PlanRelease(root string) (*Plan, error) {
+	last, err := LastTag(root)
+	if err != nil {
+		return nil, err
+	}
+	check, err := checkSince(root, last)
+	if err != nil {
+		return nil, err
+	}
+	p := &Plan{Last: last, Content: len(check.Body) > 0, Problems: check.Problems}
+	if last == "" {
+		p.Version, p.Bump, p.Reasons = Version{0, 1, 0}, Minor, []string{"no earlier v* tag: the first release"}
+		return p, nil
+	}
+	lastV, _ := ParseVersion(last)
+	if p.Bump, p.Reasons, err = Required(root, last, check.Paths, check.Added); err != nil {
+		return nil, err
+	}
+	p.Version = lastV.Next(p.Bump)
+	return p, nil
+}
+
+// Line is the plan as one machine-readable line, the first -plan prints:
+// `release=yes version=vX.Y.Z bump=patch|minor reason=...` when `## Unreleased`
+// has content, `release=no reason=...` when it has none. The reason is last
+// because it holds spaces.
+func (p *Plan) Line() string {
+	if !p.Content {
+		return "release=no reason=`## Unreleased` is empty"
+	}
+	return fmt.Sprintf("release=yes version=%s bump=%s reason=%s",
+		p.Version, strings.ToLower(p.Bump.String()), strings.Join(p.Reasons, "; "))
 }
 
 // Refusal is a precondition the release does not meet. Nothing has been
@@ -52,9 +110,12 @@ func (r *Release) say(format string, args ...any) {
 // committed as `release: vX.Y.Z`, an annotated tag, and one atomic push of
 // main and the tag.
 func (r *Release) Run() error {
-	v, ok := ParseVersion(r.Version)
-	if !ok {
-		return refuse("VERSION %q is not vMAJOR.MINOR.PATCH (v0.1.0, v0.1.1, v1.0.0)", r.Version)
+	var v Version
+	if r.Version != "" {
+		var ok bool
+		if v, ok = ParseVersion(r.Version); !ok {
+			return refuse("VERSION %q is not vMAJOR.MINOR.PATCH (v0.1.0, v0.1.1, v1.0.0)", r.Version)
+		}
 	}
 	if strings.ContainsAny(r.Title, "\r\n") {
 		return refuse("TITLE is one line")
@@ -88,36 +149,38 @@ func (r *Release) Run() error {
 	if head != upstream {
 		return refuse("HEAD %s is not origin/main %s: release what origin has (push or pull first)", short(head), short(upstream))
 	}
-	if _, err := git(r.Root, "rev-parse", "-q", "--verify", "refs/tags/"+v.String()); err == nil {
-		return refuse("tag %s already exists", v)
-	}
-	last, err := LastTag(r.Root)
-	if err != nil {
-		return err
-	}
-	check, err := checkSince(r.Root, last)
-	if err != nil {
-		return err
-	}
-	if len(check.Problems) > 0 {
-		return refuse("the changelog check fails:\n  - %s", strings.Join(check.Problems, "\n  - "))
-	}
-	if len(check.Body) == 0 {
-		return refuse("`## Unreleased` in %s is empty: there is nothing to release", ChangelogPath)
-	}
-	if last == "" {
-		r.say("no earlier v* tag: %s is the first release", v)
-	} else {
-		lastV, _ := ParseVersion(last)
-		bump, reasons, err := Required(r.Root, last, check.Paths, check.Added)
-		if err != nil {
+	if r.Version != "" {
+		if err := r.tagAbsent(v); err != nil {
 			return err
 		}
-		least := lastV.Next(bump)
-		r.say("since %s: %s, so at least %s (%s)", last, bump, least, strings.Join(reasons, "; "))
-		if v.Less(least) {
-			return refuse("%s is below %s, the least %s allows after %s", v, least, bump, last)
+	}
+	plan, err := PlanRelease(r.Root)
+	if err != nil {
+		return err
+	}
+	if len(plan.Problems) > 0 {
+		return refuse("the changelog check fails:\n  - %s", strings.Join(plan.Problems, "\n  - "))
+	}
+	if !plan.Content {
+		return refuse("`## Unreleased` in %s is empty: there is nothing to release", ChangelogPath)
+	}
+	if r.Version == "" {
+		v = plan.Version
+		if err := r.tagAbsent(v); err != nil {
+			return err
 		}
+	}
+	if plan.Last == "" {
+		r.say("no earlier v* tag: %s is the first release", v)
+	} else {
+		r.say("since %s: %s, so at least %s (%s)", plan.Last, plan.Bump, plan.Version, strings.Join(plan.Reasons, "; "))
+		if v.Less(plan.Version) {
+			return refuse("%s is below %s, the least %s allows after %s", v, plan.Version, plan.Bump, plan.Last)
+		}
+	}
+	if r.CI {
+		r.say("-ci: the workflow's gate jobs ran on %s; the local cert gate is not run", short(head))
+		return r.write(v, head)
 	}
 	r.say("running %s (the cert gate)", strings.Join(GateCommand, " "))
 	if err := r.Gate(r.Root); err != nil {
@@ -135,7 +198,15 @@ func (r *Release) Run() error {
 	if now, _ := gitLine(r.Root, "rev-parse", "refs/remotes/origin/main"); now != head {
 		return refuse("origin/main moved during the gate (%s to %s); start again", short(head), short(now))
 	}
-	return r.write(v)
+	return r.write(v, head)
+}
+
+// tagAbsent refuses a version that is already tagged.
+func (r *Release) tagAbsent(v Version) error {
+	if _, err := git(r.Root, "rev-parse", "-q", "--verify", "refs/tags/"+v.String()); err == nil {
+		return refuse("tag %s already exists", v)
+	}
+	return nil
 }
 
 // clean refuses a worktree with any change, untracked files included: the
@@ -155,8 +226,9 @@ func (r *Release) clean() error {
 	return nil
 }
 
-// write is the release itself, once every check has passed.
-func (r *Release) write(v Version) error {
+// write is the release itself, once every check has passed; base is the
+// checked HEAD, which origin/main was.
+func (r *Release) write(v Version, base string) error {
 	p := filepath.Join(r.Root, ChangelogPath)
 	text, err := os.ReadFile(p)
 	if err != nil {
@@ -180,23 +252,42 @@ func (r *Release) write(v Version) error {
 		return fmt.Errorf("tag: %w (the release commit is local; `git reset --hard origin/main` undoes it)", err)
 	}
 	sha, _ := gitLine(r.Root, "rev-parse", "HEAD")
+	if r.beforePush != nil {
+		r.beforePush()
+	}
+	// Atomic and never forced: if a push landed on main since the checks, the
+	// branch update is not a fast-forward, origin refuses both refs, and
+	// nothing of this release reaches origin.
 	if _, err := git(r.Root, "push", "--atomic", "--quiet", "origin",
 		"refs/heads/main:refs/heads/main", "refs/tags/"+v.String()+":refs/tags/"+v.String()); err != nil {
+		if _, ferr := git(r.Root, "fetch", "--quiet", "origin"); ferr == nil {
+			if now, _ := gitLine(r.Root, "rev-parse", "refs/remotes/origin/main"); now != "" && now != base {
+				return refuse("origin/main moved to %s after the checks, so the push was not a fast-forward and origin "+
+					"refused it; nothing reached origin. The next release carries both changes. Locally: "+
+					"`git tag -d %s && git reset --hard origin/main` drops this attempt", short(now), v)
+			}
+		}
 		return fmt.Errorf("push: %w\nThe release commit %s and tag %s are local only. Push them with "+
 			"`git push --atomic origin main %s`, or undo with `git tag -d %s && git reset --hard origin/main`",
 			err, short(sha), v, v, v)
 	}
-	r.say("%s tagged at %s and pushed with main; the Release workflow builds and publishes it", v, short(sha))
+	r.say("%s tagged at %s and pushed with main", v, short(sha))
 	r.say("heading: ## %s", heading)
 	return nil
 }
 
 // Required is the least bump the changes since tag call for, and why. MINOR
 // when a migration was added (a binary older than it cannot run the
-// database), anything under protocol/ changed (the wire Core and Edge share),
-// or a config yaml key was added or removed (a config file one version reads
-// the other may refuse or ignore); PATCH otherwise. paths and added are
+// database), protocol/'s source changed (the wire Core and Edge share), or a
+// config yaml key was added or removed (a config file one version reads the
+// other may refuse or ignore); PATCH otherwise. paths and added are
 // ChangedPaths and AddedMigrations since tag.
+//
+// "Source" is IsSource, as the changelog check reads it: a doc or a test under
+// protocol/ changes no binary, and every stream restamps the docs
+// (docs-verify), protocol/migrate/README.md among them, so counting any path
+// would make every release MINOR and tell a plant to migrate when nothing on
+// the wire moved.
 func Required(root, tag string, paths []string, added map[string][]int) (Bump, []string, error) {
 	var reasons []string
 	for _, reg := range Registries {
@@ -206,12 +297,12 @@ func Required(root, tag string, paths []string, added map[string][]int) (Bump, [
 	}
 	var proto []string
 	for _, p := range paths {
-		if strings.HasPrefix(p, "protocol/") {
+		if strings.HasPrefix(p, "protocol/") && IsSource(p) {
 			proto = append(proto, p)
 		}
 	}
 	if len(proto) > 0 {
-		reasons = append(reasons, fmt.Sprintf("protocol/ changed (%s)", sample(proto)))
+		reasons = append(reasons, fmt.Sprintf("protocol/ source changed (%s)", sample(proto)))
 	}
 	delta, err := ConfigDelta(root, tag)
 	if err != nil {
@@ -229,7 +320,7 @@ func Required(root, tag string, paths []string, added map[string][]int) (Bump, [
 	if len(reasons) > 0 {
 		return Minor, reasons, nil
 	}
-	return Patch, []string{"no migration, no protocol/ change, no config key added or removed"}, nil
+	return Patch, []string{"no migration, no protocol/ source change, no config key added or removed"}, nil
 }
 
 func short(sha string) string {

@@ -90,7 +90,7 @@ First-time setup, configuration and the operator pages are in [shingo-core/READM
 
 ## Releases and versioning
 
-Core and Edge share one version, `v0.MINOR.PATCH`, and a release tags both. A **MINOR** release adds a migration, changes the wire protocol or adds or removes a config key: migrate first and ship both binaries together, Core before the Edges. A **PATCH** release needs neither: install it and restart. Each release's section in [CHANGELOG.md](CHANGELOG.md) opens with its `Deploy:` line, the migrations to apply and the order to install in, followed by one line per change; the GitHub release carries the same text. Both Logs pages (`/diagnostics`) show the running version and commit.
+Core and Edge share one version, `v0.MINOR.PATCH`: a **MINOR** release adds a migration, changes the wire protocol or adds or removes a config key (migrate first and ship both binaries together, Core before the Edges); a **PATCH** release needs neither. Every change writes its lines under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md), opened by a `Deploy:` line, and the gate fails without them. Each merge to `main` then cuts a release by itself: the number is computed from the changes, and the GitHub release carries both binaries for every platform, their `SHA256SUMS`, and that changelog section as its notes. A plant installs a tag when the owner says (the installers above), and both Logs pages (`/diagnostics`) show the running version and commit.
 
 ## Documentation
 

@@ -164,5 +164,5 @@ docs-verify: ## Restamp every doc the citation readers pass to HEAD; the docs wi
 # recipe's line from shared/ by hand.
 .PHONY: release
 
-release: ## Cut a release from a clean, pushed main: make release VERSION=vX.Y.Z [TITLE="..."] (runs the cert gate, then commits, tags and pushes)
+release: ## Cut a release by hand from a clean, pushed main: make release [VERSION=vX.Y.Z] [TITLE="..."] (runs the cert gate, then commits, tags and pushes; a merge to main is released by auto-release.yml)
 	cd shared && go run ./scripts/release -root .. -version "$(VERSION)" -title "$(TITLE)"

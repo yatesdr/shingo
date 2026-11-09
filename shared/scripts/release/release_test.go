@@ -417,7 +417,8 @@ func refused(t *testing.T, r *Release, calls *int, gates int, origin, want strin
 
 func TestRelease_RefusesAMalformedVersion(t *testing.T) {
 	t.Parallel()
-	for _, v := range []string{"", "0.1.1", "v0.1", "v0.01.1", "v0.1.1-rc1", "v0.1.1 "} {
+	// "" is not here: an empty VERSION asks for the computed one.
+	for _, v := range []string{"0.1.1", "v0.1", "v0.01.1", "v0.1.1-rc1", "v0.1.1 "} {
 		r, calls, _ := newRelease(t.TempDir(), v)
 		err := r.Run()
 		if err == nil || !isRefusal(err) || !strings.Contains(err.Error(), "is not vMAJOR.MINOR.PATCH") {
@@ -500,7 +501,7 @@ func TestRelease_RefusesAVersionBelowWhatTheChangesNeed(t *testing.T) {
 		{"protocol", map[string]string{
 			"protocol/wire.go": "package protocol\n\ntype Msg struct{}\n",
 			ChangelogPath:      withUnreleased("Deploy: no migration.\n\n- A message"),
-		}, "protocol/ changed (protocol/wire.go)"},
+		}, "protocol/ source changed (protocol/wire.go)"},
 		{"config key added", map[string]string{
 			"shingo-core/config/config.go": strings.Replace(coreConfig, "\tPort int `yaml:\"port\"`\n", "\tPort int `yaml:\"port\"`\n\tHost string `yaml:\"host\"`\n", 1),
 			ChangelogPath:                  withUnreleased("Deploy: no migration.\n\n- A setting"),
@@ -602,4 +603,161 @@ func TestRelease_CutsCommitsTagsAndPushes(t *testing.T) {
 	}
 	// Released: the check holds an empty Unreleased to nothing again.
 	wantProblems(t, check(t, work))
+}
+
+// ── The plan, the computed version, -ci ─────────────────────────────────
+
+// plan is PlanRelease at work, wanting it to leave the repo as it was.
+func plan(t *testing.T, work, origin string) *Plan {
+	t.Helper()
+	before := snapshot(t, work, origin)
+	p, err := PlanRelease(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshot(t, work, origin); after != before {
+		t.Errorf("PlanRelease changed the repo:\nbefore %+v\nafter  %+v", before, after)
+	}
+	return p
+}
+
+func TestPlan_SaysWhetherAndWhatToRelease(t *testing.T) {
+	t.Parallel()
+	work, origin := clone(t)
+	if line := plan(t, work, origin).Line(); line != "release=no reason=`## Unreleased` is empty" {
+		t.Errorf("an empty Unreleased plans %q", line)
+	}
+
+	commitPush(t, work, map[string]string{
+		"shingo-core/engine/engine.go": "package engine\n\nvar X = 1\n",
+		ChangelogPath:                  withUnreleased("Deploy: no migration.\n\n- A fix"),
+	})
+	want := "release=yes version=v0.1.1 bump=patch reason=no migration, no protocol/ source change, no config key added or removed"
+	if line := plan(t, work, origin).Line(); line != want {
+		t.Errorf("a fix plans %q, want %q", line, want)
+	}
+
+	commitPush(t, work, map[string]string{
+		"shingo-core/store/migrations.go": coreAt(3),
+		ChangelogPath:                     withUnreleased("Deploy: Core v3.\n\n- A column"),
+	})
+	p := plan(t, work, origin)
+	if !strings.HasPrefix(p.Line(), "release=yes version=v0.2.0 bump=minor reason=Core adds migrations v3") {
+		t.Errorf("a migration plans %q", p.Line())
+	}
+	if len(p.Problems) != 0 {
+		t.Errorf("problems %q", p.Problems)
+	}
+}
+
+func TestRelease_ComputesTheVersionWhenNoneIsGiven(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, want string
+		files      map[string]string
+	}{
+		{"patch", "v0.1.1", map[string]string{
+			"shingo-core/engine/engine.go": "package engine\n\nvar X = 1\n",
+			ChangelogPath:                  withUnreleased("Deploy: no migration.\n\n- A fix"),
+		}},
+		{"minor", "v0.2.0", map[string]string{
+			"shingo-core/store/migrations.go": coreAt(3),
+			ChangelogPath:                     withUnreleased("Deploy: Core v3.\n\n- A column"),
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			work, origin := clone(t)
+			commitPush(t, work, c.files)
+			r, calls, out := newRelease(work, "")
+			if err := r.Run(); err != nil {
+				t.Fatalf("Run: %v\n%s", err, out.String())
+			}
+			if *calls != 1 {
+				t.Errorf("the gate ran %d times, want once", *calls)
+			}
+			head := run(t, work, "rev-parse", "HEAD")
+			if got := run(t, origin, "rev-parse", c.want+"^{commit}"); got != head {
+				t.Errorf("origin's %s is %s, want the release commit %s", c.want, got, head)
+			}
+		})
+	}
+}
+
+func TestRelease_CISkipsTheGateAndNothingElse(t *testing.T) {
+	t.Parallel()
+	work, origin := clone(t)
+	commitPush(t, work, map[string]string{
+		"shingo-core/engine/engine.go": "package engine\n\nvar X = 1\n",
+		ChangelogPath:                  withUnreleased("Deploy: no migration.\n\n- A fix"),
+	})
+	// Every other refusal stands: one before the gate would have run, one after.
+	write(t, work, map[string]string{"stray.txt": "x\n"})
+	r, calls, _ := newRelease(work, "")
+	r.CI = true
+	refused(t, r, calls, 0, origin, "the worktree is not clean")
+	if err := os.Remove(filepath.Join(work, "stray.txt")); err != nil {
+		t.Fatal(err)
+	}
+	r, calls, _ = newRelease(work, "v0.1.0")
+	r.CI = true
+	refused(t, r, calls, 0, origin, "tag v0.1.0 already exists")
+
+	r, calls, out := newRelease(work, "")
+	r.CI = true
+	if err := r.Run(); err != nil {
+		t.Fatalf("Run -ci: %v\n%s", err, out.String())
+	}
+	if *calls != 0 {
+		t.Errorf("-ci ran the gate %d times", *calls)
+	}
+	if !strings.Contains(out.String(), "-ci: the workflow's gate jobs ran on") {
+		t.Errorf("-ci did not say why it skipped the gate:\n%s", out.String())
+	}
+	head := run(t, work, "rev-parse", "HEAD")
+	if got := run(t, origin, "rev-parse", "v0.1.1^{commit}"); got != head {
+		t.Errorf("origin's v0.1.1 is %s, want the release commit %s", got, head)
+	}
+}
+
+func TestRelease_ANonFastForwardPushIsRefusedNeverForced(t *testing.T) {
+	t.Parallel()
+	work, origin := clone(t)
+	commitPush(t, work, map[string]string{
+		"shingo-core/engine/engine.go": "package engine\n\nvar X = 1\n",
+		ChangelogPath:                  withUnreleased("Deploy: no migration.\n\n- A fix"),
+	})
+	other := cloneOf(t, origin, filepath.Join(t.TempDir(), "other"))
+	r, calls, out := newRelease(work, "")
+	r.CI = true
+	r.beforePush = func() { commitPush(t, other, map[string]string{"README.md": "Pushed meanwhile.\n"}) }
+	err := r.Run()
+	if err == nil || !isRefusal(err) || !strings.Contains(err.Error(), "was not a fast-forward and origin refused it") {
+		t.Fatalf("Run with a push landing meanwhile: %v\n%s", err, out.String())
+	}
+	if *calls != 0 {
+		t.Errorf("-ci ran the gate")
+	}
+	if got, want := run(t, origin, "rev-parse", "main"), run(t, other, "rev-parse", "HEAD"); got != want {
+		t.Errorf("origin main is %s, want the other push %s: the release forced its way in", got, want)
+	}
+	if tags := run(t, origin, "tag", "--list", "v0.1.1"); tags != "" {
+		t.Errorf("origin has %q: the atomic push let the tag through without main", tags)
+	}
+}
+
+// A doc or a test under protocol/ changes no binary: it is PATCH. docs-verify
+// restamps protocol/migrate/README.md in every stream, so a rule that counted
+// any protocol/ path would make every release MINOR.
+func TestPlan_AProtocolDocOrTestIsPatch(t *testing.T) {
+	t.Parallel()
+	work, origin := clone(t)
+	commitPush(t, work, map[string]string{
+		"protocol/migrate/README.md": "# migrate\n\nVerified against: 0123abcd\n",
+		"protocol/wire_test.go":      "package protocol\n",
+		ChangelogPath:                withUnreleased("Deploy: no migration.\n\n- Docs"),
+	})
+	if line := plan(t, work, origin).Line(); !strings.HasPrefix(line, "release=yes version=v0.1.1 bump=patch") {
+		t.Errorf("a protocol/ doc and test plan %q, want PATCH", line)
+	}
 }

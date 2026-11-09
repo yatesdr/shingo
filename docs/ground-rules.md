@@ -72,31 +72,25 @@ These are the rules the codebase's comments cite.
 |---|---|---|
 | dev | `bash scripts/gate.sh` | every change |
 | push | `bash scripts/gate.sh full` | before a push |
-| cert | `bash scripts/gate.sh full --unscoped` | certifying a tip; a release runs it |
+| cert | `bash scripts/gate.sh full --unscoped` | certifying a tip; `make release` runs it |
 
 CI's guards job runs `bash scripts/gate.sh scripts`, the same `scripts/check-*.sh` set. `scripts/gate.sh`'s header
 says what each tier runs and why; run it from Windows (Git Bash), not WSL.
 
 ## Releases
 
-One version for Core and Edge: `v0.MINOR.PATCH`. **MINOR** means a migration was added, `protocol/` changed or a
-config key was added or removed: migrate first, and ship both binaries together. **PATCH** means install and restart.
+One version for Core and Edge: `v0.MINOR.PATCH`. **MINOR** means a migration was added, `protocol/`'s source
+changed or a config key was added or removed: migrate first, and ship both binaries together. **PATCH** means install
+and restart.
 
-- `CHANGELOG.md` is keyed by release. `## Unreleased` is its first section; each release is
-  `## vX.Y.Z — YYYY-MM-DD — title`, opening with a `Deploy:` line, then one bullet per change in operator language.
-  Guard: `scripts/check-changelog.sh` — when source changed since the last tag, `## Unreleased` is non-empty, opens
-  with `Deploy:`, and that line names every migration added since the tag (per module: `Core v176`, `Edge v45–v46`),
-  or says `no migration`.
-- **Cutting a release:** on `main`, clean, equal to origin's main, with `## Unreleased` complete:
-  `make release VERSION=vX.Y.Z TITLE="…"` (without make: `cd shared && go run ./scripts/release -root .. -version
-  vX.Y.Z -title "…"`). It refuses a malformed or already-tagged version, a dirty or diverged tree, a failing
-  changelog check, an empty `## Unreleased`, a version below the bump the diff requires (it prints the reason), and a
-  red `gate.sh full --unscoped`. Then it renames `## Unreleased` to the release heading under a fresh empty one,
-  commits `release: vX.Y.Z`, tags it and pushes both in one atomic push. The tag's workflow publishes the binaries
-  with that version's changelog section as the release notes.
-- **Deploying it:** `sudo bash install-core.sh --tag vX.Y.Z` on the Core server first, then
-  `sudo bash install-edge.sh --tag vX.Y.Z` on each Edge. Both Logs pages (`/diagnostics`) then show
-  `vX.Y.Z · <commit>`.
+A stream writes its lines under `## Unreleased` in `CHANGELOG.md`: a `Deploy:` line naming every migration it adds
+(per module, `Core v176`, `Edge v45–v46`) or saying `no migration`, then one bullet per change in operator language;
+`scripts/check-changelog.sh` fails the gate without them. The merge to `main` cuts the release:
+`.github/workflows/auto-release.yml` computes the number from the changes since the last tag, runs the gates on that
+commit, commits `release: vX.Y.Z` with its tag and publishes the binaries, with that section as the notes. A plant
+installs a tag when the owner says: `sudo bash install-core.sh --tag vX.Y.Z` on the Core server first, then
+`sudo bash install-edge.sh --tag vX.Y.Z` on each Edge, and both Logs pages (`/diagnostics`) then show
+`vX.Y.Z · <commit>`.
 
 ## The order layer
 

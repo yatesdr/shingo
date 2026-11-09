@@ -1,8 +1,8 @@
 # Changelog
 
 One section per release, newest first. `## Unreleased`, on top, is what the
-next release carries; `make release` renames it to the release's heading,
-`## vX.Y.Z — YYYY-MM-DD — title`.
+next release carries; the merge to main that releases it (`auto-release.yml`)
+renames it to the release's heading, `## vX.Y.Z — YYYY-MM-DD — title`.
 
 Every release section opens with its `Deploy:` line: the migrations it applies,
 per binary (`Core v176`, `Edge v45–v46`; a range is allowed), which binary goes
@@ -15,6 +15,11 @@ binary is built from has changed since the last tag, the section opens with
 `Deploy:`, and that line names every migration added since the tag.
 
 ## Unreleased
+
+Deploy: no migration.
+
+- Every merge to main is released by itself: the number is computed from the changes, the checks run, and the binaries for every platform (32-bit ARM included) are published with a `SHA256SUMS` and this changelog's section as the notes
+- The release run's checks no longer cancel one another, which left v0.1.0 tagged but never published
 
 ## v0.1.0 — 2026-11-08 — Versioned releases, generated docs, the doc gate
 

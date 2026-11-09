@@ -68,6 +68,7 @@ while [[ $# -gt 0 ]]; do
         *)
             echo "Unknown argument: $1"
             echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes] [--timezone IANA_ZONE] [--tag vX.Y.Z | vX.Y.Z]"
+            echo "Releases are cut automatically on each merge to main; --tag is how a plant picks one."
             exit 1
             ;;
     esac
