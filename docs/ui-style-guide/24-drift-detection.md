@@ -1,5 +1,7 @@
 ## Drift detection
 
+Verified against: b9210bce
+
 The codebase already has one drift test:
 `shingo-edge/www/order_status_js_drift_test.go` pins the JS status arrays
 in `operator-station/order-status.js` to the Go projectors in

@@ -1,5 +1,7 @@
 # Shingo → CMS Integration
 
+Verified against: b9210bce
+
 Living document, owned by the shingo team. It describes what is on
 `feat/cms-middleware` as of 2026-09-05 and is meant to grow as the follow-up
 items land.

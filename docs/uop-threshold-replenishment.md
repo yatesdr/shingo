@@ -1,5 +1,7 @@
 # UOP-Threshold Replenishment
 
+Verified against: b9210bce
+
 This document covers the continuous-review reorder-point system for loader L1 and cell autoreorder.
 
 The model is *C-push*: Core observes combined in-loop UOP (bins + lineside buckets), compares against engineer-configured thresholds, and creates the L1 retrieve orders itself when replenishment is needed. A threshold of `0` means Core does not monitor that pair; what feeds the loader then depends on its replenishment mode (see the loader L1 threshold's default below).

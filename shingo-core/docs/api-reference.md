@@ -1,5 +1,7 @@
 # API Reference
 
+Verified against: b9210bce
+
 All endpoints return JSON. Protected endpoints require authentication via session cookie (log in through the web UI).
 
 Base URL: `http://<host>:8083`

@@ -1,5 +1,7 @@
 ## Status indicators
 
+Verified against: b9210bce
+
 ### Signal theme
 
 Badge colors follow a scheme called **Signal**. **Hue** encodes *where* an order

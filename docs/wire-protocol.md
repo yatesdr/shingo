@@ -1,5 +1,7 @@
 # Shingo Wire Protocol Specification
 
+Verified against: b9210bce
+
 **Version:** 1
 **Last updated:** 2026-03-19
 

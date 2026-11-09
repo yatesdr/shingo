@@ -1,5 +1,7 @@
 # Concurrency & Stress
 
+Verified against: b9210bce
+
 ## Overview
 
 Concurrency tests verify the system under contention. The primary concern is the TOCTOU (time-of-check-time-of-use) race between `FindSourceBinFIFO` and `ClaimBin` — two orders can both find the same bin before either claims it. The PostFindHook enables deterministic race injection by pausing between find and claim. `simulator.ParallelGroup` provides barrier-synchronized goroutine launches for stress testing. These tests confirm that contention produces correct outcomes: no double-claims, no permanent failures, excess orders queued for retry.

@@ -1,5 +1,7 @@
 # Shingo UI Style Guide
 
+Verified against: b9210bce
+
 The canonical reference for the Shingo UI surfaces (Core admin, Edge admin,
 Operator HMI). Captures the decisions reached during the UI consistency
 refactor. Subsequent changes land via PR against this document.

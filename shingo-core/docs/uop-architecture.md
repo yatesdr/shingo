@@ -1,5 +1,7 @@
 # UOP Architecture
 
+Verified against: b9210bce
+
 UOP (Unit of Production) is the count of consumable parts in a physical bin and the count of parts on a lineside bench. This document describes how UOP is tracked, mutated, audited, and propagated across `shingo-core` and `shingo-edge`.
 
 ## Ownership: Edge-authoritative, Core-aggregating

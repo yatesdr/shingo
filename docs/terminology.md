@@ -1,5 +1,7 @@
 # Terminology Reference
 
+Verified against: b9210bce
+
 This document defines the vendor-neutral terminology used throughout Shingo and maps each term to its equivalent in common fleet management systems.
 
 ## Core Concepts

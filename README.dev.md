@@ -1,5 +1,7 @@
 # Shingo Local Dev Environment
 
+Verified against: b9210bce
+
 **LOCAL DEV / SIMULATION ONLY — never run this against production data or hosts.**
 
 A self-contained Shingo system — core + edge + Postgres + Kafka in Docker, with

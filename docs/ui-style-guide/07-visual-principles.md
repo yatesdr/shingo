@@ -1,5 +1,7 @@
 ## Visual principles
 
+Verified against: b9210bce
+
 Three named principles generalize the look people like on the map — the
 best-looking surface in the system — to every other surface. They sit above the
 component sections and inform tokens, tables, tiles, meters, and animation

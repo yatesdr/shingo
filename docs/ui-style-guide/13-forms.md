@@ -1,5 +1,7 @@
 ## Forms
 
+Verified against: b9210bce
+
 ### Markup
 
 Every form input is wrapped in a `.form-group` with an explicit `<label>`

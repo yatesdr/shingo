@@ -1,5 +1,7 @@
 # The Plant Model (what the sim runs)
 
+Verified against: b9210bce
+
 How a declarative plant spec becomes a running Shingo plant in the sim, the
 building blocks it's made of, and what the demo plant currently models.
 

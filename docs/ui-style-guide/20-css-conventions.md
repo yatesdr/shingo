@@ -1,5 +1,7 @@
 ## CSS conventions
 
+Verified against: b9210bce
+
 ### Utility classes
 
 A small set of utility classes is available across surfaces:

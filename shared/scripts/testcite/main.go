@@ -46,7 +46,10 @@
 // positional table row cannot be read, so a citation of one is reported: cite
 // the parent, or give the case a literal name.
 //
-// Usage: go run ./scripts/testcite [-root DIR]   (exit 1 on a dangling citation)
+// With -docs the same rules read the in-scope markdown docs instead, and a
+// go test -run argument in a doc is judged as the regex it is (docs.go).
+//
+// Usage: go run ./scripts/testcite [-root DIR] [-docs] [-graves]   (exit 1 on a dangling citation)
 package main
 
 import (
@@ -171,6 +174,7 @@ type fileFacts struct {
 	tests    map[string]*runNames
 	outside  literals
 	declared []string // identifiers declared as something other than a test
+	examples []string // Example functions, which a -run pattern also matches
 	comments []comment
 }
 
@@ -311,6 +315,9 @@ func parseFile(root, file string) (fileFacts, error) {
 				ff.tests[fn.Name.Name] = readRuns(fn)
 				continue
 			}
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Example") {
+				ff.examples = append(ff.examples, fn.Name.Name) // go test -run matches these too
+			}
 			ff.outside.add(collectLiterals(decl))
 		}
 	}
@@ -422,6 +429,7 @@ type Tree struct {
 	tests    map[string][]string // test name -> package dirs declaring it
 	pkgs     map[string]*pkgFacts
 	declared map[string]bool
+	examples map[string]bool
 	comments map[string][]comment // file -> comment groups
 }
 
@@ -435,6 +443,7 @@ func Load(root string) (*Tree, error) {
 		tests:    map[string][]string{},
 		pkgs:     map[string]*pkgFacts{},
 		declared: map[string]bool{},
+		examples: map[string]bool{},
 		comments: map[string][]comment{},
 	}
 	var (
@@ -481,6 +490,9 @@ func (t *Tree) add(root, file string, ff fileFacts) {
 	pf.outside.add(ff.outside)
 	for _, d := range ff.declared {
 		t.declared[d] = true
+	}
+	for _, e := range ff.examples {
+		t.examples[e] = true
 	}
 	rel, _ := filepath.Rel(root, file)
 	t.comments[filepath.ToSlash(rel)] = ff.comments
@@ -562,8 +574,13 @@ func sortHits(hits []Hit) {
 func main() {
 	root := flag.String("root", ".", "repo root holding the five modules")
 	listGraves := flag.Bool("graves", false, "also list the gravestones the check exempts")
+	docs := flag.Bool("docs", false, "read the in-scope markdown docs instead of Go comments (docs.go)")
 	flag.Parse()
-	hits, graves, err := Scan(*root)
+	scan := Scan
+	if *docs {
+		scan = ScanDocs
+	}
+	hits, graves, err := scan(*root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "testcite:", err)
 		os.Exit(2)
@@ -577,7 +594,11 @@ func main() {
 		fmt.Println(h)
 	}
 	if len(hits) > 0 {
-		fmt.Printf("%d dangling test citation(s). Point the comment at the test that pins it now, or say the pin is gone.\n", len(hits))
+		if *docs {
+			fmt.Println(docsSummary(len(hits)))
+		} else {
+			fmt.Printf("%d dangling test citation(s). Point the comment at the test that pins it now, or say the pin is gone.\n", len(hits))
+		}
 		os.Exit(1)
 	}
 }

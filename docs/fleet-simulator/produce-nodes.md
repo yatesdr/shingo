@@ -1,5 +1,7 @@
 # Produce Nodes & Edge Wiring
 
+Verified against: b9210bce
+
 ## Overview
 
 Produce nodes fill empty bins. When the operator finalizes (locks the UOP count), the system manifests the bin at Core via an ingest order, then dispatches swap choreography based on the claim's swap mode: simple (bare ingest), sequential (ingest + complex removal), single_robot (10-step all-in-one swap), or two_robot (two coordinated complex orders). Edge wiring handles UOP tracking — counter deltas increment produce UOP (counting UP) and decrement consume UOP (counting DOWN, floored at zero). Completion events reset UOP based on node role and order type.

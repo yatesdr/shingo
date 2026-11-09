@@ -23,7 +23,9 @@
 // ("removed", "deleted", "retired", "used to", "renamed", ...) cites a dead
 // name on purpose; it records history and is never a hit.
 //
-// Usage: go run ./scripts/deadident [-root DIR]   (exit 1 on a hit)
+// With -docs the same rules read the in-scope markdown docs instead (docs.go).
+//
+// Usage: go run ./scripts/deadident [-root DIR] [-docs]   (exit 1 on a hit)
 package main
 
 import (
@@ -50,6 +52,7 @@ var (
 	wordRe  = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\(?`)
 	tickRe  = regexp.MustCompile("`([^`]+)`")
 	versRe  = regexp.MustCompile(`^v[0-9]+$`)
+	gopkgRe = regexp.MustCompile(`\.v[0-9]+$`)
 	jsCmtRe = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*|<!--.*?-->`)
 	graveRe = regexp.MustCompile(`(?i)\b(removed|deleted|retired|used to|renamed|formerly|previously|no longer|replaced|superseded|obsolete|gone|was called|dropped)\b|\bpre-`)
 )
@@ -211,7 +214,10 @@ func externalName(spec *ast.ImportSpec) string {
 	if versRe.MatchString(base) {
 		base = path.Base(path.Dir(p))
 	}
-	return base
+	// The package's own name, by the conventions a path base breaks:
+	// segmentio/kafka-go is package kafka, gopkg.in/yaml.v3 package yaml.
+	base = strings.TrimSuffix(strings.TrimPrefix(base, "go-"), "-go")
+	return gopkgRe.ReplaceAllString(base, "")
 }
 
 // literalIdent returns a string literal's value if it is one identifier.
@@ -351,8 +357,13 @@ func Scan(root string) ([]Hit, error) {
 
 func main() {
 	root := flag.String("root", ".", "repo root to scan")
+	docs := flag.Bool("docs", false, "read the in-scope markdown docs instead of Go comments (docs.go)")
 	flag.Parse()
-	hits, err := Scan(*root)
+	scan, where := Scan, "comment"
+	if *docs {
+		scan, where = ScanDocs, "doc"
+	}
+	hits, err := scan(*root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "deadident:", err)
 		os.Exit(2)
@@ -361,7 +372,7 @@ func main() {
 		fmt.Printf("%s:%d: %s is cited but not declared anywhere\n", h.File, h.Line, h.Name)
 	}
 	if len(hits) > 0 {
-		fmt.Printf("%d dead identifier citation(s). Point the comment at the live name, or say it is gone.\n", len(hits))
+		fmt.Printf("%d dead identifier citation(s). Point the %s at the live name, or say it is gone.\n", len(hits), where)
 		os.Exit(1)
 	}
 }

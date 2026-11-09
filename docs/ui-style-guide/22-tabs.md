@@ -1,5 +1,7 @@
 ## Tabs
 
+Verified against: b9210bce
+
 One implementation. CSS:
 
 ```css

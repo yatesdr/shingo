@@ -1,5 +1,7 @@
 # UI Guide
 
+Verified against: b9210bce
+
 Shingo Edge provides a browser-based operator interface at `http://<host>:8081`. All pages support light and dark mode via the theme toggle in the navigation bar.
 
 ## Operator Pages

@@ -1,5 +1,7 @@
 ## Dialog UX — confirmation, prompt, toast
 
+Verified against: b9210bce
+
 ### Never use native dialogs
 
 `alert()`, `confirm()`, `prompt()` are forbidden. Use the shared helpers.

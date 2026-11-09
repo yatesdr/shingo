@@ -1,5 +1,7 @@
 # Ground rules for the order layer
 
+Verified against: b9210bce
+
 The rules every door, finder and reader of an order is held to, each with the test that holds it. They were
 written down after the press tranche's attack rounds (2026-10-24) found the same drift twelve times: a sentence
 about the tree that nobody read back against the tree. A rule here without a test is a hypothesis; a test listed

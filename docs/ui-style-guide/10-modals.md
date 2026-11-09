@@ -1,5 +1,7 @@
 ## Modals
 
+Verified against: b9210bce
+
 ### One mechanism
 
 Pick **Core's `.modal-overlay` + `.active` class** pattern. CSS-driven,

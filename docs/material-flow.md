@@ -1,5 +1,7 @@
 # Material Flow
 
+Verified against: b9210bce
+
 This document covers bins, payloads, automated supermarket storage, and material handling cycles in Shingo.
 
 ---

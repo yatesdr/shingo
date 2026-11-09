@@ -1,5 +1,7 @@
 # Architecture Reference
 
+Verified against: b9210bce
+
 How the simulation harness is built, for anyone who needs to add new tests or modify the simulator.
 
 ## The simulation harness

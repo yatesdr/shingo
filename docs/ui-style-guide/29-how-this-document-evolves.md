@@ -1,5 +1,7 @@
 ## How this document evolves
 
+Verified against: b9210bce
+
 - Changes go via PR against `shingo/docs/ui-style-guide.md`. The
   "deprecations tracker" section is the feedback loop — anything you "had
   to" do that contradicts the guide is either a deprecation candidate

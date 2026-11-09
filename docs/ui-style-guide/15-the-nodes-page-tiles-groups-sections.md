@@ -1,5 +1,7 @@
 ## The Nodes page — tiles, groups, sections
 
+Verified against: b9210bce
+
 ### Node tile
 
 **One node tile is one size everywhere**: 6.5rem x 2.75rem, set on `.node-tile`

@@ -1,5 +1,7 @@
 ## The three surfaces
 
+Verified against: b9210bce
+
 | Surface | Path | Audience | Loading model |
 |---|---|---|---|
 | **Core admin** | `shingo-core/www/` | Plant engineers, fleet operations | SSR + client-side enhancement, SSE for live updates |

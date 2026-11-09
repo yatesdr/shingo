@@ -1,5 +1,7 @@
 ## Fleet figures — busy
 
+Verified against: b9210bce
+
 **Busy means in use and unable to take other work: moving, held or faulted.**
 A robot is busy from the order's first acknowledged or in-transit row until it
 puts the load down (delivered, or the order's failure), and on an open order

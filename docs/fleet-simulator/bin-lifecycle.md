@@ -1,5 +1,7 @@
 # Bin Lifecycle & Manifest
 
+Verified against: b9210bce
+
 ## Overview
 
 The BinManifestService centralizes all bin manifest mutations — clear, sync UOP, set for production, confirm — into atomic operations. ClaimForDispatch routes through the remainingUOP protocol extension to determine the right atomic operation: nil→plain claim, zero→ClearAndClaim (full depletion), positive→SyncUOPAndClaim (partial consumption). This replaces scattered `db.SetBinManifest`/`db.ClearBinManifest` calls with service-level operations that close TOCTOU race windows.

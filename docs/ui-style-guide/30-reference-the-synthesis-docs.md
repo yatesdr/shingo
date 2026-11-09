@@ -1,5 +1,7 @@
 ## Reference: the synthesis docs
 
+Verified against: b9210bce
+
 The reasoning behind every decision in this guide lives in the
 `GitHub/shingo-ui-consistency/` folder:
 

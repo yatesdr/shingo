@@ -1,5 +1,7 @@
 ## Code organization
 
+Verified against: b9210bce
+
 ### Shared module structure
 
 **Decided: its own Go module + Go workspace.**

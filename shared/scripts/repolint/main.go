@@ -36,7 +36,11 @@
 //
 // A new repo-wide rule is a rule here, not a new scripts/check-*.sh.
 //
-// Usage: go run ./scripts/repolint [-root DIR] [-rule NAME]
+// -docs runs comment-references over the in-scope markdown docs instead of Go
+// comments, and nothing else (docs.go says what it reads); the doc-citation
+// gate, scripts/check-doc-citations.sh, runs it.
+//
+// Usage: go run ./scripts/repolint [-root DIR] [-rule NAME | -docs]
 package main
 
 import (
@@ -291,8 +295,12 @@ func run(t *tree, only string, w io.Writer) bool {
 	return clean
 }
 
-// report prints one rule's result and reports whether it was clean.
-func report(w io.Writer, r rule, res result) bool {
+// report prints one rule's result, at most maxShown findings, and reports
+// whether it was clean.
+func report(w io.Writer, r rule, res result) bool { return reportN(w, r, res, maxShown) }
+
+// reportN is report with its own cap; 0 prints every finding.
+func reportN(w io.Writer, r rule, res result, limit int) bool {
 	if len(res.findings) == 0 {
 		fmt.Fprintf(w, "ok   %s (%s)\n", r.name, res.ok)
 		return true
@@ -305,8 +313,8 @@ func report(w io.Writer, r rule, res result) bool {
 		return fs[i].Line < fs[j].Line
 	})
 	for i, f := range fs {
-		if i == maxShown {
-			fmt.Fprintf(w, "FAIL %s  ...  and %d more\n", r.name, len(fs)-maxShown)
+		if limit > 0 && i == limit {
+			fmt.Fprintf(w, "FAIL %s  ...  and %d more\n", r.name, len(fs)-limit)
 			break
 		}
 		fmt.Fprintf(w, "FAIL %s  %s  %s\n", r.name, f.where(), f.Why)
@@ -323,13 +331,20 @@ func report(w io.Writer, r rule, res result) bool {
 func main() {
 	root := flag.String("root", ".", "the repo root")
 	only := flag.String("rule", "", "run only the rule of this name")
+	docs := flag.Bool("docs", false, "read the in-scope docs instead of Go comments: comment-references only")
 	flag.Parse()
 	t, err := load(*root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "repolint:", err)
 		os.Exit(2)
 	}
-	if !run(t, *only, os.Stdout) {
+	clean := false
+	if *docs {
+		clean = runDocs(t, os.Stdout)
+	} else {
+		clean = run(t, *only, os.Stdout)
+	}
+	if !clean {
 		os.Exit(1)
 	}
 }

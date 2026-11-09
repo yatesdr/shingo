@@ -1,5 +1,7 @@
 ## Buttons
 
+Verified against: b9210bce
+
 ### Class taxonomy
 
 ```css

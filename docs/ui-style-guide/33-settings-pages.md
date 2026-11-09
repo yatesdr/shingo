@@ -1,5 +1,7 @@
 ## Settings pages
 
+Verified against: b9210bce
+
 A settings page is the shape the Edge Processes page's Settings tab drew first
 (reference shot `hmi-flow-composer-design-2026-09-02/desktop/reference/D5-settings.png`),
 shared so the Core and Edge Configuration pages are built from it too. The

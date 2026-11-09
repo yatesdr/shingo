@@ -1,5 +1,7 @@
 # Architecture
 
+Verified against: b9210bce
+
 Developer reference for ShinGo Core internals. Covers package layout, data flow, key patterns, and extension points.
 
 ## Package Layout

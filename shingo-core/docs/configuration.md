@@ -1,5 +1,7 @@
 # Configuration Reference
 
+Verified against: b9210bce
+
 ShinGo Core stores its configuration in a YAML file (default: `shingocore.yaml`). **No config file is written on first run.** If the file is absent, `config.Load` returns the in-memory defaults and creates nothing (`shingo-core/config/config.go:693-701`); the file appears only when someone saves from the web UI config page (`www/handlers_config.go:58`).
 
 > **The YAML file is application-managed and should not be edited by hand during normal operation.** Use the web UI config page (`/config`) to change runtime settings. The only exception is the initial database connection, which must be set before first launch — see [Initial Setup](#initial-setup). The YAML format is subject to change between versions.

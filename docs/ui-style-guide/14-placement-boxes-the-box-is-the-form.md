@@ -1,5 +1,7 @@
 ## Placement boxes — the box is the form
 
+Verified against: b9210bce
+
 When most of what configures a thing is **which nodes and groups it uses**, draw
 it as a box on the page that holds the nodes, with one slot per place, instead of
 a modal of name inputs. A typed name accepts any string and says nothing about

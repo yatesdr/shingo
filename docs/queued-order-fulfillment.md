@@ -1,5 +1,7 @@
 # Queued Order Fulfillment
 
+Verified against: b9210bce
+
 ## Problem
 
 When Core can't immediately find a bin to fulfill an order (empty or loaded), it fails the order. Edge sees the failure, the operator sees an error, and must manually retry. With multiple nodes competing for scarce bins, this creates races, noise, and operator frustration.

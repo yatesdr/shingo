@@ -1,5 +1,7 @@
 # Bin Loader / Unloader
 
+Verified against: b9210bce
+
 This document covers the bin loader and unloader workflow for manual material staging at operator stations. Loaders bring material into the AMR system; unloaders remove finished goods.
 
 ---

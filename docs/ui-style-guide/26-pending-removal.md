@@ -1,5 +1,7 @@
 ## Pending removal
 
+Verified against: b9210bce
+
 ### `swap_mode = "simple"` — RETIRED as a configurable mode (descriptor only)
 - **Hidden in UI:** 2026-04
 - **Retired as configurable:** 2026-07 (ingress lockdown)

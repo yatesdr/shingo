@@ -1,5 +1,7 @@
 ## Design tokens
 
+Verified against: b9210bce
+
 ### Naming
 
 Tokens use **semantic names**, not visual ones. `--success` not

@@ -1,5 +1,7 @@
 # Changeover Automation & A/B Cycling
 
+Verified against: b9210bce
+
 ## Overview
 
 Changeover automation handles production line tooling changes (style A → style B). Edge wiring advances node task states on order completion: `staging_requested → staged → line_cleared → released`. Auto-staging (Phase 2) fires at changeover start for all swap/add positions. A claim that names a keep-staged node keeps one spare standing there, and its changeover legs fetch the incoming carrier from it instead of the market, in every swap mode; a running line's swap takes it when a right spare stands there and fetches from the market otherwise. A/B cycling manages paired consume nodes with `active_pull` switching — only the active node decrements UOP, the inactive holds staged material as buffer.

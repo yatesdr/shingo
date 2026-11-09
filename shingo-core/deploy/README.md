@@ -1,5 +1,7 @@
 # Deploy artifacts
 
+Verified against: b9210bce
+
 Files installed onto a plant core box.
 
 | File | Installed to | By |

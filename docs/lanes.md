@@ -1,5 +1,7 @@
 # Lanes — mouths, digs, admission and liveness
 
+Verified against: b9210bce
+
 **Source of truth:** `shingo-core/dispatch/` (`admission.go`, `lane_gate*.go`,
 `lane_entry.go`, `lane_gate_release.go`, `lane_floor.go`, `chapter_floor.go`,
 `dig_*.go`, `queue_cause.go`, `queue_releasers.go`),

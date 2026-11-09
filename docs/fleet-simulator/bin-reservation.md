@@ -1,5 +1,7 @@
 # Bin Reservation & Claiming
 
+Verified against: b9210bce
+
 ## Overview
 
 Bin claiming protects bins from being dispatched by multiple orders simultaneously. The system uses atomic SQL updates (`claimed_by IS NULL` guard) to reserve bins during planning. The staging sweep (`ReleaseExpiredStagedBins`) flips bins from `staged` to `available` after TTL expiry. The orphan claim sweep (`ReleaseOrphanedClaims`) catches leaked claims from non-atomic terminal transitions. Bugs in this area cause double-dispatches (two robots sent to the same bin), phantom robots (dispatched with no bin), and permanently stuck inventory (claims never released).

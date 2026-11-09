@@ -1,5 +1,7 @@
 # plants/ — the one plant
 
+Verified against: b9210bce
+
 `plants/master.yaml` is the plant spec the dev stack seeds (`docker-compose.dev.yml`
 mounts this directory at `/plants`), the rig scripts drive, the planner golden is cut
 on and the scenario families seed. **LOCAL DEV / SIMULATION ONLY**: no name, part or

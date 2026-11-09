@@ -1,5 +1,7 @@
 # Order Status Lifecycle
 
+Verified against: b9210bce
+
 **What this is:** the order lifecycle status vocabulary as it exists in the code
 today — every status × who writes it × who reads it × what the operator sees.
 Grounded in `protocol/status.go` (the enum), `protocol/types.go`

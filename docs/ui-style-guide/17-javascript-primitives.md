@@ -1,5 +1,7 @@
 ## JavaScript primitives
 
+Verified against: b9210bce
+
 ### Use these helpers
 
 Don't reimplement. The shared module at `shared/utils.js` exports:

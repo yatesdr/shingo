@@ -1,5 +1,7 @@
 # engine_db_methods.go — Residual passthroughs
 
+Verified against: b9210bce
+
 **Count: 0**, and it is pinned — `frozenPassthroughCount = 0` in
 `engine/engine_db_methods_freeze_test.go`, with equality the only passing
 state. `engine/engine_db_methods.go` holds nothing but its header comment.

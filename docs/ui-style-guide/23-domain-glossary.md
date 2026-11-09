@@ -1,5 +1,7 @@
 ## Domain glossary
 
+Verified against: b9210bce
+
 Names matter — drift in component naming follows drift in domain naming.
 This glossary is the source of truth; use these names in code, templates,
 and UI labels.

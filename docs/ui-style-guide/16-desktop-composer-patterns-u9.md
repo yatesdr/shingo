@@ -1,5 +1,7 @@
 ## Desktop composer patterns (U9)
 
+Verified against: b9210bce
+
 The Edge Processes page is the engineer's half of the flow composer, and it
 introduced seven patterns worth reusing; U10's Presets tab added seven more at
 the end of the section. Reference shots:

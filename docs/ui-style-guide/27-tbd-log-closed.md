@@ -1,5 +1,7 @@
 ## TBD log (closed)
 
+Verified against: b9210bce
+
 Every TBD entry from the working draft has been resolved. The
 decisions are referenced in the relevant sections above; the summary
 below exists as a paper trail for anyone reading the doc and wondering

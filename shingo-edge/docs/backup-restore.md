@@ -1,5 +1,7 @@
 # Backup and Restore
 
+Verified against: b9210bce
+
 This document describes how ShinGo Edge backups work, how to enable automatic backups, and how to restore a failed edge machine onto replacement hardware.
 
 The procedures below are written for operators and engineers who may need to recover a station months or years after the system was installed.

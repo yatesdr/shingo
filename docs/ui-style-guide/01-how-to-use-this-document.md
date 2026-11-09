@@ -1,5 +1,7 @@
 ## How to use this document
 
+Verified against: b9210bce
+
 Read top-to-bottom once. After that, jump to the section that covers what
 you're touching. The guide is opinionated — it picks defaults rather than
 listing options. When you find yourself fighting one of these conventions

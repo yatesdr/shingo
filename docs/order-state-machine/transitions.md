@@ -1,5 +1,7 @@
 # Order state machine — bypasses and the lint guard
 
+Verified against: b9210bce
+
 **The code is the state machine; this document is not.** It used to carry
 hand-copied tables, and that is why it was wrong. It carries one again — the
 transition table below — only because a test now fails when it disagrees with

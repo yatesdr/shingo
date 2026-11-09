@@ -137,3 +137,13 @@ gate-lint:
 
 gate-test:
 	@bash scripts/gate.sh test
+
+# ── Docs ─────────────────────────────────────────────────────────────
+#
+# The gate only READS the "Verified against: <sha>" stamps
+# (scripts/check-doc-citations.sh); this is the one place they are written.
+# Run once at the end of a stream, then commit the restamp.
+.PHONY: docs-verify
+
+docs-verify: ## Restamp every doc the citation readers pass to HEAD; the docs with findings keep theirs (exit 1)
+	@bash scripts/docs-verify.sh

@@ -1,5 +1,7 @@
 # Node Naming Standards
 
+Verified against: b9210bce
+
 Reference document for physical and synthetic node naming conventions used across the Shingo system.
 
 ## Overview

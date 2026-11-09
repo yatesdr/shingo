@@ -1,5 +1,7 @@
 # Complex & Compound Orders
 
+Verified against: b9210bce
+
 ## Overview
 
 Complex orders handle multi-step robot instructions (pickup, dropoff, wait, swap) through StepsJSON → claimComplexBins → fleet dispatch. Compound reshuffles are multi-child orders for buried bin retrieval in supermarket NGRP lanes — the system detects blocked bins, plans a sequence of unbury/retrieve/restock children, and executes them sequentially with lane locking. The order_bins junction table tracks multi-pickup orders where a single complex order moves multiple bins.

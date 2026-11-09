@@ -1,5 +1,7 @@
 # Core Dispatch
 
+Verified against: b9210bce
+
 ## Overview
 
 Core dispatch translates order requests into fleet transport orders. It handles state mapping from fleet to Shingo statuses (CREATED→dispatched, RUNNING→in_transit, WAITING→staged, FINISHED→delivered), staged order release timing, bad input rejection, and the full dispatch-to-receipt lifecycle. This is the foundation — every other system builds on top of dispatch working correctly.

@@ -1,5 +1,7 @@
 ## Data visualization
 
+Verified against: b9210bce
+
 ### Which shape answers which question
 
 **Pick the form from the question, not from the page.** Phase 6 adds the first

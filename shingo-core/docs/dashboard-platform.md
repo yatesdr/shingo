@@ -1,5 +1,7 @@
 # Wall Display Platform
 
+Verified against: b9210bce
+
 > **Naming, and where the seam is.** Owner decision 11 renamed the human-facing
 > concept to **wall displays**, so the PAGE routes are `/wall-display/{id}` and
 > `/wall-displays`. Everything else deliberately kept the old name: the

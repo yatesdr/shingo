@@ -1,5 +1,7 @@
 # Sweeps, monitors and re-evaluation paths
 
+Verified against: b9210bce
+
 The inventory of every recurring or event-driven thing that can cause
 replenishment to be re-evaluated, or that sweeps state on a timer. This is the
 canonical list: `[[terminology]]` defines what a floor is and points here for the

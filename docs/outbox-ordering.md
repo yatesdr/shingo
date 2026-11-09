@@ -1,5 +1,7 @@
 # Core → Edge outbox: what order things arrive in
 
+Verified against: b9210bce
+
 Answered 2026-08-02, because the projection work needs it and nobody had
 checked. The short version is at the bottom if you only need the rule.
 

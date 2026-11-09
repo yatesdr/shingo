@@ -1,5 +1,7 @@
 ## Event handling
 
+Verified against: b9210bce
+
 ### Delegation over inline onclick
 
 ```html
