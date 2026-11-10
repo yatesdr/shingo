@@ -284,10 +284,17 @@ function drawList() {
 }
 
 // The part-identity health strip above the list: one block per process with a
-// standing condition (catid-health.js renders /api/catid-health). Advisory —
-// a failed read leaves the strip as it was. Refetched on the page's 10 s
-// refresh while the list is showing.
+// red or amber condition (catid-health.js renders /api/catid-health). Advisory
+// — a failed read leaves the strip as it was. Refetched on the page's 10 s
+// refresh while the list is showing. On a process's Settings tab it re-reads
+// that process's items instead (its notes, and the slots row's words), so a
+// verb run from there redraws there.
 async function refreshCatidHealth() {
+    if (S.processID && S.tab === 'settings') {
+        await loadCatidItems();
+        drawSettings();
+        return;
+    }
     const box = $('pd-catid');
     const strip = window.CatidHealth;
     if (!box || !strip) return;
@@ -296,7 +303,7 @@ async function refreshCatidHealth() {
         if (!res.ok) return;
         const rows = await res.json();
         const items = {};
-        await Promise.all((rows || []).map(async r => {
+        await Promise.all((rows || []).filter(strip.shows).map(async r => {
             const one = await fetch('/api/processes/' + r.process_id + '/catid-health', { cache: 'no-store' });
             if (one.ok) items[r.process_id] = ((await one.json()) || {}).items || [];
         }));
@@ -320,7 +327,20 @@ function catidPin(pid, styleID, catid, name) {
 function catidRepoint(pid, tag) {
     openSheet('Count ' + tag + '?',
         'the process counts on this slot from its next read, and its part identity follows to that slot’s CATID.', '',
-        'Count', () => sheetSubmit('POST', '/api/processes/' + pid + '/counter', { tag_name: tag }, refreshCatidHealth));
+        'Count', () => sheetSubmit('POST', '/api/processes/' + pid + '/counter', { tag_name: tag }, afterRepoint));
+}
+
+// afterRepoint redraws where the re-point was clicked. On the Settings tab
+// the process is read again and the draft's counter tag follows the save, so a
+// later Save settings does not send the old tag back; anything else in the
+// draft is kept.
+async function afterRepoint() {
+    if (!(S.processID && S.tab === 'settings')) return refreshCatidHealth();
+    const was = (process() || {}).counter_tag_name;
+    await reloadProcesses();
+    if (S.settings && S.settings.counter_tag_name === was) S.settings.counter_tag_name = (process() || {}).counter_tag_name || '';
+    await loadCountingSlots();
+    await refreshCatidHealth();
 }
 
 async function catidCharge(holdID) {
@@ -4690,6 +4710,22 @@ function hasPressIndexClaim() {
         (st.claims || []).some(c => c.swap_mode === 'two_robot_press_index'));
 }
 
+// notesField is the open process's info items (CatidHealth.notes): the
+// Processes list shows only red and amber, so a condition that needs no one
+// now (a hold to clear, an incoming style with no CATIDs) is said here, with
+// its verbs. A second counter of the same stroke is said on its slot's line
+// in the MES slots row instead, when that row has the slot.
+function notesField() {
+    const strip = window.CatidHealth;
+    if (!strip) return '';
+    const slotTags = new Set((S.countingSlots || []).map(s => s.tag));
+    const notes = strip.notes(S.catidItems || []).filter(it =>
+        !(it.kind === 'counter_slot_lockstep' && it.data && slotTags.has(it.data.tag)));
+    if (!notes.length) return '';
+    return '<div class="pd-sfld pd-scl-fld"><label>Notes<small>standing conditions the process list leaves out</small></label>' +
+        '<div class="v col">' + notes.map(it => strip.itemHTML(S.processID, it)).join('') + '</div></div>';
+}
+
 // loadCatidItems reads the open process's health items, for the slots row's
 // words and the notes ([] on a failed read).
 async function loadCatidItems() {
@@ -5047,7 +5083,7 @@ function drawSettings() {
             stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
         stField('Counting', 'off: this process isn’t counted', stToggle('counter_enabled')) +
         (hasPressIndexClaim() ? '<p class="pd-note">' + esc(PRESS_INDEX_COUNTING) + '</p>' : '') +
-        identityField() + (card ? card.countingHTML(view) : '');
+        identityField() + (card ? card.countingHTML(view) : '') + notesField();
 
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();

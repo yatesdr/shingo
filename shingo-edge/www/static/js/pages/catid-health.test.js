@@ -52,6 +52,32 @@ check('a slot the PLC counts on carries the click that counts it', () => {
     assert.ok(html.indexOf('data-act="ch-repoint" data-pid="7" data-tag="MES_Cell.Prod_Counter_02"') > 0, html);
     assert.ok(html.indexOf('Count Prod_Counter_02') > 0, 'the button names the slot');
     assert.strictEqual(html.split('data-act="ch-repoint"').length, 2, 'the lockstep line suggests nothing');
+    assert.ok(html.indexOf('a second counter of the same stroke') < 0, 'the lockstep line is info: not on the list');
+});
+
+check('the list shows red and amber only; an info item is a note for the process page', () => {
+    const items = [
+        { kind: 'wrong_part', severity: 'red', headline: 'Wrong part: the PLC is on 1002' },
+        { kind: 'unmapped_catid', severity: 'amber', headline: 'CATID 1003 maps to no style', data: { catid: '1003' } },
+        { kind: 'held', severity: 'info', headline: '5 held on CATID 1007', data: { hold_id: 11 } },
+        { kind: 'counter_slot_lockstep', severity: 'info', headline: 'Prod_Counter_02 rises with Prod_Counter_01' },
+    ];
+    assert.deepStrictEqual(H.listed(items).map(it => it.severity), ['red', 'amber']);
+    assert.deepStrictEqual(H.notes(items).map(it => it.kind), ['held', 'counter_slot_lockstep']);
+    const html = H.listHTML([
+        { process_id: 3, name: 'CELL-A', worst: 'red', count: 4, headline: 'x' },
+        { process_id: 4, name: 'P400', worst: 'info', count: 1, headline: 'Prod_Counter_02 rises with Prod_Counter_01' },
+    ], { 3: items, 4: [items[3]] });
+    assert.ok(html.indexOf('Wrong part') > 0 && html.indexOf('maps to no style') > 0, 'red and amber listed');
+    assert.ok(html.indexOf('5 held') < 0 && html.indexOf('rises with') < 0, 'no info item listed: ' + html);
+    assert.ok(html.indexOf('data-open="4"') < 0, 'a process with only info items has no block');
+    assert.strictEqual(H.listHTML([{ process_id: 4, name: 'P400', worst: 'info', count: 1, headline: 'y' }]), '',
+        'only info anywhere: no strip');
+});
+
+check('an info item still carries its verbs where it is drawn', () => {
+    const html = H.itemHTML(3, { kind: 'held', severity: 'info', headline: '5 held on CATID 1007', data: { hold_id: 11 } });
+    assert.ok(html.indexOf('pd-ch-info') > 0 && html.indexOf('data-act="ch-charge" data-hold="11"') > 0, html);
 });
 
 check('a wrong part with its changeover carries the one tap that starts it', () => {
@@ -72,11 +98,11 @@ check('a wrong part with its changeover carries the one tap that starts it', () 
 check('one block per process, toned by its worst item', () => {
     const html = H.listHTML([
         { process_id: 3, name: 'CELL-A', worst: 'red', count: 3, headline: 'Wrong part: the PLC is on 1002' },
-        { process_id: 4, name: 'CELL-B', worst: 'info', count: 1, headline: 'The incoming style STYLE-B has no CATIDs' },
+        { process_id: 4, name: 'CELL-B', worst: 'amber', count: 1, headline: 'The running style STYLE-B has no CATIDs' },
     ]);
     assert.ok(html.indexOf('pd-ch-red') > 0 && html.indexOf('data-open="3"') > 0, 'the red block for process 3');
     assert.ok(html.indexOf('and 2 more') > 0, 'the count past the headline');
-    assert.ok(html.indexOf('pd-ch-info') > 0 && html.indexOf('more</span>', html.indexOf('CELL-B')) < 0,
+    assert.ok(html.indexOf('pd-ch-amber') > 0 && html.indexOf('more</span>', html.indexOf('CELL-B')) < 0,
         'a single item says nothing more');
 });
 

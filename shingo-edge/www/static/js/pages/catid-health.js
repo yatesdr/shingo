@@ -5,12 +5,14 @@
 // /api/processes/{id}/catid-health (its items) answer; the Processes page
 // refetches on its 10 s refresh, which is what clears an item whose condition
 // ended with no hint (a read recovering, a window expiring). One block per
-// process with any item, toned by its worst one, each item with the verbs
-// that resolve it: pin an
-// unmapped CATID to a style (the suggestion, or a picked one), Charge or Write
-// off a hold, count the slot the PLC counts on, start the changeover a wrong
-// part offers (its action). A classic script, like desktop-bodies.js, so its Node test loads
-// it as CommonJS.
+// process with a red or amber item, toned by its worst one, each of those
+// items with the verbs that resolve it: pin an unmapped CATID to a style (the
+// suggestion, or a picked one), Charge or Write off a hold, count the slot the
+// PLC counts on, start the changeover a wrong part offers (its action). An
+// info item needs no one now (a second counter of the same stroke, a hold to
+// clear, an incoming style with no CATIDs): the list leaves it out, and the
+// process's Settings tab shows it with its verbs (notes). A classic script,
+// like desktop-bodies.js, so its Node test loads it as CommonJS.
 (function () {
     'use strict';
 
@@ -20,6 +22,18 @@
     }
 
     const TONE = { red: 'pd-ch-red', amber: 'pd-ch-amber', info: 'pd-ch-info' };
+
+    // LISTED: the severities the Processes list shows.
+    const LISTED = { red: true, amber: true };
+
+    // listed(items): the items the list shows; notes(items): the rest, for the
+    // process's own page.
+    function listed(items) { return (items || []).filter(it => LISTED[it.severity]); }
+    function notes(items) { return (items || []).filter(it => !LISTED[it.severity]); }
+
+    // shows(row): whether the list shows a process's summary row: its worst
+    // item is red or amber.
+    function shows(row) { return !!(row && LISTED[row.worst]); }
 
     // actionsHTML: the verbs an item carries, as data-act buttons the page's
     // click handler runs.
@@ -66,16 +80,17 @@
             (acts ? '<span class="pd-ch-acts">' + acts + '</span>' : '') + '</div>';
     }
 
-    // listHTML renders the summary rows, each process with its items when
-    // itemsByProcess carries them (else its worst headline). Nothing to show
-    // is no strip.
+    // listHTML renders the summary rows whose worst item is red or amber, each
+    // process with its red and amber items when itemsByProcess carries them
+    // (else its worst headline). Nothing to show is no strip.
     function listHTML(rows, itemsByProcess) {
-        if (!Array.isArray(rows) || rows.length === 0) return '';
+        const shown = Array.isArray(rows) ? rows.filter(shows) : [];
+        if (shown.length === 0) return '';
         const items = itemsByProcess || {};
-        return '<div class="pd-ch" role="list">' + rows.map(function (r) {
-            const its = items[r.process_id];
+        return '<div class="pd-ch" role="list">' + shown.map(function (r) {
+            const its = Array.isArray(items[r.process_id]) ? listed(items[r.process_id]) : null;
             const head = '<b class="pd-ch-name" data-open="' + esc(r.process_id) + '">' + esc(r.name) + '</b>';
-            if (!Array.isArray(its) || its.length === 0) {
+            if (!its || its.length === 0) {
                 const more = r.count > 1 ? ' <span class="pd-dim">and ' + (r.count - 1) + ' more</span>' : '';
                 return '<div class="pd-ch-row ' + (TONE[r.worst] || TONE.info) + '" role="listitem">' + head + ' ' +
                     esc(r.headline) + more + '</div>';
@@ -85,7 +100,7 @@
         }).join('') + '</div>';
     }
 
-    const api = { listHTML, itemHTML };
+    const api = { listHTML, itemHTML, listed, notes, shows };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (typeof window !== 'undefined') window.CatidHealth = api;
 })();
