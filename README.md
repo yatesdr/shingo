@@ -1,6 +1,6 @@
 # <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/shingo-banner-dark.svg"><source srcset="docs/assets/shingo-banner-light.svg"><img alt="Shingo" src="docs/assets/shingo-banner-dark.svg"></picture>
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 Material tracking and automated transport system for manufacturing plants. Shingo manages the flow of bins and materials between warehouse storage and production line stations using autonomous mobile robots. Named from the Japanese 信号 ("signal" / "instruction"), Shingo bridges the robot fleet manager and production processes, coordinating material requests and delivery.
 

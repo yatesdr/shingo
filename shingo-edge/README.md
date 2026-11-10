@@ -1,6 +1,6 @@
 # Shingo Edge
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 Shop-floor client for the Shingo material tracking system. Runs at each production line to track PLC counters, manage material inventory, handle operator order workflows, and communicate with Shingo Core over Kafka.
 

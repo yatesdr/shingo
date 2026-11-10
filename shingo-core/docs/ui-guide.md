@@ -1,6 +1,6 @@
 # UI Guide
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 ShinGo Core provides a web-based management interface at `http://<host>:8083`. All pages support light and dark mode via the theme toggle in the navigation bar.
 

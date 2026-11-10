@@ -1,6 +1,6 @@
 # Order-Building & Source Dispatch
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 **Source of truth:** `shingo-core/dispatch/builder.go`, `shingo-core/dispatch/source_finder.go`,
 `shingo-core/dispatch/allocator.go`, `protocol/status.go`. This document is the

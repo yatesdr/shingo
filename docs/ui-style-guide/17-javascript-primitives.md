@@ -1,6 +1,6 @@
 ## JavaScript primitives
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 ### Use these helpers
 

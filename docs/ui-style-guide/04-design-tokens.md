@@ -1,6 +1,6 @@
 ## Design tokens
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 ### Naming
 

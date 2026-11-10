@@ -1,6 +1,6 @@
 # The Kanban rig
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 A permanent certification fixture for the Kanban feature: the `[kanban]` and `[kanban5]` sections of `plants/master.yaml`, six runs and a walk, one driver. The other sections of the master run beside the loop, and every count a run checks is the loop's own (`kanban-rig.sh` `orders_count`). The runs go on the visible dev stack (compose project `shingo-dev`, Core `:8083`, Edge `:8081`), one at a time, so every run can be watched on the pages while it goes.
 

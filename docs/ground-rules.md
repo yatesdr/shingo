@@ -1,6 +1,6 @@
 # Ground rules
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 The rules every change to shingo is held to, each with the guard that holds it. A rule here without a guard is a
 hypothesis; a test listed as **predicted red** is committed in `testdb.VerifyRed`'s form (green while the named

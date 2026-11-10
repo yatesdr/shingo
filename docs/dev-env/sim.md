@@ -1,6 +1,6 @@
 # The Shingo Sim (local dev environment)
 
-Verified against: aa62233b
+Verified against: fe06474a
 
 A fully-local, Dockerized Shingo stack — core + edge + Postgres + Kafka, with
 simulated robots, PLCs, and operators — that runs the whole material flow
