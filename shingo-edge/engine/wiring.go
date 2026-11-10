@@ -81,6 +81,12 @@ func (e *Engine) wireEventHandlers() {
 		e.returnCarrierLeftWaiting(evt.Payload)
 		e.createHeldPullingLeg(evt.Payload)
 	}, EventOrderStatusChanged)
+
+	// A keep-staged spot's row changing in the bins copy runs its keeper again:
+	// Core's push travels apart from the order messages that kick it.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, NodeBinsUpdatedEvent]) {
+		e.keepSpotsOnBinsChange(evt.Payload.Nodes)
+	}, EventNodeBinsUpdated)
 }
 
 // isInactivePairedNode reports whether a node is part of an A/B pair

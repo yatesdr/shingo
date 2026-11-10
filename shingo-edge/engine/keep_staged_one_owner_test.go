@@ -21,8 +21,9 @@ import (
 // refills a keep-staged spot (keptFor): a changeover's start and cancel send
 // back a spare the spot is no longer kept for and order nothing else, and the
 // incoming leg takes the spare only where a REQUEST would (legDiffs). These
-// drive the start, the keeper's three decision points (the sweep, a lift at the
-// spot, an order's end) and the cancel end to end against a Core stub.
+// drive the start, the keeper's four decision points (the sweep, a lift at the
+// spot, an order's end, the spot's row changing in the bins copy) and the cancel
+// end to end against a Core stub.
 
 // restubSpot makes Core answer the line and the spot as given.
 func restubSpot(t *testing.T, fx *coFixture, line, spot protocol.NodeBinInfo) {
@@ -187,6 +188,70 @@ func TestKeepStagedOneOwner_TheWrongSpareGoesBackAndTheLegNeverTakesIt(t *testin
 	if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" {
 		t.Fatalf("refills after the leg ended = %+v, want one of PART-NEW", refills)
 	}
+}
+
+// THE COPY CATCHING UP IS A DECISION POINT. The keeper decides from the bins
+// copy, and Core's push of a bin's move races the message that ends or lifts
+// the order that moved it. A kick that reads the copy first decides from the
+// bin that has just left: here the return of the outgoing spare ends while the
+// copy still shows it (wrong for the incoming claim, so nothing is ordered),
+// and a lift is reported while the copy still shows the spare standing. The
+// refill follows when the copy shows the spot bare, not at the next sweep. CI
+// run 42888523152 (2026-11-10, integration KSR produce/two_robot_press_index/e):
+// the return's end read the copy a moment before the push and no refill came.
+func TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint(t *testing.T) {
+	t.Parallel()
+	line := protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
+
+	t.Run("the return ends before the copy shows the spot bare", func(t *testing.T) {
+		t.Parallel()
+		c := pinCase{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobotPressIndex, read: readWrong}
+		fx := c.seed(t)
+		withCascade(fx)
+		startKSChangeover(t, fx)
+		_, returns := liveSpot(t, fx, pinSpot)
+		if len(returns) != 1 {
+			t.Fatalf("returns = %+v, want the outgoing spare sent back", returns)
+		}
+		land(t, fx, returns[0].ID)
+		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 0 {
+			t.Fatalf("refills = %+v from a copy still showing the spare, want none", refills)
+		}
+		restubSpot(t, fx, line, protocol.NodeBinInfo{})
+		refills, _ := liveSpot(t, fx, pinSpot)
+		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || !refills[0].RetrieveEmpty {
+			t.Fatalf("refills once the copy shows the spot bare = %+v, want one empty for PART-NEW", refills)
+		}
+	})
+
+	t.Run("a lift reported before the copy shows it", func(t *testing.T) {
+		t.Parallel()
+		c := pinCase{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, read: readRight, staging: true}
+		fx := c.seed(t)
+		withCascade(fx)
+		startKSChangeover(t, fx)
+		var lifter *domain.Order
+		for _, o := range changeoverLegs(t, fx) {
+			steps, err := fx.eng.storedStepsOf(o.ID)
+			testutil.MustNoErr(t, err, "steps")
+			if _, l := spotSteps(steps, pinSpot); l {
+				lifter = &o
+			}
+		}
+		if lifter == nil {
+			t.Fatal("no leg takes the right spare standing on the spot")
+		}
+		testutil.MustNoErr(t, fx.db.UpdateOrderStatus(lifter.ID, string(protocol.StatusInTransit)), "with the fleet")
+		fx.eng.HandleBinPickedUp(lifter.UUID, 7, pinSpot)
+		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 0 {
+			t.Fatalf("refills = %+v from a copy still showing the spare standing, want none", refills)
+		}
+		restubSpot(t, fx, line, protocol.NodeBinInfo{})
+		refills, _ := liveSpot(t, fx, pinSpot)
+		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || refills[0].RetrieveEmpty {
+			t.Fatalf("refills once the copy shows the spot bare = %+v, want one full of PART-NEW", refills)
+		}
+	})
 }
 
 // A START THAT ABORTS THE KEEPER'S QUEUED REFILL LEAVES IT ARMED. The start's

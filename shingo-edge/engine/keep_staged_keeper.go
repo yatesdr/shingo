@@ -16,12 +16,13 @@ import (
 // ONE DECISION, ONE OWNER. What a spot needs is decided by decideSpot
 // (keep_staged_spot.go), and only the keeper asks it: the level sweep, for every
 // keep-staged line, idle ones included, so a spot is topped up without anyone
-// pressing anything; and the end of any order of the line, or a pickup at the
-// spot, at once instead of at the next sweep. A REQUEST does not: it asks only
-// for the line, taking the spare when one stands and the market's carrier when
-// none does (requestClaim), so cancelling what a REQUEST made leaves nothing of
-// the spot's behind (SPR ALN_011, 2026-10-08: a refill created with each request
-// outlived the request's cancel and took the carrier it freed).
+// pressing anything; and the end of any order of the line, a pickup at the spot,
+// or the spot's row changing in the bins copy, at once instead of at the next
+// sweep. A REQUEST does not: it asks only for the line, taking the spare when
+// one stands and the market's carrier when none does (requestClaim), so
+// cancelling what a REQUEST made leaves nothing of the spot's behind (SPR
+// ALN_011, 2026-10-08: a refill created with each request outlived the
+// request's cancel and took the carrier it freed).
 //
 // It replaced a floor that ran only while a swap waited at Core and assumed that
 // swap would lift a spare. A swap planned before the spot was kept never does:
@@ -41,14 +42,20 @@ import (
 // save deciding this cell now, and its decision covers the spot. The order-end
 // kick runs inside the completion cascade, which events deliver synchronously:
 // a changeover start aborting under the lock reaches here on its own goroutine.
-// The next sweep re-asks.
+// The miss is logged; the next decision point re-asks.
+//
+// Every run records the line as keeping the spot (keptSpotLines), so the spot's
+// row changing in the bins copy runs it again (keepSpotsOnBinsChange).
 func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 	spot := spotNode(claim)
 	if node == nil || spot == "" {
 		return
 	}
+	e.keptSpotLines.Store(keptSpotLine{spot: spot, nodeID: node.ID}, struct{}{})
 	mu := e.primeNodeLock(claim)
 	if !mu.TryLock() {
+		e.logFn("keep-staged: node %s: spot %s: the cell is being decided (its lock is held) — this pass skipped, the next re-asks",
+			node.Name, spot)
 		return
 	}
 	defer mu.Unlock()
@@ -298,21 +305,79 @@ func (e *Engine) kickKeepSpot(ctx *orderCompletionCtx) {
 
 // keepSpotOnPickup runs the keeper when Core reports a lift at a line's spot, so
 // the refill behind a lifted spare is ordered at the lift rather than at the
-// swap's end. Core moves the bin off the spot before it reports the pickup, so
-// the keeper's read already sees the spot bare.
+// swap's end. Core moves the bin off the spot before it reports the pickup, but
+// the keeper reads the bins copy, which Core's push updates on its own path: a
+// copy still showing the spare decides nothing now, and the copy's change runs
+// the keeper again (keepSpotsOnBinsChange).
 func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 	if order == nil || order.ProcessNodeID == nil || location == "" {
 		return
 	}
-	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
+	if node, claim := e.lineKeeping(*order.ProcessNodeID, location); claim != nil {
+		e.keepSpot(node, claim)
+	}
+}
+
+// keptSpotLine is a line the keeper has run for, and the spot it kept
+// (keptSpotLines).
+type keptSpotLine struct {
+	spot   string
+	nodeID int64
+}
+
+// keepSpotsOnBinsChange runs the keeper again for every line it has run for
+// whose spot's row in the bins copy just changed (EventNodeBinsUpdated).
+//
+// THE COPY CATCHES UP AFTER THE ORDER MESSAGE. The keeper decides from the bins
+// copy, and Core's push of a bin's move travels apart from the message that ends
+// or lifts the order that moved it, so a kick can read the copy a moment before
+// the push lands. Deciding from the bin that has just left, it orders nothing:
+// the spare a return took reads as a wrong bin standing, the spare a leg lifted
+// as the right one. With nothing to run the keeper when the push landed, the
+// spot waited for the next sweep, a minute: in CI run 42888523152 (2026-11-10,
+// integration KSR produce/two_robot_press_index/e) the changeover's B fetch
+// never came, and holding the scenario's push back until the messages are
+// delivered failed 18 of its 56 subtests, every sequential and press moment
+// that waits for B after the spare's return. Do not drop this wake while the
+// keeper reads the copy and the copy travels apart from the order messages.
+// Pinned by TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint.
+//
+// Only lines the keeper has run for since start: a spot it has not decided
+// since has no decision to correct, and the first sweep runs every kept line. A
+// line that no longer keeps the spot (lineKeeping) is forgotten.
+func (e *Engine) keepSpotsOnBinsChange(nodes []string) {
+	changed := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		changed[n] = true
+	}
+	e.keptSpotLines.Range(func(k, _ any) bool {
+		l := k.(keptSpotLine)
+		if !changed[l.spot] {
+			return true
+		}
+		node, claim := e.lineKeeping(l.nodeID, l.spot)
+		if claim == nil {
+			e.keptSpotLines.Delete(k)
+			return true
+		}
+		e.logFn("keep-staged: node %s: spot %s changed in the bins copy — the keeper decides it again", node.Name, l.spot)
+		e.keepSpot(node, claim)
+		return true
+	})
+}
+
+// lineKeeping is the process node nodeID and the claim it keeps spot for now
+// (spotClaimAt); nil when the line cannot be read or keeps no spare there.
+func (e *Engine) lineKeeping(nodeID int64, spot string) (*processes.Node, *processes.NodeClaim) {
+	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil || node == nil {
-		return
+		return nil, nil
 	}
 	claim := e.spotClaimAt(node)
-	if claim == nil || spotNode(claim) != location {
-		return
+	if claim == nil || spotNode(claim) != spot {
+		return nil, nil
 	}
-	e.keepSpot(node, claim)
+	return node, claim
 }
 
 // spotClaimAt is keptFor for a line read on its own: the process's armed target

@@ -1319,8 +1319,9 @@ var ksrMoments = []ksrMoment{
 		// and Core moves the bin to transit) and the cancel follows at once,
 		// before any message from Core reaches Edge, while Edge still holds
 		// every order bringing B as not yet with the fleet. Where no leg parks on
-		// the spot the keeper has not been told of the lift yet, so there is no
-		// such order at all.
+		// the spot there is usually no such order at all: the keeper has not been
+		// told of the lift, unless the bins push has already landed it, and then
+		// its refill is still Edge's own (keepSpotsOnBinsChange).
 		ret := c.coreOf(co.returns[0])
 		if ret.VendorOrderID == "" {
 			c.notReached("A's spare's return never went to the fleet")

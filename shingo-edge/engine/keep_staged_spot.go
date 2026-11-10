@@ -123,9 +123,10 @@ type spotFacts struct {
 }
 
 // decideSpot is THE decision for a keep-staged spot, and the keeper is its only
-// caller: the level sweep (idle lines included), a lift at the spot, and the end
-// of any order of the line. The rule is one right spare standing or on its way,
-// with at most one refill in flight, and only onto a spot that is bare.
+// caller: the level sweep (idle lines included), a lift at the spot, the end of
+// any order of the line, and the spot's row changing in the bins copy. The rule
+// is one right spare standing or on its way, with at most one refill in flight,
+// and only onto a spot that is bare.
 //
 // A WRONG BIN IS LEFT WHERE IT STANDS. A refill cannot be set down on it, and
 // sending it somewhere is a decision about a bin the Edge did not put there; the
@@ -418,8 +419,8 @@ func spotSteps(steps []protocol.ComplexOrderStep, spot string) (drops, lifts boo
 // staging node. The keeper's plan never returns a bin (decideSpot).
 //
 // A failure here is logged, and the next decision point — the sweep's keeper,
-// a lift at the spot, or the next order of the line to end — re-reads
-// the spot and asks again.
+// a lift at the spot, the next order of the line to end, or the spot's row
+// changing in the bins copy — re-reads the spot and asks again.
 func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, plan spotPlan, origin ordermgr.Origin) {
 	e.refillSpot(node, c, plan.refills, origin)
 	if plan.refills > 0 {

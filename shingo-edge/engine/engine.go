@@ -266,6 +266,11 @@ type Engine struct {
 	// on every keeper pass, so a restart loses nothing the next sweep does not
 	// say again.
 	keepStagedNotes sync.Map
+	// keptSpotLines is every line the keep-staged keeper has run for since
+	// start, by spot (keptSpotLine -> struct{}): a change of the spot's row in
+	// the bins copy runs it again (keepSpotsOnBinsChange). Memory only; the
+	// first sweep runs every kept line.
+	keptSpotLines sync.Map
 	// unloaderAsks holds the U1 asks out with Core and not answered
 	// (unloaderAskKey -> struct{}): the board's pending note per unloader
 	// window (UnloaderAskNote). Memory only, as the ask's waiter is: a restart
