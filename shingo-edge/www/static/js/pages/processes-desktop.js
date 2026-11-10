@@ -16,6 +16,7 @@
 
 import { renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
+import { formatClock, formatTime } from '/static/shared/utils.js';
 import {
     makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
 } from '/static/shared/scene-geom.js';
@@ -3792,7 +3793,8 @@ function clearSelected() {
 async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
-    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots()]);
+    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots(),
+        loadCatidItems()]);
     await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
@@ -4632,11 +4634,13 @@ function cuCombo(nodeID, field, kind) {
 
 // stCombo is a settings field (data-st) with the tag combo: its PLC from the
 // input plcsel names (or the fixed plcname), its options the suggestions of
-// kind (tag-suggest.js: counter, identity, or every tag).
+// kind (tag-suggest.js: counter, identity, or every tag). Its box is the wide
+// one: a tag is a struct path (MES_Cell.Prod_Counter_01), and the narrow box
+// cut it off.
 function stCombo(key, kind, plcsel, plcname) {
     return '<span class="pd-combo" data-combo="tag" data-suggest="' + kind + '"' +
         (plcsel ? ' data-plcsel="' + esc(plcsel) + '"' : '') + (plcname ? ' data-plcname="' + esc(plcname) + '"' : '') + '>' +
-        '<input class="pd-inp" type="text" data-st="' + key + '" value="' + esc(S.settings[key]) +
+        '<input class="pd-inp wide" type="text" data-st="' + key + '" value="' + esc(S.settings[key]) +
         '" autocomplete="off" spellcheck="false">' +
         '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>';
 }
@@ -4663,14 +4667,36 @@ function identityField() {
             : '');
 }
 
-// countingSection is the process's Counting block (station-card.js): the MES
-// slots, and the station counters' cards with their positions, each line
-// labelled discovered, confirmed or measured.
-function countingSection(p) {
-    const card = window.StationCard;
-    if (!card) return '';
-    return card.countingHTML({ process: p, slots: S.countingSlots || [], counters: S.stationCounters || [],
-        positions: S.curtainNodes || [], verdicts: S.stationVerdicts });
+// countingView is what the Production counter section's live words and its
+// MES slots and station counters rows read (station-card.js): the process as
+// saved, the slots' read, the station counters, their checklists' positions
+// and verdicts, the open checklist (S.scOpen), the process's health items, its
+// styles, and the plant-local time formats.
+function countingView(p) {
+    return { process: p, slots: S.countingSlots || [], counters: S.stationCounters || [],
+        positions: S.curtainNodes || [], verdicts: S.stationVerdicts, open: S.scOpen || 0,
+        items: S.catidItems || [], styles: stylesOf(p.id), fmt: formatTime, clock: formatClock };
+}
+
+// PRESS_INDEX_COUNTING is what the Counting switch also decides for a
+// process with a press-index position, said only where one exists.
+const PRESS_INDEX_COUNTING = 'A press-index position keeps a drained same-part bin at changeover only while ' +
+    'this process is counted; a sequential press reuses its parked empty either way.';
+
+// hasPressIndexClaim: some live style of the open process claims a position
+// in press-index mode.
+function hasPressIndexClaim() {
+    return ((S.composer && S.composer.styles) || []).some(st =>
+        (st.claims || []).some(c => c.swap_mode === 'two_robot_press_index'));
+}
+
+// loadCatidItems reads the open process's health items, for the slots row's
+// words and the notes ([] on a failed read).
+async function loadCatidItems() {
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/catid-health', { cache: 'no-store' });
+        S.catidItems = res.ok ? (((await res.json()) || {}).items || []) : [];
+    } catch (_) { S.catidItems = []; }
 }
 
 // loadStationVerdicts reads the binding's dry run for each of the process's
@@ -4715,13 +4741,14 @@ function saveStationPositions(id) {
                     return;
                 }
             }
+            S.scOpen = 0;
             closeSheet();
             await afterStationChange();
         });
 }
 
-// loadCountingSlots reads the process's MES slots for the Counting block
-// (none on a failed read).
+// loadCountingSlots reads the process's MES slots for the Production counter
+// section (none on a failed read).
 async function loadCountingSlots() {
     try {
         const res = await fetch('/api/processes/' + S.processID + '/counting-slots', { cache: 'no-store' });
@@ -4765,6 +4792,9 @@ function openStationCounter(id, bindNode) {
                 const b = await postJSON('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: out.body.id });
                 if (!b.ok) { sheetStatus(b.error, true); return; }
             }
+            // A new counter counts nothing yet: its checklist opens, its
+            // countable positions ticked when it is the only one.
+            if (!id && !bindNode && out.body && out.body.id) S.scOpen = out.body.id;
             closeSheet();
             await afterStationChange();
         });
@@ -4773,7 +4803,7 @@ function openStationCounter(id, bindNode) {
 
 async function afterStationChange() {
     S._tagCache = {};
-    await Promise.all([loadStationCounters(), loadCurtainNodes(), loadCountingSlots()]);
+    await Promise.all([loadStationCounters(), loadCurtainNodes(), loadCountingSlots(), loadCatidItems()]);
     await loadStationVerdicts();
     drawSettings();
 }
@@ -4797,7 +4827,7 @@ function countedAtField(n) {
     const at = n.line_counter_id || 0;
     const opts = '<option value=""' + (at ? '' : ' selected') + '>Production counter</option>' +
         (S.stationCounters || []).map(c => '<option value="' + c.id + '"' + (at === c.id ? ' selected' : '') + '>' +
-            esc(c.label || c.tag_name) + '</option>').join('') +
+            esc(window.StationCard ? window.StationCard.nameOf(c) : c.label || c.tag_name) + '</option>').join('') +
         '<option value="new">New station counter…</option>';
     return '<span class="pd-poscu"><span class="pd-dim">Counted at</span>' +
         '<select class="pd-inp" data-countedat="' + n.id + '">' + opts + '</select></span>';
@@ -5001,17 +5031,23 @@ function drawSettings() {
         stField('Group', 'groups processes on the list',
             '<button class="pd-sel" data-act="st-group">' + esc(group ? group.name : 'Ungrouped') + '<i class="car"></i></button>');
 
+    // THE LIVE STATE IS THE TITLE'S WORDS (33-settings-pages.md rule 2): what
+    // the process counts on, its CATID and style, its last stroke, from the
+    // process as saved and the slots' read. The MES slots and the station
+    // counters are this section's last two rows: they are facts about this
+    // counter, not a section of their own.
+    const card = window.StationCard;
+    const view = countingView(p);
     const counter = '<div class="pd-sect"><h2>Production counter</h2>' +
-        '<span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' +
-        esc(counting ? 'counting' : 'not wired') + '</span></div>' +
+        (card ? card.titleHTML(view)
+            : '<span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' + esc(counting ? 'counting' : 'not wired') + '</span>') +
+        '</div>' +
         stField('PLC', '', stText('counter_plc_name')) +
         stField('Tag', 'type to filter WarLink’s tags; a MES_ struct offers its counter member',
             stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
-        stField('Enabled',
-            'a press-index position keeps a drained same-part bin at changeover only while this counts (a sequential press reuses its parked empty either way)',
-            stToggle('counter_enabled')) +
-        identityField();
-    const countingBlock = countingSection(p);
+        stField('Counting', 'off: this process isn’t counted', stToggle('counter_enabled')) +
+        (hasPressIndexClaim() ? '<p class="pd-note">' + esc(PRESS_INDEX_COUNTING) + '</p>' : '') +
+        identityField() + (card ? card.countingHTML(view) : '');
 
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();
@@ -5085,7 +5121,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + countingBlock + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
+        general + counter + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -8008,10 +8044,19 @@ function onClick(e) {
             case 'sc-new': openStationCounter(0, 0); return;
             case 'sc-edit': openStationCounter(Number(btn.dataset.sc), 0); return;
             case 'sc-positions': saveStationPositions(Number(btn.dataset.sc)); return;
+            // A counter's checklist opens on Change positions… and closes on
+            // its Cancel, a second click, or its save; one is open at a time.
+            case 'sc-checklist': {
+                const id = Number(btn.dataset.sc);
+                S.scOpen = S.scOpen === id ? 0 : id;
+                drawSettings();
+                return;
+            }
+            case 'sc-checklist-close': S.scOpen = 0; drawSettings(); return;
             case 'sc-delete': {
                 const id = Number(btn.dataset.sc);
-                openSheet('Delete this station counter?', 'its positions are counted by the production counter again', '',
-                    'Delete', () => sheetSubmit('DELETE', '/api/station-counters/' + id, undefined, afterStationChange), true);
+                openSheet('Remove this station counter?', 'its positions are counted by the production counter again', '',
+                    'Remove', () => sheetSubmit('DELETE', '/api/station-counters/' + id, undefined, afterStationChange), true);
                 return;
             }
             case 'st-sync': syncCatalog(); return;

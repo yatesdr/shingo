@@ -893,6 +893,26 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-settings .pd-posscreen { display: block; margin: 14px 0 2px; }
 .pd-poscu { display: inline-flex; align-items: center; gap: 8px; }
 
+/* Settings · Production counter: the MES slots' lines and the station
+   counters' list, rows in the value column (33-settings-pages.md rule 9).
+   A counter's row is its name and tags with its verbs, then two muted lines
+   (its positions, its status; the status takes the warning ink only when the
+   counter stopped), then its checklist while open. Sizes are the settings
+   rows' own (.pd-dim, .pd-dimlink). */
+.pd-sfld.pd-scl-fld { align-items: start; }
+.pd-sfld.pd-scl-fld > label { padding-top: 3px; }
+.pd-scl-line { display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 1px 0; }
+.pd-scl-line.pd-dim, .pd-scl-line.pd-warn { font-size: 12px; }
+.pd-scl-row { padding: 4px 0 6px; border-bottom: 1px solid var(--sub-1); }
+.pd-scl-row:last-of-type { border-bottom: 0; }
+.pd-scl-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.pd-scl-head b, .pd-scl-head .pd-dimlink { flex: none; white-space: nowrap; }
+.pd-scl-head .pd-dimlink { margin-left: 0; }
+.pd-scl-head .pd-dim { min-width: 0; overflow-wrap: anywhere; }
+.pd-scl-pos { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 2px 14px; }
+.pd-scl-box { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pd-scl-acts { display: flex; gap: 8px; margin-top: 4px; }
+
 /* A process with no part yet — the state an Add process lands in. Prose at the
    note's colour and the field grid's measure; it is a sentence, not a panel. */
 .pd-empty { padding: 28px 4px; max-width: 64ch; }

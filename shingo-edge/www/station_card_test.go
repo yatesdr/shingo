@@ -21,24 +21,27 @@ func runStationCardJS(t *testing.T, only string) {
 }
 
 // TestStationCard_PreTicksOnlyCountableUnboundPositionsWhenItIsTheOnlyStation
-// runs the card's whole model test: the boxes, what is pre-ticked, the
-// bindings the save sends, and what the card measures.
+// runs the card's whole model test: the checklist (the only station counter
+// pre-ticks its countable unbound positions while it counts none; once it
+// counts one the boxes are the bindings; a second counter pre-ticks nothing;
+// the bindings the save sends), the tags, the status, the title and the rows.
 func TestStationCard_PreTicksOnlyCountableUnboundPositionsWhenItIsTheOnlyStation(t *testing.T) {
 	runStationCardJS(t, "")
 }
 
-// TestStationCard_ShowsLeadBesideRatio: the card says the parts in the line
-// since the program change beside the clicks per part, "0 ahead" as a counter
-// that counts like the production counter, and the binding confirm names the
-// number.
-func TestStationCard_ShowsLeadBesideRatio(t *testing.T) {
-	runStationCardJS(t, "the lead")
+// TestStationCard_ListsEachCounterWithItsStatus runs the station list's
+// checks: one row per counter with its tags, its positions as words and a
+// one-line status (amber only when stopped), the checklist only when opened,
+// + Add after the last row.
+func TestStationCard_ListsEachCounterWithItsStatus(t *testing.T) {
+	runStationCardJS(t, "the station list")
 }
 
-// TestCountingBlock_EachLineLabelledInThreeGroups renders the process page's
-// Counting block from a fixture: the MES slots, the station counters' cards
-// and the end of the line, in that order, each line labelled discovered,
-// confirmed, measured or typed.
-func TestCountingBlock_EachLineLabelledInThreeGroups(t *testing.T) {
-	runStationCardJS(t, "the counting block")
+// TestCountingRows_TheTitleAndTheMESSlots runs the live words and the MES
+// slots row: what the process counts on in the section title, the counted
+// slot first, in-use slots on their own lines with the re-point, unused and
+// unread slots folded.
+func TestCountingRows_TheTitleAndTheMESSlots(t *testing.T) {
+	runStationCardJS(t, "the title")
+	runStationCardJS(t, "the counting rows")
 }

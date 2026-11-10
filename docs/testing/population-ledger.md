@@ -900,3 +900,21 @@ No assertion read any of the twelve.
 - coverage Δ: 0 (a doc-reading test)
 - citations rewritten: none outside `protocol/docs_drift_test.go`
 - verified at: the commit that adds this row
+
+### DEAD — `TestStationCard_ShowsLeadBesideRatio`
+- test: `TestStationCard_ShowsLeadBesideRatio` · pkg `shingoedge/www` · run `-run '^TestStationCard_ShowsLeadBesideRatio$'` · `shingo-edge/www/station_card_test.go:34` @ `f0291082` · tags `none`
+- code: DEAD (it ran the checks of `station-card.test.js` whose names hold "the lead", and the file at base has none, so the runner ran zero checks and passed; its header describes a "0 ahead" line `station-card.js` at base does not draw)
+- assertion map: none to move. The runner now fails a filter that matches no check (`station-card.test.js`, `ran === 0`), so a wrapper cannot pass on nothing again. What the card measures is asserted by `TestStationCard_PreTicksOnlyCountableUnboundPositionsWhenItIsTheOnlyStation` (the whole file: "the status: one line, singular and plural, amber only when stopped") and `TestStationCard_ListsEachCounterWithItsStatus`.
+- mutation: the read-by-nothing proof at base, then one the survivors catch at the tip. (1) base `station-card.js`'s `measures` returns `{ ratio: 'BROKEN', stopped: 'BROKEN' }`: `node station-card.test.js "the lead"` → `station card: all passed`, exit 0 (the whole file: `FAIL the measures: …`, `FAIL the counting block: a station tag discovered …`). (2) at the tip, `status` says `'last click ' + n + ' strokes ago'` (the old plural): `node station-card.test.js` → `FAIL the status: one line, singular and plural, amber only when stopped`, `FAIL the station list: one row per counter, …`
+- coverage Δ: 0 (a node-run JS test; it covers no Go statement)
+- citations rewritten: none (`git grep -n TestStationCard_ShowsLeadBesideRatio` over the five modules: this file only)
+- verified at: the commit that adds this row
+
+### STALE — `TestCountingBlock_EachLineLabelledInThreeGroups`
+- test: `TestCountingBlock_EachLineLabelledInThreeGroups` · pkg `shingoedge/www` · run `-run '^TestCountingBlock_EachLineLabelledInThreeGroups$'` · `shingo-edge/www/station_card_test.go:42` @ `f0291082` · tags `none`
+- code: STALE (the Counting block's lines each carried a provenance chip, discovered, confirmed or measured, and the test asserted the chips; the block is now the Production counter section's MES slots and station counters rows, in words, with no chip, per `docs/ui-style-guide/33-settings-pages.md`)
+- assertion map: the slots group then the stations group, in order → `TestCountingRows_TheTitleAndTheMESSlots` ("the counting rows: MES slots counted first, …": the slots row, then `rowOf(html, 'stations')`); each slot's line (`CATID`, `count`, `rising` / `not rising`, `not read at the last pass`) → the same check's slots row text, the counted slot first, unused slots folded (`Prod_Counter_04–05 unused`), unread slots folded; a leading slot with no record ("strokes since T are not in the record") → "the counting rows: unread slots fold, a slot leading with no record says so"; a station card's tag read or not, its positions, its clicks per part and its stop → `TestStationCard_ListsEachCounterWithItsStatus` (the row's tags, `counts …`, the one-line status, amber only when stopped). Dropped: the chip on every line (its label against its text, `a line shows the label it carries`), by design; the tip asserts no chip (`html.indexOf('pd-tag') < 0`).
+- mutation: a slot's line loses its count. At base, `slotsGroup` without `' · count '`: `node station-card.test.js "the counting block"` → `FAIL the counting block: two groups, the MES slots discovered and the slot counted on confirmed`, `FAIL the counting block: a slot the PLC counts on, …`. At the tip, `slotsField`'s `reading` without `' · count '`: `node station-card.test.js "the counting rows"` → `FAIL the counting rows: MES slots counted first, in-use slots their own lines, unused ones folded`, `FAIL the counting rows: unread slots fold, a slot leading with no record says so`
+- coverage Δ: 0 (a node-run JS test; it covers no Go statement)
+- citations rewritten: none (`git grep -n TestCountingBlock_EachLineLabelledInThreeGroups` over the five modules: this file only)
+- verified at: the commit that adds this row
