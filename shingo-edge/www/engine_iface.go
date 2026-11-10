@@ -193,8 +193,9 @@ type EngineOrchestration interface {
 	ListStationCounters(processID int64) ([]engine.StationCounterCard, error)
 	// CountingSlots is the setup page's Counting block's MES slots.
 	CountingSlots(processID int64) ([]engine.MESSlot, error)
-	CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error)
-	UpdateStationCounter(id int64, label, tagName string) error
+	CreateStationCounter(processID int64, label, tagName, tagName2 string) (*counters.LineCounter, error)
+	// UpdateStationCounter: tagName2 nil keeps the second tag, blank removes it.
+	UpdateStationCounter(id int64, label, tagName string, tagName2 *string) error
 	DeleteStationCounter(id int64) error
 	SetCountedAt(nodeID int64, counterID *int64) error
 	// StationCountable is the binding's rules on one position, binding

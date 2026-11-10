@@ -4737,23 +4737,27 @@ async function loadStationCounters() {
     } catch (_) { S.stationCounters = []; }
 }
 
-// openStationCounter is the station counter's editor: its label and its tag
-// (the process's counter PLC), with the rule. bindNode, when given, is a
-// position counted at the new counter once it saves.
+// openStationCounter is the station counter's editor: its label, its tag and
+// an optional second tag (the process's counter PLC; the counter counts the
+// two tags' sum), with the rule. bindNode, when given, is a position counted
+// at the new counter once it saves.
 function openStationCounter(id, bindNode) {
     const p = process() || {};
-    const c = (S.stationCounters || []).find(x => x.id === id) || { label: '', tag_name: '' };
+    const c = (S.stationCounters || []).find(x => x.id === id) || { label: '', tag_name: '', tag_name_2: '' };
+    // The station kind: each station struct's count member by the family's
+    // convention. Not the counter kind, which leads with the MES slots a
+    // station counter may not read (stationTagFree).
+    const tagBox = (inputID, value) =>
+        '<span class="pd-combo" data-combo="tag" data-suggest="station" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
+        '<input class="pd-inp wide" id="' + inputID + '" value="' + esc(value) + '" autocomplete="off" spellcheck="false">' +
+        '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>';
     openSheet(id ? 'Edit station counter' : 'New station counter', window.StationCard.RULE,
         '<label class="pd-lbl">Label</label><input class="pd-inp wide" id="sc-label" value="' + esc(c.label) + '">' +
-        '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' +
-        // The station kind: each station struct's count member by the family's
-        // convention. Not the counter kind, which leads with the MES slots a
-        // station counter may not read (stationTagFree).
-        '<span class="pd-combo" data-combo="tag" data-suggest="station" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
-        '<input class="pd-inp wide" id="sc-tag" value="' + esc(c.tag_name) + '" autocomplete="off" spellcheck="false">' +
-        '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>',
+        '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' + tagBox('sc-tag', c.tag_name) +
+        '<label class="pd-lbl">Second tag (optional)</label>' + tagBox('sc-tag2', c.tag_name_2 || '') +
+        '<p class="pd-note">' + esc(window.StationCard.SECOND_TAG) + '</p>',
         'Save', async () => {
-            const body = { label: $('sc-label').value, tag_name: $('sc-tag').value };
+            const body = { label: $('sc-label').value, tag_name: $('sc-tag').value, tag_name_2: $('sc-tag2').value };
             const url = id ? '/api/station-counters/' + id : '/api/processes/' + S.processID + '/station-counters';
             const out = await postJSON(id ? 'PUT' : 'POST', url, body);
             if (!out.ok) { sheetStatus(out.error, true); return; }

@@ -511,7 +511,7 @@ func (w *walk) freshOrder(status string) string {
 // freshStationCounter makes a station counter on the press, bound to nothing.
 func (w *walk) freshStationCounter() int64 {
 	w.t.Helper()
-	lc, err := w.db.CreateLineCounter(w.press, "walk", "plc", w.uniq("WALK_STATION"))
+	lc, err := w.db.CreateLineCounter(w.press, "walk", "plc", w.uniq("WALK_STATION"), "")
 	if err != nil {
 		w.t.Fatalf("station counter: %v", err)
 	}

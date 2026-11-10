@@ -23,6 +23,16 @@
     const RULE = 'A station counter clicks where the part leaves the cart, once per assembly, under every ' +
         'style that uses the positions counted at it. It reads the cell’s own PLC; there is no ratio.';
 
+    // The second tag, said where it is typed.
+    const SECOND_TAG = 'A second tag is for a station with one fixture per hand, one hand running at a ' +
+        'time: the counter counts the two tags’ clicks added together.';
+
+    // tagsOf(c): a station counter's tags as the card says them, the second
+    // after " + " (the counter counts their sum).
+    function tagsOf(c) {
+        return c.tag_name_2 ? c.tag_name + ' + ' + c.tag_name_2 : String(c.tag_name || '');
+    }
+
     function esc(s) {
         return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -159,7 +169,7 @@
             '<span><button class="pd-dimlink" data-act="sc-edit" data-sc="' + c.id + '">Edit</button>' +
             '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Delete</button></span></div>' +
             line(c.last_poll_at ? 'confirmed' : 'discovered',
-                'tag ' + c.tag_name + (c.last_poll_at ? ': saved and read' : ': saved, not read yet')) +
+                'tag ' + tagsOf(c) + (c.last_poll_at ? ': saved and read' : ': saved, not read yet')) +
             line('confirmed', here.length ? 'counts ' + here.join(', ') : 'counts no position yet: tick them and save') +
             positionsHTML(c, v) + [m.ratio, m.stopped].map(x => line('measured', x)).join('');
     }
@@ -181,7 +191,7 @@
             slotsGroup(v.process || {}, v.slots || [], v.fmt || when) + stationsGroup(v);
     }
 
-    const api = { RULE, rows, changes, measures, countingHTML };
+    const api = { RULE, SECOND_TAG, tagsOf, rows, changes, measures, countingHTML };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (typeof window !== 'undefined') window.StationCard = api;
 })();

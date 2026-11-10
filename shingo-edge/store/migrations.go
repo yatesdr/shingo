@@ -2402,7 +2402,50 @@ func edgeMigrations() []migrate.Migration {
 				return err
 			},
 		},
+		{
+			// A station counter's second tag: tag_name_2 ('' for none), with
+			// its own reading (last_count_2, last_poll_at_2: NULL until its
+			// first read, which seeds) and its own publishing
+			// (warlink_managed_2). The counter counts the sum of its two tags'
+			// clicks: a station with one fixture per hand, one hand running at
+			// a time. Uniqueness across both columns is the save's
+			// (stationTagFree), since the table's UNIQUE covers tag_name only.
+			// The table is the chain's alone (v41), so these columns are too;
+			// each is guarded, as v43's.
+			Version: 45,
+			Name:    "line_counters_second_tag",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v45Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('line_counters') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(c.add); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('line_counters')
+					WHERE name IN ('tag_name_2', 'last_count_2', 'last_poll_at_2', 'warlink_managed_2')`).Scan(&n)
+				return err == nil && n == 4
+			},
+		},
 	}
+}
+
+// v45Columns are v45's line_counters columns, each with its ADD (run only
+// where missing).
+var v45Columns = []struct{ column, add string }{
+	{"tag_name_2", "ALTER TABLE line_counters ADD COLUMN tag_name_2 TEXT NOT NULL DEFAULT ''"},
+	{"last_count_2", "ALTER TABLE line_counters ADD COLUMN last_count_2 INTEGER NOT NULL DEFAULT 0"},
+	{"last_poll_at_2", "ALTER TABLE line_counters ADD COLUMN last_poll_at_2 TEXT"},
+	{"warlink_managed_2", "ALTER TABLE line_counters ADD COLUMN warlink_managed_2 INTEGER NOT NULL DEFAULT 0"},
 }
 
 // v43Columns are v43's columns, each with its ADD (run only where missing).

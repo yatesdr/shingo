@@ -76,6 +76,9 @@ type stubEngine struct {
 	// them named after the method that writes to them so the assertion
 	// site is easy to find.
 	lastReleaseOrderDisposition *engine.ReleaseDisposition
+	// lastUpdateStationCounter is UpdateStationCounter's arguments, as the
+	// handler decoded them: [label, tag, second tag or "<nil>"].
+	lastUpdateStationCounter []string
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
@@ -326,14 +329,21 @@ func (s *stubEngine) CountingSlots(processID int64) ([]engine.MESSlot, error) {
 	}
 	return slots, nil
 }
-func (s *stubEngine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
+func (s *stubEngine) CreateStationCounter(processID int64, label, tagName, tagName2 string) (*counters.LineCounter, error) {
 	if processID != 1 {
 		return nil, &engine.StationCounterRefused{Sentence: "no production counter wired"}
 	}
-	return &counters.LineCounter{ID: 8, ProcessID: 1, Label: label, PLCName: "plc", TagName: tagName}, nil
+	return &counters.LineCounter{ID: 8, ProcessID: 1, Label: label, PLCName: "plc", TagName: tagName, TagName2: tagName2}, nil
 }
-func (s *stubEngine) UpdateStationCounter(int64, string, string) error { return nil }
-func (s *stubEngine) DeleteStationCounter(int64) error                 { return nil }
+func (s *stubEngine) UpdateStationCounter(_ int64, label, tagName string, tagName2 *string) error {
+	second := "<nil>"
+	if tagName2 != nil {
+		second = *tagName2
+	}
+	s.lastUpdateStationCounter = []string{label, tagName, second}
+	return nil
+}
+func (s *stubEngine) DeleteStationCounter(int64) error { return nil }
 func (s *stubEngine) SetCountedAt(nodeID int64, _ *int64) error {
 	if nodeID != 1 {
 		return &engine.StationCounterRefused{Sentence: "no live style consumes there"}

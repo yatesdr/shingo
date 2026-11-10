@@ -122,6 +122,12 @@ var requiredColumns = []requiredColumn{
 	{"processes", "changeover_auto_arm"},
 	{"processes", "identity_tag_name"},
 	{"process_nodes", "line_counter_id"},
+	// v45: a station counter's second tag. Every line_counters read scans
+	// all four, so a missing column kills every station counter's poll.
+	{"line_counters", "tag_name_2"},
+	{"line_counters", "last_count_2"},
+	{"line_counters", "last_poll_at_2"},
+	{"line_counters", "warlink_managed_2"},
 	// v43: the seat's last release, and the ledger's record of it.
 	{"process_node_runtime_states", "released_bin_id"},
 	{"process_node_runtime_states", "released_count"},

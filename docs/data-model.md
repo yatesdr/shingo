@@ -1949,7 +1949,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`hourly_counts`](#edge-hourly_counts) | 6 | `id` | [`processes`](#edge-processes), [`styles`](#edge-styles) |
 | [`hourly_counts_local_legacy`](#edge-hourly_counts_local_legacy) | 7 | `id` | [`processes`](#edge-processes), [`styles`](#edge-styles) |
 | [`inventory_delta_seq`](#edge-inventory_delta_seq) | 6 | `scope_kind`, `scope_key`, `epoch` |  |
-| [`line_counters`](#edge-line_counters) | 8 | `id` |  |
+| [`line_counters`](#edge-line_counters) | 12 | `id` |  |
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 13 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
@@ -2225,6 +2225,10 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `last_count` | `INTEGER` | yes | `0` |  |
 | `last_poll_at` | `TEXT` |  |  |  |
 | `warlink_managed` | `INTEGER` | yes | `0` |  |
+| `tag_name_2` | `TEXT` | yes | `''` |  |
+| `last_count_2` | `INTEGER` | yes | `0` |  |
+| `last_poll_at_2` | `TEXT` |  |  |  |
+| `warlink_managed_2` | `INTEGER` | yes | `0` |  |
 
 - Unique (plc_name, tag_name)
 

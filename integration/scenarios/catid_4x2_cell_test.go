@@ -673,7 +673,7 @@ func (c *w6Cell) configureEdge() {
 	if !c.anyStation() && !c.unbound {
 		return
 	}
-	lc, err := eng.CreateStationCounter(c.processID, "load station", w6Station)
+	lc, err := eng.CreateStationCounter(c.processID, "load station", w6Station, "")
 	mustNil(t, err, "the load station's counter")
 	c.counter = lc.ID
 	for i := range w6Pos {

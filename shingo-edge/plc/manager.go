@@ -115,10 +115,11 @@ type Manager struct {
 	// (rpID → struct{}), so the log says it once a streak.
 	nonNumeric sync.Map
 
-	// lineBoot is each station counter's rollback verdict for this boot,
-	// taken at its first listing (counter id → string, "" when the run before
-	// this boot read it; consumed by its first good read): the gap is judged
-	// once a boot, never within a run (pollLineCounter).
+	// lineBoot is each station counter tag's rollback verdict for this boot,
+	// taken at its counter's first listing (lineCounterKey → string, "" when
+	// the run before this boot read it; consumed by the tag's first good
+	// read): the gap is judged once a boot, never within a run
+	// (pollLineCounter).
 	lineBoot sync.Map
 
 	// pointHold answers whether a point's count waits this pass

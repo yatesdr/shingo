@@ -8,6 +8,11 @@
 // position. The rules below keep a binding to that: a consume position some
 // live style claims, never a loader, a produce position or an A/B pair, and
 // never a tag another counter reads.
+//
+// A station counter may read a second tag on the same PLC and counts the sum:
+// a station with one fixture per hand, each with its own count, of which one
+// runs at a time, so the sum is one load per assembly on whichever hand runs,
+// a changeover's overlap included (TestLinePoll_TwoTagsCountTheirSum).
 
 package engine
 
@@ -33,52 +38,69 @@ func refused(format string, args ...any) error {
 	return &StationCounterRefused{Sentence: fmt.Sprintf(format, args...)}
 }
 
-// CreateStationCounter adds a station counter reading tagName on the process's
-// counter PLC. Refused for a process with no wired counter, a tag a reporting
-// point or another station counter reads, and a tag that is not an integer
-// (declared, or read whole when WarLink declares no type). The tag's
-// publishing is enabled when WarLink is not already publishing it, and
-// recorded as the Edge's; a refusal after that unpublishes it again. The row
-// is unread and seeds from its first poll.
-func (e *Engine) CreateStationCounter(processID int64, label, tagName string) (*counters.LineCounter, error) {
+// CreateStationCounter adds a station counter reading tagName, and tagName2
+// when it is not blank, on the process's counter PLC; a counter with two tags
+// counts their sum. Refused for a process with no wired counter, no first
+// tag, the same tag twice, a tag a reporting point or another station counter
+// reads, and a tag that is not an integer (declared, or read whole when
+// WarLink declares no type). Each tag's publishing is enabled when WarLink is
+// not already publishing it, and recorded as the Edge's; a refusal after that
+// unpublishes it again. The row is unread and each tag seeds from its first
+// poll.
+func (e *Engine) CreateStationCounter(processID int64, label, tagName, tagName2 string) (*counters.LineCounter, error) {
 	proc, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
 	}
-	tagName = strings.TrimSpace(tagName)
+	tagName, tagName2 = strings.TrimSpace(tagName), strings.TrimSpace(tagName2)
 	if proc.CounterPLCName == "" || proc.CounterTagName == "" {
 		return nil, refused("%s has no production counter wired; a station counter reads beside it", proc.Name)
 	}
 	if tagName == "" {
 		return nil, refused("a station counter needs its tag")
 	}
-	if err := e.stationTagFree(proc, tagName, 0); err != nil {
+	if err := e.stationTagsFree(proc, tagName, tagName2, 0); err != nil {
 		return nil, err
 	}
-	managed, err := e.publishStationTag(proc.CounterPLCName, tagName)
+	plcName := proc.CounterPLCName
+	managed, err := e.publishStationTag(plcName, tagName)
 	if err != nil {
 		return nil, err
 	}
-	id, err := e.db.CreateLineCounter(processID, strings.TrimSpace(label), proc.CounterPLCName, tagName)
+	managed2 := false
+	if tagName2 != "" {
+		if managed2, err = e.publishStationTag(plcName, tagName2); err != nil {
+			e.unpublishTag(managed, plcName, tagName)
+			return nil, err
+		}
+	}
+	id, err := e.db.CreateLineCounter(processID, strings.TrimSpace(label), plcName, tagName, tagName2)
 	if err != nil {
-		e.unpublishTag(managed, proc.CounterPLCName, tagName)
+		e.unpublishTag(managed, plcName, tagName)
+		e.unpublishTag(managed2, plcName, tagName2)
 		return nil, err
 	}
-	if managed {
-		if err := e.db.SetLineCounterManaged(id, true); err != nil {
+	for _, m := range []struct{ second, managed bool }{{false, managed}, {true, managed2}} {
+		if !m.managed {
+			continue
+		}
+		if err := e.db.SetLineCounterManaged(id, m.second, true); err != nil {
 			e.logFn("station counter %d: record managed publishing: %v", id, err)
 		}
 	}
 	e.stationHealth.startTrack(id, processID)
-	e.logFn("station counter %d on %s: %s/%s created (%q), unread — it seeds at its first poll", id, proc.Name,
-		proc.CounterPLCName, tagName, label)
+	e.logFn("station counter %d on %s: %s/%s created (%q), unread — each tag seeds at its first poll", id, proc.Name,
+		plcName, tagsWords(tagName, tagName2), label)
 	return e.db.GetLineCounter(id)
 }
 
-// UpdateStationCounter renames a station counter or moves it to another tag:
-// the new tag is checked and published as on create, the old one unpublished
-// when the Edge published it, and the row re-seeds from the new tag.
-func (e *Engine) UpdateStationCounter(id int64, label, tagName string) error {
+// UpdateStationCounter renames a station counter or moves it to other tags.
+// A blank tagName keeps the first tag; tagName2 nil keeps the second, and a
+// blank one removes it. Each new tag is checked and published as on create, an
+// old tag the counter no longer reads is unpublished when the Edge published
+// it (a tag that moves between the two keeps its publishing), and each tag
+// that changed re-seeds from its first read; a tag that stays keeps counting.
+func (e *Engine) UpdateStationCounter(id int64, label, tagName string, tagName2 *string) error {
 	lc, err := e.db.GetLineCounter(id)
 	if err != nil {
 		return err
@@ -87,33 +109,74 @@ func (e *Engine) UpdateStationCounter(id int64, label, tagName string) error {
 		return fmt.Errorf("no station counter %d", id)
 	}
 	label, tagName = strings.TrimSpace(label), strings.TrimSpace(tagName)
-	if tagName == "" || tagName == lc.TagName {
+	if tagName == "" {
+		tagName = lc.TagName
+	}
+	second := lc.TagName2
+	if tagName2 != nil {
+		second = strings.TrimSpace(*tagName2)
+	}
+	if tagName == lc.TagName && second == lc.TagName2 {
 		return e.db.RenameLineCounter(id, label)
 	}
 	proc, err := e.db.GetProcess(lc.ProcessID)
 	if err != nil {
 		return err
 	}
-	if err := e.stationTagFree(proc, tagName, id); err != nil {
+	if err := e.stationTagsFree(proc, tagName, second, id); err != nil {
 		return err
 	}
-	managed, err := e.publishStationTag(lc.PLCName, tagName)
+	// The publishing each old tag carries, so a tag the counter keeps (in
+	// either place) keeps it, and only a tag new to the counter is published.
+	held := map[string]bool{lc.TagName: lc.WarlinkManaged}
+	if lc.TagName2 != "" {
+		held[lc.TagName2] = lc.WarlinkManaged2
+	}
+	var published []string // new tags this save enabled, for the rollback
+	publish := func(tag string) (bool, error) {
+		if m, ok := held[tag]; ok {
+			return m, nil
+		}
+		m, err := e.publishStationTag(lc.PLCName, tag)
+		if err == nil && m {
+			published = append(published, tag)
+		}
+		return m, err
+	}
+	undo := func() {
+		for _, tag := range published {
+			e.unpublishTag(true, lc.PLCName, tag)
+		}
+	}
+	managed, err := publish(tagName)
 	if err != nil {
 		return err
 	}
-	if err := e.db.RepointLineCounter(id, label, tagName, managed); err != nil {
-		e.unpublishTag(managed, lc.PLCName, tagName)
+	managed2 := false
+	if second != "" {
+		if managed2, err = publish(second); err != nil {
+			undo()
+			return err
+		}
+	}
+	if err := e.db.RepointLineCounter(id, label, tagName, second, managed, managed2); err != nil {
+		undo()
 		return err
 	}
-	e.unpublishTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
+	for tag, m := range held {
+		if tag != tagName && tag != second {
+			e.unpublishTag(m, lc.PLCName, tag)
+		}
+	}
 	e.stationHealth.startTrack(id, lc.ProcessID)
-	e.logFn("station counter %d: %s/%s → %s/%s, unread — it seeds from the new tag's first poll", id,
-		lc.PLCName, lc.TagName, lc.PLCName, tagName)
+	e.logFn("station counter %d: %s/%s → %s/%s; a changed tag is unread — it seeds from its first poll", id,
+		lc.PLCName, tagsWords(lc.TagName, lc.TagName2), lc.PLCName, tagsWords(tagName, second))
 	return nil
 }
 
 // DeleteStationCounter deletes a station counter: its positions go back to the
-// production counter, and its tag is unpublished when the Edge published it.
+// production counter, and each of its tags is unpublished when the Edge
+// published it.
 func (e *Engine) DeleteStationCounter(id int64) error {
 	lc, err := e.db.GetLineCounter(id)
 	if err != nil {
@@ -126,8 +189,30 @@ func (e *Engine) DeleteStationCounter(id int64) error {
 		return err
 	}
 	e.unpublishTag(lc.WarlinkManaged, lc.PLCName, lc.TagName)
-	e.logFn("station counter %d (%s/%s) deleted: its positions are counted by the production counter again", id, lc.PLCName, lc.TagName)
+	if lc.TagName2 != "" {
+		e.unpublishTag(lc.WarlinkManaged2, lc.PLCName, lc.TagName2)
+	}
+	e.logFn("station counter %d (%s/%s) deleted: its positions are counted by the production counter again", id,
+		lc.PLCName, tagsWords(lc.TagName, lc.TagName2))
 	return nil
+}
+
+// tagsWords is a counter's tags as the log and the page say them: one, or
+// both joined with " + " (the counter counts their sum).
+func tagsWords(tagName, tagName2 string) string {
+	if tagName2 == "" {
+		return tagName
+	}
+	return tagName + " + " + tagName2
+}
+
+// stationCounterName is a counter as the strip names it: its label, else its
+// tags.
+func stationCounterName(lc counters.LineCounter) string {
+	if lc.Label != "" {
+		return lc.Label
+	}
+	return tagsWords(lc.TagName, lc.TagName2)
 }
 
 // SetCountedAt binds a position to a station counter (nil: back to the
@@ -157,7 +242,7 @@ func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 		if err := e.countableAtAStation(node.ProcessID, node.CoreNodeName, node.Name); err != nil {
 			return err
 		}
-		to = fmt.Sprintf("station counter %d (%s)", lc.ID, lc.TagName)
+		to = fmt.Sprintf("station counter %d (%s)", lc.ID, tagsWords(lc.TagName, lc.TagName2))
 	}
 	from := "the production counter"
 	if node.LineCounterID != nil {
@@ -212,6 +297,24 @@ func (e *Engine) countableAtAStation(processID int64, coreNode, name string) err
 	}
 	if consume == 0 {
 		return refused("no live style consumes at %s", name)
+	}
+	return nil
+}
+
+// stationTagsFree applies stationTagFree to each of a counter's tags
+// (tagName2 "" for none), and refuses the same tag twice (Logix names are
+// case-insensitive): one fixture read twice is two clicks a part.
+func (e *Engine) stationTagsFree(proc *processes.Process, tagName, tagName2 string, exceptID int64) error {
+	if tagName2 != "" && strings.EqualFold(tagName, tagName2) {
+		return refused("%s is already the counter's first tag; a second tag is the other fixture's count", tagName2)
+	}
+	for _, tag := range []string{tagName, tagName2} {
+		if tag == "" {
+			continue
+		}
+		if err := e.stationTagFree(proc, tag, exceptID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

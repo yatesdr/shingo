@@ -294,7 +294,7 @@ CREATE TABLE line_counters (
     tag_name        TEXT    NOT NULL,
     last_count      INTEGER NOT NULL DEFAULT 0,
     last_poll_at    TEXT,
-    warlink_managed INTEGER NOT NULL DEFAULT 0,
+    warlink_managed INTEGER NOT NULL DEFAULT 0, tag_name_2 TEXT NOT NULL DEFAULT '', last_count_2 INTEGER NOT NULL DEFAULT 0, last_poll_at_2 TEXT, warlink_managed_2 INTEGER NOT NULL DEFAULT 0,
     UNIQUE (plc_name, tag_name)
 );
 

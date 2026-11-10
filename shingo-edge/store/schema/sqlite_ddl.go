@@ -454,7 +454,8 @@ CREATE TABLE IF NOT EXISTS process_nodes (
 -- note on idx_styles_process_name_live above.
 
 -- line_counters (the station counters) is created by migration v41 in
--- migrations.go, its one home: this pass runs before the chain.
+-- migrations.go, its one home, and given its second tag's columns by v45:
+-- this pass runs before the chain.
 
 -- process_routing_nodes is a process's ROUTING SET: the nodes it may route
 -- material through that are not its own positions — where bins come from

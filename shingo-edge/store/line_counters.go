@@ -9,8 +9,8 @@ import (
 
 // The station counters (store/counters/line_counters.go).
 
-func (db *DB) CreateLineCounter(processID int64, label, plcName, tagName string) (int64, error) {
-	return counters.CreateLineCounter(db.DB, processID, label, plcName, tagName)
+func (db *DB) CreateLineCounter(processID int64, label, plcName, tagName, tagName2 string) (int64, error) {
+	return counters.CreateLineCounter(db.DB, processID, label, plcName, tagName, tagName2)
 }
 
 func (db *DB) GetLineCounter(id int64) (*counters.LineCounter, error) {
@@ -25,8 +25,8 @@ func (db *DB) ListPolledLineCounters() ([]counters.LineCounter, error) {
 	return counters.ListPolledLineCounters(db.DB)
 }
 
-func (db *DB) UpdateLineCounterRead(id int64, plcName, tagName string, count int64, at time.Time) (bool, error) {
-	return counters.UpdateLineCounterRead(db.DB, id, plcName, tagName, count, at)
+func (db *DB) UpdateLineCounterRead(id int64, plcName, tagName string, second bool, count int64, at time.Time) (bool, error) {
+	return counters.UpdateLineCounterRead(db.DB, id, plcName, tagName, second, count, at)
 }
 
 func (db *DB) LineCounterByTag(plcName, tagName string) (*counters.LineCounter, error) {
@@ -41,12 +41,12 @@ func (db *DB) RenameLineCounter(id int64, label string) error {
 	return counters.RenameLineCounter(db.DB, id, label)
 }
 
-func (db *DB) RepointLineCounter(id int64, label, tagName string, managed bool) error {
-	return counters.RepointLineCounter(db.DB, id, label, tagName, managed)
+func (db *DB) RepointLineCounter(id int64, label, tagName, tagName2 string, managed, managed2 bool) error {
+	return counters.RepointLineCounter(db.DB, id, label, tagName, tagName2, managed, managed2)
 }
 
-func (db *DB) SetLineCounterManaged(id int64, managed bool) error {
-	return counters.SetLineCounterManaged(db.DB, id, managed)
+func (db *DB) SetLineCounterManaged(id int64, second, managed bool) error {
+	return counters.SetLineCounterManaged(db.DB, id, second, managed)
 }
 
 // DeleteLineCounter deletes a station counter, unbinding its positions; the

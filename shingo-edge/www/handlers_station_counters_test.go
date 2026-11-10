@@ -97,3 +97,47 @@ func TestCountingRoutes_CarryTheSlotsAndTheStopLabelled(t *testing.T) {
 		t.Errorf("station counters 1: %d %s, want the card's 25 strokes since its last click, stopped", code, body)
 	}
 }
+
+// TestStationCounterRoutes_CarryTheSecondTag: the save's request carries the
+// second tag to the engine (a create's tag_name_2 is its second tag; an
+// update's "" removes it and one left out keeps it), and the create's answer
+// and the list carry tag_name_2.
+func TestStationCounterRoutes_CarryTheSecondTag(t *testing.T) {
+	h, r := newTestHandlers(t)
+	r.Get("/api/processes/{id}/station-counters", h.apiListStationCounters)
+	r.Post("/api/processes/{id}/station-counters", h.apiCreateStationCounter)
+	r.Put("/api/station-counters/{id}", h.apiUpdateStationCounter)
+	stub := h.orchestration.(*stubEngine)
+	do := func(method, path, body string) (int, string) {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := do(http.MethodPost, "/api/processes/1/station-counters",
+		`{"label":"op 20","tag_name":"Sta020_Fix1_T1.Prod_Tool_1_CNT.ACC","tag_name_2":"Sta020_Fix2_T1.Prod_Tool_1_CNT.ACC"}`)
+	var created map[string]any
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &created) != nil ||
+		created["tag_name_2"] != "Sta020_Fix2_T1.Prod_Tool_1_CNT.ACC" {
+		t.Errorf("create = %d %s, want the second tag carried", code, body)
+	}
+	for _, c := range []struct{ body, want string }{
+		{`{"label":"op 20","tag_name":"A","tag_name_2":""}`, `op 20|A|`},
+		{`{"label":"op 20","tag_name":"A","tag_name_2":"B"}`, `op 20|A|B`},
+		{`{"label":"op 20","tag_name":"A"}`, `op 20|A|<nil>`},
+	} {
+		if code, body := do(http.MethodPut, "/api/station-counters/7", c.body); code != http.StatusOK {
+			t.Errorf("update %s = %d %s", c.body, code, body)
+		}
+		if got := strings.Join(stub.lastUpdateStationCounter, "|"); got != c.want {
+			t.Errorf("update %s reached the engine as %q, want %q", c.body, got, c.want)
+		}
+	}
+	code, body = do(http.MethodGet, "/api/processes/1/station-counters", "")
+	var list []map[string]any
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &list) != nil || len(list) != 1 {
+		t.Fatalf("list = %d %s", code, body)
+	}
+	if v, ok := list[0]["tag_name_2"]; !ok || v != "" {
+		t.Errorf("list row = %v, want tag_name_2 present (\"\" for none)", list[0])
+	}
+}

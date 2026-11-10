@@ -2,7 +2,9 @@
 // strip: stopped while the line produces, not one click per part, unreadable
 // (the production counter's tag too), and a bound position that became an A/B
 // pair. Tracked in memory from the counting events; only the deepest run-out
-// is also stored, when it grows (station_in_line.go).
+// is also stored, when it grows (station_in_line.go). A counter's clicks are
+// what the poll emits for it, the sum of its tags' for a two-tag counter, so
+// the stop and the clicks per part read the sum.
 
 package engine
 
@@ -197,14 +199,21 @@ func (e *Engine) stationHealthItems(processID int64) []CatidHealthItem {
 	nodes, _ := e.db.ListProcessNodesByProcess(processID)
 	_, changeoverOpen := e.openChangeover(processID)
 	for _, lc := range lcs {
-		name := lc.Label
-		if name == "" {
-			name = lc.TagName
-		}
-		if why, at, bad := e.stationHealth.unreadable(lc.PLCName, lc.TagName); bad {
+		name := stationCounterName(lc)
+		// Each of a two-tag counter's tags is read on its own, and either
+		// failing loses that hand's clicks: each is its own line.
+		for _, tag := range lc.Tags() {
+			why, at, bad := e.stationHealth.unreadable(lc.PLCName, tag)
+			if !bad {
+				continue
+			}
+			headline := fmt.Sprintf("Station counter %s unreadable", name)
+			if lc.TagName2 != "" {
+				headline = fmt.Sprintf("Station counter %s: %s unreadable", name, tag)
+			}
 			items = append(items, CatidHealthItem{Kind: counterKindUnreadable, Severity: CatidHealthRed,
-				Headline: fmt.Sprintf("Station counter %s unreadable", name), Detail: why, Since: &at,
-				Data: map[string]any{"counter_id": lc.ID, "plc_name": lc.PLCName, "tag_name": lc.TagName}})
+				Headline: headline, Detail: why, Since: &at,
+				Data: map[string]any{"counter_id": lc.ID, "plc_name": lc.PLCName, "tag_name": tag}})
 		}
 		activeBound, paired := e.boundPositions(proc, nodes, lc.ID)
 		for _, p := range paired {

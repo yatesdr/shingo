@@ -2,7 +2,8 @@ package plc
 
 // line_counters_test.go — the poll's station-counter arm: a first read seeds,
 // a counted read emits its strokes, a station on a process whose counter is
-// off is not read, and a read after the rollback gap re-seeds.
+// off is not read, and a read after the rollback gap re-seeds. A counter with
+// two tags emits their sum, each tag seeding and resetting on its own.
 
 import (
 	"sync"
@@ -68,7 +69,7 @@ func newLineRig(t *testing.T, counterEnabled bool) *lineRig {
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &sty), "active")
 	_, err = db.CreateReportingPoint(rigPLC, rigTag, sty)
 	testutil.MustNoErr(t, err, "reporting point")
-	lc, err := db.CreateLineCounter(pid, "load station", rigPLC, rigStationTag)
+	lc, err := db.CreateLineCounter(pid, "load station", rigPLC, rigStationTag, "")
 	testutil.MustNoErr(t, err, "station counter")
 	mgr.plcs[rigPLC] = &ManagedPLC{Name: rigPLC, Status: "Connected", Values: map[string]TagValue{}}
 	return &lineRig{t: t, db: db, mgr: mgr, em: em, pid: pid, lc: lc}
@@ -292,5 +293,139 @@ func TestLinePoll_AnOutageBeforeARestartIsCounted(t *testing.T) {
 	r.pass(30, 530)
 	if got := r.em.emitted(); len(got) != 1 || got[0].delta != 30 {
 		t.Fatalf("emitted %+v, want the outage's 30 clicks", got)
+	}
+}
+
+const rigStationTag2 = "Cell_A_Station_02"
+
+// withSecondTag gives the rig's station counter its second tag, unread.
+func (r *lineRig) withSecondTag() {
+	r.t.Helper()
+	c, err := r.db.GetLineCounter(r.lc)
+	testutil.MustNoErr(r.t, err, "station counter")
+	testutil.MustNoErr(r.t, r.db.RepointLineCounter(r.lc, c.Label, c.TagName, rigStationTag2, false, false), "second tag")
+}
+
+// passBoth runs one poll pass with the production counter at count and the
+// station counter's two tags at s1 and s2; a negative reading leaves that tag
+// unreadable (not in the PLC's values).
+func (r *lineRig) passBoth(count, s1, s2 int64) {
+	mp := r.mgr.plcs[rigPLC]
+	mp.mu.Lock()
+	mp.Values[rigTag] = TagValue{Name: rigTag, TypeStr: "DINT", Value: count}
+	for tag, v := range map[string]int64{rigStationTag: s1, rigStationTag2: s2} {
+		if v < 0 {
+			delete(mp.Values, tag)
+			continue
+		}
+		mp.Values[tag] = TagValue{Name: tag, TypeStr: "DINT", Value: v}
+	}
+	mp.mu.Unlock()
+	r.mgr.pollAllReportingPoints()
+}
+
+func (r *lineRig) second() (last int64, polled *time.Time) {
+	r.t.Helper()
+	c, err := r.db.GetLineCounter(r.lc)
+	testutil.MustNoErr(r.t, err, "station counter")
+	return c.LastCount2, c.LastPollAt2
+}
+
+// TestLinePoll_TwoTagsCountTheirSum: a counter with two tags (one fixture per
+// hand) emits the sum of what each counted, once a pass: both hands in a
+// changeover's overlap, then one hand alone.
+func TestLinePoll_TwoTagsCountTheirSum(t *testing.T) {
+	t.Parallel()
+	r := newLineRig(t, true)
+	r.withSecondTag()
+	r.passBoth(10, 500, 70)
+	if got := r.em.emitted(); len(got) != 0 {
+		t.Fatalf("the first read emitted %+v, want both tags seeded", got)
+	}
+	if last, polled := r.second(); last != 70 || polled == nil {
+		t.Fatalf("the second tag after its first read: last %d polled %v, want 70 and a time", last, polled)
+	}
+	r.passBoth(12, 502, 73)
+	r.passBoth(13, 502, 74)
+	got := r.em.emitted()
+	if len(got) != 2 || got[0].delta != 5 || got[1].delta != 1 || got[0].counter != r.lc {
+		t.Fatalf("emitted %+v, want 2+3 = 5 for station counter %d, then the second hand's 1", got, r.lc)
+	}
+}
+
+// TestLinePoll_EachTagSeedsOnItsOwnFirstRead: a second tag unreadable at the
+// first pass seeds at its own first good read; the first tag counts in the
+// meantime, and the second's seed charges nothing.
+func TestLinePoll_EachTagSeedsOnItsOwnFirstRead(t *testing.T) {
+	t.Parallel()
+	r := newLineRig(t, true)
+	r.withSecondTag()
+	r.passBoth(10, 500, -1)
+	if _, polled := r.second(); polled != nil {
+		t.Fatalf("the unreadable second tag was written: %v", polled)
+	}
+	r.passBoth(11, 502, 900)
+	if got := r.em.emitted(); len(got) != 1 || got[0].delta != 2 {
+		t.Fatalf("emitted %+v, want the first tag's 2 and the second's seed charging nothing", got)
+	}
+	r.passBoth(12, 503, 904)
+	if got := r.em.emitted(); len(got) != 2 || got[1].delta != 5 {
+		t.Errorf("emitted %+v, want 1+4 = 5 once both are seeded", got)
+	}
+}
+
+// TestLinePoll_AResetOnOneTagChargesNothing: a tag that drops to zero (the
+// station's counter resets at a program change) charges nothing for the drop
+// and counts on from its new reading; the other tag's clicks in the same pass
+// are counted. One tag's reset re-seeds neither.
+func TestLinePoll_AResetOnOneTagChargesNothing(t *testing.T) {
+	t.Parallel()
+	r := newLineRig(t, true)
+	r.withSecondTag()
+	r.passBoth(10, 500, 70)
+	r.passBoth(11, 502, 0)
+	if got := r.em.emitted(); len(got) != 1 || got[0].delta != 2 {
+		t.Fatalf("emitted %+v, want the first tag's 2 and nothing for the second's reset", got)
+	}
+	if last, _ := r.second(); last != 0 {
+		t.Errorf("the reset tag's last count = %d, want 0", last)
+	}
+	r.passBoth(12, 502, 1)
+	if got := r.em.emitted(); len(got) != 2 || got[1].delta != 1 {
+		t.Errorf("emitted %+v, want the reset tag's next click counted", got)
+	}
+}
+
+// TestLinePoll_TheRollbackVerdictReadsTheLaterTag: a rollback to a build that
+// read only the first tag (it kept the row's first poll current, and charged
+// nothing for the second's clicks) counts the second tag's clicks at the next
+// boot; a rollback to a build that read no station (both polls trail the
+// point) re-seeds both.
+func TestLinePoll_TheRollbackVerdictReadsTheLaterTag(t *testing.T) {
+	t.Parallel()
+	r := newLineRig(t, true)
+	r.withSecondTag()
+	r.passBoth(10, 500, 70)
+	_, err := r.db.Exec(`UPDATE line_counters SET last_poll_at_2 = datetime('now', '-2 hours') WHERE id = ?`, r.lc)
+	testutil.MustNoErr(t, err, "the second tag left behind by a one-tag build")
+	r.age(`reporting_points`, "-1 minutes")
+	r.reboot()
+	r.passBoth(900, 500, 75)
+	if got := r.em.emitted(); len(got) != 1 || got[0].delta != 5 {
+		t.Fatalf("emitted %+v, want the second tag's 5 clicks a one-tag build charged nothing for", got)
+	}
+
+	_, err = r.db.Exec(`UPDATE line_counters SET last_poll_at = datetime('now', '-2 hours'),
+		last_poll_at_2 = datetime('now', '-2 hours') WHERE id = ?`, r.lc)
+	testutil.MustNoErr(t, err, "both tags left behind by a build that reads no station")
+	r.age(`reporting_points`, "-1 minutes")
+	r.reboot()
+	r.passBoth(1800, 600, 90)
+	if got := r.em.emitted(); len(got) != 1 {
+		t.Fatalf("emitted %+v after a rollback past both tags, want both re-seeded", got)
+	}
+	r.passBoth(1801, 601, 92)
+	if got := r.em.emitted(); len(got) != 2 || got[1].delta != 3 {
+		t.Errorf("emitted %+v, want 1+2 = 3 after the re-seed", got)
 	}
 }

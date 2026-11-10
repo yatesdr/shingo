@@ -16,7 +16,7 @@ import (
 // stationCounter creates a station counter on the process and binds nodes to it.
 func stationCounter(t *testing.T, db *store.DB, pid int64, nodes ...int64) int64 {
 	t.Helper()
-	id, err := db.CreateLineCounter(pid, "load station", "plc", "MES_Cell.Station_Counter_01")
+	id, err := db.CreateLineCounter(pid, "load station", "plc", "MES_Cell.Station_Counter_01", "")
 	testutil.MustNoErr(t, err, "station counter")
 	for _, n := range nodes {
 		testutil.MustNoErr(t, db.SetNodeLineCounter(n, &id), "bind")

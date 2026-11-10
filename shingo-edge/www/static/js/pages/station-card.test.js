@@ -62,6 +62,12 @@ check('the save sends each changed box, and only those', () => {
     assert.deepStrictEqual(C.changes(7, positions, verdicts, { 3: true }), [], 'an unchanged box sends nothing');
 });
 
+check('a two-tag counter shows both tags joined with " + "', () => {
+    assert.strictEqual(C.tagsOf({ tag_name: 'Sta020_Fix1_T1.CNT', tag_name_2: 'Sta020_Fix2_T1.CNT' }),
+        'Sta020_Fix1_T1.CNT + Sta020_Fix2_T1.CNT');
+    assert.strictEqual(C.tagsOf({ tag_name: 'Sta010.CNT', tag_name_2: '' }), 'Sta010.CNT');
+});
+
 const fmt = () => 'T';
 
 check('the measures: the clicks per part, measured; none yet says so', () => {

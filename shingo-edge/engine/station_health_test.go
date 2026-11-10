@@ -107,6 +107,14 @@ func TestHealth_UnreadableTagNamed(t *testing.T) {
 	if _, ok := healthKinds(t, r.eng, r.pid)[counterKindUnreadable]; ok {
 		t.Error("unreadable outlived a good read")
 	}
+	// A two-tag counter's second tag failing alone is its own line, naming it.
+	testutil.MustNoErr(t, r.db.RepointLineCounter(lc, c.Label, c.TagName, "STATION_RH", false, false), "second tag")
+	r.eng.Events.Emit(Event{Type: EventCounterReadError, Payload: CounterReadErrorEvent{PLCName: c.PLCName, TagName: "STATION_RH",
+		Error: "tag not found"}})
+	it, ok = healthKinds(t, r.eng, r.pid)[counterKindUnreadable]
+	if !ok || !strings.Contains(it.Headline, "load station: STATION_RH unreadable") || it.Data["tag_name"] != "STATION_RH" {
+		t.Errorf("the second tag's unreadable item = %+v", it)
+	}
 }
 
 // TestHealth_BoundPositionTurnedPairNamed: a bound position whose claim later
@@ -150,7 +158,7 @@ func TestHealth_ANewCounterCountsFromItsCreation(t *testing.T) {
 	}
 	prod(100)
 	node := bindNode(t, eng, pid, style, "NEW-1", "consume", "simple", "")
-	lc, err := eng.CreateStationCounter(pid, "load station", "Sta010.Prod_Tool_1_CNT.ACC")
+	lc, err := eng.CreateStationCounter(pid, "load station", "Sta010.Prod_Tool_1_CNT.ACC", "")
 	testutil.MustNoErr(t, err, "station counter")
 	testutil.MustNoErr(t, eng.SetCountedAt(node, &lc.ID), "bind")
 	if it, ok := healthKinds(t, eng, pid)[stationKindStopped]; ok {

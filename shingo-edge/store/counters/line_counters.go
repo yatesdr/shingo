@@ -2,7 +2,11 @@ package counters
 
 // line_counters.go — the station counters (line_counters): a tag that clicks
 // once per assembly where the part leaves the cart, counting the positions
-// bound to it in place of the production counter.
+// bound to it in place of the production counter. A counter may read a second
+// tag (tag_name_2, '' for none) and counts the sum of the two: a station with
+// two fixtures, one per hand, of which one runs at a time. Each tag keeps its
+// own reading (last_count / last_poll_at, last_count_2 / last_poll_at_2) and
+// its own publishing (warlink_managed, warlink_managed_2).
 
 import (
 	"database/sql"
@@ -23,31 +27,49 @@ type LineCounter struct {
 	LastCount      int64      `json:"last_count"`
 	LastPollAt     *time.Time `json:"last_poll_at,omitempty"`
 	WarlinkManaged bool       `json:"warlink_managed"`
+	// The second tag ('' for none), with its own reading and publishing.
+	TagName2        string     `json:"tag_name_2"`
+	LastCount2      int64      `json:"last_count_2"`
+	LastPollAt2     *time.Time `json:"last_poll_at_2,omitempty"`
+	WarlinkManaged2 bool       `json:"warlink_managed_2"`
 
 	// Poll-list only.
 	ActiveStyleID int64      `json:"-"`
 	PointPollAt   *time.Time `json:"-"`
 }
 
+// Tags is the counter's tags, the first first: one, or two when it reads a
+// second.
+func (c LineCounter) Tags() []string {
+	if c.TagName2 == "" {
+		return []string{c.TagName}
+	}
+	return []string{c.TagName, c.TagName2}
+}
+
 const lineCounterCols = `lc.id, lc.process_id, lc.label, lc.plc_name, lc.tag_name, lc.last_count,
-	COALESCE(lc.last_poll_at, ''), lc.warlink_managed`
+	COALESCE(lc.last_poll_at, ''), lc.warlink_managed,
+	lc.tag_name_2, lc.last_count_2, COALESCE(lc.last_poll_at_2, ''), lc.warlink_managed_2`
 
 func scanLineCounter(sc interface{ Scan(...any) error }, extra ...any) (LineCounter, error) {
 	var c LineCounter
-	var polled string
-	dest := append([]any{&c.ID, &c.ProcessID, &c.Label, &c.PLCName, &c.TagName, &c.LastCount, &polled, &c.WarlinkManaged}, extra...)
+	var polled, polled2 string
+	dest := append([]any{&c.ID, &c.ProcessID, &c.Label, &c.PLCName, &c.TagName, &c.LastCount, &polled, &c.WarlinkManaged,
+		&c.TagName2, &c.LastCount2, &polled2, &c.WarlinkManaged2}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return c, err
 	}
 	c.LastPollAt = helpers.ScanTimePtr(sql.NullString{String: polled, Valid: polled != ""})
+	c.LastPollAt2 = helpers.ScanTimePtr(sql.NullString{String: polled2, Valid: polled2 != ""})
 	return c, nil
 }
 
-// CreateLineCounter inserts a station counter, unread. plc_name is the
-// process's counter PLC: a station counter reads the cell's own PLC.
-func CreateLineCounter(db *sql.DB, processID int64, label, plcName, tagName string) (int64, error) {
-	res, err := db.Exec(`INSERT INTO line_counters (process_id, label, plc_name, tag_name) VALUES (?, ?, ?, ?)`,
-		processID, label, plcName, tagName)
+// CreateLineCounter inserts a station counter, unread, reading tagName and
+// tagName2 ("" for none). plc_name is the process's counter PLC: a station
+// counter reads the cell's own PLC.
+func CreateLineCounter(db *sql.DB, processID int64, label, plcName, tagName, tagName2 string) (int64, error) {
+	res, err := db.Exec(`INSERT INTO line_counters (process_id, label, plc_name, tag_name, tag_name_2) VALUES (?, ?, ?, ?, ?)`,
+		processID, label, plcName, tagName, tagName2)
 	if err != nil {
 		return 0, err
 	}
@@ -114,13 +136,18 @@ func ListPolledLineCounters(db *sql.DB) ([]LineCounter, error) {
 	return out, rows.Err()
 }
 
-// UpdateLineCounterRead writes a read the poll counted (or seeded) from: the
-// count and the poll time, only while the row still reads the tag the pass
-// listed. Reports whether it wrote; no write, no emit.
-func UpdateLineCounterRead(db *sql.DB, id int64, plcName, tagName string, count int64, at time.Time) (bool, error) {
-	res, err := db.Exec(`UPDATE line_counters SET last_count = ?, last_poll_at = ?
-		WHERE id = ? AND plc_name = ? AND tag_name = ?`,
-		count, at.UTC().Format(helpers.TimeLayout), id, plcName, tagName)
+// UpdateLineCounterRead writes a read the poll counted (or seeded) from, of
+// the counter's first tag (second false) or its second: that tag's count and
+// poll time, only while the row still reads that tag where the pass listed it.
+// Reports whether it wrote; no write, no emit.
+func UpdateLineCounterRead(db *sql.DB, id int64, plcName, tagName string, second bool, count int64, at time.Time) (bool, error) {
+	q := `UPDATE line_counters SET last_count = ?, last_poll_at = ?
+		WHERE id = ? AND plc_name = ? AND tag_name = ?`
+	if second {
+		q = `UPDATE line_counters SET last_count_2 = ?, last_poll_at_2 = ?
+		WHERE id = ? AND plc_name = ? AND tag_name_2 = ? AND tag_name_2 <> ''`
+	}
+	res, err := db.Exec(q, count, at.UTC().Format(helpers.TimeLayout), id, plcName, tagName)
 	if err != nil {
 		return false, err
 	}
@@ -128,10 +155,12 @@ func UpdateLineCounterRead(db *sql.DB, id int64, plcName, tagName string, count 
 	return n == 1, err
 }
 
-// LineCounterByTag returns the station counter reading plc/tag, or nil.
+// LineCounterByTag returns the station counter reading plc/tag, as its first
+// tag or its second, or nil.
 func LineCounterByTag(db *sql.DB, plcName, tagName string) (*LineCounter, error) {
 	c, err := scanLineCounter(db.QueryRow(`SELECT `+lineCounterCols+` FROM line_counters lc
-		WHERE lc.plc_name = ? AND lc.tag_name = ?`, plcName, tagName))
+		WHERE lc.plc_name = ? AND (lc.tag_name = ? OR (lc.tag_name_2 = ? AND lc.tag_name_2 <> ''))
+		ORDER BY lc.id LIMIT 1`, plcName, tagName, tagName))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -154,19 +183,33 @@ func RenameLineCounter(db *sql.DB, id int64, label string) error {
 	return err
 }
 
-// RepointLineCounter moves a station counter to another tag: the row is
-// unread again (last_poll_at NULL) and seeds from the new tag's first read,
-// and its WarLink publishing is recorded as managed or not.
-func RepointLineCounter(db *sql.DB, id int64, label, tagName string, managed bool) error {
-	_, err := db.Exec(`UPDATE line_counters SET label = ?, tag_name = ?, last_count = 0, last_poll_at = NULL,
-		warlink_managed = ? WHERE id = ?`,
-		label, tagName, managed, id)
+// RepointLineCounter sets a station counter's label and its two tags
+// (tagName2 "" for none). A tag that changes is unread again (its last poll
+// NULL) and seeds from its new tag's first read; a tag that stays keeps its
+// reading. Each tag's WarLink publishing is recorded as managed or not.
+// SQLite evaluates every SET right-hand side against the row as it was, so
+// each CASE compares the old tag.
+func RepointLineCounter(db *sql.DB, id int64, label, tagName, tagName2 string, managed, managed2 bool) error {
+	_, err := db.Exec(`UPDATE line_counters SET label = ?,
+		last_count = CASE WHEN tag_name = ? THEN last_count ELSE 0 END,
+		last_poll_at = CASE WHEN tag_name = ? THEN last_poll_at ELSE NULL END,
+		tag_name = ?, warlink_managed = ?,
+		last_count_2 = CASE WHEN tag_name_2 = ? AND tag_name_2 <> '' THEN last_count_2 ELSE 0 END,
+		last_poll_at_2 = CASE WHEN tag_name_2 = ? AND tag_name_2 <> '' THEN last_poll_at_2 ELSE NULL END,
+		tag_name_2 = ?, warlink_managed_2 = ?
+		WHERE id = ?`,
+		label, tagName, tagName, tagName, managed, tagName2, tagName2, tagName2, managed2 && tagName2 != "", id)
 	return err
 }
 
-// SetLineCounterManaged records whether the Edge enabled the tag's publishing.
-func SetLineCounterManaged(db *sql.DB, id int64, managed bool) error {
-	_, err := db.Exec(`UPDATE line_counters SET warlink_managed = ? WHERE id = ?`, managed, id)
+// SetLineCounterManaged records whether the Edge enabled the publishing of
+// the counter's first tag (second false) or its second.
+func SetLineCounterManaged(db *sql.DB, id int64, second, managed bool) error {
+	q := `UPDATE line_counters SET warlink_managed = ? WHERE id = ?`
+	if second {
+		q = `UPDATE line_counters SET warlink_managed_2 = ? WHERE id = ?`
+	}
+	_, err := db.Exec(q, managed, id)
 	return err
 }
 
