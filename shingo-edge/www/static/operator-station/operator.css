@@ -1186,7 +1186,13 @@ body {
    the one thing that animates: it pulses until it is unloaded
    (.os-pc-card--flash), because shipping could not see a bin arrive
    (SPR 2026-10-28). The fit's numbers (operator-board-model.js STEPS, GEOM)
-   are the sizes here: change one, change both. */
+   are the sizes here: change one, change both.
+   Every size here is a design px (DESIGN, a 1024 x 768 tablet's) times
+   --os-pc-scale, which renderBoard sets from the screen (boardViewport): 1 on
+   the tablet, more on a larger screen (at most MAX_SCALE), so the whole board
+   grows with the screen and the fit, which lays out in design px on the
+   screen over the scale, stays equal to it. A length written here without
+   the scale does not grow; operator-board-model.test.js ("scale") fails it. */
 
 body.os-pc-active { grid-template-rows: 1fr; background: var(--elev-base); }
 body.os-pc-active #os-header,
@@ -1196,30 +1202,47 @@ body.os-pc-active #os-footer { display: none; }
 #os-grid.os-pc-board {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px 20px 16px;
+    gap: calc(10px * var(--os-pc-scale));
+    padding: calc(14px * var(--os-pc-scale)) calc(20px * var(--os-pc-scale)) calc(16px * var(--os-pc-scale));
     overflow: hidden;
     background: var(--elev-base);
     color: var(--text-strong);
-    --os-pc-card: 120px;
-    --os-pc-headline: 32px;
-    --os-pc-title: 24px;
-    --os-pc-header: 34px;
-    --os-pc-spot: 15px;
-    --os-pc-spot-name: 19px;
-    --os-pc-note: 15px;
+    /* renderBoard sets it on the grid; 1 until it does. */
+    --os-pc-scale: 1;
+    --os-pc-card: calc(120px * var(--os-pc-scale));
+    --os-pc-headline: calc(32px * var(--os-pc-scale));
+    --os-pc-title: calc(24px * var(--os-pc-scale));
+    --os-pc-header: calc(34px * var(--os-pc-scale));
+    --os-pc-spot: calc(15px * var(--os-pc-scale));
+    --os-pc-spot-name: calc(19px * var(--os-pc-scale));
+    --os-pc-note: calc(15px * var(--os-pc-scale));
 }
 #os-grid.os-pc-board.os-pc-step-1 {
-    --os-pc-card: 98px; --os-pc-headline: 26px; --os-pc-title: 20px; --os-pc-header: 30px; --os-pc-spot: 14px;
-    --os-pc-spot-name: 18px; --os-pc-note: 14px;
+    --os-pc-card: calc(98px * var(--os-pc-scale));
+    --os-pc-headline: calc(26px * var(--os-pc-scale));
+    --os-pc-title: calc(20px * var(--os-pc-scale));
+    --os-pc-header: calc(30px * var(--os-pc-scale));
+    --os-pc-spot: calc(14px * var(--os-pc-scale));
+    --os-pc-spot-name: calc(18px * var(--os-pc-scale));
+    --os-pc-note: calc(14px * var(--os-pc-scale));
 }
 #os-grid.os-pc-board.os-pc-step-2 {
-    --os-pc-card: 74px; --os-pc-headline: 20px; --os-pc-title: 18px; --os-pc-header: 28px; --os-pc-spot: 13px;
-    --os-pc-spot-name: 15px; --os-pc-note: 13px;
+    --os-pc-card: calc(74px * var(--os-pc-scale));
+    --os-pc-headline: calc(20px * var(--os-pc-scale));
+    --os-pc-title: calc(18px * var(--os-pc-scale));
+    --os-pc-header: calc(28px * var(--os-pc-scale));
+    --os-pc-spot: calc(13px * var(--os-pc-scale));
+    --os-pc-spot-name: calc(15px * var(--os-pc-scale));
+    --os-pc-note: calc(13px * var(--os-pc-scale));
 }
 #os-grid.os-pc-board.os-pc-step-3 {
-    --os-pc-card: 64px; --os-pc-headline: 18px; --os-pc-title: 16px; --os-pc-header: 26px; --os-pc-spot: 12px;
-    --os-pc-spot-name: 14px; --os-pc-note: 12px;
+    --os-pc-card: calc(64px * var(--os-pc-scale));
+    --os-pc-headline: calc(18px * var(--os-pc-scale));
+    --os-pc-title: calc(16px * var(--os-pc-scale));
+    --os-pc-header: calc(26px * var(--os-pc-scale));
+    --os-pc-spot: calc(12px * var(--os-pc-scale));
+    --os-pc-spot-name: calc(14px * var(--os-pc-scale));
+    --os-pc-note: calc(12px * var(--os-pc-scale));
 }
 /* Show all scrolls, and so does the board with its status row opened: the
    tiles sit above the work, which keeps the layout the fit gave it. */
@@ -1234,29 +1257,51 @@ body.os-pc-active #os-footer { display: none; }
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    height: 40px;
+    gap: calc(16px * var(--os-pc-scale));
+    height: calc(40px * var(--os-pc-scale));
 }
-.os-pc-top-left { display: flex; align-items: baseline; gap: 14px; min-width: 0; white-space: nowrap; }
-.os-pc-title { font-size: 20px; font-weight: 600; }
-.os-pc-words { font-size: 15px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+.os-pc-top-left {
+    display: flex;
+    align-items: baseline;
+    gap: calc(14px * var(--os-pc-scale));
+    min-width: 0;
+    white-space: nowrap;
+}
+.os-pc-title { font-size: calc(20px * var(--os-pc-scale)); font-weight: 600; }
+.os-pc-words {
+    font-size: calc(15px * var(--os-pc-scale));
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 /* The stale sign, in words and no colour: it is not an act for the driver. */
-.os-pc-sign { flex: none; margin-left: auto; font-size: 15px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.os-pc-sign {
+    flex: none;
+    margin-left: auto;
+    font-size: calc(15px * var(--os-pc-scale));
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
 
 .os-pc-btn {
     flex: none;
-    min-height: 48px;
-    padding: 0 18px;
-    border: 1px solid var(--sub-2);
-    border-radius: 10px;
+    min-height: calc(48px * var(--os-pc-scale));
+    padding: 0 calc(18px * var(--os-pc-scale));
+    border: calc(1px * var(--os-pc-scale)) solid var(--sub-2);
+    border-radius: calc(10px * var(--os-pc-scale));
     background: var(--elev-raised);
-    font-size: 15px;
+    font-size: calc(15px * var(--os-pc-scale));
     font-weight: 600;
     cursor: pointer;
 }
 /* The line is 40 px; its button keeps a 48 px target by reaching 4 px into
    the padding above and the gap below. */
-.os-pc-top .os-pc-btn { min-height: 48px; height: 48px; margin: -4px 0; }
+.os-pc-top .os-pc-btn {
+    min-height: calc(48px * var(--os-pc-scale));
+    height: calc(48px * var(--os-pc-scale));
+    margin: calc(-4px * var(--os-pc-scale)) 0;
+}
 .os-pc-btn:disabled { color: var(--text-muted); cursor: default; }
 .os-pc-btn--primary:not(:disabled) {
     background: var(--accent-solid);
@@ -1265,11 +1310,11 @@ body.os-pc-active #os-footer { display: none; }
 }
 
 /* The board bar */
-.os-pc-bar { flex: none; display: flex; gap: 10px; }
-.os-pc-bar .os-pc-btn { min-height: 56px; font-size: 17px; }
+.os-pc-bar { flex: none; display: flex; gap: calc(10px * var(--os-pc-scale)); }
+.os-pc-bar .os-pc-btn { min-height: calc(56px * var(--os-pc-scale)); font-size: calc(17px * var(--os-pc-scale)); }
 
 /* The status row */
-.os-pc-status { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.os-pc-status { flex: none; display: flex; flex-direction: column; gap: calc(8px * var(--os-pc-scale)); }
 /* The status line: a board's status row (a loader's cells, an unloader's
    presses) folded to one tappable line, so the board is the work. Its height is
    GEOM.statusFold, all the fit counts of the row (operator-board.js
@@ -1277,131 +1322,183 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-cellbar {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: calc(14px * var(--os-pc-scale));
     width: 100%;
-    height: 48px;
-    padding: 0 14px;
+    height: calc(48px * var(--os-pc-scale));
+    padding: 0 calc(14px * var(--os-pc-scale));
     background: var(--elev-surface);
-    border: 1px solid var(--sub-2);
-    border-radius: 12px;
-    font-size: 15px;
+    border: calc(1px * var(--os-pc-scale)) solid var(--sub-2);
+    border-radius: calc(12px * var(--os-pc-scale));
+    font-size: calc(15px * var(--os-pc-scale));
     font-weight: 600;
     text-align: left;
     white-space: nowrap;
     cursor: pointer;
 }
-.os-pc-cellbar--red { border: 3px solid var(--status-failed-ink); padding: 0 12px; }
+.os-pc-cellbar--red {
+    border: calc(3px * var(--os-pc-scale)) solid var(--status-failed-ink);
+    padding: 0 calc(12px * var(--os-pc-scale));
+}
 .os-pc-cellbar:active { background: var(--elev-raised); }
 .os-pc-cellbar-label { flex: none; color: var(--text-muted); }
-.os-pc-cellbar-list { flex: 1; min-width: 0; display: flex; gap: 20px; overflow: hidden; }
-.os-pc-cellbar-cell { flex: none; display: inline-flex; gap: 6px; }
+.os-pc-cellbar-list { flex: 1; min-width: 0; display: flex; gap: calc(20px * var(--os-pc-scale)); overflow: hidden; }
+.os-pc-cellbar-cell { flex: none; display: inline-flex; gap: calc(6px * var(--os-pc-scale)); }
 .os-pc-cellbar-words { font-weight: 500; color: var(--text-muted); }
 .os-pc-cellbar-cell--red,
 .os-pc-cellbar-cell--red .os-pc-cellbar-words { color: var(--status-failed-ink); }
 .os-pc-cellbar-cell--quiet { color: var(--text-muted); }
 .os-pc-cellbar-toggle { flex: none; color: var(--text-muted); }
-.os-pc-status-label { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+.os-pc-status-label { font-size: calc(14px * var(--os-pc-scale)); font-weight: 600; color: var(--text-muted); }
 .os-pc-tiles {
     display: grid;
     grid-template-columns: repeat(var(--os-pc-tile-cols, 4), minmax(0, 1fr));
-    gap: 10px;
+    gap: calc(10px * var(--os-pc-scale));
     align-items: stretch;
 }
 .os-pc-tile {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: calc(6px * var(--os-pc-scale));
     min-width: 0;
-    padding: 10px 12px 12px;
+    padding: calc(10px * var(--os-pc-scale)) calc(12px * var(--os-pc-scale)) calc(12px * var(--os-pc-scale));
     background: var(--elev-surface);
-    border: 1px solid var(--sub-2);
-    border-radius: 12px;
-    font-size: 14px;
+    border: calc(1px * var(--os-pc-scale)) solid var(--sub-2);
+    border-radius: calc(12px * var(--os-pc-scale));
+    font-size: calc(14px * var(--os-pc-scale));
     font-weight: 600;
 }
 .os-pc-tile--quiet { color: var(--text-muted); }
 .os-pc-tile--more { justify-content: center; align-items: center; }
-.os-pc-tile--red { border: 3px solid var(--status-failed-ink); padding: 8px 10px 10px; }
+.os-pc-tile--red {
+    border: calc(3px * var(--os-pc-scale)) solid var(--status-failed-ink);
+    padding: calc(8px * var(--os-pc-scale)) calc(10px * var(--os-pc-scale)) calc(10px * var(--os-pc-scale));
+}
 .os-pc-tile-name { white-space: nowrap; }
 .os-pc-tile--red > .os-pc-tile-name { color: var(--status-failed-ink); }
-.os-pc-tile-more { font-size: 13px; color: var(--text-muted); }
-.os-pc-row { display: flex; flex-direction: column; gap: 4px; }
+.os-pc-tile-more { font-size: calc(13px * var(--os-pc-scale)); color: var(--text-muted); }
+.os-pc-row { display: flex; flex-direction: column; gap: calc(4px * var(--os-pc-scale)); }
 .os-pc-row-words {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 8px;
+    gap: calc(8px * var(--os-pc-scale));
     white-space: nowrap;
 }
-.os-pc-tiles--under .os-pc-row-words { flex-direction: column; align-items: flex-start; gap: 2px; }
-.os-pc-row-count { font-size: 13px; }
+.os-pc-tiles--under .os-pc-row-words {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: calc(2px * var(--os-pc-scale));
+}
+.os-pc-row-count { font-size: calc(13px * var(--os-pc-scale)); }
 .os-pc-row--unknown .os-pc-row-words { color: var(--text-muted); }
 .os-pc-row--red .os-pc-row-words { color: var(--status-failed-ink); }
 
 .os-pc-track {
     position: relative;
     display: block;
-    height: 8px;
-    border-radius: 4px;
+    height: calc(8px * var(--os-pc-scale));
+    border-radius: calc(4px * var(--os-pc-scale));
     background: var(--elev-base);
-    box-shadow: inset 0 0 0 1px var(--sub-1);
+    box-shadow: inset 0 0 0 calc(1px * var(--os-pc-scale)) var(--sub-1);
 }
-.os-pc-track--unknown { background: none; box-shadow: none; border: 1px dashed var(--sub-2); }
-.os-pc-row--red .os-pc-track { box-shadow: inset 0 0 0 1.5px var(--status-failed-ink); }
-.os-pc-fill { display: block; height: 8px; border-radius: 4px; background: var(--station); }
+.os-pc-track--unknown {
+    background: none;
+    box-shadow: none;
+    border: calc(1px * var(--os-pc-scale)) dashed var(--sub-2);
+}
+.os-pc-row--red .os-pc-track { box-shadow: inset 0 0 0 calc(1.5px * var(--os-pc-scale)) var(--status-failed-ink); }
+.os-pc-fill {
+    display: block;
+    height: calc(8px * var(--os-pc-scale));
+    border-radius: calc(4px * var(--os-pc-scale));
+    background: var(--station);
+}
 .os-pc-row--covered .os-pc-fill,
 .os-pc-tile--quiet .os-pc-fill { background: var(--sub-4); }
 .os-pc-track--unknown .os-pc-fill { display: none; }
 .os-pc-tick {
     position: absolute;
-    top: -3px;
-    width: 2px;
-    height: 14px;
+    top: calc(-3px * var(--os-pc-scale));
+    width: calc(2px * var(--os-pc-scale));
+    height: calc(14px * var(--os-pc-scale));
     background: var(--text-strong);
 }
 
-.os-pc-press-top { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; color: var(--text-muted); }
+.os-pc-press-top {
+    display: flex;
+    justify-content: space-between;
+    gap: calc(8px * var(--os-pc-scale));
+    white-space: nowrap;
+    color: var(--text-muted);
+}
 .os-pc-press-top .os-pc-row-count { color: var(--text-strong); }
-.os-pc-press-bin { font-size: 22px; font-weight: 600; white-space: nowrap; }
-.os-pc-press-part { font-size: 12px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+.os-pc-press-bin { font-size: calc(22px * var(--os-pc-scale)); font-weight: 600; white-space: nowrap; }
+.os-pc-press-part {
+    font-size: calc(12px * var(--os-pc-scale));
+    font-weight: 500;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
 /* A red press: full, and a red cart fixes it. A red cell tile reds only its
    out row (.os-pc-row--red); its other rows keep their own colours. */
 .os-pc-press.os-pc-tile--red .os-pc-press-bin,
 .os-pc-press.os-pc-tile--red .os-pc-press-part,
 .os-pc-press.os-pc-tile--red .os-pc-row-count { color: var(--status-failed-ink); }
 .os-pc-press.os-pc-tile--red .os-pc-fill { background: var(--status-failed-ink); }
-.os-pc-empties-line { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.os-pc-empties-line {
+    display: flex;
+    justify-content: space-between;
+    gap: calc(8px * var(--os-pc-scale));
+    white-space: nowrap;
+}
 .os-pc-empties-line--none .os-pc-row-count { color: var(--text-muted); }
 /* A height the group wants of the type above, small (pressesRow). */
-.os-pc-empties-line--height { padding-left: 12px; }
+.os-pc-empties-line--height { padding-left: calc(12px * var(--os-pc-scale)); }
 .os-pc-empties-line--height .os-pc-row-part,
-.os-pc-empties-line--height .os-pc-row-count { font-size: 13px; font-weight: 500; }
-.os-pc-empties-open { font-size: 13px; color: var(--text-muted); }
+.os-pc-empties-line--height .os-pc-row-count { font-size: calc(13px * var(--os-pc-scale)); font-weight: 500; }
+.os-pc-empties-open { font-size: calc(13px * var(--os-pc-scale)); color: var(--text-muted); }
 
 /* The zones */
 .os-pc-zone {
     flex: none;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 10px 12px 12px;
+    gap: calc(10px * var(--os-pc-scale));
+    padding: calc(10px * var(--os-pc-scale)) calc(12px * var(--os-pc-scale)) calc(12px * var(--os-pc-scale));
     background: var(--elev-surface);
-    border: 1px solid var(--sub-3);
-    border-radius: 18px;
+    border: calc(1px * var(--os-pc-scale)) solid var(--sub-3);
+    border-radius: calc(18px * var(--os-pc-scale));
 }
-.os-pc-zone--amber { border: 2px solid var(--status-faulted-ink); padding: 9px 11px 11px; }
-.os-pc-zone--red { border: 3px solid var(--status-failed-ink); padding: 8px 10px 10px; }
+.os-pc-zone--amber {
+    border: calc(2px * var(--os-pc-scale)) solid var(--status-faulted-ink);
+    padding: calc(9px * var(--os-pc-scale)) calc(11px * var(--os-pc-scale)) calc(11px * var(--os-pc-scale));
+}
+.os-pc-zone--red {
+    border: calc(3px * var(--os-pc-scale)) solid var(--status-failed-ink);
+    padding: calc(8px * var(--os-pc-scale)) calc(10px * var(--os-pc-scale)) calc(10px * var(--os-pc-scale));
+}
 /* A folded zone is one line: its Show button (48 px) and 4 px above and
    below it (GEOM.folded 58). */
-.os-pc-zone--folded { min-height: 58px; padding-top: 4px; padding-bottom: 4px; justify-content: center; }
+.os-pc-zone--folded {
+    min-height: calc(58px * var(--os-pc-scale));
+    padding-top: calc(4px * var(--os-pc-scale));
+    padding-bottom: calc(4px * var(--os-pc-scale));
+    justify-content: center;
+}
 .os-pc-zone-head {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(12px * var(--os-pc-scale));
     min-height: var(--os-pc-header);
     white-space: nowrap;
 }
-.os-pc-rail { flex: none; width: 6px; height: 26px; border-radius: 3px; background: var(--sub-5); }
+.os-pc-rail {
+    flex: none;
+    width: calc(6px * var(--os-pc-scale));
+    height: calc(26px * var(--os-pc-scale));
+    border-radius: calc(3px * var(--os-pc-scale));
+    background: var(--sub-5);
+}
 .os-pc-zone--amber .os-pc-rail { background: var(--status-faulted-ink); }
 .os-pc-zone--red .os-pc-rail { background: var(--status-failed-ink); }
 .os-pc-zone-title { font-size: var(--os-pc-title); font-weight: 600; letter-spacing: -.01em; }
@@ -1409,83 +1506,100 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-zone--amber .os-pc-zone-reason { color: var(--status-faulted-ink); }
 .os-pc-zone--red .os-pc-zone-title,
 .os-pc-zone--red .os-pc-zone-reason { color: var(--status-failed-ink); }
-.os-pc-zone-count { font-size: 19px; font-weight: 600; color: var(--text-muted); }
-.os-pc-zone-empty { font-size: 17px; color: var(--text-muted); }
-.os-pc-zone-reason { display: inline-flex; align-items: center; gap: 8px; font-size: 19px; font-weight: 600; }
+.os-pc-zone-count { font-size: calc(19px * var(--os-pc-scale)); font-weight: 600; color: var(--text-muted); }
+.os-pc-zone-empty { font-size: calc(17px * var(--os-pc-scale)); color: var(--text-muted); }
+.os-pc-zone-reason {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(8px * var(--os-pc-scale));
+    font-size: calc(19px * var(--os-pc-scale));
+    font-weight: 600;
+}
 .os-pc-zone-reason .os-pc-word { font-size: var(--os-pc-title); }
 
 /* The buffer strip: a box per spot, in the plant's order. */
-.os-pc-strip-words { font-size: 15px; font-weight: 600; color: var(--text-muted); }
-.os-pc-strip { display: inline-flex; gap: 6px; margin-left: auto; }
+.os-pc-strip-words { font-size: calc(15px * var(--os-pc-scale)); font-weight: 600; color: var(--text-muted); }
+.os-pc-strip { display: inline-flex; gap: calc(6px * var(--os-pc-scale)); margin-left: auto; }
 .os-pc-spot-box {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    font-size: 18px;
+    width: calc(36px * var(--os-pc-scale));
+    height: calc(36px * var(--os-pc-scale));
+    border-radius: calc(8px * var(--os-pc-scale));
+    font-size: calc(18px * var(--os-pc-scale));
     font-weight: 600;
 }
-.os-pc-spot-box--partial { border: 2px solid var(--text-strong); }
+.os-pc-spot-box--partial { border: calc(2px * var(--os-pc-scale)) solid var(--text-strong); }
 .os-pc-zone--amber .os-pc-spot-box--partial { border-color: var(--status-faulted-ink); color: var(--status-faulted-ink); }
 .os-pc-zone--red .os-pc-spot-box--partial { border-color: var(--status-failed-ink); color: var(--status-failed-ink); }
 .os-pc-spot-box--empty { background: var(--sub-3); }
-.os-pc-spot-box--coming { background: var(--sub-3); border: 2px solid var(--text-strong); }
-.os-pc-spot-box--open { border: 2px dashed var(--sub-2); }
-.os-pc-spot-box--unknown { border: 2px solid var(--sub-2); color: var(--text-muted); }
-.os-pc-toggle { margin-left: 8px; background: none; border-color: transparent; color: var(--text-muted); }
+.os-pc-spot-box--coming { background: var(--sub-3); border: calc(2px * var(--os-pc-scale)) solid var(--text-strong); }
+.os-pc-spot-box--open { border: calc(2px * var(--os-pc-scale)) dashed var(--sub-2); }
+.os-pc-spot-box--unknown { border: calc(2px * var(--os-pc-scale)) solid var(--sub-2); color: var(--text-muted); }
+.os-pc-toggle {
+    margin-left: calc(8px * var(--os-pc-scale));
+    background: none;
+    border-color: transparent;
+    color: var(--text-muted);
+}
 
 /* The cards: one size a step, the card is the button. */
 .os-pc-cards {
     display: grid;
     grid-template-columns: repeat(var(--os-pc-cols, 3), minmax(0, 1fr));
-    gap: 10px;
+    gap: calc(10px * var(--os-pc-scale));
 }
 .os-pc-card {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(12px * var(--os-pc-scale));
     min-width: 0;
     /* The step's height at least: a card whose note wraps grows (fitBoard
        counts it, cardHeight). */
     min-height: var(--os-pc-card);
-    padding: 2px 14px;
+    padding: calc(2px * var(--os-pc-scale)) calc(14px * var(--os-pc-scale));
     text-align: left;
     background: var(--elev-surface);
-    border: 1px solid var(--sub-2);
-    border-radius: 16px;
+    border: calc(1px * var(--os-pc-scale)) solid var(--sub-2);
+    border-radius: calc(16px * var(--os-pc-scale));
     cursor: pointer;
 }
-.os-pc-card--amber { border: 2px solid var(--status-faulted-ink); }
+.os-pc-card--amber { border: calc(2px * var(--os-pc-scale)) solid var(--status-faulted-ink); }
 /* A full ready to unload: green, its outline and a glow pulsing in its own
    tone (a stopped press's red takes it over); the card's text never fades.
    Still under reduced motion: the green says it. */
-.os-pc-card--green { border: 2px solid var(--success); }
+.os-pc-card--green { border: calc(2px * var(--os-pc-scale)) solid var(--success); }
 .os-pc-card--flash { --os-pc-flash: var(--success); animation: os-pc-arrived 1.4s ease-in-out infinite; }
 .os-pc-card--flash.os-pc-card--red { --os-pc-flash: var(--status-failed-ink); }
 @keyframes os-pc-arrived {
     0%, 100% { box-shadow: 0 0 0 0 transparent; }
-    50% { box-shadow: 0 0 0 4px var(--os-pc-flash), 0 0 20px 6px var(--os-pc-flash); }
+    50% {
+        box-shadow: 0 0 0 calc(4px * var(--os-pc-scale)) var(--os-pc-flash),
+            0 0 calc(20px * var(--os-pc-scale)) calc(6px * var(--os-pc-scale)) var(--os-pc-flash);
+    }
 }
 @media (prefers-reduced-motion: reduce) { .os-pc-card--flash { animation: none; } }
-.os-pc-card--red { border: 3px solid var(--status-failed-ink); }
+.os-pc-card--red { border: calc(3px * var(--os-pc-scale)) solid var(--status-failed-ink); }
 .os-pc-card:active { background: var(--elev-raised); }
 .os-pc-card-body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: calc(5px * var(--os-pc-scale));
     min-width: 0;
     overflow: hidden;
 }
 .os-pc-step-2 .os-pc-card-body { gap: 0; }
 .os-pc-step-3 .os-pc-card-body { gap: 0; }
 /* The compact step's reason: 16 px word, 15 px words, on an 18 px line (STEPS). */
-.os-pc-step-3 .os-pc-reason { line-height: 18px; }
-.os-pc-step-3 .os-pc-reason .os-pc-word { font-size: 16px; }
-.os-pc-step-3 .os-pc-reason .os-pc-why { font-size: 15px; }
-.os-pc-step-3 .os-pc-reason .os-pc-mark svg { width: 16px; height: 16px; }
+.os-pc-step-3 .os-pc-reason { line-height: calc(18px * var(--os-pc-scale)); }
+.os-pc-step-3 .os-pc-reason .os-pc-word { font-size: calc(16px * var(--os-pc-scale)); }
+.os-pc-step-3 .os-pc-reason .os-pc-why { font-size: calc(15px * var(--os-pc-scale)); }
+.os-pc-step-3 .os-pc-reason .os-pc-mark svg {
+    width: calc(16px * var(--os-pc-scale));
+    height: calc(16px * var(--os-pc-scale));
+}
 .os-pc-spot { display: flex; align-items: baseline; min-width: 0; font-size: var(--os-pc-spot); white-space: nowrap; line-height: 1.2; }
 .os-pc-spot-name,
 .os-pc-spot-code { flex: none; font-weight: 600; white-space: pre; }
@@ -1501,11 +1615,26 @@ body.os-pc-active #os-footer { display: none; }
     line-height: 1.05;
     white-space: nowrap;
 }
-.os-pc-also { font-size: 14px; line-height: 1.2; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.os-pc-reason { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; line-height: 1.2; }
-.os-pc-why { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.os-pc-also {
+    font-size: calc(14px * var(--os-pc-scale));
+    line-height: 1.2;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.os-pc-reason {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--os-pc-scale));
+    min-width: 0;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+.os-pc-why { font-size: calc(17px * var(--os-pc-scale)); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .os-pc-card--plain .os-pc-why { color: var(--text-muted); }
-.os-pc-word { font-size: 20px; font-weight: 700; letter-spacing: .05em; }
+.os-pc-word { font-size: calc(20px * var(--os-pc-scale)); font-weight: 700; letter-spacing: .05em; }
 .os-pc-card--red .os-pc-reason,
 .os-pc-card--red .os-pc-chevron { color: var(--status-failed-ink); }
 .os-pc-card--amber .os-pc-reason,
@@ -1516,6 +1645,10 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-note { font-size: var(--os-pc-note); line-height: 1.2; color: var(--text-muted); white-space: normal; overflow-wrap: anywhere; }
 .os-pc-chevron { flex: none; display: inline-flex; color: var(--text-muted); }
 .os-pc-mark { flex: none; display: inline-flex; }
+/* The icons' sizes at the scale: their width and height attributes
+   (operator-board.js mark, chevron) are the design's. */
+.os-pc-chevron svg { width: calc(14px * var(--os-pc-scale)); height: calc(22px * var(--os-pc-scale)); }
+.os-pc-mark svg { width: calc(18px * var(--os-pc-scale)); height: calc(18px * var(--os-pc-scale)); }
 .os-pc-mark-ink { stroke: var(--elev-base); }
 .os-pc-mark-dot { fill: var(--elev-base); }
 .os-pc-num {
@@ -1523,17 +1656,17 @@ body.os-pc-active #os-footer { display: none; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    border: 2px solid var(--text-strong);
-    border-radius: 10px;
-    font-size: 18px;
+    width: calc(36px * var(--os-pc-scale));
+    height: calc(36px * var(--os-pc-scale));
+    border: calc(2px * var(--os-pc-scale)) solid var(--text-strong);
+    border-radius: calc(10px * var(--os-pc-scale));
+    font-size: calc(18px * var(--os-pc-scale));
     font-weight: 600;
 }
 .os-pc-more {
     justify-content: center;
     border-style: dashed;
-    font-size: 19px;
+    font-size: calc(19px * var(--os-pc-scale));
     font-weight: 600;
 }
 

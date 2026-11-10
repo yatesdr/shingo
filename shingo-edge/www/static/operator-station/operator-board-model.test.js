@@ -33,6 +33,8 @@ const M = ctx;
 M.GEOM = vm.runInContext('GEOM', ctx);
 M.MAX_TILE_ROWS = vm.runInContext('MAX_TILE_ROWS', ctx);
 M.STEPS = vm.runInContext('STEPS', ctx);
+M.DESIGN = vm.runInContext('DESIGN', ctx);
+M.MAX_SCALE = vm.runInContext('MAX_SCALE', ctx);
 
 function tile(role, o) {
     o = o || {};
@@ -851,6 +853,102 @@ WIDTHS.forEach(function (w) {
     const tall = M.fitBoard({ width: 1024, height: 768 }, 0, [zoneOf(nCards(2).concat([card({ note: NOTE + ' ' + NOTE + ' ' + NOTE })]))], false);
     eq(M.cardHeight(card({ note: NOTE + ' ' + NOTE + ' ' + NOTE }), tall.step, narrow) > M.STEPS[tall.step].card, true,
         'a note too long for two lines at the smallest step makes its card taller, never cut');
+}
+
+// ── scale: the board grows with the screen ──
+// boardViewport: the design's size on the 1024 x 768 tablet and on anything
+// smaller (the fit shrinks it there), the smaller of the two ratios on a
+// larger screen, at most MAX_SCALE; the fit lays out in the screen over it.
+{
+    const S = (w, h) => M.boardViewport({ width: w, height: h });
+    eq(S(1024, 768), { scale: 1, width: 1024, height: 768 }, 'scale: the 1024 x 768 tablet is 1, at its own size');
+    eq([S(1024, 600), S(1024, 1400), S(800, 480)],
+        [{ scale: 1, width: 1024, height: 600 }, { scale: 1, width: 1024, height: 1400 }, { scale: 1, width: 800, height: 480 }],
+        'scale: 1 at 1024 px wide whatever the height, and never under 1 on a smaller screen');
+    eq([S(1280, 960).scale, S(1536, 1152).scale, S(1920, 1080).scale, S(1600, 1536).scale, S(2560, 1440).scale],
+        [1.25, 1.5, 1.406, 1.562, 1.875], 'scale: grows with the screen, the smaller of the width\'s and height\'s ratio, floored to a thousandth');
+    eq([S(2048, 1536).scale, S(3840, 2160).scale, S(7680, 4320).scale], [M.MAX_SCALE, M.MAX_SCALE, M.MAX_SCALE], 'scale: at most MAX_SCALE (2)');
+    let short = 0;
+    for (let w = M.DESIGN.width; w <= 4096; w += 13) {
+        for (let h = M.DESIGN.height; h <= 3072; h += 11) {
+            const v = S(w, h);
+            if (v.width < M.DESIGN.width || v.height < M.DESIGN.height) short++;
+        }
+    }
+    eq(short, 0, 'scale: the screen over the scale is never short of the design');
+}
+// The fit at a scale is the fit on the tablet: the same content on a screen k
+// times the tablet's picks the same step, columns, cuts and rows a tile. On the
+// larger screen's own px (no scale) it would pick a larger step, which the
+// scale takes back: every size grew with it.
+{
+    const DAY14 = 'PART1-Q7X2C.06';
+    const day = o => card(Object.assign({ headline: DAY14 }, o || {}));
+    const dayCells = { tiles: [1, 2, 3, 4, 5].map(i => ({ cell: 'CELL-' + i, rows: [{ part: DAY14, words: '212 left' }, { part: DAY14, words: '' }], hidden: 0 })), more: 0 };
+    const cells = { tiles: [1, 2, 3, 4, 5].map(i => ({ cell: 'CELL-' + i,
+        rows: [1, 2, 3, 4].map(() => ({ part: 'PART-A', words: '212 left' })), hidden: 2 })), more: 0 };
+    const strip = Array.from({ length: 9 }, () => ({ node: 'S', state: 'partial' }));
+    const NOTE = 'CARRIER-0007 staged 2h at SMN_U2, not bound — Record Count on the bin tab.';
+    const boards = [
+        { name: 'the large day', status: w => M.statusRowLayout(dayCells, w).height, bar: false,
+            zones: [zoneOf([]), zoneOf([day(), day()]), zoneOf([], { folded: true })] },
+        { name: 'overflow', status: () => 150, bar: true,
+            zones: [zoneOf([card({ tone: 'red' }), card({ tone: 'amber' })].concat(nCards(10))), zoneOf(nCards(6)), zoneOf([], { folded: true })] },
+        { name: 'the amber buffer', status: () => 140, bar: false,
+            zones: [zoneOf([], { tone: 'plain' }), zoneOf(nCards(2), { tone: 'plain' }),
+                zoneOf(nCards(6, { number: 1 }), { tone: 'amber', openedByBoard: true, strip: strip })] },
+        { name: 'rows a tile giving way', status: w => rows => M.statusRowLayout(cells, w, rows).height, bar: false,
+            zones: [zoneOf(nCards(6, { tone: 'red' }).concat(nCards(3, { tone: 'amber' }), nCards(12))), zoneOf(nCards(2)), zoneOf([], { folded: true })] },
+        { name: 'a wrapped note', status: () => 0, bar: false, zones: [zoneOf(nCards(4).concat([card({ note: NOTE })]))] },
+    ];
+    const tablet = { width: M.DESIGN.width, height: M.DESIGN.height };
+    [1.25, 1.5, 2].forEach(function (k) {
+        boards.forEach(function (b) {
+            const at = M.boardViewport({ width: tablet.width * k, height: tablet.height * k });
+            eq(M.fitBoard(at, b.status(at.width), b.zones, b.bar), M.fitBoard(tablet, b.status(tablet.width), b.zones, b.bar),
+                'scale ' + k + ': ' + b.name + ' fits as it does on the tablet');
+        });
+    });
+    const over = boards[1];
+    const raw = M.fitBoard({ width: 2048, height: 1536 }, 150, over.zones, true);
+    const scaled = M.fitBoard(M.boardViewport({ width: 2048, height: 1536 }), 150, over.zones, true);
+    eq([scaled.step, raw.step < scaled.step], [SMALLEST, true], 'scale 2: the overflow board keeps the tablet\'s step, not the larger one its px alone would give');
+}
+// operator.css draws every board size at the scale: in each .os-pc-* rule
+// every px length is calc(Npx * var(--os-pc-scale)), so the whole board grows
+// with the screen (gaps, padding, outlines, icons, buttons, not only the type)
+// and the fit stays equal to it; the step tokens are STEPS's numbers.
+{
+    const css = fs.readFileSync(path.join(__dirname, 'operator.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const SCALED = /calc\(-?\d+(?:\.\d+)?px \* var\(--os-pc-scale\)\)/g;
+    const bare = [];
+    const within = [];
+    let from = 0;
+    for (let i = 0; i < css.length; i++) {
+        const ch = css[i];
+        if (ch === '{') { within.push(css.slice(from, i).trim()); from = i + 1; continue; }
+        if (ch !== ';' && ch !== '}') continue;
+        const decl = css.slice(from, i).trim();
+        if (within.some(s => s.indexOf('os-pc') >= 0) && /\dpx/.test(decl.replace(SCALED, ''))) {
+            bare.push(within[within.length - 1] + ' { ' + decl + ' }');
+        }
+        if (ch === '}') within.pop();
+        from = i + 1;
+    }
+    eq(bare, [], 'scale: every px length in a board rule is drawn at --os-pc-scale');
+    const TOKEN = { card: 'card', headline: 'headline', title: 'title', header: 'header', spot: 'spot', 'spot-name': 'spotName', note: 'note' };
+    const tokensAt = function (sel) {
+        const block = new RegExp(sel.replace(/[.#]/g, '\\$&') + '\\s*\\{([^}]*)\\}').exec(css)[1];
+        const out = {};
+        const re = /--os-pc-([\w-]+):\s*calc\((\d+)px \* var\(--os-pc-scale\)\)/g;
+        let t;
+        while ((t = re.exec(block)) !== null) if (TOKEN[t[1]]) out[TOKEN[t[1]]] = Number(t[2]);
+        return out;
+    };
+    const named = s => { const o = {}; Object.keys(TOKEN).forEach(k => { o[TOKEN[k]] = s[TOKEN[k]]; }); return o; };
+    eq(M.STEPS.map((s, st) => tokensAt('#os-grid.os-pc-board' + (st ? '.os-pc-step-' + st : ''))), M.STEPS.map(named),
+        'scale: the step tokens in operator.css are STEPS\'s, each at --os-pc-scale');
+    eq(/--os-pc-scale:\s*1;/.test(/#os-grid\.os-pc-board\s*\{([^}]*)\}/.exec(css)[1]), true, 'scale: the board is at 1 until renderBoard sets it');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

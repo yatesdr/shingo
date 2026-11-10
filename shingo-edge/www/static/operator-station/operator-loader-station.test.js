@@ -1134,6 +1134,23 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(grid.children.map((n, i) => n === before[i]), [true, false, true], 'a moved count replaces the cells row only');
     await tap(pcCard('PART-A', 'SMN_K1'));
     eq(loadOpens, [{ node: 1, codes: ['PART-A'], cap: 0 }], 'a kept card still opens its act');
+    // The board grows with the screen: the scale is the grid's
+    // (--os-pc-scale, boardViewport), set beside the step. A screen twice the
+    // tablet's draws the same bands at twice the size, so none is replaced;
+    // the grid drawn as anything else drops it.
+    const scaleNow = () => [grid.style.props['--os-pc-scale'], grid.className.split(' ').filter(c => /^os-pc-step-/.test(c))];
+    ctx.window.innerWidth = 1024; ctx.window.innerHeight = 768;
+    const kept = grid.children.slice();
+    ctx.renderGrid();
+    const tablet = scaleNow();
+    ctx.window.innerWidth = 2048; ctx.window.innerHeight = 1536;
+    ctx.renderGrid();
+    eq([tablet[0], scaleNow()[0], scaleNow()[1]], ['1', '2', tablet[1]], 'scale: 1 on the tablet, 2 on a screen twice its size, at the tablet\'s step');
+    eq(grid.children.map((n, i) => n === kept[i]), [true, true, true], 'scale: a screen that changes only the scale replaces no band');
+    ctx.window.innerWidth = 1280; delete ctx.window.innerHeight;
+    setView([]);
+    ctx.renderGrid();
+    eq(grid.style.props['--os-pc-scale'], undefined, 'scale: the grid drawn as anything but the board drops it');
 }
 
 // ── 13. A buffer full of partials no home can take ────────────────────────

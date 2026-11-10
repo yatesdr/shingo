@@ -289,6 +289,7 @@ export function renderGrid() {
     }
     document.body.classList.remove('os-pc-active');
     grid.classList.remove('os-pc-board', 'os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3', 'os-pc-showall', 'os-pc-cellsopen');
+    grid.style.removeProperty('--os-pc-scale');
     resetBoard();
     grid.innerHTML = '';
 

@@ -1319,6 +1319,32 @@ export const GEOM = {
     pressTile: 132, emptiesLine: 25, emptiesFoot: 46, statusFold: 48,
 };
 
+// DESIGN is the screen STEPS, GEOM and operator.css's .os-pc-* sizes are drawn
+// for, in CSS px: a 10-inch tablet, which lays the station out 1024 px wide
+// (operator-display.html's viewport). MAX_SCALE is the most the board grows on
+// a larger screen.
+export const DESIGN = { width: 1024, height: 768 };
+export const MAX_SCALE = 2;
+
+// boardViewport is a screen (viewport {width, height}, CSS px) as the board
+// lays it out: {scale, width, height}. scale is how many times its design
+// size the board draws at: the smaller of the screen's width and height over
+// DESIGN's, never under 1 (a smaller screen keeps the design's sizes and the
+// fit shrinks them, as on the tablet), at most MAX_SCALE, and floored to a
+// thousandth, so the screen over it is never a rounding error short of the
+// design. width and height are the screen over scale, in the design's px.
+// operator.css multiplies every size by --os-pc-scale (renderBoard sets it to
+// scale), so the board fits the screen at scale exactly where it fits width x
+// height at 1: the fit (fitBoard) and the status row (statusRowLayout) lay out
+// in these, which is every number of theirs times scale on the screen itself.
+// A 1024-px tablet is scale 1, its own width and height. Pinned by
+// operator-board-model.test.js ("scale").
+export function boardViewport(viewport) {
+    const ratio = Math.min(viewport.width / DESIGN.width, viewport.height / DESIGN.height);
+    const scale = ratio > 1 ? Math.min(MAX_SCALE, Math.floor(ratio * 1000) / 1000) : 1;
+    return { scale: scale, width: viewport.width / scale, height: viewport.height / scale };
+}
+
 // columnsFor is the card columns at a width: 2 under 1000 px, 3 from 1000, 4
 // from 1360, 5 from 1800 (each the narrowest at which the compact step holds a
 // numbered 18-character part). A 10-inch tablet lays the station out at 1024
@@ -1443,11 +1469,12 @@ function boardHeight(zones, shown, step, cols, fixedTop, width) {
     return h + GEOM.padBottom;
 }
 
-// fitBoard is the board's fit: (viewport {width, height}, the status row's
-// height, the zones with their cards, whether the board bar is drawn) to
-// {step, columns, shown (cards drawn per zone; the rest behind "+N more"),
-// rowsPerTile}. statusHeight is a number, or a function of the rows a cell
-// tile shows (statusRowLayout's height at that count) where those may give way.
+// fitBoard is the board's fit: (viewport {width, height} in the design's px,
+// boardViewport's; the status row's height; the zones with their cards;
+// whether the board bar is drawn) to {step, columns, shown (cards drawn per
+// zone; the rest behind "+N more"), rowsPerTile}. statusHeight is a number,
+// or a function of the rows a cell tile shows (statusRowLayout's height at
+// that count) where those may give way.
 //
 //   - the width's columns, fewer where the smallest step would clip a code;
 //   - the largest step at which every card's codes fit unclipped (cardFits) and
@@ -1526,7 +1553,7 @@ export function fitBoard(viewport, statusHeight, zones, hasBar) {
 }
 
 // statusRowLayout lays the status row (cellsRow's or pressesRow's) out at a
-// width: its tiles per line, each wide enough for its longest part and count
+// width (the design's px, boardViewport's): its tiles per line, each wide enough for its longest part and count
 // side by side (or with the count moved under the bar where that cannot fit),
 // the lines it takes and its height, the input fitBoard takes. A cell tile
 // shows at most rowsPerTile of its rows (MAX_TILE_ROWS when not given), the

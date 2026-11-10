@@ -12,7 +12,7 @@
 // the same panels the old boards opened, so a tap posts what it posted.
 
 import { el } from './operator-util.js';
-import { boardModel, fitBoard, statusRowLayout, GEOM } from './operator-board-model.js';
+import { boardModel, boardViewport, fitBoard, statusRowLayout, GEOM } from './operator-board-model.js';
 
 // What the person at the screen chose; this screen only, nothing is stored.
 let showAll = false;
@@ -332,15 +332,20 @@ export function renderBoard(grid, view, viewport, acts, when, sign) {
     // laid out as it was (SPR 2026-10-28: on a 10-inch tablet the cells took a
     // third of the screen; the presses row stayed open until it was folded too).
     const statusAt = function () { return status ? GEOM.statusFold : 0; };
+    // The board grows with the screen (boardViewport): operator.css draws
+    // every size at --os-pc-scale, and the fit and the status row lay out in
+    // the design's px, the screen over the scale.
+    const at = boardViewport(viewport);
     let zones = m.zones;
     let fit;
     if (showAll) {
         zones = [{ key: 'all', title: 'All spots', count: m.all.length, tone: 'plain', cards: m.all }];
-        fit = fitBoard({ width: viewport.width, height: Infinity }, statusAt, zones, !!m.bar);
+        fit = fitBoard({ width: at.width, height: Infinity }, statusAt, zones, !!m.bar);
     } else {
-        fit = fitBoard(viewport, statusAt, zones, !!m.bar);
+        fit = fitBoard(at, statusAt, zones, !!m.bar);
     }
-    const layout = statusRowLayout(status, viewport.width, fit.rowsPerTile);
+    const layout = statusRowLayout(status, at.width, fit.rowsPerTile);
+    grid.style.setProperty('--os-pc-scale', String(at.scale));
     grid.classList.remove('os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3');
     grid.classList.add('os-pc-step-' + fit.step);
     if (showAll) grid.classList.add('os-pc-showall'); else grid.classList.remove('os-pc-showall');
