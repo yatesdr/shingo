@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.2.0 — 2026-11-10
+
 Deploy: Core v176, Edge v45–v46. Core first, then the Edge.
 
 - A station counter can read a second tag and counts the two together: one fixture per hand, one hand at a time (Edge v45)
