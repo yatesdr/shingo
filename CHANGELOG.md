@@ -16,6 +16,21 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Core v176, Edge v45–v46. Core first, then the Edge.
+
+- A station counter can read a second tag and counts the two together: one fixture per hand, one hand at a time (Edge v45)
+- A dedicated loader's Clear partials can be turned off in Core's loader editor; off hides the board's buffer section (Core v176, Edge v46)
+- The loader board grows with the screen past the 1024 tablet, up to twice its size
+- An unloader window card reads in three lines: the spot and its state, the part and its count, what to send back
+- A window card shows Core's count of the cart, where it showed the window's 0
+- No board card cuts its instruction or a part: the line wraps, or the board steps down
+- The Production counter settings carry their state in the title, fold unused MES slots and list station counters as rows
+- A station counter's position boxes show its bindings after a save, where every countable position stayed ticked
+- The CATID notice strip takes the theme's colours; the Processes list shows red and amber, info notes sit on the process's Settings
+- Each change to main is tested once, in the run that releases it, where every check used to run twice
+- A release page carries only the binaries and their `SHA256SUMS`
+- The README opens with the banner as its heading, its chevrons reaching the bottom of the outline
+
 ## v0.1.1 — 2026-11-09
 
 Deploy: no migration.
