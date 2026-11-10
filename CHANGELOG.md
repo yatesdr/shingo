@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.2.1 — 2026-11-10
+
 Deploy: no migration.
 
 - A loader's LOAD window opens from the screen's own view, with no wait: a slow Wi-Fi link no longer times out "Manifest"
