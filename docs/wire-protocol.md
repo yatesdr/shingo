@@ -710,10 +710,13 @@ digest. The edge holds it in memory only.
 
 Rows come one per watched name, in the list's order, each watched group's member rows directly after it. A row's
 `state` is `unknown` (Core has no node by the name), `group`, `empty` or `occupied`; only an occupied row names the
-resident bin, and a group row carries its bin count and inbound orders. **No count is in a row** but a held
-partial's (`held_uop`), which nothing draws from while it waits: `stocked` and `partial` are thresholds of the
-count, so a count that moves without crossing one sends nothing. No time that moves and nothing about the asker is
-in it.
+resident bin, and a group row carries its bin count and inbound orders. **A row's count is for display and outside
+the digest**: `display_uop` is the carrier's count as the row was built, left out of `NodeBinsDigest`, so a count
+tick moves no digest and sends nothing, and the edge holds it as of the row's last push: the count while the cart
+stands where nothing draws (an unloader window, a loader spot), stale at a seat that draws. A screen shows it;
+nothing decides on it, and a row from a Core that sends none shows no count. A held partial's declared count
+(`held_uop`) does not tick either. `stocked` and `partial` are thresholds of the count, so a count that moves
+without crossing one sends nothing. No time that moves and nothing about the asker is in it.
 
 Each group line is an outbound group, with levels, of a consume loader with a watched window. A `layers` absent
 is the type at any height; a number is a wanted height in layers, and `0` is tops & bottoms (a tote cart with no
@@ -759,6 +762,7 @@ know them ignores them, and Core deploys first. A plant with no levels sends `gr
 | `held_since` | string | omitempty | See `uop_capacity`. |
 | `held_for` | string | omitempty | See `uop_capacity`. |
 | `held_uop` | integer | omitempty | See `uop_capacity`. |
+| `display_uop` | integer | omitempty | DisplayUOP is the carrier's count (bins.uop_remaining) as this row was built, for a screen to show beside its part and for nothing to decide on: NodeBinsDigest leaves it out, so a count tick pushes nothing and it is as of the row's last push. Set on an occupied row whose carrier has a part; nil from a Core that sends none, which a screen shows as no count, never as 0. |
 | `inbound` | [`NodeBinsInbound`](#nodebinsinbound)[] | omitempty | Inbound is the live orders whose delivery resolves at this node, in order id order. |
 
 <!-- /generated -->

@@ -59,6 +59,26 @@ func TestNodeBinsSnapshot_Golden(t *testing.T) {
 				`"inbound":[{"order_uuid":"ord-2","bin_type":"KD","payload":"PART-A","from":"SM-1.L1"}]}`,
 		},
 		{
+			name: "a full with its count as of the push",
+			v: NodeBinsRow{
+				Node: "SMN_U1", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 30, BinLabel: "TOTE-7",
+				BinTypeCode: "TOTE", PayloadCode: "PART-A", Epoch: 2, Stocked: true, UOPCapacity: 40, DisplayUOP: intPtr(40),
+			},
+			want: `{"node":"SMN_U1","state":"occupied","occupied":true,"bins":1,"bin_id":30,"bin_label":"TOTE-7",` +
+				`"bin_type_code":"TOTE","payload_code":"PART-A","manifest_confirmed":false,"epoch":2,"stocked":true,` +
+				`"partial":false,"uop_capacity":40,"display_uop":40}`,
+		},
+		{
+			name: "a cart counted to nothing: its 0 is sent, not left out",
+			v: NodeBinsRow{
+				Node: "SMN_U2", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 31, BinLabel: "TOTE-8",
+				BinTypeCode: "TOTE", PayloadCode: "PART-A", Epoch: 2, UOPCapacity: 40, DisplayUOP: intPtr(0),
+			},
+			want: `{"node":"SMN_U2","state":"occupied","occupied":true,"bins":1,"bin_id":31,"bin_label":"TOTE-8",` +
+				`"bin_type_code":"TOTE","payload_code":"PART-A","manifest_confirmed":false,"epoch":2,"stocked":false,` +
+				`"partial":false,"uop_capacity":40,"display_uop":0}`,
+		},
+		{
 			name: "a bare cart at 0 totes: the marker, not tops & bottoms",
 			v: NodeBinsRow{
 				Node: "SMN_A2", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 28, BinLabel: "TOTE-2",
@@ -186,6 +206,10 @@ func TestNodeBinsDigest_Golden(t *testing.T) {
 		"reordered rows":  {ListDigest: list, Rows: []NodeBinsRow{row2, row1}},
 		"empty groups":    {ListDigest: list, Rows: snap.Rows, Groups: []NodeBinsGroup{}},
 		"rows not shared": {ListDigest: list, Rows: append([]NodeBinsRow{}, row1, row2)},
+		// A count that moves: the row's display count is outside the digest, so
+		// a count tick pushes nothing and costs no heartbeat a resend.
+		"a count that moves": {ListDigest: list, Rows: []NodeBinsRow{withCount(row1, 37), row2}},
+		"a count to zero":    {ListDigest: list, Rows: []NodeBinsRow{withCount(row1, 0), row2}},
 	}
 	for name, s := range same {
 		if got := d(NodeBinsDigest(s)); got != base {
@@ -248,4 +272,10 @@ func TestNodeBinsDigest_Golden(t *testing.T) {
 		d(NodeBinsDigest(g([]NodeBinsWant{{BinType: "TOTE", Layers: intPtr(1), Want: 1}}, nil))); a == b {
 		t.Errorf("a height on a want left the digest at %s", a)
 	}
+}
+
+// withCount is r with its display count set (NodeBinsRow.DisplayUOP).
+func withCount(r NodeBinsRow, n int) NodeBinsRow {
+	r.DisplayUOP = &n
+	return r
 }

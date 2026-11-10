@@ -45,17 +45,24 @@ package protocol
 //     answer should ride the same outboxes (CorID), with no HTTP between the
 //     Edge and Core.
 //
-// THE ROW CARRIES NO COUNT. A count ticks wherever a cell draws straight from
-// a watched node, and a ticking value inside the digest would send the whole
-// snapshot on every heartbeat; the Edge is the count's source and Core the
-// ledger. What a row derives from the count moves only at a crossing: Stocked
-// (above zero) and Partial (above zero, below capacity). Its numbers do not
-// tick: Bins (carriers at the node), Epoch (a generation), UOPCapacity (the
-// part's), HeldUOP (a held partial's declared count, which nothing draws from
-// while it waits) and the tote numbers; Inbound changes when an order starts
-// or ends. No time that moves and nothing about who asked is in it either (a
-// held partial's arrival is fixed), so two Edges watching the same nodes are
-// sent the same rows.
+// THE ROW'S COUNT IS FOR DISPLAY, AND OUTSIDE THE DIGEST. A count ticks
+// wherever a cell draws straight from a watched node, and a ticking value
+// inside the digest would send the whole snapshot on every heartbeat; the Edge
+// is the count's source and Core the ledger. So DisplayUOP, the count as the
+// row was built, is left out of NodeBinsDigest (2026-11-10): a tick moves no
+// digest and pushes nothing, and the Edge's copy holds the count as of the
+// last push that went out for another reason. Where nothing draws (an
+// unloader window, a loader spot, a held partial) that is the count while the
+// cart stands; at a seat that draws it is stale. A screen may show it; nothing
+// may decide on it. Pinned by TestNodeBinsDigest_Golden ("a count that
+// moves"). What a row derives from the count moves only at a crossing: Stocked
+// (above zero) and Partial (above zero, below capacity). Its other numbers do
+// not tick: Bins (carriers at the node), Epoch (a generation), UOPCapacity
+// (the part's), HeldUOP (a held partial's declared count, which nothing draws
+// from while it waits) and the tote numbers; Inbound changes when an order
+// starts or ends. No time that moves and nothing about who asked is in it
+// either (a held partial's arrival is fixed), so two Edges watching the same
+// nodes are sent the same rows.
 
 // BinWatchList is the sorted, de-duplicated list of Core node names one Edge's
 // operator stations draw. Digest is BinWatchDigest(Nodes); Core quotes it back
@@ -147,6 +154,13 @@ type NodeBinsRow struct {
 	HeldSince   string `json:"held_since,omitempty"`
 	HeldFor     string `json:"held_for,omitempty"`
 	HeldUOP     int    `json:"held_uop,omitempty"`
+	// DisplayUOP is the carrier's count (bins.uop_remaining) as this row was
+	// built, for a screen to show beside its part and for nothing to decide
+	// on: NodeBinsDigest leaves it out, so a count tick pushes nothing and it
+	// is as of the row's last push. Set on an occupied row whose carrier has a
+	// part; nil from a Core that sends none, which a screen shows as no count,
+	// never as 0.
+	DisplayUOP *int `json:"display_uop,omitempty"`
 	// Inbound is the live orders whose delivery resolves at this node, in
 	// order id order.
 	Inbound []NodeBinsInbound `json:"inbound,omitempty"`

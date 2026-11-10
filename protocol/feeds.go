@@ -277,11 +277,15 @@ func BinWatchDigest(nodes []string) (string, error) {
 // layers) and its assignments by (node, bin type); a row's members and inbound
 // orders as the row carries them. The snapshot's own Digest is not part of it.
 // ListDigest is, so a snapshot built for an older watch list never matches one
-// built for the current list. Nothing in a row counts what is in a bin
-// (NodeBinsRow), so a count that moves without crossing zero or the part's
-// capacity leaves this digest where it was.
+// built for the current list. A row's count (DisplayUOP) is left out, and
+// nothing else in a row counts what is in a bin (NodeBinsRow), so a count
+// that moves without crossing zero or the part's capacity leaves this digest
+// where it was.
 func NodeBinsDigest(s NodeBinsSnapshot) (string, error) {
 	rows := append([]NodeBinsRow{}, s.Rows...)
+	for i := range rows {
+		rows[i].DisplayUOP = nil
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Node != rows[j].Node {
 			return rows[i].Node < rows[j].Node

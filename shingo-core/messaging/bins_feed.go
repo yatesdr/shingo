@@ -588,6 +588,10 @@ func binRow(name string, b *bins.Bin) protocol.NodeBinsRow {
 	row.TotesPerLayer = b.TotesPerLayer
 	if b.PayloadCode != "" {
 		row.UOPCapacity = b.UOPCapacity
+		// The count for a screen to show, as of this build: outside the
+		// digest, so a count tick pushes nothing (protocol.NodeBinsRow.DisplayUOP).
+		count := b.UOPRemaining
+		row.DisplayUOP = &count
 	}
 	row.Partial = row.Stocked && b.UOPRemaining < row.UOPCapacity
 	if b.HeldSince != nil {

@@ -77,13 +77,16 @@ func binsWatchList(t *testing.T, names ...string) *protocol.BinWatchList {
 
 // wantRows is the fixture's snapshot rows: one row per name, sorted; the name
 // Core does not know is unknown, the node with no bin empty, and each bin's
-// row carries the bins at its node (one) and its generation (a new bin's, 1).
+// row carries the bins at its node (one) and its generation (a new bin's, 1);
+// the full its count for display (40), the bare cart, with no part, none.
 func (f binsFixture) wantRows() []protocol.NodeBinsRow {
+	count := 40
 	return []protocol.NodeBinsRow{
 		{Node: "GHOST", State: protocol.BinsStateUnknown},
 		{Node: "LANE-1.SLOT-1", State: protocol.BinsStateEmpty},
 		{Node: "SMN_A1", State: protocol.BinsStateOccupied, Occupied: true, Bins: 1, BinID: f.full, BinLabel: "TOTE-1",
-			BinTypeCode: "TOTE", PayloadCode: "PART-A", Manifest: &f.manifest, ManifestConfirmed: true, Epoch: 1, Stocked: true},
+			BinTypeCode: "TOTE", PayloadCode: "PART-A", Manifest: &f.manifest, ManifestConfirmed: true, Epoch: 1, Stocked: true,
+			DisplayUOP: &count},
 		{Node: "SMN_A2", State: protocol.BinsStateOccupied, Occupied: true, Bins: 1, BinID: f.base, BinLabel: "TOTE-2",
 			BinTypeCode: "TOTE-BARE", Bare: true, Epoch: 1},
 	}
@@ -137,7 +140,7 @@ func TestBuildNodeBins_FiveStatementsWhateverTheListLength(t *testing.T) {
 		`{"node":"LANE-1.SLOT-1","state":"empty","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false},`+
 		`{"node":"SMN_A1","state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"TOTE-1","bin_type_code":"TOTE",`+
 		`"payload_code":"PART-A","manifest":"{\"items\": [{\"part_number\": \"PART-A\"}]}",`+
-		`"manifest_confirmed":true,"epoch":1,"stocked":true,"partial":false},`+
+		`"manifest_confirmed":true,"epoch":1,"stocked":true,"partial":false,"display_uop":40},`+
 		`{"node":"SMN_A2","state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"TOTE-2","bin_type_code":"TOTE-BARE",`+
 		`"bare":true,"manifest_confirmed":false,"epoch":1,"stocked":false,"partial":false}],"groups":[]}`,
 		d, list.Digest, f.full, f.base)
@@ -204,18 +207,24 @@ func wireBytes(t *testing.T, v any) (raw, zipped int) {
 // What moves the digest is what a station draws. A count that ticks and an
 // adjustment that stays above zero do not; a count reaching zero or going
 // below it reads not stocked; an epoch reset moves it, because the generation
-// is on the row (a boundary the Edge is told of, which never ticks).
+// is on the row (a boundary the Edge is told of, which never ticks). Every
+// build's row carries the count as it stands (DisplayUOP), outside the digest.
 func TestBuildNodeBins_CountsDoNotMoveTheDigest(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	f := newBinsFixture(t, db)
 	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
 	svc.bins.replace("edge.a", binsWatchList(t, binsFixtureNames...))
+	var shown []int
 	digest := func() (string, bool) {
 		snap, _, err := svc.buildNodeBins("edge.a")
 		testutil.MustNoErr(t, err, "build")
 		for _, r := range snap.Rows {
 			if r.Node == "SMN_A1" {
+				if r.DisplayUOP == nil {
+					t.Fatal("SMN_A1's row carries no count")
+				}
+				shown = append(shown, *r.DisplayUOP)
 				return snap.Digest, r.Stocked
 			}
 		}
@@ -250,6 +259,9 @@ func TestBuildNodeBins_CountsDoNotMoveTheDigest(t *testing.T) {
 		if stocked != step.wantStocked {
 			t.Errorf("%s: stocked = %v, want %v", step.name, stocked, step.wantStocked)
 		}
+	}
+	if want := []int{40, 39, 7, 7, 0, -2}; !reflect.DeepEqual(shown, want) {
+		t.Errorf("the row's count build by build = %v, want %v", shown, want)
 	}
 }
 

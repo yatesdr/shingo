@@ -1,6 +1,8 @@
 package messaging
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -28,6 +30,34 @@ func TestBinRow_CapacityAndHeldPartial(t *testing.T) {
 	empty := binRow("LINE-2", &bins.Bin{ID: 9, UOPCapacity: 100})
 	if empty.UOPCapacity != 0 {
 		t.Errorf("a carrier with no part carries capacity %d; want 0", empty.UOPCapacity)
+	}
+}
+
+// TestBinRow_CarriesItsCountForDisplay: an occupied row whose carrier has a
+// part carries its count (DisplayUOP), 0 and below zero included, for a
+// screen to show; an empty carrier and an empty node carry none. The count is
+// outside the digest (protocol TestNodeBinsDigest_Golden, "a count that
+// moves"), so a tick pushes nothing.
+func TestBinRow_CarriesItsCountForDisplay(t *testing.T) {
+	t.Parallel()
+	count := func(r protocol.NodeBinsRow) string {
+		if r.DisplayUOP == nil {
+			return "none"
+		}
+		return fmt.Sprint(*r.DisplayUOP)
+	}
+	at := time.Date(2026, 11, 10, 7, 0, 0, 0, time.UTC)
+	got := []string{
+		count(binRow("WIN-1", &bins.Bin{ID: 1, PayloadCode: "PART-A", UOPRemaining: 1027, UOPCapacity: 1300})),
+		count(binRow("WIN-2", &bins.Bin{ID: 2, PayloadCode: "PART-A", UOPRemaining: 0, UOPCapacity: 1300})),
+		count(binRow("WIN-3", &bins.Bin{ID: 3, PayloadCode: "PART-A", UOPRemaining: -2, UOPCapacity: 1300})),
+		count(binRow("HOME-1", &bins.Bin{ID: 4, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100, HeldSince: &at})),
+		count(binRow("WIN-4", &bins.Bin{ID: 5, UOPRemaining: 0})),
+		count(binRow("WIN-5", nil)),
+	}
+	want := []string{"1027", "0", "-2", "40", "none", "none"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("display counts = %v, want %v", got, want)
 	}
 }
 
