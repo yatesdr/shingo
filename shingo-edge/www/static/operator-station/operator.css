@@ -1216,6 +1216,8 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-spot: calc(15px * var(--os-pc-scale));
     --os-pc-spot-name: calc(19px * var(--os-pc-scale));
     --os-pc-note: calc(15px * var(--os-pc-scale));
+    --os-pc-instruction: calc(22px * var(--os-pc-scale));
+    --os-pc-instruction-line: calc(26px * var(--os-pc-scale));
 }
 #os-grid.os-pc-board.os-pc-step-1 {
     --os-pc-card: calc(98px * var(--os-pc-scale));
@@ -1225,6 +1227,8 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-spot: calc(14px * var(--os-pc-scale));
     --os-pc-spot-name: calc(18px * var(--os-pc-scale));
     --os-pc-note: calc(14px * var(--os-pc-scale));
+    --os-pc-instruction: calc(20px * var(--os-pc-scale));
+    --os-pc-instruction-line: calc(24px * var(--os-pc-scale));
 }
 #os-grid.os-pc-board.os-pc-step-2 {
     --os-pc-card: calc(74px * var(--os-pc-scale));
@@ -1234,6 +1238,8 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-spot: calc(13px * var(--os-pc-scale));
     --os-pc-spot-name: calc(15px * var(--os-pc-scale));
     --os-pc-note: calc(13px * var(--os-pc-scale));
+    --os-pc-instruction: calc(18px * var(--os-pc-scale));
+    --os-pc-instruction-line: calc(24px * var(--os-pc-scale));
 }
 #os-grid.os-pc-board.os-pc-step-3 {
     --os-pc-card: calc(64px * var(--os-pc-scale));
@@ -1243,6 +1249,8 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-spot: calc(12px * var(--os-pc-scale));
     --os-pc-spot-name: calc(14px * var(--os-pc-scale));
     --os-pc-note: calc(12px * var(--os-pc-scale));
+    --os-pc-instruction: calc(15px * var(--os-pc-scale));
+    --os-pc-instruction-line: calc(18px * var(--os-pc-scale));
 }
 /* Show all scrolls, and so does the board with its status row opened: the
    tiles sit above the work, which keeps the layout the fit gave it. */
@@ -1594,6 +1602,7 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-step-3 .os-pc-card-body { gap: 0; }
 /* The compact step's reason: 16 px word, 15 px words, on an 18 px line (STEPS). */
 .os-pc-step-3 .os-pc-reason { line-height: calc(18px * var(--os-pc-scale)); }
+.os-pc-step-3 .os-pc-reason > .os-pc-mark { margin-top: calc(1px * var(--os-pc-scale)); }
 .os-pc-step-3 .os-pc-reason .os-pc-word { font-size: calc(16px * var(--os-pc-scale)); }
 .os-pc-step-3 .os-pc-reason .os-pc-why { font-size: calc(15px * var(--os-pc-scale)); }
 .os-pc-step-3 .os-pc-reason .os-pc-mark svg {
@@ -1615,23 +1624,28 @@ body.os-pc-active #os-footer { display: none; }
     line-height: 1.05;
     white-space: nowrap;
 }
+/* The other parts a home takes: they wrap and are never cut (alsoLines). */
 .os-pc-also {
     font-size: calc(14px * var(--os-pc-scale));
     line-height: 1.2;
     font-weight: 600;
     color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
+/* The reason line: its mark and word, then the instruction, which wraps in the
+   room beside them and is never cut (reasonLines); each line is the step's
+   reason line (STEPS reason), the mark centred on the first. */
 .os-pc-reason {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: calc(8px * var(--os-pc-scale));
     min-width: 0;
     white-space: nowrap;
-    line-height: 1.2;
+    line-height: calc(24px * var(--os-pc-scale));
 }
+.os-pc-reason > .os-pc-mark { margin-top: calc(3px * var(--os-pc-scale)); }
+.os-pc-reason > .os-pc-why { white-space: normal; overflow-wrap: anywhere; }
 .os-pc-why { font-size: calc(17px * var(--os-pc-scale)); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .os-pc-card--plain .os-pc-why { color: var(--text-muted); }
 .os-pc-word { font-size: calc(20px * var(--os-pc-scale)); font-weight: 700; letter-spacing: .05em; }
@@ -1643,6 +1657,45 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-card--green .os-pc-chevron { color: var(--success); }
 /* An alarm note is an instruction: it wraps and is never cut. */
 .os-pc-note { font-size: var(--os-pc-note); line-height: 1.2; color: var(--text-muted); white-space: normal; overflow-wrap: anywhere; }
+/* A cart at an unloader window (windowCards, operator-board.js windowCard):
+   three lines, none cut. The spot's name with the cart's state beside it, at
+   the spot line's size, the state wrapping in the room the name leaves; what
+   is on the cart, the headline, wrapping here; the instruction at its own
+   size on its own line (STEPS instruction, instructionLine), a change amber. */
+.os-pc-win-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: calc(12px * var(--os-pc-scale));
+    min-width: 0;
+    line-height: 1.2;
+}
+.os-pc-win-top > .os-pc-spot-name { flex: none; white-space: pre; }
+.os-pc-state {
+    min-width: 0;
+    font-size: var(--os-pc-spot);
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-align: right;
+    color: var(--text-muted);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.os-pc-state > .os-pc-mark { vertical-align: top; margin-right: calc(8px * var(--os-pc-scale)); }
+.os-pc-state .os-pc-mark svg { width: 1.2em; height: 1.2em; }
+.os-pc-card--green .os-pc-state { color: var(--success); }
+.os-pc-card--red .os-pc-state { color: var(--status-failed-ink); }
+.os-pc-card--window .os-pc-headline { white-space: normal; overflow-wrap: anywhere; }
+.os-pc-instruction {
+    font-size: var(--os-pc-instruction);
+    line-height: var(--os-pc-instruction-line);
+    font-weight: 600;
+    color: var(--text-strong);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.os-pc-instruction--change { color: var(--status-faulted-ink); }
+.os-pc-card--red .os-pc-instruction { color: var(--status-failed-ink); }
 .os-pc-chevron { flex: none; display: inline-flex; color: var(--text-muted); }
 .os-pc-mark { flex: none; display: inline-flex; }
 /* The icons' sizes at the scale: their width and height attributes

@@ -301,7 +301,8 @@ export function heightWords(layers) {
     return layers === 0 ? 'tops & bottoms' : layers + ' high';
 }
 
-// heightLabel is a cart's height as its spot line says it: "3 high" on an
+// heightLabel is a cart's height as a window card's headline says it (an
+// empty's, windowCards): "3 high" on an
 // exact multiple, "3 high + 2" with two totes over, "tops & bottoms" at 0,
 // "Unknown" with no number, and nothing for a type with no totes per layer.
 export function heightLabel(bin) {
@@ -941,17 +942,28 @@ function loaderCards(t, ctx) {
 
 // ── the unloader's cards ─────────────────────────────────────────────────────
 
-// windowCards is the unloader's one list: one card per cart at a window, the
-// bin's name the headline, what to send back the note. The note is "Change to
-// <bin>" on any cart whose send-back type is not its own, or whose send-back
-// height is not the one it stands at; "Send back <bin>" on
-// a full of its own type and "Send it" on an empty of its own type, these two
-// only on a station that handles more than one bin type. What to send back is
-// clearHighlight's: the window's assignment, else a waiting press's bin type,
-// else the cart's own; the note names it with its height where it has one
-// ("Change to TOTE-1 · 3 high"). The cart's own height rides the spot line
-// (heightLabel). A delivered order with no cart yet is the old boards' Unload
-// card.
+// windowCards is the unloader's one list: one card per cart at a window, in
+// three lines (window: true; operator-board.js windowCard). The first is the
+// spot's name and the cart's state beside it: ARRIVED (a full to unload,
+// green), CLEARED · ROBOT COMING or CLEARED · WAITING TO MOVE (its move off
+// the window is live), NOW (a stopped press's red, lightStoppedPresses), or
+// nothing for a cart that waits. The second, the headline, is what is on the
+// cart: a full's part and its count, an empty's type, "empty" and its height
+// (heightLabel), a bare cart "no bin". The count is Core's as of its last push
+// of the row (bin.display_uop; nothing draws at a window, so it is the cart's
+// while it stands), a held partial's held_uop from a Core that sends only
+// that, and none where Core sent none, never a 0 (a bug fixed 2026-11-10:
+// every full read "· 0", the tile's own count, which nothing ticks here). The
+// third is the instruction, the reason: "Change to <bin>" (change: amber) on
+// any cart whose send-back type is not its own, or whose send-back height is
+// not the one it stands at; "Send back <bin>" on a full of its own type and
+// "Send it" on an empty of its own type, these two only on a station that
+// handles more than one bin type. What to send back is clearHighlight's: the
+// window's assignment, else a waiting press's bin type, else the cart's own;
+// the instruction names it with its height where it has one ("Change to
+// TOTE-1 · 3 high"). The spot is named once, on the first line (a bug fixed
+// 2026-11-10: "at <spot>" led the reason and pushed "Send back <bin>" off the
+// card). A delivered order with no cart yet is the old boards' Unload card.
 function windowCards(consumers, ctx) {
     // While the bins are not known no cart is drawn: what stands at a window is
     // what each card and its act read.
@@ -1000,7 +1012,8 @@ function windowCards(consumers, ctx) {
         if (full && bin.held_since) {
             const since = ctx.when(bin.held_since);
             note = 'Partial · held for ' + (bin.held_for || 'its line') + (since ? ' · since ' + since : '');
-        } else if (leaving && !noneShort) note = robot ? 'Cleared · robot on its way' : 'Cleared · waiting to move';
+        // A cart cleared and leaving says so in its state; it is owed nothing.
+        } else if (leaving && !noneShort) note = '';
         // A bare cart is not finished, so it does not wait for the line (a bug
         // fixed: it said so); at a stage-2 window its tap says what to put on
         // (EMPTY ON or PARTIAL ON) and the card names nothing to send back.
@@ -1009,20 +1022,25 @@ function windowCards(consumers, ctx) {
         else if (noneShort) note = 'No group is short of this cart';
         else if (changes) note = 'Change to ' + choiceLabel(lit) + forGroup;
         else if (back && (multi || forGroup)) note = (full ? 'Send back ' + choiceLabel(lit) : 'Send it') + forGroup;
-        // A full at the window has arrived, ready to unload: green, ARRIVED and
-        // where, pulsing until it is (flash; SPR 2026-10-28, shipping could not
-        // see a bin arrive or at which spot, and the owner asked for green). A
-        // held partial is no full to unload and stays plain: its card's act is
-        // the held panel (unloadAct).
+        // A full at the window has arrived, ready to unload: green and ARRIVED,
+        // pulsing until it is (flash; SPR 2026-10-28, shipping could not see a
+        // bin arrive or at which spot). A held partial is no full to unload and
+        // stays plain: its card's act is the held panel (unloadAct).
         const arrived = full && !bin.held_since;
+        let state = arrived ? 'ARRIVED' : '';
+        if (leaving && !noneShort) state = robot ? 'CLEARED · ROBOT COMING' : 'CLEARED · WAITING TO MOVE';
+        const count = typeof bin.display_uop === 'number' ? bin.display_uop
+            : (bin.held_since && typeof bin.held_uop === 'number' ? bin.held_uop : null);
+        let headline = 'no bin';
+        if (full) headline = bin.payload_code + (count !== null ? ' · ' + fmtCount(count) : '');
+        else if (!bin.bare) {
+            const height = heightLabel(bin);
+            headline = (own || bin.bin_label || 'Unknown bin') + ' · empty' + (height ? ' · ' + height : '');
+        }
         ctx.windows.push(ctx.card(t, 'cart', [arrived ? 1 : 2], {
-            spotWords: full ? 'holds a full bin' : (bin.bare ? 'no bin' : 'holds an empty bin'),
-            spotPart: full ? bin.payload_code : '',
-            spotCount: full ? fmtCount((t.runtime && t.runtime.remaining_uop_cached) || 0) : '',
-            spotHeight: bin.bare ? '' : heightLabel(bin),
-            headline: own || bin.bin_label || 'Unknown bin',
-            tone: arrived ? 'green' : 'plain', word: arrived ? 'ARRIVED' : '', flash: arrived,
-            reason: arrived ? 'at ' + spotOf(t) + (note ? ' · ' + note : '') : note,
+            window: true, headline: headline,
+            tone: arrived ? 'green' : 'plain', word: state, flash: arrived,
+            reason: note, change: changes && note.indexOf('Change to ') === 0,
             back: back, own: own, full: full,
             act: windowAct(t, ctx.kind, lit),
         }));
@@ -1046,7 +1064,8 @@ function lightStoppedPresses(presses, windows) {
         if (!cart) return;
         cart.tone = 'red';
         cart.word = 'NOW';
-        cart.reason = (cart.own && cart.own !== p.bin ? 'Change to ' : 'Send back ') + p.bin;
+        cart.change = !!cart.own && cart.own !== p.bin;
+        cart.reason = (cart.change ? 'Change to ' : 'Send back ') + p.bin;
         cart.rank = [0];
         p.red = true;
     });
@@ -1284,19 +1303,27 @@ function boardBar(tiles, kind, view) {
 // STEPS are the board's four sizes: a card's height (its least: a card with
 // more lines than that holds grows, cardHeight) and headline, a section title
 // and its header row, the spot line, the note, the gap between a card's lines
-// and the reason's line. On a card the word (NOW, SOON) is 20 px and its reason
-// 17 px, on a 24 px line, at every step but the compact one (16 px and 15 px on
-// 18 px); the "Also" line is 17 px. The compact step is what a 10-inch tablet
+// and each line of the reason; and on the reason line the word (NOW, SOON,
+// ARRIVED), the reason's words and the mark: 20, 17 and 18 px on a 24 px line
+// at every step but the compact one (16, 15 and 16 px on 18 px). The "Also"
+// line is 17 px a line. A window card's instruction (windowCards) has a size
+// of its own between the note and the title, on its own line (instruction,
+// instructionLine), and its state the spot line's size beside the spot's
+// name. The compact step is what a 10-inch tablet
 // falls to before any card goes behind "+N more" (SPR 2026-10-28). spotName is
 // the spot's own name on that line, larger than the words beside it: where the
 // card is matters most to the person walking to it (shipping, SPR 2026-10-28).
 // The two small steps take its room from their line gap and the compact reason
 // line, so a card is no taller than it was and no card more goes behind "+N".
 export const STEPS = [
-    { card: 120, headline: 32, title: 24, header: 34, spot: 15, spotName: 19, note: 15, lineGap: 5, reason: 24 },
-    { card: 98, headline: 26, title: 20, header: 30, spot: 14, spotName: 18, note: 14, lineGap: 5, reason: 24 },
-    { card: 74, headline: 20, title: 18, header: 28, spot: 13, spotName: 15, note: 13, lineGap: 0, reason: 24 },
-    { card: 64, headline: 18, title: 16, header: 26, spot: 12, spotName: 14, note: 12, lineGap: 0, reason: 18 },
+    { card: 120, headline: 32, title: 24, header: 34, spot: 15, spotName: 19, note: 15, lineGap: 5, reason: 24, word: 20, why: 17, mark: 18,
+        instruction: 22, instructionLine: 26 },
+    { card: 98, headline: 26, title: 20, header: 30, spot: 14, spotName: 18, note: 14, lineGap: 5, reason: 24, word: 20, why: 17, mark: 18,
+        instruction: 20, instructionLine: 24 },
+    { card: 74, headline: 20, title: 18, header: 28, spot: 13, spotName: 15, note: 13, lineGap: 0, reason: 24, word: 20, why: 17, mark: 18,
+        instruction: 18, instructionLine: 24 },
+    { card: 64, headline: 18, title: 16, header: 26, spot: 12, spotName: 14, note: 12, lineGap: 0, reason: 18, word: 16, why: 15, mark: 16,
+        instruction: 15, instructionLine: 18 },
 ];
 
 // GEOM is the board's fixed geometry in px, shared with operator.css's
@@ -1309,14 +1336,16 @@ export const STEPS = [
 // with the gap under it, a tile's padding, its head (outline, padding, name)
 // and each line under it with the gap above it (a row with its words beside
 // the bar or under it, a covered row's bare bar, the "+N"), the press tile and
-// an Empties line. Measured on the glass in headless Chrome at each step.
+// an Empties line, the gap between a reason line's mark, word and words, and
+// on a window card the gap between the spot's name and the cart's state.
+// Measured on the glass in headless Chrome at each step.
 export const GEOM = {
     padX: 20, padTop: 14, padBottom: 16, topLine: 40, gap: 10, bar: 56,
     sectionPadX: 12, sectionPadY: 22, sectionBorder: 3, headerGap: 10, cardGap: 10,
     cardPadX: 14, cardPadY: 2, cardBorder: 3, chevron: 26, badge: 48, folded: 58, stripBox: 36, toggle: 48, zoneLine: 21,
     alsoLine: 17,
     statusLabel: 27, tilePad: 27, tileGap: 10, tileHead: 43, rowLine: 37, rowUnder: 56, rowBar: 14, rowMore: 23,
-    pressTile: 132, emptiesLine: 25, emptiesFoot: 46, statusFold: 48,
+    pressTile: 132, emptiesLine: 25, emptiesFoot: 46, statusFold: 48, reasonGap: 8, stateGap: 12,
 };
 
 // DESIGN is the screen STEPS, GEOM and operator.css's .os-pc-* sizes are drawn
@@ -1389,15 +1418,18 @@ export function cardInnerWidth(width, cols, numbered) {
 
 // cardFits reports whether a card's part number or bin code and its spot
 // line's names fit unclipped at a step: the headline whole, and on the spot
-// line the spot, the bin code and an unloader's part, count and height whole
-// (the words between them give way, never a code); and its note, which wraps
-// and is never cut, in two lines or fewer.
+// line the spot and its bin code whole (the words between them give way, never
+// a code); and its note, its reason and its "Also" line, which wrap and are
+// never cut, in two lines or fewer. A window card is its own (windowCardFits).
 export function cardFits(card, step, inner) {
+    if (card.window) return windowCardFits(card, step, inner);
     const s = STEPS[step];
     if (textWidth(card.headline, s.headline) > inner) return false;
     if (noteLines(card, step, inner) > 2) return false;
-    const rest = [card.spotCode, card.spotPart, card.spotCount, card.spotHeight].filter(Boolean).join(' · ');
-    return textWidth(card.spot, s.spotName) + textWidth(' · ' + rest + (rest ? ' · ' : ''), s.spot) <= inner;
+    if (reasonLines(card, step, inner) > 2) return false;
+    if (alsoLines(card, inner) > 2) return false;
+    const code = card.spotCode || '';
+    return textWidth(card.spot, s.spotName) + textWidth(' · ' + code + (code ? ' · ' : ''), s.spot) <= inner;
 }
 
 // noteLines is the lines a card's note wraps to at a step, measured high (a
@@ -1407,17 +1439,97 @@ export function noteLines(card, step, inner) {
     return Math.max(1, Math.ceil(textWidth(card.note, STEPS[step].note) / (inner * 0.9)));
 }
 
+// reasonLines is the lines a card's reason line takes at a step: its mark and
+// word (NOW, ARRIVED; bold and spaced .05 em) first, then the reason, which
+// wraps in what the column has left beside them, measured high as the note
+// is. The reason is the card's instruction ("Send back TOTE-2", "Change to
+// TOTE-1 · 3 high") and is never cut (a bug fixed 2026-11-10: it was cut to
+// "Send back T…" on a window card); where it takes more than two lines the
+// card does not fit the step.
+export function reasonLines(card, step, inner) {
+    if (!card.word && !card.reason) return 0;
+    if (!card.reason) return 1;
+    const s = STEPS[step];
+    let lead = 0;
+    // The mark: on every coloured line, and beside any word (operator-board.js wordLine).
+    if (card.word || card.tone === 'red' || card.tone === 'amber' || card.tone === 'green') lead += s.mark + GEOM.reasonGap;
+    if (card.word) lead += textWidth(card.word, s.word) + Math.ceil(card.word.length * 0.05 * s.word) + GEOM.reasonGap;
+    const why = textWidth((card.word ? '· ' : '') + card.reason, s.why);
+    return Math.max(1, Math.ceil(why / ((inner - lead) * 0.9)));
+}
+
+// alsoLines is the lines a card's "Also" line (the other parts a home takes)
+// wraps to, never cut: a part is never what gives way.
+export function alsoLines(card, inner) {
+    if (!card.also || !card.also.length) return 0;
+    return Math.max(1, Math.ceil(textWidth('Also ' + card.also.join(', '), 14) / (inner * 0.9)));
+}
+
 // cardHeight is a card's height at a step: the step's, or its lines' where
 // they need more (a long note at the smallest step). The lines are the spot
-// line, the headline, the reason, the "Also" line and the note's lines, with
-// the step's gap between them (operator.css's line-heights: 1.2, the headline
-// 1.05).
+// line, the headline, the reason's lines, the "Also" line's and the note's,
+// with the step's gap between them (operator.css's line-heights: 1.2, the
+// headline 1.05, the reason the step's reason line).
 export function cardHeight(card, step, inner) {
+    if (card.window) return windowCardHeight(card, step, inner);
     const g = GEOM;
     const s = STEPS[step];
     let h = Math.ceil(Math.max(s.spot, s.spotName) * 1.2) + s.lineGap + Math.ceil(s.headline * 1.05);
-    if (card.word || card.reason) h += s.lineGap + s.reason;
-    if (card.also && card.also.length) h += s.lineGap + g.alsoLine;
+    if (card.word || card.reason) h += s.lineGap + reasonLines(card, step, inner) * s.reason;
+    if (card.also && card.also.length) h += s.lineGap + alsoLines(card, inner) * g.alsoLine;
+    if (card.note) h += s.lineGap + noteLines(card, step, inner) * Math.ceil(s.note * 1.2);
+    return Math.max(s.card, h + 2 * (g.cardPadY + g.cardBorder));
+}
+
+// A window card's three lines (windowCards; operator-board.js windowCard),
+// each never cut: the spot's name, whole, with the cart's state beside it,
+// which wraps in the room the name leaves; the headline, what is on the cart,
+// which wraps (a part with its count is wider than a narrow column); the
+// instruction, at its own size, which wraps; and the alarm note as on any card.
+// A step where any of them needs three lines is one the card does not fit.
+
+// stateLines is the lines a window card's state takes beside its spot's name,
+// its mark (a coloured state's) and its words at the spot line's size, bold
+// and spaced .05 em, measured high as the note is.
+export function stateLines(card, step, inner) {
+    if (!card.word) return 0;
+    const s = STEPS[step];
+    const room = inner - textWidth(card.spot, s.spotName) - GEOM.stateGap;
+    const mark = card.tone === 'plain' ? 0 : Math.ceil(s.spot * 1.2) + GEOM.reasonGap;
+    const need = mark + textWidth(card.word, s.spot) + Math.ceil(card.word.length * 0.05 * s.spot);
+    if (need <= room) return 1;
+    return room > 0 ? Math.ceil(need / (room * 0.9)) : Infinity;
+}
+
+// headlineLines is the lines a window card's headline wraps to: one where it
+// fits whole, else measured high.
+export function headlineLines(card, step, inner) {
+    const w = textWidth(card.headline, STEPS[step].headline);
+    return w <= inner ? 1 : Math.ceil(w / (inner * 0.9));
+}
+
+// instructionLines is the lines a window card's instruction wraps to.
+export function instructionLines(card, step, inner) {
+    if (!card.reason) return 0;
+    return Math.max(1, Math.ceil(textWidth(card.reason, STEPS[step].instruction) / (inner * 0.9)));
+}
+
+function windowCardFits(card, step, inner) {
+    if (textWidth(card.spot, STEPS[step].spotName) > inner) return false;
+    return stateLines(card, step, inner) <= 2 && headlineLines(card, step, inner) <= 2 &&
+        instructionLines(card, step, inner) <= 2 && noteLines(card, step, inner) <= 2;
+}
+
+// windowCardHeight is a window card's height at a step: the spot's line (a
+// state on more lines adds the spot line's size a line, its first sitting on
+// the name's baseline), the headline's lines, the instruction's (its own
+// line, STEPS instructionLine) and the note's, the step's gap between them.
+function windowCardHeight(card, step, inner) {
+    const g = GEOM;
+    const s = STEPS[step];
+    let h = Math.ceil(s.spotName * 1.2) + Math.max(0, stateLines(card, step, inner) - 1) * Math.ceil(s.spot * 1.2);
+    h += s.lineGap + headlineLines(card, step, inner) * Math.ceil(s.headline * 1.05);
+    if (card.reason) h += s.lineGap + instructionLines(card, step, inner) * s.instructionLine;
     if (card.note) h += s.lineGap + noteLines(card, step, inner) * Math.ceil(s.note * 1.2);
     return Math.max(s.card, h + 2 * (g.cardPadY + g.cardBorder));
 }
@@ -1503,8 +1615,8 @@ export function fitBoard(viewport, statusHeight, zones, hasBar) {
         });
     };
     // The width's columns (columnsFor), one fewer while the smallest step
-    // cannot hold every card's codes at that many: a long bin code with its
-    // part on the spot line takes a column back rather than clip.
+    // cannot hold every card's codes at that many, or its reason or a window
+    // card's lines in two lines each: a column goes back rather than a cut.
     let cols = columnsFor(viewport.width);
     while (cols > 2 && !fitsAt(STEPS.length - 1, cols)) cols--;
     const fits = function (step) { return fitsAt(step, cols); };

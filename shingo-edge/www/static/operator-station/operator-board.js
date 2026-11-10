@@ -68,9 +68,39 @@ function wordLine(cls, tone, word, reason) {
     return line;
 }
 
+// windowCard draws a cart at an unloader window in its three lines
+// (windowCards): the spot's name with the cart's state beside it (its mark on
+// a coloured state), what is on the cart, and the instruction, a change amber;
+// then any alarm note. The chevron and the tap are any card's.
+function windowCard(card, acts) {
+    const btn = el('button', { type: 'button', className: 'os-pc-card os-pc-card--window os-pc-card--' + card.tone +
+        (card.flash ? ' os-pc-card--flash' : '') });
+    const body = el('span', { className: 'os-pc-card-body' });
+    const top = el('span', { className: 'os-pc-win-top' });
+    top.appendChild(el('span', { className: 'os-pc-spot-name', textContent: card.spot }));
+    if (card.word) {
+        const state = el('span', { className: 'os-pc-state' });
+        if (card.tone !== 'plain') state.appendChild(mark(card.tone));
+        state.appendChild(el('span', { className: 'os-pc-state-words', textContent: card.word }));
+        top.appendChild(state);
+    }
+    body.appendChild(top);
+    body.appendChild(el('span', { className: 'os-pc-headline', textContent: card.headline }));
+    if (card.reason) {
+        body.appendChild(el('span', { className: 'os-pc-instruction' + (card.change ? ' os-pc-instruction--change' : ''),
+            textContent: card.reason }));
+    }
+    if (card.note) body.appendChild(el('span', { className: 'os-pc-note', textContent: card.note }));
+    btn.appendChild(body);
+    btn.appendChild(chevron());
+    btn.addEventListener('click', function () { acts.act(card.act); });
+    return btn;
+}
+
 // buildCard draws one card. The spot's name and any code on the spot line
 // never shrink; the words between them do.
 function buildCard(card, acts) {
+    if (card.window) return windowCard(card, acts);
     const btn = el('button', { type: 'button', className: 'os-pc-card os-pc-card--' + card.tone + (card.flash ? ' os-pc-card--flash' : '') });
     if (card.number) {
         btn.classList.add('os-pc-card--numbered');
@@ -80,10 +110,7 @@ function buildCard(card, acts) {
     const spot = el('span', { className: 'os-pc-spot' });
     spot.appendChild(el('span', { className: 'os-pc-spot-name', textContent: card.spot }));
     if (card.spotWords) spot.appendChild(el('span', { className: 'os-pc-spot-words', textContent: ' · ' + card.spotWords }));
-    [card.spotCode, card.spotPart, card.spotCount, card.spotHeight].forEach(function (code, i) {
-        if (!code) return;
-        spot.appendChild(el('span', { className: 'os-pc-spot-code', textContent: (i === 0 ? ' ' : ' · ') + code }));
-    });
+    if (card.spotCode) spot.appendChild(el('span', { className: 'os-pc-spot-code', textContent: ' ' + card.spotCode }));
     body.appendChild(spot);
     body.appendChild(el('span', { className: 'os-pc-headline', textContent: card.headline }));
     if (card.also && card.also.length) {

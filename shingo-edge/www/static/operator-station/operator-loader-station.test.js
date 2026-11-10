@@ -382,12 +382,18 @@ function slotTile(name) {
 }
 // The board (operator-board.js): its cards, its zones, its top line and bar.
 function pcCards() { return grid.descendants().filter(n => n.classList.contains('os-pc-card') && !n.classList.contains('os-pc-more')); }
-const LEAVES = ['os-pc-spot-name', 'os-pc-spot-words', 'os-pc-spot-code', 'os-pc-headline', 'os-pc-also', 'os-pc-word', 'os-pc-why', 'os-pc-note'];
+const LEAVES = ['os-pc-spot-name', 'os-pc-state-words', 'os-pc-spot-words', 'os-pc-spot-code', 'os-pc-headline', 'os-pc-also', 'os-pc-word',
+    'os-pc-why', 'os-pc-instruction', 'os-pc-note'];
 function cardText(card) {
     return card.descendants().filter(n => LEAVES.some(c => n.classList.contains(c))).map(n => n.textContent);
 }
 function pcCard(headline, spot) {
     return pcCards().find(c => part(c, 'os-pc-headline') === headline && (!spot || part(c, 'os-pc-spot-name') === spot)) || null;
+}
+// winCard is the card of the cart at a window, by its spot (windowCards: the
+// headline is what is on the cart).
+function winCard(spot) {
+    return pcCards().find(c => c.classList.contains('os-pc-card--window') && part(c, 'os-pc-spot-name') === spot) || null;
 }
 function zoneEls() { return grid.descendants().filter(n => n.classList.contains('os-pc-zone')); }
 function zoneTitles() { return zoneEls().map(z => part(z, 'os-pc-zone-title')); }
@@ -729,8 +735,9 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 // ── 5. A shared unloader (the old slot grid) ───────────────────────────────
 {
     const slots = [
-        loaderTile(1, 'ULN_A1', { role: 'consume', parts: ['PART-A', 'PART-B'], bin: FULL('PART-A', 7), uop: 7,
-            operator: true, outbound: 'EMPTY-SUPER' }),
+        // Its row carries Core's count (display_uop), which the card shows.
+        loaderTile(1, 'ULN_A1', { role: 'consume', parts: ['PART-A', 'PART-B'], bin: Object.assign(FULL('PART-A', 7), { display_uop: 7 }),
+            uop: 7, operator: true, outbound: 'EMPTY-SUPER' }),
         loaderTile(2, 'ULN_A2', { role: 'consume', parts: ['PART-A', 'PART-B'], bin: EMPTY, operator: true }),
         loaderTile(3, 'ULN_A3', { role: 'consume', parts: ['PART-A', 'PART-B'], bin: NONE, operator: true }),
     ];
@@ -742,15 +749,15 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(headerButtons(), [], 'a shared unloader: no CHANGEOVER (changed: the header kept it)');
     eq(zoneTitles(), ['At the windows'], 'a shared unloader: one list');
     eq(pcCards().map(c => cardText(c)), [
-        ['ULN_A1', ' · holds a full bin', ' · PART-A', ' · 7', 'TOTE-1', 'ARRIVED', '· at ULN_A1 · Send back TOTE-1'],
-        ['ULN_A2', ' · holds an empty bin', 'TOTE-1', 'Send it'],
-    ], 'At the windows: one card a cart, the bin the headline; a station of two bin types says what to send back; ' +
-        'a full has ARRIVED and says where');
-    eq(pcCard('TOTE-1', 'ULN_A1').className, 'os-pc-card os-pc-card--green os-pc-card--flash', 'an arrived full: green, pulsing');
-    eq(pcCard('TOTE-1', 'ULN_A1').descendants().some(n => n.classList.contains('os-pc-mark')), true, 'an arrived full carries its mark');
+        ['ULN_A1', 'ARRIVED', 'PART-A · 7', 'Send back TOTE-1'],
+        ['ULN_A2', 'TOTE-1 · empty', 'Send it'],
+    ], 'At the windows: one card a cart in three lines, the spot and its state, what is on the cart (a full: its part and ' +
+        'the count of its row), the instruction; a station of two bin types says what to send back (changed 2026-11-10)');
+    eq(winCard('ULN_A1').className, 'os-pc-card os-pc-card--window os-pc-card--green os-pc-card--flash', 'an arrived full: green, pulsing');
+    eq(winCard('ULN_A1').descendants().some(n => n.classList.contains('os-pc-mark')), true, 'an arrived full carries its mark');
 
     // A full: the CLEAR panel. Two types for the window's parts: a picker.
-    await tap(pcCard('TOTE-1', 'ULN_A1'));
+    await tap(winCard('ULN_A1'));
     eq(overlayTexts()[0], 'Full pulled, empty filled?', 'cart full: the CLEAR panel');
     eq(overlayButtons(), ['TOTE-1', 'TOTE-2', 'CANCEL'], 'cart full: a type per part');
     eq(overlayTexts().indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true, 'cart full: the discard count');
@@ -760,12 +767,12 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 
     // An empty: PUSH EMPTY and PUSH AS.
     render();
-    await tap(pcCard('TOTE-1', 'ULN_A2'));
+    await tap(winCard('ULN_A2'));
     eq(overlayButtons(), ['PUSH EMPTY', 'PUSH AS TOTE-1', 'PUSH AS TOTE-2', 'CANCEL'], 'cart empty: PUSH EMPTY and PUSH AS');
     await tapOverlay('PUSH EMPTY');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/push-empty', body: {} }], 'PUSH EMPTY posts push-empty');
     render();
-    await tap(pcCard('TOTE-1', 'ULN_A2'));
+    await tap(winCard('ULN_A2'));
     await tapOverlay('PUSH AS TOTE-1');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/clear-bin', body: { bin_type_code: 'TOTE-1' } }],
         'PUSH AS posts clear-bin with the type');
@@ -789,9 +796,9 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     setView(slots, { serves: [row('P1', 'PART-A', 40, { role: 'produce', carrier: 'TOTE-2', capacity_uop: 40, waiting: true })] });
     render();
     const red = pcCards()[0];
-    eq([cardText(red), red.className], [['ULN_A2', ' · holds an empty bin', 'TOTE-1', 'NOW', '· Change to TOTE-2'], 'os-pc-card os-pc-card--red'],
+    eq([cardText(red), red.className], [['ULN_A2', 'NOW', 'TOTE-1 · empty', 'Change to TOTE-2'], 'os-pc-card os-pc-card--window os-pc-card--red'],
         'a full press with no empty ready: the first cart that can fix it is red, "Change to"');
-    await tap(pcCard('TOTE-1', 'ULN_A1'));
+    await tap(winCard('ULN_A1'));
     eq(body.children.filter(n => !n.removed).slice(-1)[0].descendants().filter(n => n.classList.contains('os-co-picker-btn--lit')).map(n => n.textContent),
         ['TOTE-2'], 'the CLEAR panel lights the card\'s send-back type');
 }
@@ -816,9 +823,9 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     ]);
     render();
     eq(pcCards().length, 3, 'two-stage: a card per cart');
-    eq(part(pcCard('TOTE-1', 'ST2_A2'), 'os-pc-why'), 'The cart waits here for the line',
+    eq(part(winCard('ST2_A2'), 'os-pc-instruction'), 'The cart waits here for the line',
         'stage 2 pulled directly: the empty cart waits for the line');
-    await tap(pcCard('TOTE-1', 'ST1_A1'));
+    await tap(winCard('ST1_A1'));
     eq(overlayButtons(), ['BIN OFF', 'CANCEL'], 'stage 1 full: one tap, BIN OFF');
     await tapOverlay('BIN OFF');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: {} }], 'BIN OFF posts clear-bin with no type');
@@ -828,7 +835,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await tapOverlay('Send on');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/clear-bin', body: {} }], 'Send on posts clear-bin with no type');
     render();
-    await tap(pcCard('TOTE-1', 'ST2_A2'));
+    await tap(winCard('ST2_A2'));
     eq(overlayButtons(), ['PUSH EMPTY', 'PUSH AS TOTE-1', 'CANCEL'], 'stage 2 empty that is not bare: PUSH EMPTY');
 }
 
@@ -851,7 +858,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         loaderTile(2, 'SMN_M2', { role: 'produce', parts: ['PART-A'], bin: NONE, operator: true }),
     ]);
     render();
-    await tap(pcCard('TOTE-1', 'ULN_M1'));
+    await tap(winCard('ULN_M1'));
     await tapOverlay('CONFIRM SWAP');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-1' } }],
         'consume card: the unload tap posts clear-bin through the panel');
@@ -861,7 +868,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         loaderTile(2, 'SMN_M2', { role: 'produce', parts: ['PART-A'], bin: NONE, operator: true }),
     ]);
     render();
-    await tap(pcCard('TOTE-1', 'ULN_M1'));
+    await tap(winCard('ULN_M1'));
     eq(overlayButtons(), ['CONFIRM SWAP', 'CANCEL'], 'consume empty on a mixed board: the CLEAR panel, as the old card opened');
 }
 
@@ -1247,11 +1254,11 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq([presses().length, grid.classList.contains('os-pc-cellsopen')], [1, true], 'presses: a tap opens the tiles, and the board may scroll');
     await tap(bar());
     eq(presses().length, 0, 'presses: a second tap folds them');
-    eq(cardText(pcCard('TOTE-1', 'ULN_P2')).slice(-1), ['Cleared · robot on its way'],
-        'a cart cleared and on its way out says so');
+    eq(cardText(winCard('ULN_P2')), ['ULN_P2', 'CLEARED · ROBOT COMING', 'TOTE-1 · empty'],
+        'a cart cleared and on its way out says so in its state, and is owed nothing');
     leaving.status = 'queued';
     render();
-    eq(cardText(pcCard('TOTE-1', 'ULN_P2')).slice(-1), ['Cleared · waiting to move'],
+    eq(cardText(winCard('ULN_P2')), ['ULN_P2', 'CLEARED · WAITING TO MOVE', 'TOTE-1 · empty'],
         'a cleared cart whose move has no robot says it waits');
     leaving.status = 'in_transit';
     render();
@@ -1296,7 +1303,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     // (5b983220), which a bare cart does not (a bug fixed); its tap was Send on,
     // and is EMPTY ON or PARTIAL ON (ruling 2026-10-29).
     const bareCard = pcCards().find(c => cardText(c)[0] === 'ST2_B1');
-    eq(cardText(bareCard), ['ST2_B1', ' · no bin', 'TOTE-1'], 'stage 2, a bare cart: no bin, its type, no note');
+    eq(cardText(bareCard), ['ST2_B1', 'no bin'], 'stage 2, a bare cart: no bin, no note (changed 2026-11-10: its marker type was the headline)');
     await tap(bareCard);
     eq([overlayTexts().slice(0, 2), overlayButtons()],
         [['Cart, no bin', 'Put an empty on, or a partial — type the count.'], ['EMPTY ON', 'PARTIAL ON', 'CANCEL']],

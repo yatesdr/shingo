@@ -476,13 +476,29 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(by.SMN_D1, 'Change to KD-1 · for ZONE-45', 'a source\'s type: the note names the group');
     eq(by.SMN_D2, 'Send it · for ZONE-45', 'a cart already of the source\'s type: the note still names the group');
     eq(by.SMN_D3, 'No group is short of this cart', 'nothing short: the card says so');
-    eq(by.SMN_D4, 'at SMN_D4 · No group is short of this cart', 'a full with nothing short says so, where it stands');
+    eq(by.SMN_D4, 'No group is short of this cart', 'a full with nothing short says so (where it stands is the spot of the card; changed: "at SMN_D4 · " led it)');
+}
+
+// ── a window card's state: ARRIVED, CLEARED (a robot coming, or waiting), or none ──
+{
+    const move = status => [ord(70, status, { order_type: 'move', source_node: 'SMN_S2', delivery_node: 'EMPTY-SUPER' })];
+    const at = (orders) => zone(B({ station: {}, serves: [], nodes: [
+        bt(1, 'SMN_S1', { role: 'consume', parts: ['PART-K'], bin: FULLBIN('PART-K', 'TOTE-2'), carriers: ['TOTE-2'] }),
+        bt(2, 'SMN_S2', { role: 'consume', parts: ['PART-K'], bin: EMPTYBIN('TOTE-2'), carriers: ['TOTE-2'], orders: orders }),
+    ] }), 'windows').cards.map(c => [c.spot, c.word, c.tone, c.reason]);
+    eq(at(move('in_transit')), [['SMN_S1', 'ARRIVED', 'green', ''], ['SMN_S2', 'CLEARED · ROBOT COMING', 'plain', '']],
+        'state: a full ARRIVED, green; a cleared cart whose move a robot has, CLEARED · ROBOT COMING, owed nothing');
+    eq(at(move('queued'))[1], ['SMN_S2', 'CLEARED · WAITING TO MOVE', 'plain', ''], 'state: a cleared cart whose move has no robot waits');
+    eq(at([])[1], ['SMN_S2', '', 'plain', ''], 'state: a cart that waits for nothing has none');
 }
 
 // ── the unloader: one list, one red per stopped press ──
 {
     const windows = [
-        bt(1, 'SMN_B2', { role: 'consume', parts: ['PART-K'], bin: FULLBIN('PART-K', 'TOTE-2'), uop: 180, carriers: ['TOTE-2', 'KD-1'] }),
+        // SMN_B2's row carries its count (display_uop); SMN_B4's, from an
+        // older Core, none. The tile's own count (uop) is the line seat's.
+        bt(1, 'SMN_B2', { role: 'consume', parts: ['PART-K'], bin: Object.assign(FULLBIN('PART-K', 'TOTE-2'), { display_uop: 1027 }),
+            uop: 180, carriers: ['TOTE-2', 'KD-1'] }),
         bt(2, 'SMN_B4', { role: 'consume', parts: ['PART-L'], bin: FULLBIN('PART-L', 'KD-1'), uop: 1250, carriers: ['KD-1'] }),
         bt(3, 'SMN_B3', { role: 'consume', parts: ['PART-L'], bin: EMPTYBIN('KD-1'), carriers: ['KD-1'] }),
         bt(4, 'SMN_B5', { role: 'consume', parts: ['PART-L'], bin: NOBIN, carriers: ['KD-1'] }),
@@ -495,13 +511,18 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const empties = { group: 'EMPTY-SUPER', rows: [{ bin_type: 'TOTE-2', have: 0, spots: 1 }, { bin_type: 'KD-1', have: 2, spots: 1 }] };
     const b = B({ station: { name: 'Unloader' }, nodes: windows, serves: serves, empties: empties });
     const w = zone(b, 'windows');
-    eq(w.cards.map(c => [c.spot, c.spotWords, c.spotPart, c.spotCount, c.headline, c.tone, c.word, c.reason]), [
-        ['SMN_B3', 'holds an empty bin', '', '', 'KD-1', 'red', 'NOW', 'Change to TOTE-2'],
-        ['SMN_B2', 'holds a full bin', 'PART-K', '180', 'TOTE-2', 'green', 'ARRIVED', 'at SMN_B2 · Send back TOTE-2'],
-        ['SMN_B4', 'holds a full bin', 'PART-L', '1,250', 'KD-1', 'green', 'ARRIVED', 'at SMN_B4 · Change to TOTE-2'],
-    ], 'unloader: one card per cart, the bin the headline; "Change to" on a cart whose send-back type is not its own; ' +
-        'one red per stopped press, the first cart in the walk (an empty first) whose send-back bin it needs; red first; ' +
-        'a full at a window has ARRIVED, green (ready to unload), and says where (changed: plain, SPR 2026-10-28)');
+    eq(w.cards.map(c => [c.spot, c.word, c.headline, c.reason, c.tone, !!c.change]), [
+        ['SMN_B3', 'NOW', 'KD-1 · empty', 'Change to TOTE-2', 'red', true],
+        ['SMN_B2', 'ARRIVED', 'PART-K · 1,027', 'Send back TOTE-2', 'green', false],
+        ['SMN_B4', 'ARRIVED', 'PART-L', 'Change to TOTE-2', 'green', true],
+    ], 'unloader: one card per cart in three lines: the spot and its state (NOW, ARRIVED); what is on the cart (a full: ' +
+        'its part and the count of its row, display_uop, none where the row carried none; an empty: its type and "empty"); ' +
+        'the instruction, a change marked. One red per stopped press, the first cart in the walk (an empty first) whose ' +
+        'send-back bin it needs; red first. (Changed 2026-11-10: the bin type was the headline, the part and the tile count ' +
+        '(0 at a window) rode the spot line, and "at <spot> · " led the reason.)');
+    eq(w.cards.every(c => c.window), true, 'every cart at a window is a window card');
+    eq(w.cards.filter(c => [c.word, c.headline, c.reason].join(' ').indexOf('at ' + c.spot) !== -1), [],
+        'no window card names its spot but on its first line (no "at <spot>")');
     eq(w.cards.map(c => !!c.flash), [false, true, true], 'an arrived full pulses (flash); an empty cart does not');
     eq(b.presses.tiles.map(p => [p.cell, p.node, p.words, p.bin, p.part, p.ready, p.red]), [
         ['PRESS-1', 'PLN_A1', 'full', 'TOTE-2', 'PART-K', false, true],
@@ -517,7 +538,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'a full\'s CLEAR: its carriers and its count, the waiting press\'s bin lit');
     // One bin type at the station: no "Send back" / "Send it".
     const one = B({ station: {}, nodes: [windows[1], windows[2]], serves: [serves[2]], empties: empties });
-    eq(zone(one, 'windows').cards.map(c => c.reason), ['at SMN_B4', ''], 'one bin type at the station: no send-back note (an arrived full says where)');
+    eq(zone(one, 'windows').cards.map(c => c.reason), ['', ''], 'one bin type at the station: no send-back note (ARRIVED stands alone on an arrived full)');
     // The Empties lines are the served presses' bin types: a type the group
     // holds that no served press uses gets no line.
     const extra = { group: 'EMPTY-SUPER', rows: empties.rows.concat([{ bin_type: 'TOTE-9', have: 6, spots: 1 }]) };
@@ -525,8 +546,8 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'Empties: no line for a type no served press uses');
     // A stage-1 unloader: no Empties tile, no note.
     const st1 = B({ station: {}, nodes: [bt(1, 'ST1', { role: 'consume', bin: FULLBIN('PART-A'), leavesBare: true })], serves: [], empties: empties });
-    eq([st1.presses.empties, zone(st1, 'windows').cards[0].reason, zone(st1, 'windows').cards[0].act.leavesBare], [null, 'at ST1', true],
-        'stage 1: no Empties tile (its group is stage 2\'s windows), no note but where it arrived, Full off');
+    eq([st1.presses.empties, zone(st1, 'windows').cards[0].reason, zone(st1, 'windows').cards[0].act.leavesBare], [null, '', true],
+        'stage 1: no Empties tile (its group is stage 2\'s windows), no note, Full off');
     // A held partial (main's partial home): its note says whose and since when,
     // and its tap is UNLOAD and COUNT, not the CLEAR.
     const heldBin = Object.assign({}, FULLBIN('PART-K', 'TOTE-2'), { held_since: '2026-10-18T10:00:00Z', held_for: 'P400', held_uop: 120 });
@@ -536,6 +557,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq([hc.reason, hc.act.kind, hc.act.heldFor, hc.act.count, hc.act.stageTwo], ['Partial · held for P400 · since 10:00', 'unload-held', 'P400', 120, false],
         'a held partial at a window: held for its line since its arrival; the tap is UNLOAD and COUNT with the count Core holds');
     eq([hc.tone, !!hc.flash], ['plain', false], 'a held partial is no full to unload: plain, no pulse');
+    eq([hc.word, hc.headline], ['', 'PART-K · 120'], 'a held partial: no state; its part and its declared count (held_uop, from a Core that sends no display_uop)');
     // The same partial on a pulled-directly stage-2 window (SPR's pair, produce
     // and takes_bare): the held card, its act the stage 2's PARTIAL OFF · EMPTY
     // ON (stageTwo). Changed: at 7a4efa4d the window was consume and the act
@@ -603,15 +625,15 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const b = B({ station: {}, nodes: [win, empty], serves: serves, empties: view.empties });
     const w = zone(b, 'windows');
     const byspot = {};
-    w.cards.forEach(c => { byspot[c.spot] = [c.spotHeight, c.reason, c.act.lit]; });
-    eq(byspot.SMN_C1, ['', 'at SMN_C1 · Change to TOTE-1 · 3 high', { bin_type: 'TOTE-1', layers: 3 }],
-        'a KD cart assigned TOTE-1 at 3 high: the note says so and its CLEAR lights it');
-    eq(byspot.SMN_C2, ['3 high + 2', 'Send it', { bin_type: 'TOTE-1' }],
-        'an empty tote cart over a layer: its height on the spot line; like for like names no height');
+    w.cards.forEach(c => { byspot[c.spot] = [c.headline, c.reason, c.act.lit, !!c.change]; });
+    eq(byspot.SMN_C1, ['PART-K', 'Change to TOTE-1 · 3 high', { bin_type: 'TOTE-1', layers: 3 }, true],
+        'a KD cart assigned TOTE-1 at 3 high: the instruction says so, a change, and its CLEAR lights it');
+    eq(byspot.SMN_C2, ['TOTE-1 · empty · 3 high + 2', 'Send it', { bin_type: 'TOTE-1' }, false],
+        'an empty tote cart over a layer: its type, "empty" and its height on the headline; like for like names no height');
     const tall = Object.assign(bt(3, 'SMN_C3', { role: 'consume', parts: ['PART-K'], bin: Object.assign(T(16, 8),
         { payload_code: 'PART-K', stocked: true }), uop: 30, carriers: ['TOTE-1', 'KD-1'] }), { assignment: { bin_type: 'TOTE-1', layers: 5 } });
     const c3 = zone(B({ station: {}, nodes: [tall], serves: serves, empties: view.empties }), 'windows').cards[0];
-    eq([c3.spotHeight, c3.reason], ['2 high', 'at SMN_C3 · Change to TOTE-1 · 5 high'],
+    eq([c3.headline, c3.reason, c3.change], ['PART-K', 'Change to TOTE-1 · 5 high', true],
         'a tote cart at 2 high assigned 5 high: a change, said with its height');
     eq(b.presses.empties.lines.map(l => [l.bin, l.words, !!l.small]),
         [['TOTE-1', '1 ready', false], ['TOTE-1 · 3 high', '1 of 2', true], ['TOTE-1 · 5 high', '0 of 1', true]],
@@ -715,14 +737,17 @@ const WIDTHS = [1000, 1024, 1280, 1359, 1360, 1799, 1800, 1920];
 const HEIGHTS = { 1000: 540, 1024: 540, 1280: 800, 1359: 800, 1360: 800, 1799: 1000, 1800: 1000, 1920: 1080 };
 
 // The clip proofs: wherever fitBoard lands, an 18-character part on a card
-// (numbered or not), a 19-character bin code on an unloader's headline and its
-// spot line's part and count fit whole.
+// (numbered or not) fits whole, and so do a window card's lines: the part and
+// its count, and a 19-character bin code in its instruction (changed
+// 2026-11-10: the unloader's card carried the bin code as its headline and the
+// part and count on its spot line).
 WIDTHS.forEach(function (w) {
-    [card(), card({ number: 3 }), card({ headline: BIN19, spotCode: '', spotPart: PART18, spotCount: '1,027', spotWords: 'holds a full bin' })]
+    [card(), card({ number: 3 }), { window: true, spot: 'SMN_A13', tone: 'green', word: 'ARRIVED', headline: PART18 + ' · 1,027',
+        reason: 'Change to ' + BIN19 }]
         .forEach(function (c, k) {
             const f = M.fitBoard({ width: w, height: HEIGHTS[w] }, 0, [zoneOf([c])], false);
             eq(M.cardFits(c, f.step, M.cardInnerWidth(w, f.columns, !!c.number)), true,
-                'clip proof ' + ['part', 'numbered part', 'bin code'][k] + ' at ' + w + ' px, ' + f.columns + ' columns, step ' + f.step);
+                'clip proof ' + ['part', 'numbered part', 'window card'][k] + ' at ' + w + ' px, ' + f.columns + ' columns, step ' + f.step);
         });
 });
 // At every step a board can be asked for and every column count, a card that
@@ -734,13 +759,10 @@ const SMALLEST = M.STEPS.length - 1;
     eq(M.cardFits(card({ number: 1 }), SMALLEST, M.cardInnerWidth(w, cols, true)), true,
         'clip proof: the smallest step fits the numbered 18-character part at the narrowest ' + cols + '-column width');
 });
-// The bin code with its part on the spot line does not fit three columns at
-// 1000 px: the fit takes a column back rather than clip it.
+// The 18-character part keeps three columns at 1000 px; what the smallest step
+// cannot hold at three columns takes a column back (the reason's and the
+// window card's pins, below).
 {
-    const unloader = card({ headline: BIN19, spotCode: '', spotPart: PART18, spotCount: '1,027' });
-    const f = M.fitBoard({ width: 1000, height: 540 }, 0, [zoneOf([unloader])], false);
-    eq([M.cardFits(unloader, SMALLEST, M.cardInnerWidth(1000, 3, false)), f.columns, M.cardFits(unloader, f.step, M.cardInnerWidth(1000, f.columns, false))],
-        [false, 2, true], 'clip proof: a code the smallest step cannot hold at three columns takes a column back');
     eq(M.fitBoard({ width: 1000, height: 540 }, 0, [zoneOf([card()])], false).columns, 3, 'the 18-character part keeps three columns at 1000 px');
 }
 // The cell tile: the longest part with "1,027 left" side by side, or the count
@@ -855,6 +877,52 @@ WIDTHS.forEach(function (w) {
         'a note too long for two lines at the smallest step makes its card taller, never cut');
 }
 
+// A card's reason and its "Also" parts wrap and are never cut: the fit counts
+// their lines, and a step where either needs three is one the card does not
+// fit (a bug fixed 2026-11-10: both were cut to an ellipsis).
+{
+    const inner = M.cardInnerWidth(1024, 3, false);
+    const load = card({ tone: 'red', word: 'NOW', reason: 'CELL-1 out' });
+    eq(M.STEPS.map((s, st) => [M.reasonLines(load, st, inner), M.cardHeight(load, st, inner)]), M.STEPS.map(s => [1, s.card]),
+        'a short reason: one line, the step\'s card');
+    const long = card({ tone: 'red', word: 'NOW', reason: 'Pull the full · partial from SMN_P12 · then load PART-3184' });
+    eq(M.STEPS.map((s, st) => M.cardFits(long, st, inner)), [false, false, false, false],
+        'a reason that needs three lines at three columns fits no step there');
+    const f = M.fitBoard({ width: 1024, height: 768 }, 0, [zoneOf([long])], false);
+    eq([f.columns, M.reasonLines(long, f.step, M.cardInnerWidth(1024, f.columns, false)) <= 2], [2, true],
+        'the fit takes a column back rather than cut the reason');
+    const also = card({ headline: 'PART-3', also: ['PART-3184-27QX2C90', 'PART-3184-27QX2C91'] });
+    eq([M.alsoLines(also, inner), M.cardHeight(also, 2, inner) > M.STEPS[2].card], [2, true], 'the "Also" parts wrap to two lines, counted');
+}
+
+// A window card's three lines (windowCards: the spot and the cart's state,
+// what is on the cart, the instruction) are never cut. At 1024 px, three
+// columns: a typical arrived full is one line each, no taller than the step's
+// card; a long part with its count wraps at the large steps and is one line at
+// the compact ones; CLEARED · ROBOT COMING wraps beside its spot; an
+// instruction too long for two lines fits no step there, and the fit takes a
+// column back rather than cut it.
+{
+    const inner = M.cardInnerWidth(1024, 3, false);
+    const win = o => Object.assign({ window: true, spot: 'SMN_01', tone: 'green', word: 'ARRIVED', headline: 'PART-K · 40',
+        reason: 'Send back TOTE-2' }, o || {});
+    eq(M.STEPS.map((s, st) => [M.cardFits(win(), st, inner), M.cardHeight(win(), st, inner)]), M.STEPS.map(s => [true, s.card]),
+        'window card: a typical arrived full fits every step, no taller than the step\'s card');
+    const hk = win({ headline: 'LK41 5019 A PIA27 · 240', reason: 'Change to TOTE-2415 · 3 high' });
+    eq(M.STEPS.map((s, st) => [M.cardFits(hk, st, inner), M.headlineLines(hk, st, inner)]), [[true, 2], [true, 2], [true, 1], [true, 1]],
+        'window card: a long part and its count wrap at the large steps, whole at the compact ones');
+    eq(M.cardHeight(hk, 3, inner), M.STEPS[3].card, 'window card: at the compact step it is no taller than the step\'s card');
+    const cleared = win({ tone: 'plain', word: 'CLEARED · ROBOT COMING', headline: 'TOTE-2415 · empty', reason: '' });
+    eq(M.STEPS.map((s, st) => [M.cardFits(cleared, st, inner), M.stateLines(cleared, st, inner)]), [[true, 2], [true, 2], [true, 2], [true, 1]],
+        'window card: a long state wraps beside its spot, and fits');
+    const long = win({ reason: 'Send back TOTE-2415 · for ZONE-45 · Send back TOTE-2415 · for ZONE-45' });
+    eq(M.STEPS.map((s, st) => M.cardFits(long, st, inner)), [false, false, false, false],
+        'window card: an instruction that needs three lines fits no step at three columns');
+    const f = M.fitBoard({ width: 1024, height: 768 }, 48, [zoneOf([long])], false);
+    eq([f.columns, M.cardFits(long, f.step, M.cardInnerWidth(1024, f.columns, false))], [2, true],
+        'window card: the fit takes a column back rather than cut the instruction');
+}
+
 // ── scale: the board grows with the screen ──
 // boardViewport: the design's size on the 1024 x 768 tablet and on anything
 // smaller (the fit shrinks it there), the smaller of the two ratios on a
@@ -936,7 +1004,8 @@ WIDTHS.forEach(function (w) {
         from = i + 1;
     }
     eq(bare, [], 'scale: every px length in a board rule is drawn at --os-pc-scale');
-    const TOKEN = { card: 'card', headline: 'headline', title: 'title', header: 'header', spot: 'spot', 'spot-name': 'spotName', note: 'note' };
+    const TOKEN = { card: 'card', headline: 'headline', title: 'title', header: 'header', spot: 'spot', 'spot-name': 'spotName', note: 'note',
+        instruction: 'instruction', 'instruction-line': 'instructionLine' };
     const tokensAt = function (sel) {
         const block = new RegExp(sel.replace(/[.#]/g, '\\$&') + '\\s*\\{([^}]*)\\}').exec(css)[1];
         const out = {};
@@ -949,6 +1018,24 @@ WIDTHS.forEach(function (w) {
     eq(M.STEPS.map((s, st) => tokensAt('#os-grid.os-pc-board' + (st ? '.os-pc-step-' + st : ''))), M.STEPS.map(named),
         'scale: the step tokens in operator.css are STEPS\'s, each at --os-pc-scale');
     eq(/--os-pc-scale:\s*1;/.test(/#os-grid\.os-pc-board\s*\{([^}]*)\}/.exec(css)[1]), true, 'scale: the board is at 1 until renderBoard sets it');
+    // The reason line's sizes (STEPS word, why, mark, reason): the compact
+    // step's rule, every other step's the plain one.
+    // lenIn is the px a rule (its selector as written, at a line's start) gives
+    // a property, at the scale; null where the rule or the length is not there.
+    const lenIn = function (sel, prop) {
+        const at = css.indexOf('\n' + sel + ' {');
+        if (at < 0) return null;
+        const block = css.slice(at, css.indexOf('}', at));
+        const m = /calc\((\d+)px \* var\(--os-pc-scale\)\)/.exec(block.split(prop + ':')[1] || '');
+        return m ? Number(m[1]) : null;
+    };
+    const reasonAt = function (st) {
+        const c = st === 3 ? '.os-pc-step-3 .os-pc-reason ' : '';
+        return { reason: lenIn(st === 3 ? '.os-pc-step-3 .os-pc-reason' : '.os-pc-reason', 'line-height'),
+            word: lenIn(c + '.os-pc-word', 'font-size'), why: lenIn(c + '.os-pc-why', 'font-size'), mark: lenIn(c + '.os-pc-mark svg', 'width') };
+    };
+    eq(M.STEPS.map((s, st) => reasonAt(st)), M.STEPS.map(s => ({ reason: s.reason, word: s.word, why: s.why, mark: s.mark })),
+        'scale: the reason line in operator.css (its line, word, words and mark) is the one STEPS measures');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
