@@ -93,6 +93,7 @@ func boardFixture() domain.OperatorStationView {
 				UOPCapacity: 10, HeldSince: "2026-10-18T10:00:00Z", HeldFor: "PRESS-1"},
 			BinStocked:     &stocked,
 			BinTotes:       &domain.BinTotes{TotesOnCart: &have, TotesPerLayer: &have},
+			BinDisplayUOP:  &have,
 			Assignment:     &domain.TileAssignment{BinType: "TOTE-1", Layers: &have},
 			BufferPartial:  &domain.BufferPartial{Node: "SMN_F1"},
 			SupplyRefusals: map[string]domain.SupplyRefusal{"PART-A": {}},

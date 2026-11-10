@@ -66,6 +66,18 @@ func TestStationNodeView_JSONShape(t *testing.T) {
 		t.Error("a bin the feed calls not stocked reads as stocked off its count")
 	}
 
+	// The row's count for display (BinDisplayUOP): on the bin as display_uop,
+	// 0 included, and absent when the row carried none (an older Core), so the
+	// board never shows a false 0.
+	zero := 0
+	shown := keys(StationNodeView{Loader: &TileLoader{Role: "consume"}, BinState: &NodeBinState{Occupied: true}, BinDisplayUOP: &zero})
+	if got := string(keys(shown["bin_state"])["display_uop"]); got != "0" {
+		t.Errorf("bin_state.display_uop = %q with a count of 0 on the row, want 0", got)
+	}
+	if _, ok := b["display_uop"]; ok {
+		t.Error("a bin whose row carried no count carries display_uop")
+	}
+
 	// The Production page's {{json .BinState}}: the count, as it always was.
 	raw, err := json.Marshal(bin)
 	if err != nil {

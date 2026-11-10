@@ -89,6 +89,12 @@ type StationNodeView struct {
 	// station's JSON carries them on bin_state, and NodeBinState, which the
 	// Production page marshals whole, carries none.
 	BinTotes *BinTotes `json:"-"`
+	// BinDisplayUOP is the carrier's count from its node-bins row
+	// (protocol.NodeBinsRow.DisplayUOP): as of the row's last push, for the
+	// board to show beside the part and for nothing to decide on. Nil when the
+	// row carried none (an older Core, or a carrier with no part). Not
+	// serialised: the station's JSON carries it as bin_state.display_uop.
+	BinDisplayUOP *int `json:"-"`
 	// Assignment is what the cart at this window is asked to go back as, from
 	// the group line of the Edge's copy of Core's node-bins feed: a bin type,
 	// and for a type with layer wants a height of it. Nil on every other tile,
@@ -551,7 +557,8 @@ type ServedRow struct {
 
 // stationBinState is a tile's bin as the station's JSON carries it:
 // NodeBinState with Stocked in place of the count, and the cart's tote
-// numbers. The board asks only whether a bin holds parts, never how many; the
+// numbers. The board asks only whether a bin holds parts, never how many (it
+// shows the row's count, DisplayUOP, and decides nothing on it); the
 // Production page marshals NodeBinState itself, with its Stocked and Partial.
 // Pinned by
 // TestStationNodeView_JSONShape.
@@ -580,6 +587,11 @@ type stationBinState struct {
 	// (StationNodeView.BinTotes), absent when unknown.
 	TotesOnCart   *int `json:"totes_on_cart,omitempty"`
 	TotesPerLayer *int `json:"totes_per_layer,omitempty"`
+	// DisplayUOP is the count the board shows on a window card
+	// (StationNodeView.BinDisplayUOP): as of Core's last push of the row,
+	// absent when the row carried none. The board decides nothing on it; what
+	// it acts on stays stocked.
+	DisplayUOP *int `json:"display_uop,omitempty"`
 }
 
 // stationOrder is a tile's order as the station's JSON carries it: the keys
@@ -675,6 +687,7 @@ func (v StationNodeView) MarshalJSON() ([]byte, error) {
 		if t := p.BinTotes; t != nil {
 			bin.TotesOnCart, bin.TotesPerLayer = t.TotesOnCart, t.TotesPerLayer
 		}
+		bin.DisplayUOP = p.BinDisplayUOP
 		p.BinState = nil
 	}
 	orders := stationOrders(p.Orders)

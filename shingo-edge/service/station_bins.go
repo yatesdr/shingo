@@ -227,7 +227,8 @@ func sortedNames(set map[string]bool) []string {
 
 // BoardBin is one node's bin as the board reads it: its row in the Edge's copy
 // of Core's node-bins feed. The board asks whether a bin holds parts
-// (Stocked), never how many: the row carries no count.
+// (Stocked), never how many: the row's count (DisplayUOP) is as of its last
+// push, and the board only shows it.
 type BoardBin struct {
 	protocol.NodeBinsRow
 }
@@ -251,7 +252,7 @@ func BoardBinsFromCopy(rows map[string]protocol.NodeBinsRow) map[string]BoardBin
 //     clear would bring home (buffer_partial), unless the loader's Clear
 //     partials is off;
 //   - the board's empties, from its unloader's outbound group;
-//   - each cart's tote numbers, from its row;
+//   - each cart's tote numbers and its count for display, from its row;
 //   - from the group lines of the Edge's copy (groups; nil from
 //     a Core that sends none): each window's assignment, and the empties'
 //     wants, per type and per wanted height.
@@ -273,6 +274,7 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 			if row.TotesOnCart != nil || protocol.IsToteType(row.TotesPerLayer) {
 				tile.BinTotes = &domain.BinTotes{TotesOnCart: row.TotesOnCart, TotesPerLayer: row.TotesPerLayer}
 			}
+			tile.BinDisplayUOP = row.DisplayUOP
 		}
 		if a := AssignmentAt(groups, name); a != nil && read {
 			tile.Assignment = a

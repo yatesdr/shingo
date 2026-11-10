@@ -422,6 +422,32 @@ func TestStampBins_EmptiesWantsAndHeights(t *testing.T) {
 	}
 }
 
+// TestStampBins_TheCountForDisplay: a row's count for display (DisplayUOP)
+// rides the tile's bin as display_uop, 0 included; a row that carried none (an
+// older Core) gives none, never a 0.
+func TestStampBins_TheCountForDisplay(t *testing.T) {
+	db, _ := countingDB(t)
+	svc, _, _ := binsPlant(t, db)
+	n := func(v int) *int { return &v }
+	rows := BoardBinsFromCopy(map[string]protocol.NodeBinsRow{
+		"U1": {Node: "U1", Occupied: true, PayloadCode: "PART-C", Stocked: true, DisplayUOP: n(1027)},
+		"U2": {Node: "U2", Occupied: true, PayloadCode: "PART-C", DisplayUOP: n(0)},
+		"U3": {Node: "U3", Occupied: true, PayloadCode: "PART-C", Stocked: true},
+	})
+	v := &domain.OperatorStationView{}
+	for _, name := range []string{"U1", "U2", "U3"} {
+		v.Nodes = append(v.Nodes, domain.StationNodeView{Node: domain.Node{CoreNodeName: name},
+			Loader: &domain.TileLoader{Role: "consume", Layout: "shared_window"}})
+	}
+	svc.StampBins(v, rows, true, nil)
+	for i, want := range []string{`"display_uop":1027`, `"display_uop":0`, ""} {
+		tile := stampJSON(t, v.Nodes[i])
+		if want == "" && strings.Contains(tile, "display_uop") || want != "" && !strings.Contains(tile, want) {
+			t.Errorf("%s: tile %s, want display_uop %q", v.Nodes[i].Node.CoreNodeName, tile, want)
+		}
+	}
+}
+
 // TestNodeBinState_HeldPartialFromEitherSource: a held partial reaches the
 // tile's bin the same from both sources: the part's capacity, its line, its
 // arrival and its count. Over HTTP the count is the row's own; the copy carries
