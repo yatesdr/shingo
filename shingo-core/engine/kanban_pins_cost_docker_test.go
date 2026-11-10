@@ -52,13 +52,14 @@ const (
 	// however many groups and levels.
 	snapshotBuild = 9
 	// snapshotBodyBytes is that snapshot's body as it goes to the Edge with every cart
-	// lit for K: three assignments of a type (114 over the base's 1000, K whole and none
-	// said), and the fields a source's row carries cost no byte here.
-	snapshotBodyBytes = 1114
-	// snapshotBodyBytesWhole is it with K whole and nothing short: the base's 1000, and
+	// lit for K: three assignments of a type (114 over the base's 1017, K whole and none
+	// said), and the fields a source's row carries cost no byte here. The base is 1000
+	// plus the full cart's count for the screen (display_uop, 17 bytes on its row).
+	snapshotBodyBytes = 1131
+	// snapshotBodyBytesWhole is it with K whole and nothing short: the base's 1017, and
 	// an assignment for each of the three carts saying so (146 of them, none_short's
 	// own key 18 a row). Only rows that carry the field pay.
-	snapshotBodyBytesWhole = 1146
+	snapshotBodyBytesWhole = 1163
 	// intakeDoorToASource is the intake door up to the order's birth, for an empty pushed at K
 	// with no slot of K free, into Z45 short of that type, however many of Z45's positions are
 	// free: the cart, K's node, the door's one read, Z45's properties,

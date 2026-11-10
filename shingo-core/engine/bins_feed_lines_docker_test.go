@@ -69,9 +69,10 @@ func TestBinsFeed_ReferenceCaseLineInTheSnapshot(t *testing.T) {
 	perLayer := map[string]string{"TOTE-L": `,"totes_per_layer":8`} // the type's, on every cart of it
 	row := func(node string, full bool, bt string) string {
 		if full {
+			// A full cart's row carries its count for the screen (display_uop), outside the digest.
 			return fmt.Sprintf(`{"node":%q,"state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"CART-%s",`+
 				`"bin_type_code":%q,"payload_code":"PART-A","manifest":"{\"items\": []}","manifest_confirmed":false,`+
-				`"epoch":1,"stocked":true,"partial":false%s}`,
+				`"epoch":1,"stocked":true,"partial":false%s,"display_uop":10}`,
 				node, carts[node], node, bt, perLayer[bt])
 		}
 		return fmt.Sprintf(`{"node":%q,"state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"CART-%s",`+
