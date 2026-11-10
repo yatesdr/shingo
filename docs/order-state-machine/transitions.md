@@ -1,6 +1,6 @@
 # Order state machine — bypasses and the lint guard
 
-Verified against: fe06474a
+Verified against: 51489c78
 
 **The code is the state machine; this document is not.** It carries one table
 copied out of the code — the transition table below — only because a test fails
