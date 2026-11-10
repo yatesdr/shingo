@@ -17,11 +17,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
 	"shingoedge/store/internal/helpers"
 )
+
+// generation moves on every write to payload_catalog, so a reader that holds
+// what it read (the station view's load templates, service
+// StationService.heldLoadTemplates) knows to read again without asking the
+// table on every build. Seeded from the clock, as processes.NodeGeneration is,
+// so no run repeats another's values. Every writer of the table is in this
+// file and bumps it after its write lands.
+var generation atomic.Uint64
+
+func init() {
+	generation.Store(uint64(time.Now().UnixNano()))
+}
+
+// Generation is the current value: it changes on every write to
+// payload_catalog and never repeats within a run.
+func Generation() uint64 { return generation.Load() }
 
 // CatalogEntry is one payload_catalog row.
 type CatalogEntry struct {
@@ -43,6 +60,20 @@ type CatalogEntry struct {
 	// read (www apiPayloadManifest) answers from it.
 	Manifest  []protocol.ManifestItem `json:"manifest"`
 	UpdatedAt time.Time               `json:"updated_at"`
+}
+
+// TemplateLines is the row as a load template: its manifest lines, or, for a
+// row with none, one line of the payload itself (ratio 1, its description),
+// which is what Core's manifest endpoint answered for such a payload. The load
+// modal shows these lines (www apiPayloadManifest, the station view's load
+// templates) and a LOAD that carries no manifest is built from them
+// (engine Engine.loadManifest), so what the operator checked is what is
+// written.
+func (e *CatalogEntry) TemplateLines() []protocol.ManifestItem {
+	if len(e.Manifest) > 0 {
+		return e.Manifest
+	}
+	return []protocol.ManifestItem{{PartNumber: e.Code, PartsPerCycle: 1, Description: e.Description}}
 }
 
 const catalogSelectCols = `id, name, code, description, uop_capacity, COALESCE(catid, '') as catid, manifest, updated_at`
@@ -102,9 +133,12 @@ func UpsertCatalog(db *sql.DB, entry *CatalogEntry) error {
 	if err != nil {
 		return fmt.Errorf("encode catalog %s manifest: %w", entry.Code, err)
 	}
-	_, err = db.Exec(upsertCatalogSQL,
-		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID, manifest)
-	return err
+	if _, err = db.Exec(upsertCatalogSQL,
+		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID, manifest); err != nil {
+		return err
+	}
+	generation.Add(1)
+	return nil
 }
 
 // SyncCatalog upserts the full Core catalog and prunes stale entries in ONE
@@ -139,7 +173,11 @@ func SyncCatalog(db *sql.DB, entries []*CatalogEntry) error {
 	if err := deleteStaleCatalogEntriesTx(tx, ids); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	generation.Add(1)
+	return nil
 }
 
 // ListCatalog returns every payload_catalog row sorted by name.
@@ -180,7 +218,11 @@ func DeleteStaleCatalogEntries(db *sql.DB, activeIDs []int64) error {
 	if err := deleteStaleCatalogEntriesTx(tx, activeIDs); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	generation.Add(1)
+	return nil
 }
 
 // deleteStaleCatalogEntriesTx is the prune shared by the standalone call and

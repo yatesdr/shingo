@@ -346,6 +346,9 @@ function setView(nodes, extra) {
         available_styles: [{ id: 11, name: 'STYLE-1' }, { id: 12, name: 'STYLE-2' }],
         nodes: nodes,
         payload_bin_types: catalog,
+        // Each part's load template, as BuildView ships it for a loader board
+        // (the same shape, and here the same values, as the manifest read).
+        load_templates: manifests,
     }, extra || {});
     ctx.setView(view);
     return view;
@@ -468,8 +471,9 @@ function spyLoadBin() {
 }
 spyLoadBin();
 
-const loadBody = { payload_code: 'PART-A', uop_count: 24,
-    manifest: [{ part_number: 'PN-A1', quantity: 48, description: 'left' }] };
+// Changed (2026-11-10): a LOAD posts the part and the count and no manifest;
+// the Edge builds the bin's lines from its catalog copy (section 14).
+const loadBody = { payload_code: 'PART-A', uop_count: 24 };
 
 // ═════════════════════════════════════════════════════════════════════════════
 (async function main() {
@@ -499,7 +503,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(loadOpens, [{ node: 1, codes: ['PART-A'], cap: 0 }], 'LOAD: the card opens the load modal for that part, capacity 0 (the synthesised claim has none)');
     await confirmLoad();
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: loadBody }],
-        'LOAD: CONFIRM LOAD posts load-bin with the part, the UoP count and the manifest scaled to it');
+        'LOAD: CONFIRM LOAD posts load-bin with the part and the UoP count (changed: no manifest)');
 }
 {
     // Nothing parked, nothing live: Request empty is offered and posts an empty body.
@@ -1176,19 +1180,62 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     ['NOW', -1, ['No partial can come home']], 'no partial can come home: a plain line under the header');
 }
 
-// ── 14. The load modal's manifest, from the Edge's catalog copy ───────────
+// ── 14. The load modal's template: the view's, the manifest read the fallback ──
 {
-    // The Edge answers from its copy of Core's catalog: a payload with a row
-    // shows its lines; "No manifest template for this payload" only for an
-    // answer with no lines, which the Edge gives only when its copy has no row
-    // for the payload. A failed read is not "no template".
-    const rowsText = () => document.getElementById('load-bin-rows').innerHTML.replace(/<[^>]*>/g, '');
+    // Changed (2026-11-10): a tap read the part's manifest
+    // (GET /api/payload/{code}/manifest) before the modal could be used, and a
+    // loader screen on lossy Wi-Fi timed it out (Hopkinsville). The view
+    // carries each part's template (view.load_templates); a tap opens from it
+    // with no request, the count starts at its capacity, and LOAD posts the
+    // part and the count, never a manifest: the Edge builds the bin's lines.
+    //
+    // The read stays for a part the view does not carry: it shows the row's
+    // lines; "No manifest template for this payload" only for an answer with no
+    // lines, which the Edge gives only when its copy has no row for the
+    // payload. A failed read is not "no template".
+    const rowsEl = document.getElementById('load-bin-rows');
+    const rowsText = () => rowsEl.innerHTML.replace(/<[^>]*>/g, '');
+    const shown = () => [rowsEl].concat(rowsEl.descendants()).map(n => n.innerHTML).join('');
+    const reads = () => requests.filter(r => /\/manifest$/.test(r.url)).map(r => r.url);
+    const tile = loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE });
+    const twoLines = { 'PART-A': { uop_capacity: 100, items: [
+        { part_number: 'PN-V1', parts_per_cycle: 2, description: 'left' },
+        { part_number: 'PN-V2', parts_per_cycle: 1, description: '' }] } };
+    let keypad = null;
+    const realKeypad = ctx.openKeypad;
+    ctx.openKeypad = function (_node, _value, opts) { keypad = opts; };
+
+    setView([tile], { load_templates: twoLines });
+    resetDOM();
     ctx.openLoadBin(1, ['PART-A'], 0);
     await flush();
-    const rowsEl = document.getElementById('load-bin-rows');
-    const shown = [rowsEl].concat(rowsEl.descendants()).map(n => n.innerHTML).join('');
-    eq([shown.indexOf('PN-A1') >= 0, shown.indexOf('No manifest template') >= 0], [true, false],
-        'load modal: a payload with a catalog row shows its template line');
+    eq([reads(), shown().indexOf('PN-V1') >= 0, shown().indexOf('PN-V2') >= 0, shown().indexOf('>200<') >= 0],
+        [[], true, true, true],
+        'load modal, the part in the view: no request, its two lines, the count at its capacity (PN-V1 2 x 100)');
+    await confirmLoad();
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: { payload_code: 'PART-A', uop_count: 100 } }],
+        'load modal, from the view: LOAD posts the part and the capacity, no manifest');
+
+    resetDOM();
+    ctx.openLoadBin(1, ['PART-A'], 0);
+    await flush();
+    await document.getElementById('os-load-uop-display').click();
+    await keypad.onOk(0, 90);
+    await confirmLoad();
+    eq([reads(), posts()], [[], [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: { payload_code: 'PART-A', uop_count: 90 } }]],
+        'load modal, from the view: a count typed below the capacity is the count posted');
+
+    // The fallback: the view carries no template for the part.
+    setView([tile], { load_templates: undefined });
+    resetDOM();
+    ctx.openLoadBin(1, ['PART-A'], 0);
+    await flush();
+    eq([reads(), shown().indexOf('PN-A1') >= 0, shown().indexOf('No manifest template') >= 0],
+        [['/api/payload/PART-A/manifest'], true, false],
+        'load modal, the part not in the view: the manifest read, and the row\'s template line');
+    await confirmLoad();
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: loadBody }],
+        'load modal, from the read: LOAD posts the part and the read\'s capacity, no manifest');
     ctx.openLoadBin(1, ['PART-NONE'], 0);
     await flush();
     eq(rowsText(), 'No manifest template for this payload',
@@ -1199,6 +1246,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(rowsText(), 'Failed to load manifest — tap the payload again to retry',
         'load modal: a failed read says so, with the retry, not "no template"');
     manifestBroken.delete('PART-A');
+    ctx.openKeypad = realKeypad;
 }
 
 // ── 15. The cells line, and a refused part a cell runs ─────────────────────
@@ -1328,9 +1376,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await keypad.onOk(0, 37);
     ctx.openKeypad = realKeypad;
     await confirmLoad();
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/load-bin', body: { payload_code: 'PART-K', uop_count: 37,
-        manifest: [{ part_number: 'PN-K1', quantity: 37, description: 'right' }] } }],
-    'PARTIAL ON posts load-bin with the part and the typed count');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/load-bin', body: { payload_code: 'PART-K', uop_count: 37 } }],
+        'PARTIAL ON posts load-bin with the part and the typed count');
 
     // No line sources from here: EMPTY ON alone.
     setView([stage1, stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE }), held]);
@@ -1354,9 +1401,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await tapOverlay('FULL ON');
     eq(loadOpens, [{ node: 2, codes: ['PART-K'], cap: 0 }], 'FULL ON opens the load modal for the cells\' parts');
     await confirmLoad();
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/load-bin', body: { payload_code: 'PART-K', uop_count: 132,
-        manifest: [{ part_number: 'PN-K1', quantity: 132, description: 'right' }] } }],
-    'FULL ON posts load-bin at the pack, nothing typed');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/load-bin', body: { payload_code: 'PART-K', uop_count: 132 } }],
+        'FULL ON posts load-bin at the pack, nothing typed');
 
     // Both sides source from here: EMPTY ON, FULL ON and PARTIAL ON.
     setView([stage1, stageTwoTile(2, 'ST2_B1', { pulled_directly: true, bin: BARE, stage_two_side: 'mixed',
@@ -1430,7 +1476,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 // ── 18. The LOAD's count is the one typed ───────────────────────────────────
 {
     // The load modal posts the part and the count the person typed on the
-    // keypad, the manifest scaled to it; a count of 0 posts nothing.
+    // keypad (changed 2026-11-10: and no manifest); a count of 0 posts nothing.
     let keypad = null;
     const realKeypad = ctx.openKeypad;
     ctx.openKeypad = function (_node, _value, opts) { keypad = opts; };
@@ -1440,9 +1486,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await document.getElementById('os-load-uop-display').click();
     await keypad.onOk(0, 37);
     await confirmLoad();
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: { payload_code: 'PART-A', uop_count: 37,
-        manifest: [{ part_number: 'PN-A1', quantity: 74, description: 'left' }] } }],
-    'LOAD: the typed count, and the manifest scaled to it');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: { payload_code: 'PART-A', uop_count: 37 } }],
+        'LOAD: the typed count');
     resetDOM();
     ctx.openLoadBin(1, ['PART-A'], 0);
     await flush();

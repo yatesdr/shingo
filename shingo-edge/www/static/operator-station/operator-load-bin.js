@@ -1,7 +1,7 @@
 import { esc } from '/static/shared/esc.js';
 import { postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
-import { findNodeByID } from './operator-state.js';
+import { findNodeByID, getView } from './operator-state.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, standingRefusalFor,
     REFUSE_LABEL, UNDO_LABEL,
@@ -74,6 +74,45 @@ function syncRefusalControl() {
     wrap.style.display = '';
 }
 
+// viewTemplate is the part's load template from the station view
+// (view.load_templates: the catalog's capacity and template lines, in the shape
+// the manifest read answers), or null when the view carries none for it.
+function viewTemplate(code) {
+    const view = getView();
+    const templates = view && view.load_templates;
+    return (templates && templates[code]) || null;
+}
+
+// applyTemplate fills the modal from a load template — the view's or the
+// manifest read's answer, the same shape — and draws it.
+function applyTemplate(data) {
+    const rows = document.getElementById('load-bin-rows');
+    const items = data.items || [];
+    loadBinState.uopCount = loadBinState.typedCount ? 0 : (data.uop_capacity || 0);
+    // The template the catalog holds, shown so the operator can check the bin
+    // matches it; the ratios are the catalog's and are not editable here.
+    //
+    // What is held is the TEMPLATE (a per-cycle ratio per part). The count a
+    // line shows is that ratio times the UoP count the operator sets, derived
+    // at render, because the operator can change UoP after the template opens.
+    // LOAD sends the part and the count, and the Edge builds the bin's
+    // manifest from the same catalog copy (engine loadManifest).
+    loadBinState.manifest = items.map(function(item) {
+        return {
+            part_number: item.part_number,
+            parts_per_cycle: item.parts_per_cycle || 0,
+            description: item.description || '',
+        };
+    });
+    // No lines only when the Edge's catalog copy has no row for the payload
+    // (apiPayloadManifest; the view then carries no template for it).
+    if (items.length === 0) {
+        rows.innerHTML = '<div style="color:#f66;padding:8px">No manifest template for this payload</div>';
+        return;
+    }
+    renderRows();
+}
+
 async function selectLoadPayload(code) {
     if (!loadBinState) return;
     loadBinState.payloadCode = code;
@@ -81,14 +120,24 @@ async function selectLoadPayload(code) {
         btn.className = 'os-action-btn' + (btn.dataset.code === code ? ' request' : '');
     });
     syncRefusalControl();
+    // FROM THE VIEW, WITH NO REQUEST: the board's view carries each part's
+    // template (view.load_templates), so the tap opens at once. A loader screen
+    // on a 1-2 s Wi-Fi link with loss (Hopkinsville, 2026-11) timed out the
+    // per-tap read below before LOAD could be pressed. Pinned by
+    // operator-loader-station.test.js section 14.
+    const held = viewTemplate(code);
+    if (held) {
+        applyTemplate(held);
+        return;
+    }
+    // The fallback, for a part the view did not carry: the manifest read.
     const rows = document.getElementById('load-bin-rows');
     rows.innerHTML = '<div style="color:#999;text-align:center;padding:12px">Loading manifest...</div>';
     // Bound the fetch (fetchWithTimeout): a browser fetch has no default timeout,
     // so a silently severed connection (edge restart mid-request, Wi-Fi blip,
     // half-open TCP) would leave the modal stuck on "Loading manifest…" until a
     // hard refresh. On timeout it fails to a retryable message — tapping the
-    // payload re-fires selectLoadPayload. The Edge answers from its own catalog
-    // copy, so the helper's 8s default never cuts a healthy load short.
+    // payload re-fires selectLoadPayload.
     try {
         const res = await fetchWithTimeout('/api/payload/' + encodeURIComponent(code) + '/manifest');
         const data = res.ok ? await res.json() : null;
@@ -102,33 +151,7 @@ async function selectLoadPayload(code) {
             rows.innerHTML = '<div style="color:#f66;padding:8px">Failed to load manifest — tap the payload again to retry</div>';
             return;
         }
-        const items = data.items || [];
-        loadBinState.uopCount = loadBinState.typedCount ? 0 : (data.uop_capacity || 0);
-        // Capture the canonical manifest from the payload template — operators
-        // shouldn't be redefining it on the fly. They see the line items so
-        // they can verify the bin matches the template, but the ratios are
-        // the catalog's and are not editable here.
-        //
-        // What is held is the TEMPLATE (a per-cycle ratio per part). The
-        // physical count for a line is that ratio times the UoP count the
-        // operator sets, so it is derived at render and at submit rather than
-        // stored — the operator can change UoP after the template loads, and a
-        // count captured here would be the count for whatever UoP happened to
-        // be showing at fetch time.
-        loadBinState.manifest = items.map(function(item) {
-            return {
-                part_number: item.part_number,
-                parts_per_cycle: item.parts_per_cycle || 0,
-                description: item.description || '',
-            };
-        });
-        // No lines only when the Edge's catalog copy has no row for the payload
-        // (apiPayloadManifest).
-        if (items.length === 0) {
-            rows.innerHTML = '<div style="color:#f66;padding:8px">No manifest template for this payload</div>';
-            return;
-        }
-        renderRows();
+        applyTemplate(data);
     } catch (err) {
         console.error('selectLoadPayload manifest fetch', err);
         if (!loadBinState || loadBinState.payloadCode !== code) return;
@@ -218,6 +241,8 @@ async function submitLoadBin() {
         showToast('Select a payload first', 'error');
         return;
     }
+    // No template shown (the fallback read failed or is still out): the
+    // operator has had nothing to check the bin against.
     if (state.manifest.length === 0) {
         showToast('No manifest loaded', 'error');
         return;
@@ -229,18 +254,12 @@ async function submitLoadBin() {
         showToast('Set UoP Count first', 'error');
         return;
     }
+    // The part and the count, and no manifest: the Edge builds the bin's lines
+    // from its catalog copy, each template line's ratio times this count
+    // (engine loadManifest), the lines this modal showed.
     const body = {
         payload_code: state.payloadCode,
         uop_count: state.uopCount,
-        // Ratios become counts on the way out. The template line says how many
-        // per cycle; the bin holds that times the cycles the operator counted.
-        manifest: state.manifest.map(function(item) {
-            return {
-                part_number: item.part_number,
-                quantity: item.parts_per_cycle * state.uopCount,
-                description: item.description,
-            };
-        }),
     };
     const nodeID = state.nodeID;
     setSubmittingUI(true);

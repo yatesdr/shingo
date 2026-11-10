@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -137,10 +138,12 @@ func (e *Engine) stageTwoParts(l *domain.Loader) []domain.StageTwoPart {
 	return l.StageTwoParts(claims, e.CoreNodeGroups())
 }
 
-// LoadBin marks a bin at a manual_swap node as loaded with the given manifest.
-// Calls Core's HTTP API directly to set the manifest on the existing bin at
-// that node. No transport order is created — the bin stays in place until a
-// move order sends it to OutboundDestination.
+// LoadBin marks a bin at a manual_swap node as loaded with the given manifest,
+// or, when the request carries none, with the one loadManifest builds from
+// this Edge's catalog copy (the operator station sends none). Calls Core's
+// HTTP API directly to set the manifest on the existing bin at that node. No
+// transport order is created — the bin stays in place until a move order
+// sends it to OutboundDestination.
 //
 // uopCount is absent-or-value: nil when nobody declared a count, in which case
 // Core answers from the payload's standard pack. Core resolves it either way
@@ -175,9 +178,6 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 
 	if err := requireLoaderClaim(node, claim); err != nil {
 		return err
-	}
-	if len(manifest) == 0 {
-		return fmt.Errorf("manifest is empty")
 	}
 
 	// Check that a bin is actually at this node and that it's empty.
@@ -228,6 +228,9 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	if !slices.Contains(allowed, payloadCode) {
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
+	if manifest, err = e.loadManifest(payloadCode, uopCount, manifest); err != nil {
+		return err
+	}
 
 	// NO LOCAL FALLBACK. An undeclared count travels as absence and Core
 	// resolves it from the payload's standard pack — the same template this
@@ -268,6 +271,48 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	}
 	e.afterLoad(nodeID, node, claim, payloadCode, loadResp)
 	return nil
+}
+
+// loadManifest is the manifest a LOAD writes: the one the request carried,
+// unchanged, else the payload's template from this Edge's copy of Core's
+// catalog (CatalogEntry.TemplateLines, the lines the load modal shows), each
+// line's per-cycle ratio times the declared count, with its description.
+//
+// THE EDGE BUILDS IT SO THE MODAL NEED NOT FETCH IT. The operator station used
+// to build this in the browser from a per-tap manifest read, and on the
+// Hopkinsville loader's Wi-Fi (1-2 s round trips with loss, 2026-11) that read
+// failed as "Manifest timed out" before LOAD could be pressed. The arithmetic
+// is the one the station's submitLoadBin did, so a bin loaded either way
+// carries the same lines. A request with a manifest (the Production page,
+// whose counts a person may edit; the sim; a screen still on the old script)
+// is not rebuilt. Pinned by TestLoadBin_BuildsTheManifestFromTheCatalog.
+//
+// A payload the copy has no row for has no template and is refused, as the
+// modal said "No manifest template for this payload"; a request with no count
+// is refused too, because the count is what the lines are scaled by and the
+// standard pack is Core's to resolve, not this copy's.
+func (e *Engine) loadManifest(payloadCode string, uopCount *int64, sent []protocol.IngestManifestItem) ([]protocol.IngestManifestItem, error) {
+	if len(sent) > 0 {
+		return sent, nil
+	}
+	if uopCount == nil {
+		return nil, fmt.Errorf("set the UoP count to load %s", payloadCode)
+	}
+	entry, err := e.db.GetPayloadCatalogByCode(payloadCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("no manifest template for %s in this Edge's catalog", payloadCode)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the catalog for %s: %w", payloadCode, err)
+	}
+	lines := entry.TemplateLines()
+	out := make([]protocol.IngestManifestItem, len(lines))
+	for i, l := range lines {
+		out[i] = protocol.IngestManifestItem{
+			PartNumber: l.PartNumber, Quantity: l.PartsPerCycle * *uopCount, Description: l.Description,
+		}
+	}
+	return out, nil
 }
 
 // afterLoad is a LOAD's follow-up once Core has loaded the carrier: the

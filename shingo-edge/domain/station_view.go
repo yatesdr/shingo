@@ -330,6 +330,17 @@ type OperatorStationView struct {
 	// choices of the cart's family (operator-board-model.js clearChoices). Absent
 	// from a Core that sends none, and the panels then do not filter.
 	Family map[string]string `json:"family,omitempty"`
+	// LoadTemplates is, per part the board's load modal can open on (a loader
+	// tile's parts; a stage 2's partial and full parts), the part's load
+	// template from the Edge's copy of Core's catalog: its UOP capacity, which
+	// the modal's count starts at, and its template lines, which it shows. The
+	// modal opens from it with no request; the LOAD sends the part and the
+	// count, and the Edge builds the manifest from the same copy
+	// (engine Engine.loadManifest). Absent on a board with no loader tile; a
+	// part the copy has no row for is absent from it, and the modal then asks
+	// GET /api/payload/{code}/manifest. Built by
+	// StationService.loadTemplatesForBoard, from memory between catalog writes.
+	LoadTemplates map[string]LoadTemplate `json:"load_templates,omitempty"`
 	// Empties is what the outbound group of the board's unloader holds:
 	// per bin type, the empties standing in it, and the group's open spots.
 	// Absent on a board with no such loader, for a stage-1 unloader (its group
@@ -358,6 +369,15 @@ type OperatorStationView struct {
 	// Stamped by www stampStationCatalog; pinned by
 	// TestStationCatalog_SaysAsOfAndNotKnown.
 	Catalog *CatalogKnown `json:"catalog,omitempty"`
+}
+
+// LoadTemplate is one part's load template, in the shape the manifest read
+// (GET /api/payload/{code}/manifest) answers, so the modal reads either the
+// same way: the catalog's UOP capacity and its template lines
+// (catalog.CatalogEntry.TemplateLines).
+type LoadTemplate struct {
+	UOPCapacity int                     `json:"uop_capacity"`
+	Items       []protocol.ManifestItem `json:"items"`
 }
 
 // CatalogKnown is whether a view's payload catalog is known, and when it was

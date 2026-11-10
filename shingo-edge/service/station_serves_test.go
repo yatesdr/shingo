@@ -11,6 +11,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
 )
 
@@ -473,5 +474,73 @@ func TestFamiliesForBoard(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"family"`) {
 		t.Errorf("a view with no families sends the key: %s", raw)
+	}
+}
+
+// TestLoadTemplatesForBoard: the view carries, under the key the load modal
+// reads, the catalog's capacity and template lines for each part the board's
+// load modal can open on: a loader tile's parts and a stage 2's partial and
+// full parts, not an unloader's (it clears, it does not load), and not a part
+// the catalog has no row for; a row with no lines is its one-line template of
+// itself. It reads the catalog once, then not again until the catalog is
+// written. Not parallel: the catalog's generation is process-wide, and another
+// test's catalog write between two builds here would be counted as this one's.
+func TestLoadTemplatesForBoard(t *testing.T) {
+	db, counter := countingDB(t)
+	for _, e := range []*catalog.CatalogEntry{
+		{ID: 1, Name: "PART-A", Code: "PART-A", UOPCapacity: 24, Manifest: []protocol.ManifestItem{
+			{PartNumber: "PN-A1", PartsPerCycle: 2, Description: "left"}, {PartNumber: "PN-A2", PartsPerCycle: 1}}},
+		{ID: 2, Name: "PART-K", Code: "PART-K", Description: "bare", UOPCapacity: 132},
+		{ID: 3, Name: "PART-P", Code: "PART-P", UOPCapacity: 10, Manifest: []protocol.ManifestItem{{PartNumber: "PN-P", PartsPerCycle: 1}}},
+		{ID: 4, Name: "PART-U", Code: "PART-U", UOPCapacity: 50},
+	} {
+		if err := db.UpsertPayloadCatalog(e); err != nil {
+			t.Fatalf("seed %s: %v", e.Code, err)
+		}
+	}
+	tiles := []store.StationNodeView{
+		{},
+		{Loader: &domain.TileLoader{Role: string(domain.RoleProduce),
+			Parts: []domain.TileLoaderPart{{Code: "PART-A"}, {Code: "PART-GONE"}}}},
+		{Loader: &domain.TileLoader{Role: string(domain.RoleConsume), Parts: []domain.TileLoaderPart{{Code: "PART-U"}}}},
+		{Loader: &domain.TileLoader{Role: string(domain.RoleConsume), TakesBare: true,
+			PartialParts: []string{"PART-P", "PART-K"}, FullParts: []string{"PART-K"}}},
+	}
+	svc := NewStationService(db)
+	build := func() (string, int64) {
+		counter.Reset()
+		raw, err := json.Marshal(domain.OperatorStationView{LoadTemplates: svc.loadTemplatesForBoard(tiles)})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return string(raw), counter.Count()
+	}
+	want := `"load_templates":{` +
+		`"PART-A":{"uop_capacity":24,"items":[{"part_number":"PN-A1","parts_per_cycle":2,"description":"left"},{"part_number":"PN-A2","parts_per_cycle":1,"description":""}]},` +
+		`"PART-K":{"uop_capacity":132,"items":[{"part_number":"PART-K","parts_per_cycle":1,"description":"bare"}]},` +
+		`"PART-P":{"uop_capacity":10,"items":[{"part_number":"PN-P","parts_per_cycle":1,"description":""}]}}`
+	if got, n := build(); !strings.Contains(got, want) || n != 1 {
+		t.Errorf("first build = %s in %d statements, want %s in 1", got, n, want)
+	}
+	if got, n := build(); !strings.Contains(got, want) || n != 0 {
+		t.Errorf("second build = %s in %d statements, want the same in 0", got, n)
+	}
+	if err := db.UpsertPayloadCatalog(&catalog.CatalogEntry{ID: 3, Name: "PART-P", Code: "PART-P", UOPCapacity: 12}); err != nil {
+		t.Fatalf("rewrite PART-P: %v", err)
+	}
+	if got, n := build(); !strings.Contains(got, `"PART-P":{"uop_capacity":12,"items":[{"part_number":"PART-P"`) || n != 1 {
+		t.Errorf("after a catalog write = %s in %d statements, want PART-P's new row in 1", got, n)
+	}
+
+	counter.Reset()
+	if got := svc.loadTemplatesForBoard([]store.StationNodeView{{}}); got != nil || counter.Count() != 0 {
+		t.Errorf("a board with no loader tile: %v in %d statements, want none in 0", got, counter.Count())
+	}
+	raw, err := json.Marshal(domain.OperatorStationView{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), `"load_templates"`) {
+		t.Errorf("a view with no templates sends the key: %s", raw)
 	}
 }

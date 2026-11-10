@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -16,6 +17,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 	"shingoedge/store/lineside"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -215,6 +217,11 @@ type StationService struct {
 	curtained     map[curtainKey]processes.Node
 	curtainedGen  uint64
 	curtainLoaded bool
+
+	// loadTemplates is every catalog row's load template as of one catalog
+	// generation (catalog.Generation), held so the view build reads the
+	// catalog only after it is written. See heldLoadTemplates.
+	loadTemplates atomic.Pointer[heldTemplates]
 
 	// touched throttles the liveness write — see Touch.
 	touchMu lockcheck.Mutex[lockorder.StationTouch]
@@ -738,6 +745,8 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 
 	view.Serves = s.servedRows(view.Nodes)
 	view.Family = s.familiesForBoard(view.Nodes)
+	// After the served pass: it stamps a stage 2's partial and full parts.
+	view.LoadTemplates = s.loadTemplatesForBoard(view.Nodes)
 
 	return view, nil
 }
@@ -755,6 +764,75 @@ func (s *StationService) familiesForBoard(tiles []store.StationNodeView) map[str
 		}
 	}
 	return nil
+}
+
+// loadTemplatesForBoard is the view's LoadTemplates: the load template of each
+// part the board's load modal can open on, so a tap opens it with no request
+// (the HMI's link may be Wi-Fi that cannot carry one in time). Those parts are
+// a loader tile's own (an unloader's are cleared, never loaded) and a stage
+// 2's partial and full parts (PARTIAL ON, FULL ON). Nil on a board with none;
+// a part the catalog has no row for is left out. No statement between catalog
+// writes (heldLoadTemplates). Pinned by TestLoadTemplatesForBoard.
+func (s *StationService) loadTemplatesForBoard(tiles []store.StationNodeView) map[string]domain.LoadTemplate {
+	var codes []string
+	for i := range tiles {
+		l := tiles[i].Loader
+		if l == nil {
+			continue
+		}
+		if !l.ActsAsUnloader() {
+			for _, p := range l.Parts {
+				codes = append(codes, p.Code)
+			}
+		}
+		codes = append(codes, l.PartialParts...)
+		codes = append(codes, l.FullParts...)
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	all := s.heldLoadTemplates()
+	out := make(map[string]domain.LoadTemplate, len(codes))
+	for _, c := range codes {
+		if t, ok := all[c]; ok {
+			out[c] = t
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// heldTemplates is every catalog row's load template, as of one catalog
+// generation.
+type heldTemplates struct {
+	gen    uint64
+	byCode map[string]domain.LoadTemplate
+}
+
+// heldLoadTemplates is every catalog row's load template by payload code,
+// read again only when the catalog has been written since (catalog.Generation):
+// one statement on the first build after a write, none on the next. A failed
+// read is not held: this build carries no templates (the modal falls back to
+// its manifest read) and the next build reads again. Two builds that find it
+// stale together both read; the later store wins, and both read the same rows.
+func (s *StationService) heldLoadTemplates() map[string]domain.LoadTemplate {
+	gen := catalog.Generation()
+	if held := s.loadTemplates.Load(); held != nil && held.gen == gen {
+		return held.byCode
+	}
+	rows, err := s.db.ListPayloadCatalog()
+	if err != nil {
+		log.Printf("station view: read the payload catalog for the load templates: %v", err)
+		return nil
+	}
+	byCode := make(map[string]domain.LoadTemplate, len(rows))
+	for _, r := range rows {
+		byCode[r.Code] = domain.LoadTemplate{UOPCapacity: r.UOPCapacity, Items: r.TemplateLines()}
+	}
+	s.loadTemplates.Store(&heldTemplates{gen: gen, byCode: byCode})
+	return byCode
 }
 
 // curtainKey names a process_node by what a claim's pairing names it by: the
