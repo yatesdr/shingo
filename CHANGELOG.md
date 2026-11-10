@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.2.2 — 2026-11-10
+
 Deploy: no migration.
 
 - A keep-staged spot reorders as soon as Core reports the bin moved, not up to a minute later
