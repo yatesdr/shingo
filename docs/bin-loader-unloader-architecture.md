@@ -27,6 +27,7 @@ A loader is one `bin_loaders` row on Core (columns: [data-model.md](data-model.m
 - `inbound_source` and `outbound_dest` are where its carriers come from and go; `funnel_windows` says whether a
   shared loader spreads a demand over its windows or funnels it to its first; `auto_push` arms the Edge's
   window-free asks; `second_stage_loader_id` joins the two loaders of a two-stage unloader.
+- `no_clear_partials` turns off a dedicated loader's **Clear partials** (see [Clear partials](#clear-partials)).
 
 Its homes are `bin_loader_homes` rows (a window or a dedicated position; `UNIQUE(position_node_id)`, so a node
 belongs to at most one loader; `home_kind` for a dedicated home with no part). A loader's carrier mix
@@ -81,6 +82,21 @@ bin on.
 **Bin identity.** A LOAD writes the bin record standing at the window, the one the Edge checked empty. If the
 forklift swapped the physical container, the record still describes what stands at the window: what matters is
 the manifest, the count and the location.
+
+### Clear partials
+
+A dedicated loader keeps partly used bins in its buffer spots (`home_kind` `buffer`). When a home holds a stocked
+bin of its part and a buffer spot of the same loader holds a stocked bin of that part, the board's Clear partials
+section has a card for the home, "Pull the full · partial from" and the spot's name (the Edge stamps the spot on
+the home's tile, `bufferPartialFor`). The driver pulls the full and taps; the tap is Core's home clear (the `clear_home` ask,
+`Engine.ClearLoaderHome`), which records the full gone and brings the partial home.
+
+`bin_loaders.no_clear_partials` turns this off for one loader: the Clear partials switch on Core's loader settings,
+drawn for a dedicated loader with a pinned home and a buffer spot, on by default. Off, no home names a buffer
+partial, the board draws no buffer section (strip, words and cards) and no PULL FULL FROM HOME, and Core refuses
+the home clear. The buffer's partials stay in the loader's source pool (`Home.InSourcePool`). It rides the wire as
+`LoaderInfo.NoClearPartials`; a Core that predates the field sends nothing, which reads as on, so deploy Core
+first.
 
 ---
 

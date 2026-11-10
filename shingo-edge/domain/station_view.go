@@ -493,6 +493,11 @@ type TileLoader struct {
 	// board_hides_idle, has no reader here: the board draws a card only for
 	// work (boardModel), so there is no idle card to hide.
 	BoardShowsAllParts bool `json:"board_shows_all_parts"`
+	// NoClearPartials is the Core-owned setting (Loader.NoClearPartials): a
+	// dedicated loader's Clear partials is off, so the board draws no buffer
+	// section for it (the strip, its words and its cards) and offers no home
+	// clear. Absent, the clear, on every other tile.
+	NoClearPartials bool `json:"no_clear_partials,omitempty"`
 	// Buffer is a dedicated loader's buffer spots in the plant's order (Core's
 	// bin_loader_homes sort order), each with what stands there. Carried ONCE
 	// per loader, on the tile of its first home on the board in that order;

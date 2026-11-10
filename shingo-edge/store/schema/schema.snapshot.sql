@@ -159,6 +159,9 @@ CREATE TABLE core_loaders (
     -- (bin_loaders.board_hides_idle, board_shows_all_parts).
     board_hides_idle      INTEGER NOT NULL DEFAULT 0,
     board_shows_all_parts INTEGER NOT NULL DEFAULT 0,
+    -- 1 = a dedicated loader whose Clear partials is off: the board offers
+    -- no home clear (Edge v46). Core owns it (bin_loaders.no_clear_partials).
+    no_clear_partials INTEGER NOT NULL DEFAULT 0,
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );

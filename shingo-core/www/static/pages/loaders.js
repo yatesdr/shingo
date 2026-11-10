@@ -152,6 +152,10 @@ function formShape(state) {
     // not cards, so the board questions are asked of every loader and of an
     // unloader only with one spot per part.
     board: saved && (!unloader || dedicated),
+    // Clear partials is a dedicated station's with a pinned home and a buffer
+    // spot (homesAndBuffer, from the list). Switched off, it stays drawn
+    // whatever else changed, so it can always be switched back on.
+    clearPartials: saved && dedicated && (!!state.homesAndBuffer || state.clearPartials === false),
     remove: saved,
   };
 }
@@ -301,18 +305,30 @@ function formStateFromLoader(l) {
     pulledDirectly: !!l.pulled_directly,
     boardHidesIdle: !!l.board_hides_idle,
     boardShowsAllParts: !!l.board_shows_all_parts,
+    // Stored as its restriction (no_clear_partials); on unless it says so.
+    clearPartials: !l.no_clear_partials,
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
   };
 }
 
-// formStateFromItem is a listed station's state: its row, and the server's
+// formStateFromItem is a listed station's state: its row, the server's
 // answer to whether a drain box would be kept on it (drain_allowed), which the
-// page asks rather than spells.
+// page asks rather than spells, and whether its members are a pinned home and
+// a buffer spot (homesAndBuffer), which is what Clear partials needs.
 function formStateFromItem(item) {
   const state = formStateFromLoader(item.loader);
   state.drainAllowed = !!item.drain_allowed;
+  state.homesAndBuffer = homesAndBuffer(item.homes || []);
   return state;
+}
+
+// homesAndBuffer is whether a dedicated station's members hold a home pinned
+// to a part and at least one buffer spot: the two a clear's full and partial
+// stand on.
+function homesAndBuffer(homes) {
+  const isBuffer = function (hm) { return (hm.home_kind || 'home') === 'buffer'; };
+  return homes.some(isBuffer) && homes.some(function (hm) { return !isBuffer(hm) && !!hm.payload_code; });
 }
 
 // loaderPayload is the update body of a state. /api/loader/update is a
@@ -336,6 +352,9 @@ function loaderPayload(state) {
     pulled_directly: !!state.pulledDirectly,
     board_hides_idle: !!state.boardHidesIdle,
     board_shows_all_parts: !!state.boardShowsAllParts,
+    // Off only when the switch says so: a state that never read the row
+    // keeps the clear on.
+    no_clear_partials: state.clearPartials === false,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };
@@ -366,6 +385,7 @@ const DRAIN_BOXES = [
 const DRAIN_FIELD = 'drain-';
 const DRAIN_HELP = "Drains carts that land in this unloader's inbound source. Point it at a press's outbound, not a stock group.";
 const DRAIN_EMPTY_HELP = 'Tote bins nobody counted are drained by the unverified box.';
+const CLEAR_PARTIALS_HELP = 'Off: the board never asks to pull a full so a buffer partial can go home.';
 
 // drainSet is the set drains with one state set on or off, in DRAIN_BOXES'
 // order, each once; a state no box drains is left out.
@@ -884,6 +904,10 @@ function settingsHtml(item, s2) {
   if (shape.board) {
     board += settingCheck(lid, 'boardHidesIdle', state.boardHidesIdle, 'Hide spots with nothing to do (an empty spot still shows when the operator orders empties)');
     board += settingCheck(lid, 'boardShowsAllParts', state.boardShowsAllParts, 'Show every part this station takes, not only what a running style needs');
+  }
+  if (shape.clearPartials) {
+    board += settingCheck(lid, 'clearPartials', state.clearPartials, 'Clear partials')
+      + h`<div class="form-hint">${CLEAR_PARTIALS_HELP}</div>`;
   }
   const stageHead = pair ? h`<div class="loader-stage-title">Stage 1</div>` : '';
   const winSection = win ? h`<div class="loader-settings-section"><div class="loader-stage-title">Windows</div>${raw(win)}</div>` : '';

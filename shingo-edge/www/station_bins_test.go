@@ -165,12 +165,20 @@ func newBinsRig(t *testing.T) *binsRig {
 	bridgeAsks(t, eng, srv.URL)
 	rig.station(t, "LDR", "SMN_H1", "SMN_H2")
 	rig.station(t, "UNL", "ULN_1", "ULN_2")
+	eng.ApplyNodeList(binsRigNodeList())
+	return rig
+}
+
+// binsRigNodeList is the rig's node list as Core sends it: the nodes, the
+// dedicated loader loader:1 (homes SMN_H1 and SMN_H2, buffer spots SMN_F1 and
+// SMN_F2) and the unloader loader:2.
+func binsRigNodeList() *protocol.NodeListResponse {
 	nodes := []protocol.NodeInfo{}
 	for _, n := range []string{"SMN_H1", "SMN_H2", "SMN_F1", "SMN_F2", "ULN_1", "ULN_2",
 		"EMPTY-GRP.E1", "EMPTY-GRP.E2", "EMPTY-GRP.E3"} {
 		nodes = append(nodes, protocol.NodeInfo{Name: n})
 	}
-	eng.ApplyNodeList(&protocol.NodeListResponse{
+	return &protocol.NodeListResponse{
 		Nodes: nodes,
 		Loaders: []protocol.LoaderInfo{
 			{
@@ -190,8 +198,7 @@ func newBinsRig(t *testing.T) *binsRig {
 				Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-C"}},
 			},
 		},
-	})
-	return rig
+	}
 }
 
 // holdStubBins applies, as the Edge's copy of the bins feed, what the stub's
@@ -360,6 +367,37 @@ func TestStationView_BinsStampedFromTheCopy(t *testing.T) {
 	}
 	if bs, _ := tileByNode(t, unl, "ULN_1")["bin_state"].(map[string]any); bs == nil || bs["payload_code"] != "PART-C" {
 		t.Errorf("ULN_1 bin_state = %v", bs)
+	}
+}
+
+// TestStationView_ClearPartialsOffFromTheWire: Core's loader with
+// "no_clear_partials": true on the node list reaches the board as the tile's
+// loader.no_clear_partials, and its home holding a full beside a buffer
+// partial of its part names none, so the board draws no clear. The node list
+// without the key, as an older Core sends it, keeps the clear: the key is
+// absent on the tile and the home names its spot.
+func TestStationView_ClearPartialsOffFromTheWire(t *testing.T) {
+	rig := newBinsRig(t)
+	rig.holdStubBins(t)
+	h1 := tileByNode(t, rig.view(t, "LDR"), "SMN_H1")
+	if v, ok := h1["loader"].(map[string]any)["no_clear_partials"]; ok {
+		t.Errorf("an older Core's loader: the tile carries no_clear_partials %v, want it absent (the clear)", v)
+	}
+	if got := jsonOf(t, h1["buffer_partial"]); got != `{"node":"SMN_F1"}` {
+		t.Errorf("an older Core's loader: SMN_H1 buffer_partial = %s, want the spot holding its part", got)
+	}
+
+	resp := binsRigNodeList()
+	if err := json.Unmarshal([]byte(`{"no_clear_partials": true}`), &resp.Loaders[0]); err != nil {
+		t.Fatalf("decode the key onto loader:1: %v", err)
+	}
+	rig.eng.ApplyNodeList(resp)
+	h1 = tileByNode(t, rig.view(t, "LDR"), "SMN_H1")
+	if v := h1["loader"].(map[string]any)["no_clear_partials"]; v != true {
+		t.Errorf("Clear partials off: the tile's loader.no_clear_partials = %v, want true", v)
+	}
+	if bp, ok := h1["buffer_partial"]; ok {
+		t.Errorf("Clear partials off: SMN_H1 still names a buffer partial %s", jsonOf(t, bp))
 	}
 }
 

@@ -4564,7 +4564,23 @@ func migrationList() []migration {
 		{175, "bins.lifted_from_node_id - the node a streamed carrier was lifted from, written with lifted_at: a late draw is booked there",
 			v175BinLiftedFromNode,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bins", "lifted_from_node_id") }},
+		{176, "bin_loaders.no_clear_partials - a dedicated loader whose board never offers Clear partials and whose home clear is refused; false, as every loader is",
+			v176LoaderNoClearPartials,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "no_clear_partials") }},
 	}
+}
+
+// v176LoaderNoClearPartials adds bin_loaders.no_clear_partials, the "Clear
+// partials" setting stated as its restriction: true, and the station's board
+// never asks a driver to pull a home's full so a buffer partial can go home,
+// and Core's home clear refuses. FALSE is the default, the Go zero value and
+// what a client omitting the field sends, so every loader keeps the clear until
+// someone turns it off. ROLLBACK is the previous binary plus DROP COLUMN.
+func v176LoaderNoClearPartials(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS no_clear_partials BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("v176 bin_loaders.no_clear_partials: %w", err)
+	}
+	return nil
 }
 
 // v175BinLiftedFromNode adds bins.lifted_from_node_id. The lift of a streamed

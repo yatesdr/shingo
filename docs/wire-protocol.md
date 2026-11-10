@@ -937,6 +937,7 @@ digest and `scene_revision` is the `scene` feed's value.
 | `pulled_directly` | boolean | omitempty | PulledDirectly marks a loader whose finished carriers the process pulls straight off its windows (a two-stage unloader's stage 2, or any loader but a stage 1): the Edge's CLEAR there sends the carrier nowhere, quietly, and the board says it waits for the line. False, also what a Core predating this field sends, is the empty-out to OutboundDest. |
 | `board_hides_idle` | boolean | omitempty | BoardHidesIdle: the station's board leaves off cards and homes with nothing to do (an operator-ordered station still shows an empty spot). BoardShowsAllParts: the board lists every part the station takes, not only what a running style needs. Display only. A Core predating these fields sends both false, so deploy Core first. |
 | `board_shows_all_parts` | boolean | omitempty | See `board_hides_idle`. |
+| `no_clear_partials` | boolean | omitempty | NoClearPartials turns off a dedicated loader's Clear partials: its board never asks a driver to pull a home's full so that a buffer partial goes home, and Core refuses the home clear. False, also what a Core predating this field sends, is the clear every loader has. |
 | `positions` | [`LoaderPosition`](#loaderposition)[] | omitempty | Positions are the loader's member homes: its windows (shared_window) or its dedicated positions. |
 | `payloads` | [`LoaderPayloadInfo`](#loaderpayloadinfo)[] | omitempty | Payloads is the shared allowed set, on a shared_window loader only. |
 

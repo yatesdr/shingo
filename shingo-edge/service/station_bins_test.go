@@ -229,6 +229,45 @@ func TestStampBins_BufferStrip(t *testing.T) {
 	}
 }
 
+// TestStampBins_ClearPartialsOff: with the loader's Clear partials off, a home
+// holding a full of its part beside a buffer partial of the same part names no
+// buffer partial, so the board has no card to draw and the home's clear is not
+// offered; the same bins with the clear on name the spot.
+func TestStampBins_ClearPartialsOff(t *testing.T) {
+	db, _ := countingDB(t)
+	svc, _, _ := binsPlant(t, db)
+	rows := httpBins(map[string]protocol.NodeBinInfo{
+		"H1": {NodeName: "H1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 30},
+		"H2": {NodeName: "H2"},
+		"F1": {NodeName: "F1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4},
+		"F2": {NodeName: "F2"},
+	})
+	homes := func(opts ...domain.LoaderOption) *domain.Loader {
+		return mustLoader(t)(domain.NewDedicatedPositionsLoader("homes", domain.RoleProduce, domain.ReplenishmentOperator,
+			[]domain.Position{
+				{Node: "H1", Payload: "PART-A", HomeKind: domain.HomeKindHome},
+				{Node: "H2", Payload: "PART-B", HomeKind: domain.HomeKindHome},
+				{Node: "F1", HomeKind: domain.HomeKindBuffer},
+				{Node: "F2", HomeKind: domain.HomeKindBuffer},
+			}, opts...))
+	}
+	for _, tc := range []struct {
+		name string
+		l    *domain.Loader
+		want string
+	}{
+		{"on", homes(), `{"node":"F1"}`},
+		{"off", homes(domain.WithNoClearPartials(true)), `null`},
+	} {
+		svc.SetLoaderResolver(loaderSet{tc.l})
+		v := homesView()
+		svc.StampBins(v, rows, true, nil)
+		if got := stampJSON(t, v.Nodes[0].BufferPartial); got != tc.want {
+			t.Errorf("Clear partials %s: H1 buffer_partial = %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestStampBins_OneTileOfALoaderCarriesItsStrip: a dedicated loader's buffer
 // strip rides once, on its first home in the plant's order that is a tile of
 // the board, and on no other tile; with that home off the board, the next.

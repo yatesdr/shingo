@@ -494,6 +494,69 @@ func TestLoaderFunnelWindows_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestLoaderNoClearPartials_RoundTrip follows Clear partials the whole way, as
+// TestLoaderFunnelWindows_RoundTrip does the window setting: a loader created
+// without mentioning it keeps the clear (false, and the wire leaves the key
+// off, so an Edge reads it as an older Core's), switched off it survives the
+// write, the list read and the projection, and switched back on the key is
+// gone from the wire again.
+func TestLoaderNoClearPartials_RoundTrip(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "NCP-L", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentOperator,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	wireHasKey := func() bool {
+		t.Helper()
+		raw, err := json.Marshal(findLoaderInfo(t, db, id))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return strings.Contains(string(raw), `"no_clear_partials"`)
+	}
+	got, err := db.GetLoader(id)
+	if err != nil || got == nil {
+		t.Fatalf("GetLoader: %v", err)
+	}
+	if got.NoClearPartials || wireHasKey() {
+		t.Fatalf("a new loader: no_clear_partials=%v, on the wire=%v; want the clear on and no key", got.NoClearPartials, wireHasKey())
+	}
+
+	got.NoClearPartials = true
+	if err := db.UpdateLoader(*got); err != nil {
+		t.Fatalf("UpdateLoader: %v", err)
+	}
+	if back, err := db.GetLoader(id); err != nil || back == nil || !back.NoClearPartials {
+		t.Errorf("switched off, GetLoader = %+v (%v); want no_clear_partials true", back, err)
+	}
+	all, err := db.ListLoaders()
+	if err != nil {
+		t.Fatalf("ListLoaders: %v", err)
+	}
+	listed := false
+	for _, l := range all {
+		listed = listed || (l.ID == id && l.NoClearPartials)
+	}
+	if !listed {
+		t.Error("ListLoaders drops no_clear_partials: the sync walks that list")
+	}
+	if !findLoaderInfo(t, db, id).NoClearPartials {
+		t.Error("switched off, BuildLoaderInfos drops it: the Edge would keep asking for the clear")
+	}
+
+	got.NoClearPartials = false
+	if err := db.UpdateLoader(*got); err != nil {
+		t.Fatalf("UpdateLoader back on: %v", err)
+	}
+	if wireHasKey() {
+		t.Error("switched back on, the wire still carries no_clear_partials")
+	}
+}
+
 // findLoaderInfo projects every loader and returns the one with this id's key.
 func findLoaderInfo(t *testing.T, db *store.DB, id int64) protocol.LoaderInfo {
 	t.Helper()

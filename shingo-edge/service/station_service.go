@@ -1539,6 +1539,7 @@ func (s *StationService) tileLoader(l *domain.Loader, coreNode string) *domain.T
 		TakesBare:          l.TakesBare(),
 		PulledDirectly:     l.PulledDirectly(),
 		BoardShowsAllParts: l.BoardShowsAllParts(),
+		NoClearPartials:    l.NoClearPartials(),
 	}
 	if l.ActsAsUnloader() && s.carrierCatalog != nil {
 		tl.Carriers = carriersFor(s.carrierCatalog(), codes)

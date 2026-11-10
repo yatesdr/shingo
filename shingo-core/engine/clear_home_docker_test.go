@@ -932,6 +932,15 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 				return protocol.ClearHomeRequest{HomeNode: r.s.Name}
 			},
 			http.StatusBadRequest, func(*clearRig) string { return "CRD-S is a buffer position, not a home" }},
+		{"a loader with Clear partials off", "CRQ", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				l, err := r.db.GetLoader(r.loaderID)
+				testutil.MustNoErr(t, err, "the loader")
+				l.NoClearPartials = true
+				testutil.MustNoErr(t, r.db.UpdateLoader(*l), "switch Clear partials off")
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "Clear partials is turned off for CRQ" }},
 		{"a home with no carrier", "CRE", true,
 			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
 				away := mkNode(t, r, "CRE-AWAY")

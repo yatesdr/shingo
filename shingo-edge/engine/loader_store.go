@@ -98,7 +98,8 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			})
 		}
 		// FunnelWindows is not passed: positions never share a budget, so it is
-		// meaningless here.
+		// meaningless here. NoClearPartials is passed here only: a home clear
+		// is a dedicated loader's.
 		return domain.NewDedicatedPositionsLoader(id, role, repl, positions,
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithLeavesBare(l.LeavesBare),
@@ -106,6 +107,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			domain.WithAutoPush(l.AutoPush),
 			domain.WithPulledDirectly(l.PulledDirectly),
 			domain.WithBoardSettings(l.BoardHidesIdle, l.BoardShowsAllParts),
+			domain.WithNoClearPartials(l.NoClearPartials),
 			domain.WithOutboundDest(l.OutboundDest))
 
 	default:

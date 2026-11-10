@@ -147,6 +147,9 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// draws. A full-row write like the rest: absent reads as false.
 		BoardHidesIdle     bool `json:"board_hides_idle"`
 		BoardShowsAllParts bool `json:"board_shows_all_parts"`
+		// NoClearPartials: the Clear partials switch, off. Absent reads as
+		// false, which keeps the clear on.
+		NoClearPartials bool `json:"no_clear_partials"`
 		// DrainStates: the drain boxes, as the set of carrier states ticked.
 		// A full-row write like the rest: absent drains nothing, so the page
 		// sends the stored set back with every other setting.
@@ -165,7 +168,8 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		FunnelWindows:  req.FunnelWindows,
 		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 		BoardHidesIdle: req.BoardHidesIdle, BoardShowsAllParts: req.BoardShowsAllParts,
-		Drains: req.DrainStates,
+		NoClearPartials: req.NoClearPartials,
+		Drains:          req.DrainStates,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return

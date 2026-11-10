@@ -136,6 +136,7 @@ CREATE TABLE public.bin_loaders (
     drains_tops_bottoms boolean DEFAULT false NOT NULL,
     drains_leftover boolean DEFAULT false NOT NULL,
     drains_unverified boolean DEFAULT false NOT NULL,
+    no_clear_partials boolean DEFAULT false NOT NULL,
     CONSTRAINT bin_loaders_layout_check CHECK ((layout = ANY (ARRAY['shared_window'::text, 'dedicated_positions'::text]))),
     CONSTRAINT bin_loaders_replenishment_check CHECK ((replenishment = ANY (ARRAY['operator'::text, 'threshold'::text]))),
     CONSTRAINT bin_loaders_role_check CHECK ((role = ANY (ARRAY['produce'::text, 'consume'::text])))

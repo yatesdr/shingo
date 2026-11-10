@@ -287,6 +287,9 @@ type LoaderUpdate struct {
 	// BoardShowsAllParts: the Edge board lists every part the station takes,
 	// not only what a running style needs. Display only; any station.
 	BoardShowsAllParts bool
+	// NoClearPartials: Clear partials is off (loaders.Loader.NoClearPartials).
+	// A full-row write like the rest: absent leaves the clear on.
+	NoClearPartials bool
 	// Drains: the part-less carrier states an unloader drains from its inbound
 	// source (loaders.DrainStates). A full-row write like the rest: absent
 	// drains nothing. Checked on every save that leaves a box on (checkDrains).
@@ -366,6 +369,7 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	cur.AutoPush = in.AutoPush
 	cur.BoardHidesIdle = in.BoardHidesIdle
 	cur.BoardShowsAllParts = in.BoardShowsAllParts
+	cur.NoClearPartials = in.NoClearPartials
 	if cur.Drains, err = loaders.NewDrainStates(in.Drains); err != nil {
 		return err
 	}

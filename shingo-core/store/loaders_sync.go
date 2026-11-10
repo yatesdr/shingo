@@ -81,6 +81,8 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			// How the station's board draws; display only.
 			BoardHidesIdle:     l.BoardHidesIdle,
 			BoardShowsAllParts: l.BoardShowsAllParts,
+			// The board's Clear partials, and the home clear Core answers.
+			NoClearPartials: l.NoClearPartials,
 		}
 
 		homes, err := db.ListLoaderHomes(l.ID)

@@ -248,7 +248,8 @@ func BoardBinsFromCopy(rows map[string]protocol.NodeBinsRow) map[string]BoardBin
 //     in the plant's order, on the loader of its first home in that order
 //     that is a tile of this board (stripTile);
 //   - on a home holding a stocked bin of its part, the spot whose partial its
-//     clear would bring home (buffer_partial);
+//     clear would bring home (buffer_partial), unless the loader's Clear
+//     partials is off;
 //   - the board's empties, from its unloader's outbound group;
 //   - each cart's tote numbers, from its row;
 //   - from the group lines of the Edge's copy (groups; nil from
@@ -419,8 +420,13 @@ func spotState(row BoardBin) string {
 // bufferPartialFor is the spot whose partial a clear of the home at node would
 // bring home: the home holds a stocked bin of its own part, and the first
 // buffer spot in the plant's order holds a stocked bin of the same part. Nil
-// when node is not a home or no spot qualifies.
+// when node is not a home, no spot qualifies, or the loader's Clear partials
+// is off (Loader.NoClearPartials): its board never asks for the clear.
+// Pinned by TestStampBins_ClearPartialsOff.
 func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *domain.BufferPartial {
+	if l.NoClearPartials() {
+		return nil
+	}
 	if _, pinned := l.PayloadAt(domain.NodeID(node)); !pinned {
 		return nil
 	}

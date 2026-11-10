@@ -1212,6 +1212,11 @@ type LoaderInfo struct {
 	// fields sends both false, so deploy Core first.
 	BoardHidesIdle     bool `json:"board_hides_idle,omitempty"`
 	BoardShowsAllParts bool `json:"board_shows_all_parts,omitempty"`
+	// NoClearPartials turns off a dedicated loader's Clear partials: its
+	// board never asks a driver to pull a home's full so that a buffer partial
+	// goes home, and Core refuses the home clear. False, also what a Core
+	// predating this field sends, is the clear every loader has.
+	NoClearPartials bool `json:"no_clear_partials,omitempty"`
 	// Positions are the loader's member homes: its windows (shared_window) or
 	// its dedicated positions.
 	Positions []LoaderPosition `json:"positions,omitempty"`

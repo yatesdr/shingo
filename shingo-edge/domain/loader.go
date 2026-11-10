@@ -167,6 +167,7 @@ type Loader struct {
 	pulledDirectly     bool   // finished carts stay for the process to pull off its windows (see PulledDirectly)
 	boardHidesIdle     bool   // the board leaves off spots with nothing to do (see BoardHidesIdle)
 	boardShowsAllParts bool   // the board lists every part, not only the running style's (see BoardShowsAllParts)
+	noClearPartials    bool   // dedicated only: the board offers no home clear (see NoClearPartials)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -405,6 +406,18 @@ func (l *Loader) BoardHidesIdle() bool { return l.boardHidesIdle }
 // BoardShowsAllParts reports whether the board lists every part the station
 // takes, rather than only what a running style needs.
 func (l *Loader) BoardShowsAllParts() bool { return l.boardShowsAllParts }
+
+// WithNoClearPartials turns off a dedicated loader's Clear partials
+// (CoreLoader.NoClearPartials, owned by Core's bin_loaders.no_clear_partials).
+// Not passing the option leaves it false, the clear every loader has.
+func WithNoClearPartials(off bool) LoaderOption {
+	return func(l *Loader) { l.noClearPartials = off }
+}
+
+// NoClearPartials reports whether this loader's Clear partials is off: no
+// home of it names a buffer partial to bring home (StationService.StampBins),
+// and its board draws no buffer section. Core refuses the clear too.
+func (l *Loader) NoClearPartials() bool { return l.noClearPartials }
 
 // Positions returns a copy of the dedicated positions (nil for shared_window).
 func (l *Loader) Positions() []Position { return append([]Position(nil), l.positions...) }

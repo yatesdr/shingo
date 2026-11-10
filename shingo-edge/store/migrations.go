@@ -2436,6 +2436,31 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 4
 			},
 		},
+		{
+			// core_loaders.no_clear_partials: a dedicated loader's Clear
+			// partials is off (LoaderInfo, Core v176). core_loaders is a cache
+			// rewritten on every node-list sync, so DEFAULT 0, the clear,
+			// only matters until the next one. The baseline CREATE carries it
+			// for a fresh install; guarded, like v23.
+			Version: 46,
+			Name:    "core_loaders_no_clear_partials",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name = 'no_clear_partials'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE core_loaders ADD COLUMN no_clear_partials INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name = 'no_clear_partials'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

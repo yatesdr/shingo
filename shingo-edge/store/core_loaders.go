@@ -54,8 +54,13 @@ type CoreLoader struct {
 	// Core owns both (bin_loaders); display only.
 	BoardHidesIdle     bool
 	BoardShowsAllParts bool
-	Positions          []CoreLoaderPosition
-	Payloads           []CoreLoaderPayload
+	// NoClearPartials: a dedicated loader's Clear partials is off, so the
+	// board offers no home clear. Core owns it (bin_loaders.no_clear_partials);
+	// false, the clear, is also what a row from a Core predating the field
+	// reads as.
+	NoClearPartials bool
+	Positions       []CoreLoaderPosition
+	Payloads        []CoreLoaderPayload
 }
 
 // CoreLoaderPosition is one home of a cached loader (position node NAME). For a
@@ -102,10 +107,10 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, synced_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, synced_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
 			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-			l.LeavesBare, l.TakesBare, l.AutoPush, l.PulledDirectly, l.BoardHidesIdle, l.BoardShowsAllParts,
+			l.LeavesBare, l.TakesBare, l.AutoPush, l.PulledDirectly, l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
@@ -132,7 +137,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -150,7 +155,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -175,7 +180,7 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
 			&l.OutboundDest, &l.InboundSource, &l.FunnelWindows,
 			&l.LeavesBare, &l.TakesBare, &l.AutoPush, &l.PulledDirectly,
-			&l.BoardHidesIdle, &l.BoardShowsAllParts); err != nil {
+			&l.BoardHidesIdle, &l.BoardShowsAllParts, &l.NoClearPartials); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
 		}
 		out = append(out, l)

@@ -733,6 +733,45 @@ await (async function settingsSaveThroughTheApi() {
     check('a rename carries board_hides_idle through, not flattened', off.board_hides_idle === true && off.board_shows_all_parts === false);
 })();
 
+// Clear partials: on a dedicated station with a pinned home and a buffer spot
+// only, on unless the row says no_clear_partials, with its one line saying what
+// off means; switching it off sends no_clear_partials:true, and every other
+// save carries the stored value through.
+(function clearPartials() {
+    const h = load({ auth: true });
+    h.set("binTypeCatalog = []");
+    const ded = function (over) { return loader(Object.assign({ replenishment: 'operator', layout: 'dedicated_positions' }, over || {})); };
+    const home = { position_node_id: 1, payload_code: 'PART-A', home_kind: 'home' };
+    const unpinned = { position_node_id: 2, payload_code: '', home_kind: 'home' };
+    const buffer = { position_node_id: 3, payload_code: '', home_kind: 'buffer' };
+    const draw = function (l, homes) { return h.ctx.settingsHtml({ loader: l, homes: homes, payloads: [] }, null); };
+    const help = 'Off: the board never asks to pull a full so a buffer partial can go home.';
+    const both = draw(ded(), [home, buffer]);
+    check('clear partials: a dedicated station with a pinned home and a buffer spot has the switch, on',
+        /data-field="clearPartials" checked/.test(both) && both.indexOf('> Clear partials</label>') >= 0);
+    check('clear partials: one line under it says what off means',
+        both.indexOf('<div class="form-hint">' + help + '</div>') > both.indexOf('data-field="clearPartials"'));
+    check('clear partials: drawn off from a stored no_clear_partials',
+        /data-field="clearPartials">/.test(draw(ded({ no_clear_partials: true }), [home, buffer])));
+    check('clear partials: no buffer spot, no switch', draw(ded(), [home]).indexOf('data-field="clearPartials"') < 0);
+    check('clear partials: a buffer and only an unpinned home, no switch',
+        draw(ded(), [unpinned, buffer]).indexOf('data-field="clearPartials"') < 0);
+    check('clear partials: a shared-window station, no switch',
+        draw(loader(), [home, buffer]).indexOf('data-field="clearPartials"') < 0);
+    check('clear partials: switched off, it stays drawn after the buffer goes, to be switched back on',
+        /data-field="clearPartials">/.test(draw(ded({ no_clear_partials: true }), [home])));
+
+    const offBody = h.ctx.settingUpdate(ded(), 'clearPartials', false);
+    check('switching Clear partials off sends no_clear_partials:true and leaves the rest alone',
+        offBody.no_clear_partials === true && offBody.replenishment === 'operator' && offBody.layout === 'dedicated_positions');
+    check('switching it back on sends no_clear_partials:false',
+        h.ctx.settingUpdate(ded({ no_clear_partials: true }), 'clearPartials', true).no_clear_partials === false);
+    check('a rename carries no_clear_partials through, not flattened',
+        h.ctx.settingUpdate(ded({ no_clear_partials: true }), 'name', 'LDR-B').no_clear_partials === true);
+    check('a row that does not say keeps the clear on',
+        h.ctx.settingUpdate(ded(), 'boardHidesIdle', true).no_clear_partials === false);
+})();
+
 // The four drain boxes (W14). Beside Accept partials on a single unloader where
 // the list says a box holds (drain_allowed), with the owner's labels and two
 // help lines; each box saves as ticked; the set round-trips, and saving any

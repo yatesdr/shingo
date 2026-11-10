@@ -72,6 +72,11 @@ eq(L([tile('consume'), tile('produce')]), 'payload/none', 'a station mixing role
 eq(L([press, tile('produce')]), 'grid/changeover', 'a loader beside a press: the node grid');
 eq(L([press, tile('produce', { dedicated: true })]), 'grid/pull-full-from-home', 'a dedicated loader beside a press');
 eq(L([press]), 'grid/changeover', 'a press');
+const noClear = t => { t.loader.no_clear_partials = true; return t; };
+eq(L([press, noClear(tile('produce', { dedicated: true }))]), 'grid/none',
+    'a dedicated loader beside a press with Clear partials off: no PULL FULL FROM HOME, and no CHANGEOVER in its place');
+eq(L([noClear(tile('produce', { dedicated: true })), tile('produce', { dedicated: true })]), 'homes/pull-full-from-home',
+    'one dedicated loader with Clear partials on keeps the header');
 
 // ── the parts a running style uses, and the cards ──
 const t2 = tile('produce', { parts: ['PART-B', 'PART-A', 'PART-C'] });
@@ -405,6 +410,14 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'no buffer on the tile (before it is sent, or a loader without one): no section');
     const amberTop = B({ station: {}, nodes: homesWith(spots(['partial', 'open']), 'SMN_B1'), serves: [] });
     eq(amberTop.words, ['0 to load', '1 partial', 'Buffer: no empty'], 'top line: the partials count and the buffer while amber');
+    // Clear partials off (the loader's no_clear_partials): the Edge names no
+    // buffer partial, and the board draws no section for the strip it still
+    // sends: no zone, no red, no partials count, no buffer words.
+    const off = buffer => homesWith(buffer, '').map(t => { t.loader.no_clear_partials = true; return t; });
+    const redOff = B({ station: {}, nodes: off(spots(['partial', 'partial'])), serves: [] }, { partialsOpen: true });
+    eq([zone(redOff, 'partials'), redOff.zones.map(z => z.key), redOff.words, M.bufferOf(off(spots(['partial'])))],
+        [null, ['load'], ['0 to load'], null],
+        'Clear partials off: a buffer of partials draws no section, and the top line says nothing of it');
 }
 
 // ── Check bin: a home holding a part at a count of 0 or below ──

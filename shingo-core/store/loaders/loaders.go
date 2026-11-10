@@ -142,6 +142,16 @@ type Loader struct {
 	// operator, which is what the board did before this was a setting.
 	BoardShowsAllParts bool `json:"board_shows_all_parts"`
 
+	// NoClearPartials turns off a dedicated loader's "Clear partials": the
+	// station's board never asks a driver to pull a home's full so that a
+	// buffer partial of its part can go home (the section and its cards are
+	// not drawn), and the home clear's door refuses (engine.ClearLoaderHome).
+	// The buffer's partials stay in the loader's source pool (Home.InSourcePool).
+	// Stated as the restriction, as FunnelWindows is, so FALSE -- the column
+	// default (v176), the Go zero value, what a client omitting it sends and
+	// what an older Core leaves off the wire -- is the clear every loader has.
+	NoClearPartials bool `json:"no_clear_partials"`
+
 	// Drains is what an UNLOADER pulls from its inbound source beside its
 	// fulls: the part-less carrier states a plant ticked (v165, DrainStates).
 	// Empty — the default, and what every row read before a box was ticked —
@@ -216,7 +226,7 @@ type Config struct {
 }
 
 // loaderCols is every loader read's column list.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, archived_at, funnel_windows, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, ` + drainCols
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, archived_at, funnel_windows, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, ` + drainCols
 
 // drainCols are the four drain boxes (v165), in Drainable's order, for every
 // read and both writes.
@@ -232,7 +242,7 @@ func scanLoader(s scanner) (Loader, error) {
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &archivedAt, &l.FunnelWindows,
 		&l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly, &l.PulledDirectly,
-		&l.BoardHidesIdle, &l.BoardShowsAllParts, &drains[0], &drains[1], &drains[2], &drains[3])
+		&l.BoardHidesIdle, &l.BoardShowsAllParts, &l.NoClearPartials, &drains[0], &drains[1], &drains[2], &drains[3])
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -252,12 +262,12 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
 			funnel_windows, accept_partials, auto_push,
-			second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, `+drainCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+			second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, `+drainCols+`)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.AcceptPartials, l.AutoPush,
 		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
-		l.BoardHidesIdle, l.BoardShowsAllParts, drains[0], drains[1], drains[2], drains[3],
+		l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials, drains[0], drains[1], drains[2], drains[3],
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -343,14 +353,14 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
 			accept_partials=$7, auto_push=$8,
 			second_stage_loader_id=$9, fed_directly=$10, pulled_directly=$11,
-			board_hides_idle=$12, board_shows_all_parts=$13,
-			drains_empty=$14, drains_tops_bottoms=$15, drains_leftover=$16, drains_unverified=$17,
+			board_hides_idle=$12, board_shows_all_parts=$13, no_clear_partials=$14,
+			drains_empty=$15, drains_tops_bottoms=$16, drains_leftover=$17, drains_unverified=$18,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$18`,
+		WHERE id=$19`,
 		l.Name, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.AcceptPartials, l.AutoPush,
 		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
-		l.BoardHidesIdle, l.BoardShowsAllParts, drains[0], drains[1], drains[2], drains[3], l.ID)
+		l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials, drains[0], drains[1], drains[2], drains[3], l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

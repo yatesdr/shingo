@@ -152,7 +152,8 @@ func (e *Engine) clearLoaderHomeLocked(station string, req protocol.ClearHomeReq
 }
 
 // resolveClearJob makes the checks the Edge used to make, against Core's own
-// records: a pinned home of a dedicated loader, one carrier on it holding
+// records: a pinned home of a dedicated loader whose Clear partials is on
+// (loaders.Loader.NoClearPartials), one carrier on it holding
 // stock that nobody has claimed, and the partial — the named spot's, else the
 // first buffer spot's in the loader's order — of the home's part, held by no
 // order (clearPartialOn).
@@ -173,6 +174,15 @@ func (e *Engine) resolveClearJob(home *nodes.Node, station string, req protocol.
 	}
 	if h.Kind == loaders.HomeKindBuffer || h.PayloadCode == "" {
 		return refuse(http.StatusBadRequest, "%s is a buffer position, not a home", home.Name)
+	}
+	// The loader's own setting: with Clear partials off its board offers no
+	// clear, and a tap that reaches here anyway (a board drawn before the
+	// switch, a header picker, an API client) is refused before anything is
+	// read or written.
+	if l, err := e.db.GetLoader(h.LoaderID); err != nil {
+		return refuse(http.StatusInternalServerError, "could not read %s's loader: %v", home.Name, err)
+	} else if l != nil && l.NoClearPartials {
+		return refuse(http.StatusBadRequest, "Clear partials is turned off for %s", l.Name)
 	}
 	onHome, err := e.db.ListBinsByNode(home.ID)
 	if err != nil {

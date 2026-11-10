@@ -399,6 +399,10 @@ column facts that live here:
   Core that predates the field.
 - `min_stock` on `bin_loader_homes` and `bin_loader_payloads` (and the Edge cache) is dormant: written 0, read by
   nothing.
+- `no_clear_partials` is a dedicated loader's Clear partials switch stated as its restriction, so false (the
+  default, and what a Core that predates it leaves off `LoaderInfo`) is the clear every loader has. It is
+  `bin_loaders.no_clear_partials` on Core (v176) and `core_loaders.no_clear_partials` in the Edge cache (v46); what
+  it turns off is [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md#clear-partials)'s.
 
 ### Typed Domain Identifiers (Edge runtime)
 
@@ -429,7 +433,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`bin_loader_homes`](#core-bin_loader_homes) | 7 |  | [`bin_loaders`](#core-bin_loaders), [`nodes`](#core-nodes) |
 | [`bin_loader_payloads`](#core-bin_loader_payloads) | 4 | `loader_id`, `payload_code` | [`bin_loaders`](#core-bin_loaders) |
 | [`bin_loader_quotas`](#core-bin_loader_quotas) | 3 | `loader_id`, `bin_type_id` | [`bin_loaders`](#core-bin_loaders), [`bin_types`](#core-bin_types) |
-| [`bin_loaders`](#core-bin_loaders) | 23 | `id` | `bin_loaders` |
+| [`bin_loaders`](#core-bin_loaders) | 24 | `id` | `bin_loaders` |
 | [`bin_types`](#core-bin_types) | 13 | `id` | [`carrier_families`](#core-carrier_families), `bin_types` |
 | [`bin_uop_delta_daily`](#core-bin_uop_delta_daily) | 13 | `day`, `bin_id`, `epoch_seq`, `payload_code`, `reason`, `actor` |  |
 | [`bin_uop_exception`](#core-bin_uop_exception) | 13 | `id` |  |
@@ -627,6 +631,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `drains_tops_bottoms` | `boolean` | yes | `false` |  |
 | `drains_leftover` | `boolean` | yes | `false` |  |
 | `drains_unverified` | `boolean` | yes | `false` |  |
+| `no_clear_partials` | `boolean` | yes | `false` |  |
 
 - Check `(layout = ANY (ARRAY['shared_window', 'dedicated_positions']))`
 - Check `(replenishment = ANY (ARRAY['operator', 'threshold']))`
@@ -1941,7 +1946,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`changeover_station_tasks`](#edge-changeover_station_tasks) | 5 | `id` | [`operator_stations`](#edge-operator_stations), [`process_changeovers`](#edge-process_changeovers) |
 | [`core_loader_payloads`](#edge-core_loader_payloads) | 3 | `loader_key`, `payload_code` |  |
 | [`core_loader_positions`](#edge-core_loader_positions) | 6 | `loader_key`, `position_node` |  |
-| [`core_loaders`](#edge-core_loaders) | 16 | `loader_key` |  |
+| [`core_loaders`](#edge-core_loaders) | 17 | `loader_key` |  |
 | [`counter_snapshots`](#edge-counter_snapshots) | 11 | `id` | [`reporting_points`](#edge-reporting_points) |
 | [`demand_origins_open`](#edge-demand_origins_open) | 17 | `episode_key` |  |
 | [`feed_copy`](#edge-feed_copy) | 5 | `feed` |  |
@@ -2108,6 +2113,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `pulled_directly` | `INTEGER` | yes | `0` |  | 1 = a loader whose finished carts the process pulls straight off its windows: the CLEAR sends the cart nowhere (Edge v10). Core owns it. |
 | `board_hides_idle` | `INTEGER` | yes | `0` |  | How the station's board draws (Edge v23). Core owns both (bin_loaders.board_hides_idle, board_shows_all_parts). |
 | `board_shows_all_parts` | `INTEGER` | yes | `0` |  |  |
+| `no_clear_partials` | `INTEGER` | yes | `0` |  | 1 = a dedicated loader whose Clear partials is off: the board offers no home clear (Edge v46). Core owns it (bin_loaders.no_clear_partials). |
 | `synced_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 
 #### Edge: `counter_snapshots`

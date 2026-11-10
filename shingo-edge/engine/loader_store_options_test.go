@@ -30,7 +30,8 @@ func projectedByKey(t *testing.T, eng *Engine, key string, role domain.LoaderRol
 // TestProjectCoreLoader_OptionsByBranch: the shared_window branch carries
 // inbound, outbound, funnel_windows, leaves_bare,
 // takes_bare, auto_push and the two board settings; the dedicated_positions branch
-// carries all of those except funnel_windows.
+// carries all of those except funnel_windows, and no_clear_partials, which only
+// it carries.
 func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
@@ -40,7 +41,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Replenishment: protocol.LoaderReplenishmentOperator,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
 			FunnelWindows: true, LeavesBare: true, TakesBare: true, AutoPush: true,
-			BoardHidesIdle: true, BoardShowsAllParts: true,
+			BoardHidesIdle: true, BoardShowsAllParts: true, NoClearPartials: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-SW-W1"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		},
@@ -49,7 +50,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Replenishment: protocol.LoaderReplenishmentOperator,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
 			FunnelWindows: true, LeavesBare: true, TakesBare: true, AutoPush: true,
-			BoardHidesIdle: true, BoardShowsAllParts: true,
+			BoardHidesIdle: true, BoardShowsAllParts: true, NoClearPartials: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-DP-P1", PayloadCode: "PART-A"}},
 		},
 	)
@@ -94,6 +95,13 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	// (positions never share a budget).
 	if dp.FunnelWindows() {
 		t.Error("dedicated funnel = true, want false (the branch does not pass it)")
+	}
+	if !dp.NoClearPartials() {
+		t.Error("dedicated no_clear_partials = false, want true")
+	}
+	// Not passed by the shared branch: a home clear is a dedicated loader's.
+	if sw.NoClearPartials() {
+		t.Error("shared no_clear_partials = true, want false (the branch does not pass it)")
 	}
 }
 

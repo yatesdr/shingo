@@ -100,6 +100,15 @@ export function isDedicated(tile) {
     return !!loader && loader.layout === 'dedicated_positions';
 }
 
+// clearsPartials: this dedicated loader's board asks for Clear partials (a
+// home's full pulled so a buffer partial goes home). Off where Core's
+// bin_loaders.no_clear_partials says so: the buffer section, its words and the
+// header's PULL FULL FROM HOME are not drawn. Absent is on.
+function clearsPartials(tile) {
+    const loader = loaderOf(tile);
+    return isDedicated(tile) && !loader.no_clear_partials;
+}
+
 // isUnloaderWindow: a window of a shared unloader, a stage 2's among them (a
 // tap on a full is the CLEAR panel, on an empty the empty-cart panel).
 export function isUnloaderWindow(tile) {
@@ -120,8 +129,10 @@ export function isUnloaderWindow(tile) {
 //                     unloader (the old payload board, with the board bar);
 //          'grid'     every other station: a shared unloader's windows (the
 //                     old slot grid), or a loader beside a press.
-//   header 'pull-full-from-home' on a station with a dedicated loader;
-//          'none' on a payload board, and on a station of one loader tile;
+//   header 'pull-full-from-home' on a station with a dedicated loader whose
+//          Clear partials is on (clearsPartials);
+//          'none' on a station whose dedicated loaders all have it off, on a
+//          payload board, and on a station of one loader tile;
 //          'changeover' (CHANGEOVER, or CUTOVER and CANCEL) otherwise.
 export function boardLayout(tiles) {
     const loaders = tiles.filter(function (t) { return !!loaderOf(t); });
@@ -132,7 +143,8 @@ export function boardLayout(tiles) {
     if (tiles.length === 0) kind = 'empty';
     else if (all && !slots) kind = homes ? 'homes' : 'payload';
     let header = 'changeover';
-    if (homes) header = 'pull-full-from-home';
+    if (loaders.some(clearsPartials)) header = 'pull-full-from-home';
+    else if (homes) header = 'none';
     else if (kind === 'payload' || (tiles.length === 1 && loaders.length === 1)) header = 'none';
     return { kind: kind, header: header, loaders: loaders };
 }
@@ -729,13 +741,16 @@ function foldPresses(presses) {
 // bufferOf is the loader's buffer spots, tile.loader.buffer [{node, state}] in
 // the plant's order (state partial | empty | open | unknown; unknown is a spot
 // the board cannot place: a count of 0 or below, no payload, or not read), or
-// null when the loader has none. A spot a clear is moving a home's carrier to
-// is 'coming': it ends holding an empty. Partials are numbered in order.
+// null when the loader has none or its Clear partials is off (loader
+// no_clear_partials): then the board draws no buffer section, no strip, words
+// or count. A spot a
+// clear is moving a home's carrier to is 'coming': it ends holding an empty.
+// Partials are numbered in order.
 export function bufferOf(tiles) {
     let spots = null;
     tiles.forEach(function (t) {
         const loader = loaderOf(t);
-        if (!spots && loader && Array.isArray(loader.buffer) && loader.buffer.length > 0) spots = loader.buffer;
+        if (!spots && loader && !loader.no_clear_partials && Array.isArray(loader.buffer) && loader.buffer.length > 0) spots = loader.buffer;
     });
     if (!spots) return null;
     const coming = {};
