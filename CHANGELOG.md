@@ -16,6 +16,11 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- A loader's LOAD window opens from the screen's own view, with no wait: a slow Wi-Fi link no longer times out "Manifest"
+- The Edge writes the bin's manifest at LOAD from its catalog copy; the screen sends the part and the count
+
 ## v0.2.0 — 2026-11-10
 
 Deploy: Core v176, Edge v45–v46. Core first, then the Edge.
