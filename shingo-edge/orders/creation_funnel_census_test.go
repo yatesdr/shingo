@@ -314,7 +314,10 @@ var edgeCreationSites = map[string]string{
 	"engine/operator_stations.go:applyConsumePlan":      "CreateMoveOrder",
 	"engine/operator_produce.go:applyProduceEmptyLine":  "CreateMoveOrderCarryingTo,CreateRetrieveOrder",
 	"engine/operator_produce.go:dispatchPairedLeg":      "CreateComplexOrderPaired",
-	"engine/operator_produce.go:createClearsThenPrimes": "CreateMoveOrder,CreateMoveOrderForBin,CreateRetrieveOrder",
+	"engine/operator_produce.go:createClearsThenPrimes": "CreateMoveOrderForBin",
+	// a carrier to a position other than the line: the primes and the
+	// keep-staged refill
+	"engine/operator_produce.go:carrierToPosition": "CreateRetrieveOrder",
 	// the release layer (main, 2026-09-30): a release's material move
 	"engine/release_commit.go:commitMaterial": "CreateMoveOrderWithUOP",
 	// changeover
@@ -329,7 +332,6 @@ var edgeCreationSites = map[string]string{
 	"engine/operator_bin_ops.go:createUnloaderEmptyOut":  "CreateMoveOrderForBin",
 	"engine/operator_window_pullback.go:PullFromMarket":  "CreateMoveOrderWithPayloadCodeForBin",
 	// keep-staged spot and a cancelled changeover's parked trips (main, 2026-10-03/04)
-	"engine/keep_staged_spot.go:refillSpot":              "CreateRetrieveOrder",
 	"engine/keep_staged_spot.go:returnSpare":             "CreateMoveOrderForBin",
 	"engine/changeover_cancel_park.go:clearStrandedPark": "CreateMoveOrderCarrying",
 	"engine/changeover_cancel_park.go:finishParkedTrips": "CreateMoveOrderCarrying",

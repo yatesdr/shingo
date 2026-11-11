@@ -260,21 +260,15 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 // A clear is a named-bin move of the carrier the bins table holds there to the
 // claim's outbound (CreateMoveOrderForBin: it lifts that bin or none, and never
 // while a leg places there, which chainReadiness already left out). A prime
-// brings a carrier from the claim's inbound source: a full to a consume press,
-// an empty to a produce press. What the prime carries is its only role branch.
-// A produce prime is a retrieve of an empty, not a move: a move is a
-// full-intent local relocation of the bin AT a concrete source node, so it
-// would hunt a FULL bin in what is an empties pool. quantity is the request's
-// for a consume prime; an empty is one.
+// is a carrier to a position other than the line (carrierToPosition).
+// quantity is the request's for a consume prime; an empty is one.
 //
 // Each is created on the head node, as the primes always were, so START's
 // cancel and block reach them; none is tracked in runtime slots (those belong
-// to the head's serial-order machinery for swap cycles). The merged
-// auto-confirm signal for the primes; a clear is auto-confirmed, as every
-// named-bin move is. No re-read: every create returns the stored row.
+// to the head's serial-order machinery for swap cycles). Both auto-confirm. No
+// re-read: every create returns the stored row.
 func (e *Engine) createClearsThenPrimes(node *processes.Node, claim *processes.NodeClaim, chain Readiness, quantity int64, origin ordermgr.Origin) ([]*orders.Order, error) {
 	nodeID := node.ID
-	autoConfirm := claim.AutoConfirm || e.cfg.AutoConfirm()
 	out := make([]*orders.Order, 0, chain.Count())
 	for _, row := range chain.Clear {
 		co, err := e.orderMgr.CreateMoveOrderForBin(&nodeID, row.Node, claim.OutboundDestination, row.PayloadCode, row.BinID, origin)
@@ -284,21 +278,40 @@ func (e *Engine) createClearsThenPrimes(node *processes.Node, claim *processes.N
 		out = append(out, co)
 	}
 	for _, pos := range chain.Prime {
-		var po *orders.Order
-		var err error
-		if claim.Role == protocol.ClaimRoleProduce {
-			po, err = e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: pos,
-				Source: claim.InboundSource, Payload: claim.PayloadCode, Quantity: 1, Empty: true,
-				AutoConfirm: autoConfirm, Origin: origin})
-		} else {
-			po, err = e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, pos, autoConfirm, origin)
-		}
+		po, err := e.carrierToPosition(nodeID, claim, pos, quantity, origin)
 		if err != nil {
 			return nil, fmt.Errorf("prime %s: %w", pos, err)
 		}
 		out = append(out, po)
 	}
 	return out, nil
+}
+
+// carrierToPosition is the one maker of a carrier to a position of the
+// claim's cell other than its line: a prime to an index press's position
+// behind the front, a keep-staged refill to its spot. A plain retrieve from
+// the claim's inbound source of what the cell carries (carriesEmpty): an
+// empty to a produce cell, a full of its part to a consume one (quantity, a
+// full's count; an empty is one). nodeID is the row it is made on, the line's.
+//
+// IT NAMES THE PRESS IT SERVES (the claim's node), so a strict kanban admits
+// it, and it is a carrier coming to another position (comingToAnotherPosition)
+// that works no cell.
+//
+// IT IS ALWAYS CONFIRMED BY ITS PLACEMENT, whatever the claim or the plant
+// says about receipts: no operator stands at that position to receive it, and
+// a delivered, unconfirmed order there reads as still coming, to the Edge and
+// to Core, which holds the next pair on waiting_for_outside until Core's sweep
+// confirms it (up to ten minutes a cycle). A prime was confirmed by the merged
+// auto-confirm signal; a consume prime was a move.
+func (e *Engine) carrierToPosition(nodeID int64, claim *processes.NodeClaim, pos string, quantity int64, origin ordermgr.Origin) (*orders.Order, error) {
+	empty := carriesEmpty(claim)
+	if empty {
+		quantity = 1
+	}
+	return e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: pos,
+		Source: claim.InboundSource, Payload: claim.PayloadCode, Quantity: quantity, Empty: empty,
+		AutoConfirm: true, Origin: origin, Press: claim.CoreNodeName})
 }
 
 // primeNodeLock returns the per-cell prime mutex, creating it on first use.

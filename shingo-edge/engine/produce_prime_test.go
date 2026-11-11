@@ -485,21 +485,22 @@ func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 	}
 }
 
-// TestApplyProducePlan_PrimeAutoConfirmIsMerged pins the merge across the whole
-// matrix rather than at one point. Asserting only the config-true case is
-// exactly the leaning test that goes vacuous the day someone flips a default:
-// a hard-coded `true` satisfies it. The false/false row is the one that bites.
-func TestApplyProducePlan_PrimeAutoConfirmIsMerged(t *testing.T) {
+// TestApplyProducePlan_APrimeIsConfirmedByItsPlacement: a prime auto-confirms
+// across the whole matrix of the claim's and the plant's receipt settings
+// (carrierToPosition). It followed the merged signal, so the false/false row
+// left a delivered prime unconfirmed at a position with no operator, read as
+// still coming, and Core held the next pair on waiting_for_outside until its
+// sweep confirmed it.
+func TestApplyProducePlan_APrimeIsConfirmedByItsPlacement(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		claimAC, cfgAC bool
-		want           bool
 	}{
-		{"neither", false, false, false},
-		{"config_only", false, true, true},
-		{"claim_only", true, false, true},
-		{"both", true, true, true},
+		{"neither", false, false},
+		{"config_only", false, true},
+		{"claim_only", true, false},
+		{"both", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -521,9 +522,9 @@ func TestApplyProducePlan_PrimeAutoConfirmIsMerged(t *testing.T) {
 			if len(res.PrimeOrders) != 1 {
 				t.Fatalf("PrimeOrders = %+v, want one", res.PrimeOrders)
 			}
-			if got := res.PrimeOrders[0].AutoConfirm; got != tc.want {
-				t.Errorf("claim=%v cfg=%v: prime AutoConfirm = %v, want %v (claim || config)",
-					tc.claimAC, tc.cfgAC, got, tc.want)
+			if !res.PrimeOrders[0].AutoConfirm {
+				t.Errorf("claim=%v cfg=%v: the prime does not auto-confirm; no operator receives it",
+					tc.claimAC, tc.cfgAC)
 			}
 		})
 	}
