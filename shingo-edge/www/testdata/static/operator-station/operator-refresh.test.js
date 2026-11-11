@@ -358,11 +358,13 @@ function pressView() {
 }
 
 served = pressView();
-// The shared bus the station takes its events from, first, so a station
-// module's own export of a name wins as its import does in the page; the
-// fake clock's server time stays the station's clock.
-['../../../../shared/dom.js', '../../../../shared/clock.js', '../../../../shared/utils.js',
-    '../../../../shared/bus.js'].forEach(loadModule);
+// The shared files the station imports (clock.js, bus.js here, esc.js below;
+// TestStationBoot_SharedFiles holds the list), first, so a station module's
+// own export of a name wins as its import does in the page; the fake clock's
+// server time stays the station's clock. Nothing else from shared/ is loaded,
+// so a station module that leaned on a name only another shared file defines
+// fails here as it would on the kiosk.
+['../../../../shared/clock.js', '../../../../shared/bus.js'].forEach(loadModule);
 ctx.serverNow = () => now;
 ctx.formatClock = (iso) => String(iso);
 ['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',

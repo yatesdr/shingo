@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -12,12 +13,12 @@ import (
 // operator_lazy_model_test.go — what the operator station loads at boot, and
 // what it loads only when a screen needs it.
 //
-// The station is a Pi on plant Wi-Fi. composer-model.js, its largest file,
-// loads behind one loader, composer-boot.js's ensureComposerModel, which the
-// flow panel and the composer both wait on. The Node test boots the shipping
-// modules and watches what they request; the census test below holds the
-// source to the same shape, so a new import or a second loader fails here and
-// not on the floor.
+// The station is a Pi on plant Wi-Fi. Its module graph takes three small
+// shared files, and composer-model.js, its largest file, loads behind one
+// loader, composer-boot.js's ensureComposerModel, which the flow panel and the
+// composer both wait on. The Node test boots the shipping modules and watches
+// what they request; the census tests below hold the source to the same
+// shape, so a new import or a second loader fails here and not on the floor.
 
 // TestOperatorLazyModelJS runs testdata/static/operator-station/
 // operator-lazy-model.test.js once per mode: a cold board then the style chip
@@ -39,6 +40,35 @@ func TestOperatorLazyModelJS(t *testing.T) {
 			}
 			t.Logf("%s", out)
 		})
+	}
+}
+
+// stationEntry is the module operator-display.html boots the station from.
+const stationEntry = "/static/operator-station/operator.js"
+
+// TestStationBoot_SharedFiles: the station's module graph reaches these shared
+// files and no others. Each is small and has a job the station does: the
+// server clock (clock.js), the one event stream (bus.js), the quote-safe
+// escape its renderers concatenate attributes with (esc.js). The touch layer
+// (toasts, press guard, touch sheets) is the station's own and is not
+// extracted, so a shared UI module here is a decision to make, not a
+// convenience: add it to the list with the reason.
+func TestStationBoot_SharedFiles(t *testing.T) {
+	t.Parallel()
+	want := []string{"/static/shared/bus.js", "/static/shared/clock.js", "/static/shared/esc.js"}
+	reach := staticAssets().ImportMap(stationEntry)
+	if len(reach) == 0 {
+		t.Fatalf("the import closure of %s is empty: the handler no longer serves the entry", stationEntry)
+	}
+	var got []string
+	for u := range reach {
+		if strings.HasPrefix(u, "/static/shared/") {
+			got = append(got, u)
+		}
+	}
+	sort.Strings(got)
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("the station reaches these shared files:\n  got  %v\n  want %v", got, want)
 	}
 }
 
