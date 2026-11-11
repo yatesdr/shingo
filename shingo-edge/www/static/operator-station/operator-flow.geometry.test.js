@@ -476,7 +476,7 @@ const PRESS6 = {
 
 // THE HOPKINSVILLE-PRESS SHAPE. Two mirrored halves: a north press spot over a
 // back-line spot each side, and an on-deck spot beyond each end just off the
-// back line. Two jobs over the same positions: a 2-Robot Index from the decks,
+// back line. Two jobs over the same positions: an Index Swap from the decks,
 // and a 2-Robot Swap staging at them.
 function hkPress(job) {
     const c = job === 'swap'
@@ -612,7 +612,7 @@ console.log('relation layout: the (c, r) tables');
     table('a deck behind its own spot', tryL(behind), { PLN_01: [0, 0], PLN_02: [0, 1], PLN_03: [1, 1], PLN_04: [1, 2] }, 2, 3);
 
     const hkI = tryL(hkPress('index')), hkS = tryL(hkPress('swap'));
-    table('hopkinsville press, 2-Robot Index', hkI, HKPRESS, 4, 2);
+    table('hopkinsville press, Index Swap', hkI, HKPRESS, 4, 2);
     table('hopkinsville press, 2-Robot Swap', hkS, HKPRESS, 4, 2);
     oneCardPerCell('hopkinsville press', hkPress('index'), hkI);
     check('hopkinsville press: PLN_02 in the same cell under both jobs',
@@ -830,12 +830,12 @@ console.log('relation picture: fading');
 console.log('relation picture: chevrons on the card doing the action');
 {
     const cards = parse(m.renderFlowPicture({ cell: press6(), station: { name: 'PIN' } }, {}));
-    // 2-Robot Index: the deck card Robot 1 up and Robot 2 toward its press
+    // Index Swap: the deck card Robot 1 up and Robot 2 toward its press
     // spot; the press card one Robot 2 from the deck's side.
-    check('2-Robot Index: the west deck carries Robot 1 up and Robot 2 right', cvs(nodeCard(cards, 'PLN_01')) === '1u 2r', cvs(nodeCard(cards, 'PLN_01')));
-    check('2-Robot Index: its press spot one Robot 2, from the deck\'s side', cvs(nodeCard(cards, 'PLN_05')) === '2r', cvs(nodeCard(cards, 'PLN_05')));
-    check('2-Robot Index: the east deck carries Robot 1 up and Robot 2 left', cvs(nodeCard(cards, 'PLN_08')) === '1u 2l', cvs(nodeCard(cards, 'PLN_08')));
-    check('2-Robot Index: its press spot Robot 2 from the east', cvs(nodeCard(cards, 'PLN_07')) === '2l', cvs(nodeCard(cards, 'PLN_07')));
+    check('Index Swap: the west deck carries Robot 1 up and Robot 2 right', cvs(nodeCard(cards, 'PLN_01')) === '1u 2r', cvs(nodeCard(cards, 'PLN_01')));
+    check('Index Swap: its press spot one Robot 2, from the deck\'s side', cvs(nodeCard(cards, 'PLN_05')) === '2r', cvs(nodeCard(cards, 'PLN_05')));
+    check('Index Swap: the east deck carries Robot 1 up and Robot 2 left', cvs(nodeCard(cards, 'PLN_08')) === '1u 2l', cvs(nodeCard(cards, 'PLN_08')));
+    check('Index Swap: its press spot Robot 2 from the east', cvs(nodeCard(cards, 'PLN_07')) === '2l', cvs(nodeCard(cards, 'PLN_07')));
     check('chevrons: an idle card has none', cvs(nodeCard(cards, 'PLN_06')) === '', cvs(nodeCard(cards, 'PLN_06')));
     const none = parse(m.renderFlowPicture({ cell: press6(), station: { name: 'PIN' } }, { chevrons: [] }));
     check('chevrons: [] draws none', none.every(c => c.cvs.length === 0));
@@ -844,10 +844,10 @@ console.log('relation picture: chevrons on the card doing the action');
     // A deck feeding the spot above it in its column: vertical. One a column
     // over and a row down is a tie, and a tie is horizontal.
     const up = parse(m.renderFlowPicture({ cell: press6({ PLN_09: index('PLN_05') }), station: { name: 'PIN' } }, {}));
-    check('2-Robot Index: a deck below its spot sends Robot 2 up', cvs(nodeCard(up, 'PLN_05')) === '1u 2u' && cvs(nodeCard(up, 'PLN_09')) === '2u',
+    check('Index Swap: a deck below its spot sends Robot 2 up', cvs(nodeCard(up, 'PLN_05')) === '1u 2u' && cvs(nodeCard(up, 'PLN_09')) === '2u',
         cvs(nodeCard(up, 'PLN_05')) + ' / ' + cvs(nodeCard(up, 'PLN_09')));
     const tie = parse(m.renderFlowPicture({ cell: press6({ PLN_09: index('PLN_06') }), station: { name: 'PIN' } }, {}));
-    check('2-Robot Index: a deck a column over and a row down sends Robot 2 sideways', cvs(nodeCard(tie, 'PLN_06')) === '1u 2l' &&
+    check('Index Swap: a deck a column over and a row down sends Robot 2 sideways', cvs(nodeCard(tie, 'PLN_06')) === '1u 2l' &&
         cvs(nodeCard(tie, 'PLN_09')) === '2l', cvs(nodeCard(tie, 'PLN_06')) + ' / ' + cvs(nodeCard(tie, 'PLN_09')));
     // ONE DECK, TWO PRESS SPOTS: a recipe group's on-deck spot feeds each of
     // its group's spots, and the desktop draws the group with a claim on
@@ -855,18 +855,18 @@ console.log('relation picture: chevrons on the card doing the action');
     // Robot 2 toward them is one pair while they stand on one side of it.
     const shared = parse(m.renderFlowPicture({ cell: press6({ PLN_05: index('PLN_01'), PLN_09: index('PLN_01'),
         PLN_07: index('PLN_08', 'SYN-P2') }), station: { name: 'PIN' } }, {}));
-    check('2-Robot Index: every press spot one deck feeds carries its Robot 2',
+    check('Index Swap: every press spot one deck feeds carries its Robot 2',
         cvs(nodeCard(shared, 'PLN_05')) === '2r' && cvs(nodeCard(shared, 'PLN_09')) === '2r' && cvs(nodeCard(shared, 'PLN_01')) === '1u 2r',
         [cvs(nodeCard(shared, 'PLN_05')), cvs(nodeCard(shared, 'PLN_09')), cvs(nodeCard(shared, 'PLN_01'))].join(' / '));
     const one9 = parse(m.renderFlowPicture({ cell: press6({ PLN_05: index('PLN_01'), PLN_09: index('PLN_01') }),
         station: { name: 'PIN' } }, { chevrons: ['PLN_09'] }));
-    check('2-Robot Index: the second spot a deck feeds draws alone, its deck\'s moves with it',
+    check('Index Swap: the second spot a deck feeds draws alone, its deck\'s moves with it',
         cvs(nodeCard(one9, 'PLN_09')) === '2r' && cvs(nodeCard(one9, 'PLN_01')) === '1u 2r' && cvs(nodeCard(one9, 'PLN_05')) === '',
         [cvs(nodeCard(one9, 'PLN_09')), cvs(nodeCard(one9, 'PLN_01')), cvs(nodeCard(one9, 'PLN_05'))].join(' / '));
     // With a third: the third carries Robot 1 up and Robot 2 toward the deck,
     // and is drawn as a card of the deck's height in its own cell.
     const third = parse(m.renderFlowPicture({ cell: press6({ PLN_05: index('PLN_01', 'SYN-P1', 'PLN_09') }), station: { name: 'PIN' } }, {}));
-    check('2-Robot Index with a third: the third carries Robot 1 up and Robot 2 toward the deck',
+    check('Index Swap with a third: the third carries Robot 1 up and Robot 2 toward the deck',
         cvs(nodeCard(third, 'PLN_09')) === '1u 2l' && nodeCard(third, 'PLN_09').h === 76, cvs(nodeCard(third, 'PLN_09')));
     // 2-Robot Swap staging at back positions: the lane card Robot 1 up, the
     // spot Robot 1 from the lane's side.

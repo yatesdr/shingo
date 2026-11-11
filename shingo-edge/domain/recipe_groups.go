@@ -402,8 +402,8 @@ func (c *groupCheck) fieldsTheModeTakes() error {
 					if word == "" {
 						word = string(star.SwapMode)
 					}
-					return refusef("%s lists %s as %s for %s, which a %s does not use",
-						g.Name, list[0], strings.ToLower(flowspec.Label(f.field)), s.CoreNodeName, word)
+					return refusef("%s lists %s as %s for %s, which %s does not use",
+						g.Name, list[0], strings.ToLower(flowspec.Label(f.field)), s.CoreNodeName, withArticle(word))
 				case f.cell(star) == "":
 					return refusef("%s lists %s for %s, and %s has none in the recipe — set one on %s's row first, or take it out",
 						g.Name, groupPlaceNoun(f.field, star.SwapMode), s.CoreNodeName, g.Of, g.Of)
@@ -476,8 +476,8 @@ func (c *groupCheck) advancedTheModeTakes() error {
 		row := flowspec.Steady(star.Role, star.SwapMode)
 		for _, f := range advancedFields {
 			if f.set(*g.Advanced) && row[f.field] == flowspec.Forbidden {
-				return refusef("%s's Advanced sets %s, which a %s %s spot does not use — clear it",
-					g.Name, strings.ToLower(flowspec.Label(f.field)), SwapModeWord(star.SwapMode), star.Role)
+				return refusef("%s's Advanced sets %s, which %s %s spot does not use — clear it",
+					g.Name, strings.ToLower(flowspec.Label(f.field)), withArticle(SwapModeWord(star.SwapMode)), star.Role)
 			}
 		}
 		if msg := PackToleranceRefusal(g.Advanced.PackTolerancePct); msg != "" {

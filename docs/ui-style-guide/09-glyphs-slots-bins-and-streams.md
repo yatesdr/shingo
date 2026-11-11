@@ -94,7 +94,7 @@ template names a robot.
 |---|---|
 | 1‑Robot Swap | position card over a row of two staging slots, inbound left and outbound right; the new bin rises from the inbound slot and the old bin parks down into the outbound slot, both Robot 1. No move to the dock beside the park: the out-stub by the card's side is only for an old bin that leaves with no park leg drawn |
 | 2‑Robot Swap | position card over its inbound staging slot; the old bin leaves by the side (Robot 2's out-stub). **No outbound slot**, even when the claim names one: Robot 2 takes the old bin straight to the dock, and a slot would draw a trip this choreography never makes |
-| 2‑Robot Index | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. An inbound staging the claim names is a slot under the on-deck card (under the press card when there is no deck), captioned `Inbound staging`, with **no chevron**: the running choreography has no leg to it, and its tooltip says it is used at changeover. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
+| Index Swap | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. An inbound staging the claim names is a slot under the on-deck card (under the press card when there is no deck), captioned `Inbound staging`, with **no chevron**: the running choreography has no leg to it, and its tooltip says it is used at changeover. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
 | Sequential A/B | A and B side by side in one double-width module under one line-side bar |
 | no claim | the position card, dashed, its bar dimmed. The bar of a position not in the flow is the only thing in the picture that is ever dimmed |
 
@@ -219,7 +219,7 @@ chevron, as in Design tokens › Robot identity hues.
 
 ### The cell picture by relation
 
-A cell whose claims run a changeover (2‑Robot Index, 2‑Robot Swap, 1‑Robot
+A cell whose claims run a changeover (Index Swap, 2‑Robot Swap, 1‑Robot
 Swap, Sequential A/B — `relationScope`) is drawn **by relation** on every
 surface that draws it: the station's flow panel, the HMI's recipe steps and
 the desktop. Markets, loaders and unloaders keep the module picture, byte for

@@ -25,7 +25,7 @@
 // ── vocabulary ───────────────────────────────────────────────────────────────
 // "Robot 1" / "Robot 2", never the short forms. SPEC §0.7.
 const MODES = {
-    two_robot_press_index: '2‑Robot Index',
+    two_robot_press_index: 'Index Swap',
     two_robot: '2‑Robot Swap',
     single_robot: '1‑Robot Swap',
     sequential: 'Sequential A/B',
@@ -2555,7 +2555,7 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 // thing they are about has always been CellPicture. The press-index mode keeps
 // its own words: that one really is about a press indexing.
 const PAIRED_NOTE = {
-    two_robot_press_index: 'No back position on this cell — a ' + MODES.two_robot_press_index +
+    two_robot_press_index: 'No back position on this cell — an ' + MODES.two_robot_press_index +
         ' pairs with one, and a position becomes a back position only when a flow names it. ' +
         'Pair this one from the desktop’s Flows, or pick another choreography.',
     sequential: 'Only one position on this cell — ' + MODES.sequential +

@@ -32,6 +32,7 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - Evacuate on changeover is gone; a claim that had it on with no marks is logged (Edge v47)
 - Which robot brings a press's next carrier is stored as Robot 1, 2 or 3 (Edge v47)
 - An index press can use Robot 3: a third trip brings the back its carrier when Robot 2 lifts it
+- The index press's mode is called Index Swap on every screen and in every refusal
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
 - A robot's lift clears the spot it lifted from whichever order it belongs to, and only for the cart it lifted
 

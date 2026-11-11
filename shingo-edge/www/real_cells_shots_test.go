@@ -339,7 +339,7 @@ func changeoverMode(mode string) bool {
 }
 
 // claimRole is the role a claim is written with. THE PICTURE CARRIES NONE
-// (CellClaim has no role), so it is read off the mode: a 2-Robot Index claim
+// (CellClaim has no role), so it is read off the mode: an Index Swap claim
 // is a press making parts, and every other claim consumes — which is what
 // Hopkinsville's weld cell runs (its composer read is the one pull that
 // carries roles). The board's picture never reads a role; the Spots step's

@@ -1012,7 +1012,7 @@ function relSlot(x, y, name, caption, o) {
 // width; renderFlowPicture puts the legend over it and the dock under it.
 //
 // THE CHOREOGRAPHY IS THE CLAIMS', AND ITS ROBOTS THE MODEL'S. Which cards
-// carry which moves (SYNTH row 19): a 2-Robot Index's on-deck card Robot 1 up
+// carry which moves (SYNTH row 19): an Index Swap's on-deck card Robot 1 up
 // and Robot 2 toward its press spot, the press card one Robot 2 from the
 // deck's side, a third Robot 1 up and Robot 2 toward the deck; a 2-Robot
 // Swap's lane Robot 1 up and its spot Robot 1 from the lane's side; a 1-Robot

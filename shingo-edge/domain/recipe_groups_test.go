@@ -122,7 +122,7 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 		// The mint would refuse every style made from it (the claim validator
 		// refuses what the mode forbids), so the save says so first.
 		"an Advanced field the mode does not use": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"auto_push":true`, 1)),
-			says: "Right Hand's Advanced sets auto push, which a 2‑Robot Index produce spot does not use — clear it"},
+			says: "Right Hand's Advanced sets auto push, which an Index Swap produce spot does not use — clear it"},
 		// The index-robot flip has no meaning off a press index: the claim
 		// validator refuses it there, so the recipe save does first.
 		"the robot flip off a press index": {flow: `{"cells":[

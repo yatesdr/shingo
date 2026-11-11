@@ -180,7 +180,7 @@ type ComposerStyle struct {
 	// ClaimCount is zero for a style nobody has set up — the "Build" verdict,
 	// and with the gate off the row that reads "Set up from the desktop".
 	ClaimCount int `json:"claim_count"`
-	// Modes and Nodes build the row's flow summary ("2‑Robot Index · P01/P04").
+	// Modes and Nodes build the row's flow summary ("Index Swap · P01/P04").
 	//
 	// NODES RIDES THE PICKER SCOPE ONLY (owner, 2026-09-17: carrying the same
 	// data twice is not kept). It is the core node of every claim, which is
