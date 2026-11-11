@@ -100,7 +100,11 @@ function load(opts) {
         const t = head.children.find(c => c.dataset.composerAsset === asset && !c.fired);
         if (!t) throw new Error('no unanswered tag for ' + asset + ' (tags: ' + out.tags().join(', ') + ')');
         t.fired = ev;
-        if (ev === 'load' && asset === '/static/operator-station/composer-model.js') window.ComposerModel = opts.loads || { init() {} };
+        // A model tag that loads runs the file, which sets the global;
+        // opts.loads === null is a file that ran and set nothing.
+        if (ev === 'load' && asset === '/static/operator-station/composer-model.js' && opts.loads !== null) {
+            window.ComposerModel = opts.loads || { init() {} };
+        }
         (t.listeners[ev] || []).forEach(fn => fn({}));
     };
     out.window = window;
@@ -143,6 +147,95 @@ console.log('a failed request is made again');
         const second = await p;
         check('and opens the composer once it has it', !!second, String(second));
     }
+}
+
+// ── the model's one loader ──────────────────────────────────────────────────
+console.log('the model loads once, when it is asked for');
+{
+    // A page whose own tag ran the model (the Processes page) fetches nothing.
+    const have = { init() {} };
+    const b = load({ model: have });
+    const got = await b.ensureComposerModel();
+    check('a model already on window: resolved, nothing requested', got === have && b.appended.length === 0,
+        'appended: ' + b.appended.join(', '));
+}
+{
+    const b = load();
+    check('nothing is requested until a caller asks', b.appended.length === 0, b.appended.join(', '));
+    const p1 = b.ensureComposerModel();
+    const p2 = b.ensureComposerModel();
+    await flush();
+    check('two callers during the load share one request',
+        b.appended.length === 1 && b.appended[0] === MODEL, b.appended.join(', '));
+    b.fire(MODEL, 'load');
+    const [m1, m2] = await Promise.all([p1, p2]);
+    check('both get the model', !!m1 && m1 === m2 && m1 === b.window.ComposerModel);
+    await b.ensureComposerModel();
+    check('a caller after the load requests nothing', b.appended.length === 1, b.appended.join(', '));
+}
+{
+    const b = load();
+    const p = b.ensureComposerModel();
+    await flush();
+    b.fire(MODEL, 'error');
+    const got = await p;
+    check('a lost model resolves null (the caller says so)', got === null, String(got));
+    check('and is logged', b.errors.some(e => /composer model/.test(e)), b.errors.join(' | '));
+    check('and leaves no tag behind', b.tags().indexOf(MODEL) < 0, b.tags().join(', '));
+    await flush();
+    check('nothing asks again by itself', b.appended.length === 1, b.appended.join(', '));
+    const again = b.ensureComposerModel();
+    await flush();
+    check('the next ask requests it again', b.appended.filter(a => a === MODEL).length === 2, b.appended.join(', '));
+    b.fire(MODEL, 'load');
+    check('and gets it', !!(await again));
+}
+{
+    // A file that loads but sets nothing (a parse error in it) is a failed load.
+    const b = load({ loads: null });
+    const p = b.ensureComposerModel();
+    await flush();
+    b.fire(MODEL, 'load');
+    check('a model file that set nothing resolves null', (await p) === null);
+}
+
+// ── the composer waits for the same loader ──────────────────────────────────
+console.log('the composer loads the model before its render module');
+{
+    const b = load();
+    const p = b.ensureComposer();
+    await flush(); b.fire(CSS, 'load');
+    await flush(); b.fire(SPEC, 'load');
+    await flush();
+    check('the model is requested after the flowspec', b.appended.join(',') === [CSS, SPEC, MODEL].join(','),
+        b.appended.join(', '));
+    check('the render module is not imported before the model is in', b.imports.length === 0, b.imports.join(', '));
+    b.fire(MODEL, 'load');
+    const ui = await p;
+    check('then the render module, and the composer opens',
+        b.imports.length === 1 && b.imports[0] === RENDER && !!ui, b.imports.join(', '));
+}
+{
+    const b = load();
+    const p = b.ensureComposer();
+    await flush(); b.fire(CSS, 'load');
+    await flush(); b.fire(SPEC, 'load');
+    await flush(); b.fire(MODEL, 'error');
+    const ui = await p;
+    check('a lost model opens no composer (CHANGEOVER says tap again)', ui === null && b.imports.length === 0,
+        String(ui) + ' / ' + b.imports.join(', '));
+}
+{
+    // The flow panel loaded the model first: the composer does not ask again.
+    const b = load();
+    const m = b.ensureComposerModel();
+    await flush(); b.fire(MODEL, 'load'); await m;
+    const p = b.ensureComposer();
+    await flush(); b.fire(CSS, 'load');
+    await flush(); b.fire(SPEC, 'load');
+    const ui = await p;
+    check('a model already loaded is not requested twice',
+        !!ui && b.appended.filter(a => a === MODEL).length === 1, b.appended.join(', '));
 }
 
 console.log(failures ? '\n' + failures + ' failure(s)' : '\nall passed');

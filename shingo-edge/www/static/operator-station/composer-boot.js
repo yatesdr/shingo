@@ -10,16 +10,23 @@
 //
 // WHAT STAYS AT BOOT, and it is not an oversight:
 //
-//   - composer-model.js, because operator-flow.js asks it for the read-only
-//     picture's sentences (sentencesFromView) the moment the style chip's
-//     panel is opened, and that panel is part of the board.
 //   - composer-glyphs.js and composer-glyphs.css, because the board's own
 //     changeover card draws the swap-mode glyph.
-//   - flow-picture.css, for the same panel.
+//   - flow-picture.css, for the style chip's flow panel.
 //
-// ONE LOAD, HELD. Every entry point calls ensureComposer(); the promise is
-// kept, so a second tap while the first is still fetching joins it rather than
-// starting a second fetch, and every tap after that is synchronous.
+// THE MODEL IS DEFERRED TOO, behind its own loader (ensureComposerModel).
+// composer-model.js is the largest file the station has, about 45 kB on the
+// wire and 137 kB to parse, and the board reads it in two places only: the
+// style chip's flow panel (operator-flow.js syncFlowPanel) and the composer.
+// Both wait on the one loader below. The picture functions stay synchronous,
+// because the Processes page calls them with the model already on window
+// (its own classic tag, processes.html); a page whose tag has run the model
+// fetches nothing here.
+//
+// ONE LOAD, HELD. Every entry point calls ensureComposer() or
+// ensureComposerModel(); the promise is kept, so a second tap while the first
+// is still fetching joins it rather than starting a second fetch, and every
+// tap after that is synchronous.
 
 // VERSIONED FROM THIS MODULE'S OWN URL. The template stamps ?v= on the script
 // tag that pulled this in, and import.meta.url carries it — so the deferred
@@ -70,17 +77,49 @@ function loadScript(src) {
     });
 }
 
+let modelLoading = null;
+
+// ensureComposerModel resolves window.ComposerModel, or null when
+// composer-model.js could not be loaded. It is the model's one loader: the
+// flow panel waits on it before it draws, and ensureComposer before the
+// render module runs.
+//
+// A FAILED LOAD RESOLVES null AND THE CALLER SAYS SO, in the station's words
+// (the flow panel's toast, the changeover's). Clearing the held promise is
+// what lets the next tap try again. Nothing retries on its own: a lost request
+// waits for a tap, and never becomes one request per view refresh.
+export function ensureComposerModel() {
+    if (window.ComposerModel) return Promise.resolve(window.ComposerModel);
+    if (modelLoading) return modelLoading;
+    modelLoading = loadScript('/static/operator-station/composer-model.js')
+        .then(() => {
+            if (!window.ComposerModel) throw new Error('composer-model.js ran and set no window.ComposerModel');
+            return window.ComposerModel;
+        })
+        .catch(err => {
+            modelLoading = null;
+            console.error('composer model', err);
+            return null;
+        });
+    return modelLoading;
+}
+
 // ensureComposer resolves once window.ComposerUI is ready to be called.
 //
 // ORDER IS LOAD-BEARING: flowspec-data.js sets window.FLOWSPEC, which
 // composer-model.js's init reads for the per-mode rules and every surface
 // reads for a field's word. It is awaited before the render module, so a
 // composer that opens is a composer that knows what its choreography forbids.
+// The model is awaited before it too: composer-render.js draws every screen
+// through window.ComposerModel, and a cold #compose= opens one from the
+// module's own boot (bootFromHash), with no tap in between.
 export function ensureComposer() {
     if (window.ComposerUI) return Promise.resolve(window.ComposerUI);
     if (loading) return loading;
     loading = loadStyle('/static/operator-station/composer.css')
         .then(() => loadScript('/static/operator-station/flowspec-data.js'))
+        .then(() => ensureComposerModel())
+        .then(model => { if (!model) throw new Error('the composer model did not load'); })
         .then(() => import('/static/operator-station/composer-render.js' + VERSION))
         .then(() => window.ComposerUI)
         .catch(err => {

@@ -64,7 +64,7 @@
 // every position is a card in its own cell, a staging position included, and
 // only a lane that is not a position is a slot (in the band).
 
-import { el } from './operator-util.js';
+import { el, showToast } from './operator-util.js';
 // The QUOTE-SAFE escape, not operator-util's. This file builds attributes by
 // concatenation — data-pos, data-tap, transform — and the base's escaper
 // leaves `"` alone. See shared/esc.js.
@@ -1488,11 +1488,18 @@ export function closeFlowPanel() {
 // fixed size on the kiosk whatever the cell needs. A changeover cell is drawn
 // by relation here too (the scope gate): one cell, one picture, on the board
 // and on the recipe steps.
+//
+// THE MODEL FIRST. The picture reads window.ComposerModel, mostly unguarded
+// (modulesOf, stagingNamed, worldRows, drawRelation, renderFlowPicture), and
+// the station loads the model on the panel's first open rather than at boot
+// (composer-boot.js). Until it is in, the panel waits on the loader and then
+// draws the view as it is when the load lands.
 export function syncFlowPanel(view) {
     const p = panel();
     if (!p) return;
     if (!open) { p.hidden = true; return; }
     if (!view) return;
+    if (!(typeof window !== 'undefined' && window.ComposerModel)) { waitForModel(); return; }
     const title = document.getElementById('os-flow-title');
     const sub = document.getElementById('os-flow-sub');
     const svg = document.getElementById('os-flow-svg');
@@ -1509,6 +1516,37 @@ export function syncFlowPanel(view) {
         svg.setAttribute('height', String(h));
     }
     p.hidden = false;
+}
+
+// waitForModel holds one wait however many refreshes arrive during the load,
+// and draws once when it lands.
+//
+// THE LOADER IS IMPORTED HERE, WHEN IT IS NEEDED, not at the top of the file:
+// the Processes page imports this file for its pictures and puts the model on
+// window with its own tag (processes.html), so a static import would add
+// composer-boot.js to that page for nothing. On the station the module is
+// already loaded (operator-render.js imports it), so this costs no request.
+//
+// A FAILED LOAD CLOSES THE PANEL AND SAYS SO. Left open, every view refresh
+// would ask for the model again, one request per refresh on plant Wi-Fi.
+// Closed, the next try is the operator's tap, as for the changeover screen.
+let modelWait = null;
+
+function waitForModel() {
+    if (modelWait) return;
+    modelWait = import('./composer-boot.js')
+        .then(boot => boot.ensureComposerModel())
+        .catch(() => null)
+        .then(model => {
+            modelWait = null;
+            if (!open) return;
+            if (!model) {
+                closeFlowPanel();
+                showToast('The flow did not load — tap STYLE again', 'error');
+                return;
+            }
+            syncFlowPanel(getView());
+        });
 }
 
 // mountFlowPanel builds the panel once and wires its Board button. Safe to
