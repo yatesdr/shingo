@@ -176,8 +176,7 @@ func releasePinCells() []relCell {
 	twoRobot := pairSpec{mode: protocol.SwapModeTwoRobot}
 	twoRobotConsume := pairSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume}
 	coPI := coSpec{mode: protocol.SwapModeTwoRobotPressIndex}
-	coPITooling := coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}
-	coSRTooling := coSpec{mode: protocol.SwapModeSingleRobot, tooling: true}
+	coSR := coSpec{mode: protocol.SwapModeSingleRobot}
 	coTwoRobot := coSpec{mode: protocol.SwapModeTwoRobot}
 	S, D, T := protocol.StatusStaged, protocol.StatusDispatched, protocol.StatusInTransit
 	withBinAt := func(b func(h *relHarness)) func(h *relHarness) {
@@ -188,36 +187,10 @@ func releasePinCells() []relCell {
 	}
 
 	return []relCell{
-		// ── N-a: a second release on an in_transit multi-wait leg ─────────
-		// The Edge sends it; Core appends the NEXT wait's segment (the Core
-		// half is pinned in shingo-core). The Edge half is characterised here:
-		// the envelope goes, through a second sweep (which the page's toast
-		// invited until it reported deferred supply apart from pending).
-		{name: "N-a/sweep twice on a single_robot tooling evac",
-			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[] | uop=0",
-			build: coAt(coSRTooling, "evac", S),
-			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
-		{name: "N-a/station button twice on a press-index tooling pair",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
-			build: coAt(coPITooling, "evac", S, "supply", S),
-			act:   seq(pairClick(dispNone), pairClick(dispNone)), probe: probes(pUOP)},
-		{name: "N-a/sweep twice on a press-index tooling R1",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[] | uop=0",
-			build: coAt(coPITooling, "evac", S, "supply", S),
-			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
-
-		// ── N-a(ii): a second click on an evac already staged at "tooling done" ─
-		// N-a covers a leg still driving between its waits. Once the evac has
-		// staged at its later wait, a second click meant for "ready" releases
-		// it past the tooling hold: the Edge cannot tell the two clicks apart,
-		// because the act does not say which wait it is for. S5's
-		// purpose-scoped act is the fix; until then the plant instruction
-		// stands (no second RELEASE on a tooling node before tooling is done).
-		{name: "N-a(ii)/ready clicked again after the evac staged at tooling done",
-			want:  "ok | evac=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[]",
-			build: coAt(coSRTooling, "evac", S),
-			act: seq(sweepClickAs(release.PurposeReady, dispNone), stagesAt("evac", 1),
-				sweepClickAs(release.PurposeReady, dispNone))},
+		// ── N-a: a second release on a multi-wait leg ────────────────────
+		// The switch's evacuate legs, which carried a ready and a tooling done
+		// wait, are gone; a tool change's leg carries one, and a second only at
+		// a curtained position.
 
 		// ── §6.4: the station button on a single_robot changeover node ────────
 		// Its task carries one order (since 2026-10-16), and the pair path
@@ -228,7 +201,7 @@ func releasePinCells() []relCell {
 		// evac ships its bin's count at RELEASE.
 		{name: "6.4/station RELEASE on a single_robot changeover node",
 			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0",
-			build: coAt(coSRTooling, "evac", S),
+			build: coAt(coSR, "evac", S),
 			act:   pairClick(dispNone)},
 
 		// ── The pickup chain releases a supply the pair click released ──────
@@ -244,10 +217,10 @@ func releasePinCells() []relCell {
 		// (The single_robot relay row, "stage leg confirms, swap leg at ready",
 		// is gone: since 2026-10-16 the single-robot changeover is one order,
 		// and there is no stage leg to confirm.)
-		{name: "L1/press-index tooling: R2 confirms, R1 at tooling done", gate: release.G2,
-			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
-			build: coAt(coPITooling, "evac", S, "supply", T),
-			act:   confirms("supply")},
+		{name: "L1/press-index tool change: the neighbour's supply confirms, the leg at tooling done holds", gate: release.G2,
+			want:  "ok | nevac=submitted nsupply=confirmed supply=staged | rel=- | ingest=0 capred=0",
+			build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true, neighbour: true}, "supply", S, "nsupply", T),
+			act:   confirms("nsupply")},
 
 		// ── The press-index pair (keep) ──────────────────────────────────────
 		{name: "keep/pi changeover pair, both staged",

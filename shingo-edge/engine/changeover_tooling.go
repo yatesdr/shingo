@@ -470,8 +470,15 @@ func liftsAndRefills(a *changeover.NodeAction) bool {
 // This is the shape the sim proved on the floor (2026-08-24), and it is now
 // produced HERE rather than by a builder a separate predicate selected.
 func toolingPositionAction(press toolingPress, position string, node *processes.Node) changeover.NodeAction {
-	fromPosition := domain.SynthesizePositionClaim(press.from, position)
-	toPosition := domain.SynthesizePositionClaim(press.to, position)
+	// A press position has no claim of its own: it is synthesized from the
+	// press's, as the per-position fan-out does. Any other mode marks its own
+	// node, whose claims are the leg's as they stand (a keep-staged incoming
+	// claim keeps the spot its refill lifts from).
+	fromPosition, toPosition := press.from, press.to
+	if press.from.IsPressIndex() {
+		fromPosition = domain.SynthesizePositionClaim(press.from, position)
+		toPosition = domain.SynthesizePositionClaim(press.to, position)
+	}
 
 	// The replacement leg is a fresh EMPTY carrier for a produce position, and
 	// names the incoming style when the carrier type changes — refillPickup owns

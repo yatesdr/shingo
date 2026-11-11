@@ -198,11 +198,7 @@ func ChangeoverSituation(from, to *NodeClaim) Situation {
 	case ToolingClearanceApplies(from, to):
 		return SituationEvacuate
 	case from.PayloadCode == to.PayloadCode && from.Role == to.Role:
-		// Same part, whole-node evacuation: read off the outgoing claim.
-		if from.EvacuateOnChangeover {
-			return SituationEvacuate
-		}
-		return SituationUnchanged
+		return SituationUnchanged // the same part: nothing moves
 	default:
 		return SituationSwap
 	}

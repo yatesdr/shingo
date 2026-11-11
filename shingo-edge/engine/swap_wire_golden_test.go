@@ -107,17 +107,14 @@ func buildSwapWireGolden(t *testing.T) map[string]any {
 					to := goldenClaim(role, mode, pay.to, v.secondPaired, v.flip)
 					entry["BuildSwapChangeoverSteps/"+pay.name] = renderChangeoverDispatch(
 						BuildSwapChangeoverSteps(from, to, "", ""))
-					entry["BuildEvacuateChangeoverSteps/"+pay.name] = renderChangeoverDispatch(
-						BuildEvacuateChangeoverSteps(from, to, "", ""))
 				}
 
 				from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
 				to := goldenClaim(role, mode, "P-TO", v.secondPaired, v.flip)
 				entry["BuildChangeoverPlan"] = map[string]any{
-					"swap":     renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: from, ToClaim: to}}),
-					"evacuate": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationEvacuate, FromClaim: from, ToClaim: to}}),
-					"add":      renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationAdd, ToClaim: to}}),
-					"drop":     renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationDrop, FromClaim: from}}),
+					"swap": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: from, ToClaim: to}}),
+					"add":  renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationAdd, ToClaim: to}}),
+					"drop": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationDrop, FromClaim: from}}),
 				}
 				golden[key] = entry
 			}

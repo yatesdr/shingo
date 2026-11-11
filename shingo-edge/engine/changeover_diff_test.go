@@ -39,35 +39,34 @@ func TestDiffStyleClaims_Swap(t *testing.T) {
 	}
 }
 
-// THE OUTGOING CLAIM OWNS THE FLAG. This test used to set it on the INCOMING
-// claim, matching a read that disagreed with the planner's Drop branch three
-// files away (which has always read fromClaim.EvacuateOnChangeover). One flag,
-// one owner: the bins in the way of the tool change are the ones the outgoing
-// setup put there.
+// THE OUTGOING CLAIM OWNS THE MARKS: the bins in the way of the tool change
+// are the ones the outgoing setup put there. A single-node cell that marks its
+// node evacuates, whether its part stays or changes.
 func TestDiffStyleClaims_Evacuate(t *testing.T) {
 	t.Parallel()
-	diffs := DiffStyleClaims(
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-	)
-	d := findDiff(diffs, "N1")
-	if d == nil {
-		t.Fatal("missing diff for N1")
-	}
-	if d.Situation != SituationEvacuate {
-		t.Errorf("situation = %q, want %q", d.Situation, SituationEvacuate)
+	for _, toPart := range []string{"PART-A", "PART-B"} {
+		diffs := DiffStyleClaims(
+			[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", ChangeoverEvacNodes: []string{"N1"}}},
+			[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: toPart, Role: "consume"}},
+		)
+		d := findDiff(diffs, "N1")
+		if d == nil {
+			t.Fatal("missing diff for N1")
+		}
+		if d.Situation != SituationEvacuate {
+			t.Errorf("to %s: situation = %q, want %q", toPart, d.Situation, SituationEvacuate)
+		}
 	}
 }
 
-// The other side of the same decision, and the one with a live consequence: a
-// plant that set the flag on the INCOMING style will stop evacuating. Pinned
-// so the change is a decision on the record rather than a surprise, and so
-// anyone who "fixes" it by reading both sides has to argue with a test.
+// The other side of the same decision: marks on the INCOMING claim do not make
+// this changeover a tool change. They are that claim's, for the changeover away
+// from it.
 func TestDiffStyleClaims_EvacuateOnIncomingClaimIsNotHonoured(t *testing.T) {
 	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", ChangeoverEvacNodes: []string{"N1"}}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -244,8 +243,8 @@ func TestDiffStyleClaims_BothEmpty(t *testing.T) {
 //
 // The previous "changeover-only role" tests covered behavior that the UI
 // consistency refactor removed. Evacuate-during-changeover is now driven
-// by the EvacuateOnChangeover flag on the active claim, not by a
-// separate "changeover" claim role. The EVAC-NODE case below exercises
+// by the tool-change marks on the active claim, not by a separate
+// "changeover" claim role. The EVAC-NODE case below exercises
 // the surviving mechanic.
 
 func TestDiffStyleClaims_MultiNode(t *testing.T) {
@@ -253,13 +252,13 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 	from := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "OLD", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
-		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", EvacuateOnChangeover: true},
+		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", ChangeoverEvacNodes: []string{"EVAC-NODE"}},
 		{CoreNodeName: "DROP-NODE", PayloadCode: "DROP-PART", Role: "consume"},
 	}
 	to := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "NEW", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
-		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", EvacuateOnChangeover: true},
+		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume"},
 		{CoreNodeName: "ADD-NODE", PayloadCode: "NEW-PART", Role: "consume"},
 	}
 
@@ -334,25 +333,6 @@ func TestDiffStyleClaims_RoleChange(t *testing.T) {
 	}
 	if d.Situation != SituationSwap {
 		t.Errorf("situation = %q, want %q (same payload, different role = swap)", d.Situation, SituationSwap)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// EvacuateOnChangeover ignored when payload differs (still Swap)
-// ---------------------------------------------------------------------------
-
-func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
-	t.Parallel()
-	diffs := DiffStyleClaims(
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume", EvacuateOnChangeover: true}},
-	)
-	d := findDiff(diffs, "N1")
-	if d == nil {
-		t.Fatal("missing diff for N1")
-	}
-	if d.Situation != SituationSwap {
-		t.Errorf("situation = %q, want %q (payload change overrides evacuate flag)", d.Situation, SituationSwap)
 	}
 }
 

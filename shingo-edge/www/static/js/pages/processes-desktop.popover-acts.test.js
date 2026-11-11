@@ -2378,7 +2378,7 @@ async function mainAsync() {
     const openAdvPick = (scrim, doc) => click(scrim, doc, { advkind: 'pick', adv: 'changeover_carryover_disposition' });
     const dialogs = [
         ['Advanced', openAdv, 'PLN_01 · Advanced', l => l.find('data-adv', 'reorder_point'), '40',
-            (scrim, doc) => click(scrim, doc, { advkind: 'toggle', adv: 'evacuate_on_changeover' })],
+            (scrim, doc) => click(scrim, doc, { advkind: 'toggle', adv: 'auto_reorder' })],
     ];
     for (const [name, open, heading, field, typed, redraw] of dialogs) {
         await pin(name + ': Escape over typed input asks, and Keep editing keeps the value', async () => {

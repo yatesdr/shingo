@@ -1249,7 +1249,7 @@ const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 // robot fetches the empty — is IN (2026-11-05): without it every style the
 // floor built from a recipe minted Robot 1.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
-    'evacuate_on_changeover', 'changeover_carryover_disposition', 'keep_staged_node', 'index_robot_supplies',
+    'changeover_carryover_disposition', 'keep_staged_node', 'index_robot_supplies',
     'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
@@ -3857,7 +3857,10 @@ async function setPartSetMember(code, on) {
 const ADV_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
     ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
-    ['Changeover specials', ['evacuate_on_changeover', 'evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
+    // ONE TOOL CHANGE: the marks are the whole of it on every line mode. The
+    // destination override and the carry-over disposition are the marks'
+    // options, drawn with them.
+    ['Changeover specials', ['evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
     // FINISHED GOODS: what a produce position's bin is counted to and where it
     // goes when it leaves short, in the order an engineer decides them — the
     // pack cap, the miscount tolerance (drawn only while the cap is on: it has
@@ -3899,8 +3902,7 @@ const ADV_COPY = {
     auto_request_payload: ['auto_request_payload', 'which part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
     keep_staged_node: ['keep_staged_node', 'the node the full or empty comes from instead of the market; a spare is kept on it'],
-    evacuate_on_changeover: ['evacuate_on_changeover', 'clear this position before the new style'],
-    evac_nodes: ['changeover_evac_nodes', 'tooling change — which positions get cleared'],
+    evac_nodes: ['changeover_evac_nodes', 'which positions must be clear. The changeover pauses for Tooling done'],
     evac_dest: ['changeover_evac_destination', ''],
     // What each kind of home does, because the picker cannot say it: the
     // routing row is a name. An unloader home unloads the bin; it does not
@@ -3979,7 +3981,7 @@ function advShows(key) {
     if (key === 'pack_tolerance_pct' && !S.adv.a.strict_pack) return false;
     if (S.adv.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, S.adv.node, key);
     if (key === 'evac_nodes' || key === 'evac_dest') {
-        return M().advancedShows(S.model, S.adv.node, 'evacuate_on_changeover');
+        return M().advancedShows(S.model, S.adv.node, 'changeover_evac_nodes');
     }
     if (key === 'partial_dest') return M().advancedShows(S.model, S.adv.node, 'partial_destination');
     return M().advancedShows(S.model, S.adv.node, key);

@@ -53,8 +53,8 @@ func TestReleaseCosts(t *testing.T) {
 			coAt(coSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume, drop: true}, "evac", S), orderClick("evac", dispPartial(7))},
 		{"per-order click / two_robot consume evac, send partial 7",
 			pairAt(pairSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume}, "evac", S, "supply", S), orderClick("evac", dispPartial(7))},
-		{"changeover node click / press-index tooling, curtain armed",
-			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S)), nodeCOClick(dispNone)},
+		{"changeover node click / press-index pair, curtain armed",
+			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", S, "supply", S)), nodeCOClick(dispNone)},
 		{"request / two_robot produce",
 			func(h *relHarness) { h.seedNode(pairSpec{mode: protocol.SwapModeTwoRobot}) },
 			func(h *relHarness) error { _, err := h.eng.RequestProduceSwap(h.nodeID, 0); return err }},
@@ -70,7 +70,7 @@ func TestReleaseCosts(t *testing.T) {
 		{"/view / one paired tile, both staged, curtain armed",
 			withCurtain(curtainSafe, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)), view},
 		{"/view / press-index tile in a changeover",
-			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S)), view},
+			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", S, "supply", S)), view},
 	}
 	for _, p := range paths {
 		h := newRelHarness(t)
@@ -95,7 +95,7 @@ func TestReleaseViewReadBudget(t *testing.T) {
 		{"one paired tile, both staged, curtain armed",
 			withCurtain(curtainSafe, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)), 20},
 		{"press-index tile in a changeover",
-			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S)), 25},
+			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", S, "supply", S)), 25},
 	} {
 		h := newRelHarness(t)
 		c.build(h)

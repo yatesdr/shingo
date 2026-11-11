@@ -64,7 +64,7 @@ func TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn(t *testing.T) {
 		PayloadCode: "PIA26", ReorderPoint: 12, InboundStaging: "PLN_02",
 		OutboundStaging: "PLN_05", InboundSource: "SMN", OutboundDestination: "SMN_DST",
 		AllowedPayloadCodes: []string{"PIA26"}, AutoRequestPayload: "PIA26",
-		EvacuateOnChangeover: true, PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
+		PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
 		AutoConfirm: true, LinesideSoftThreshold: 3, ReuseCompatibleBins: true, AutoPush: true,
 		Source: ClaimSourceHMI, CalledBy: "Press 400",
 	}

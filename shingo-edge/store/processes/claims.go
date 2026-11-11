@@ -33,7 +33,7 @@ import (
 //   - "produce":   system delivers empty bins and removes filled ones
 //
 // (The legacy "changeover" role was removed during the UI consistency
-// refactor; changeovers are now driven by swap_mode + EvacuateOnChangeover.)
+// refactor; changeovers are now driven by swap_mode and the tool-change marks.)
 //
 // SwapMode controls the choreography:
 //   - "simple":      RETIRED as a configurable claim mode — UpsertClaim no
@@ -69,7 +69,7 @@ type (
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	` + capacity.SQL("style_node_claims") + `, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
-	keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
 	changeover_evac_nodes, changeover_evac_destination,
@@ -92,7 +92,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&resolvedCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON, &c.AutoRequestPayload,
-		&c.KeepStagedNode, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
+		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
 		&evacNodesJSON, &c.ChangeoverEvacDestination,
@@ -712,16 +712,16 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
-		keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes, changeover_evac_destination,
 		index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON, in.AutoRequestPayload,
-		keepStagedNode, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
+		keepStagedNode, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
 		domain.OptValue(in.ChangeoverEvacDestination),
@@ -895,7 +895,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
 		`containment_destination=?`, `partial_destination=?`, `curtain_required=?`, `strict_pack=?`, `pack_tolerance_pct=?`,
-		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
+		`allowed_payload_codes=?`, `auto_request_payload=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 		`source=?`, `called_by=?`, `updated_at=datetime('now')`, `retired_at=NULL`,
@@ -904,7 +904,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
 		in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct,
-		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
+		allowedJSON, in.AutoRequestPayload,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		in.Source, in.CalledBy,

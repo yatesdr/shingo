@@ -152,7 +152,7 @@ func findTaskByNode(tasks []processes.NodeTask, coreName string) *processes.Node
 // Section 3: Changeover flow gaps
 // ===========================================================================
 
-// Default drop (no EvacuateOnChangeover marker): task is terminal-from-plan
+// Default drop (no tool-change mark): task is terminal-from-plan
 // at line_cleared so cutover doesn't wait on the bin's return trip. The
 // order still runs (operator releases with partial count at the lineside,
 // robot returns the bin), it just isn't on the critical path. Plant
@@ -192,7 +192,7 @@ func TestChangeoverFlow_SituationDrop(t *testing.T) {
 	if orderB.OrderType != orders.TypeComplex {
 		t.Errorf("Order B type: expected complex, got %s", orderB.OrderType)
 	}
-	// Without the EvacuateOnChangeover marker, the task is terminal from
+	// Without a tool-change mark on the node, the task is terminal from
 	// plan time so cutover doesn't wait.
 	if task.State != domain.NodeTaskLineCleared {
 		t.Errorf("expected line_cleared at plan time (non-evac drop), got %s", task.State)
@@ -310,7 +310,7 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 // overhaul`: they covered the legacy "changeover" claim role that
 // refactor removed. The equivalent evacuate-during-changeover
 // behavior is now exercised through claims with
-// EvacuateOnChangeover=true and is covered by TestDiffStyleClaims_MultiNode
+// a tool-change mark and is covered by TestDiffStyleClaims_MultiNode
 // and TestDiffStyleClaims_Evacuate in changeover_diff_test.go.
 
 // Double changeover — complete one, start another, verify clean state.

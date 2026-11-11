@@ -30,7 +30,7 @@ type coClaim struct {
 	role                     protocol.ClaimRole
 	mode                     protocol.SwapMode
 	keepStaged               bool
-	evacuate                 bool // EvacuateOnChangeover
+	evacuate                 bool // a tool change: the outgoing claim marks its line
 }
 
 type coFixture struct {
@@ -78,7 +78,7 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 		in := processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: c.line, Role: c.role, SwapMode: c.mode, PayloadCode: c.part,
 			UOPCapacity: 40, InboundSource: c.source, InboundStaging: c.spot, OutboundDestination: "KSCO-DEST",
-			EvacuateOnChangeover: c.evacuate,
+			ChangeoverEvacNodes: toolChangeMarks(c.evacuate, c.line),
 		}
 		if c.mode == protocol.SwapModeSingleRobot {
 			in.OutboundStaging = "KSCO-OUT-" + c.line
@@ -215,7 +215,7 @@ func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 		evacuate    bool
 		wantRefills int
 	}{
-		{"evacuated line: the supply lifts the spare, nothing from the start", true, 0},
+		{"a tool change on the line: its leg lifts the spare, nothing from the start", true, 0},
 		{"unchanged line: nothing", false, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {

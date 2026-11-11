@@ -38,7 +38,6 @@ func advancedPrior() NodeClaim {
 	c.LinesideSoftThreshold = 7
 	c.AutoRequestPayload = "SYN-A-P002"
 	c.AutoPush = true
-	c.EvacuateOnChangeover = true
 	c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	c.KeepStagedNode = "SPOT-1"
 	c.IndexRobotSupplies = true
@@ -72,12 +71,12 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 		t.Fatalf("an untouched Advanced changed the write:\n got  %+v\n want %+v", got, want)
 	}
 
-	// And the row that lands still holds the engineer's thirteen.
+	// And the row that lands still holds the engineer's twelve.
 	row := MaterializeClaim(got, &prior)
 	if !reflect.DeepEqual(row.AllowedPayloadCodes, prior.AllowedPayloadCodes) ||
 		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
 		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
-		!row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
+		row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
 		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotSupplies || !row.AutoConfirm || !row.StrictPack || row.PackTolerancePct != 5 {
 		t.Errorf("a column the modal owns was flattened by a save that never opened it: %+v", row)
 	}
@@ -97,7 +96,6 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 		LinesideSoftThreshold: 0,
 		AutoRequestPayload:    "",
 		AutoPush:              false,
-		EvacuateOnChangeover:  false,
 		CarryoverDisposition:  CarryoverOutboundStaging,
 		IndexRobotSupplies:    false,
 		AutoConfirm:           false,
@@ -114,8 +112,8 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	if row.LinesideSoftThreshold != 0 || row.AutoRequestPayload != "" || row.AutoPush {
 		t.Errorf("a cleared field did not clear: %d / %q / %v", row.LinesideSoftThreshold, row.AutoRequestPayload, row.AutoPush)
 	}
-	if row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverOutboundStaging {
-		t.Errorf("changeover specials did not land: %v / %q", row.EvacuateOnChangeover, row.ChangeoverCarryoverDisposition)
+	if row.ChangeoverCarryoverDisposition != CarryoverOutboundStaging {
+		t.Errorf("changeover special did not land: %q", row.ChangeoverCarryoverDisposition)
 	}
 	// keep_staged_node is the modal's: an Apply that leaves it blank clears the
 	// prior's node.

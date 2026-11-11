@@ -83,7 +83,6 @@ type RecipeAdvanced struct {
 	AutoReorder           bool                 `json:"auto_reorder,omitempty"`
 	LinesideSoftThreshold int                  `json:"lineside_soft_threshold,omitempty"`
 	AutoPush              bool                 `json:"auto_push,omitempty"`
-	EvacuateOnChangeover  bool                 `json:"evacuate_on_changeover,omitempty"`
 	CarryoverDisposition  CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
 	KeepStagedNode        string               `json:"keep_staged_node,omitempty"`
 	IndexRobotSupplies    bool                 `json:"index_robot_supplies,omitempty"`
@@ -218,7 +217,7 @@ func SlotGroups(slots []Slot, groups []RecipeGroup) []*RecipeGroup {
 func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.ReorderPoint, a.AutoReorder = g.ReorderPoint, g.AutoReorder
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
-	a.EvacuateOnChangeover, a.KeepStagedNode = g.EvacuateOnChangeover, g.KeepStagedNode
+	a.KeepStagedNode = g.KeepStagedNode
 	a.IndexRobotSupplies = g.IndexRobotSupplies
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
 	a.PackTolerancePct = g.PackTolerancePct
@@ -450,7 +449,6 @@ var advancedFields = []struct {
 	{flowspec.AutoReorder, func(a RecipeAdvanced) bool { return a.AutoReorder }},
 	{flowspec.LinesideSoftThreshold, func(a RecipeAdvanced) bool { return a.LinesideSoftThreshold != 0 }},
 	{flowspec.AutoPush, func(a RecipeAdvanced) bool { return a.AutoPush }},
-	{flowspec.EvacuateOnChangeover, func(a RecipeAdvanced) bool { return a.EvacuateOnChangeover }},
 	{flowspec.ChangeoverCarryoverDisposition, func(a RecipeAdvanced) bool {
 		return a.CarryoverDisposition != "" && a.CarryoverDisposition != CarryoverReplace
 	}},

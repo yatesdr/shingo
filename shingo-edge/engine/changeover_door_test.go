@@ -242,18 +242,15 @@ func TestStart_RacingTheSwitchNeverInsertsAFromStyleNoLongerActive(t *testing.T)
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	pid, _, from, to, _, _ := seedChangeoverScenario(t, db)
-	// The incoming claim asks for an evacuation the outgoing one does not: the
-	// planner logs it.
-	_, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: to, CoreNodeName: "CO-NODE", Role: "consume",
-		SwapMode: "simple", PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SOURCE-NEW",
-		InboundStaging: "IN-STAGING", EvacuateOnChangeover: true})
-	testutil.MustNoErr(t, err, "the incoming claim evacuates")
+	pid, nodeID, from, to, _, _ := seedChangeoverScenario(t, db)
+	// A queued order at the changing node: the start cancels it after the
+	// planner has read the active style, and logs it before the insert.
+	seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-race-queued", "PART-OLD", orders.StatusQueued)
 	switched := make(chan error, 1)
 	var once sync.Once
 	logFn := eng.logFn
 	eng.logFn = func(format string, args ...any) {
-		if strings.HasPrefix(format, "changeover: node") {
+		if strings.Contains(format, "pre-dispatch order(s) at start") {
 			once.Do(func() {
 				go func() { switched <- eng.SetProcessActiveStyle(pid, nil) }()
 				select {

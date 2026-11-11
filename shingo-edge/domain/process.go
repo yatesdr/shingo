@@ -409,8 +409,7 @@ type NodeClaim struct {
 	// keep-staged on, in every swap mode; blank is off. It may be the same node
 	// as InboundStaging (the robot waits under the spare) and is otherwise a
 	// node no other claim names (processes.CheckKeepStagedSpots).
-	KeepStagedNode       string `json:"keep_staged_node"`
-	EvacuateOnChangeover bool   `json:"evacuate_on_changeover"`
+	KeepStagedNode string `json:"keep_staged_node"`
 	// PairedCoreNode is ONE FIELD CARRYING TWO MEANINGS, and which one you are
 	// reading depends entirely on the swap mode:
 	//
@@ -450,11 +449,8 @@ type NodeClaim struct {
 	//
 	// Empty is the standing default and means what it has always meant: no node
 	// is marked, so nothing is cleared for a setup and the cell takes the
-	// ordinary choreography. Unmarked nodes stay put.
-	//
-	// The scalar EvacuateOnChangeover above remains the whole answer for a
-	// single-node consume/process node; this is the multi-node shape of the same
-	// question, which is why it lives beside it and not in a new struct.
+	// ordinary choreography. Unmarked nodes stay put. It is the whole answer on
+	// every line mode (ToolChangePositions).
 	ChangeoverEvacNodes []string `json:"changeover_evac_nodes,omitempty"`
 	// ChangeoverEvacDestination is where a tooling evacuation sends the bins
 	// it lifts off the press. Free-form: a node name or a group name, exactly
@@ -632,7 +628,7 @@ const SwapModePressPosition = flowspec.SwapModePressPosition
 // (PairedCoreNode, SecondPairedCoreNode) and the staging fields are zeroed
 // (a single position uses direct trips, no staging hop, no A/B partner).
 // Everything else — PayloadCode, InboundSource, OutboundDestination, Role,
-// UOPCapacity, EvacuateOnChangeover — is copied from the parent.
+// UOPCapacity, the tool-change marks — is copied from the parent.
 //
 // The synthesized claim keeps the PARENT's ID: per-position node tasks
 // reference that ID so wiring lookups resolve back to the real persisted
@@ -1249,29 +1245,10 @@ func StagedToolingChangeover(from *NodeClaim) bool {
 	return len(MarkedEvacNodes(from)) > 0
 }
 
-// ChangeoverNeedsEvacuation reports whether this transition has to take bins
-// off the line before the tool can change, reading the OUTGOING claim per the
-// rule above. Either the whole-node scalar or a per-position selection says yes.
-func ChangeoverNeedsEvacuation(from *NodeClaim) bool {
-	if from == nil {
-		return false
-	}
-	return from.EvacuateOnChangeover || StagedToolingChangeover(from)
-}
-
-// EvacConfigOnWrongSide reports the case worth a log line: the INCOMING claim
-// asks for evacuation and the outgoing one does not, so this transition will
-// not evacuate where the old read would have.
-//
-// Not a refusal and not a fallback — a diagnostic. Honouring it would be a
-// second ownership rule, and the whole point of the decision above is that
-// there is one. Naming it is what turns "the config is on the wrong claim"
-// from a silent behaviour change into a line an engineer can act on.
-func EvacConfigOnWrongSide(from, to *NodeClaim) bool {
-	if from == nil || to == nil {
-		return false
-	}
-	return to.EvacuateOnChangeover && !ChangeoverNeedsEvacuation(from)
+// MarksNode reports whether this claim marks node as a position its tool
+// change must clear (MarkedEvacNodes).
+func MarksNode(c *NodeClaim, node string) bool {
+	return node != "" && slices.Contains(MarkedEvacNodes(c), node)
 }
 
 // EvacDestinationFor is where a tooling evacuation sends this claim's bins.
@@ -1345,7 +1322,6 @@ type NodeClaimInput struct {
 	PackTolerancePct     int      `json:"pack_tolerance_pct"`
 	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
 	AutoRequestPayload   string   `json:"auto_request_payload"`
-	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
 	PairedCoreNode       string   `json:"paired_core_node"`
 	SecondPairedCoreNode string   `json:"second_paired_core_node"`
 	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.

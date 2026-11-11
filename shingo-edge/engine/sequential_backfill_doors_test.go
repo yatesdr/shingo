@@ -56,10 +56,10 @@ func TestSequentialConsume_RemovalMintsOneBackfill(t *testing.T) {
 	}
 }
 
-// TestSequentialChangeoverEvacuate_OnePositionGetsOneCarrier is census 29: the
-// tooling-evacuate variant (buildSequentialPerPositionEvacuate) has the same
-// self-refilling tail as the changeover swap, so it must not get a backfill
-// either. Its comment says the same read covers it; nothing checked.
+// TestSequentialChangeoverEvacuate_OnePositionGetsOneCarrier is census 29: a
+// tool change's leg on a sequential position (toolingPositionAction) has the
+// same self-refilling tail as the changeover swap, so it must not get a
+// backfill either. Its comment says the same read covers it; nothing checked.
 func TestSequentialChangeoverEvacuate_OnePositionGetsOneCarrier(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

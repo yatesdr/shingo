@@ -78,6 +78,8 @@ var vestigialColumns = map[string]bool{
 	"inbound_source_node_group":  true,
 	"outbound_source_node":       true,
 	"outbound_source_node_group": true,
+	// The old tool-change switch: nothing reads or writes it; v47 drops it.
+	"evacuate_on_changeover": true,
 }
 
 // unspokenColumn is one column the composer does not author, named, with the
@@ -96,7 +98,6 @@ var unspokenColumns = []struct {
 	{"allowed_payload_codes", func(c processes.NodeClaim) any { return c.AllowedPayloadCodes }},
 	{"auto_request_payload", func(c processes.NodeClaim) any { return c.AutoRequestPayload }},
 	{"keep_staged_node", func(c processes.NodeClaim) any { return c.KeepStagedNode }},
-	{"evacuate_on_changeover", func(c processes.NodeClaim) any { return c.EvacuateOnChangeover }},
 	{"auto_confirm", func(c processes.NodeClaim) any { return c.AutoConfirm }},
 	{"sequence", func(c processes.NodeClaim) any { return c.Sequence }},
 	{"lineside_soft_threshold", func(c processes.NodeClaim) any { return c.LinesideSoftThreshold }},

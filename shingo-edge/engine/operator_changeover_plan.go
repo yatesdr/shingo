@@ -62,31 +62,7 @@ type changeoverPlan struct {
 // Note: validation errors use changeover-specific messages ("process is already running
 // style %d", etc). If this is later reused for a dry-run API, the error messages will
 // still be appropriate — but callers should be aware they're changeover-flavored.
-// logEvacConfigOnWrongSide names the case the ownership decision changes: the
-// INCOMING claim asks for evacuation and the outgoing one does not, so this
-// transition will not evacuate where the old read would have.
 //
-// A DIAGNOSTIC, NOT A FALLBACK. Honouring it would be a second ownership rule,
-// and the point of the decision is that there is one. Saying it is what turns
-// "the config is on the wrong claim" from a silent behaviour change into a
-// line an engineer can act on.
-func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeClaim) {
-	toByNode := make(map[string]*processes.NodeClaim, len(toClaims))
-	for i := range toClaims {
-		toByNode[toClaims[i].CoreNodeName] = &toClaims[i]
-	}
-	for i := range fromClaims {
-		from := &fromClaims[i]
-		to := toByNode[from.CoreNodeName]
-		if domain.EvacConfigOnWrongSide(from, to) {
-			e.logFn("changeover: node %s — 'Evacuate on changeover' is set on the INCOMING style's "+
-				"claim but not the outgoing one, and the outgoing claim is what decides. This "+
-				"transition will NOT evacuate. Move the setting to the outgoing style's claim.",
-				from.CoreNodeName)
-		}
-	}
-}
-
 // planChangeover builds everything a changeover needs before anything is
 // written: the diffs, the node tasks, the participants and the tooling
 // decoration.
@@ -189,7 +165,6 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 	if err != nil {
 		return nil, err
 	}
-	e.logEvacConfigOnWrongSide(fromClaims, toClaims)
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
 		return nil, err
@@ -343,9 +318,9 @@ func (e *Engine) aimEvacsAtResidentHome(diffs []ChangeoverNodeDiff, state func(c
 		if d.FromClaim == nil || (d.Situation != SituationSwap && d.Situation != SituationDrop) {
 			continue
 		}
-		// A drop marked for tool-change evacuation is the tooling choreography's
-		// (the station's evacuate ladder), like Evacuate itself.
-		if d.Situation == SituationDrop && d.FromClaim.EvacuateOnChangeover {
+		// A drop at a marked position is the tool change's, like Evacuate
+		// itself: an override destination, if the cell names one, decides.
+		if d.Situation == SituationDrop && domain.MarksNode(d.FromClaim, d.CoreNodeName) {
 			continue
 		}
 		rt := state(d.CoreNodeName).runtime

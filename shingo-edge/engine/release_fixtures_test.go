@@ -156,9 +156,9 @@ type coSpec struct {
 	role     protocol.ClaimRole
 	threePos bool
 	flipped  bool
-	// tooling selects the evacuate situation (same payload, EvacuateOnChangeover
-	// on the outgoing claim): the shape whose evac leg carries a second station
-	// wait, "tooling done".
+	// tooling is a tool change with the part unchanged: the outgoing claims mark
+	// every position they stand on, and each marked position gets the tool
+	// change's one leg (toolingPositionAction), under the task's supply pointer.
 	tooling bool
 	// marked marks the press's positions for tooling clearance
 	// (ChangeoverEvacNodes on the outgoing claim; the incoming claim stages at
@@ -216,7 +216,8 @@ func (h *relHarness) changeover(s coSpec) int64 {
 	}
 	if s.tooling {
 		to.PayloadCode = fxPart
-		from.EvacuateOnChangeover = true
+		marks := from.ToolChangePositions()
+		from.ChangeoverEvacNodes = &marks
 	}
 	if s.marked {
 		positions := []string{fxPress}
@@ -269,11 +270,14 @@ func (h *relHarness) changeover(s coSpec) int64 {
 		var backFrom int64
 		for _, sid := range []int64{fromID, toID} {
 			payload := fxPartNext
-			if sid == fromID {
+			if sid == fromID || s.tooling {
 				payload = fxPart
 			}
 			in := ps.claimInput(sid, payload)
 			in.CoreNodeName, in.PairedCoreNode = fxPressB, fxPress
+			if s.tooling && sid == fromID {
+				in.ChangeoverEvacNodes = &[]string{fxPressB}
+			}
 			id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(h.t, err, "back claim")
 			if sid == fromID {

@@ -100,7 +100,7 @@ func TestPlanNodeAction_Drop(t *testing.T) {
 	if action.EvacOrder.Complex.AutoConfirm {
 		t.Error("Drop evac order must NOT auto-confirm — operator releases with partial count at lineside")
 	}
-	// Default drop (no EvacuateOnChangeover marker): terminal from plan
+	// Default drop (the node is not marked for a tool change): terminal from plan
 	// time so cutover doesn't wait. Bin retrieval still runs but isn't on
 	// the critical path.
 	if action.NextState != domain.NodeTaskLineCleared {
@@ -108,15 +108,14 @@ func TestPlanNodeAction_Drop(t *testing.T) {
 	}
 }
 
-// Drops with EvacuateOnChangeover=true on the from-claim represent
-// tool-change-style evacuations — cutover should wait until the bin
-// physically leaves the line. Task stays at empty_requested at plan
+// A drop at a node the from-claim marks for a tool change must be clear
+// before cutover: cutover waits until the bin physically leaves the line. Task stays at empty_requested at plan
 // time and advances to line_cleared on the pickup event (handled in
 // handler_bin_picked_up).
-func TestPlanNodeAction_Drop_WithEvacuateMarker(t *testing.T) {
+func TestPlanNodeAction_Drop_AtAMarkedNode(t *testing.T) {
 	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
-	from.EvacuateOnChangeover = true
+	from.ChangeoverEvacNodes = []string{"N1"}
 	diff := ChangeoverNodeDiff{
 		CoreNodeName: "N1",
 		Situation:    SituationDrop,
@@ -129,7 +128,7 @@ func TestPlanNodeAction_Drop_WithEvacuateMarker(t *testing.T) {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
 	if action.NextState != domain.NodeTaskEmptyRequested {
-		t.Errorf("NextState = %q, want empty_requested (evac-marked drop blocks cutover until pickup)", action.NextState)
+		t.Errorf("NextState = %q, want empty_requested (a marked drop blocks cutover until pickup)", action.NextState)
 	}
 }
 
@@ -381,55 +380,6 @@ func assertSequentialPlanRoles(t *testing.T, activePull map[string]bool, wantPar
 					t.Errorf("position %s's order steps on its partner (%+v)", pos, s)
 				}
 			}
-		}
-	}
-}
-
-// Sequential Evacuate emits ONE order for this position — evac, fetch new, hold
-// on the bare tooling-done wait, deliver. LogTag = "evacuate_sequential".
-//
-// PER-NODE (2026-08-28): this asserted both SupplyOrder and EvacOrder, because
-// the whole-press builder returned both positions' step lists from one diff.
-// The partner position now gets its own action from its own diff.
-func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
-	t.Parallel()
-	from := fullSwapClaim("N1", "PART-A", "consume")
-	from.SwapMode = "sequential"
-	from.PairedCoreNode = "N1B"
-	to := fullSwapClaim("N1", "PART-A", "consume")
-	to.EvacuateOnChangeover = true
-	diff := ChangeoverNodeDiff{
-		CoreNodeName: "N1",
-		Situation:    SituationEvacuate,
-		FromClaim:    &from,
-		ToClaim:      &to,
-	}
-	node := &processes.Node{ID: 42, Name: "N1"}
-	action := planNodeAction(diff, node, false, nil)
-
-	if action.Err != nil {
-		t.Fatalf("unexpected planning error: %v", action.Err)
-	}
-	if action.SupplyOrder == nil {
-		t.Fatal("sequential evacuate emits this position's order at plan time")
-	}
-	if action.EvacOrder != nil {
-		t.Error("per-node evacuate is ONE order per position; the partner has its own diff and action")
-	}
-	if action.LogTag != "evacuate_sequential" {
-		t.Errorf("LogTag = %q, want evacuate_sequential", action.LogTag)
-	}
-	steps := action.SupplyOrder.Complex.Steps
-	if len(steps) != 5 {
-		t.Fatalf("expected 5 steps (evac, out, fetch, wait, deliver), got %d: %+v", len(steps), steps)
-	}
-	if steps[3].Action != "wait" || steps[3].Node != "" {
-		t.Errorf("step 3 = %+v, want the BARE tooling-done wait — one click releases every position "+
-			"through the per-task fan-out", steps[3])
-	}
-	for _, s := range steps {
-		if s.Node == "N1B" {
-			t.Errorf("this position's evacuate order steps on N1B (%+v); that position has its own", s)
 		}
 	}
 }
@@ -1282,8 +1232,6 @@ func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
 		c.Sequence = 7
 	case flowspec.KeepStagedNode:
 		c.KeepStagedNode = v
-	case flowspec.EvacuateOnChangeover:
-		c.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:
 		c.ChangeoverEvacNodes = []string{v}
 	case flowspec.ChangeoverEvacDestination:

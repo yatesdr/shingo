@@ -698,7 +698,7 @@ func BuildSwapChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveN
 	case protocol.SwapModeTwoRobot:
 		return buildTwoRobotChangeoverSwap(fromClaim, toClaim)
 	case protocol.SwapModeTwoRobotPressIndex:
-		return buildPressIndexChangeoverSwap(fromClaim, toClaim, false /* tooling */)
+		return buildPressIndexChangeoverSwap(fromClaim, toClaim)
 	case protocol.SwapModeSequential:
 		// Per-node (2026-08-28): this diff's own position only. activeNode is
 		// unused here — which side THIS claim is on is decided by comparing its
@@ -712,51 +712,7 @@ func BuildSwapChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveN
 		// so up to three robots fire in parallel for one press's changeover.
 		return buildPressIndexPerPositionSwap(fromClaim, toClaim)
 	default:
-		return buildSingleRobotChangeoverSwap(fromClaim, toClaim, false)
-	}
-}
-
-// BuildEvacuateChangeoverSteps builds the changeover evacuate dispatch
-// (tool clearance needed). Same SwapMode switch as BuildSwapChangeoverSteps:
-//
-//   - single_robot: wait between dropoff-old-at-staging and pickup-new.
-//   - two_robot: identical to Swap — two independent robots clear the
-//     line during tooling without an extra operator gate, so no second
-//     wait is needed.
-//   - two_robot_press_index: extra wait on R1 between dropoff old at
-//     OutboundDestination and pickup new from InboundSource.
-//   - sequential: this position's own evac+backfill, gated on the bare
-//     tooling-done wait; the single click still releases both positions
-//     through ReleaseChangeoverWait's per-task fan-out.
-//
-// activeNode is accepted for signature symmetry with BuildSwapChangeoverSteps
-// and is unread: evacuate has no cutover gate, because both positions come off
-// the line. inactiveNode IS read now — not for choreography, but because the
-// parked position of a produce press holds an on-deck EMPTY whether the press
-// is changing tools or styles, and its pickup has to say so.
-func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveNode, activeNode string) ChangeoverDispatch {
-	_ = activeNode
-	switch fromClaim.SwapMode {
-	case protocol.SwapModeTwoRobot:
-		return buildTwoRobotChangeoverSwap(fromClaim, toClaim)
-	case protocol.SwapModeTwoRobotPressIndex:
-		return buildPressIndexChangeoverSwap(fromClaim, toClaim, true)
-	case protocol.SwapModeSequential:
-		return buildSequentialPerPositionEvacuate(fromClaim, toClaim, inactiveNode)
-	case pressPositionSwapMode:
-		// Per-position dispatch: the parent evacuate situation drives the
-		// "evacuate" semantics, but at the per-position level the robot
-		// work is identical to Swap (evac old, fetch new, deliver new).
-		//
-		// A MARKED position's tooling treatment is NOT decided here. The tooling
-		// decorator edits this leg afterwards — the staging hold always, and a
-		// redirected destination only if the cell named an override — precisely
-		// so that no builder has to know whether the press is marked. That
-		// knowledge lived in a predicate here once, and an earlier pass
-		// rewriting SwapMode is what made it unreachable.
-		return buildPressIndexPerPositionSwap(fromClaim, toClaim)
-	default:
-		return buildSingleRobotChangeoverSwap(fromClaim, toClaim, true)
+		return buildSingleRobotChangeoverSwap(fromClaim, toClaim)
 	}
 }
 
@@ -779,25 +735,22 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 // nothing and Core reads it as the carrier this plan set down. The fetch names
 // the incoming part (stageSteps with fromClaim, as the two-robot supply does),
 // because the order carries the outgoing payload for its lift off the line.
-func buildSingleRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tooling bool) ChangeoverDispatch {
+func buildSingleRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) ChangeoverDispatch {
 	stage, collect := stageSteps(fromClaim, toClaim, relayPickup(toClaim))
 	return ChangeoverDispatch{
-		StepsB:       append(stage, singleRobotChangeoverTail(fromClaim, toClaim, tooling, collect)...),
+		StepsB:       append(stage, singleRobotChangeoverTail(fromClaim, toClaim, collect)...),
 		AutoConfirmB: true,
 	}
 }
 
 // singleRobotChangeoverTail is order B of a single-robot changeover from the
 // bin standing on the to-claim's inbound staging: evacuate the line, park the
-// old bin, (tooling) wait, collect the new one, deliver it, clear the old one.
-func singleRobotChangeoverTail(fromClaim, toClaim *processes.NodeClaim, tooling bool, collect protocol.ComplexOrderStep) []protocol.ComplexOrderStep {
+// old bin, collect the new one, deliver it, clear the old one.
+func singleRobotChangeoverTail(fromClaim, toClaim *processes.NodeClaim, collect protocol.ComplexOrderStep) []protocol.ComplexOrderStep {
 	stepsB := []protocol.ComplexOrderStep{
 		stationWait(fromClaim.CoreNodeName, release.PurposeReady), // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},          // evacuate old
 		stagingDropoff(fromClaim.OutboundStaging),                 // park old
-	}
-	if tooling {
-		stepsB = append(stepsB, stationWait("", release.PurposeToolingDone)) // "tooling done"
 	}
 	return append(stepsB,
 		collect, // grab new
@@ -811,9 +764,9 @@ func singleRobotChangeoverTail(fromClaim, toClaim *processes.NodeClaim, tooling 
 // changeover: from-claim drives the outbound side, to-claim drives the
 // inbound side. The "ready" wait is the operator gate that releases both
 // robots; once released, Robot B clears the line while Robot A delivers
-// the new bin. No second wait point: with two robots running independently
-// the line is naturally clear during tooling, and Swap and Evacuate
-// produce the same step list.
+// the new bin. It has no Tooling done wait: a tool change at this node is the
+// decorator's (applyToolingChangeover), which replaces this pair with the
+// tool change's one leg.
 func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) ChangeoverDispatch {
 	if toClaim.InboundStaging == "" {
 		return ChangeoverDispatch{}
@@ -873,11 +826,7 @@ func twoRobotChangeoverLegs(fromClaim *processes.NodeClaim, stepsA []protocol.Co
 // InboundSource; R2 indexes intermediate positions. Honors 2-pos vs 3-pos
 // via fromClaim.SecondPairedCoreNode (using fromClaim's geometry is
 // consistent with the swap_dispatch pattern).
-//
-// For evacuate, a "tooling done" wait sits on R1 between the outbound
-// dropoff and the inbound pickup so the operator gates the refill leg
-// after the line has been cleared.
-func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tooling bool) ChangeoverDispatch {
+func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) ChangeoverDispatch {
 	if fromClaim.PairedCoreNode == "" || fromClaim.OutboundDestination == "" {
 		return ChangeoverDispatch{}
 	}
@@ -886,9 +835,6 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 		stationWait(fromClaim.CoreNodeName, release.PurposeReady),
 		{Action: "pickup", Node: fromClaim.CoreNodeName},
 		buildStep("dropoff", fromClaim.OutboundDestination),
-	}
-	if tooling {
-		r1 = append(r1, stationWait("", release.PurposeToolingDone)) // "tooling done"
 	}
 	// ── THE FLIP APPLIES HERE TOO ────────────────────────────────────────
 	//
@@ -1035,46 +981,32 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 	}
 }
 
-// buildToolingEvacSteps is the one-robot tooling-evacuation shape: take the
-// blocking bin off a line position, put the replacement where it waits, and
-// deliver it when the operator says the tool is done.
+// buildToolingEvacSteps is a tool change's one leg at a marked position: take
+// the carrier that blocks the tool off the line at START, put the replacement
+// where it waits, and deliver it when the operator says the tool is done.
 //
-//	pickup(position)      lift the bin that blocks the tool
+//	pickup(position)      lift the carrier that blocks the tool
 //	dropoff(evacDest)     get it off the line
-//	pickup(inboundSource) fetch the incoming style's bin
-//	wait(waitNode)        the tooling-done gate
+//	pickup(inboundSource) fetch the incoming style's carrier
+//	wait(staging)         the Tooling done gate, AT inbound staging
 //	dropoff(position)     deliver on release
 //
-// ── WHY waitNode IS A PARAMETER AND NOT A CONSTANT ────────────────────────
+// The wait is at a node, so the robot drives there holding the carrier and
+// parks out of the cell: a tool change can take a shift, and robots idling on
+// the line apron for that long block the very access the millwrights need, and
+// release is then a short move in rather than a full fetch. Every line mode
+// takes this one shape (toolingPositionAction); the save requires inbound
+// staging on a claim with marks.
 //
-// Sequential passes "" — a BARE wait. Its robot holds the bin wherever it
-// happens to be when the gate closes, and one tooling-done click releases both
-// positions' waits through ReleaseChangeoverWait's per-task fan-out. That
-// works because a sequential cell is two positions beside each other and the
-// robot has nowhere better to be.
-//
-// The staged press-index positions pass InboundStaging — a wait AT A NODE, so the
-// robot drives there holding the bin and parks. That difference is DELIBERATE
-// and owner-chosen, not an accident of two builders growing apart: a press
-// tooling change can take a shift, and robots idling on the press apron for
-// that long block the very access the millwrights need. Staging gets them out
-// of the cell while still holding the bin, so release is a short move in
-// rather than a full fetch.
-//
-// Same steps, one parameter, so the difference is legible at both call sites
-// instead of living in two builders that merely look similar.
 // It takes the CLAIMS rather than a bare inbound-source name so its refill leg
-// goes through refillPickup like every other one. Passing the name was how
-// buildSequentialChangeoverEvacuate — which shares this helper — ended up
-// fetching a full payload-matched bin from the empty pool: the string carried
-// the node but not the produce/empty question, so each caller had to answer it
-// again afterwards, and that caller never did.
-func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *processes.NodeClaim, waitNode string) []protocol.ComplexOrderStep {
+// goes through refillPickup like every other one: a name carries the node but
+// not the produce/empty question.
+func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *processes.NodeClaim, staging string) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: position},
 		buildStep("dropoff", evacDest),
 		refillPickup(fromClaim, toClaim),
-		stationWait(waitNode, release.PurposeToolingDone),
+		stationWait(staging, release.PurposeToolingDone),
 		{Action: "dropoff", Node: position},
 	}
 }
@@ -1218,58 +1150,5 @@ func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, ina
 		// about a step that is not asking the question.
 		CarriesFromPayloadA: !onDeckEmpty,
 		StepsB:              nil, // per-node: one order, this position's
-	}
-}
-
-// buildSequentialPerPositionEvacuate is the tooling variant of the same split:
-// ONE position's evac-and-backfill, gated on the tooling-done click.
-//
-//	pickup(my position)              — lift what is standing here
-//	dropoff(OutboundDestination)
-//	refillPickup(fromClaim, toClaim) — fetch new material now, hold it
-//	wait("")                         — the tooling-done gate, BARE
-//	dropoff(my position)             — deliver on release
-//
-// No inactive/active distinction in the CHOREOGRAPHY — both positions come off
-// the line because production is going down anyway, so neither waits for a
-// cutover. The parked/produce EMPTY flag still applies: what is standing on the
-// parked position is an on-deck empty whether the press is changing tools or
-// styles.
-//
-// THE BARE WAIT IS WHAT KEEPS THE SINGLE CLICK. One tooling-done click still
-// releases both positions, and it does so the same way it always did — through
-// ReleaseChangeoverWait's per-task fan-out, which walks every node task of the
-// changeover. Under the whole-press builder those two waits were two step-lists
-// in one NodeAction; now they are two orders on two tasks. The fan-out iterates
-// tasks either way, so the operator-facing semantic is unchanged.
-func buildSequentialPerPositionEvacuate(fromClaim, toClaim *processes.NodeClaim, inactiveNode string) ChangeoverDispatch {
-	if fromClaim == nil || toClaim == nil {
-		return ChangeoverDispatch{}
-	}
-	if fromClaim.PairedCoreNode == "" || inactiveNode == "" {
-		return ChangeoverDispatch{}
-	}
-	if fromClaim.OutboundDestination == "" || toClaim.InboundSource == "" {
-		return ChangeoverDispatch{}
-	}
-	pos := fromClaim.CoreNodeName
-	if pos == "" {
-		return ChangeoverDispatch{}
-	}
-	onDeckEmpty := pos == inactiveNode && fromClaim.Role == protocol.ClaimRoleProduce
-
-	steps := buildToolingEvacSteps(pos, fromClaim.OutboundDestination, fromClaim, toClaim, "")
-	if onDeckEmpty {
-		// The opening pickup, and only it: the refill pickup later in the list is
-		// already Empty-by-role through refillPickup, and the dropoffs are not
-		// pickups at all.
-		steps[0].Empty = true
-	}
-	return ChangeoverDispatch{
-		StepsA:              steps,
-		DeliveryNodeA:       pos,
-		AutoConfirmA:        true,
-		CarriesFromPayloadA: !onDeckEmpty,
-		StepsB:              nil,
 	}
 }

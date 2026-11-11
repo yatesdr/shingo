@@ -111,7 +111,6 @@ type fingerprintClaim struct {
 	AllowedPayloadCodes            []string             `json:"allowed_payload_codes"`
 	AutoRequestPayload             string               `json:"auto_request_payload"`
 	KeepStagedNode                 string               `json:"keep_staged_node"`
-	EvacuateOnChangeover           bool                 `json:"evacuate_on_changeover"`
 	PairedCoreNode                 string               `json:"paired_core_node"`
 	AutoConfirm                    bool                 `json:"auto_confirm"`
 	Sequence                       int                  `json:"sequence"`
@@ -174,7 +173,7 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			CurtainRequired:        c.CurtainRequired,
 			StrictPack:             c.StrictPack,
 			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
-			KeepStagedNode: c.KeepStagedNode, EvacuateOnChangeover: c.EvacuateOnChangeover, PairedCoreNode: c.PairedCoreNode,
+			KeepStagedNode: c.KeepStagedNode, PairedCoreNode: c.PairedCoreNode,
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,
 			LinesideSoftThreshold: c.LinesideSoftThreshold, SecondPairedCoreNode: c.SecondPairedCoreNode,
 			ReuseCompatibleBins: c.ReuseCompatibleBins, AutoPush: c.AutoPush,

@@ -34,9 +34,9 @@ func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
 
 	// Seed the task into a non-terminal state so the test exercises the
 	// switch's job of advancing it. seedDropScenario's claim has no
-	// EvacuateOnChangeover marker, so the planner stamps line_cleared
+	// tool-change mark, so the planner stamps line_cleared
 	// at plan time — overwrite that here to simulate the
-	// EvacuateOnChangeover=true shape where switch is the action that
+	// marked-node shape where switch is the action that
 	// finishes the task.
 	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 	if err != nil {
@@ -85,11 +85,11 @@ func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
 	if task.Situation != "drop" {
 		t.Fatalf("expected drop situation, got %s", task.Situation)
 	}
-	// EvacuateOnChangeover=true on the from-claim → planner lands the
+	// A tool-change mark on the from-claim → planner lands the
 	// task at empty_requested (non-terminal) so cutover waits for the
 	// physical pickup. That's the precondition for this regression.
 	if task.State != domain.NodeTaskEmptyRequested {
-		t.Fatalf("expected empty_requested at plan time (EvacuateOnChangeover), got %s", task.State)
+		t.Fatalf("expected empty_requested at plan time (a marked node), got %s", task.State)
 	}
 	if task.OldMaterialReleaseOrderID == nil {
 		t.Fatal("expected evac order on drop task")
@@ -141,9 +141,8 @@ func TestHandleNodeOrderFailed_DropOtherFailureStillErrors(t *testing.T) {
 	}
 }
 
-// seedDropScenarioEvacuate mirrors seedDropScenario but sets
-// EvacuateOnChangeover=true on the from-claim so the planner lands the
-// drop task at empty_requested (non-terminal) rather than line_cleared.
+// seedDropScenarioEvacuate mirrors seedDropScenario but marks the from-claim's
+// node for a tool change so the planner lands the drop task at empty_requested (non-terminal) rather than line_cleared.
 // This is the precondition for the no_bin auto-clear regression: the
 // task must be non-terminal at the moment the order fails.
 func seedDropScenarioEvacuate(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
@@ -166,7 +165,7 @@ func seedDropScenarioEvacuate(t *testing.T, db *store.DB) (processID, nodeID, fr
 		StyleID: fromStyleID, CoreNodeName: "DROPE-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-DROP", UOPCapacity: 100, InboundSource: "SRC-DROP",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST-DROP",
-		EvacuateOnChangeover: true,
+		ChangeoverEvacNodes: toolChangeMarks(true, "DROPE-NODE"),
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)

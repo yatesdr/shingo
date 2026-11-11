@@ -590,7 +590,7 @@ func TestPressIndex_ThePressSeatPullsForThePairsLife(t *testing.T) {
 func TestPressIndex_ToolingEvacuateLeavesThePressPulling(t *testing.T) {
 	t.Parallel()
 	h := newRelHarness(t)
-	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "supply", protocol.StatusStaged)(h)
 	co, err := h.db.GetActiveProcessChangeover(h.processID)
 	testutil.MustNoErr(t, err, "read changeover")
 	task, err := h.db.GetChangeoverNodeTaskByNode(co.ID, h.nodeID)

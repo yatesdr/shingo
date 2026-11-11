@@ -54,20 +54,18 @@ func TestChangeoverEvac_TheCountIsTheSeatsOrTheReleaseIsRefused(t *testing.T) {
 //
 // Sequential's lifter is its one order, under the SUPPLY pointer: the leg that
 // took a counted-out cart back to its market with its part (DECISIONS U.1,
-// LINE-2). Sequential's tooling leg lifts before its only wait, at dispatch,
-// so no release of it lifts anything: "none".
+// LINE-2). A tool change's leg, one for every mode (toolingPositionAction),
+// lifts before its only wait, at START, so no release of it lifts anything:
+// "none". Its count is locked at START instead.
 func TestChangeoverLift_EachModesLifterIsToldFromItsSteps(t *testing.T) {
 	t.Parallel()
 	want := map[string]string{
-		"single_robot/swap":             "B (evac)",
-		"sequential/swap":               "A (supply)",
-		"two_robot/swap":                "evac (evac)",
-		"two_robot_press_index/swap":    "evac (evac)",
-		"press_position/swap":           "A (supply)",
-		"single_robot/tooling":          "B (evac)",
-		"sequential/tooling":            "none",
-		"two_robot/tooling":             "evac (evac)",
-		"two_robot_press_index/tooling": "evac (evac)",
+		"single_robot/swap":          "B (evac)",
+		"sequential/swap":            "A (supply)",
+		"two_robot/swap":             "evac (evac)",
+		"two_robot_press_index/swap": "evac (evac)",
+		"press_position/swap":        "A (supply)",
+		"tool_change":                "none",
 	}
 	pointer := map[string]string{"A": "supply", "B": "evac", "evac": "evac", "supply": "supply"}
 	lifters := map[string][]string{} // a shape (mode, role, geometry, situation) → its lifting legs
@@ -99,12 +97,14 @@ func TestChangeoverLift_EachModesLifterIsToldFromItsSteps(t *testing.T) {
 			}
 			to := *from
 			to.PayloadCode = "NEXT"
-			shape, row, d := fmt.Sprintf("%s/%s/tooling", mode, role), string(mode)+"/tooling",
-				BuildEvacuateChangeoverSteps(from, &to, "B", "LINE")
-			if mode == pressPositionSwapMode {
-				shape, row, d = fmt.Sprintf("%s/%s/swap", mode, role), string(mode)+"/swap",
-					BuildSwapChangeoverSteps(from, &to, "B", "LINE")
+			tool := toolingPositionAction(toolingPress{from: from, to: &to, positions: []string{"LINE"},
+				evacDest: "OUT", staging: "IN-STG"}, "LINE", &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"})
+			leg(fmt.Sprintf("tool_change/%s/%s", mode, role), "tool_change", "A", tool.SupplyOrder.Complex.Steps)
+			if mode != pressPositionSwapMode {
+				continue
 			}
+			shape, row, d := fmt.Sprintf("%s/%s/swap", mode, role), string(mode)+"/swap",
+				BuildSwapChangeoverSteps(from, &to, "B", "LINE")
 			if d.Roles != nil {
 				leg(shape, row, "evac", d.Roles.evac.steps)
 				leg(shape, row, "supply", d.Roles.supply.steps)

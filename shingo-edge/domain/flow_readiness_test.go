@@ -97,9 +97,9 @@ func TestFlowReadiness_OnlyOrderBuildingPairsAreChecked(t *testing.T) {
 		{"explicit clear on the incoming side", []NodeClaim{blank("N", "OLD")}, []NodeClaim{blank("N", "__empty__")}, 0},
 		{"node was empty, now needs material", []NodeClaim{blank("N", "__empty__")}, []NodeClaim{blank("N", "NEW")}, 0},
 		{"swap: different payload", []NodeClaim{blank("N", "OLD")}, []NodeClaim{blank("N", "NEW")}, 3},
-		{"evacuate: same payload, outgoing claim evacuates", []NodeClaim{func() NodeClaim {
+		{"evacuate: same payload, the outgoing claim marks its node", []NodeClaim{func() NodeClaim {
 			c := blank("N", "SAME")
-			c.EvacuateOnChangeover = true
+			c.ChangeoverEvacNodes = []string{"N"}
 			return c
 		}()}, []NodeClaim{blank("N", "SAME")}, 3},
 	}

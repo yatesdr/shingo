@@ -216,7 +216,6 @@ const ADVANCED_DEFAULTS = {
     auto_request_payload: '',
     auto_push: false,
     keep_staged_node: '',
-    evacuate_on_changeover: false,
     changeover_carryover_disposition: 'replace',
     index_robot_supplies: false,
     auto_confirm: false,

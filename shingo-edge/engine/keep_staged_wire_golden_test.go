@@ -40,7 +40,7 @@ func buildKeepStagedWireGolden(t *testing.T) map[string]any {
 				entry["BuildSwapDispatchErr"] = err.Error()
 			}
 			for _, pay := range []struct{ name, to string }{{"samePayload", "P-FROM"}, {"newPayload", "P-TO"}} {
-				for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
+				for _, situation := range []ChangeoverSituation{SituationSwap} {
 					// The outgoing claim keeps no spare; the incoming one does.
 					from := goldenClaim(role, mode, "P-FROM", "", false)
 					from.PairedCoreNode = ""

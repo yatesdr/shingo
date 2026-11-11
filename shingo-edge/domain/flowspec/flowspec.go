@@ -114,7 +114,6 @@ const (
 	LinesideSoftThreshold          Field = "lineside_soft_threshold"
 	Sequence                       Field = "sequence"
 	KeepStagedNode                 Field = "keep_staged_node"
-	EvacuateOnChangeover           Field = "evacuate_on_changeover"
 	ChangeoverEvacNodes            Field = "changeover_evac_nodes"
 	ChangeoverEvacDestination      Field = "changeover_evac_destination"
 	ChangeoverCarryoverDisposition Field = "changeover_carryover_disposition"
@@ -184,8 +183,7 @@ var fieldLabels = map[Field]string{
 	LinesideSoftThreshold:          "Lineside soft threshold",
 	Sequence:                       "Board order",
 	KeepStagedNode:                 "Keep staged node",
-	EvacuateOnChangeover:           "Evacuate on changeover",
-	ChangeoverEvacNodes:            "Changeover evac nodes",
+	ChangeoverEvacNodes:            "Tool change",
 	ChangeoverEvacDestination:      "Changeover evac destination",
 	ChangeoverCarryoverDisposition: "Carry-over disposition",
 	ReuseCompatibleBins:            "Reuse compatible bins",
@@ -210,7 +208,7 @@ var fieldOrder = []Field{
 	InboundStaging, OutboundStaging, PairedCoreNode, OutboundDestination, InboundSource,
 	SecondPairedCoreNode,
 	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
-	LinesideSoftThreshold, Sequence, KeepStagedNode, EvacuateOnChangeover,
+	LinesideSoftThreshold, Sequence, KeepStagedNode,
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
@@ -447,7 +445,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
-		EvacuateOnChangeover, ChangeoverEvacDestination,
+		ChangeoverEvacDestination,
 		AutoConfirm, AutoRequestPayload,
 	} {
 		ms[f] = Unused

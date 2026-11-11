@@ -131,8 +131,8 @@ func TestChangeoverAbandonThenRequest_Succeeds(t *testing.T) {
 
 // commonCellRig is healthRig (A active, pinned 1001; B pinned 1002; the PLC on
 // 1001) with three consume positions, each with a cart of A's part: N-COMMON,
-// which both styles claim for PART-C; N-EVAC, the same, B's claim evacuating
-// on a changeover; and N-MIRROR, whose part differs (A PART-L, B PART-R).
+// which both styles claim for PART-C; N-EVAC, the same, the changeover's task
+// evacuating it; and N-MIRROR, whose part differs (A PART-L, B PART-R).
 func commonCellRig(t *testing.T) (eng *Engine, pid, a, b int64, nodes map[string]*processes.Node, cm *catidMonitor) {
 	t.Helper()
 	eng, db, pid, a, b, cm := healthRig(t, "1001")
@@ -142,7 +142,7 @@ func commonCellRig(t *testing.T) (eng *Engine, pid, a, b int64, nodes map[string
 	testutil.MustNoErr(t, err, "B's claim at N-COMMON")
 	cartNode(t, eng, pid, a, "N-EVAC", "PART-E", "PART-E", 9762)
 	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: b, CoreNodeName: "N-EVAC", Role: "consume",
-		SwapMode: "simple", PayloadCode: "PART-E", UOPCapacity: 100, InboundSource: "SRC", EvacuateOnChangeover: true})
+		SwapMode: "simple", PayloadCode: "PART-E", UOPCapacity: 100, InboundSource: "SRC"})
 	testutil.MustNoErr(t, err, "B's claim at N-EVAC")
 	mirrorNode(t, eng, pid, a, b, "N-MIRROR", "PART-L", "PART-R", 9763)
 	ns, err := db.ListProcessNodesByProcess(pid)

@@ -25,7 +25,8 @@ import (
 //   - a marked position's lift has no wait in front of it (it goes at START);
 //   - every unmarked position whose part changes is still planned;
 //   - no order ends on a wait;
-//   - a changeover with no marks has no tooling_done wait;
+//   - a changeover with no marks has no tooling_done wait, and no builder
+//     writes one: only the decorator does;
 //   - the planner and the readiness card read one situation.
 
 // tcCell is one row's cell: the outgoing and incoming claims, every node the
@@ -247,10 +248,25 @@ func TestToolChange_TheTable(t *testing.T) {
 				}
 			}
 		}
+		// No builder writes a tooling wait: the plan without the decorator has none.
+		diffs := DiffStyleClaims(cell.from, cell.to)
+		diffs = FanOutPressIndex(diffs, tcBinTypes(c), nil)
+		diffs = FanOutPressIndexCrossMode(diffs, tcBinTypes(c))
+		nodes := make([]processes.Node, 0, len(cell.nodes))
+		for i, n := range cell.nodes {
+			nodes = append(nodes, processes.Node{ID: int64(i + 1), CoreNodeName: n, Name: n})
+		}
+		bare := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
+		for leg, steps := range orderSteps(bare) {
+			if slices.ContainsFunc(steps, isToolingWait) {
+				t.Errorf("%s: a builder wrote a tooling wait on %s: %s", name, leg, stepsString(steps))
+			}
+		}
 		// The planner and the readiness card read one situation.
 		for _, d := range DiffStyleClaims(cell.from, cell.to) {
 			if want := domain.ChangeoverSituation(d.FromClaim, d.ToClaim); d.Situation != want {
 				t.Errorf("%s: %s planned %s, the card reads %s", name, d.CoreNodeName, d.Situation, want)
 			}
 		}
-	}}
+	}
+}

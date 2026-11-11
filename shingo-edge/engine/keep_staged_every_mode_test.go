@@ -90,9 +90,14 @@ func TestKeepStagedNode_SequentialAndPressFetchFromTheSpot(t *testing.T) {
 			assertOnlyTheFetchMoved(t, what+" changeover swap",
 				BuildSwapChangeoverSteps(from, to, inactive, "").StepsA,
 				BuildSwapChangeoverSteps(from, withSpot(to), inactive, "").StepsA, to)
-			assertOnlyTheFetchMoved(t, what+" changeover evacuate",
-				BuildEvacuateChangeoverSteps(from, to, inactive, "").StepsA,
-				BuildEvacuateChangeoverSteps(from, withSpot(to), inactive, "").StepsA, to)
+			// A tool change's leg on a sequential line is the claim's own: its
+			// refill lifts the spare from the spot too.
+			tool := func(to *processes.NodeClaim) []protocol.ComplexOrderStep {
+				a := toolingPositionAction(toolingPress{from: from, to: to, positions: []string{"LINE"},
+					evacDest: "OUT", staging: "STG"}, "LINE", node)
+				return a.SupplyOrder.Complex.Steps
+			}
+			assertOnlyTheFetchMoved(t, what+" changeover tool change", tool(to), tool(withSpot(to)), to)
 		}
 
 		// Press-index: the leg that owns the fetch takes it from the spot; the
@@ -126,13 +131,10 @@ func TestKeepStagedNode_SequentialAndPressFetchFromTheSpot(t *testing.T) {
 
 			from := goldenClaim(role, protocol.SwapModeTwoRobotPressIndex, "P-FROM", v.secondPaired, v.flip)
 			to := goldenClaim(role, protocol.SwapModeTwoRobotPressIndex, "P-TO", v.secondPaired, v.flip)
-			for _, tooling := range []bool{false, true} {
+			{
 				cw := pw + " changeover"
-				if tooling {
-					cw += " evacuate"
-				}
-				p := buildPressIndexChangeoverSwap(from, to, tooling)
-				k := buildPressIndexChangeoverSwap(from, withSpot(to), tooling)
+				p := buildPressIndexChangeoverSwap(from, to)
+				k := buildPressIndexChangeoverSwap(from, withSpot(to))
 				if v.flip {
 					assertOnlyTheFetchMoved(t, cw+" supply", p.Roles.supply.steps, k.Roles.supply.steps, to)
 					if !reflect.DeepEqual(p.Roles.evac.steps, k.Roles.evac.steps) {

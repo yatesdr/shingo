@@ -131,10 +131,8 @@ type FlowAdvanced struct {
 	// a vacated position asks for. Blank is off.
 	AutoRequestPayload string `json:"auto_request_payload,omitempty"`
 	AutoPush           bool   `json:"auto_push,omitempty"`
-	// EvacuateOnChangeover and CarryoverDisposition are the changeover
-	// specials that are not positions on the picture.
-	//
-	EvacuateOnChangeover bool                 `json:"evacuate_on_changeover,omitempty"`
+	// CarryoverDisposition is the changeover special that is not a position on
+	// the picture.
 	CarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition"`
 	// KeepStagedNode is the node this position's full or empty comes from
 	// instead of the inbound source, with a spare kept standing on it. Blank is
@@ -185,7 +183,6 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		LinesideSoftThreshold: c.LinesideSoftThreshold,
 		AutoRequestPayload:    c.AutoRequestPayload,
 		AutoPush:              c.AutoPush,
-		EvacuateOnChangeover:  c.EvacuateOnChangeover,
 		CarryoverDisposition:  CarryoverFor(c),
 		KeepStagedNode:        c.KeepStagedNode,
 		IndexRobotSupplies:    c.IndexRobotSupplies,
@@ -242,11 +239,11 @@ func Collapse(c NodeClaim) FlowCell {
 
 // Expand is the write for a cell: the NodeClaimInput UpsertClaim takes.
 //
-// It honours updateClaim's boundary. Of the eighteen columns the store writes
+// It honours updateClaim's boundary. Of the seventeen columns the store writes
 // unconditionally, the cell supplies role, swap_mode, payload_code, the two
-// paired positions, the four routing fields and the partial destination; the other nine (uop_capacity,
+// paired positions, the four routing fields and the partial destination; the other eight (uop_capacity,
 // reorder_point, allowed_payload_codes, auto_request_payload,
-// evacuate_on_changeover, auto_confirm, lineside_soft_threshold,
+// auto_confirm, lineside_soft_threshold,
 // reuse_compatible_bins, auto_push) are copied from the prior claim — or take
 // the INSERT defaults with no prior — because a value type cannot say "no
 // opinion" and the composer has none. Of the twelve pointer-gated columns it
@@ -289,7 +286,6 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 			in.AllowedPayloadCodes = []string{cell.PayloadCode}
 		}
 		in.AutoRequestPayload = prior.AutoRequestPayload
-		in.EvacuateOnChangeover = prior.EvacuateOnChangeover
 		in.AutoConfirm = prior.AutoConfirm
 		in.LinesideSoftThreshold = prior.LinesideSoftThreshold
 		in.ReuseCompatibleBins = prior.ReuseCompatibleBins
@@ -321,7 +317,6 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.LinesideSoftThreshold = a.LinesideSoftThreshold
 		in.AutoRequestPayload = a.AutoRequestPayload
 		in.AutoPush = a.AutoPush
-		in.EvacuateOnChangeover = a.EvacuateOnChangeover
 		in.AutoConfirm = a.AutoConfirm
 		in.ReorderPointSource = Ptr(a.ReorderPointSource)
 		in.AutoReorder = Ptr(a.AutoReorder)
@@ -366,7 +361,6 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		PackTolerancePct:               c.PackTolerancePct,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
 		AutoRequestPayload:             c.AutoRequestPayload,
-		EvacuateOnChangeover:           c.EvacuateOnChangeover,
 		PairedCoreNode:                 c.PairedCoreNode,
 		SecondPairedCoreNode:           c.SecondPairedCoreNode,
 		ChangeoverEvacNodes:            Ptr(nonNilStrings(c.ChangeoverEvacNodes)),
@@ -468,7 +462,6 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.PartialDestination = in.PartialDestination
 	c.AllowedPayloadCodes = cloneStrings(in.AllowedPayloadCodes)
 	c.AutoRequestPayload = in.AutoRequestPayload
-	c.EvacuateOnChangeover = in.EvacuateOnChangeover
 	// The two paired positions as the save stores them: none on a mode that
 	// names none.
 	c.PairedCoreNode, c.SecondPairedCoreNode = in.SavedPairs()

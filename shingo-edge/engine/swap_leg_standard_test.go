@@ -239,7 +239,7 @@ func TestEveryChangeoverLegDepartsProvably(t *testing.T) {
 					disp  ChangeoverDispatch
 				}{
 					{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
-					{"evacuate", BuildEvacuateChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
+					{"tool change", ChangeoverDispatch{StepsA: toolChangeLeg(from, to)}},
 				} {
 					legs := map[string][]protocol.ComplexOrderStep{
 						situation.label + " A": situation.disp.StepsA,
@@ -395,7 +395,7 @@ func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
 				disp  ChangeoverDispatch
 			}{
 				{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
-				{"evacuate", BuildEvacuateChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
+				{"tool change", ChangeoverDispatch{StepsA: toolChangeLeg(from, to)}},
 			} {
 				legs := map[string][]protocol.ComplexOrderStep{
 					"A": situation.disp.StepsA,
@@ -413,14 +413,13 @@ func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
 			}
 		}
 	}
-	// Four entries, one builder: buildSingleRobotChangeoverSwap's stepsB, reached
-	// by single_robot directly and by manual_swap through the default arm, in both
-	// situations.
+	// Two entries, one builder: buildSingleRobotChangeoverSwap's stepsB, reached
+	// by single_robot directly and by manual_swap through the default arm. A tool
+	// change's leg is not one: its last cell step is its own final set-down, so
+	// it departs at its finish (legDepartsAt's final kind).
 	assertHazardSet(t, "changeover", changeover, map[string]bool{
-		"single_robot swap B":     true,
-		"single_robot evacuate B": true,
-		"manual_swap swap B":      true,
-		"manual_swap evacuate B":  true,
+		"single_robot swap B": true,
+		"manual_swap swap B":  true,
 	})
 }
 
