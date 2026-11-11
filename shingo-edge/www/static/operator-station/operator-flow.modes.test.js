@@ -148,17 +148,18 @@ if (!indexPath || !twoRobotPath || !singlePath || !seqPath || !twoLanesPath || !
 // Each produce position draws an INDEX module: the press card, its paired
 // back position as the on-deck card inside it, and three moves — the next bin
 // in behind the one on deck (Robot 1), the index up into the press (Robot 2),
-// the old bin out to the dock (Robot 2). The spare bound positions draw as
+// the old bin out to the dock (Robot 1, which lifts it off the front: it read
+// Robot 2, against the builders). The spare bound positions draw as
 // plain cards captioned "back position", as before the rewrite: Kind is a
 // fact about the PROCESS, and the synthetic sequential style pairs
 // PLN_03/PLN_06. Dock IN names the paired back positions; dock OUT names the
 // fronts; the legend lists both robots.
 characterise('press index — two rows, two pairs', indexPath, {
-    moves: 6, r1Chevrons: 4, r2Chevrons: 8,
+    moves: 6, r1Chevrons: 8, r2Chevrons: 4,
     cardLines: ['Robot 1 supplies PLN_02', 'Robot 1 supplies PLN_05', 'Robot 2 indexes',
         'on deck for PLN_01', 'on deck for PLN_04', 'back position'],
     noCardLines: ['Inbound staging', 'Robot 1 moves in', 'Robot 1 clears old', 'front position'],
-    dock: ['Inbound source · Robot 1 → PLN_02, PLN_05', 'Outbound destination · Robot 2 ← PLN_01, PLN_04'],
+    dock: ['Inbound source · Robot 1 → PLN_02, PLN_05', 'Outbound destination · Robot 1 ← PLN_01, PLN_04'],
     stagingSlots: 0,
     strips: 0,
     legend: 2, legendRobots: [1, 2],
@@ -438,6 +439,24 @@ function namedNodes(claim) {
             }
         }
     }
+}
+
+{
+    // THE BOARD KNOWS WHO REFILLS. The view's claim carries refill_by
+    // (domain.CellClaim.RefillBy) and the board's lines and dock read it: a
+    // press set to Robot 2 or Robot 3 read "Robot 1 supplies" on the board.
+    console.log('refill — the board names the robot each press refill setting says');
+    const view = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    const set = { PLN_01: 'index_robot', PLN_04: 'own_robot' };
+    for (const p of view.cell.positions) if (p.claim && set[p.core_node_name]) p.claim.refill_by = set[p.core_node_name];
+    const s = m.sentencesFromView(view);
+    const lines = n => (s && s.cardLines[n]) || [];
+    check('refill: PLN_01 says Robot 2 supplies its back', lines('PLN_01').indexOf('Robot 2 supplies PLN_02') >= 0, JSON.stringify(lines('PLN_01')));
+    check('refill: PLN_04 says Robot 3 supplies its back', lines('PLN_04').indexOf('Robot 3 supplies PLN_05') >= 0, JSON.stringify(lines('PLN_04')));
+    const inRobots = ((s && s.dock.inGroups) || []).map(g => g.robot).sort();
+    const outRobots = ((s && s.dock.outGroups) || []).map(g => g.robot);
+    check('refill: the dock brings in on Robot 2 and Robot 3', JSON.stringify(inRobots) === '[2,3]', JSON.stringify(inRobots));
+    check('refill: the full totes leave on Robot 1', JSON.stringify(outRobots) === '[1]', JSON.stringify(outRobots));
 }
 
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }

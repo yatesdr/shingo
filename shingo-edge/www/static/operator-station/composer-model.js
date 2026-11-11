@@ -118,11 +118,13 @@ function fieldWord(state, field) {
 // Advanced as stored or drafted (cellAdvanced); absent reads as Robot 1, the
 // minted default.
 const CARDLINE = {
+    // THE REFILL GOES TO THE LAST POSITION, the back (a three-position
+    // press's third), as the builders set it down (composePressIndexPair).
     two_robot_press_index: (c, a) => {
-        const r = a && a.refill_by;
-        if (r === 'index_robot') return 'Robot 2 indexes · Robot 2 supplies ' + (c.paired || '?');
-        if (r === 'own_robot') return 'Robot 2 indexes · Robot 3 supplies ' + (c.paired || '?');
-        return 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes';
+        const back = c.secondPaired || c.paired || '?';
+        const r = refillRobotOf(a);
+        if (r === 1) return 'Robot 1 supplies ' + back + ' · Robot 2 indexes';
+        return 'Robot 2 indexes · Robot ' + r + ' supplies ' + back;
     },
     two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
     single_robot: c => ((c.staging || c.parkOld)
@@ -1310,7 +1312,15 @@ function legFields(mode) {
 // per surface: a surface that guessed would eventually disagree with one that
 // derived.
 function usesTwoRobots(state) {
-    return activeCells(state).some(([, c]) => dockRobotsOf(c).out === 2);
+    return activeCells(state).some(([, c]) => c.mode === 'two_robot' || c.mode === 'two_robot_press_index');
+}
+
+// refillRobotOf is the robot an index press's Advanced says brings its back
+// the next carrier: 1, 2 or 3 (refill_by clearing_robot / index_robot /
+// own_robot); absent or unknown is Robot 1, the default.
+function refillRobotOf(a) {
+    const r = a && a.refill_by;
+    return r === 'index_robot' ? 2 : r === 'own_robot' ? 3 : 1;
 }
 
 // dockRobotsOf is ONE CELL'S answer to "which robot brings its new bin from
@@ -1319,14 +1329,17 @@ function usesTwoRobots(state) {
 // the single cell still clears with Robot 1: asking the flow (usesTwoRobots)
 // for that cell's out robot drew its move to the dock in Robot 2's colour.
 //
-// The two-robot choreographies are the ones whose old bin leaves on Robot 2:
-// two_robot pulls it while Robot 1 stages the new one, a press index carries
-// it out after indexing (its LEGS row is Robot 2's index). Every other mode,
-// and every inbound trip, is Robot 1's. usesTwoRobots reads this, so the flow's
-// sentence and each cell's colour cannot disagree.
-function dockRobotsOf(c) {
-    const two = c.mode === 'two_robot_press_index' || c.mode === 'two_robot';
-    return { in: 1, out: two ? 2 : 1 };
+// two_robot is the one choreography whose old bin leaves on Robot 2: it pulls
+// it while Robot 1 stages the new one. A PRESS INDEX'S FULL TOTE LEAVES ON
+// ROBOT 1, which lifts it off the front and takes it out (the builders,
+// composePressIndexPair); its Robot 2 only indexes, and this said Robot 2. A
+// press index's inbound trip is whoever its refill setting names (a, the
+// cell's Advanced: Robot 1, 2 or 3). Every other inbound trip is Robot 1's.
+function dockRobotsOf(c, a) {
+    return {
+        in: c.mode === 'two_robot_press_index' ? refillRobotOf(a) : 1,
+        out: c.mode === 'two_robot' ? 2 : 1,
+    };
 }
 
 // cellRobots is dockRobotsOf by position name, for the picture: null for a
@@ -1334,10 +1347,13 @@ function dockRobotsOf(c) {
 function cellRobots(state, node) {
     const c = state.cells[node];
     if (!c || !c.on || !c.mode) return null;
-    return dockRobotsOf(c);
+    return dockRobotsOf(c, cellAdvanced(state, node));
 }
 
 function robotWords(state) {
+    if (activeCells(state).some(([n, c]) => c.mode === 'two_robot_press_index' && refillRobotOf(cellAdvanced(state, n)) === 3)) {
+        return 'Robot 1, Robot 2 and Robot 3';
+    }
     return usesTwoRobots(state) ? 'Robot 1 and Robot 2' : 'Robot 1';
 }
 
@@ -1463,7 +1479,7 @@ function dockNotes(state) {
         // through it, and "SLN_010, SLN_010" read as two lanes of one name.
         const byRobot = new Map();
         for (const cell of act) {
-            const r = dockRobotsOf(cell[1])[dir];
+            const r = dockRobotsOf(cell[1], cellAdvanced(state, cell[0]))[dir];
             if (!byRobot.has(r)) byRobot.set(r, []);
             const t = targetOf(cell);
             if (byRobot.get(r).indexOf(t) < 0) byRobot.get(r).push(t);
@@ -2131,6 +2147,9 @@ function orderSentences(state) {
             if (!from || !to) continue;
             out.push({
                 robot: robot,
+                // role is what the order does, whatever robot number the row
+                // shows: a reader asking which orders take bins off asks this.
+                role: robot === 1 ? 'supply' : 'evac',
                 from: from,
                 to: to,
                 // The new bin is named by its part; the old one has no part to

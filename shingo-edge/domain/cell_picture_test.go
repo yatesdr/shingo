@@ -350,3 +350,37 @@ func TestCellPicture_EveryPositionSaysItsStation(t *testing.T) {
 		t.Fatal("no position of the fixture is bound to a station; the pin proves nothing")
 	}
 }
+
+// TestCellPicture_AnIndexPressSaysWhoRefillsIt: the board's view carries who
+// brings an index press's back its next carrier, so the board's lines can
+// name Robot 2 or Robot 3; Robot 1, the default, says nothing.
+func TestCellPicture_AnIndexPressSaysWhoRefillsIt(t *testing.T) {
+	t.Parallel()
+	fx := scenefixtures.A()
+	claims := claimsOf(fx, 7)
+	want := map[string]protocol.RefillBy{"PLN_01": protocol.RefillByIndexRobot, "PLN_04": protocol.RefillByOwnRobot}
+	for node, r := range want {
+		c, ok := claims[node]
+		if !ok {
+			t.Fatalf("style 7 has no claim on %s", node)
+		}
+		c.RefillBy = r
+		claims[node] = c
+	}
+	pic := BuildCellPicture(CellPictureInput{
+		StationID: 5, Nodes: nodesOf(fx, 1), Claims: claims, Geometry: geometryOf(fx), Groups: groupsOf(fx),
+	})
+	seen := 0
+	for _, p := range pic.Positions {
+		if p.Claim == nil {
+			continue
+		}
+		seen++
+		if got := p.Claim.RefillBy; got != want[p.CoreNodeName] {
+			t.Errorf("%s: the view's refill_by = %q, want %q", p.CoreNodeName, got, want[p.CoreNodeName])
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no position of style 7 carries a claim; the test asks nothing")
+	}
+}

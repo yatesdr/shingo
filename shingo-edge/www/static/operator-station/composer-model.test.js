@@ -466,7 +466,9 @@ test('dockNotes(style 7) reads exactly as the spec S4 sentence', () => {
     // It read `Robot 1 brings new stock here → …`, which is a sentence about
     // `inbound_source` that never says which field it means.
     assert.strictEqual(d.in.note, 'Inbound source · Robot 1 → PLN_02, PLN_05');
-    assert.strictEqual(d.out.note, 'Outbound destination · Robot 2 ← PLN_01, PLN_04');
+    // The full tote leaves on Robot 1, which lifts it off the front; it read
+    // Robot 2, against the builders.
+    assert.strictEqual(d.out.note, 'Outbound destination · Robot 1 ← PLN_01, PLN_04');
     assert.strictEqual(d.in.group, 'Supermarket Empty Totes');
     assert.strictEqual(d.out.group, 'Supermarket Area');
 });
