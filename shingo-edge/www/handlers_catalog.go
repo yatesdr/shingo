@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 )
 
 // --- Core Nodes ---
@@ -20,9 +21,14 @@ import (
 // node may be a position of several processes at once (StationService.SetNodes
 // accepts it), so the positions checklist offers it even when another process
 // already holds it, and greys out every other node another process holds.
+//
+// Group is the node group a member is in, so a picker for a role where Core
+// picks leaves members out (desktop-bodies.js legExclusion), by the same map
+// the leg refusal reads (domain.CoreNodeKinds.GroupOf).
 type coreNodeRow struct {
 	protocol.NodeInfo
 	Members      []string `json:"members,omitempty"`
+	Group        string   `json:"group,omitempty"`
 	SharedLoader bool     `json:"shared_loader,omitempty"`
 }
 
@@ -30,9 +36,10 @@ func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.CoreNodes()
 	stations := h.engine.StationService()
 	groups := stations.GroupMembers()
+	kinds := domain.CoreNodeKindsOf(nodes, groups)
 	infos := make([]coreNodeRow, 0, len(nodes))
 	for _, n := range nodes {
-		infos = append(infos, coreNodeRow{NodeInfo: n, Members: groups[n.Name],
+		infos = append(infos, coreNodeRow{NodeInfo: n, Members: groups[n.Name], Group: kinds.GroupOf(n.Name),
 			SharedLoader: stations.LoaderHolds(n.Name)})
 	}
 	writeJSON(w, infos)

@@ -25,6 +25,22 @@ import (
 // Phase 6.2′ extracted this from named methods on *engine.Engine.
 type ProcessService struct {
 	db *store.DB
+	// coreNodeKinds is Core's node list as a leg's refusal reads it, for a
+	// recipe's save (SetCoreNodeKindsResolver). Nil reads as no list heard:
+	// nothing is refused.
+	coreNodeKinds func() domain.CoreNodeKinds
+}
+
+// SetCoreNodeKindsResolver gives the service Core's node list as a leg's
+// refusal reads it (Engine.CoreNodeKinds), for a recipe's save.
+func (s *ProcessService) SetCoreNodeKindsResolver(r func() domain.CoreNodeKinds) { s.coreNodeKinds = r }
+
+// kinds is the resolver's answer, or no list heard.
+func (s *ProcessService) kinds() domain.CoreNodeKinds {
+	if s.coreNodeKinds == nil {
+		return domain.CoreNodeKinds{}
+	}
+	return s.coreNodeKinds()
 }
 
 // NewProcessService constructs a ProcessService wrapping the shared

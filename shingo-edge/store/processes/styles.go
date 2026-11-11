@@ -399,10 +399,10 @@ func (c *copiedClaim) legs() NodeClaimInput {
 }
 
 // refuseStoredLegs reads one style's live claims as this transaction has
-// written them and refuses the first leg that names a lane. One SELECT, and
-// none when no lane is known (empty kinds refuse nothing).
+// written them and refuses the first leg the leg rule refuses. One SELECT, and
+// none when no node list is heard (empty kinds refuse nothing).
 func refuseStoredLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, from string) error {
-	if len(kinds.Lanes) == 0 {
+	if kinds.Empty() {
 		return nil
 	}
 	rows, err := readCopiedClaims(tx, styleID)
@@ -413,7 +413,7 @@ func refuseStoredLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, fro
 }
 
 // refuseCopiedLegs refuses the first copied claim, by node name, with a
-// leg naming a lane: "<from>, claim at <node>: <leg>: <sentence>".
+// refused leg: "<from>, claim at <node>: <leg>: <sentence>".
 func refuseCopiedLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedClaim, from string) error {
 	nodes := make([]string, 0, len(rows))
 	for node := range rows {

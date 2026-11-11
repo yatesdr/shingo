@@ -327,7 +327,7 @@ func (s *ProcessService) create(processID int64, name, createdBy string, cells [
 		return 0, err
 	}
 	id, err := s.db.CreateFlowPreset(domain.FlowPresetInput{
-		ProcessID: processID, Name: name, FlowJSON: flowJSON, CreatedBy: createdBy,
+		ProcessID: processID, Name: name, FlowJSON: flowJSON, CreatedBy: createdBy, Kinds: s.kinds(),
 	})
 	if err != nil {
 		return 0, err

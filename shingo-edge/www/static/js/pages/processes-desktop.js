@@ -3546,7 +3546,7 @@ function routingPickersReady() {
             onDrop: name => setRoutingNode(g[0], name, false),
             exclude: n => (isPositionRow(n)
                 ? 'a position of this process — available to every flow on it already'
-                : B().legExclusion(S.coreNodes, n)),
+                : B().legExclusion(S.coreNodes, n, g[0])),
             // WHERE A NAME CAME FROM, AT THE MOMENT OF PICKING. A row the
             // backfill found says so and how many live styles route through
             // it, which is the whole of Q5's evidence line in the one place it
@@ -6712,7 +6712,7 @@ function openAddProcess() {
             // so the three do not exclude each other.
             exclude: n => (positions().indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
-                : B().legExclusion(S.coreNodes, n)),
+                : B().legExclusion(S.coreNodes, n, g[0])),
             onChange: redrawSheetMap,
         });
     }
@@ -7014,7 +7014,7 @@ async function openContainmentPicker(btn) {
     const pop = $('pd-stpop');
     if (!pop) return;
     const current = S.settings.quality_hold_destination || '';
-    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).filter(n => !B().isLane(n)).map(n => ({
+    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).filter(n => !B().legExclusion(S.coreNodes, n.name, 'destination')).map(n => ({
         name: n.name,
         label: n.name + (n.node_type === 'NGRP' ? ' (group)' : ''),
     })));

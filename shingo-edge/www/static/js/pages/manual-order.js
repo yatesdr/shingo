@@ -17,9 +17,11 @@ import { postAct } from '/static/js/ask-act.js';
     // name -> node_type (NGRP/LANE/'') from the core sync, so the picker can badge
     // a synthetic container distinctly from a targetable slot.
     var coreType = {};
+    var coreGroup = {};
     coreNodesRaw.forEach(function(e) {
         var nm = coreNodeName(e);
         if (nm && e && typeof e === 'object' && e.node_type) coreType[nm] = e.node_type;
+        if (nm && e && typeof e === 'object' && e.group) coreGroup[nm] = e.group;
     });
     var coreNodes = coreNodesRaw.map(coreNodeName).filter(Boolean);
 
@@ -29,7 +31,7 @@ import { postAct } from '/static/js/ask-act.js';
     coreNodes.sort().forEach(function(n) {
         seen[n] = true;
         var edge = edgeNodes.find(function(e){ return e.id === n; });
-        merged.push({ id: n, desc: edge ? edge.desc : '', source: 'core', type: coreType[n] || '' });
+        merged.push({ id: n, desc: edge ? edge.desc : '', source: 'core', type: coreType[n] || '', group: coreGroup[n] || '' });
     });
     edgeNodes.forEach(function(e) {
         if (!seen[e.id]) {
@@ -56,9 +58,15 @@ import { postAct } from '/static/js/ask-act.js';
     ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
         var sel = document.getElementById(selID);
         merged.forEach(function(n) {
+            // A MEMBER OF A GROUP IS CORE'S TO PICK: an order's pickup and
+            // delivery name the group (the API refuses a member). The delivery
+            // offers one only for a complex order, whose Core Node is the
+            // cell's own position (updateOrderForm).
+            if (selID === 'mo-pickup' && n.group) return;
             var opt = document.createElement('option');
             opt.value = n.id;
             opt.dataset.source = n.source;
+            if (selID === 'mo-delivery' && n.group) opt.dataset.memberOf = n.group;
             opt.textContent = nodeOptionLabel(n);
             sel.appendChild(opt);
         });
@@ -71,6 +79,13 @@ import { postAct } from '/static/js/ask-act.js';
 //   complex:  process node (optional), production (delivery label), staging
 function updateOrderForm() {
     var t = document.getElementById('mo-type').value;
+    var deliv = document.getElementById('mo-delivery');
+    if (deliv) {
+        deliv.querySelectorAll('option[data-member-of]').forEach(function(o) {
+            o.hidden = o.disabled = t !== 'complex';
+        });
+        if (deliv.selectedOptions[0] && deliv.selectedOptions[0].disabled) deliv.selectedIndex = 0;
+    }
     var showNode    = t !== 'move';
     var showPickup  = t === 'move';
     var showDeliv   = t === 'move' || t === 'retrieve' || t === 'complex';

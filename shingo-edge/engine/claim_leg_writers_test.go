@@ -20,9 +20,31 @@ const (
 	engLegRefused = "refused"
 )
 
+// engLaneCore is a Core list with a lane in a group, and every other node the
+// reorder claim names, so a refusal there is for the lane and not for a name
+// Core's list does not hold.
 var engLaneCore = []protocol.NodeInfo{
 	{Name: "CW-SUP", NodeType: protocol.NodeClassNGRP},
 	{Name: "CW-SUP.CW-LANE", NodeType: protocol.NodeClassLANE},
+	{Name: "CW-PRESS"}, {Name: "CW-HOLD"}, {Name: "CW-STG"}, {Name: "CW-STG2"},
+}
+
+// engCoreListFor is Core's list holding every node the cells name, and extra:
+// a save is then refused for the leg under test, not for a name Core's list
+// does not hold.
+func engCoreListFor(cells []domain.FlowCell, extra ...protocol.NodeInfo) []protocol.NodeInfo {
+	list := append([]protocol.NodeInfo(nil), extra...)
+	known := map[string]bool{}
+	for _, c := range cells {
+		for _, n := range []string{c.CoreNodeName, c.PairedCoreNode, c.InboundSource, c.OutboundDestination,
+			c.InboundStaging, c.OutboundStaging, c.PartialDestination} {
+			if n != "" && !known[n] {
+				known[n] = true
+				list = append(list, protocol.NodeInfo{Name: n})
+			}
+		}
+	}
+	return list
 }
 
 // composerLegCensus is the flow composer's save, per leg a two_robot cell
@@ -41,12 +63,12 @@ func TestSaveFlow_ALaneOnEachLeg(t *testing.T) {
 			db := testEngineDB(t)
 			processID, _, toStyleID := seedFlowScenario(t, db)
 			eng := testEngine(t, db)
-			eng.SetCoreNodes(engLaneCore)
 			enableComposer(t, db, processID)
+			cells := cellsOf(t, db, toStyleID)
+			eng.SetCoreNodes(engCoreListFor(cells, engLaneCore[:2]...))
 
 			fp, err := eng.FlowFingerprint(processID, toStyleID)
 			testutil.MustNoErr(t, err, "fingerprint")
-			cells := cellsOf(t, db, toStyleID)
 			for i := range cells {
 				if cells[i].CoreNodeName != "FLOW-ADD" {
 					continue
@@ -156,6 +178,86 @@ func engStoredLane(t *testing.T, db *store.DB, styleID int64, leg string) bool {
 			"inbound_staging": c.InboundStaging,
 		}[leg]
 		if v == "CW-LANE" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSaveFlow_AMemberWhereCorePicks: the claim editor's save (the flow
+// composer), handed a member of a node group on each leg a two_robot cell
+// carries. Where Core picks the member is refused, on its field; as the cell's
+// staging spot it saves, because a staging spot names the exact node.
+func TestSaveFlow_AMemberWhereCorePicks(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct{ leg, want string }{
+		{"inbound_source", engLegRefused},
+		{"outbound_destination", engLegRefused},
+		{"inbound_staging", engLegSaved},
+	} {
+		t.Run(row.leg, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			processID, _, toStyleID := seedFlowScenario(t, db)
+			eng := testEngine(t, db)
+			enableComposer(t, db, processID)
+			cells := cellsOf(t, db, toStyleID)
+			// Core's list holds every node the cells name, and a group with its member.
+			eng.SetCoreNodes(engCoreListFor(cells,
+				protocol.NodeInfo{Name: "CW-GRP", NodeType: protocol.NodeClassNGRP}, protocol.NodeInfo{Name: "CW-GRP.CW-SLOT"}))
+
+			fp, err := eng.FlowFingerprint(processID, toStyleID)
+			testutil.MustNoErr(t, err, "fingerprint")
+			for i := range cells {
+				if cells[i].CoreNodeName != "FLOW-ADD" {
+					continue
+				}
+				switch row.leg {
+				case "inbound_source":
+					cells[i].InboundSource = "CW-SLOT"
+				case "outbound_destination":
+					cells[i].OutboundDestination = "CW-SLOT"
+				case "inbound_staging":
+					cells[i].InboundStaging = "CW-SLOT"
+				}
+			}
+			_, err = eng.SaveFlow(processID, FlowSaveRequest{Source: domain.ClaimSourceHMI, ToStyleID: toStyleID,
+				Cells: cells, Fingerprint: fp, CalledBy: "Press 400"})
+			stored := engStoredNode(t, db, toStyleID, row.leg, "CW-SLOT")
+			var refused *FlowValidationError
+			got := ""
+			switch {
+			case err == nil && stored:
+				got = engLegSaved
+			case errors.As(err, &refused) && !stored:
+				got = engLegRefused
+				onField := false
+				for _, f := range refused.Findings {
+					onField = onField || string(f.Field) == row.leg
+				}
+				if !onField {
+					t.Errorf("the refusal is not on %s: %+v", row.leg, refused.Findings)
+				}
+			default:
+				t.Fatalf("save: err %v, member stored %v", err, stored)
+			}
+			if got != row.want {
+				t.Errorf("composer with a member on %s: %s, want %s", row.leg, got, row.want)
+			}
+		})
+	}
+}
+
+func engStoredNode(t *testing.T, db *store.DB, styleID int64, leg, name string) bool {
+	t.Helper()
+	claims, err := db.ListStyleNodeClaims(styleID)
+	testutil.MustNoErr(t, err, "list claims")
+	for _, c := range claims {
+		v := map[string]string{
+			"inbound_source": c.InboundSource, "outbound_destination": c.OutboundDestination,
+			"inbound_staging": c.InboundStaging,
+		}[leg]
+		if v == name {
 			return true
 		}
 	}

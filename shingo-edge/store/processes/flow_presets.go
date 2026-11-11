@@ -85,7 +85,7 @@ func CreateFlowPreset(db *sql.DB, in FlowPresetInput) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := domain.ValidateFlowPreset(in.FlowJSON, allowed); err != nil {
+	if err := domain.ValidateFlowPreset(in.FlowJSON, allowed, in.Kinds); err != nil {
 		return 0, err
 	}
 	if err := refuseNameOfAnotherShape(db, in); err != nil {

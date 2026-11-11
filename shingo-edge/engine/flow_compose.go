@@ -367,7 +367,7 @@ func (e *Engine) claimContext(processID int64) (domain.ClaimContextSet, error) {
 		for name := range known {
 			in.KnownCoreNodes[name] = true
 		}
-		in.Kinds = domain.CoreNodeKindsOf(known)
+		in.Kinds = domain.CoreNodeKindsOf(known, e.CoreNodeGroups())
 	}
 	return domain.NewClaimContextSet(in), nil
 }

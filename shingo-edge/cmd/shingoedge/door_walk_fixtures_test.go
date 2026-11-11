@@ -170,9 +170,11 @@ func routeFixtures() map[string]routeFixture {
 
 		// ── admin: order creation ──
 		"POST /api/orders/retrieve": {want: 200, req: at("/api/orders/retrieve", map[string]any{"delivery_node": "PLN_01", "payload_code": "PART-W", "quantity": 1})},
-		"POST /api/orders/move":     {want: 200, req: at("/api/orders/move", map[string]any{"source_node": "SMN_01", "delivery_node": "PLN_04", "quantity": 1})},
-		"POST /api/orders/complex":  {want: 400, req: at("/api/orders/complex", map[string]any{"steps": []any{}})},
-		"POST /api/orders/ingest":   {want: 400, req: at("/api/orders/ingest", map[string]any{"node": "PLN_01", "payload_code": "PART-W"})},
+		// A node in no group: an API move's source is where Core picks, and a
+		// member of a group is refused there (SMN_01 is one of Supermarket Area's).
+		"POST /api/orders/move":    {want: 200, req: at("/api/orders/move", map[string]any{"source_node": "SMN_011", "delivery_node": "PLN_04", "quantity": 1})},
+		"POST /api/orders/complex": {want: 400, req: at("/api/orders/complex", map[string]any{"steps": []any{}})},
+		"POST /api/orders/ingest":  {want: 400, req: at("/api/orders/ingest", map[string]any{"node": "PLN_01", "payload_code": "PART-W"})},
 
 		// ── admin: PLCs ──
 		"POST /api/plcs/read-tag":             {want: 500, req: at("/api/plcs/read-tag", map[string]any{"plc_name": "PLC-1", "tag_name": "T"})},

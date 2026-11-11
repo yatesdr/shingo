@@ -214,13 +214,14 @@ func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInp
 //
 // The row must belong to processID.
 //
-// SWITCHING A LANE ON IS REFUSED. A row naming a lane can be in the table from
-// before the saves refused one, or from migration v25, which does not filter
-// lanes; once switched off it stays off. The check reads the row first (one
-// SELECT), only when switching on with a lane known; switching off is never
+// SWITCHING ON A ROW THE LEG RULE REFUSES IS REFUSED. A row naming a lane, or
+// a member of a group as a source or a destination, can be in the table from
+// before the saves refused one, or from migration v25, which filters nothing;
+// once switched off it stays off. The check reads the row first (one SELECT),
+// only when switching on with a node list heard; switching off is never
 // refused.
 func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id int64, enabled bool, calledBy string) error {
-	if enabled && len(kinds.Lanes) > 0 {
+	if enabled && !kinds.Empty() {
 		var name, role string
 		switch err := db.QueryRow(`SELECT core_node_name, role FROM process_routing_nodes
 			WHERE id = ? AND process_id = ?`, id, processID).Scan(&name, &role); {

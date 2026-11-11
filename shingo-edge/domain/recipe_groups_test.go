@@ -70,7 +70,7 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 			{"core_node_name":"SEQ_A","paired_core_node":["SEQ_B"]},
 			{"core_node_name":"SEQ_C","paired_core_node":["SEQ_D"]}]}]}`,
 	} {
-		if err := ValidateFlowPreset(flow, groupsLive); err != nil {
+		if err := ValidateFlowPreset(flow, groupsLive, CoreNodeKinds{}); err != nil {
 			t.Errorf("%s: refused: %v", name, err)
 		}
 	}
@@ -154,7 +154,7 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 		"two groups of one name": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"name":"Right Hand"`, `"name":"Left Hand"`, 1)),
 			says: "two groups are called Left Hand — the floor asks for each part by its group's name"},
 	} {
-		err := ValidateFlowPreset(tc.flow, groupsLive)
+		err := ValidateFlowPreset(tc.flow, groupsLive, CoreNodeKinds{})
 		if err == nil || !strings.Contains(err.Error(), tc.says) || (tc.is != nil && !errors.Is(err, tc.is)) {
 			t.Errorf("%s: %v, want a refusal saying %q", name, err, tc.says)
 		}

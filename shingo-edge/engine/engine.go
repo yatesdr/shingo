@@ -419,6 +419,7 @@ func New(c Config) *Engine {
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
+	e.processService.SetCoreNodeKindsResolver(e.CoreNodeKinds)
 	e.styleService = service.NewStyleService(e.db)
 	e.styleService.OnKeepStagedSpotsCleared(e.spotsCleared)
 	e.shiftService = service.NewShiftService(e.db)
@@ -801,6 +802,12 @@ func (e *Engine) CoreNodeGroups() map[string][]string {
 		cp[k] = append([]string(nil), v...)
 	}
 	return cp
+}
+
+// CoreNodeKinds is Core's node list reduced to what a leg's refusal reads
+// (domain.CoreNodeKindsOf): its lanes, kanbans, group members and names.
+func (e *Engine) CoreNodeKinds() domain.CoreNodeKinds {
+	return domain.CoreNodeKindsOf(e.CoreNodes(), e.CoreNodeGroups())
 }
 
 // CoreNodes returns a copy of the core node set.

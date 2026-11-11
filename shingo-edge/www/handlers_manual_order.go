@@ -13,14 +13,19 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	// slot and dotted child slots ("Group.Slot") nest under it — the bare-name
 	// list let operators pick a synthetic group (e.g. "Supermarket Area") and
 	// dead-end. Mirrors the core orders.js picker.
+	// Group marks a member of a node group: the pickup and the delivery of an
+	// order the API takes are roles where Core picks, and leave members out
+	// (manual-order.js, production.js; the API refuses one, refusePicked).
 	type coreNodeOpt struct {
 		Name     string `json:"name"`
 		NodeType string `json:"node_type,omitempty"`
+		Group    string `json:"group,omitempty"`
 	}
+	kinds := h.coreNodeKinds()
 	coreNodeOpts := make([]coreNodeOpt, 0, len(coreNodes))
 	coreNodeNames := make([]string, 0, len(coreNodes))
 	for name, info := range coreNodes {
-		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType})
+		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType, Group: kinds.GroupOf(name)})
 		coreNodeNames = append(coreNodeNames, name)
 	}
 

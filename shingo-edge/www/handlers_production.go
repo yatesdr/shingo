@@ -430,13 +430,18 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 
 	processNodes, _ := h.engine.ProcessService().ListNodes()
 	coreNodes := h.engine.CoreNodes()
+	// Group marks a member of a node group: the pickup and the delivery of an
+	// order the API takes are roles where Core picks, and leave members out
+	// (manual-order.js, production.js; the API refuses one, refusePicked).
 	type coreNodeOpt struct {
 		Name     string `json:"name"`
 		NodeType string `json:"node_type,omitempty"`
+		Group    string `json:"group,omitempty"`
 	}
+	kinds := h.coreNodeKinds()
 	coreNodeOpts := make([]coreNodeOpt, 0, len(coreNodes))
 	for name, info := range coreNodes {
-		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType})
+		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType, Group: kinds.GroupOf(name)})
 	}
 	type edgeNode struct {
 		ID   string `json:"id"`
