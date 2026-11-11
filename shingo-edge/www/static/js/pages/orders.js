@@ -13,7 +13,7 @@ async function confirmDelivery(orderID, qty) {
         await api.post('/api/confirm-delivery/' + orderID, { final_count: n });
         toast('Delivery confirmed', 'success');
         htmx.trigger(document.body, 'refreshOrders');
-    } catch (e) { toast('Error: ' + e, 'error'); }
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
 }
 
 async function submitOrder(orderID) {
@@ -21,7 +21,7 @@ async function submitOrder(orderID) {
         await api.post('/api/orders/' + orderID + '/submit', {});
         toast('Order submitted', 'success');
         htmx.trigger(document.body, 'refreshOrders');
-    } catch (e) { toast('Error: ' + e, 'error'); }
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
 }
 
 async function releaseOrder(orderID) {
@@ -70,7 +70,7 @@ async function releaseOrder(orderID) {
             ? 'Order released — partial (' + partial + ' parts preserved)'
             : 'Order released — empty (manifest cleared)', 'success');
         htmx.trigger(document.body, 'refreshOrders');
-    } catch (e) { toast('Error: ' + e, 'error'); }
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
 
     async function postRelease(b) {
         await api.post('/api/orders/' + orderID + '/release', b);
@@ -83,7 +83,7 @@ async function abortOrder(orderID) {
         await api.post('/api/orders/' + orderID + '/abort', {});
         toast('Order aborted', 'success');
         htmx.trigger(document.body, 'refreshOrders');
-    } catch (e) { toast('Error: ' + e, 'error'); }
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
 }
 
 // Staged-expiry and fault clocks tick from shared installLiveDurations

@@ -10,7 +10,8 @@
 //             uiConfirmWithInput uiPrompt toast api apiGet/Post/Put/Delete, and
 //             the bus subscription app.js makes on import (onSSE 'system-status')
 //   edge-hub  shingo-edge/www/static/js/shingoedge.js  createSSE showModal
-//             hideModal confirm prompt api handleResponse toast window.ShingoEdge
+//             hideModal confirm prompt api (over shared/http.js) toast
+//             window.ShingoEdge
 //   shared    shared/utils.js  api apiResult createSSE showRefreshBanner showModal
 //             hideModal confirm prompt toast installBackdropClose; shared/bus.js
 //             the onSSE bus
@@ -53,8 +54,8 @@
 //     timer is not cancelled — shingoedge.js:97, shared/utils.js:165.
 //   sse.edge-hub.txt handler names: "onfoo" listens for "oo", "onSSEPing" for
 //     "s-s-e-ping" — shingoedge.js:82.
-//   api.core-hub.txt / api.edge-hub.txt "204 no content", "200 empty body":
-//     a 2xx with no body rejects (SyntaxError) — app.js:257, shingoedge.js:349.
+//   api.core-hub.txt "204 no content", "200 empty body": a 2xx with no body
+//     rejects (SyntaxError) — app.js:257.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
 //     app.js:253.
 //   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
@@ -64,6 +65,8 @@
 //   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
 //     0 disarms the watchdog already running, so the stream stays up; it
 //     used to be dropped once more.
+//   api.edge-hub.txt "204 no content", "200 empty body": resolves null (the
+//     hub's api is shared/http.js's door); it rejected with a SyntaxError.
 
 'use strict';
 
@@ -146,7 +149,15 @@ function watch(p) {
 function said(w) {
     if (w.state === 'pending') return 'pending';
     if (w.state === 'resolved') return 'resolves ' + JSON.stringify(w.value === undefined ? '(undefined)' : w.value);
-    return 'rejects ' + describeThrown(w.value);
+    // A plain Error is one the helper made (a hub's api rejects one carrying
+    // the HTTP door's sentence): its message is the helper's text, so it is
+    // pinned. The engine's own throws are typed (TypeError, SyntaxError) and
+    // keep describeThrown's constructor-only form.
+    const v = w.value;
+    if (v && typeof v === 'object' && v.constructor && v.constructor.name === 'Error' && typeof v.message === 'string') {
+        return 'rejects Error ' + JSON.stringify(v.message);
+    }
+    return 'rejects ' + describeThrown(v);
 }
 
 // ═══ modal ═══════════════════════════════════════════════════════════════════
@@ -530,7 +541,7 @@ async function apiPins(surface) {
             safe: [],
         },
         'edge-hub': {
-            shape: () => 'api is an ' + typeof probe.m.api + ' {' + Object.keys(probe.m.api).join(', ') + '}; handleResponse is module-private',
+            shape: () => 'api is an ' + typeof probe.m.api + ' {' + Object.keys(probe.m.api).join(', ') + '}, over shared/http.js with its notice off',
             requests: [
                 ['api.get(url)', (p) => p.m.api.get('/api/x')],
                 ['api.post(url, {a:1})', (p) => p.m.api.post('/api/x', { a: 1 })],
@@ -538,10 +549,9 @@ async function apiPins(surface) {
                 ['api.put(url, {a:1})', (p) => p.m.api.put('/api/x', { a: 1 })],
                 ['api.patch(url, {a:1})', (p) => p.m.api.patch('/api/x', { a: 1 })],
                 ['api.del(url)', (p) => p.m.api.del('/api/x')],
-                ['api.postDetailed(url, {a:1})', (p) => p.m.api.postDetailed('/api/x', { a: 1 })],
             ],
             throwing: [['api.get', (p) => p.m.api.get('/api/x')], ['api.post', (p) => p.m.api.post('/api/x', { a: 1 })], ['api.del', (p) => p.m.api.del('/api/x')]],
-            safe: [['api.postDetailed', (p) => p.m.api.postDetailed('/api/x', { a: 1 })]],
+            safe: [],
         },
         'shared': {
             shape: () => 'api is an ' + typeof probe.m.api + ' {' + Object.keys(probe.m.api).join(', ') + '}; apiResult is a ' + typeof probe.m.apiResult + ' (method, url, body)',

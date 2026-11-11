@@ -178,7 +178,7 @@ var sharedHelperCopies = map[string]string{
 	"shingo-edge/www/static/js/shingoedge.js confirm":   "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js prompt":    "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js toast":     "Edge hub copy",
-	"shingo-edge/www/static/js/shingoedge.js api":       "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js api":       "the Edge hub's api: http.js's door, its refusal thrown as an Error for the pages that catch one",
 	// The station's own builder: it sets properties where dom.js's el sets
 	// attributes (operator-util.js's comment), and the station's touch layer is
 	// not extracted (brief v2 S2).
@@ -219,7 +219,6 @@ var sharedExportsNoImporter = map[string]string{
 	"layer.js openSheet":         "adopted in wave C (s2-processes)",
 	"layer.js closeLayer":        "adopted in wave C (s2-processes)",
 	"layer.js layerDepth":        "adopted in wave C (s2-processes): the page's own Escape",
-	"http.js http":               "adopted in wave C (s2-hubs / s2-processes)",
 	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",
 	"picker.js createPicker":     "adopted in wave C (s2-processes), its adapters in S3",
 	"notice.js clearBanner":      "adopted in S5 (the lost-connection banner)",

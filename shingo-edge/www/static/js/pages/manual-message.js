@@ -129,9 +129,9 @@ async function sendMessage() {
         statusEl.style.color = 'var(--color-success, green)';
         toast('Message sent', 'success');
     } catch (e) {
-        statusEl.textContent = 'Failed: ' + e;
+        statusEl.textContent = 'Failed: ' + e.message;
         statusEl.style.color = 'var(--color-danger, red)';
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 

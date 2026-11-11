@@ -61,5 +61,5 @@ status: "Failed: send failed: kafka: client has run out of available brokers" co
 ## order.request, fetch rejects
 POST /api/manual-message {"type":"order.request","payload":{"order_uuid":"00000000-0000-4000-8000-0000000000aa","order_type":"retrieve","payload_desc":"PART-A","quantity":2,"delivery_node":"SLOT-A1","source_node":"GRP-A","retrieve_empty":true}}
 answer: fetch rejects (TypeError: Failed to fetch)
-shows: toast error: "Error: TypeError: Failed to fetch"
-status: "Failed: TypeError: Failed to fetch" color="var(--color-danger, red)"
+shows: toast error: "Error: No answer from the server"
+status: "Failed: No answer from the server" color="var(--color-danger, red)"

@@ -9,9 +9,9 @@
 //
 // WHAT IS REAL. The page markup (sliced from <main> to the page's module
 // tag), each page module byte for byte less its import/export lines, and the
-// helpers they import: shingoedge.js's api, handleResponse, showModal and
-// hideModal; shared/dom.js's escapeHtml; ask-act.js's postAct; and
-// production-refresh.js. Each is read off its own file.
+// helpers they import: shingoedge.js's api (over shared/http.js, read whole),
+// showModal and hideModal; shared/dom.js's escapeHtml; ask-act.js's postAct;
+// and production-refresh.js. Each is read off its own file.
 //
 // WHAT IS STUBBED, AND WHY EACH IS SAFE FOR THESE PINS.
 //   - The DOM (dom.js): elements parsed from the markup, selects answering
@@ -73,11 +73,16 @@ const unModule = src => src
 
 const EDGE = read(path.join(JS, 'shingoedge.js'));
 const SHARED_DOM = read(path.join(SHARED, 'dom.js'));
+// shared/http.js whole, in a function of its own so its private names stay
+// its own; its notice is the context's toast (the hub's api turns it off).
+const HTTP = 'var http = (function () {\n' + unModule(read(path.join(SHARED, 'http.js'))) + '\nreturn http;\n})();';
 const HELPERS = [
     block(SHARED_DOM, /const HTML_ESCAPES = /, 'HTML_ESCAPES').replace(/^const /, 'var '),
     block(SHARED_DOM, /export function escapeHtml\(/, 'escapeHtml'),
+    HTTP,
+    block(EDGE, /const QUIET = /, 'QUIET').replace(/^const /, 'var '),
+    block(EDGE, /function answered\(/, 'answered'),
     block(EDGE, /export const api = /, 'api').replace(/^const /, 'var '),
-    block(EDGE, /function handleResponse\(/, 'handleResponse'),
     block(EDGE, /export function showModal\(/, 'showModal'),
     block(EDGE, /export function hideModal\(/, 'hideModal'),
     unModule(read(path.join(JS, 'ask-act.js'))),

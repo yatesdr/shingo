@@ -332,7 +332,7 @@ async function syncWith(btn, url, what) {
         await api.post(url);
         out.textContent = 'Asked; the ' + what + ' arrives with Core\'s next answer.';
     } catch (e) {
-        out.textContent = 'Not sent: ' + e;
+        out.textContent = 'Not sent: ' + e.message;
     }
     setTimeout(() => { btn.disabled = false; }, 1500);
 }
@@ -351,7 +351,7 @@ async function testBrokers() {
             const res = await api.post('/api/config/kafka/test', { broker: addr });
             out.textContent = res.connected ? 'reachable' : ('not reachable: ' + (res.error || 'failed'));
         } catch (e) {
-            out.textContent = String(e);
+            out.textContent = e.message;
         }
     }
 }

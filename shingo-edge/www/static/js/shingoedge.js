@@ -32,7 +32,7 @@ import {
 } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { installBackdropClose } from '/static/shared/utils.js';
-import { hookHtmxErrors } from '/static/shared/http.js';
+import { hookHtmxErrors, http } from '/static/shared/http.js';
 installBackdropClose();
 // Once per page, on the body every htmx event bubbles to. A module runs after
 // the document is parsed, so the body is there.
@@ -274,88 +274,29 @@ export function replaceRowCells(rowId, cellData) {
     }
 }
 
-// --- API helpers ---
-export const api = {
-    get: function(url) {
-        return fetch(url).then(handleResponse);
-    },
-    post: function(url, body) {
-        return fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).then(handleResponse);
-    },
-    put: function(url, body) {
-        return fetch(url, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).then(handleResponse);
-    },
-    patch: function(url, body) {
-        return fetch(url, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).then(handleResponse);
-    },
-    del: function(url) {
-        return fetch(url, { method: 'DELETE' }).then(handleResponse);
-    },
-    // postDetailed is api.post for a caller that needs the RESPONSE BODY of a
-    // refusal, not just its message.
-    //
-    // ADDITIVE ON PURPOSE. api.post throws the `error` string and discards
-    // everything beside it, which every existing consumer relies on — they
-    // catch a string and render it. Changing that shape would touch every call
-    // site in the app to serve one form. So this is a second door: it never
-    // throws, and returns {ok, data, status, error, fieldErrors, warnings}.
-    //
-    // Field-tagged errors are what the claim editor renders on the offending
-    // input (domain.ValidateNodeClaim ships them as `field_errors`, and
-    // `warnings` alongside a successful save).
-    postDetailed: function(url, body) {
-        return fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).then(function(res) {
-            return res.text().then(function(text) {
-                var parsed = null;
-                try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
-                return {
-                    ok: res.ok,
-                    status: res.status,
-                    data: parsed,
-                    error: (parsed && parsed.error) || (res.ok ? '' : (text || ('HTTP ' + res.status))),
-                    fieldErrors: (parsed && parsed.field_errors) || [],
-                    warnings: (parsed && parsed.warnings) || [],
-                };
-            });
-        }, function(err) {
-            // A transport failure is not a validation answer; say so plainly
-            // rather than returning an empty findings list that reads as "the
-            // server had no objection".
-            return { ok: false, status: 0, data: null, error: String(err), fieldErrors: [], warnings: [] };
-        });
-    }
-};
-
-function handleResponse(res) {
-    if (!res.ok) {
-        return res.text().then(function(text) {
-            try {
-                var obj = JSON.parse(text);
-                throw obj.error || text;
-            } catch (e) {
-                if (typeof e === 'string') throw e;
-                throw text;
-            }
-        });
-    }
-    return res.json();
+// --- api: the HTTP door, for a page that catches a refusal ---
+// The pages call api.get / post / put / patch / del and catch what it
+// rejects. Behind the names is shared/http.js's door with its notice off:
+// every caller shows the refusal itself, and the door showing it too would
+// say it twice. It resolves the answer's body (null for a 204 or an empty
+// 2xx, which used to reject with a SyntaxError) and rejects an Error whose
+// message is the door's one sentence: the server's own error, else "No
+// answer from the server", "Signed out", "Server error (500)" and the rest
+// http.js lists. A write given no body sends {}, the door's rule.
+const QUIET = { notice: false };
+function answered(p) {
+    return p.then(function(res) {
+        if (res.ok) return res.body;
+        throw new Error(res.error);
+    });
 }
+export const api = {
+    get: function(url) { return answered(http.get(url, QUIET)); },
+    post: function(url, body) { return answered(http.post(url, body, QUIET)); },
+    put: function(url, body) { return answered(http.put(url, body, QUIET)); },
+    patch: function(url, body) { return answered(http.patch(url, body, QUIET)); },
+    del: function(url) { return answered(http.del(url, QUIET)); },
+};
 
 // --- Toast notifications ---
 export function toast(message, type) {

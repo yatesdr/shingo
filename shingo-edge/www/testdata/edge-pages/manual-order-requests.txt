@@ -98,5 +98,5 @@ form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PR
 picks: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"
 POST /api/orders/complex {"process_node_id":null,"quantity":1,"steps":[{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"LANE-1"},{"action":"wait"},{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"PRESS-1"}]}
 answer: fetch rejects (TypeError: Failed to fetch)
-shows: toast error: "Error: TypeError: Failed to fetch"
+shows: toast error: "Error: No answer from the server"
 form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"

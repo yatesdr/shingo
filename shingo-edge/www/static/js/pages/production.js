@@ -38,7 +38,7 @@ async function releaseNodeWithPrompt(nodeID) {
             ? 'Released — partial (' + partial + ' parts preserved)'
             : 'Released — empty (manifest cleared)', 'success');
     } catch(e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 
@@ -274,7 +274,7 @@ async function clearLinesideBucket() {
         }
         toast('Lineside bucket cleared', 'success');
     } catch(e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 
@@ -688,7 +688,7 @@ async function createOrder() {
             await api.post('/api/orders/complex', body);
             toast('Complex order created', 'success');
             resetOrderForm();
-        } catch (e) { toast('Error: ' + e, 'error'); }
+        } catch (e) { toast('Error: ' + e.message, 'error'); }
         return;
     }
 
@@ -724,7 +724,7 @@ async function syncNodes() {
     try {
         await api.post('/api/core-nodes/sync');
         toast('Node sync requested', 'success');
-    } catch (e) { toast('Sync failed: ' + e, 'error'); }
+    } catch (e) { toast('Sync failed: ' + e.message, 'error'); }
     setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Nodes'; }, 2000);
 }
 

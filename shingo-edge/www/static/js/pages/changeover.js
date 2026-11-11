@@ -19,7 +19,7 @@ async function previewProcessChangeover() {
         });
         renderChangeoverPreview(resp);
     } catch (e) {
-        toast('Preview failed: ' + e, 'error');
+        toast('Preview failed: ' + e.message, 'error');
     }
 }
 
@@ -74,7 +74,7 @@ async function startProcessChangeover() {
         renderUnresolvedParticipants(co && co.unresolved_participants);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 
@@ -85,7 +85,7 @@ async function cancelProcessChangeover() {
         renderUnresolvedParticipants(null);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 
@@ -95,7 +95,7 @@ async function completeCutover() {
         renderUnresolvedParticipants(null);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 
@@ -134,7 +134,7 @@ async function releaseChangeoverMaterial() {
         }
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
-        toast('Release failed: ' + e, 'error');
+        toast('Release failed: ' + e.message, 'error');
     }
 }
 
@@ -143,7 +143,7 @@ async function switchStation(stationID) {
         await api.post('/api/processes/' + processID + '/changeover/switch-station/' + stationID, {});
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
     }
 }
 

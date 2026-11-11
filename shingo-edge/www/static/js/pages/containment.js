@@ -16,7 +16,7 @@ async function verifyContainmentBin(el) {
         toast('Bin #' + binID + ' released — robot dispatched', 'success');
         window.location.reload();
     } catch (e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
         applyHeldReload();
     }
 }
@@ -36,7 +36,7 @@ async function recallContained(el) {
         }
         window.location.reload();
     } catch (e) {
-        toast('Error: ' + e, 'error');
+        toast('Error: ' + e.message, 'error');
         applyHeldReload();
     }
 }
