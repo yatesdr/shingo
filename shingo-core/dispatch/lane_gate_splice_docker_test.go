@@ -348,3 +348,46 @@ func TestSplice_RefusesAnUnresolvedStepBeforeTheEntry(t *testing.T) {
 		t.Errorf("a blank AFTER the gated entry refused the splice (gated=%v err=%v)", gated, err)
 	}
 }
+
+// TestSpliceCoreWaits_NoLaneNoAngleIsUntouched: a plan with no gated lane and
+// no turn node comes back as it was given, byte for byte, and ungated.
+func TestSpliceCoreWaits_NoLaneNoAngleIsUntouched(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	src, line := lineNode(t, db, "SCW-SRC"), lineNode(t, db, "SCW-LINE")
+	for name, plan := range map[string][]resolvedStep{
+		"a plain move": {{Action: protocol.ActionPickup, Node: src.Name}, {Action: protocol.ActionDropoff, Node: line.Name}},
+		"a swap leg": {
+			{Action: protocol.ActionWait, Node: line.Name, WaitKind: WaitKindStation},
+			{Action: protocol.ActionPickup, Node: line.Name}, {Action: protocol.ActionDropoff, Node: src.Name}},
+	} {
+		before := string(mustJSON(t, plan))
+		out, _, gated, err := d.spliceCoreWaits(plan, 0)
+		if err != nil || gated {
+			t.Fatalf("%s: gated=%v err=%v, want it through untouched", name, gated, err)
+		}
+		if got := string(mustJSON(t, out)); got != before {
+			t.Errorf("%s: spliced to %s, want %s", name, got, before)
+		}
+	}
+}
+
+// TestSpliceCoreWaits_OwnerCheckedWithNoLane: the owner check runs on every
+// plan, not only on one a lane gate was found in. A wait whose kind nobody owns
+// is refused with no lane on the path.
+func TestSpliceCoreWaits_OwnerCheckedWithNoLane(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	line := lineNode(t, db, "SCW-OWN-LINE")
+	plan := []resolvedStep{
+		{Action: protocol.ActionWait, Node: line.Name, WaitKind: "supervisor"},
+		{Action: protocol.ActionPickup, Node: line.Name},
+	}
+	if _, _, _, err := d.spliceCoreWaits(plan, 0); err == nil {
+		t.Fatal("a wait declaring an owner nobody implements went through with no lane on the path")
+	}
+}

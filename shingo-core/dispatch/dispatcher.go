@@ -677,7 +677,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 
 	// BUILD THE PLAN, THEN SPLICE IT. One rule for every order type: a plain
 	// order has no steps_json at this point, so its plan is built here and then
-	// goes through the SAME spliceLaneWait a coordinated order's authored plan
+	// goes through the SAME spliceCoreWaits a coordinated order's authored plan
 	// goes through at complex_dispatch.go. The valve stopped authoring.
 	//
 	// The two conditions that used to sit here -- `gated && !order.Coordinated`
@@ -732,7 +732,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 			}
 		}
 	}
-	spliced, target, gated, err := d.spliceLaneWait(plan, order.ID)
+	spliced, target, gated, err := d.spliceCoreWaits(plan, order.ID)
 	if err != nil {
 		return "", err
 	}

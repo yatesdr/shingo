@@ -408,8 +408,8 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 		return nil, dispatchStep{done: true, err: err}
 	}
 	// A plan a refused create left spliced is worked as the plan it was spliced
-	// from; the splice re-inserts its waits (withoutInboundLaneWaits).
-	resolvedSteps = withoutInboundLaneWaits(resolvedSteps)
+	// from; the splice re-inserts its waits (withoutInsertedWaits).
+	resolvedSteps = withoutInsertedWaits(resolvedSteps)
 	// A queued order keeps its intent, not a choice made on an earlier pass: the
 	// pass that reaches the hand makes every group choice again (asIntent;
 	// prepareComplexHand says when).
@@ -713,8 +713,8 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 	// RUNS ONCE PER CREATE. A successful dispatch leaves the order `dispatched`,
 	// so this phase cannot re-enter for it. A create the fleet refused re-queues
 	// the order with the spliced plan persisted (Q6); its next pass strips the
-	// waits at load (withoutInboundLaneWaits), so this splices once again.
-	spliced, target, gated, err := d.spliceLaneWait(resolvedSteps, order.ID)
+	// waits at load (withoutInsertedWaits), so this splices once again.
+	spliced, target, gated, err := d.spliceCoreWaits(resolvedSteps, order.ID)
 	if err != nil {
 		// A refusal here is structural: a lane entry that is not concrete yet, or a
 		// wait that would gate nothing. Both are plans Core cannot gate safely, and

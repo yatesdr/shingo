@@ -13,7 +13,7 @@ import (
 //
 // An order_bins row's pick_step and drop_step are POSITIONS IN THE ORDER'S
 // PLAN. The allocator writes them during confirmComplexPlan, against the plan as
-// it exists at claim time. spliceLaneWait then INSERTS a wait step ahead of
+// it exists at claim time. spliceCoreWaits then INSERTS a wait step ahead of
 // every gated lane entry, so every recorded position at or after an insertion
 // is off by the number of waits inserted ahead of it — and the plan that gets
 // persisted is the spliced one.
@@ -43,7 +43,9 @@ import (
 //
 // It reads the answer off the spliced plan itself rather than taking it from the
 // splice as a side-channel: the steps the splice inserted are exactly the
-// WaitKindLane waits, and every other step is the next original step in order.
+// WaitKindLane and WaitKindTurn waits (spliceCoreWaits; the plan it is given
+// carries neither, withoutInsertedWaits), and every other step is the next
+// original step in order.
 // Same list, same walk, so the map cannot describe a different plan than the one
 // being persisted.
 //
@@ -54,7 +56,7 @@ func spliceStepShift(spliced []resolvedStep) map[int]int {
 	shift := make(map[int]int)
 	pre := 0
 	for post, s := range spliced {
-		if s.Action == protocol.ActionWait && s.WaitKind == WaitKindLane {
+		if s.Action == protocol.ActionWait && (s.WaitKind == WaitKindLane || s.WaitKind == WaitKindTurn) {
 			continue // inserted by the splice; it has no pre-splice position
 		}
 		if post != pre {

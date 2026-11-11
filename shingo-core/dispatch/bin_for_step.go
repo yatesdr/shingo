@@ -39,7 +39,7 @@ var ErrPickupNotInLane = errors.New("pickup bin is not in this lane")
 // Every lift is a row, a relay's re-lift included (domain.Lifts writes it), so
 // the rows are the whole answer: a step no row names moves no cart this order
 // holds. stepIndex is the index into the order's FULL plan as persisted, the
-// waits spliceLaneWait inserts included; splice_reindex.go moves the rows with
+// waits spliceCoreWaits inserts included; splice_reindex.go moves the rows with
 // the plan.
 //
 // It does not say where the cart IS, only which cart the step is about.

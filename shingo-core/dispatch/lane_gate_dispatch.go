@@ -352,31 +352,72 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 			blankAt, last)
 	}
 
-	out := make([]resolvedStep, 0, len(steps)+len(gates))
-	next := 0
-	for i, s := range steps {
-		if next < len(gates) && gates[next].idx == i {
-			gates[next].target.gatePoint = gates[next].target.pointFor(orderID)
-			out = append(out, resolvedStep{
-				Action:   protocol.ActionWait,
-				Node:     gates[next].target.gatePoint,
-				WaitKind: WaitKindLane,
-				WaitLane: gates[next].target.lane.ID,
-				// The gate key (C2c ruling 4): the group whose pass releases it.
-				WaitGroup: groupIDOf(gates[next].target.lane),
-			})
-			next++
-		}
-		out = append(out, s)
+	waits := make([]insertedWait, len(gates))
+	for k := range gates {
+		gates[k].target.gatePoint = gates[k].target.pointFor(orderID)
+		waits[k] = insertedWait{before: gates[k].idx, step: resolvedStep{
+			Action:   protocol.ActionWait,
+			Node:     gates[k].target.gatePoint,
+			WaitKind: WaitKindLane,
+			WaitLane: gates[k].target.lane.ID,
+			// The gate key (C2c ruling 4): the group whose pass releases it.
+			WaitGroup: groupIDOf(gates[k].target.lane),
+		}}
 	}
+	out := insertWaits(steps, waits)
 
 	if err := d.assertEachWaitGatesItsEntry(out); err != nil {
+		return nil, laneGateTarget{}, false, err
+	}
+	return out, gates[0].target, true, nil
+}
+
+// spliceCoreWaits is THE ONE ENTRY POINT for the waits Core inserts into a
+// plan, and both create seams call it (dispatchToFleetCore for a plain order,
+// buildComplexCommit for a complex one): build the plan, then splice it, one
+// rule set for every order type. It runs the lane rule (spliceLaneWait, with
+// its lane-only check) and then asks the whole plan who owns each wait.
+//
+// THE OWNER CHECK RUNS ON EVERY PLAN. It used to be reached only when a lane
+// gate was found: spliceLaneWait returned before it otherwise, so a wait added
+// by anything other than the lane walk would have shipped with no fence. A plan
+// whose wait declares a kind nobody owns is now refused whether or not a lane is
+// on its path.
+//
+// Returns the plan unchanged (the same slice) when nothing is inserted, and
+// gated only when a lane wait was: the lane valve is the lane's.
+func (d *Dispatcher) spliceCoreWaits(steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
+	out, target, gated, err := d.spliceLaneWait(steps, orderID)
+	if err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
 	if err := assertEveryWaitDeclaresAnOwner(out); err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
-	return out, gates[0].target, true, nil
+	return out, target, gated, nil
+}
+
+// insertedWait is one wait Core inserts into a plan: the wait, and the index in
+// the plan as given of the step it goes in front of.
+type insertedWait struct {
+	before int
+	step   resolvedStep
+}
+
+// insertWaits is the one insert: each wait in front of the step it names, in
+// the order given where two name the same step. Every step of the plan as given
+// keeps its order. The waits must come in plan order (the lane walk's do).
+func insertWaits(steps []resolvedStep, waits []insertedWait) []resolvedStep {
+	out := make([]resolvedStep, 0, len(steps)+len(waits))
+	next := 0
+	for i, s := range steps {
+		for next < len(waits) && waits[next].before == i {
+			out = append(out, waits[next].step)
+			next++
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // assertEveryWaitDeclaresAnOwner is W1's drift test on the CORE side, armed on
@@ -806,6 +847,15 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 	unlock := d.laneGates.lock(groupID)
 	defer unlock()
 
+	// THE VALVE IS THE LANE'S, AND IT READS WAIT 0 AS THE LANE'S. A plan whose
+	// first wait is another kind (a table turn in front of a lift, before the
+	// lane is reached) is not this lane's to append: its first wait's own
+	// releaser appends it, and the append leaves the robot at the lane wait,
+	// which is that lane's event (evaluateLaneWaitAfterAppend).
+	if w, at := waitAt(plan, 0); !at || w.WaitKind != WaitKindLane {
+		return vendorOrderID
+	}
+
 	// Direction off the plan, exactly as the evaluator reads it.
 	entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(plan, 0)
 	if !ok {
@@ -1039,8 +1089,11 @@ func waitIndexOf(o *orders.Order) int {
 	return o.WaitIndex
 }
 
-// withoutInboundLaneWaits is a stored plan less the waits a splice inserted in
-// front of its lane entries: the plan the splice was given.
+// withoutInsertedWaits is a stored plan less the waits a splice inserted: the
+// lane waits in front of its lane entries, and the turn waits in front of its
+// lifts and set-downs at a node that turns the table. It is the plan the splice
+// was given. A turn wait goes because the pickup it stands in front of may have
+// moved; the splice inserts it again where the plan now lifts.
 //
 // A complex order the fleet refused is re-queued with its paper (Q6), and the
 // valve persisted its spliced plan before the create (persist-before-create).
@@ -1058,10 +1111,13 @@ func waitIndexOf(o *orders.Order) int {
 //
 // A wait with nothing after it gates an APPEND (a dwelling dig leg's) and is
 // kept: no splice inserts one, and a dwell plan is authored fresh each time.
-func withoutInboundLaneWaits(steps []resolvedStep) []resolvedStep {
+func withoutInsertedWaits(steps []resolvedStep) []resolvedStep {
 	out := steps[:0:0]
 	for i, s := range steps {
 		if s.Action == protocol.ActionWait && s.WaitKind == WaitKindLane && i+1 < len(steps) {
+			continue
+		}
+		if s.Action == protocol.ActionWait && s.WaitKind == WaitKindTurn {
 			continue
 		}
 		out = append(out, s)

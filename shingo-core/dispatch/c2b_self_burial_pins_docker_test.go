@@ -187,7 +187,7 @@ func TestC2bPin_AnInteriorGroupDropWaitsForAFreeChild(t *testing.T) {
 	}
 	var steps []resolvedStep
 	testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
-	steps = withoutInboundLaneWaits(steps) // the gate's waits, in front of each lane entry
+	steps = withoutInsertedWaits(steps) // the gate's waits, in front of each lane entry
 	if steps[1].Node != mouth.Name {
 		t.Fatalf("the interior drop was sent to %q, want the freed child %s", steps[1].Node, mouth.Name)
 	}
@@ -322,7 +322,7 @@ func TestC2bPin_AnIntakeDropNeverWallsItsOwnPickup(t *testing.T) {
 				testdb.AssertNoHoldsAtRest(t, db, "the swap waits for somewhere that does not wall its pickup")
 				return
 			}
-			steps = withoutInboundLaneWaits(steps) // the gate's waits, in front of each lane entry
+			steps = withoutInsertedWaits(steps) // the gate's waits, in front of each lane entry
 			if o.VendorOrderID == "" || protocol.IsAcquiring(o.Status) || !strings.HasPrefix(steps[1].Node, prefix+"-L2S") {
 				t.Fatalf("with a second lane the swap is %s with its drop at %q, want it sent into %s's lane "+
 					"(not %s)", o.Status, steps[1].Node, other.Name, mouth.Name)
@@ -400,7 +400,7 @@ func TestC2bPin_ADropNeverWallsAGroupPickupResolvedAfterIt(t *testing.T) {
 				}
 				return
 			}
-			steps = withoutInboundLaneWaits(steps)
+			steps = withoutInsertedWaits(steps)
 			if !strings.HasPrefix(steps[1].Node, prefix+"-L2S") {
 				t.Fatalf("with a free second lane the swap's drop is at %q, want the second lane (status %s)",
 					steps[1].Node, o.Status)
