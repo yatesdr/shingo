@@ -22,6 +22,8 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - A plain empty for a press is served by a strict kanban that supports that press
 - A press's plain move of a contained part to finished goods goes to containment
 - An order with no steps draws its pickup and its drop, never the press as a stop between
+- Every plain order an Edge makes for a press names that press, SEND BACK's two included
+- The demo plant's press empties kanban is strict, so only the presses it supports draw from it
 - A tool change can mark positions on any line mode; unmarked positions swap as usual
 - A claim with marks names inbound staging: the new carrier waits there for Tooling done
 - A tool change clears its marked positions at START and indexes nothing onto the press

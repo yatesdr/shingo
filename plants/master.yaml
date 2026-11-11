@@ -2619,9 +2619,12 @@ cell_configs:
 kanbans:
 
   # ══ [demo] the press empties, first: the demo tests read kanbans[0] ══════════════════════════
+  # STRICT: an empty asked for a press this kanban supports is served from it, and any other
+  # asker is fenced ("group fenced"). Every Edge order names its press (process_node), so the
+  # two presses it supports are admitted; a Core that does not read the field fences them too.
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
-    strict: false
+    strict: true
     levels:
       - {bin_type: STANDARD, want: 4}
       - {bin_type: STANDARD-SM, want: 2}
