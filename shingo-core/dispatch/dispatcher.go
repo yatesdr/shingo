@@ -671,8 +671,16 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// sibling: [pickup, wait(vacate), drop], so the create is its lift alone,
 	// unsealed, and the robot stands under its lifted bin until Core appends the
 	// drop on its partner's lift (clear_home.go, issueClearTrade).
+	//
+	// It skips the splice (a trade never touches a lane), so the turn rule is
+	// asked here: a trade whose lift is at a node that turns the table gets its
+	// turn wait in front of the lift too.
 	if held, ok := heldTradePlan(order); ok {
-		return d.dispatchHeldTrade(order, held, sourceNode, payloadCode, hand)
+		turned, tErr := d.spliceTurnWaits(held)
+		if tErr != nil {
+			return "", tErr
+		}
+		return d.dispatchHeldTrade(order, turned, sourceNode, payloadCode, hand)
 	}
 
 	// BUILD THE PLAN, THEN SPLICE IT. One rule for every order type: a plain
@@ -757,15 +765,36 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// wait-not-fail holds, but the sentence is wrong), and the redirect door
 	// fails the row because a person is waiting on the reply. Writing the real
 	// cause at the moment it happens is the only place the truth is still known.
-	if gated {
+	//
+	// A PLAN THAT GAINED A TURN WAIT is persisted the same way (it goes out
+	// unsealed), so its rows are written against it too.
+	turned := hasTurnWait(spliced)
+	if gated || turned {
 		if rErr := d.recordCartsForPlan(order, spliced); rErr != nil {
-			log.Printf("dispatch: order %d — could not write its carts against the gated plan: %v", order.ID, rErr)
+			log.Printf("dispatch: order %d — could not write its carts against the spliced plan: %v", order.ID, rErr)
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
 			return "", rErr
 		}
 	}
+	loadSeq := d.loadSequenceForPayload(payloadCode)
+	// THE LOAD SEQUENCE CANNOT RIDE A TURN. F4c expands only the create's
+	// pickups, and at a turn node the lift is in an append, which is never
+	// expanded: the sequence would be silently dropped. So the order waits, named.
+	if turned && len(loadSeq) > 0 {
+		if node, ok := d.turnLiftWithSequence(spliced); ok {
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseTurnLoadSequence,
+				QueueParams{TableNode: node, Payload: payloadCode, TableLoadSequence: true})
+			return "", fmt.Errorf("order %d: payload %s carries a load sequence and lifts at %s, which turns the table", order.ID, payloadCode, node)
+		}
+	}
 	if gated {
-		return d.dispatchGated(order, target, spliced, d.loadSequenceForPayload(payloadCode), hand)
+		return d.dispatchGated(order, target, spliced, loadSeq, hand)
+	}
+	// A PLAN THAT GAINED A TURN WAIT AND NO LANE WAIT goes out unsealed: the
+	// create runs to the turn wait, and the table turn appends the rest once
+	// the table reads the node's angle (table_turn_hold.go).
+	if turned {
+		return d.dispatchUnsealed(order, spliced, sourceNode, loadSeq, hand, "turned")
 	}
 
 	vendorOrderID := mintVendorOrderID(order.ID)

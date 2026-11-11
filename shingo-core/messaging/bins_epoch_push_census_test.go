@@ -117,12 +117,14 @@ var bumpPushCensus = map[string]censusNode{
 	"dispatch:Dispatcher.acquireHand": {callers: []string{"dispatch:Dispatcher.commitToFleet"}},
 	"dispatch:Dispatcher.commitToFleet": {callers: []string{
 		"dispatch:Dispatcher.dispatchComplexToFleet", "dispatch:Dispatcher.dispatchGated",
-		"dispatch:Dispatcher.dispatchHeldTrade", "dispatch:Dispatcher.dispatchToFleetCore"}},
+		"dispatch:Dispatcher.dispatchToFleetCore", "dispatch:Dispatcher.dispatchUnsealed"}},
 	"dispatch:Dispatcher.commitPairToFleet":      {push: pushOrderDispatched, via: "dispatch:Dispatcher.afterComplexCreate"},
 	"dispatch:Dispatcher.dispatchComplexToFleet": {push: pushOrderDispatched, via: "dispatch:Dispatcher.afterComplexCreate"},
 	"dispatch:Dispatcher.dispatchGated":          {push: pushOrderDispatched, via: "dispatch:Dispatcher.afterGatedCreate"},
-	"dispatch:Dispatcher.dispatchHeldTrade":      {push: pushOrderDispatched},
 	"dispatch:Dispatcher.dispatchToFleetCore":    {push: pushOrderDispatched},
+	// The plain seam's unsealed create: a home clear's trade leg and a plan
+	// that gained a table turn's wait.
+	"dispatch:Dispatcher.dispatchUnsealed": {push: pushOrderDispatched},
 
 	// The release of a carrier from an Edge that sends no stream fence.
 	"service:BinManifestService.syncOrClearForReleased": {push: pushBinsChanged},

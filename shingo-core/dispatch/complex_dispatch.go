@@ -762,6 +762,20 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(preWait),
 			hand: hand, actor: "dispatcher", told: told, gated: true, target: target, hasWait: true}, nil
 	}
+	// A PLAN THAT GAINED A TURN WAIT AND NO LANE WAIT is STORED, because the
+	// table turn's re-driver reads the plan it runs: the ungated arm below
+	// creates from the plan as resolved and persists nothing. So it goes the
+	// unsealed way, the lane valve's create without the lane (no load sequence:
+	// complex has never been expanded).
+	if hasTurnWait(spliced) {
+		req, preWait, uErr := d.buildUnsealedCreate(order, spliced, nil, "turned")
+		if uErr != nil {
+			d.refuseComplexHandover(order, told, uErr)
+			return nil, uErr
+		}
+		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(preWait),
+			hand: hand, actor: "scanner", told: told, hasWait: true}, nil
+	}
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := mintVendorOrderID(order.ID)

@@ -397,6 +397,12 @@ const (
 	// the order is still held, and a person ends it (the hard release, a cancel,
 	// or clearing the node's angle).
 	CauseTableTurnFailed QueueCause = "table-turn-failed"
+	// CauseTurnLoadSequence — the order's payload carries an advanced load
+	// sequence (F4c) and its lift is at a node that turns the table. The lift
+	// goes out in an append there, which is never expanded, so the sequence
+	// would be dropped without a word; the order waits instead. A person ends
+	// it: the payload's sequence or the node's angle is removed.
+	CauseTurnLoadSequence QueueCause = "turn-load-sequence"
 	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
 	// itself then failed: the re-bind found no slot, the segment could not be
 	// built, the append errored below the retry threshold. The order stays a

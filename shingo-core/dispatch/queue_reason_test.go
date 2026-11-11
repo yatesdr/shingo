@@ -60,6 +60,12 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "The table at SMN_008 did not reach 90°, reads 3° — Core stopped turning it",
 		},
 		{
+			name:   "a lift whose load sequence cannot ride a turn",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{TableNode: "SMN_008", Payload: "CHILD-CART", TableLoadSequence: true},
+			want:   "SMN_008 turns the table before the lift, and CHILD-CART carries a load sequence that cannot run there — waiting for its configuration to be fixed",
+		},
+		{
 			name:   "table turn that failed, angle unread",
 			code:   protocol.QueueWaitingForSlot,
 			params: QueueParams{TableNode: "SMN_008", TableWantDeg: 90, TableFailed: true},

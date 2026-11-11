@@ -156,24 +156,35 @@ func tradeSteps(from, to string, st plan.Vacate) []resolvedStep {
 }
 
 // dispatchHeldTrade is the create seam's trade arm (dispatchToFleetCore): the
-// stored plan persisted as it is, the create its lift alone and unsealed
-// (buildUnsealedCreate, the lane valve's create), the hand and the fleet
-// through commitToFleet declaring the pickup's node. Then the hold is asked
-// once (redriveVacateOrder): the partner may have lifted already, and its
-// lift's re-drive did not see this order while it had no vendor order. A trade
-// never touches a lane (clearTradeRefusal refuses one at birth), so the plan
-// is not spliced.
+// stored plan persisted as it is (with a turn wait in front of its lift at a
+// node that turns the table), sent unsealed (dispatchUnsealed). A trade never
+// touches a lane (clearTradeRefusal refuses one at birth), so the plan is not
+// lane-spliced.
 func (d *Dispatcher) dispatchHeldTrade(order *orders.Order, steps []resolvedStep, sourceNode *nodes.Node, payloadCode string, hand Hand) (string, error) {
-	req, _, err := d.buildUnsealedCreate(order, steps, d.loadSequenceForPayload(payloadCode), "held")
+	return d.dispatchUnsealed(order, steps, sourceNode, d.loadSequenceForPayload(payloadCode), hand, "held")
+}
+
+// dispatchUnsealed is the plain seam's unsealed create, shared by a home
+// clear's trade leg and a plan that gained a turn wait: the plan persisted, the
+// create its pre-wait segment, unsealed (buildUnsealedCreate, the lane valve's
+// create), the hand and the fleet through commitToFleet declaring the source
+// node, the dispatched event, and then the order's Core-held waits asked once:
+// a trade's partner may have lifted already, and its lift's re-drive did not
+// see this order while it had no vendor order (redriveVacateOrder); a turn's
+// robot is not at its wait yet, so the table turn finds nothing to do until
+// the staged hook. what names the plan in a log line and an error.
+func (d *Dispatcher) dispatchUnsealed(order *orders.Order, steps []resolvedStep, sourceNode *nodes.Node, loadSeq []string, hand Hand, what string) (string, error) {
+	req, _, err := d.buildUnsealedCreate(order, steps, loadSeq, what)
 	if err != nil {
 		return "", err
 	}
 	if err := d.commitToFleet(order, req, "dispatcher", hand, sourceNode); err != nil {
 		return "", err
 	}
-	d.dbg("order %d dispatched as %s (%s, held for its drop at %s)", order.ID, req.OrderID, sourceNode.Name, order.DeliveryNode)
+	d.dbg("order %d dispatched as %s (%s, %s, unsealed to its first wait)", order.ID, req.OrderID, sourceNode.Name, what)
 	d.emitter.EmitOrderDispatched(order.ID, req.OrderID, order.SourceNode, order.DeliveryNode)
 	d.redriveVacateOrder(order, 0)
+	d.RedriveTableTurns(order.ID)
 	return req.OrderID, nil
 }
 

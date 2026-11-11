@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store/nodes"
 )
@@ -352,4 +353,97 @@ func waitArgsRecognize(raw json.RawMessage) (bool, error) {
 		return false, fmt.Errorf("the Wait key's parameters do not read (%v): %s", err, raw)
 	}
 	return args.Recognize != nil && *args.Recognize, nil
+}
+
+// ── THE TURN RULE (spliceCoreWaits' second rule) ────────────────────────────
+//
+// A lift at a node set to turn before the lift needs the robot parked there
+// with a wait in front of it, so the turn has a moment to happen in: recognize,
+// drive-under and lift are one robot task with no gap. The Edge's curtain rule,
+// moved to where every order passes (E/engine/release_creation.go): for each
+// pickup(X) at such a node, a wait at X, kind turn, unless the step directly
+// before it is already a wait at X. A swap's lift has its station wait there
+// already, so a swap gets nothing. A node with no angle answers from memory.
+
+// turnWaits is the turn rule's inserts for a plan, in plan order.
+func (d *Dispatcher) turnWaits(steps []resolvedStep) []insertedWait {
+	if !d.hasTurnNodes() {
+		return nil
+	}
+	var out []insertedWait
+	for i, s := range steps {
+		t, ok := d.turnAt(s.Node)
+		if !ok || !turnsBefore(s, t) {
+			continue
+		}
+		if i > 0 && steps[i-1].Action == protocol.ActionWait && steps[i-1].Node == s.Node {
+			continue // a wait at X already stands in front: the turn happens there
+		}
+		out = append(out, insertedWait{before: i, step: resolvedStep{
+			Action: protocol.ActionWait, Node: s.Node, WaitKind: WaitKindTurn}})
+	}
+	return out
+}
+
+// turnsBefore reports whether a step is the one a turn node turns before: the
+// lift at a lift-side node.
+func turnsBefore(s resolvedStep, t turnNode) bool {
+	return s.Action == protocol.ActionPickup && t.side != TableTurnSideSetDown
+}
+
+// spliceTurnWaits is the turn rule applied: the waits inserted, then the check
+// that every lift at a turn node has its wait. spliceCoreWaits runs it after the
+// lane rule; a home clear's trade leg, whose create skips the splice, runs it
+// alone (dispatchToFleetCore).
+func (d *Dispatcher) spliceTurnWaits(steps []resolvedStep) ([]resolvedStep, error) {
+	if waits := d.turnWaits(steps); len(waits) > 0 {
+		steps = insertWaits(steps, waits)
+	}
+	if err := d.assertEveryTurnHasItsWait(steps); err != nil {
+		return nil, err
+	}
+	return steps, nil
+}
+
+// assertEveryTurnHasItsWait is the check after the insert: every lift at a
+// lift-side turn node has a wait at that node directly in front. A plan that
+// fails is a shape the rule did not foresee, and it is refused by name rather
+// than shipped to lift an unturned cart.
+func (d *Dispatcher) assertEveryTurnHasItsWait(steps []resolvedStep) error {
+	if !d.hasTurnNodes() {
+		return nil
+	}
+	for i, s := range steps {
+		t, ok := d.turnAt(s.Node)
+		if !ok || !turnsBefore(s, t) {
+			continue
+		}
+		if i == 0 || steps[i-1].Action != protocol.ActionWait || steps[i-1].Node != s.Node {
+			return fmt.Errorf("splice: step %d (%s at %s) has no wait at %s in front of it, and %s turns the "+
+				"table before the %s — the table would not be turned", i, s.Action, s.Node, s.Node, s.Node, sideWords(t.side))
+		}
+	}
+	return nil
+}
+
+// turnLiftWithSequence names the first node in a plan where a lift waits on a
+// table turn: an advanced load sequence (F4c) cannot run there, because the
+// lift goes out in an append and an append is never expanded.
+func (d *Dispatcher) turnLiftWithSequence(steps []resolvedStep) (string, bool) {
+	for _, s := range steps {
+		if t, ok := d.turnAt(s.Node); ok && turnsBefore(s, t) {
+			return s.Node, true
+		}
+	}
+	return "", false
+}
+
+// hasTurnWait reports whether a plan carries a wait the turn rule inserted.
+func hasTurnWait(steps []resolvedStep) bool {
+	for _, s := range steps {
+		if s.Action == protocol.ActionWait && s.WaitKind == WaitKindTurn {
+			return true
+		}
+	}
+	return false
 }

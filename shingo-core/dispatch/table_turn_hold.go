@@ -196,9 +196,10 @@ func (d *Dispatcher) turnHoldAtRelease(o *orders.Order, steps []resolvedStep) bo
 
 // turnBackstop is the append door's refusal (appendSegmentAndAdvance): a lift
 // or set-down at a turn node with the table off its angle goes nowhere. Every
-// releaser checks before it appends, so reaching the refusal is a defect, and
-// it is logged as one. The hard release passes the door with the angle in its
-// audit line instead.
+// releaser checks before it appends, so reaching the refusal is a defect: it is
+// logged and audited on the order ("table_turn_refused"), so a plant can find
+// one. The hard release passes the door with the angle in its audit line
+// instead.
 func (d *Dispatcher) turnBackstop(order *orders.Order, what string) error {
 	if !d.hasTurnNodes() {
 		return nil // no node turns: every append is exactly as it was
@@ -211,8 +212,10 @@ func (d *Dispatcher) turnBackstop(order *orders.Order, what string) error {
 	if !applies || !d.turnStillOwed(order, steps) {
 		return nil
 	}
-	log.Printf("dispatch: DEFECT: %s: order %d would %s at %s with the table not on %.0f° (%s) — refused at the "+
-		"append; the table turn re-drives it", what, order.ID, sideWords(t.side), node, degrees(t.rad), d.describeTable(order, t))
+	detail := fmt.Sprintf("%s would %s at %s with the table not on %.0f° (%s) — refused at the append; the table "+
+		"turn re-drives it", what, sideWords(t.side), node, degrees(t.rad), d.describeTable(order, t))
+	log.Printf("dispatch: DEFECT: order %d: %s", order.ID, detail)
+	d.db.AppendAudit("order", order.ID, "table_turn_refused", "", detail, "system")
 	d.markTurnPending()
 	return fmt.Errorf("%s: order %d: %w", what, order.ID, ErrTurnNotDone)
 }

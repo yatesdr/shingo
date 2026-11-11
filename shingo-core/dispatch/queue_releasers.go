@@ -800,6 +800,12 @@ var causeReleasers = []causeReleaser{
 			"table comes to read the angle",
 	},
 	{
+		cause:       CauseTurnLoadSequence,
+		populations: []WaitPopulation{PopAcquiring},
+		what: "a person: the payload's advanced load sequence is removed, or the node's turn angle is cleared — " +
+			"then the scanner's next pass dispatches it. Nothing arriving clears it",
+	},
+	{
 		cause:       CauseVacateLifterGone,
 		populations: []WaitPopulation{PopVacateHeld},
 		what: "for a swap pair, the death rule cancels this leg (HandleSwapPeerTerminal), or the Core hard " +

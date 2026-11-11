@@ -376,7 +376,9 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 // plan, and both create seams call it (dispatchToFleetCore for a plain order,
 // buildComplexCommit for a complex one): build the plan, then splice it, one
 // rule set for every order type. It runs the lane rule (spliceLaneWait, with
-// its lane-only check) and then asks the whole plan who owns each wait.
+// its lane-only check), then the turn rule (spliceTurnWaits, with its check
+// that every lift at a turn node has its wait), and then asks the whole plan
+// who owns each wait.
 //
 // THE OWNER CHECK RUNS ON EVERY PLAN. It used to be reached only when a lane
 // gate was found: spliceLaneWait returned before it otherwise, so a wait added
@@ -385,10 +387,14 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 // on its path.
 //
 // Returns the plan unchanged (the same slice) when nothing is inserted, and
-// gated only when a lane wait was: the lane valve is the lane's.
+// gated only when a lane wait was: the lane valve is the lane's. A plan that
+// gained only a turn wait goes out unsealed through its seam's own arm.
 func (d *Dispatcher) spliceCoreWaits(steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
 	out, target, gated, err := d.spliceLaneWait(steps, orderID)
 	if err != nil {
+		return nil, laneGateTarget{}, false, err
+	}
+	if out, err = d.spliceTurnWaits(out); err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
 	if err := assertEveryWaitDeclaresAnOwner(out); err != nil {

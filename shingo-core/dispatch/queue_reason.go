@@ -198,6 +198,9 @@ type QueueParams struct {
 	TableReadsDeg *float64
 	TableBlocked  string
 	TableFailed   bool
+	// TableLoadSequence marks a lift at TableNode held because its payload
+	// (Payload) carries an advanced load sequence (CauseTurnLoadSequence).
+	TableLoadSequence bool
 	// FleetReason is the fleet's own refusal, already rendered
 	// (fleet.FormatVendorError — "RDS error 60009: …"), when the fleet ANSWERED
 	// with one (QueueFleetUnavailable). Empty means it did not answer, which is
@@ -341,6 +344,13 @@ func materialSentence(p QueueParams) string {
 // tableSentence is a lift (or set-down) held for the robot's jack table.
 func tableSentence(p QueueParams) string {
 	switch {
+	case p.TableLoadSequence:
+		part := "this order's payload"
+		if p.Payload != "" {
+			part = p.Payload
+		}
+		return fmt.Sprintf("%s turns the table before the lift, and %s carries a load sequence that cannot run there — "+
+			"waiting for its configuration to be fixed", p.TableNode, part)
 	case p.TableFailed && p.TableReadsDeg != nil:
 		return fmt.Sprintf("The table at %s did not reach %.0f°, reads %.0f° — Core stopped turning it",
 			p.TableNode, p.TableWantDeg, *p.TableReadsDeg)
