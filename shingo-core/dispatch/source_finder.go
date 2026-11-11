@@ -146,13 +146,13 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 // THE ORDER'S WANT IS THE NEED'S HEIGHT (orders.want, as its asker stated it):
 // a stated one is exact, its carrier type derived as any empty's. A pull of
 // tops & bottoms only lands on a fed press's outside, and its asker is that
-// press, which is the need's ProcessNode (so a strict group that supports the
-// press serves it): one read, on every find, the scanner's replay included.
-// The press is not written into the row's process_node, which is blank for a
-// plain order (the wire carries none) and which other readers key on: the
-// history row's reference, the futility key and the route's stops would all
-// start naming the press. A pull whose press no longer resolves fails with the
-// sentence intake would have refused it with (pressFor).
+// press, the need's ProcessNode (so a strict group that supports the press
+// serves it). A pull that names its press (protocol.OrderRequest.ProcessNode)
+// is asked as that press, as every order is. One that names none, from an
+// Edge older than the field, has its press found from its outside: one read,
+// on every find, the scanner's replay included, and a pull whose press no
+// longer resolves fails with the sentence intake would have refused it with
+// (pressFor). The found press goes once every Edge names its press.
 func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResult {
 	need := SourceNeed{
 		SourceNode:   order.SourceNode,
@@ -179,7 +179,7 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		Asker:  digAskerFor(order),
 		Height: order.Want,
 	}
-	if order.Want == protocol.TopsAndBottomsOnly {
+	if order.Want == protocol.TopsAndBottomsOnly && order.ProcessNode == "" {
 		press, refusal, err := pressFor(f.db, order.PayloadCode, order.DeliveryNode)
 		switch {
 		case err != nil:

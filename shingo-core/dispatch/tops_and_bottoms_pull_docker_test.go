@@ -177,6 +177,30 @@ func TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt(t *testing.
 	}
 }
 
+// TestTopsAndBottomsPull_APullThatNamesItsPressIsAskedAsThatPress: a pull
+// that names its press is asked as that press, as every order is; the press
+// found from the outside is for a pull that names none. With the cell's claim
+// gone, the found press refuses the blank pull, and the strict group that
+// supports the named press serves the named one.
+func TestTopsAndBottomsPull_APullThatNamesItsPressIsAskedAsThatPress(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	c := newTBPCell(t, db, "TBN")
+	tb := c.cart(t, c.toteID, "TBN-TB", intPtr(0), "", nil)
+	testdb.KanbanStrict(t, db, c.srcID, true)
+	c.exec(t, `INSERT INTO kanban_supports (kanban_node_id, process_node_id) VALUES ($1, $2)`, c.srcID, c.pressID)
+	c.exec(t, `DELETE FROM style_claims WHERE core_node_name = $1`, c.press)
+
+	if res := c.find(t, c.pull("tbn-blank")); res.Outcome != OutcomeStructural {
+		t.Errorf("naming no press with no fed press to find: %v (bin %+v), want refused", res.Outcome, res.Bin)
+	}
+	named := c.pull("tbn-named")
+	named.ProcessNode = c.press
+	if res := c.find(t, named); res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != tb {
+		t.Fatalf("naming its press: %v under %q (bin %+v), want bin %d", res.Outcome, res.QueueCause, res.Bin, tb)
+	}
+}
+
 // TestPressFor_TheOutcomes: one statement answers the press a pull of tops &
 // bottoms is for: the fed press whose outside the delivery is and whose claim
 // carries the part, whatever carriers the part rides (which of them the pull

@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/orders"
 )
 
@@ -68,5 +70,23 @@ func TestStuckContext(t *testing.T) {
 		if got := stuckContext(&c.o); got != c.want {
 			t.Errorf("stuckContext(%+v) = %q, want %q", c.o, got, c.want)
 		}
+	}
+}
+
+// TestCarrierProcessNodes_AnOrderThatNamesItsPressIsThatPress: the press a
+// cancelled order names is the whole answer to whose claims are its own; the
+// cart's own drop and pick nodes are the guess for an order that names none
+// (an Edge older than protocol.OrderRequest.ProcessNode).
+func TestCarrierProcessNodes_AnOrderThatNamesItsPressIsThatPress(t *testing.T) {
+	t.Parallel()
+	pick, drop := 0, 1
+	o := &orders.Order{SourceNode: "KAN-1", DeliveryNode: "POS"}
+	o.Carts = []domain.Cart{{BinID: 5, PickStep: &pick, DropStep: &drop}}
+	if got := carrierProcessNodes(o, 5); !slices.Equal(got, []string{"POS", "KAN-1"}) {
+		t.Errorf("naming no press: %v, want the cart's drop then its pick", got)
+	}
+	o.ProcessNode = "PRESS"
+	if got := carrierProcessNodes(o, 5); !slices.Equal(got, []string{"PRESS"}) {
+		t.Errorf("naming its press: %v, want the press alone", got)
 	}
 }

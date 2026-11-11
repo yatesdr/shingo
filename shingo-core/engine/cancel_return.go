@@ -365,8 +365,9 @@ func (e *Engine) returnSources(bin *bins.Bin, carrier *orders.Order) ([]returnSo
 // finder's tier 3 applies to a need naming that group (nodes.GroupFencesAsker).
 // DECLARED AND NOT FENCED: a place some claim declares, but that this process
 // may not draw from, is a place the next empty need from this process would be
-// turned away at. The asker is the order's process node, else the node the
-// cart was set down at or lifted from (carrierProcessNodes' first).
+// turned away at. The asker is the order's process node, else, for an order
+// that names none, the node the cart was set down at or lifted from
+// (carrierProcessNodes' first).
 func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order, binID int64) (bool, string) {
 	if src == nil || src.NodeTypeCode != protocol.NodeClassNGRP {
 		return false, ""
@@ -572,7 +573,9 @@ func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *ord
 }
 
 // carrierProcessNodes: the nodes that make a claim "the cancelled order's own"
-// for this cart. The order's process node when it carries one, then the cart's
+// for this cart. The order's process node alone when it names one: the press
+// it serves is the whole answer. An order that names none (an Edge older than
+// protocol.OrderRequest.ProcessNode) is guessed from the cart's
 // OWN drop and pick nodes — from the order's rows for the cart (domain.StepNode
 // of their drop and pick steps), not the order's delivery and source nodes,
 // which for a swap are the other cart's: a swap sourced at the press lifted its
@@ -583,7 +586,10 @@ func carrierProcessNodes(o *orders.Order, binID int64) []string {
 	if o == nil {
 		return nil
 	}
-	names := []string{o.ProcessNode}
+	if o.ProcessNode != "" {
+		return []string{o.ProcessNode}
+	}
+	var names []string
 	for _, c := range o.Carts {
 		if c.BinID != binID {
 			continue
