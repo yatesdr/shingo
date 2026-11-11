@@ -53,15 +53,17 @@
 //     timer is not cancelled — shingoedge.js:97, shared/utils.js:165.
 //   sse.edge-hub.txt handler names: "onfoo" listens for "oo", "onSSEPing" for
 //     "s-s-e-ping" — shingoedge.js:82.
-//   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
-//     0 does not disarm a watchdog already armed; the stream is dropped once
-//     more — shared/bus.js:80, :83.
 //   api.core-hub.txt / api.edge-hub.txt "204 no content", "200 empty body":
 //     a 2xx with no body rejects (SyntaxError) — app.js:257, shingoedge.js:349.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
 //     app.js:253.
 //   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
 //     lives 3200 ms, not 5000 — shared/utils.js:375.
+//
+// FIXED SINCE (the golden shows the fixed behaviour):
+//   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
+//     0 disarms the watchdog already running, so the stream stays up; it
+//     used to be dropped once more.
 
 'use strict';
 

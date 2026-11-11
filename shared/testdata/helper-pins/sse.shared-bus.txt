@@ -109,23 +109,20 @@ then 0.2 s more (5.1 s since the last frame)
     = #10 opened 2000 ms after #9 closed
 as #10 opens (its watchdog armed): setSSEWatchdog(0), #10 ← connected {"build":"b1"}, then 60 s with no frame
     t=53900 handler C({"build":"b1"}, <event>)
-    t=58900 close #10
-    t=58900 handler D(null, null)
-    t=59900 open #11 /events?topics=bins%2Corder-update
 
 ## reload on build
-setSSEReloadOnBuild(true); #11 ← connected {"build":"b3"}
+setSSEReloadOnBuild(true); #10 ← connected {"build":"b3"}
     t=113900 location.reload()
     t=113900 handler C({"build":"b3"}, <event>)
-#11 ← heartbeat {"build":"b3"}
+#10 ← heartbeat {"build":"b3"}
     t=113900 location.reload()
     t=113900 handler H({"build":"b3"}, <event>)
-#11 ← heartbeat {"build":"b1"}
+#10 ← heartbeat {"build":"b1"}
     t=113900 handler H({"build":"b1"}, <event>)
 
 ## close
-#11 error, then closeSSEBus() before the reconnect fires
-    t=113900 close #11
+#10 error, then closeSSEBus() before the reconnect fires
+    t=113900 close #10
     t=113900 handler D(null, null)
     = no new stream within 70000 ms
 onSSE("later", F) after closeSSEBus()

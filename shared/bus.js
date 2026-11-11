@@ -76,8 +76,13 @@ export function setSSEQuery(params) {
 }
 
 // setSSEWatchdog arms the no-frame watchdog: ms with no frame of any kind and
-// the stream is treated as dead. Pick a few heartbeats' worth. 0 disarms.
-export function setSSEWatchdog(ms) { _busWatchdogMs = ms > 0 ? ms : 0; }
+// the stream is treated as dead. Pick a few heartbeats' worth. 0 disarms, the
+// timer already running on the live stream included: left running, it dropped
+// the stream once more after the page had turned the watchdog off.
+export function setSSEWatchdog(ms) {
+    _busWatchdogMs = ms > 0 ? ms : 0;
+    if (!_busWatchdogMs && _busWatchdog !== null) { clearTimeout(_busWatchdog); _busWatchdog = null; }
+}
 
 function _busFeedWatchdog(es) {
     if (!_busWatchdogMs) return;
