@@ -4,13 +4,16 @@ package dispatch
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/payloads"
 )
 
@@ -81,5 +84,76 @@ func TestOrderPress_AStrictKanbanServesThePlainEmptyThatNamesItsPress(t *testing
 	if named.QueueCause == string(CauseFinderGroupFenced) || named.Plan == nil || named.Plan.BinID != c.empty {
 		t.Fatalf("naming the press: %s under %q with pick %+v, want the kanban's empty %d picked",
 			named.Status, named.QueueCause, named.Plan, c.empty)
+	}
+}
+
+// TestOrderPress_ThePressAPlainOrderNamesIsWhatCoreKeysItOn: the readers that
+// key on an order's process node read a plain order that names its press as
+// that press's, where the same order naming none read as nobody's. Both
+// orders are a full retrieve to the press's outside position that finds
+// nothing and is cancelled out of queued.
+//
+//   - futility: the tuple (station, press, part) counts it; with no press the
+//     tuple is too vague to count (FutilityKey.incomplete).
+//   - the history row's reference names the press; with none, the delivery.
+//   - the lane-entry origin is the press's (process, style) set; with none,
+//     unclassified.
+func TestOrderPress_ThePressAPlainOrderNamesIsWhatCoreKeysItOn(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	c := newOPCell(t, db, "OPR")
+	outside := &nodes.Node{Name: "OPR-OUT", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(db.DB, outside), "the press's outside")
+	pressNode, err := db.GetNodeByDotName(c.press)
+	testutil.MustNoErr(t, err, "the press")
+	pressOrigin(t, db, pressNode, "OPR-P", "OPR-S")
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	clk := clock.NewManual(time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC))
+	aud := armDetector(t, d, 2, clk)
+
+	cancelled := func(uuid, press string) *orders.Order {
+		t.Helper()
+		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: uuid, OrderType: OrderTypeRetrieve,
+			PayloadCode: c.part, DeliveryNode: outside.Name, ProcessNode: press, Quantity: 1})
+		o := testdb.RequireOrderStatus(t, db, uuid, protocol.StatusQueued)
+		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})
+		clk.Advance(time.Minute)
+		return testdb.RequireOrder(t, db, uuid)
+	}
+	refNode := func(o *orders.Order) string {
+		t.Helper()
+		hist, err := db.ListOrderHistory(o.ID)
+		testutil.MustNoErr(t, err, "history")
+		last := hist[len(hist)-1]
+		if last.Ref == nil {
+			return ""
+		}
+		return last.Ref.Node
+	}
+
+	for _, uuid := range []string{"opr-blank-1", "opr-blank-2"} {
+		o := cancelled(uuid, "")
+		if got := refNode(o); got != outside.Name {
+			t.Errorf("naming no press: the history refers to %q, want the delivery %s", got, outside.Name)
+		}
+		if got, err := d.laneEntryOriginFor(o); err != nil || got != "" {
+			t.Errorf("naming no press: lane-entry origin %q (%v), want unclassified", got, err)
+		}
+	}
+	if got := len(aud.all()); got != 0 {
+		t.Fatalf("two futile orders naming no press were counted (%d records): a blank tuple is too vague", got)
+	}
+
+	for _, uuid := range []string{"opr-press-1", "opr-press-2"} {
+		o := cancelled(uuid, c.press)
+		if got := refNode(o); got != c.press {
+			t.Errorf("naming its press: the history refers to %q, want %s", got, c.press)
+		}
+		if got, err := d.laneEntryOriginFor(o); err != nil || got != originKeyForStyles([]string{"OPR-P|OPR-S"}) {
+			t.Errorf("naming its press: lane-entry origin %q (%v), want the press's styles", got, err)
+		}
+	}
+	if got := len(aud.all()); got != 1 {
+		t.Errorf("two futile orders naming the press at threshold 2 recorded %d times, want once", got)
 	}
 }

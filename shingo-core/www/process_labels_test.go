@@ -23,6 +23,11 @@ func TestProcessLabels(t *testing.T) {
 	}{
 		{"line order", domain.Order{ProcessNode: "ALN_001", SourceNode: "SMN_015", DeliveryNode: "ALN_001"}, "SNF2"},
 		{"evac to a loader window", domain.Order{ProcessNode: "ALN_001", SourceNode: "ALN_001", DeliveryNode: "SMN_015"}, "SNF2"},
+		// A plain order names its press too (protocol.OrderRequest.ProcessNode):
+		// a retrieve to a press's outside position, which no claim names, reads
+		// as the press's process, where naming none it read as nobody's.
+		{"plain retrieve to a press's outside, naming the press", domain.Order{ProcessNode: "ALN_001", SourceNode: "SMN_005", DeliveryNode: "ALN_001_OUT"}, "SNF2"},
+		{"the same retrieve naming no press", domain.Order{SourceNode: "SMN_005", DeliveryNode: "ALN_001_OUT"}, ""},
 		{"loader refill, no line node", domain.Order{SourceNode: "AMR Supermarket", DeliveryNode: "SMN_015"}, "Bin Loader"},
 		{"shared node", domain.Order{DeliveryNode: "SMN_001"}, "SNF3 / SNF4"},
 		{"supermarket to supermarket", domain.Order{SourceNode: "SMN_005", DeliveryNode: "SMN_008"}, ""},
