@@ -1026,3 +1026,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### STALE — `TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap`
+- test: `TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap` · pkg `shingoedge/engine` · run `-run '^TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap$'` · `shingo-edge/engine/changeover_diff_test.go:866` @ `0ef21ca1` · tags `none`
+- code: STALE (a position only the incoming style uses is planned from its seat: an Add unless a bin is bound there, "fix(edge): one pass plans every press position, and a new one is a delivery")
+- assertion map: BACK, named only by the 3-position incoming claim, gets one diff → `TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionFromItsSeat` (still one diff, still nothing at MIDDLE); BACK is the Swap with the incoming claim as its from-claim → the same test with a bin bound on BACK (`SeatBin`); with no seat read BACK is now the Add of the incoming claim, by design.
+- mutation: the old assertions against the new pass, before the test was rewritten: `go test -count=1 -run '^TestZZOldBody$' ./engine/` → `BACK situation = "add", want SituationSwap`, `BACK FromClaim = <nil>, want the incoming claim's (the from-style didn't have this position)`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

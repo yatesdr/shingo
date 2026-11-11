@@ -86,7 +86,7 @@ type vacantLine struct {
 // vacantPositions is the one answer, from an occupancy map, to "which of this
 // claim's positions hold no bin": the line's own, and its dependent positions.
 // A name missing from occupancy reads occupied. A changeover splits a press per
-// position on it (FanOutPressIndex, from the seats); REQUEST asks it for the
+// position on it (PlanPressPositions, from the seats); REQUEST asks it for the
 // line alone and judges the dependent positions by chainReadiness, which also
 // knows what stands on them.
 func vacantPositions(claim *processes.NodeClaim, occupancy map[string]bool) (lineVacant bool, paired []string) {

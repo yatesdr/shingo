@@ -41,7 +41,7 @@ import (
 // WHY THIS IS A PASS OVER THE FINISHED PLAN AND NOT A FIFTH FAN-OUT.
 //
 // It used to be a fan-out — FanOutStagedToolingEvacuation — sitting in the diff
-// pipeline beside FanOutPressIndexDifferentBinType, and the two competed. The
+// pipeline beside the bin-type fan-out (now PlanPressPositions), and the two competed. The
 // bin-type pass ran first and rewrote the diff's SwapMode to press_position;
 // the tooling pass's predicate required two_robot_press_index; so on a press
 // that was BOTH marked and changing bin type, tooling silently did nothing.
@@ -324,7 +324,7 @@ func (p toolingPress) expandsPositions() bool { return p.to != nil }
 //
 // BOTH HALVES, AND THE SECOND ONE WAS FOUND THE HARD WAY. Scoping this to the
 // marked nodes fixed the paired node and left the Adds exactly where they were:
-// an Add exists because the cross-mode pass synthesized it, so no mark names it,
+// an Add exists because PlanPressPositions synthesized it, so no mark names it,
 // and on a disjoint changeover its node has no row either. It got a task, no
 // order, and blocked the cutover — the same defect as N1-a, one branch over,
 // caught by the spot-check that was meant to confirm the fix.

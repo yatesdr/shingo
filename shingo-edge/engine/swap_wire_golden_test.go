@@ -85,8 +85,7 @@ func renderToolChangePlan(from, to *processes.NodeClaim) []map[string]any {
 	f := *from
 	f.ChangeoverEvacNodes = f.ToolChangePositions()
 	fromClaims, toClaims := []processes.NodeClaim{f}, []processes.NodeClaim{*to}
-	diffs := FanOutPressIndex(DiffStyleClaims(fromClaims, toClaims), nil, nil)
-	diffs = FanOutPressIndexCrossMode(diffs, nil)
+	diffs := PlanPressPositions(DiffStyleClaims(fromClaims, toClaims), nil, nil)
 	var nodes []processes.Node
 	for i, n := range f.ToolChangePositions() {
 		nodes = append(nodes, processes.Node{ID: int64(i + 1), Name: n, CoreNodeName: n, ProcessID: 1})

@@ -320,8 +320,7 @@ func TestToolChange_TheTable(t *testing.T) {
 		}
 		// No builder writes a tooling wait: the plan without the decorator has none.
 		diffs := DiffStyleClaims(cell.from, cell.to)
-		diffs = FanOutPressIndex(diffs, tcBinTypes(c), nil)
-		diffs = FanOutPressIndexCrossMode(diffs, tcBinTypes(c))
+		diffs = PlanPressPositions(diffs, tcBinTypes(c), nil)
 		nodes := make([]processes.Node, 0, len(cell.nodes))
 		for i, n := range cell.nodes {
 			nodes = append(nodes, processes.Node{ID: int64(i + 1), CoreNodeName: n, Name: n})

@@ -28,7 +28,7 @@ import (
 // PairedCoreNode=active).
 //
 // Press-index different-bin-type detection runs as a separate post-
-// processor (FanOutPressIndexDifferentBinType in changeover.go) before
+// processor (PlanPressPositions in changeover.go) before
 // BuildChangeoverPlan sees the diffs; per-position diffs reach the
 // planner with SwapMode = "press_position" and route through the
 // dedicated case in BuildSwapChangeoverSteps.

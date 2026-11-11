@@ -139,8 +139,7 @@ func toolingTestPlanSeated(t *testing.T, from, to []processes.NodeClaim, binType
 	state func(string) NodeState, nodeNames ...string) changeover.Plan {
 	t.Helper()
 	diffs := DiffStyleClaims(from, to)
-	diffs = FanOutPressIndex(diffs, binTypes, state)
-	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	diffs = PlanPressPositions(diffs, binTypes, state)
 	diffs = ApplyNodeState(diffs, state)
 
 	nodes := make([]processes.Node, 0, len(nodeNames))
@@ -301,12 +300,14 @@ func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 //
 // THIS IS ALSO THE CROSS-MODE PIN. DiffStyleClaims produces only PLN_001(drop)
 // and PLN_005(add) — the two claim ROWS. The extension positions PLN_002(drop) and
-// PLN_006(add) exist solely because FanOutPressIndexCrossMode synthesizes them,
+// PLN_006(add) exist solely because PlanPressPositions synthesizes them,
 // verified by tracing the passes. So the assertions below on PLN_002 and
 // PLN_006 are assertions that the decorator correctly edits legs planned from
-// cross-mode's synthesized diffs — the one ordering interaction the two passes
-// have, and it is safe by construction: cross-mode makes diffs, the decorator
-// edits the plan those diffs produced, so neither can preempt the other.
+// its synthesized diffs — the one ordering interaction the two have, and it is
+// safe by construction: the press positions make diffs, the decorator edits
+// the plan those diffs produced, so neither can preempt the other. PLN_006 has
+// never had a carrier leave it, so it is an Add, not a swap that would lift
+// at a node nothing is known to stand on.
 func TestToolingAcrossDisjointNodes(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_001", "PLN_002", "PART-A")
@@ -338,10 +339,16 @@ func TestToolingAcrossDisjointNodes(t *testing.T) {
 		}
 	}
 
-	// Every new position stages and holds behind tooling-done.
+	// Every new position is a delivery, and it stages and holds behind
+	// tooling-done. Nothing is known to stand on either (no seat is read here),
+	// so neither lifts first: a lift at an empty node holds the order at Core.
 	for _, position := range []string{"PLN_005", "PLN_006"} {
 		a := actionFor(t, plan, position)
 		got := allSteps(a)
+		if a.Situation != string(SituationAdd) || strings.Contains(got, "pickup@"+position) {
+			t.Errorf("new position %s planned %s.\nsteps = %s\nA position only the incoming style uses "+
+				"is a delivery unless a bin is known to be bound there.", position, a.Situation, got)
+		}
 		if !strings.Contains(got, "wait@IN-STAGE") {
 			t.Errorf("new position %s takes delivery with no tooling hold.\nsteps = %s\n"+
 				"A human is inside the cell. Material must wait at inbound staging and move in "+

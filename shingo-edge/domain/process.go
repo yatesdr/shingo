@@ -676,7 +676,7 @@ func SynthesizePositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim 
 // This is the ONE derivation. Three consumers need it and they must agree:
 //
 //   - the planner, which synthesizes the position claims to build the per-position
-//     orders (FanOutPressIndexDifferentBinType),
+//     orders (engine.PlanPressPositions),
 //   - the station view, which re-derives them so a fanned-out position renders as
 //     claimed rather than as an unclaimed node with no buttons,
 //   - the per-node changeover actions and the cutover gate, which have to be
@@ -753,8 +753,10 @@ func (c *NodeClaim) Positions() []string {
 // as though it were the front. Both derive from the same walk instead.
 //
 // THE SCOPE IS THE POINT, and it is why this is a second method rather than a
-// parameter. fanOutPositions wants the front as slot 0; FanOutPressIndexCrossMode
-// must NOT include it, because the front is already the diff's own node. A
+// parameter. A split cell's positions (Positions) want the front first; the
+// planner's walk of the positions no diff stands on (DependentPositions, behind
+// the mode gate) must NOT include it, because the front is already the diff's
+// own node. A
 // single function with an includeFront flag would put that difference at the
 // call sites as a boolean, which is where it was before it had a name.
 func (c *NodeClaim) ExtensionPositions() []string {

@@ -18,7 +18,7 @@ import (
 //
 // The same-bin-type case rides the press's index motion: one claim, one node,
 // one pair of orders. When the bin geometry changes the index cannot shift the
-// bins, so FanOutPressIndexDifferentBinType rewrites the parent diff into one
+// bins, so PlanPressPositions rewrites the parent diff into one
 // diff PER POSITION — and the back positions have no style_node_claims row. They never
 // have: UpsertClaim refuses the press_position marker, the planner synthesizes
 // their claims in memory, and the position is a physical position of a press rather

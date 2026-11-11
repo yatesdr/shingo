@@ -247,46 +247,42 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //     fan-out silently degrades to "same bin type" and would route a
 //     real different-bin-type changeover through the wrong choreography.
 //
-//  3. Same-mode fan-out (FanOutPressIndex). Expands a press-index parent
-//     diff into per-position diffs when the from- and to-claim payloads
-//     have different bin type codes, or when a position holds no bin
-//     (vacantPositions, the answer REQUEST's planVacantLine reads).
+//  3. Every press position either style names (PlanPressPositions): one
+//     rule per position, front or back, same mode or cross mode. A cell
+//     whose carrier type changes, that is marked for a tool change, or that
+//     has a bare position is planned position by position; every position a
+//     press claim names that no diff stands on is decided by the same rule.
+//     A position only the incoming style uses is a delivery unless its seat
+//     says a bin is bound there.
 //
-//  4. Cross-mode / extension-position fan-out. Picks up press-index
-//     extension positions (PairedCoreNode / SecondPairedCoreNode)
-//     that the same-mode pass left alone — cross-mode changeovers
-//     (one side press-index, the other not) and same-mode same-bin-
-//     type position-count deltas. Acts only on positions not already
-//     covered, so step 3 always wins for positions it touched.
-//
-//  5. ApplyNodeState, reading the same node state as step 1: a Swap whose
+//  4. ApplyNodeState, reading the same node state as step 1: a Swap whose
 //     seat says its carrier has gone becomes Add (nothing to lift, only the
 //     new bin to bring), and a one-position consume node already holding the
 //     incoming part becomes Unchanged and AlreadyDone (a restarted
 //     changeover does not swap a node the first attempt finished). After the
-//     fan-outs, so each press position is judged by its own seat, never its
+//     press positions, so each one is judged by its own seat, never its
 //     front's. Then the sequential reuse shortcut, which skips a parked
 //     side's Swap and so must see an empty parked side already made Add.
 //
-//  6. The old carrier's destination. Each Swap and Drop is aimed where the
+//  5. The old carrier's destination. Each Swap and Drop is aimed where the
 //     carrier actually standing on its node belongs (residentEvacDest), the
 //     same call REQUEST, produce and the Material release make, so a node
 //     holding a foreign part sends it home rather than to the outgoing
-//     style's destination. LAST, after the fan-outs, so each position is
+//     style's destination. LAST, after the press positions, so each one is
 //     aimed by its own node's carrier, never its front's. Not Evacuate: the
 //     tooling choreography owns where a cleared carrier waits.
 //
 // Add new diff post-processors to this function so the ordering
 // invariants stay in one place. Any new processor needs to declare
-// where it sits in the pipeline relative to the existing six.
+// where it sits in the pipeline relative to the existing five.
 //
 // TOOLING IS NOT IN THIS LIST, and that is its declaration: it is not a
 // diff post-processor at all. It runs LAST, over the FINISHED PLAN, and
-// edits the legs these four produced (see changeover_tooling.go). It was
-// a fifth entry here once — FanOutStagedToolingEvacuation — and step 3
-// silently disqualified it by rewriting the SwapMode its predicate read,
-// so a press that was both marked for tooling and changing bin type got
-// no tooling at all. A pass that cannot be reached by another pass's
+// edits the legs these passes produced (see changeover_tooling.go). It was
+// an entry here once — FanOutStagedToolingEvacuation — and the bin-type
+// fan-out silently disqualified it by rewriting the SwapMode its predicate
+// read, so a press that was both marked for tooling and changing bin type
+// got no tooling at all. A pass that cannot be reached by another pass's
 // output does not need a slot in this ordering.
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
 	state := e.nodeStateAt(processID)
@@ -295,14 +291,13 @@ func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []Chan
 		return nil, err
 	}
 	binTypes := e.binTypeSnapshot(diffs)
-	diffs = FanOutPressIndex(diffs, binTypes, state)
-	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	diffs = PlanPressPositions(diffs, binTypes, state)
 	diffs = ApplyNodeState(diffs, state)
-	// AFTER the snapshot, because it reads the same catalog map the press-index
-	// fan-outs do — one lookup, one answer about what a style rides, so the two
-	// shortcuts cannot disagree. After ApplyNodeState, so a parked side with no
-	// bin is brought one (Add) rather than skipped as a reusable empty; a
-	// sequential diff is not a press-index diff, so the fan-outs cannot see it.
+	// AFTER the snapshot, because it reads the same catalog map the press
+	// positions do — one lookup, one answer about what a style rides, so the two
+	// cannot disagree. After ApplyNodeState, so a parked side with no bin is
+	// brought one (Add) rather than skipped as a reusable empty; a sequential
+	// diff is not a press-index diff, so the press positions cannot see it.
 	diffs = ApplySequentialReuseShortcut(diffs, binTypes, e.activePullForDiffs(processID))
 	e.aimEvacsAtResidentHome(diffs, state)
 	return diffs, nil
@@ -340,7 +335,7 @@ func (e *Engine) aimEvacsAtResidentHome(diffs []ChangeoverNodeDiff, state func(c
 // fan-out at all (bins stranded on the press with no order and no error).
 //
 // Scoped to any non-Unchanged situation on EITHER side, not just
-// Swap/Evacuate on the from-side: the cross-mode pass reads bin types for
+// Swap/Evacuate on the from-side: PlanPressPositions reads bin types for
 // extension positions carried on Drop and Add diffs too. HK #27 produced
 // ONLY Drop and Add, so the old Swap/Evacuate-scoped gate would have
 // waved through exactly the changeover that needed it.

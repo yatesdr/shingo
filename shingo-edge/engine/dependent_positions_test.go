@@ -150,11 +150,11 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		}
 	})
 
-	t.Run("FanOutPressIndexCrossMode (changeover.go): a press's positions on either side", func(t *testing.T) {
+	t.Run("PlanPressPositions (changeover.go): a press's positions on either side", func(t *testing.T) {
 		t.Parallel()
 		situations := func(diffs []ChangeoverNodeDiff) map[string]ChangeoverSituation {
 			out := map[string]ChangeoverSituation{}
-			for _, d := range FanOutPressIndexCrossMode(diffs, nil)[len(diffs):] {
+			for _, d := range PlanPressPositions(diffs, nil, nil)[len(diffs):] {
 				out[d.CoreNodeName] = d.Situation
 			}
 			return out
@@ -163,11 +163,11 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		if len(got) != 2 || got["B"] != SituationDrop || got["C"] != SituationDrop {
 			t.Errorf("press → stale two_robot: %v, want B and C dropped", got)
 		}
-		// W4: an incoming-only position is the per-position Swap (an Add once
-		// ApplyNodeState reads it vacant); before W4 it was an Add here.
+		// An incoming-only position is an Add with no seat read: nothing says a
+		// bin stands there (a bound bin makes it the per-position Swap).
 		got = situations([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: stale, ToClaim: press2}})
-		if len(got) != 1 || got["B"] != SituationSwap {
-			t.Errorf("stale two_robot → press2: %v, want B planned as the Swap", got)
+		if len(got) != 1 || got["B"] != SituationAdd {
+			t.Errorf("stale two_robot → press2: %v, want B planned as the Add", got)
 		}
 		if got = situations([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: stale, ToClaim: seq}}); len(got) != 0 {
 			t.Errorf("stale two_robot → sequential: %v, want nothing", got)

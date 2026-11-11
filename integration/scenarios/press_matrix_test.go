@@ -279,7 +279,7 @@ func newPmCell(t *testing.T, r pmRow) *pmCell {
 		o.sameB = true
 	case "changeover":
 		// Into a press: from a press of another part and carrier, or across
-		// modes from any other (the cross-mode read, FanOutPressIndexCrossMode).
+		// modes from any other (the press positions' one pass, PlanPressPositions).
 		o.modeB = protocol.SwapModeTwoRobotPressIndex
 	}
 	p := &pmCell{ksrCell: newKsrCell(t, o), r: r}
@@ -896,7 +896,7 @@ func (p *pmCell) seatGone(nodeID int64) {
 // each seat recording its carrier gone. The outgoing style is the row's mode
 // (a press, or across modes any other); the incoming is a press of B. START
 // plans each vacant position an Add (ApplyNodeState: a vacant Swap is an Add;
-// FanOutPressIndexCrossMode plans the to-only paired position a Swap first),
+// PlanPressPositions plans the to-only paired position an Add from its seat),
 // so its orders are plain deliveries of B, one to each position, and no leg;
 // the changeover runs to CUTOVER with a B bin on each.
 func pmChangeoverIntoVacant(p *pmCell) {

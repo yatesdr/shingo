@@ -422,7 +422,8 @@ func TestApplyReuseCompatibleBinsShortcut_NilAccessorPreservesSwap(t *testing.T)
 }
 
 // ---------------------------------------------------------------------------
-// FanOutPressIndexDifferentBinType (per-position fan-out post-processor)
+// PlanPressPositions: a press split position by position for a carrier type
+// that changes (the tests keep the name of the pass that once did this alone)
 // ---------------------------------------------------------------------------
 
 // pressIndexFanOutFromClaim builds a press-index claim with the given
@@ -453,7 +454,7 @@ func TestFanOutPressIndexDifferentBinType_3PosTo3Pos_Emits3Diffs(t *testing.T) {
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T2"}
-	out := FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := PlanPressPositions(diffs, binTypes, nil)
 
 	if len(out) != 3 {
 		t.Fatalf("expected 3 per-position diffs, got %d", len(out))
@@ -501,7 +502,7 @@ func TestFanOutPressIndexDifferentBinType_3PosTo2Pos_ThirdPositionDropOnly(t *te
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T2"}
-	out := FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := PlanPressPositions(diffs, binTypes, nil)
 
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs (front+mid full swap, back drop-only), got %d", len(out))
@@ -533,7 +534,7 @@ func TestFanOutPressIndexDifferentBinType_2PosTo3Pos_ThirdPositionAddOnly(t *tes
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T2"}
-	out := FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := PlanPressPositions(diffs, binTypes, nil)
 
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs (front+mid full swap, back add-only), got %d", len(out))
@@ -564,7 +565,7 @@ func TestFanOutPressIndexDifferentBinType_SameBinType_NoFanOut(t *testing.T) {
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T1"} // same bin type
-	out := FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := PlanPressPositions(diffs, binTypes, nil)
 
 	if len(out) != 1 {
 		t.Fatalf("same bin type → no fan-out, expected 1 diff, got %d", len(out))
@@ -591,7 +592,7 @@ func TestFanOutPressIndexDifferentBinType_MissingEntries_NoFanOut(t *testing.T) 
 		{"PART-A": "T1", "PART-B": ""},
 	}
 	for i, m := range cases {
-		out := FanOutPressIndexDifferentBinType(diffs, m)
+		out := PlanPressPositions(diffs, m, nil)
 		if len(out) != 1 {
 			t.Errorf("case %d: missing entries should not fan out, got %d diffs", i, len(out))
 		}
@@ -612,7 +613,7 @@ func TestFanOutPressIndexDifferentBinType_NonPressIndexUnchanged(t *testing.T) {
 		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T2"}
-	out := FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := PlanPressPositions(diffs, binTypes, nil)
 
 	if len(out) != 1 || out[0].FromClaim.SwapMode != "single_robot" {
 		t.Errorf("non-press-index must pass through unchanged; got %d diffs, first SwapMode=%q",
@@ -632,7 +633,7 @@ func TestFanOutPressIndexDifferentBinType_SynthesizedClaimRetainsParentID(t *tes
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T2"}
-	out := FanOutPressIndexDifferentBinType(diffs, binTypes)
+	out := PlanPressPositions(diffs, binTypes, nil)
 
 	for _, d := range out {
 		if d.FromClaim != nil && d.FromClaim.ID != 42 {
@@ -645,7 +646,9 @@ func TestFanOutPressIndexDifferentBinType_SynthesizedClaimRetainsParentID(t *tes
 }
 
 // ---------------------------------------------------------------------------
-// FanOutPressIndexCrossMode (cross-mode + extension-position fan-out)
+// PlanPressPositions: the positions a press claim names that no diff stands on
+// (cross mode, a press dropped, added, resized or moved; the tests keep the
+// name of the pass that once did this alone)
 // ---------------------------------------------------------------------------
 
 // crossModeFromPressIndex builds a press-index from-claim with the
@@ -695,7 +698,7 @@ func TestFanOutCrossMode_PressIndex3PosToSingleRobot_SynthesizesBackMiddleDrops(
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 
 	// FRONT (already covered) + MIDDLE + BACK = 3 diffs total.
 	if len(out) != 3 {
@@ -743,10 +746,10 @@ func TestFanOutCrossMode_PressIndex3PosToSingleRobot_SynthesizesBackMiddleDrops(
 // Direction B mirror: from is single_robot, to is press-index 3-pos.
 // Front position has a normal Swap diff. Middle and back only exist on the
 // to-claim's extension fields, and nothing the outgoing style holds says what
-// stands there, so the cross-mode fan-out plans each as the per-position Swap,
-// its from-claim synthesized from the incoming claim: whatever stands there
-// leaves and the new style's carrier comes. ApplyNodeState, which runs next,
-// turns a vacant one into an Add and leaves an unknown seat the Swap.
+// stands there, so each is planned from its own seat: a bin bound there makes
+// it the per-position Swap, its from-claim synthesized from the incoming claim
+// (whatever stands there leaves and the new style's carrier comes); a vacant
+// or unknown seat makes it an Add, a plain delivery.
 func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_PlansEachIncomingPositionFromItsSeat(t *testing.T) {
 	t.Parallel()
 	from := crossModeNonPressIndex("FRONT", "PART-A", "single_robot")
@@ -754,41 +757,8 @@ func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_PlansEachIncomingPositionFr
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
-
-	if len(out) != 3 {
-		t.Fatalf("expected 3 diffs (front + 2 synthesized positions), got %d", len(out))
-	}
-	for _, d := range out {
-		switch d.CoreNodeName {
-		case "FRONT":
-			if d.Situation != SituationSwap {
-				t.Errorf("FRONT: situation = %q, want SituationSwap untouched", d.Situation)
-			}
-		case "MIDDLE", "BACK":
-			if d.Situation != SituationSwap {
-				t.Errorf("%s: situation = %q, want SituationSwap", d.CoreNodeName, d.Situation)
-			}
-			if d.FromClaim == nil || d.ToClaim == nil {
-				t.Fatalf("%s: want both claims synthesized from the incoming claim, got from=%v to=%v", d.CoreNodeName, d.FromClaim, d.ToClaim)
-			}
-			if d.FromClaim.PayloadCode != "PART-B" || d.FromClaim.OutboundDestination != "DEST" || d.ToClaim.InboundSource != "MARKET" {
-				t.Errorf("%s: from %+v to %+v, want both the incoming claim's", d.CoreNodeName, d.FromClaim, d.ToClaim)
-			}
-			// A synthesized claim clears InboundStaging so the Add it becomes
-			// at a vacant seat routes through the direct-Retrieve fallback
-			// (delivery to the position node) rather than a stage order.
-			if d.ToClaim.InboundStaging != "" {
-				t.Errorf("%s: synthesized ToClaim must clear InboundStaging, got %q", d.CoreNodeName, d.ToClaim.InboundStaging)
-			}
-			if disp := BuildSwapChangeoverSteps(d.FromClaim, d.ToClaim, "", ""); disp.rejected() {
-				t.Errorf("%s: the per-position Swap builds nothing", d.CoreNodeName)
-			}
-		}
-	}
-
 	// Through the seats: BACK vacant, MIDDLE holding a bin, FRONT unknown.
-	planned := ApplyNodeState(out, func(n string) NodeState {
+	out := PlanPressPositions(diffs, nil, func(n string) NodeState {
 		switch n {
 		case "BACK":
 			return NodeState{Seat: SeatEmpty}
@@ -797,16 +767,40 @@ func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_PlansEachIncomingPositionFr
 		}
 		return NodeState{}
 	})
-	for _, d := range planned {
+
+	if len(out) != 3 {
+		t.Fatalf("expected 3 diffs (front + 2 synthesized positions), got %d", len(out))
+	}
+	for _, d := range out {
 		want := map[string]ChangeoverSituation{"FRONT": SituationSwap, "MIDDLE": SituationSwap, "BACK": SituationAdd}[d.CoreNodeName]
 		if d.Situation != want {
 			t.Errorf("%s: planned %q, want %q", d.CoreNodeName, d.Situation, want)
 		}
+		switch d.CoreNodeName {
+		case "MIDDLE":
+			if d.FromClaim == nil || d.ToClaim == nil {
+				t.Fatalf("%s: want both claims synthesized from the incoming claim, got from=%v to=%v", d.CoreNodeName, d.FromClaim, d.ToClaim)
+			}
+			if d.FromClaim.PayloadCode != "PART-B" || d.FromClaim.OutboundDestination != "DEST" || d.ToClaim.InboundSource != "MARKET" {
+				t.Errorf("%s: from %+v to %+v, want both the incoming claim's", d.CoreNodeName, d.FromClaim, d.ToClaim)
+			}
+			if disp := BuildSwapChangeoverSteps(d.FromClaim, d.ToClaim, "", ""); disp.rejected() {
+				t.Errorf("%s: the per-position Swap builds nothing", d.CoreNodeName)
+			}
+		case "BACK":
+			// A synthesized claim clears InboundStaging so the Add routes
+			// through the direct-Retrieve fallback (delivery to the position
+			// node) rather than a stage order.
+			if d.FromClaim != nil || d.ToClaim == nil || d.ToClaim.InboundStaging != "" {
+				t.Errorf("%s: want the incoming claim alone with no inbound staging, got from=%v to=%+v", d.CoreNodeName, d.FromClaim, d.ToClaim)
+			}
+		}
 	}
-	if planned := ApplyNodeState(FanOutPressIndexCrossMode([]ChangeoverNodeDiff{
+	unknown := PlanPressPositions([]ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
-	}, nil), func(string) NodeState { return NodeState{} }); planned[1].Situation != SituationSwap || planned[2].Situation != SituationSwap {
-		t.Errorf("unknown seats: %q %q, want both the Swap", planned[1].Situation, planned[2].Situation)
+	}, nil, func(string) NodeState { return NodeState{} })
+	if unknown[1].Situation != SituationAdd || unknown[2].Situation != SituationAdd {
+		t.Errorf("unknown seats: %q %q, want both the Add", unknown[1].Situation, unknown[2].Situation)
 	}
 }
 
@@ -821,7 +815,7 @@ func TestFanOutCrossMode_PressIndex3PosToTwoRobot_SynthesizesBackMiddleDrops(t *
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs, got %d", len(out))
@@ -838,48 +832,48 @@ func TestFanOutCrossMode_PressIndex3PosToTwoRobot_SynthesizesBackMiddleDrops(t *
 }
 
 // Direction C: both press-index, position-count differs, same bin type.
-// The same-mode fan-out doesn't fire (bin types match); the cross-mode
-// fan-out picks up the position-count delta. Here the from-style is
-// 2-pos, to-style is 3-pos: BACK only appears in to-claim's extension,
-// so the cross-mode fan-out plans it as the mirror case's per-position
-// Swap (an Add once ApplyNodeState reads it vacant).
-func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap(t *testing.T) {
+// The press is not split (bin types match); the position only the to-style
+// names is planned from its own seat. Here the from-style is 2-pos, to-style
+// is 3-pos: BACK only appears in to-claim's extension, so it is an Add with no
+// seat read, and the per-position Swap (its from-claim the incoming claim's)
+// with a bin bound there.
+func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionFromItsSeat(t *testing.T) {
 	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
-	diffs := []ChangeoverNodeDiff{
-		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
-	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
-
-	if len(out) != 2 {
-		t.Fatalf("expected 2 diffs (front untouched + back), got %d", len(out))
-	}
-	var backDiff *ChangeoverNodeDiff
-	for i := range out {
-		if out[i].CoreNodeName == "BACK" {
-			backDiff = &out[i]
+	back := func(state func(string) NodeState) *ChangeoverNodeDiff {
+		out := PlanPressPositions([]ChangeoverNodeDiff{
+			{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+		}, nil, state)
+		if len(out) != 2 {
+			t.Fatalf("expected 2 diffs (front untouched + back), got %d", len(out))
 		}
-	}
-	if backDiff == nil {
+		// MIDDLE is shared by both press-index extensions (paired on both),
+		// so nothing is planned there: same bin type, the index at FRONT
+		// carries it.
+		for _, d := range out {
+			if d.CoreNodeName == "MIDDLE" {
+				t.Error("MIDDLE: no diff may be synthesized for a position both sides reference")
+			}
+		}
+		for i := range out {
+			if out[i].CoreNodeName == "BACK" {
+				return &out[i]
+			}
+		}
 		t.Fatal("expected synthesized BACK diff")
+		return nil
 	}
-	if backDiff.Situation != SituationSwap {
-		t.Errorf("BACK situation = %q, want SituationSwap", backDiff.Situation)
+
+	if d := back(nil); d.Situation != SituationAdd || d.FromClaim != nil || d.ToClaim == nil {
+		t.Errorf("no seat read: BACK %q from %v to %v, want an Add of the incoming claim", d.Situation, d.FromClaim, d.ToClaim)
 	}
-	if backDiff.FromClaim == nil || backDiff.FromClaim.PayloadCode != "PART-B" {
-		t.Errorf("BACK FromClaim = %+v, want the incoming claim's (the from-style didn't have this position)", backDiff.FromClaim)
+	d := back(func(n string) NodeState { return NodeState{Seat: SeatBin} })
+	if d.Situation != SituationSwap {
+		t.Errorf("a bin bound on BACK: situation = %q, want SituationSwap", d.Situation)
 	}
-	if backDiff.ToClaim == nil {
-		t.Error("BACK ToClaim must be non-nil")
-	}
-	// MIDDLE is shared by both press-index extensions (paired on both),
-	// so the cross-mode fan-out leaves it alone — same-bin-type, position
-	// stays via implicit no-op or index motion at FRONT.
-	for _, d := range out {
-		if d.CoreNodeName == "MIDDLE" {
-			t.Error("MIDDLE: cross-mode fan-out must NOT synthesize a diff for a position both sides reference")
-		}
+	if d.FromClaim == nil || d.FromClaim.PayloadCode != "PART-B" || d.ToClaim == nil {
+		t.Errorf("BACK from %+v to %+v, want both the incoming claim's (the from-style didn't have this position)", d.FromClaim, d.ToClaim)
 	}
 }
 
@@ -892,7 +886,7 @@ func TestFanOutCrossMode_PressIndex3PosToPressIndex2Pos_SynthesizesDropForRetire
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 
 	if len(out) != 2 {
 		t.Fatalf("expected 2 diffs (front + back drop), got %d", len(out))
@@ -921,7 +915,7 @@ func TestFanOutCrossMode_NotCrossMode_NoExtraDiffs(t *testing.T) {
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationUnchanged, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 
 	if len(out) != 1 {
 		t.Errorf("expected diffs unchanged, got %d (cross-mode fan-out must skip when both sides reference each position)", len(out))
@@ -941,12 +935,12 @@ func TestFanOutCrossMode_AfterSameModeFanOut_NoOverlap(t *testing.T) {
 	}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T2"}
 	// Same-mode fan-out expands into 3 per-position diffs.
-	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
+	diffs = PlanPressPositions(diffs, binTypes, nil)
 	if len(diffs) != 3 {
 		t.Fatalf("same-mode fan-out setup: expected 3 per-position diffs, got %d", len(diffs))
 	}
 	// Cross-mode fan-out then runs and should add nothing.
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 	if len(out) != 3 {
 		t.Errorf("expected cross-mode fan-out to add nothing on top of same-mode fan-out, got %d diffs", len(out))
 	}
@@ -963,7 +957,7 @@ func TestFanOutCrossMode_PressIndexFullDrop_FansOutExtensions(t *testing.T) {
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationDrop, FromClaim: &from, ToClaim: nil},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 	if len(out) != 3 {
 		t.Fatalf("expected 3 diffs (front drop + middle drop + back drop), got %d", len(out))
 	}
@@ -989,7 +983,7 @@ func TestFanOutCrossMode_SynthesizedClaimRetainsParentID(t *testing.T) {
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := FanOutPressIndexCrossMode(diffs, nil)
+	out := PlanPressPositions(diffs, nil, nil)
 	for _, d := range out {
 		if d.CoreNodeName == "FRONT" {
 			continue // unchanged
@@ -1032,7 +1026,7 @@ func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_DifferentBinType_Synt
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")
 	binTypes := map[string]string{"LK41": "TOTE-2415", "PC3C": "45x48 KD"}
 
-	got := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02")
+	got := findDiff(PlanPressPositions(diffs, binTypes, nil), "PLN_02")
 	if got == nil {
 		t.Fatal("PLN_02 got no diff — the back position strands with no order and no error (HK #27)")
 	}
@@ -1070,7 +1064,7 @@ func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_SameBinType_NoFanOut(
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "LK42")
 	binTypes := map[string]string{"LK41": "TOTE-2415", "LK42": "TOTE-2415"}
 
-	if d := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02"); d != nil {
+	if d := findDiff(PlanPressPositions(diffs, binTypes, nil), "PLN_02"); d != nil {
 		t.Fatalf("same bin type must not fan out the shared back position, got %+v", d)
 	}
 }
@@ -1084,14 +1078,15 @@ func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_UnknownBinType_NoFanO
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")
 	binTypes := map[string]string{"LK41": "TOTE-2415"} // PC3C unresolved
 
-	if d := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02"); d != nil {
+	if d := findDiff(PlanPressPositions(diffs, binTypes, nil), "PLN_02"); d != nil {
 		t.Fatalf("unknown bin type must not fan out the shared back position, got %+v", d)
 	}
 }
 
-// The same-mode pass owns any position it touched; this pass must not emit a
-// second diff for it. Shared FRONT node + different bin types is the same-mode
-// case, so PLN_02 is already covered when cross-mode runs.
+// A split cell owns every position it names; the walk of positions no diff
+// stands on must not emit a second diff for one. Shared FRONT node + different
+// bin types splits the cell, so PLN_02 is covered by the split, once, and a
+// second run over the planned diffs adds nothing.
 func TestFanOutCrossMode_SharedFrontNode_DifferentBinType_NoDoubleEmit(t *testing.T) {
 	t.Parallel()
 	from := pressIndexFanOutClaim("LK41", "PLN_01", "PLN_02", "")
@@ -1101,17 +1096,17 @@ func TestFanOutCrossMode_SharedFrontNode_DifferentBinType_NoDoubleEmit(t *testin
 		{CoreNodeName: "PLN_01", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 
-	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
-	out := FanOutPressIndexCrossMode(diffs, binTypes)
-
-	var n int
-	for _, d := range out {
-		if d.CoreNodeName == "PLN_02" {
-			n++
+	once := PlanPressPositions(diffs, binTypes, nil)
+	for name, out := range map[string][]ChangeoverNodeDiff{"once": once, "twice": PlanPressPositions(once, binTypes, nil)} {
+		var n int
+		for _, d := range out {
+			if d.CoreNodeName == "PLN_02" {
+				n++
+			}
 		}
-	}
-	if n != 1 {
-		t.Fatalf("PLN_02 got %d diffs, want exactly 1 (same-mode pass owns it)", n)
+		if n != 1 {
+			t.Fatalf("%s: PLN_02 got %d diffs, want exactly 1 (the split cell owns it)", name, n)
+		}
 	}
 }
 
