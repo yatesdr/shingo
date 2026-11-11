@@ -18,16 +18,21 @@ import (
 )
 
 // place_by_contents.go — choosing a lifted carrier's drop by what it holds
-// (dropByContents): the partial arm, then the keeper arm.
+// (dropByContents): the other-part arm, then the partial arm, then the keeper
+// arm.
 //
 // A carrier leaves a line full, empty, or UNFINISHED: its part set, its count
-// above 0 and below the part's capacity. A full goes where the claim sends it;
-// so does an unfinished one, unless the claim names a partial home
-// (partial_destination), where it waits to be called back and finished. An
-// EMPTY lifted off a line position goes to a kanban that is short of
-// it, when one supporting that position is: the keeper wins over the
-// planned drop. Core owns the count, so Core decides: the Edge authors the
-// route and never reads the count to choose a drop.
+// above 0 and below the part's capacity. A full goes where the claim for its
+// part at that node sends it: the order's claim's outbound for the order's
+// part, another claim's for another part. So does an unfinished one, unless
+// the claim names a partial home (partial_destination), where it waits to be
+// called back and finished. An EMPTY lifted off a line position goes to a
+// kanban supporting that position whenever a slot of it takes the cart: the
+// keeper wins over the planned drop. Core holds the bin and owns the count, so
+// Core decides: the Edge authors the route with the claim's ordinary
+// destinations and never reads the carrier to choose a drop. A carrier set
+// down at the node it was lifted from (a round trip to staging and back) has
+// not left, and keeps its drop.
 //
 // ── WHEN ──────────────────────────────────────────────────────────────────
 // At the moment the count is final and before the drop reaches the fleet:
@@ -304,24 +309,26 @@ func partialHome(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.
 }
 
 // kanbanSlot is the keeper arm: where an empty lifted off a line
-// position goes when a kanban supporting that position wants it,
-// "" when none does. The keeper is absolute where it wants the carrier and
+// position goes when a kanban supporting that position takes it,
+// "" when none does. The keeper is absolute where it takes the carrier and
 // the door knows what the carrier is.
 //
 //   - The carrier is empty (no part) and not bare; the lift node is a line
 //     position (IsLinePosition): never a move off a loader window, a storage
 //     node or a group.
-//   - A tote cart goes only as its own height, by its carrier state: tops &
-//     bottoms to a group short of its tops & bottoms row; an empty at whole
-//     layers to a group short of that wanted height (or, where the group wants
-//     no heights of the type, short of the type); a leftover or an unverified
-//     cart keeps the planned drop, where the unloader's card decides. A tote
-//     cart lifted off a fed press's outside (IsFedOutside) always keeps the
-//     planned drop: its count is exact only at its lift, after every door.
-//   - Any other empty goes to a group short of its type (the keeper's Short).
-//   - Of the groups that want it, the largest gap first, ties by name, the
-//     first with a slot that admits the cart (StoreDestination, the cart
-//     stated).
+//   - A tote cart goes only as tops & bottoms or an empty at whole layers, by
+//     its carrier state; a leftover or an unverified cart keeps the planned
+//     drop, where the unloader's card decides. A tote cart lifted off a fed
+//     press's outside (IsFedOutside) always keeps the planned drop: its count
+//     is exact only at its lift, after every door.
+//   - The cart is of the supporting kanban's loop (a cart off a position it
+//     supports, nodes.KanbanDoor.Loop), so it lands in the kanban whenever a
+//     slot admits it, whatever the level says (plan.Planner.ChoosePush; the
+//     group resolver asks no level of a loop cart). With no slot free, it goes
+//     to the first of the kanban's sources short of its type; with none, it
+//     keeps the planned drop.
+//   - Kanbans supporting the position are asked in the order
+//     KanbansSupporting reads them, the first with a slot taking the cart.
 //
 // Reads, only for an empty off a line position: the line-position read, the
 // fed-outside read for a tote cart, the supporting groups; per supporting

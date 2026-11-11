@@ -38,8 +38,8 @@ import (
 //
 // LOCUS — Core is the single authority. The Edge ships the evac order with
 // DeliveryNode="" and holds no authoritative bin-landing record; Core resolves the
-// dropoff here and the existing release-time redirect overlay (patchRedirectSegments)
-// carries it to the fleet. Divergence-free.
+// dropoff here and moves it in the plan the pass sends and the stored one
+// (setParkDestination, through repoint), so the create carries it. Divergence-free.
 //
 // NEVER-2N — the park's placement MUST consult the Core in-flight authority (the
 // SAME order-truth restock gates on, the in-flight delivery-node counts /

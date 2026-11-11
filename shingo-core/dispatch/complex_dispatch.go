@@ -514,8 +514,9 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 	// dedicated-loader home (order.SourceNode = the evac pickup), Core decides where
 	// the bin lands — HOME if free, else a buffer slot — and rewrites DeliveryNode.
 	// The Edge shipped DeliveryNode="" and named no target, so Core is the single
-	// authority; the release-time redirect overlay (patchRedirectSegments) carries
-	// the choice to the fleet. A non-dedicated / non-loader source is left untouched.
+	// authority; the park moves the drop in the plan this pass sends and in the
+	// stored one (repoint), so the create carries it. A non-dedicated / non-loader
+	// source is left untouched.
 	//
 	// When neither can take the bin and the only destination left is the home just
 	// found unavailable, the order WAITS here rather than being dispatched onto it.

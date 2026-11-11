@@ -300,9 +300,9 @@ func TestPlaceForDedicatedLoader_SupplyWithWait_HomeFree_RoutesHome(t *testing.T
 }
 
 // The release-time link: after placeForDedicatedLoader rewrites DeliveryNode, the
-// existing patchRedirectSegments must overlay it onto the final dropoff step so the
-// fleet follows the park choice. This is why no Edge step change is needed — Core is
-// the single authority and the existing redirect overlay carries it.
+// existing patchRedirectSegments must overlay it onto the final dropoff step of a
+// segment cut later. The create carries the park too: the park moves the plan the
+// pass sends (TestRepoint_APlanningRepointReachesTheCreate).
 func TestPlaceForDedicatedLoader_RedirectCarriesParkToFinalDropoff(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
