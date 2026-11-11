@@ -13,12 +13,12 @@ delegateActions       -         shared    dom.js
 installBackdropClose  -         -         utils.js
 showModal             -         own       utils.js
 hideModal             -         own       utils.js
-confirm               -         own       utils.js
-prompt                -         own       utils.js
+confirm               -         shared    utils.js
+prompt                -         shared    utils.js
 uiConfirm             -         -         -
 uiConfirmWithInput    -         -         -
 uiPrompt              -         -         -
-toast                 -         own       utils.js
+toast                 -         shared    utils.js
 api                   -         own       utils.js
 apiGet                own       -         -
 apiPost               own       -         -

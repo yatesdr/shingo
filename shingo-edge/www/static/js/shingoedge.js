@@ -24,6 +24,8 @@
 // Migrate it to module imports and the window-bridge can go.
 
 import { escapeHtml } from '/static/shared/dom.js';
+import { confirm, prompt } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 import {
     installHtmxLiveDurations,
     installHtmxTimestampConversion,
@@ -157,69 +159,12 @@ export function hideModal(id, opts) {
     }
 }
 
-// --- Confirm dialog ---
-export function confirm(message) {
-    return new Promise(function(resolve) {
-        var overlay = document.createElement('div');
-        overlay.className = 'confirm-overlay';
-        var box = document.createElement('div');
-        box.className = 'confirm-box';
-        box.innerHTML = '<p>' + escapeHtml(message) + '</p>';
-        var cancelBtn = document.createElement('button');
-        cancelBtn.className = 'btn';
-        cancelBtn.textContent = 'Cancel';
-        var confirmBtn = document.createElement('button');
-        confirmBtn.className = 'btn btn-danger';
-        confirmBtn.textContent = 'Confirm';
-        box.appendChild(cancelBtn);
-        box.appendChild(confirmBtn);
-        overlay.appendChild(box);
-        document.body.appendChild(overlay);
-        cancelBtn.onclick = function() { overlay.remove(); resolve(false); };
-        confirmBtn.onclick = function() { overlay.remove(); resolve(true); };
-    });
-}
-
-// --- Prompt dialog ---
-// Promise-based, styled overlay. Replaces native window.prompt.
-// opts.type ('text'|'number'), opts.value (default), opts.min, opts.max.
-// Resolves to the entered string, or null on cancel/escape.
-export function prompt(message, opts) {
-    opts = opts || {};
-    return new Promise(function(resolve) {
-        var overlay = document.createElement('div');
-        overlay.className = 'confirm-overlay';
-        var box = document.createElement('div');
-        box.className = 'confirm-box';
-        box.innerHTML = '<p>' + escapeHtml(message) + '</p>';
-        var input = document.createElement('input');
-        input.className = 'form-input';
-        input.type = opts.type === 'number' ? 'number' : 'text';
-        if (opts.value !== undefined) input.value = String(opts.value);
-        if (opts.min !== undefined) input.min = String(opts.min);
-        if (opts.max !== undefined) input.max = String(opts.max);
-        input.style.cssText = 'margin:0.5rem 0 1rem;display:block;width:100%';
-        box.appendChild(input);
-        var cancelBtn = document.createElement('button');
-        cancelBtn.className = 'btn';
-        cancelBtn.textContent = 'Cancel';
-        var okBtn = document.createElement('button');
-        okBtn.className = 'btn btn-primary';
-        okBtn.textContent = 'OK';
-        box.appendChild(cancelBtn);
-        box.appendChild(okBtn);
-        overlay.appendChild(box);
-        document.body.appendChild(overlay);
-        var done = function(v) { overlay.remove(); resolve(v); };
-        cancelBtn.onclick = function() { done(null); };
-        okBtn.onclick = function() { done(input.value); };
-        input.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') done(input.value);
-            else if (e.key === 'Escape') done(null);
-        });
-        setTimeout(function() { input.focus(); }, 0);
-    });
-}
+// --- confirm, prompt, toast: the layer's and the notice's ---
+// The one confirm and prompt (shared/layer.js: Escape, the backdrop and
+// every other close resolve them, focus goes in and comes back) and the one
+// toast (shared/notice.js). Re-exported here until the pages import them
+// from those files.
+export { confirm, prompt, toast };
 
 // --- Form helpers ---
 export function populateForm(formId, data) {
@@ -297,25 +242,6 @@ export const api = {
     patch: function(url, body) { return answered(http.patch(url, body, QUIET)); },
     del: function(url) { return answered(http.del(url, QUIET)); },
 };
-
-// --- Toast notifications ---
-export function toast(message, type) {
-    type = type || 'info';
-    var container = document.querySelector('.toast-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.className = 'toast-container';
-        document.body.appendChild(container);
-    }
-    var t = document.createElement('div');
-    t.className = 'toast toast-' + type;
-    t.textContent = message;
-    container.appendChild(t);
-    setTimeout(function() {
-        t.style.opacity = '0';
-        setTimeout(function() { t.remove(); }, 300);
-    }, 3000);
-}
 
 // --- Process selector navigation handlers ---
 // Templates that emit `<select data-action-change="navigateToProcess">`

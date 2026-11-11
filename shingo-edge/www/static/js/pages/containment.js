@@ -1,5 +1,6 @@
 import { api, confirm, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
 import { postAct } from '/static/js/ask-act.js';
+import { layerDepth } from '/static/shared/layer.js';
 
 // Quality Containment page: Verify Good releases one verified bin from its
 // containment node to the claim's outbound; Recall walks a contained
@@ -86,8 +87,10 @@ delegateActions(document.body, {
 // path (the server template), zero drift between it and the page.
 var _reloadHeld = false;
 
+// dialogOpen asks the layer (shared/layer.js), which holds every confirm
+// and modal open on the page: the confirm is no longer a .confirm-overlay.
 function dialogOpen() {
-    return !!document.querySelector('.modal-overlay.active, .confirm-overlay');
+    return layerDepth() > 0;
 }
 
 function reloadOnContainment() {

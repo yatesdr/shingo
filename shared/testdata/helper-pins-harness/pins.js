@@ -96,6 +96,8 @@ const SURFACES = [
         file: 'shingo-edge/www/static/js/shingoedge.js',
         pick: (m) => ({ showModal: m.showModal, hideModal: m.hideModal, confirm: m.confirm, prompt: m.prompt, toast: m.toast }),
         words: { confirm: 'confirm', prompt: 'prompt' },
+        // Its confirm and prompt are shared/layer.js's, its toast notice.js's.
+        sel: { dialog: '.layer-scrim', toastBox: '.notice-stack', toast: '.notice-toast' },
     },
     {
         name: 'shared', root: 'core', entry: '/static/shared/utils.js',
@@ -1168,11 +1170,14 @@ function hubCensus() {
     const em = edge.load('/static/js/shingoedge.js');
     edge.load('/static/shared/utils.js');
     const edgeAdded = added(edge.window, edgeWindowBefore);
-    // A hub's export is "shared" when it is the very value the defining shared
-    // module exports in the same realm (one module instance per URL).
+    // A hub's export is "shared" when it is the very value a shared module
+    // that exports the name exports in the same realm (one module instance per
+    // URL): any of them, since utils.js still carries a copy of the layer's and
+    // the notice's names while a hub takes the component's.
     const home = sharedHome();
+    const exporters = sharedExporters();
     const kind = (r, mod, n) => (!(n in mod) ? '-'
-        : (home[n] && mod[n] === r.load('/static/shared/' + home[n])[n]) ? 'shared' : 'own');
+        : (exporters[n] || []).some((f) => mod[n] === r.load('/static/shared/' + f)[n]) ? 'shared' : 'own');
     for (const n of names) {
         out.push(n.padEnd(22) + kind(core, cm, n).padEnd(10) + kind(edge, em, n).padEnd(10) + (home[n] || '-'));
     }
@@ -1193,9 +1198,18 @@ function hubCensus() {
 // today, is the one named here.
 function sharedHome() {
     const out = {};
+    const all = sharedExporters();
+    Object.keys(all).forEach((n) => { out[n] = all[n][all[n].length - 1]; });
+    return out;
+}
+
+// sharedExporters maps each name to every shared/*.js file that exports it,
+// in name order.
+function sharedExporters() {
+    const out = {};
     fs.readdirSync(path.join(REPO, 'shared')).filter((f) => f.endsWith('.js')).sort().forEach((f) => {
         const src = fs.readFileSync(path.join(REPO, 'shared', f), 'utf8');
-        for (const m of src.matchAll(/^export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s*([\w$]+)/gm)) out[m[1]] = f;
+        for (const m of src.matchAll(/^export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s*([\w$]+)/gm)) (out[m[1]] = out[m[1]] || []).push(f);
     });
     return out;
 }

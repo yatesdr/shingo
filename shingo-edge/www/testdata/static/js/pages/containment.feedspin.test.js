@@ -10,8 +10,8 @@
 //
 // Loaded like changeover.refresh.test.js: the module run through
 // vm.runInContext with the import line stripped and its imports supplied as
-// globals. setInterval, createSSE, delegateActions and confirm are captured,
-// so the test drives the SSE handler and the verbs directly.
+// globals. setInterval, createSSE, delegateActions, confirm and layerDepth
+// are captured, so the test drives the SSE handler and the verbs directly.
 
 const fs = require('fs');
 const path = require('path');
@@ -42,10 +42,7 @@ function makeContext() {
     const document = {
         hidden: false,
         body: {},
-        querySelector(sel) {
-            if (!state.modalOpen) return null;
-            return sel.split(',').some((s) => s.trim() === '.modal-overlay.active' || s.trim() === '.confirm-overlay') ? {} : null;
-        },
+        querySelector() { return null; },
         getElementById() { return null; },
         addEventListener() {},
     };
@@ -69,6 +66,9 @@ function makeContext() {
             state.modalOpen = true;
             state.confirmResolve = (ok) => { state.modalOpen = false; resolve(ok); };
         }),
+        // The layer's count of open entries (shared/layer.js): the confirm
+        // above is one while it is pending.
+        layerDepth: () => (state.modalOpen ? 1 : 0),
         toast: () => {},
         delegateActions: (_root, actions) => { state.actions = actions; },
         createSSE: (url, handlers) => { state.sse.push({ url, handlers }); return { close() {} }; },
