@@ -79,6 +79,13 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 		if r.Loaded {
 			jackState, liftHeight = 1, simLiftHeightLoaded // loaded at rest
 		}
+		// The table as a plant robot reports it while a turn runs: task 2
+		// until it settles (table_turn.go).
+		table := s.TableStatus(r.ID)
+		taskStatus := 0
+		if table.TaskStatus == fleet.TaskStatusRunning {
+			taskStatus = fleet.TaskStatusRunning
+		}
 		robots = append(robots, fleet.RobotStatus{
 			VehicleID:    r.ID,
 			Connected:    true,
@@ -119,6 +126,8 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 			// than arrived at by every robot sharing the empty string.
 			MapMD5:         "sim-map-md5",
 			CurrentStation: r.At,
+			TableAngle:     table.TableAngle,
+			TaskStatus:     taskStatus,
 		})
 	}
 	return robots, nil

@@ -44,6 +44,21 @@ type BinPointStatus struct {
 	BinTask []map[string]json.RawMessage `json:"binTask,omitempty"`
 }
 
+// TaskArgs returns each binTask's raw parameter map keyed by its name, or nil
+// when the location has none. Safe on a nil receiver.
+func (s *BinPointStatus) TaskArgs() map[string]json.RawMessage {
+	if s == nil || len(s.BinTask) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(s.BinTask))
+	for _, entry := range s.BinTask {
+		for name, args := range entry {
+			out[name] = args
+		}
+	}
+	return out
+}
+
 // TaskNames returns the binTask action names configured at this location, in
 // response order. Each BinTask entry is a single-key object keyed by the task
 // name; this flattens those keys. Safe on a nil receiver (returns nil).

@@ -77,6 +77,8 @@ export function openNodeModal(el, opts) {
   // for an operator who can edit: the section lives in the auth-only half of
   // the modal and has no read-only twin.
   renderKanbanSection(isAuth && isGroupType, d.id);
+  // The table turn: a physical spot only, never a group, lane or lane slot.
+  renderTableTurn(isAuth && d.synthetic !== 'true' && !isLaneSlot);
   // The keeper's last tick for a kanban, for every viewer: inside
   // the kanban section with a session, in the read-only half without.
   renderKeeperLevels(isGroupType ? d.name : '', d.id);
@@ -169,6 +171,8 @@ function loadNodeDetail(nodeID, isSynthetic) {
         } else if (p.key === 'resolve_around') {
           var rabox = document.getElementById('nf-resolve-around');
           if (rabox) rabox.checked = (p.value === 'on');
+        } else if (p.key === 'table_turn_rad' || p.key === 'table_turn_side') {
+          loadTableTurnProperty(p.key, p.value);
         }
       });
     })
@@ -483,6 +487,8 @@ async function handleNodeSave(el, evt) {
     if (!ok) return;
   }
 
+  // Refused when the turn cannot work at this spot; the reason is shown.
+  if (await saveTableTurn() === false) return;
   // This one can ask the human a question (a mark the map does not know).
   if (await saveLaneGatePoints() === false) return;
   await saveKanban();
@@ -828,6 +834,73 @@ async function saveLaneGatePoints() {
       toast('Could not save the waiting point for ' + row.dataset.laneName + ': ' + err, 'error');
     }
   }
+}
+
+// ── Table turn ─────────────────────────────────────────────────────────────
+//
+// The person types DEGREES and Core stores RADIANS (table_turn_rad). The saved
+// value is remembered as the degrees shown, so a save that changed nothing
+// writes nothing: re-deriving radians from a rounded display would rewrite the
+// property, and leave an audit row, on every save.
+
+// renderTableTurn shows the section, empty, for a node that can carry a turn.
+function renderTableTurn(show) {
+  var box = document.getElementById('nf-table-turn');
+  if (!box) return;
+  box.classList.toggle('hide', !show);
+  var deg = document.getElementById('nf-turn-deg');
+  var side = document.getElementById('nf-turn-side');
+  if (deg) { deg.value = ''; deg.dataset.saved = ''; }
+  if (side) { side.value = 'lift'; side.dataset.saved = ''; }
+}
+
+// loadTableTurnProperty fills the section from one stored property.
+function loadTableTurnProperty(key, value) {
+  if (key === 'table_turn_rad') {
+    var deg = document.getElementById('nf-turn-deg');
+    var rad = parseFloat(value);
+    if (!deg || !isFinite(rad)) return;
+    deg.value = String(Math.round(rad * 180 / Math.PI * 10) / 10);
+    deg.dataset.saved = deg.value;
+  } else if (key === 'table_turn_side') {
+    var side = document.getElementById('nf-turn-side');
+    if (!side) return;
+    side.value = value || 'lift';
+    side.dataset.saved = value || '';
+  }
+}
+
+// saveTableTurn writes what changed. Core refuses a turn that cannot work at
+// this spot (a Wait key that does not recognize the cart, a fleet that cannot
+// turn a table); the refusal stops the save, so the reason stays on screen.
+async function saveTableTurn() {
+  var box = document.getElementById('nf-table-turn');
+  if (!box || box.classList.contains('hide')) return true;
+  var nodeID = parseInt(document.getElementById('nf-id').value, 10);
+  if (!nodeID) return true;
+  var side = document.getElementById('nf-turn-side');
+  var deg = document.getElementById('nf-turn-deg');
+  try {
+    if (side && side.value !== (side.dataset.saved || 'lift')) {
+      await apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'table_turn_side', value: side.value});
+      side.dataset.saved = side.value;
+    }
+    var typed = deg ? deg.value.trim() : '';
+    if (deg && typed !== (deg.dataset.saved || '')) {
+      var value = '';
+      if (typed !== '') {
+        var d = parseFloat(typed);
+        if (!isFinite(d)) { toast('The table angle must be a number of degrees.', 'error'); return false; }
+        value = String(d * Math.PI / 180);
+      }
+      await apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'table_turn_rad', value: value});
+      deg.dataset.saved = typed;
+    }
+  } catch (err) {
+    toast('Could not save the table turn: ' + err, 'error');
+    return false;
+  }
+  return true;
 }
 
 // /nodes?open=ALN_003 opens that node's pop-up — the order pop-up links every

@@ -78,3 +78,36 @@ func TestMapRobotStatus_CarriesTheJackState(t *testing.T) {
 		t.Errorf("stations = %q / %q", got.CurrentStation, got.LastStation)
 	}
 }
+
+// A table turned under a cart, scrubbed from Hopkinsville AMR-05's
+// /robotsStatus on 2026-11-10 at 14:50:51, after a #3057 to 1.57
+// (turntable-bintask-2026-11-10/turn3057_145043.log): the table at 1.569, the
+// body's angle unchanged, the turn's task finished (4).
+const turnedTableRobotJSON = `{
+  "vehicle_id": "AMR-05",
+  "rbk_report": {
+    "angle": 3.131, "spin": 1.569, "task_status": 4, "current_station": "AP590",
+    "jack": {"jack_height": -0.0001, "jack_isFull": false, "jack_state": 3}
+  }
+}`
+
+// spin is the table's angle, and it reaches fleet.RobotStatus as TableAngle,
+// apart from the body's angle: the table turn reads nothing else to know it is
+// done.
+func TestMapRobotStatus_CarriesTheTableAngle(t *testing.T) {
+	t.Parallel()
+	var r rds.RobotStatus
+	if err := json.Unmarshal([]byte(turnedTableRobotJSON), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := mapRobotStatus(r)
+	if got.TableAngle != 1.569 {
+		t.Errorf("TableAngle = %v, want 1.569 (rbk_report.spin)", got.TableAngle)
+	}
+	if got.Angle != 3.131 {
+		t.Errorf("Angle = %v, want the body's 3.131 — the table angle must not leak into it", got.Angle)
+	}
+	if got.TaskStatus != 4 {
+		t.Errorf("TaskStatus = %d, want 4", got.TaskStatus)
+	}
+}

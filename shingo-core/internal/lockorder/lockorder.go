@@ -67,6 +67,7 @@ type (
 	ETACache        struct{}
 	LaneGateMap     struct{}
 	ScanTrigger     struct{}
+	TableTurns      struct{}
 
 	BurialShadow struct{}
 	FolderShadow struct{}
@@ -85,6 +86,7 @@ type (
 	SimDeck   struct{}
 	SimFleet  struct{}
 	Simulator struct{}
+	SimTable  struct{}
 
 	TestWedgeSweep struct{}
 	TestShared     struct{}
@@ -130,6 +132,7 @@ func (UngatedDigTally) Rank() int { return 153 }
 func (ETACache) Rank() int        { return 154 }
 func (LaneGateMap) Rank() int     { return 155 }
 func (ScanTrigger) Rank() int     { return 156 }
+func (TableTurns) Rank() int      { return 157 }
 
 func (BurialShadow) Rank() int { return 160 }
 func (FolderShadow) Rank() int { return 161 }
@@ -148,6 +151,7 @@ func (SSEClient) Rank() int        { return 176 }
 func (SimDeck) Rank() int   { return 180 }
 func (SimFleet) Rank() int  { return 181 }
 func (Simulator) Rank() int { return 182 }
+func (SimTable) Rank() int  { return 183 }
 
 func (TestWedgeSweep) Rank() int { return 185 }
 func (TestShared) Rank() int     { return 186 }
@@ -192,6 +196,7 @@ func (UngatedDigTally) Name() string { return "dispatch.ungatedDigTally.mu" }
 func (ETACache) Name() string        { return "eta.Cache.mu" }
 func (LaneGateMap) Name() string     { return "dispatch.laneGateSerializer.mu" }
 func (ScanTrigger) Name() string     { return "fulfillment.triggerMu" }
+func (TableTurns) Name() string      { return "dispatch.Dispatcher.turnMu" }
 
 func (BurialShadow) Name() string { return "service.burialShadow.mu" }
 func (FolderShadow) Name() string { return "service.folderShadow.mu" }
@@ -210,6 +215,7 @@ func (SSEClient) Name() string        { return "www.sseClient.mu" }
 func (SimDeck) Name() string   { return "simulator.deck.mu" }
 func (SimFleet) Name() string  { return "simulator.driver.fleetMu" }
 func (Simulator) Name() string { return "simulator.Simulator.mu" }
+func (SimTable) Name() string  { return "simulator.table.mu" }
 
 func (TestWedgeSweep) Name() string { return "testdb.wedgeSweepMu" }
 func (TestShared) Name() string     { return "testdb.sharedMu" }

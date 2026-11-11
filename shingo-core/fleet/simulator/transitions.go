@@ -133,6 +133,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 	if emitter == nil || resolver == nil {
 		// Unwired backend: commit in place, same as DriveState's legacy arm.
 		s.commitStateLocked(order, newState)
+		order.assignRobot(robotID)
 		s.mu.Unlock()
 		return oldState, mapStateInternal(newState), false
 	}
@@ -162,6 +163,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 		return oldState, "", false
 	}
 	s.commitStateLocked(order, newState)
+	order.assignRobot(robotID)
 	mappedStatus = mapStateInternal(newState)
 	s.mu.Unlock()
 
@@ -261,6 +263,13 @@ func isTransitionLocked(order *simulatedOrder, newState string) bool {
 
 // commitStateLocked records a transition. Any committed transition answers
 // the release that armed awaitingNextWait.
+// assignRobot records the robot an order was driven with. Caller holds s.mu.
+func (o *simulatedOrder) assignRobot(robotID string) {
+	if robotID != "" {
+		o.assigned = robotID
+	}
+}
+
 func (s *SimulatorBackend) commitStateLocked(order *simulatedOrder, newState string) {
 	order.state = newState
 	order.awaitingNextWait = false

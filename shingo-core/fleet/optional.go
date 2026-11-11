@@ -1,6 +1,8 @@
 package fleet
 
 import (
+	"encoding/json"
+	"math"
 	"strings"
 	"time"
 )
@@ -49,6 +51,12 @@ type LocationTasks struct {
 	Location  string
 	Exists    bool
 	TaskNames []string
+	// TaskArgs is each task's parameters as the fleet holds them, raw and keyed
+	// by task name (SEER: the binTask entry's value, e.g. Wait's
+	// {"operation":"Wait","recognize":true,"recfile":…}). The node page reads
+	// the Wait key's recognize from it to decide whether a table may turn
+	// there before the lift. Nil when the fleet reports none.
+	TaskArgs map[string]json.RawMessage
 }
 
 // BinTaskChecker is the OPTIONAL backend capability for querying which binTask
@@ -197,6 +205,9 @@ type RobotStatus struct {
 	JackState  int
 	JackIsFull bool
 	IsLoaded   bool
+	// TableAngle is the jack table's angle in the robot's frame, radians
+	// (rds.RbkReport.Spin). Read against a node's turn angle by TableOnAngle.
+	TableAngle float64
 	BatteryV   float64
 	BatteryA   float64
 	// Battery pack telemetry. Nothing in this system has ever retained a
@@ -307,6 +318,50 @@ type SceneStateProvider interface {
 // makes "this map is unchanged" answerable.
 type RobotMapDownloader interface {
 	DownloadRobotMap(vehicleID, mapName string) ([]byte, error)
+}
+
+// TableTurner is the OPTIONAL backend capability for turning a robot's jack
+// table while it stands at a node, before it lifts or sets down there
+// (dispatch's table turn). A backend without it cannot turn a table, and the
+// node page refuses a turn angle on such a fleet rather than holding every
+// lift there for a turn that cannot come.
+//
+// THE TURN IS SENT WHILE THE ROBOT IS PARKED AT A WAIT, never between blocks
+// of one task: recognize, drive-under and lift run as one robot task with no
+// gap in it (field test 2026-11-10, turntable-bintask-2026-11-10/BRIEF §2).
+type TableTurner interface {
+	// OrderVehicle names the robot the fleet holds vendorOrderID on, read from
+	// the fleet at the moment of asking; "" when it names none.
+	OrderVehicle(vendorOrderID string) (string, error)
+	// TurnTable turns vehicleID's table to rad, an ABSOLUTE angle in the
+	// robot's frame, by the nearest way. Sending it twice turns it once, so a
+	// retry is safe. It returns when the fleet has taken the command, not when
+	// the table is there: TableOnAngle over the next status says that.
+	TurnTable(vehicleID string, rad float64) error
+}
+
+// TableTurnTolerance is how close the table must read to its angle, radians
+// (about 2°). The robot settled at 1.569 for a 1.57 send, 2026-11-10.
+const TableTurnTolerance = 0.035
+
+// TaskStatusRunning is Robokit's task_status while the robot is executing a
+// task. A #3057 holds it for the whole turn (measured 2026-11-10: 2 from the
+// send until the table settled, then 4), so a table that reads its angle while
+// the task still runs has not finished turning.
+const TaskStatusRunning = 2
+
+// TableOnAngle reports whether a robot's table has finished turning to want:
+// the WRAPPED difference is within TableTurnTolerance (so -π and π are the same
+// angle) and the robot is not still running the turn.
+func TableOnAngle(r RobotStatus, want float64) bool {
+	return r.TaskStatus != TaskStatusRunning && AngleWithin(r.TableAngle, want, TableTurnTolerance)
+}
+
+// AngleWithin reports whether two angles in radians are within tol of each
+// other the short way round.
+func AngleWithin(a, b, tol float64) bool {
+	d := math.Atan2(math.Sin(a-b), math.Cos(a-b))
+	return math.Abs(d) <= tol
 }
 
 // RobotAlarm is a vendor-neutral active robot alarm (Q-026). JSON tags match

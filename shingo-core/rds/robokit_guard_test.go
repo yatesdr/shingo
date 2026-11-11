@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,5 +89,61 @@ func TestGeneralRobokitAPI_AcceptsARelayedPayload(t *testing.T) {
 	if len(got) != len(body) {
 		t.Errorf("got %d bytes, want %d -- the body must arrive unaltered, or the "+
 			"content hash over it means nothing", len(got), len(body))
+	}
+}
+
+// A command is judged by the robot's ret_code, not by the size floor: the
+// robot's whole answer to #3057 is 57 bytes, which the payload floor refuses
+// every time. Measured at Hopkinsville 2026-11-10 (turn3057_145043.log).
+func TestRobokitCommand_AcceptsTheRobotsAckAndNothingElse(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+		want string // "" = accepted
+	}{
+		{name: "the robot's ack", body: `{"create_on":"2026-11-11T04:34:09.607+0800","ret_code":0}`},
+		{name: "RDS error envelope", body: `{"code":50001,"msg":"generalRobokitAPI error: cmd is not json object"}`, want: "code 50001"},
+		{name: "robot refusal", body: `{"ret_code":40000,"err_msg":"spin not allowed"}`, want: "ret_code 40000"},
+		{
+			// RDS answered and the robot did not: the envelope the payload floor
+			// exists for, which a command must refuse on the missing ret_code.
+			name: "RDS ok with no robot answer",
+			body: `{"code":0,"create_on":"2026-08-07T19:13:26Z","msg":"ok"}`,
+			want: "no ret_code",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got GeneralRobokitRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				if _, err := w.Write([]byte(tc.body)); err != nil {
+					t.Errorf("write the reply: %v", err)
+				}
+			}))
+			defer srv.Close()
+
+			err := NewClient(srv.URL, time.Second).TurnTable("AMR-05", 1.57, 5*time.Second)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused the robot's ack: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+			if got.Vehicle != "AMR-05" || got.Port != RobokitPortNav || got.Code != RobokitCodeSpin {
+				t.Errorf("sent vehicle=%q port=%d code=%d, want AMR-05 %d %d",
+					got.Vehicle, got.Port, got.Code, RobokitPortNav, RobokitCodeSpin)
+			}
+			cmd, err := json.Marshal(got.Cmd)
+			if err != nil {
+				t.Fatalf("marshal the sent cmd: %v", err)
+			}
+			if string(cmd) != `{"robot_spin_angle":1.57,"spin_direction":0}` {
+				t.Errorf("sent cmd %s, want the absolute angle by the nearest way", cmd)
+			}
+		})
 	}
 }

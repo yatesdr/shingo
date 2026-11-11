@@ -109,6 +109,15 @@ type Dispatcher struct {
 	// acquirer is the fulfillment scanner, wired by the engine (SetAcquirer):
 	// the lock a door holds and the one acquire it asks for (door.go).
 	acquirer Acquirer
+
+	// The table turn (table_turn.go): the fleet's turner and the robot status
+	// reader, wired by the engine (SetTableTurner), nil on a fleet that cannot
+	// turn a table; the turn nodes, cached so a node with no angle costs no
+	// query. Behind turnMu, a leaf.
+	turnMu      lockcheck.Mutex[lockorder.TableTurns]
+	turner      fleet.TableTurner
+	robotStatus RobotStatusReader
+	turnNodes   map[string]turnNode
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {

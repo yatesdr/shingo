@@ -47,7 +47,11 @@ type simulatedOrder struct {
 	// path pins its order to the robot carrying the bin, and a return driven by
 	// some other robot would be a robot unloading a deck it does not have.
 	vehicle string
-	blocks  []simulatedBlock
+	// assigned is the robot the order was last driven with
+	// (DriveStateWithRobot), the simulator's answer to which robot holds it
+	// (OrderVehicle). "" until then.
+	assigned string
+	blocks   []simulatedBlock
 	// terminalAt is when the order first entered a terminal state
 	// (FINISHED/STOPPED/FAILED); zero until then. The driver's eviction
 	// sweep (T2.3) deletes terminal orders older than a retention window.
@@ -94,6 +98,8 @@ type SimulatorBackend struct {
 	// exactly why `unused` fires here on the default build. CI lints untagged, so
 	// the suppression is load-bearing, not cosmetic.
 	driver any //nolint:unused // set by NewDriverFromConfig / read by typedDriver, both sim-tagged (driver_lifecycle_sim.go)
+	// table is the simulated jack tables (table_turn.go).
+	table simTable
 }
 
 // New creates a SimulatorBackend with the given options.
@@ -103,6 +109,7 @@ func New(opts ...Option) *SimulatorBackend {
 		settled: make(map[string]struct{}),
 		clk:     clock.Real(),
 	}
+	s.table.init()
 	for _, o := range opts {
 		o(&s.opts)
 	}

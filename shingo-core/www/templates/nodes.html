@@ -225,6 +225,29 @@
       </div>
     </div>
 
+    <!-- Table turn (a physical spot only; not a group, lane or lane slot).
+         Degrees here, radians stored (table_turn_rad). Core refuses a turn
+         that cannot work at this spot and says why. -->
+    <div id="nf-table-turn" class="hide mb-2">
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Table turn</label>
+      <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
+        Turn the robot's jack table here, while it waits under the cart, before it lifts. The angle is in
+        the robot's frame. Empty means no turn. Core holds the lift until the table reads the angle.
+      </div>
+      <div class="grid grid-2 text-sm">
+        <div class="form-group">
+          <label for="nf-turn-deg">Angle (degrees)</label>
+          <input type="number" id="nf-turn-deg" class="form-input" step="0.1" min="-179.9" max="179.9" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="nf-turn-side">When</label>
+          <select id="nf-turn-side">
+            <option value="lift">Before the lift</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <!-- Kanban (NGRP only) -------------------------------------------------
          The level Core holds here in EMPTY carriers. A group with a level is a
          kanban. Not a "buffer": a loader window with home_kind=buffer is a

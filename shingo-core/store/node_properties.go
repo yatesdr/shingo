@@ -39,3 +39,9 @@ func (db *DB) UnmarkedLanes() ([]string, error) { return nodes.UnmarkedLanes(db.
 func (db *DB) GroupsWithWaitingSpots() (map[int64]bool, error) {
 	return nodes.GroupsWithWaitingSpots(db.DB)
 }
+
+// ListNodePropertiesByKeys is every property under one of keys, with its
+// node's name (nodes.ListPropertiesByKeys).
+func (db *DB) ListNodePropertiesByKeys(keys ...string) ([]nodes.NamedProperty, error) {
+	return nodes.ListPropertiesByKeys(db.DB, keys...)
+}

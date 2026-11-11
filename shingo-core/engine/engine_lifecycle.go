@@ -483,5 +483,32 @@ func (e *Engine) newDispatcher(emitter dispatch.Emitter, resolver *dispatch.Defa
 		resolver,
 	)
 	d.SetBinsRowsFunc(e.nodeService.BinsRows)
+	// The table turn: the fleet's turner, if it has one, and the robot status
+	// from the poll robotRefreshLoop already makes (dispatch/table_turn.go).
+	if t, ok := e.fleet.(fleet.TableTurner); ok {
+		d.SetTableTurner(t, e.polledRobotStatus)
+	}
 	return d
+}
+
+// polledRobotFresh is how old the latest robot poll may be for the table turn
+// to act on it: three poll intervals. Older, and a robot's table angle is a
+// memory, not a reading.
+const polledRobotFresh = 3 * robotPollInterval
+
+// polledRobotStatus is the table turn's robot read: the robot as the latest
+// poll listed it, and false when that poll is stale or does not list it. It
+// reads the poll rather than robotsCache, which keeps a robot RDS stopped
+// listing forever.
+func (e *Engine) polledRobotStatus(vehicleID string) (fleet.RobotStatus, bool) {
+	robots, at := e.latestPolledRobots()
+	if at.IsZero() || time.Since(at) > polledRobotFresh {
+		return fleet.RobotStatus{}, false
+	}
+	for _, r := range robots {
+		if r.VehicleID == vehicleID {
+			return r, true
+		}
+	}
+	return fleet.RobotStatus{}, false
 }

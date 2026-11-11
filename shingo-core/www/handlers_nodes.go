@@ -526,6 +526,13 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A TABLE TURN THAT CANNOT WORK IS REFUSED HERE, where the person typing it
+	// can be told why: a robot held at a node for a turn its fleet cannot make
+	// stands there until someone hard-releases it (dispatch/table_turn.go).
+	if err := h.engine.Dispatcher().CheckTableTurnProperty(req.NodeID, req.Key, req.Value, false); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := h.setNodePropertyAudited(req.NodeID, req.Key, req.Value); err != nil {
 		if service.IsLaneUnmarked(err) {
 			h.jsonError(w, "This group has lanes, and every lane needs a waiting spot: keep at least one.", http.StatusBadRequest)
@@ -534,7 +541,20 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.reloadTableTurnsAfter(req.Key)
 	h.jsonSuccess(w)
+}
+
+// reloadTableTurnsAfter refreshes the dispatcher's turn nodes after a write to
+// one of the turn's properties, so the next plan reads it. A reload that fails
+// is logged; the floor reloads on its next pass.
+func (h *Handlers) reloadTableTurnsAfter(key string) {
+	if !dispatch.IsTableTurnProperty(key) {
+		return
+	}
+	if err := h.engine.Dispatcher().ReloadTableTurns(); err != nil {
+		log.Printf("node property %s: reload the table turn nodes: %v", key, err)
+	}
 }
 
 // apiNodeDisplayNameSet is the Nodes page's display-name write. The node's
@@ -759,6 +779,10 @@ func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
+	if err := h.engine.Dispatcher().CheckTableTurnProperty(req.NodeID, req.Key, "", true); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := h.engine.NodeService().DeleteNodeProperty(req.NodeID, req.Key); err != nil {
 		if service.IsLaneUnmarked(err) {
 			h.jsonError(w, "This group has lanes, and every lane needs a waiting spot: keep at least one.", http.StatusBadRequest)
@@ -767,5 +791,6 @@ func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.reloadTableTurnsAfter(req.Key)
 	h.jsonSuccess(w)
 }

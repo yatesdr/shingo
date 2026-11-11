@@ -105,6 +105,7 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 		JackState:         r.RbkReport.Jack.JackState,
 		JackIsFull:        r.RbkReport.Jack.JackIsFull,
 		IsLoaded:          r.IsLoaded,
+		TableAngle:        r.RbkReport.Spin,
 		BatteryV:          r.RbkReport.Voltage,
 		BatteryA:          r.RbkReport.Current,
 		BatteryTemp:       r.RbkReport.BatteryTemperature,

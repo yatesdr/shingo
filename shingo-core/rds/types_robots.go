@@ -166,9 +166,15 @@ type RbkReport struct {
 	Time                int64       `json:"time"`
 	TotalTime           int64       `json:"total_time"`
 	Jack                JackReport  `json:"jack"`
-	Voltage             float64     `json:"voltage"`
-	Current             float64     `json:"current"`
-	Alarms              RbkAlarms   `json:"alarms"`
+	// Spin is the jack TABLE's angle in the robot frame, radians — not the
+	// chassis. SEER calls turning the table "spin" (#3057) and rotating the body
+	// "turn" (#3056). Measured at Hopkinsville 2026-11-10: 0.0016 at rest, 1.569
+	// about 8 s after a #3057 to 1.57, with the body still. It is the only read
+	// that says a table turn is done (dispatch's table turn, fleet.TableOnAngle).
+	Spin    float64   `json:"spin"`
+	Voltage float64   `json:"voltage"`
+	Current float64   `json:"current"`
+	Alarms  RbkAlarms `json:"alarms"`
 	// CurrentMapMD5 hashes the robot's OWN onboard .smap — the artifact that
 	// holds the reflector positions and the ReflectorArea polygons, none of
 	// which RDS exposes (its /scene returns advancedAreaList: []).

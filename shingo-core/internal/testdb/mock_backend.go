@@ -17,7 +17,48 @@ type MockBackend struct {
 	onCreate    func()
 	onRelease   func()
 	releaseReqs []ReleaseCall
+	// turns and vehicles are the table turner (fleet.TableTurner): every
+	// TurnTable call, and the robot OrderVehicle names per vendor order.
+	turns    []TurnCall
+	vehicles map[string]string
 }
+
+// TurnCall is one TurnTable the mock took.
+type TurnCall struct {
+	Vehicle string
+	Rad     float64
+}
+
+var _ fleet.TableTurner = (*MockBackend)(nil)
+
+// SetOrderVehicle names the robot OrderVehicle answers for a vendor order.
+func (m *MockBackend) SetOrderVehicle(vendorOrderID, vehicle string) {
+	if m.vehicles == nil {
+		m.vehicles = map[string]string{}
+	}
+	m.vehicles[vendorOrderID] = vehicle
+}
+
+// OrderVehicle is fleet.TableTurner's vehicle read: the robot SetOrderVehicle
+// named, else "".
+func (m *MockBackend) OrderVehicle(vendorOrderID string) (string, error) {
+	if m.fail {
+		return "", fmt.Errorf("mock: not connected")
+	}
+	return m.vehicles[vendorOrderID], nil
+}
+
+// TurnTable records the turn; it refuses while the mock fails.
+func (m *MockBackend) TurnTable(vehicleID string, rad float64) error {
+	m.turns = append(m.turns, TurnCall{Vehicle: vehicleID, Rad: rad})
+	if m.fail {
+		return fmt.Errorf("mock: not connected")
+	}
+	return nil
+}
+
+// TurnCalls returns the TurnTable calls the mock took, in call order.
+func (m *MockBackend) TurnCalls() []TurnCall { return m.turns }
 
 // ReleaseCall is one captured append against a live (unsealed) order — the
 // /addBlocks half of the staged lifecycle. Complete records whether the append

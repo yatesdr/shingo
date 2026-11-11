@@ -104,3 +104,35 @@ func GetProperty(db *sql.DB, nodeID int64, key string) string {
 	}
 	return value
 }
+
+// NamedProperty is one property with the name of the node it is on.
+type NamedProperty struct {
+	NodeID   int64
+	NodeName string
+	Key      string
+	Value    string
+}
+
+// ListPropertiesByKeys returns every property under one of keys, with its
+// node's name, ordered by node and key: a whole-plant read of a property that
+// is set on a few nodes, for a cache that must not ask once per node (the
+// table turn's, dispatch/table_turn.go).
+func ListPropertiesByKeys(db *sql.DB, keys ...string) ([]NamedProperty, error) {
+	rows, err := db.Query(`SELECT p.node_id, n.name, p.key, p.value
+		  FROM node_properties p JOIN nodes n ON n.id = p.node_id
+		 WHERE p.key = ANY($1::text[])
+		 ORDER BY p.node_id, p.key`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("list properties %v: %w", keys, err)
+	}
+	defer rows.Close()
+	var out []NamedProperty
+	for rows.Next() {
+		var p NamedProperty
+		if err := rows.Scan(&p.NodeID, &p.NodeName, &p.Key, &p.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

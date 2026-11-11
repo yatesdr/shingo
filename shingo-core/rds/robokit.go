@@ -51,6 +51,10 @@ type GeneralRobokitRequest struct {
 	Port    int    `json:"port"`
 	Code    int    `json:"code"`
 	Cmd     any    `json:"cmd,omitempty"`
+	// command marks a call that changes something on the robot and has no
+	// payload (RobokitCommand): the empty-relay floor does not apply to it, and
+	// the robot's ret_code is read instead. Not on the wire.
+	command bool
 }
 
 // GeneralRobokitAPI relays a Robokit call through RDS and returns the raw
@@ -153,12 +157,14 @@ func (c *Client) GeneralRobokitAPI(req GeneralRobokitRequest, timeout time.Durat
 	// investigated, which is why the guard stays: if the empty envelope comes
 	// back, this is where it is caught instead of being stored as "no beams".
 	//
-	// The threshold is deliberately crude. Every Robokit response this package
-	// asks for carries a payload orders of magnitude larger than an envelope --
-	// a map list, a 37 KB laser frame, or a 7.3 MB map -- so "smaller than a
-	// plausible envelope plus a little" separates "relayed nothing" from
-	// "relayed something" without needing to know the shape of each response.
-	if len(data) < minRelayedBody {
+	// The threshold is deliberately crude, and it applies only to a call that
+	// asks for a payload -- a map list, a 37 KB laser frame, or a 7.3 MB map --
+	// so "smaller than a plausible envelope plus a little" separates "relayed
+	// nothing" from "relayed something" without needing to know the shape of
+	// each response. A COMMAND (RobokitCommand) has no payload: the robot's
+	// whole answer is a 57-byte {"create_on":...,"ret_code":0}, which this floor
+	// would refuse every time, so a command is judged by the robot's ret_code.
+	if !req.command && len(data) < minRelayedBody {
 		return nil, fmt.Errorf(
 			"rds robokit: vehicle %s port %d code %d relayed no payload (%d bytes, status ok) -- "+
 				"RDS accepted the call and did not reach the robot; the proxy is not relaying",
@@ -170,6 +176,66 @@ func (c *Client) GeneralRobokitAPI(req GeneralRobokitRequest, timeout time.Durat
 // minRelayedBody is the smallest body that could contain a relayed payload
 // rather than a bare status envelope. RDS's own OK envelope is 56 bytes.
 const minRelayedBody = 200
+
+// RobokitCommand relays a Robokit COMMAND through RDS: a call that changes
+// something on the robot and answers only whether it took it.
+//
+// SUCCESS IS THE ROBOT'S ret_code, PRESENT AND ZERO, and nothing else. The
+// relay's own guard (GeneralRobokitAPI) refuses a non-zero `code` or `ret_code`;
+// what it cannot refuse is RDS's {"code":0,"msg":"ok"}, which is RDS saying it
+// answered and the robot did not (the 56-byte envelope measured at
+// Springfield 2026-08-07). A command has no payload to measure, so the size
+// floor GeneralRobokitAPI uses cannot tell the two apart; the robot's own
+// field can. Measured at Hopkinsville 2026-11-10, AMR-05, #3057: the robot's
+// answer is {"create_on":"…","ret_code":0}, 57 bytes
+// (turntable-bintask-2026-11-10/turn3057_145043.log).
+func (c *Client) RobokitCommand(req GeneralRobokitRequest, timeout time.Duration) error {
+	req.command = true
+	data, err := c.GeneralRobokitAPI(req, timeout)
+	if err != nil {
+		return err
+	}
+	var probe struct {
+		RetCode *int `json:"ret_code"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return fmt.Errorf("rds robokit: vehicle %s port %d code %d: the reply is not JSON (%v): %s",
+			req.Vehicle, req.Port, req.Code, err, truncate(data, 256))
+	}
+	if probe.RetCode == nil {
+		return fmt.Errorf("rds robokit: vehicle %s port %d code %d: RDS answered with no ret_code (%s) -- "+
+			"RDS took the call and the robot did not answer it",
+			req.Vehicle, req.Port, req.Code, truncate(data, 256))
+	}
+	return nil // GeneralRobokitAPI has already refused a non-zero ret_code
+}
+
+// RobokitCodeSpin is #3057, robot_task_spin_req: turn the jack table. SEER's
+// names run the other way round from what they describe: "spin" (3057) turns
+// the table, "turn" (3056) rotates the robot body.
+const RobokitCodeSpin = 3057
+
+// TurnTable sends #3057 on the navigation port: turn the robot's jack table to
+// rad, an ABSOLUTE angle in the robot's frame, by the nearest way. Absolute on
+// purpose: sending it twice turns the table once, so a retry after a lost
+// answer is safe. increase_spin_angle, the relative form, would turn it twice
+// and is never sent. The robot holds task_status at 2 for the whole turn
+// (measured 2026-11-10, about 8 s for 90°).
+func (c *Client) TurnTable(vehicle string, rad float64, timeout time.Duration) error {
+	return c.RobokitCommand(GeneralRobokitRequest{
+		Vehicle: vehicle,
+		Port:    RobokitPortNav,
+		Code:    RobokitCodeSpin,
+		Cmd:     TableSpinCmd{RobotSpinAngle: rad, SpinDirection: 0},
+	}, timeout)
+}
+
+// TableSpinCmd is #3057's body. SpinDirection 0 is the nearest way round (1
+// counterclockwise, -1 clockwise).
+type TableSpinCmd struct {
+	RobotSpinAngle float64 `json:"robot_spin_angle"`
+	SpinDirection  int     `json:"spin_direction"`
+}
 
 // MapListResponse is #1300: which map a robot is running and its hash.
 type MapListResponse struct {

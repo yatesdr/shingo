@@ -445,9 +445,44 @@ func (a *Adapter) CheckLocationTasks(locations []string) ([]fleet.LocationTasks,
 			Location:  r.ID,
 			Exists:    r.Exist,
 			TaskNames: r.Status.TaskNames(), // nil-safe: Status is nil when the bin doesn't exist
+			TaskArgs:  r.Status.TaskArgs(),
 		})
 	}
 	return out, nil
+}
+
+// --- fleet.TableTurner ---
+
+var _ fleet.TableTurner = (*Adapter)(nil)
+
+// tableTurnTimeout bounds one #3057 relay. The robot acks in milliseconds and
+// the turn runs after the ack, so a call that takes longer is a relay that is
+// not answering. It is called from the order status handler and the robot
+// poll loop, which must not stall behind it (the plan's rule 5).
+const tableTurnTimeout = 3 * time.Second
+
+// OrderVehicle is fleet.TableTurner's vehicle read: the robot RDS holds the
+// order on, from the order detail, at the moment the turn is sent. The same
+// read ReleaseOrder makes before an append, bounded by the client's own
+// timeout.
+func (a *Adapter) OrderVehicle(vendorOrderID string) (string, error) {
+	d, err := a.client.GetOrderDetails(vendorOrderID)
+	if err != nil {
+		return "", err
+	}
+	return d.Vehicle, nil
+}
+
+// TurnTable is fleet.TableTurner's turn: #3057 through RDS's relay
+// (rds.Client.TurnTable), with its own short timeout. A failure is logged with
+// the timeout, so a relay that stopped answering reads as that and not as a
+// robot that refused.
+func (a *Adapter) TurnTable(vehicleID string, rad float64) error {
+	err := a.client.TurnTable(vehicleID, rad, tableTurnTimeout)
+	if err != nil {
+		log.Printf("adapter: table turn for %s to %.3f rad (timeout %s): %v", vehicleID, rad, tableTurnTimeout, err)
+	}
+	return err
 }
 
 // --- fleet.FireAlarmController ---
