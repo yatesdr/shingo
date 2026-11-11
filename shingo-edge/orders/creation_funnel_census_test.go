@@ -155,6 +155,41 @@ func TestCensus_EdgeWireShapes(t *testing.T) {
 	})
 }
 
+// TestCensus_EveryPlainOrderNamesItsPress: every protocol.OrderRequest the
+// Edge builds sets ProcessNode, the press the order serves, as every
+// ComplexOrderRequest does. Core keys its per-press readings on it (a strict
+// kanban's fence, the futility tuple, containment on a plain move to finished
+// goods); a plain literal without it sends every order of its kind as an order
+// for no press.
+func TestCensus_EveryPlainOrderNamesItsPress(t *testing.T) {
+	t.Parallel()
+	got := edgeSites(t, scanEdgeSources(t), func(x ast.Node) string {
+		lit, ok := x.(*ast.CompositeLit)
+		if !ok {
+			return ""
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "OrderRequest" {
+			return ""
+		}
+		if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "protocol" {
+			return ""
+		}
+		for _, el := range lit.Elts {
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "ProcessNode" {
+					return "names its press"
+				}
+			}
+		}
+		return "names no press"
+	})
+	sitesEqual(t, "the plain wire shapes' press", got, map[string]string{
+		"orders/manager_create.go:CreateRetrieveOrder": "names its press",
+		"orders/manager_create.go:createMoveOrder":     "names its press",
+	})
+}
+
 // constructors are the three Manager methods that build a wire shape: the
 // retrieve's one body (CreateRetrieveOrder, which takes a spec) and the move's
 // and the complex order's. Every other exported Create*Order on Manager is a
