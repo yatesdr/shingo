@@ -7,7 +7,7 @@ import (
 )
 
 // TestOperatorRefreshJS runs the Node tests of the station's refresh
-// (static/operator-station/operator-refresh.test.js): which events rebuild a
+// (testdata/static/operator-station/operator-refresh.test.js): which events rebuild a
 // station's view, how often, and what a build costs the screen. Skipped if
 // `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorRefreshJS(t *testing.T) {

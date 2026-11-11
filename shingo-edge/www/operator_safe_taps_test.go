@@ -7,7 +7,7 @@ import (
 )
 
 // TestOperatorSafeTapsJS runs the Node tests of the station's safe taps
-// (static/operator-station/operator-safe-taps.test.js): a modal closed or
+// (testdata/static/operator-station/operator-safe-taps.test.js): a modal closed or
 // refused leaves nothing dead or frozen, a finished request closes only the
 // modal it came from, and one tap sends one request. Skipped if `node` is
 // not on PATH (matches the other JS test wrappers).

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestAppEnterSubmitsJS runs static/app.entersubmits.test.js (W5): Enter in a
+// TestAppEnterSubmitsJS runs testdata/static/app.entersubmits.test.js (W5): Enter in a
 // data-action-keydown="enterSubmits:<verb>" input calls <verb> from the page's
 // delegateActions map. Named _wrapper_test.go, not _js_test.go: a trailing _js
 // is read as GOOS=js and the file would never build (see

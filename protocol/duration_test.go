@@ -7,7 +7,7 @@ import (
 
 // TestFormatDuration_TheLadder pins the ladder byte for byte.
 //
-// THIS TABLE IS DUPLICATED VERBATIM in shared/utils.livedurations.test.js, and
+// THIS TABLE IS DUPLICATED VERBATIM in shared/testdata/js/utils.livedurations.test.js, and
 // the duplication is the point: the fault line is rendered once by this function
 // server-side and then once per second by the JS ladder in the browser. While
 // the two disagreed, every faulted row on every board visibly rewrote itself a

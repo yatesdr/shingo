@@ -21,7 +21,7 @@ import (
 // the page draws what it saved; a save carrying the set back with another
 // setting keeps it; a box where it cannot hold is a 400 with the reason. The
 // page's half (the boxes, their words, the full-row write) is
-// static/pages/loaders.flow.test.js.
+// testdata/static/pages/loaders.flow.test.js.
 
 func listedDrains(t *testing.T, h *Handlers, id int64) []string {
 	t.Helper()

@@ -11,7 +11,7 @@ import (
 // target), so the file is silently excluded from every normal build.
 //
 // TestMissionDetailStagesJS runs the Node tests for the mission-detail page
-// (static/pages/mission-detail.stages.test.js). Skipped if `node` is not on
+// (testdata/static/pages/mission-detail.stages.test.js). Skipped if `node` is not on
 // PATH, matching the other JS test wrappers; gate.sh refuses to run without it.
 func TestMissionDetailStagesJS(t *testing.T) {
 	nodePath, err := exec.LookPath("node")

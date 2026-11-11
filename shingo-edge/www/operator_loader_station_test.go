@@ -8,7 +8,7 @@ import (
 
 // TestOperatorLoaderStationJS runs the Node characterisation of the loader and
 // unloader station's glass in
-// static/operator-station/operator-loader-station.test.js: what each layout
+// testdata/static/operator-station/operator-loader-station.test.js: what each layout
 // draws, every act it offers a loader or unloader tile, and what each tap
 // posts. Skipped if `node` is not on PATH (matches the other JS test
 // wrappers).

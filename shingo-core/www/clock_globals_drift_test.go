@@ -150,7 +150,7 @@ func TestNoPageModuleDefinesADurationFormatter(t *testing.T) {
 
 // TestEscapeHtmlDefinedOnce: the HTML escape is defined in one file across
 // shared/ and Core's static tree — shared/utils.js, the copy that escapes
-// quotes (pin: shared/utils.escape.test.js). Core had app.js's copy and five
+// quotes (pin: shared/testdata/js/utils.escape.test.js). Core had app.js's copy and five
 // page-local ones (dashboard, dashboard-node-report, dashboard-map, missions'
 // escapeText/escapeAttr), all but one leaving `"` and `'` alone, so the h template could
 // be broken out of from inside an attribute. A page-local escaper under

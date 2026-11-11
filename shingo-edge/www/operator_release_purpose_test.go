@@ -7,7 +7,7 @@ import (
 )
 
 // TestOperatorReleasePurposeJS runs the Node-based unit tests for the board's
-// per-purpose RELEASE (static/operator-station/operator-release-purpose.test.js):
+// per-purpose RELEASE (testdata/static/operator-station/operator-release-purpose.test.js):
 // the labelled button a changeover tile shows, and the glow, including an
 // unchanged node keeping its glow during another node's changeover (L10).
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).

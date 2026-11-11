@@ -386,7 +386,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	// that modal; what replaced it wipes a field only where this table says
 	// Forbidden (composer-model.js clearForbidden), so a Used column is now
 	// kept by construction. Pinned in
-	// www/static/js/pages/composer-fields.characterization.test.js, which
+	// www/testdata/static/js/pages/composer-fields.characterization.test.js, which
 	// derives its expectation from Steady rather than listing fields.
 	pi := steadyBase()
 	pi[PayloadCode] = Required

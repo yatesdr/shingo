@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestKanbanPinPushAsJS runs static/operator-station/kanban_pins_push_as.test.js,
+// TestKanbanPinPushAsJS runs testdata/static/operator-station/kanban_pins_push_as.test.js,
 // the characterization pins of the unloader's PUSH AS panel. Skipped if `node` is
 // not on PATH (matches the other JS test wrappers).
 func TestKanbanPinPushAsJS(t *testing.T) {

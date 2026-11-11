@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestNodesDetailPopupSaveJS runs static/pages/nodes-detail.popup-save.test.js:
+// TestNodesDetailPopupSaveJS runs testdata/static/pages/nodes-detail.popup-save.test.js:
 // the node pop-up writes nothing until the detail for the node it shows has
 // loaded, then writes only the group settings the person changed, awaited, and
 // a failed load or write stops the save with the reason shown. Named

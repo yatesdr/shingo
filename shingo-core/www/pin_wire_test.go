@@ -166,7 +166,7 @@ func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 // (lane-name) submits: nodes-supermarket.js maps enterSubmits, and enterSubmits
 // finds its target in the page's delegateActions map instead of on window,
 // where no module function lives. The behaviour is run by
-// static/app.entersubmits.test.js (TestAppEnterSubmitsJS).
+// testdata/static/app.entersubmits.test.js (TestAppEnterSubmitsJS).
 func TestPinWire_W5_EnterSubmitsMappedAndMapResolved(t *testing.T) {
 	tmpl := pinReadFile(t, "templates/nodes.html")
 	for _, want := range []string{

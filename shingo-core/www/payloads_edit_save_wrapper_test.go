@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestPayloadsEditSaveJS runs static/pages/payloads.edit-save.test.js: the
+// TestPayloadsEditSaveJS runs testdata/static/pages/payloads.edit-save.test.js: the
 // payload edit form sends its carrier types and its manifest only once it has
 // loaded them, so a save before the load or after a failed one leaves both
 // standing. Named _wrapper_test.go, not _js_test.go (a trailing _js is read as

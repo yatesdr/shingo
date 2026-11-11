@@ -183,7 +183,7 @@ func TestStrictPack_ForbiddenOnConsumeAndLoaderClaimsOnly(t *testing.T) {
 // said — and U9d deleted that modal. Its replacement derives the wipe from
 // Steady (composer-model.js clearForbidden), so a Used column is kept by
 // construction, and the suite that pins it —
-// www/static/js/pages/composer-fields.characterization.test.js, which replaced
+// www/testdata/static/js/pages/composer-fields.characterization.test.js, which replaced
 // processes.js's — asks Steady for the expectation rather than listing fields.
 // The assertion below stays: it is what keeps the two columns Used.
 //

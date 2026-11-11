@@ -145,7 +145,7 @@ value the save would refuse. Copy from it:
   stored. A form that sends every field it knows about flattens the fields it
   does not show.
 - **A replacement checks at least what it replaced.**
-  `shingo-edge/www/static/js/pages/composer-fields.characterization.test.js`
+  `shingo-edge/www/testdata/static/js/pages/composer-fields.characterization.test.js`
   (run by `TestComposerFieldsCharacterization`) walks the whole (role ×
   swap_mode) matrix, and its runner refuses to pass below
   `RETIRED_SUITE_ASSERTIONS`, the count of the suite it replaced. When a form is

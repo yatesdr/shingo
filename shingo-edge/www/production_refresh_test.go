@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestProductionRefreshJS runs static/js/pages/production-refresh.test.js
+// TestProductionRefreshJS runs testdata/static/js/pages/production-refresh.test.js
 // under node: the Production page's one /events stream fires each of
 // #production-content's sse: triggers and still reaches the page's own
 // handlers (C2).

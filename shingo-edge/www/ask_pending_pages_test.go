@@ -7,7 +7,7 @@ import (
 )
 
 // TestDesktopPagesSayAnAskIsPending runs the Node harness for the desktop
-// pages' ask-backed actions (static/js/pages/ask-pending.test.js): the
+// pages' ask-backed actions (testdata/static/js/pages/ask-pending.test.js): the
 // Production page's LOAD and REQUEST EMPTY and the containment page's hold
 // clear show the station's notice on a 202 pending answer, hold the act as the
 // station does, and never show a success over an act Core has not answered.

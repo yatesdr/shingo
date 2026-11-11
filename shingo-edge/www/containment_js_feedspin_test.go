@@ -7,7 +7,7 @@ import (
 )
 
 // TestContainmentJS_FeedsPin runs the containment page's refresh pins under
-// node (static/js/pages/containment.feedspin.test.js): no poll, a reload on
+// node (testdata/static/js/pages/containment.feedspin.test.js): no poll, a reload on
 // the SSE `containment` event, and a reload that arrives while a dialog is
 // open held and applied when it closes. Each check carries beside it, as a
 // comment, the value before "feat(core,edge): Core sends containment, the Edge

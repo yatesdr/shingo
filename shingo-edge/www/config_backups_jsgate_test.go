@@ -7,7 +7,7 @@ import (
 )
 
 // TestConfigBackupsJS runs the Configuration page's backup-list tests under
-// node (static/js/pages/config-backups.test.js). E5 is pinned there through
+// node (testdata/static/js/pages/config-backups.test.js). E5 is pinned there through
 // delegateActions: a click on a listed backup's Restore posts exactly the
 // listed key, quotes, brackets and colons included. Before U3 the key was
 // built into the action string and arrived wrapped in quotes with a stray

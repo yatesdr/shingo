@@ -27,7 +27,7 @@ The convention, one rule each layer:
   `TestEveryClockPageCarriesGlobals` (Core and Edge) fails a page whose scripts
   reach a clock function without the partial. The JS `formatTime` is
   byte-for-byte the Go layout's twin; change them in both or in neither (pinned
-  by `shared/utils.planttime.test.js`).
+  by `shared/testdata/js/utils.planttime.test.js`).
 - **Wire and storage stay UTC.** `data-utc` attributes, `data-since` /
   `data-until` machine readers (robots, dashboards, orders), API JSON —
   all RFC3339-UTC. Only display converts.

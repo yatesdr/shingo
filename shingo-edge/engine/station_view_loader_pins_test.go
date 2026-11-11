@@ -18,7 +18,7 @@ import (
 // is a changed outcome and has to be named as one.
 //
 // The glass half (what the board draws from these tiles, and what each tap
-// posts) is www/static/operator-station/operator-loader-station.test.js.
+// posts) is www/testdata/static/operator-station/operator-loader-station.test.js.
 
 // tileFor returns the tile for a core node, failing when it is not drawn.
 func tileFor(t *testing.T, view *domain.OperatorStationView, coreNode string) *domain.StationNodeView {
