@@ -267,7 +267,11 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 // the only thing this function does with it. A zero is legal and takes the first
 // point: a plan being shaped before its order has an id is choosing a place to
 // stand, not making a decision that has to be stable across runs.
-func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
+//
+// from is where the walk starts (spliceFrom): the whole plan from outside every
+// lane at a create, the rest of the route at a re-plan (repoint), whose earlier
+// steps keep the waits they were given.
+func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64, from spliceFrom) ([]resolvedStep, laneGateTarget, bool, error) {
 	// gate is one inserted wait: where it goes, and which lane it guards.
 	type gate struct {
 		idx    int
@@ -277,11 +281,12 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 		gates   []gate
 		blankAt = -1
 		// inside is the gated lane the robot is currently in, as the walk sees it.
-		// 0 means "not in a gated lane", which is both the start state and what a
-		// step somewhere else resets it to.
-		inside int64
+		// 0 means "not in a gated lane", which is both a create's start state and
+		// what a step somewhere else resets it to.
+		inside = from.inside
 	)
-	for i, s := range steps {
+	for i := from.at; i < len(steps); i++ {
+		s := steps[i]
 		if s.Action != protocol.ActionPickup && s.Action != protocol.ActionDropoff {
 			continue
 		}
@@ -366,7 +371,7 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 	}
 	out := insertWaits(steps, waits)
 
-	if err := d.assertEachWaitGatesItsEntry(out); err != nil {
+	if err := d.assertEachWaitGatesItsEntryFrom(out, from.at); err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
 	return out, gates[0].target, true, nil
@@ -390,11 +395,30 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 // gated only when a lane wait was: the lane valve is the lane's. A plan that
 // gained only a turn wait goes out unsealed through its seam's own arm.
 func (d *Dispatcher) spliceCoreWaits(steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
-	out, target, gated, err := d.spliceLaneWait(steps, orderID)
+	return d.spliceCoreWaitsFrom(steps, orderID, spliceFrom{})
+}
+
+// spliceFrom is where a splice starts: the first step it may put a wait in
+// front of, and the gated lane the robot is in when it reaches that step (0:
+// none). A create's is the zero value, the whole plan from outside every lane.
+// A re-plan's (repoint) starts after the wait the robot stands at, so the
+// steps before it, which the fleet has, keep the waits they were given.
+type spliceFrom struct {
+	at     int
+	inside int64
+}
+
+// spliceCoreWaitsFrom is spliceCoreWaits from a start point: the lane rule and
+// the turn rule over steps[from.at:], each check over the same span, and the
+// owner check over the whole plan. steps must carry no Core-inserted wait at or
+// after from.at (withoutInsertedWaits); the steps before it are read as context
+// (the step a turn wait would stand behind) and are not changed.
+func (d *Dispatcher) spliceCoreWaitsFrom(steps []resolvedStep, orderID int64, from spliceFrom) ([]resolvedStep, laneGateTarget, bool, error) {
+	out, target, gated, err := d.spliceLaneWait(steps, orderID, from)
 	if err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
-	if out, err = d.spliceTurnWaits(out); err != nil {
+	if out, err = d.spliceTurnWaitsFrom(out, from.at); err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
 	if err := assertEveryWaitDeclaresAnOwner(out); err != nil {
@@ -506,7 +530,15 @@ func assertEveryWaitDeclaresAnOwner(steps []resolvedStep) error {
 // splice never puts a lane wait immediately after a pickup from its own lane (a
 // second touch of the same lane in a row is one wait, not two).
 func (d *Dispatcher) assertEachWaitGatesItsEntry(steps []resolvedStep) error {
-	for i, s := range steps {
+	return d.assertEachWaitGatesItsEntryFrom(steps, 0)
+}
+
+// assertEachWaitGatesItsEntryFrom is the check over steps[from:], the span a
+// re-plan spliced (repoint): the waits before it were checked when they were
+// inserted, and the robot is past them.
+func (d *Dispatcher) assertEachWaitGatesItsEntryFrom(steps []resolvedStep, from int) error {
+	for i := from; i < len(steps); i++ {
+		s := steps[i]
 		if s.Action != protocol.ActionWait || s.WaitKind != WaitKindLane {
 			continue
 		}
