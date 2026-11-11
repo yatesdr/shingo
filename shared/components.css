@@ -1254,3 +1254,34 @@ nav {
 .layer-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
 .layer-status { flex: 1; color: var(--text-muted); font-size: var(--font-sm); }
 .layer-status.is-bad { color: var(--chip-ink-below); }
+
+/* ── THE NOTICE (style guide §11, shared/notice.js) ──────────────────────
+ * One fixed region across the top: the banners, then the toasts stacked on the
+ * right below them, so a toast never covers a banner's button. The region lets
+ * clicks through; only a banner and a toast take them. */
+.notice-root {
+    position: fixed; top: 0; left: 0; right: 0; z-index: var(--z-toast);
+    display: flex; flex-direction: column; pointer-events: none;
+}
+.notice-banner {
+    display: flex; align-items: center; justify-content: center; gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-4); pointer-events: auto; font-size: var(--font-sm); color: var(--text);
+    background: color-mix(in srgb, var(--info) 14%, var(--surface)); border-bottom: 1px solid var(--info);
+}
+.notice-banner--warning { background: color-mix(in srgb, var(--warning) 18%, var(--surface)); border-bottom-color: var(--warning); }
+.notice-banner--error { background: color-mix(in srgb, var(--danger) 14%, var(--surface)); border-bottom-color: var(--danger); }
+.notice-stack {
+    align-self: flex-end; display: flex; flex-direction: column; gap: var(--sp-2);
+    width: 24rem; max-width: calc(100vw - 2 * var(--sp-4)); margin: var(--sp-4);
+}
+.notice-toast {
+    padding: var(--sp-2) var(--sp-4); pointer-events: auto;
+    border: 1px solid var(--border); border-left: 4px solid var(--info); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); box-shadow: var(--shadow-md); font-size: var(--font-sm);
+}
+.notice-toast--success { border-left-color: var(--success); }
+.notice-toast--warning { border-left-color: var(--warning); }
+.notice-toast--error { border-left-color: var(--danger); }
+.notice-toast.is-sticky { cursor: pointer; }
+.notice-action { margin-left: var(--sp-2); padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-weight: var(--fw-bold); cursor: pointer; }
+.notice-dismiss { padding: 0 var(--sp-1); border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }

@@ -1,0 +1,137 @@
+// notice.js — the one toast and the one banner (style guide §11, "The
+// notice"). Both draw into one fixed region at the top of the page, made on
+// first use: the banners across it, the toasts stacked below them on the
+// right, so a toast never covers a banner's button.
+//
+// TOAST LIFETIMES are the ones the three copies agreed on (the P0 helper
+// pins): an error 5 s, every other level 3.2 s, and {sticky:true} until it is
+// clicked. {sticky:false} is the level's own lifetime. utils.js gave an error
+// with {sticky:false} 3.2 s, because its test read "not explicitly false"
+// where it meant "not sticky"; here sticky is the only switch.
+//
+// ONE OF EACH. A toast whose words and level are already up is not stacked a
+// second time: the old one goes and the new one starts its lifetime again. A
+// page whose background reads fail every ten seconds says so once, not once
+// per read.
+//
+// THE BANNER is a line across the top of the page, one per key, that stays
+// until it is cleared or dismissed. It carries no words of its own: S5 puts
+// "A new version is available" and "Lost connection to <Core|this Edge> ·
+// last answered <time>" on it, under two keys, and both can show at once.
+//
+// NOTHING HAPPENS AT IMPORT: the region is made by the first toast or banner.
+
+import { el } from './utils.js';
+
+const LEVELS = ['info', 'success', 'warning', 'error'];
+const LIFETIME_MS = { error: 5000 };
+const DEFAULT_LIFETIME_MS = 3200;
+
+let region = null;
+const banners = new Map();
+const live = new WeakMap();   // toast element -> { text, level, timer }
+
+function parts() {
+    if (!region || !region.isConnected) {
+        region = {
+            root: el('div', { className: 'notice-root' }),
+            banners: el('div', { className: 'notice-banners' }),
+            stack: el('div', { className: 'notice-stack', role: 'status', 'aria-live': 'polite' }),
+            get isConnected() { return this.root.isConnected; },
+        };
+        region.root.appendChild(region.banners);
+        region.root.appendChild(region.stack);
+        document.body.appendChild(region.root);
+    }
+    return region;
+}
+
+// words is the text a message shows: an Error's message, a refusal body's
+// error, a string as itself, nothing for null.
+function words(m) {
+    if (m === null || m === undefined) return '';
+    if (typeof m === 'object') {
+        if (typeof m.message === 'string') return m.message;
+        if (typeof m.error === 'string') return m.error;
+    }
+    return String(m);
+}
+
+// action is a toast's or banner's one control: {label, href} is a link (the
+// sign-in link the HTTP door offers), {label, onClick} a button.
+function action(a) {
+    if (!a || !a.label) return null;
+    if (a.href) return el('a', { className: 'notice-action', href: a.href }, a.label);
+    return el('button', { className: 'notice-action', type: 'button', onclick: a.onClick || null }, a.label);
+}
+
+// toast shows one message and returns its element.
+//   level  'info' (default), 'success', 'warning', 'error'
+//   opts   sticky (stays until clicked), action ({label, href} or
+//          {label, onClick})
+export function toast(message, level, opts) {
+    const o = opts || {};
+    const lvl = LEVELS.indexOf(level) >= 0 ? level : 'info';
+    const text = words(message);
+    const { stack } = parts();
+    for (const old of Array.prototype.slice.call(stack.children)) {
+        const was = live.get(old);
+        if (was && was.text === text && was.level === lvl) drop(old);
+    }
+    const t = el('div', {
+        className: 'notice-toast notice-toast--' + lvl + (o.sticky ? ' is-sticky' : ''),
+        role: lvl === 'error' ? 'alert' : null,
+        title: o.sticky ? 'Click to dismiss' : null,
+    }, [el('span', { className: 'notice-text' }, text), action(o.action)]);
+    const note = { text, level: lvl, timer: null };
+    live.set(t, note);
+    if (o.sticky) t.addEventListener('click', () => drop(t));
+    else note.timer = setTimeout(() => drop(t), LIFETIME_MS[lvl] || DEFAULT_LIFETIME_MS);
+    stack.appendChild(t);
+    return t;
+}
+
+function drop(t) {
+    const note = live.get(t);
+    if (note && note.timer !== null) clearTimeout(note.timer);
+    live.delete(t);
+    t.remove();
+}
+
+// banner shows, or redraws in place, the banner under key, and returns its
+// element. opts:
+//   text       what it says
+//   level      'info' (default), 'warning', 'error'
+//   action     {label, onClick} or {label, href}: Refresh, say
+//   dismiss    false: no × (a banner that clears itself, like a lost
+//              connection's on reconnect); default true
+//   onDismiss  after its × removed it
+export function banner(key, opts) {
+    const o = opts || {};
+    let b = banners.get(key);
+    if (!b || !b.isConnected) {
+        b = el('div', { className: 'notice-banner', role: 'status', 'data-banner': String(key) });
+        parts().banners.appendChild(b);
+        banners.set(key, b);
+    }
+    b.className = 'notice-banner notice-banner--' + (LEVELS.indexOf(o.level) >= 0 ? o.level : 'info');
+    b.textContent = '';
+    b.appendChild(el('span', { className: 'notice-text' }, words(o.text)));
+    const act = action(o.action);
+    if (act) b.appendChild(act);
+    if (o.dismiss !== false) {
+        b.appendChild(el('button', {
+            className: 'notice-dismiss', type: 'button', 'aria-label': 'Dismiss',
+            onclick: () => { clearBanner(key); if (o.onDismiss) o.onDismiss(); },
+        }, '×'));
+    }
+    return b;
+}
+
+// clearBanner takes the banner under key down; no banner is no error.
+export function clearBanner(key) {
+    const b = banners.get(key);
+    if (!b) return;
+    banners.delete(key);
+    b.remove();
+}

@@ -35,6 +35,39 @@ if (count === null) return;
 Make an async or SSE-delivered failure sticky: the operator might have looked
 away.
 
+### The notice: one toast, one banner
+
+`shared/notice.js` draws both into one fixed region at the top of the page:
+the banners across it, the toasts stacked on the right below them, so a toast
+never covers a banner's button. Pages move onto it in wave C.
+
+- **`toast(message, level, opts)`** keeps the lifetimes above: an error 5 s,
+  every other level 3.2 s, `{ sticky: true }` until it is clicked.
+  `{ sticky: false }` is the level's own lifetime. The same words at the same
+  level already up are one toast, its lifetime started again, so a read that
+  fails every ten seconds says so once. A message is text, never markup; an
+  Error shows its message. `opts.action` is one control: `{ label, href }` (the
+  HTTP door's **Sign in**) or `{ label, onClick }`.
+- **`banner(key, opts)`** is a line that stays until it is cleared or its ×
+  is pressed: one per key, redrawn in place when shown again. It carries no
+  words of its own. The two it is for, both able to show at once:
+
+```js
+import { banner, clearBanner } from '/static/shared/notice.js';
+
+// A new build on an admin page (ruling 4: kiosks reload instead).
+banner('build', { text: 'A new version is available',
+    action: { label: 'Refresh', onClick: () => location.reload() } });
+
+// The bus's disconnected signal; cleared on the next connect.
+banner('connection', { text: 'Lost connection to Core · last answered 14:02',
+    level: 'warning', dismiss: false });
+clearBanner('connection');
+```
+
+`TestSharedComponentSpecs` holds both; `TestSharedComponentPins` runs the
+helper pins' toast cases on the notice.
+
 ### Save on change, ask before losing data
 
 **One rule for every page.** An edit saves the moment it is made: a select
