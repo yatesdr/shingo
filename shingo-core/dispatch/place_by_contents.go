@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
@@ -124,25 +126,115 @@ func liftOff(steps []resolvedStep, node string, from, to int) int {
 //
 //   - A carrier set down at the node it was lifted from has not left (a
 //     carry-over round trip, out to staging and back): its drop is its own.
-//   - The partial arm first (partialHome: an unfinished carrier to its claim's
+//   - The other-part arm first (otherPartHome): a carrier aimed at another
+//     part's outbound goes where its own part's claim at liftNode sends it.
+//     That is the planned drop the arms after it ask about.
+//   - Then the partial arm (partialHome: an unfinished carrier to its claim's
 //     partial home), then the keeper arm (kanbanSlot: an empty off a line
 //     position to a kanban that takes it).
 //
-// "" keeps the planned drop, and nothing stalls for want of either. why is the
-// reason, for the door's log. count is the carrier's final count: the bin's at
-// a release, the operator's at a move that declares one.
+// "" keeps the planned drop, and nothing stalls for want of any of them. why
+// is the reason, for the door's log. count is the carrier's final count: the
+// bin's at a release, the operator's at a move that declares one. asked is the
+// planned drop as the order asked for it (authoredDrop): the group a slot was
+// resolved from, else current.
 func dropByContents(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, count int,
-	liftNode, current string, stated binresolver.BinTypeStatement) (target, why string) {
+	liftNode, current, asked string, stated binresolver.BinTypeStatement) (target, why string) {
 	if b == nil || current == liftNode {
 		return "", ""
 	}
-	if t := partialHome(db, pure, order, b, count, liftNode, current, stated); t != "" {
+	planned, plannedWhy := current, ""
+	if t, w := otherPartHome(db, pure, order, b, liftNode, asked, stated); t != "" {
+		planned, plannedWhy = t, w
+	}
+	if t := partialHome(db, pure, order, b, count, liftNode, planned, stated); t != "" {
 		return t, fmt.Sprintf("leaves %s unfinished (%d of %s) — to its partial home", liftNode, count, b.PayloadCode)
 	}
-	if t := kanbanSlot(db, pure, order, b, liftNode, current); t != "" {
+	if t := kanbanSlot(db, pure, order, b, liftNode, planned); t != "" {
 		return t, fmt.Sprintf("leaves %s empty — to its kanban,", liftNode)
 	}
+	if planned != current {
+		return planned, plannedWhy
+	}
 	return "", ""
+}
+
+// otherPartHome is the other-part arm: where a carrier aimed at another part's
+// outbound goes, the outbound of the claim at liftNode for the carrier's own
+// part, a concrete node as named, a group's free slot for this carrier.
+//
+// KEYED ON THE CARRIER AND THE DROP, NOT THE ORDER'S PART. The Edge aims every
+// leg at the outbound of the claim the leg is for, and a cell left holding
+// another style's carrier (a changeover leg cancelled, a carrier set down by
+// hand) would send it to that claim's outbound, where it blocks the part that
+// lives there. An order's part does not say which carrier it lifts: a swap's
+// legs carry the requested claim's, the Material page's release the
+// carrier's own. The drop does: asked is another part's outbound at this node
+// and not the carrier's own, so the claim the order was for aimed it. A drop
+// that is nobody's outbound (SEND BACK's kanban, a staging spot, a partial
+// home, containment) was chosen for the carrier and is left alone.
+//
+// "" when the carrier holds no part, its part's claim sends it where it is
+// aimed already (two parts may share an outbound), or the drop is no other
+// part's outbound; and, said in the log, when no claim at the node names its
+// part, the claims for it disagree, or its home has no room.
+func otherPartHome(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, liftNode, asked string,
+	stated binresolver.BinTypeStatement) (target, why string) {
+	if b.PayloadCode == "" || asked == "" {
+		return "", ""
+	}
+	routes, err := db.ClaimOutboundsAt(liftNode)
+	if err != nil {
+		log.Printf("dispatch: claim outbounds at %s failed — order %d keeps its drop: %v", liftNode, order.ID, err)
+		return "", ""
+	}
+	own := routes[b.PayloadCode]
+	if slices.Contains(own, asked) {
+		return "", ""
+	}
+	aimedFor := ""
+	for part, outs := range routes {
+		if part != b.PayloadCode && slices.Contains(outs, asked) {
+			aimedFor = part
+			break
+		}
+	}
+	if aimedFor == "" {
+		return "", ""
+	}
+	switch len(own) {
+	case 0:
+		log.Printf("WARN: order %d lifts %s off %s, aimed at %s (the outbound for %s), and no claim at %s names %s "+
+			"— it keeps its drop", order.ID, b.PayloadCode, liftNode, asked, aimedFor, liftNode, b.PayloadCode)
+		return "", ""
+	case 1:
+	default:
+		log.Printf("WARN: order %d lifts %s off %s, aimed at %s (the outbound for %s), and the claims at %s disagree "+
+			"on where %s goes (%s) — it keeps its drop. Fix the claims: one node and part, one outbound.",
+			order.ID, b.PayloadCode, liftNode, asked, aimedFor, liftNode, b.PayloadCode, strings.Join(own, ", "))
+		return "", ""
+	}
+	home := own[0]
+	why = fmt.Sprintf("holds %s, not %s — to its own claim's outbound,", b.PayloadCode, aimedFor)
+	node, err := db.GetNodeByDotName(home)
+	if err != nil || node == nil {
+		log.Printf("WARN: the outbound %q of %s at %s does not resolve to a node — order %d keeps its drop",
+			home, b.PayloadCode, liftNode, order.ID)
+		return "", ""
+	}
+	if node.NodeTypeCode != protocol.NodeClassNGRP {
+		return node.Name, why
+	}
+	if pure == nil {
+		return "", ""
+	}
+	res, err := pure.StoreDestination(node, b.PayloadCode, stated, digAskerFor(order))
+	if err != nil || res == nil || res.Node == nil {
+		log.Printf("dispatch: %s has no room for bin %d of %s — order %d keeps its drop: %v",
+			home, b.ID, b.PayloadCode, order.ID, err)
+		return "", ""
+	}
+	return res.Node.Name, why
 }
 
 // partialHome is the partial arm: where an unfinished carrier of the claim at
@@ -327,7 +419,7 @@ func (d *Dispatcher) placeByContentsAtRelease(order *orders.Order, steps []resol
 		return false
 	}
 	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, steps[f].Node,
-		d.carriedType(order, f))
+		authoredDrop(steps[f]), d.carriedType(order, f))
 	if target == "" || target == steps[f].Node {
 		return false
 	}
@@ -439,7 +531,8 @@ func (d *Dispatcher) placeByContentsAtReserve(order *orders.Order, plan *Complex
 		return
 	}
 	from := steps[f].Node
-	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, from, binresolver.KnownCarrier(b))
+	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, from, authoredDrop(steps[f]),
+		binresolver.KnownCarrier(b))
 	if target == "" || target == from {
 		return
 	}
@@ -524,7 +617,8 @@ func (s *PlanningService) placeByContentsMove(order *orders.Order, pick SourceRe
 	if order.RemainingUOP != nil {
 		count = *order.RemainingUOP
 	}
-	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, binresolver.KnownCarrier(b))
+	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, order.DeliveryNode,
+		binresolver.KnownCarrier(b))
 	if target == "" || target == order.DeliveryNode {
 		return nil
 	}
@@ -554,7 +648,8 @@ func (s *PlanningService) byContentsDrop(order *orders.Order, b *bins.Bin) (*nod
 	if order.RemainingUOP != nil {
 		count = *order.RemainingUOP
 	}
-	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, binresolver.KnownCarrier(b))
+	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, order.DeliveryNode,
+		binresolver.KnownCarrier(b))
 	if target == "" || target == order.DeliveryNode {
 		return nil, ""
 	}

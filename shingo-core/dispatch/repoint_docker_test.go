@@ -386,3 +386,66 @@ func TestByContents_ACarrierBroughtBackToItsPositionHasNotLeft(t *testing.T) {
 		t.Errorf("stored plan %q, want the carrier back on %s", shape(got), c.line.Name)
 	}
 }
+
+// twoStyleLine is a line run by two styles, each part with its own outbound,
+// standing a full of part B: the carrier a cancelled changeover leg left behind.
+func twoStyleLine(t *testing.T, prefix string) (c rpCell, outA, outB *nodes.Node, b *bins.Bin) {
+	t.Helper()
+	c = newRPCell(t, prefix, protocol.ClaimRoleProduce, prefix+"-OUT-A", "")
+	outA, outB = prNode(t, c.db, prefix+"-OUT-A"), prNode(t, c.db, prefix+"-OUT-B")
+	other := prefix + "-PART-B"
+	testutil.MustNoErr(t, c.db.CreatePayload(&payloads.Payload{Code: other, UOPCapacity: 100}), "part B")
+	_, err := c.db.ReplacePlantClaimsFromStation(prefix+"-PROC", "line-1",
+		[]plantclaims.StyleRow{{ProcessID: prefix + "-PROC", StyleID: prefix + "-STYLE", IsActive: true},
+			{ProcessID: prefix + "-PROC", StyleID: prefix + "-STYLE-B"}},
+		[]plantclaims.ClaimRow{
+			{ProcessID: prefix + "-PROC", StyleID: prefix + "-STYLE", CoreNodeName: c.line.Name, Role: protocol.ClaimRoleProduce,
+				SwapMode: protocol.SwapModeTwoRobot, PayloadCode: c.part, OutboundDestination: outA.Name},
+			{ProcessID: prefix + "-PROC", StyleID: prefix + "-STYLE-B", CoreNodeName: c.line.Name, Role: protocol.ClaimRoleProduce,
+				SwapMode: protocol.SwapModeTwoRobot, PayloadCode: other, OutboundDestination: outB.Name}}, nil, 0)
+	testutil.MustNoErr(t, err, "both styles' claims")
+	b = c.carrier(100)
+	testutil.MustNoErr(t, c.db.SetBinManifest(b.ID, `{"items":[]}`, other, 100), "a full of part B")
+	got, err := c.db.GetBin(b.ID)
+	testutil.MustNoErr(t, err, "reload the carrier")
+	return c, outA, outB, got
+}
+
+// TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome: a leg aimed at part A's
+// outbound lifts a full of part B. It goes where B's claim at the line sends
+// it: at a swap's release, whose order carries A, and in the Material page's
+// release, whose move carries the carrier's own part B. A drop that is no
+// claim's outbound was chosen for the carrier and stands.
+func TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome(t *testing.T) {
+	t.Parallel()
+	t.Run("a swap leg at its release", func(t *testing.T) {
+		t.Parallel()
+		c, outA, outB, b := twoStyleLine(t, "RPG")
+		o := c.stagedLeg("rpg-leg", b, rlWait(c.line.Name, WaitKindStation), vsPick(c.line.Name), vsDrop(outA.Name))
+		steps := c.release(o, 100)
+		if f := lastDropIndex(steps); f < 0 || steps[f].Node != outB.Name {
+			t.Errorf("stored plan %q, want the part-B full at its own outbound %s", shape(steps), outB.Name)
+		}
+	})
+	t.Run("the Material page's move, carrying the carrier's part", func(t *testing.T) {
+		t.Parallel()
+		c, outA, outB, b := twoStyleLine(t, "RPH")
+		c.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "rph-move", OrderType: OrderTypeMove,
+			PayloadCode: b.PayloadCode, SourceNode: c.line.Name, DeliveryNode: outA.Name, ProcessNode: c.line.Name,
+			BinID: b.ID, Quantity: 1})
+		if o := testdb.RequireOrder(t, c.db, "rph-move"); o.DeliveryNode != outB.Name {
+			t.Errorf("the move goes to %q, want the part-B full at its own outbound %s", o.DeliveryNode, outB.Name)
+		}
+	})
+	t.Run("a drop no claim names is left alone", func(t *testing.T) {
+		t.Parallel()
+		c, _, _, b := twoStyleLine(t, "RPI")
+		away := prNode(t, c.db, "RPI-AWAY")
+		c.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "rpi-move", OrderType: OrderTypeMove,
+			PayloadCode: b.PayloadCode, SourceNode: c.line.Name, DeliveryNode: away.Name, ProcessNode: c.line.Name,
+			BinID: b.ID, Quantity: 1})
+		if o := testdb.RequireOrder(t, c.db, "rpi-move"); o.DeliveryNode != away.Name {
+			t.Errorf("the move goes to %q, want %s, which it was sent to on purpose", o.DeliveryNode, away.Name)
+		}
+	})
+}
