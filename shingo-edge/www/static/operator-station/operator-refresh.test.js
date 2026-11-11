@@ -697,6 +697,44 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     await settle();
 }
 
+// ── the event stream: the backoff's cap, the URL it reopens, no banner ───────
+//
+// What the station's stream does TODAY, before the shared-UI brief moves the
+// bus and puts a lost-connection banner on this screen (S5): pinned so that
+// change shows up here. The bus is shared/utils.js's; these are the station's
+// settings of it (operator.js: setSSEReloadOnBuild, setSSEQuery,
+// setSSEWatchdog).
+{
+    await settle();
+    reloads = 0;
+    const url = openStream().url;
+    // A stream that keeps failing with no connect between: the wait doubles
+    // from 1 s and stops at 10 s.
+    const waits = [];
+    for (let i = 0; i < 6; i++) {
+        const before = streams.length;
+        openStream().fail();
+        let waited = 0;
+        while (streams.length === before && waited < 20000) { await advance(500); waited += 500; }
+        waits.push(waited);
+    }
+    eq(waits, [1000, 2000, 4000, 8000, 10000, 10000], 'a stream that keeps failing reconnects after 1, 2, 4, 8 s, then every 10 s');
+    eq(openStream().url, url, 'every reconnect reopens the same URL: the station and the types it takes');
+    eq(streams.filter(s => !s.closed).length, 1, 'and holds one stream open');
+    // The build the station first saw stays the one it compares against: every
+    // frame naming another build reloads again, a frame naming the first does
+    // not.
+    openStream().emit('connected', { build: 'build-A' });
+    eq(reloads, 0, 'a connect naming the first build seen: no reload');
+    openStream().emit('connected', { build: 'build-B' });
+    openStream().emit('heartbeat', { build: 'build-B' });
+    eq(reloads, 2, 'every frame naming another build reloads, the second as well as the first');
+    eq(body.descendants().some(n => n.id === 'shingo-refresh-banner'), false,
+        'a new build never shows the refresh banner on the station: it reloads');
+    reloads = 0;
+    await settle();
+}
+
 // ── part-change alerts and the post-cutover banner ───────────────────────────
 {
     const alerts = () => body.descendants().filter(n => n.classList.contains('os-alert') && !n.removed);
