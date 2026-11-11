@@ -237,8 +237,9 @@ func complexNeed(stationID string, p *protocol.ComplexOrderRequest, steps []reso
 		Source:       source,
 		Delivery:     delivery,
 		Steps:        stepsJSON,
+		ProcessNode:  p.ProcessNode,
 		Sibling:      p.SiblingOrderUUID,
-		Complex:      &ComplexSpec{ProcessNode: p.ProcessNode, KeyRoute: p.KeyRoute, KeyTask: p.KeyTask},
+		Complex:      &ComplexSpec{KeyRoute: p.KeyRoute, KeyTask: p.KeyTask},
 	}
 }
 

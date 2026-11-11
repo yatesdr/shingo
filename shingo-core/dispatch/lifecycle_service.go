@@ -148,6 +148,10 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		SourceIntent: SourceIntentForType(orderType),
 		OriginID:     originID,
 		OriginClass:  originClass,
+		// The press the order serves, as the station named it: read by the
+		// decision below (a strict kanban admits the presses it supports) and
+		// stored.
+		ProcessNode: p.ProcessNode,
 		// The height the empty is wanted at, as the station stated it: read by
 		// the decision below and stored, so every find of the order reads it.
 		Want: p.Want,
@@ -206,6 +210,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 			PayloadCode:     order.PayloadCode,
 			OriginID:        order.OriginID,
 			OriginClass:     order.OriginClass,
+			ProcessNode:     order.ProcessNode,
 			StationKnows:    true,
 			Source:          order.SourceNode,
 			Delivery:        order.DeliveryNode,
