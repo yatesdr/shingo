@@ -16,6 +16,14 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- A node can turn the robot's jack table before the lift, or before the set-down: its angle is set in degrees on the node page, and Core lifts (or sets down) only when the table reads it
+- At a swap's line that turns the table, Release is still pressed once: if the table is not turned yet, Core holds the lift and sends it when it is
+- A move, a Material-page release or a quality hold that lifts at a turning node stops there for the turn, about 8 s, with nobody pressing anything
+- A table that has not turned after three tries holds its order with the reason on the row and emails an alarm naming the node; the hard release still moves it, recorded with the angle
+- The node pop-up shows the node's saved settings again: since 2026-10-08 a group showed default algorithms and no waiting spots, and Save wrote the defaults back
+
 ## v0.2.2 — 2026-11-10
 
 Deploy: no migration.
