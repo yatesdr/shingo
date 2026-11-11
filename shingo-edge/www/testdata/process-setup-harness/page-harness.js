@@ -14,7 +14,8 @@
 // added to the page is loaded here without anyone remembering to); esc.js and
 // scene-geom.js; and operator-flow.js's renderFlowPicture / pictureRows /
 // sentencesFromModel / relationPlacement / moduleOf, loaded the way
-// operator-flow.test.js loads them.
+// operator-flow.test.js loads them; and shingoedge.js's showModal and
+// hideModal, cut out of it whole (they are the sheet stack's scroll lock).
 //
 // WHAT IS STUBBED, AND WHY EACH IS SAFE FOR A PIN THAT RECORDS REQUESTS.
 //   - The DOM. The page builds markup by string concatenation, so an element
@@ -27,7 +28,12 @@
 //     of a selector; querySelectorAll answers one-part selectors only (the
 //     option rows a popover binds its clicks to), so a pin clicks the very
 //     element the page's listener is on. A sheet field ([data-f="x"]) reads
-//     the value the markup opened with unless the pin typed one (type()).
+//     the value the markup opened with unless the pin typed one (type()),
+//     and is one element whichever selector finds it. A drawn checkbox opens
+//     checked as its markup says; a drawn select opens on its selected
+//     option. document.querySelector answers from #pd-root, then #pd-scrim;
+//     document.querySelectorAll answers nothing. focus() is recorded
+//     (page.focused) and window listeners are kept (page.fireWindow).
 //     NOT FOLLOWED: an outerHTML write (redrawPositionsTable) leaves its
 //     container's markup as it was.
 //   - Clicks: click() hands the host's own listener (#pd-root's onClick,
@@ -37,11 +43,12 @@
 //   - fetch: every call is recorded (method, url, parsed body) and answered
 //     by the caller's serve(method, url, body); an unrouted call is a 404 and
 //     is recorded like any other, so a new request shows up in the golden.
+//     An answer may also be a body that is not JSON, or no answer at all (a
+//     rejection): see ctx.fetch below.
 //   - Timers: setTimeout queues; settle() drains microtasks and runs the
 //     queue until both are empty. setInterval and requestAnimationFrame are
 //     collected and never run (the rail's re-read and the re-measure pass
 //     are not acts a pin drives).
-//   - showModal / hideModal (shingoedge.js): toggle .active, as the base does.
 //   - formatClock / formatTime (shared/utils.js): the timestamp as given —
 //     the plant clock is not what these pins are about.
 //   - Date: a fixed instant, so a "Saved 14:05" can never make a golden flap.
@@ -60,6 +67,8 @@ const WWW = path.join(__dirname, '..', '..');
 const STATIC = path.join(WWW, 'static');
 const SHARED = path.join(WWW, '..', '..', 'shared');
 const read = p => fs.readFileSync(p, 'utf8');
+// The wrapper the page is run inside adds one line above its first.
+const PAGE_LINE_OFFSET = 1;
 
 // The classic scripts processes.html puts on the page before the module, in
 // its order. The module tag is not one of them.
@@ -121,6 +130,8 @@ async function open(opts) {
         calls: [],       // every fetch, in order: {method, url, body}
         typed: {},       // sheet field name -> typed value
         timers: [],      // pending setTimeout callbacks
+        focused: [],     // every element the page called focus() on, in order
+        winListeners: {},// window.addEventListener's, by type
     };
     let timerID = 0;
 
@@ -153,7 +164,8 @@ async function open(opts) {
             querySelectorAll(sel) { return queryAll(this, sel); },
             getBoundingClientRect: () => ({ left: 0, top: 0, right: 200, bottom: 24, width: 200, height: 24 }),
             closest: () => null,
-            focus() {}, blur() {}, scrollIntoView() {},
+            // focus is recorded, so a pin can say where the page put it.
+            focus() { h.focused.push(this); doc.activeElement = this; }, blur() {}, scrollIntoView() {},
         };
         return e;
     }
@@ -214,8 +226,19 @@ async function open(opts) {
         for (const c of String(t.attrs.class || '').split(/\s+/).filter(Boolean)) e.classList.add(c);
         e.hidden = 'hidden' in t.attrs;
         e.disabled = 'disabled' in t.attrs;
+        e.checked = 'checked' in t.attrs;
+        if (t.tag === 'input') e.type = t.attrs.type || 'text';
         if (t.tag === 'input' && t.attrs.value !== undefined) e.value = t.attrs.value;
         e._html = innerOf(hay, t);
+        // A select's value is its selected option's, else its first; and
+        // selectedOptions answers the option the value names (the health
+        // strip's "Pin" reads both off its chooser).
+        if (t.tag === 'select') {
+            const opts = [...e._html.matchAll(/<option value="([^"]*)"([^>]*)>([\s\S]*?)<\/option>/g)]
+                .map(m => ({ value: unescapeAttr(m[1]), selected: /\bselected\b/.test(m[2]), textContent: unescapeAttr(m[3].replace(/<[^>]*>/g, '')) }));
+            e.value = ((opts.find(o => o.selected) || opts[0]) || { value: '' }).value;
+            Object.defineProperty(e, 'selectedOptions', { get() { return opts.filter(o => o.value === e.value); } });
+        }
         e.closest = sel => (!/\s/.test(sel.trim()) && tagMatches(t, simpleParts(sel)) ? e : null);
         return e;
     }
@@ -301,7 +324,16 @@ async function open(opts) {
         const hay = markupOf(c);
         const t = tagsIn(hay).find(x => tagMatches(x, parts));
         if (!t) return null;
-        return (c._parts[key] = fromTag(t, hay));
+        return (c._parts[key] = fieldOr(c, t, hay));
+    }
+    // A SHEET FIELD IS ONE ELEMENT WHICHEVER SELECTOR REACHES IT: an input
+    // carrying data-f found by another selector (Advanced's numbers, found by
+    // [data-advkind="number"] to bind and by [data-f] to test for typed work)
+    // is the field, so what the page types through one is what it reads
+    // through the other.
+    function fieldOr(c, t, hay) {
+        if (t.attrs['data-f'] !== undefined && /^(input|select|textarea)$/.test(t.tag)) return field(c, t.attrs['data-f']);
+        return fromTag(t, hay);
     }
     // Every element matching a ONE-part selector ('[data-opt]', '.pd-npk'),
     // in markup order: the option rows a popover binds its clicks to, which a
@@ -312,7 +344,7 @@ async function open(opts) {
         if (c._parts[key]) return c._parts[key];
         const parts = simpleParts(sel);
         const hay = markupOf(c);
-        return (c._parts[key] = tagsIn(hay).filter(x => tagMatches(x, parts)).map(x => fromTag(x, hay)));
+        return (c._parts[key] = tagsIn(hay).filter(x => tagMatches(x, parts)).map(x => fieldOr(c, x, hay)));
     }
 
     const pageData = makeEl('page-data');
@@ -333,13 +365,18 @@ async function open(opts) {
     const doc = {
         readyState: 'complete',
         hidden: false,
-        body: { classList: classList(), dataset: {}, scrollWidth: 1440 },
+        body: { classList: classList(), dataset: {}, style: {}, scrollWidth: 1440 },
+        activeElement: null,
         documentElement: { clientWidth: 1440, clientHeight: 900 },
         listeners: {},
         getElementById: byId,
         addEventListener(t, fn) { (doc.listeners[t] = doc.listeners[t] || []).push(fn); },
         removeEventListener() {},
-        querySelector: () => null,
+        // document.querySelector answers from the page and the scrim, in that
+        // order (a suggestion box finds the PLC field it names by selector).
+        // querySelectorAll stays empty: the pickers it would bind are driven
+        // by their rows.
+        querySelector: sel => query(statics["pd-root"], sel) || query(statics["pd-scrim"], sel),
         querySelectorAll: () => [],
         createElement: tag => makeEl('', String(tag).toUpperCase()),
     };
@@ -358,7 +395,7 @@ async function open(opts) {
         location: { search: opts.search || '', hash: opts.hash || '', pathname: '/processes' },
         history: { replaceState: (st, title, url) => replaceStates.push(String(url)) },
         innerWidth: 1440, innerHeight: 900,
-        addEventListener() {}, removeEventListener() {},
+        addEventListener(t, fn) { (h.winListeners[t] = h.winListeners[t] || []).push(fn); }, removeEventListener() {},
         URLSearchParams, AbortController, Date: FixedDate,
         CSS: { escape: s => String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c) },
         setTimeout: fn => { const id = ++timerID; h.timers.push({ id, fn }); return id; },
@@ -369,23 +406,55 @@ async function open(opts) {
     };
     vm.createContext(ctx);
     vm.runInContext('var window = globalThis; var self = globalThis;', ctx);
-    ctx.showModal = id => { const m = byId(id); if (m) m.classList.add('active'); };
-    ctx.hideModal = id => { const m = byId(id); if (m) m.classList.remove('active'); };
+    // showModal / hideModal are shingoedge.js's own two functions, cut out of
+    // the module whole: the rest of it installs document listeners and opens
+    // an EventSource, and the sheet stack's scroll lock is these two lines.
+    const se = read(path.join(STATIC, 'js', 'shingoedge.js'));
+    const cut = name => {
+        const m = new RegExp('^export function ' + name + '\\([\\s\\S]*?\\r?\\n\\}\\r?\\n', 'm').exec(se);
+        if (!m) throw new Error('shingoedge.js has no export function ' + name + '; the cut has drifted');
+        return m[0].replace(/^export /, '');
+    };
+    vm.runInContext(cut('showModal') + cut('hideModal'), ctx, { filename: 'shingoedge.js' });
 
     // fetch: recorded, then answered by the caller. The answer is parsed by
     // the page's own JSON, so what the page holds is of its own realm.
+    //
+    // AN ANSWER IS ONE OF THREE THINGS. {status, body}: JSON, as writeError
+    // and writeJSON send it. {status, raw}: a body that is not JSON (chi's
+    // Recoverer's empty 500, the login page an expired session's 303 lands
+    // on), whose json() rejects as a browser's does. {reject}: no answer at
+    // all, the TypeError a browser's fetch rejects with when the Edge is
+    // down. Each call also carries `site`, the line of processes-desktop.js
+    // the fetch was called from, and `stack`, every page line on the stack
+    // (so a postJSON write names its caller), read off the stack (in no golden:
+    // the page's line numbers move with every edit).
     const ctxJSON = vm.runInContext('JSON', ctx);
+    const ctxTypeError = vm.runInContext('TypeError', ctx);
     ctx.fetch = (url, init) => {
         const method = (init && init.method) || 'GET';
         let body;
         if (init && init.body !== undefined) {
             try { body = JSON.parse(init.body); } catch (_) { body = init.body; }
         }
-        h.calls.push({ method: method, url: String(url), body: body });
+        const limit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 40;
+        const trace = String(new Error().stack);
+        Error.stackTraceLimit = limit;
+        const frames = [...trace.matchAll(/processes-desktop\.js:(\d+):\d+/g)].map(m => Number(m[1]) - PAGE_LINE_OFFSET);
+        const call = { method: method, url: String(url), body: body };
+        Object.defineProperty(call, 'site', { value: frames[0] || 0 });
+        Object.defineProperty(call, 'stack', { value: frames });
+        h.calls.push(call);
         const ans = opts.serve ? opts.serve(method, String(url), body) : undefined;
+        if (ans && ans.reject) return Promise.reject(new ctxTypeError(ans.reject));
         const status = ans ? (ans.status || 200) : 404;
-        const text = JSON.stringify(ans ? (ans.body === undefined ? {} : ans.body) : { error: 'no route in the fixture' });
-        return Promise.resolve({ ok: status >= 200 && status < 300, status: status, json: async () => ctxJSON.parse(text) });
+        const text = ans && ans.raw !== undefined ? String(ans.raw)
+            : JSON.stringify(ans ? (ans.body === undefined ? {} : ans.body) : { error: 'no route in the fixture' });
+        return Promise.resolve({
+            ok: status >= 200 && status < 300, status: status, redirected: !!(ans && ans.redirected),
+            json: async () => ctxJSON.parse(text), text: async () => text,
+        });
     };
 
     for (const rel of classicScripts()) {
@@ -402,9 +471,12 @@ async function open(opts) {
     // THE PAGE, in a function scope of its own, with one line added at its
     // foot: __pd(name) evaluates a name in the module's scope, so a pin calls
     // the page's own functions and reads its own S rather than a copy.
+    // An import or export line becomes as many empty lines as it had, so a
+    // stack's line is the page's line less the one the wrapper adds.
     let src = read(path.join(STATIC, 'js', 'pages', 'processes-desktop.js'));
-    src = src.replace(/^import[\s\S]*?from\s+'[^']+';\s*$/gm, '');
-    src = src.replace(/^export\s*\{[^}]*\};?\s*$/m, '');
+    const blank = m => m.replace(/[^\n]/g, '');
+    src = src.replace(/^import[\s\S]*?from\s+'[^']+';[ \t]*$/gm, blank);
+    src = src.replace(/^export\s*\{[^}]*\};?[ \t]*$/m, blank);
     vm.runInContext('(function(){\n' + src + '\n;globalThis.__pd = function (s) { return eval(s); };\n})();', ctx,
         { filename: 'processes-desktop.js' });
 
@@ -470,6 +542,56 @@ async function open(opts) {
         // The rows of a popover the page drew into element `id` that carry
         // attribute `attr` — the elements its click listeners are bound to.
         rows(id, attr) { const el = byId(id); return el ? el.querySelectorAll('[' + attr + ']') : []; },
+        // key presses a key on the document: the page's keydown listeners
+        // (boot's Escape rule) see {key}.
+        key(k) {
+            const ev = { type: 'keydown', key: k, target: doc.body, stopPropagation() {}, preventDefault() {} };
+            for (const fn of (doc.listeners.keydown || []).slice()) fn(ev);
+        },
+        // fireWindow runs the listeners the page put on window (focus, error,
+        // unhandledrejection) with `ev`.
+        fireWindow(type, ev) {
+            for (const fn of (h.winListeners[type] || []).slice()) fn(Object.assign({ type: type }, ev || {}));
+        },
+        hasWindowListener: type => !!(h.winListeners[type] || []).length,
+        // Every element the page focused, in order, and the one it holds now.
+        focused: h.focused,
+        // segments: every run of text the page has drawn, each with where it
+        // is — its container (#id) and the innermost element around it
+        // (tag#id.class) — then every textContent the page set on an element
+        // it looked up (a sheet's status line, a button's label). The refusal
+        // pins compare two of these to say what a refusal put on screen.
+        segments() {
+            const out = [];
+            for (const c of containers()) {
+                const host = '#' + (c.id || '?');
+                const stack = [];
+                const re = /<(\/?)([a-z][\w-]*)\b([^>]*)>|([^<]+)/gi;
+                let m;
+                while ((m = re.exec(c._html))) {
+                    if (m[4] !== undefined) {
+                        const t = unescapeAttr(m[4]).replace(/&times;/g, '×').replace(/\s+/g, ' ').trim();
+                        if (t) out.push(host + ' ' + (stack.length ? stack[stack.length - 1].d : '') + ': ' + t);
+                        continue;
+                    }
+                    const tag = m[2].toLowerCase();
+                    if (m[1]) {
+                        const i = stack.map(s => s.tag).lastIndexOf(tag);
+                        if (i >= 0) stack.length = i;
+                        continue;
+                    }
+                    if (VOID.has(tag)) continue;
+                    const cls = /\bclass="([^"]*)"/.exec(m[3]), id = /\bid="([^"]*)"/.exec(m[3]);
+                    stack.push({ tag: tag, d: tag + (id ? '#' + id[1] : '') + (cls && cls[1].trim() ? '.' + cls[1].trim().split(/\s+/).join('.') : '') });
+                }
+                for (const [k, v] of Object.entries(c._parts)) {
+                    for (const e of [].concat(v)) {
+                        if (e && e.textContent) out.push(host + ' ' + k.replace(/^(q|qa|f):/, '') + ' (textContent): ' + e.textContent);
+                    }
+                }
+            }
+            return out;
+        },
     };
     await page.settle();
     return page;
