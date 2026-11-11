@@ -80,6 +80,12 @@ const SURFACES = [
         file: 'shingo-core/www/static/app.js',
         pick: (m) => ({ showModal: m.showModal, hideModal: m.hideModal, confirm: m.uiConfirm, prompt: m.uiPrompt, toast: m.toast }),
         words: { confirm: 'uiConfirm', prompt: 'uiPrompt' },
+        // Its modals and dialogs are layer.js's (wave C, s2-hubs-core). No Core
+        // file calls utils.js's installBackdropClose any more (the layer needs
+        // none), so a case's "page called installBackdropClose()" is the
+        // components' no-op here.
+        sharedEntry: 'shared/testdata/components/surface.js',
+        sel: { dialog: '.layer-scrim' },
     },
     {
         name: 'edge-hub', root: 'edge', entry: '/static/js/shingoedge.js',

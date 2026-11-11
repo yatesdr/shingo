@@ -22,8 +22,8 @@ import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
 import { formatTime, timeAgo } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
-import { installBackdropClose, showRefreshBanner } from '/static/shared/utils.js';
-installBackdropClose();
+import { showRefreshBanner } from '/static/shared/utils.js';
+import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep
 // importing them from here.
@@ -74,142 +74,14 @@ export function el(tag, props, children) {
   return node;
 }
 
-// Generic modal show/hide
-export function showModal(id) {
-  document.getElementById(id).classList.add('active');
-}
-export function hideModal(id) {
-  document.getElementById(id).classList.remove('active');
-}
-
-// --- Dialog helpers (Promise-based, replace native alert/confirm/prompt) ---
-//
-// Mirrors the shingoedge.js / shared/utils.js shape so page scripts on
-// either surface call the same names. Migration rule: every page that
-// uses native confirm()/prompt()/alert() switches to these when the page
-// JS is touched.
-
-export function uiConfirm(message) {
-  return new Promise(function(resolve) {
-    var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay active confirm-overlay';
-    var box = document.createElement('div');
-    box.className = 'modal confirm-box';
-    box.style.maxWidth = '420px';
-    var p = document.createElement('p');
-    p.textContent = message;
-    p.style.margin = '0 0 1rem';
-    box.appendChild(p);
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end';
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.onclick = function() { overlay.remove(); resolve(false); };
-    var okBtn = document.createElement('button');
-    okBtn.className = 'btn btn-danger';
-    okBtn.textContent = 'Confirm';
-    okBtn.onclick = function() { overlay.remove(); resolve(true); };
-    row.appendChild(cancelBtn); row.appendChild(okBtn);
-    box.appendChild(row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-  });
-}
-
-// uiConfirmWithInput — uiConfirm with an OPTIONAL free-text field inside the
-// confirm box: one dialog, Confirm/Cancel, and the typed value travels with
-// the answer. The payloads screen's containment toggles use it so the quality
-// reason is typed where the decision is made, not in a field that sits on the
-// page year-round. Resolves {ok, value}: ok=false on cancel (Escape or the
-// button); value is the possibly-empty input text on confirm.
-export function uiConfirmWithInput(message, opts) {
-  opts = opts || {};
-  return new Promise(function(resolve) {
-    var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay active confirm-overlay';
-    var box = document.createElement('div');
-    box.className = 'modal confirm-box';
-    box.style.maxWidth = '440px';
-    var p = document.createElement('p');
-    p.textContent = message;
-    p.style.margin = '0 0 0.75rem';
-    box.appendChild(p);
-    var input = document.createElement('input');
-    input.className = 'form-input';
-    input.type = 'text';
-    if (opts.placeholder) input.placeholder = opts.placeholder;
-    input.style.marginBottom = '1rem';
-    box.appendChild(input);
-    var done = function(ok) {
-      var v = input.value;
-      overlay.remove();
-      resolve({ ok: ok, value: v });
-    };
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end';
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.onclick = function() { done(false); };
-    var okBtn = document.createElement('button');
-    okBtn.className = 'btn btn-danger';
-    okBtn.textContent = 'Confirm';
-    okBtn.onclick = function() { done(true); };
-    input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') done(true);
-      else if (e.key === 'Escape') done(false);
-    });
-    row.appendChild(cancelBtn); row.appendChild(okBtn);
-    box.appendChild(row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    setTimeout(function() { input.focus(); }, 0);
-  });
-}
-
-export function uiPrompt(message, opts) {
-  opts = opts || {};
-  return new Promise(function(resolve) {
-    var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay active confirm-overlay';
-    var box = document.createElement('div');
-    box.className = 'modal confirm-box';
-    box.style.maxWidth = '420px';
-    var p = document.createElement('p');
-    p.textContent = message;
-    p.style.margin = '0 0 0.75rem';
-    box.appendChild(p);
-    var input = document.createElement('input');
-    input.className = 'form-input';
-    input.type = opts.type === 'number' ? 'number' : 'text';
-    if (opts.value !== undefined) input.value = String(opts.value);
-    if (opts.min !== undefined) input.min = String(opts.min);
-    if (opts.max !== undefined) input.max = String(opts.max);
-    input.style.marginBottom = '1rem';
-    box.appendChild(input);
-    var done = function(v) { overlay.remove(); resolve(v); };
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end';
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.onclick = function() { done(null); };
-    var okBtn = document.createElement('button');
-    okBtn.className = 'btn btn-primary';
-    okBtn.textContent = 'OK';
-    okBtn.onclick = function() { done(input.value); };
-    input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') done(input.value);
-      else if (e.key === 'Escape') done(null);
-    });
-    row.appendChild(cancelBtn); row.appendChild(okBtn);
-    box.appendChild(row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    setTimeout(function() { input.focus(); }, 0);
-  });
-}
+// The modals, confirm and prompt are the one overlay stack's (shared/layer.js,
+// style guide §10): Escape closes the innermost, the body's scroll lock is
+// counted, focus goes in and comes back, fields clear on hide, and a confirm
+// always resolves. A modal that opts in with data-backdrop-close closes on its
+// backdrop without an install call, so this file no longer calls
+// installBackdropClose (it and the layer would both answer one click).
+// Core's pages say uiConfirm / uiPrompt / uiConfirmWithInput.
+export { showModal, hideModal, uiConfirm, uiPrompt, uiConfirmWithInput };
 
 export function toast(message, level, opts) {
   level = level || 'info';

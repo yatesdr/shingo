@@ -3,43 +3,43 @@
 # fake clock moved a minute on: a dialog still pending then never resolves by itself.
 
 ## uiConfirm
-uiConfirm(msg): the DOM it writes: focus #opener
-    div class="modal-overlay active confirm-overlay"
-      div class="modal confirm-box" style="max-width:420px"
-        p style="margin:0 0 1rem"
+uiConfirm(msg): the DOM it writes: focus button.btn
+    div class="layer-scrim"
+      div class="layer-card" role="alertdialog" aria-modal="true"
+        p class="layer-msg"
           "Delete <b>BIN-1</b> & \"its\" tags?"
-        div style="display:flex;gap:0.5rem;justify-content:flex-end"
-          button class="btn" onclick
+        div class="layer-foot"
+          button class="btn" type="button" listens=click
             "Cancel"
-          button class="btn btn-danger" onclick
+          button class="btn btn-danger" type="button" data-layer-ok="" listens=click
             "Confirm"
 uiConfirm: OK: resolves true, no overlay left, focus #opener
 uiConfirm: Cancel: resolves false, no overlay left, focus #opener
-uiConfirm: Escape on body, after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
-uiConfirm: Escape on its OK button, after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
-uiConfirm: the page opened and hid a modal with this surface's showModal first, then Escape on body, after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
-uiConfirm: press and click the overlay (backdrop), after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
+uiConfirm: Escape on body, after 60 s: resolves false, no overlay left
+uiConfirm: Escape on its OK button, after 60 s: resolves false, no overlay left
+uiConfirm: the page opened and hid a modal with this surface's showModal first, then Escape on body, after 60 s: resolves false, no overlay left
+uiConfirm: press and click the overlay (backdrop), after 60 s: pending, 1 overlay(s) left: "layer-scrim"
 uiConfirm: a second one opened while the first is open: 2 overlays; OK on the second: first pending, second resolves true; then Cancel on the first: first resolves false, no overlay left
 uiConfirm: OK clicked twice: resolves true, no overlay left
 uiConfirm(non-string message 42): the message node:
-    p style="margin:0 0 1rem"
+    p class="layer-msg"
       "42"
 
 ## uiPrompt
-uiPrompt(msg): the DOM it writes, focus after a tick: focus at open #opener, after a tick input.form-input
-    div class="modal-overlay active confirm-overlay"
-      div class="modal confirm-box" style="max-width:420px"
-        p style="margin:0 0 0.75rem"
+uiPrompt(msg): the DOM it writes, focus after a tick: focus at open input.layer-input, after a tick input.layer-input
+    div class="layer-scrim"
+      div class="layer-card" role="alertdialog" aria-modal="true"
+        p class="layer-msg"
           "Delete <b>BIN-1</b> & \"its\" tags?"
-        input class="form-input" type="text" style="margin-bottom:1rem" listens=keydown
-        div style="display:flex;gap:0.5rem;justify-content:flex-end"
-          button class="btn" onclick
+        input class="layer-input" type="text" value="" listens=keydown
+        div class="layer-foot"
+          button class="btn" type="button" listens=click
             "Cancel"
-          button class="btn btn-primary" onclick
+          button class="btn btn-primary" type="button" data-layer-ok="" listens=click
             "OK"
 uiPrompt(msg, {type:"number", min:1, max:9, value:5}): the input: type "number", min "1", max "9", value "5"
 uiPrompt(msg, {type:"date"}): the input type: "text"
-uiPrompt: OK untouched, no default: resolves "", no overlay left, focus body
+uiPrompt: OK untouched, no default: resolves "", no overlay left, focus #opener
 uiPrompt: OK untouched, {value:"5"}: resolves "5"
 uiPrompt: OK untouched, {value:0}: resolves "0"
 uiPrompt: {value:"5"}, cleared to empty, OK: resolves ""
@@ -47,26 +47,26 @@ uiPrompt: typed "abc", OK: resolves "abc"
 uiPrompt: typed "abc", Enter in the input: resolves "abc", no overlay left
 uiPrompt: typed "abc", Escape in the input: resolves null, no overlay left
 uiPrompt: typed "abc", Cancel: resolves null, no overlay left
-uiPrompt: Escape on body, after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
-uiPrompt: press and click the overlay (backdrop), after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
+uiPrompt: Escape on body, after 60 s: resolves null, no overlay left
+uiPrompt: press and click the overlay (backdrop), after 60 s: pending, 1 overlay(s) left: "layer-scrim"
 uiPrompt: over an open modal (this surface's showModal), Escape in the input: resolves null, the modal underneath open
-uiPrompt: a second one opened while the first is open: 2 overlays, focus input.form-input in overlay 2; Enter in the first: first resolves "one", second pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
+uiPrompt: a second one opened while the first is open: 2 overlays, focus input.layer-input in overlay 2; Enter in the first: first resolves "one", second pending, 1 overlay(s) left: "layer-scrim"
 
 ## uiConfirmWithInput (core-hub only)
-uiConfirmWithInput(msg, {placeholder:"Reason"}): the DOM it writes, focus after a tick: focus input.form-input
-    div class="modal-overlay active confirm-overlay"
-      div class="modal confirm-box" style="max-width:440px"
-        p style="margin:0 0 0.75rem"
+uiConfirmWithInput(msg, {placeholder:"Reason"}): the DOM it writes, focus after a tick: focus input.layer-input
+    div class="layer-scrim"
+      div class="layer-card" role="alertdialog" aria-modal="true"
+        p class="layer-msg"
           "Delete <b>BIN-1</b> & \"its\" tags?"
-        input class="form-input" type="text" placeholder="Reason" style="margin-bottom:1rem" listens=keydown
-        div style="display:flex;gap:0.5rem;justify-content:flex-end"
-          button class="btn" onclick
+        input class="layer-input" type="text" placeholder="Reason" listens=keydown
+        div class="layer-foot"
+          button class="btn" type="button" listens=click
             "Cancel"
-          button class="btn btn-danger" onclick
+          button class="btn btn-danger" type="button" data-layer-ok="" listens=click
             "Confirm"
 uiConfirmWithInput: typed "dent", Confirm: resolves {"ok":true,"value":"dent"}, no overlay left
 uiConfirmWithInput: untouched, Confirm: resolves {"ok":true,"value":""}
 uiConfirmWithInput: typed "dent", Enter: resolves {"ok":true,"value":"dent"}
 uiConfirmWithInput: typed "dent", Escape in the input: resolves {"ok":false,"value":"dent"}, no overlay left
 uiConfirmWithInput: typed "dent", Cancel: resolves {"ok":false,"value":"dent"}
-uiConfirmWithInput: Escape on body, after 60 s: pending, 1 overlay(s) left: "modal-overlay active confirm-overlay"
+uiConfirmWithInput: Escape on body, after 60 s: resolves {"ok":false,"value":""}, no overlay left

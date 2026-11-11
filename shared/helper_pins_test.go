@@ -173,12 +173,10 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 var sharedHelperCopies = map[string]string{
 	// The Core hub's own copies (pinned in testdata/helper-pins/hubs.txt as
 	// "own"), exported to Core's pages under the shared names.
-	"shingo-core/www/static/app.js el":        "Core hub copy",
-	"shingo-core/www/static/app.js debounce":  "Core hub copy",
-	"shingo-core/www/static/app.js showModal": "Core hub copy",
-	"shingo-core/www/static/app.js hideModal": "Core hub copy",
-	"shingo-core/www/static/app.js toast":     "Core hub copy",
-	"shingo-core/www/static/app.js api":       "Core hub copy (a function, not utils.js's object)",
+	"shingo-core/www/static/app.js el":       "Core hub copy",
+	"shingo-core/www/static/app.js debounce": "Core hub copy",
+	"shingo-core/www/static/app.js toast":    "Core hub copy",
+	"shingo-core/www/static/app.js api":      "Core hub copy (a function, not utils.js's object)",
 	// The Edge hub's own copies, likewise.
 	"shingo-edge/www/static/js/shingoedge.js createSSE": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js showModal": "Edge hub copy",
@@ -225,11 +223,6 @@ var sharedExportsNoImporter = map[string]string{
 	"clock.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
 	// The shared components, which no page imports until wave C swaps the
 	// hubs and the Processes page onto them.
-	"layer.js showModal":         "adopted in wave C (s2-hubs)",
-	"layer.js hideModal":         "adopted in wave C (s2-hubs)",
-	"layer.js confirm":           "adopted in wave C (s2-hubs)",
-	"layer.js prompt":            "adopted in wave C (s2-hubs)",
-	"layer.js confirmWithInput":  "adopted in wave C (s2-hubs): Core's uiConfirmWithInput",
 	"layer.js openSheet":         "adopted in wave C (s2-processes)",
 	"layer.js closeLayer":        "adopted in wave C (s2-processes)",
 	"layer.js layerDepth":        "adopted in wave C (s2-processes): the page's own Escape",
