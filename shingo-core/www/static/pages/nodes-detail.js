@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, delegateActions, el, escapeHtml, openFromQuery, toast, uiConfirm } from '/static/app.js';
-import { confirmAllowedBinsNarrowing, renderKeeperLevels, renderKanbanSection, saveKanban } from '/static/pages/nodes-kanban.js';
+import { confirmAllowedBinsNarrowing, kanbanLoading, renderKeeperLevels, renderKanbanSection, saveKanban } from '/static/pages/nodes-kanban.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
@@ -535,9 +535,10 @@ function loadInventory(nodeID) {
 //
 // NOTHING IS WRITTEN UNTIL THE DETAIL HAS LOADED, the form post included: until
 // then the pickers and the group settings hold defaults, not this node's values.
+// A group's kanban section has a load of its own, and is waited for the same way.
 async function handleNodeSave(el, evt) {
   if (evt) evt.preventDefault();
-  if (_detailState !== 'loaded') {
+  if (_detailState !== 'loaded' || kanbanLoading()) {
     if (_detailState === 'failed') toast(DETAIL_FAILED, 'error');
     else toast(DETAIL_LOADING, 'warning');
     return;

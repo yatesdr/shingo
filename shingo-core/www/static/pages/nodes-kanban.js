@@ -51,8 +51,19 @@ function blank(nodeID) {
     // and re-saved rather than dropped: they usually mean the claim topology
     // moved after somebody saved, and silently deleting a supported position is
     // not a thing a render should do.
-    orphans: []
+    orphans: [],
+    // loaded: the server's answer is in. Until then the section shows this
+    // blank state, and a save would write its empty sources and supports.
+    loaded: false
   };
+}
+
+// kanbanLoading says whether the open group's section is still waiting on its
+// load. The pop-up's Save writes nothing while it is (nodes-detail.js
+// handleNodeSave). A load that failed hides the section, and Save leaves the
+// kanban alone.
+export function kanbanLoading() {
+  return !!_kanban && !_kanban.loaded;
 }
 
 // renderKanbanSection loads and draws the section, or hides it.
@@ -122,6 +133,7 @@ export function renderKanbanSection(isGroupType, nodeID) {
     renderLevels();
     renderSources();
     renderSupports();
+    _kanban.loaded = true;
   }).catch(function (err) {
     console.error('renderKanbanSection', err);
     // Loud, and the section stays hidden. A section rendered from a failed fetch

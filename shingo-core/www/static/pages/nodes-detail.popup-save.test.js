@@ -342,6 +342,26 @@ async function main() {
         check('Save says why', toasts.length === 1, JSON.stringify(toasts));
     }
 
+    console.log("a Save while the group's kanban section is still loading writes nothing");
+    {
+        const kanban = deferred();
+        const { ctx, posts, toasts, form } = load({
+            [DETAIL]: () => Promise.resolve(detail(12, STORED)),
+            [KANBAN]: () => kanban.p,
+        });
+        ctx.openNodeModal(group(12, 'SMN-A'));
+        await settle();
+        await ctx.handleNodeSave(null, null);
+        same('nothing posted', posts, []);
+        check('the form is not submitted', form.submitted === 0, 'submitted ' + form.submitted);
+        check('Save says why', toasts.length === 1, JSON.stringify(toasts));
+        kanban.resolve({});
+        await settle();
+        await ctx.handleNodeSave(null, null);
+        check('once it answers, Save goes through', form.submitted === 1, 'submitted ' + form.submitted);
+        check('and saves the kanban it loaded', posts.some((p) => p.url === '/api/nodes/kanban/settings'), JSON.stringify(posts.map((p) => p.url)));
+    }
+
     console.log("a late answer for the last node opened changes nothing in the next");
     {
         const answers = { 12: deferred(), 13: deferred() };
