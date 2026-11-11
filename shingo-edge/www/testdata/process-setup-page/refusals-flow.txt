@@ -1,0 +1,69 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## flow edit: the debounced preview (POS_A5 source, POS_A1 key route)
+# writes, in order: POST /api/processes/1/flow/preview
+### POST /api/processes/1/flow/preview  ←  409 {"error"} (writeFlowRefusal)
+    then: nothing
+    new text: #pd-bar div.h.bad: the Edge refused it
+    new text: #pd-bar div.d: Check the flow, or ask an engineer if this needs Core. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/preview  ←  400 {"error", order_count:0, findings, fingerprint} (no orders)
+    then: nothing
+    new text: #pd-svg text.needlbl: POS_A1 needs a source
+    new text: #pd-bar div.h.bad: 1 to fix
+    new text: #pd-bar div.d: POS_A1 needs a source · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/preview  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-bar div.h: Preview OK · null orders
+    new text: #pd-bar div.d: Inbound source GRP_A · SRC_1 · outbound destination DST_1 · DST_2 · ULD_1 · key route LM_1, LM_2, LM_3 · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/preview  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+
+## Save style
+# writes, in order: POST /api/processes/1/flow/save
+### POST /api/processes/1/flow/save  ←  409 {"error"} (writeFlowRefusal)
+    then: nothing
+    new text: #pd-bar div.h.bad: the Edge refused it
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/save  ←  409 {"error", stale:true} (a stale fingerprint)
+    then: POST /api/processes/1/flow/preview
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/save  ←  422 {"error", findings} (validation)
+    then: nothing
+    new text: #pd-svg text.needlbl: POS_A1 needs a source
+    new text: #pd-bar div.h.bad: 1 to fix
+    new text: #pd-bar div.d: POS_A1 needs a source · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/save  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-bar div.h.bad: The save was refused (500)
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+### POST /api/processes/1/flow/save  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)

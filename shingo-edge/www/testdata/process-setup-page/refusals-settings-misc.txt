@@ -1,0 +1,90 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## Sync from Core
+# writes, in order: POST /api/payload-catalog/sync
+### POST /api/payload-catalog/sync  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-root div.pd-refusal: The catalog sync failed (400). Core may be unreachable.
+    sheet: closed
+    state: settingsError="The catalog sync failed (400). Core may be unreachable."
+    unhandled rejection: none
+### POST /api/payload-catalog/sync  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-root div.pd-refusal: The catalog sync failed (500). Core may be unreachable.
+    sheet: closed
+    state: settingsError="The catalog sync failed (500). Core may be unreachable."
+    unhandled rejection: none
+### POST /api/payload-catalog/sync  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### POST /api/payload-catalog/sync  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-root div.pd-notice: Catalog synced from Core.
+    sheet: closed
+    state: settingsNotice="Catalog synced from Core."
+    unhandled rejection: none
+
+## Delete process
+# writes, in order: DELETE /api/processes/1
+### DELETE /api/processes/1  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Delete Press A?", status "the Edge refused it" (bad), OK "Delete Press A" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: DELETE /api/processes/1 · GET /api/processes · GET /api/catid-health → sheet: closed
+### DELETE /api/processes/1  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Delete Press A?", status "the server refused it (500)" (bad), OK "Delete Press A" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: DELETE /api/processes/1 · GET /api/processes · GET /api/catid-health → sheet: closed
+### DELETE /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Delete Press A?", no status, OK "Delete Press A" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: DELETE /api/processes/1 · GET /api/processes · GET /api/catid-health → sheet: closed
+### DELETE /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes
+    new text: … and 36 more runs (the tab redrew)
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+
+## Add group
+# writes, in order: POST /api/process-groups
+### POST /api/process-groups  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Add group", status "the Edge refused it" (bad), OK "Add" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/process-groups · GET /api/process-groups · GET /api/catid-health → sheet: closed
+### POST /api/process-groups  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Add group", status "the server refused it (500)" (bad), OK "Add" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/process-groups · GET /api/process-groups · GET /api/catid-health → sheet: closed
+### POST /api/process-groups  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add group", no status, OK "Add" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/process-groups · GET /api/process-groups · GET /api/catid-health → sheet: closed
+### POST /api/process-groups  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-groups
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)

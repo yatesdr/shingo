@@ -1,0 +1,118 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## Part popover: + PART-12 (on a fresh page)
+# writes, in order: PUT /api/processes/1/payloads
+### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-partlist div.none.pd-partnote: Could not add PART-12: the Edge refused it
+    sheet: closed
+    state: partPop.note="Could not add PART-12: the Edge refused it"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-partlist div.none.pd-partnote: Could not add PART-12: the server refused it (500)
+    sheet: closed
+    state: partPop.note="Could not add PART-12: the server refused it (500)"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/composer · POST /api/processes/1/flow/preview
+    new text: #pd-root span.t: PART-12
+    new text: #pd-svg text.partlbl: PART-12
+    new text: #pd-postbl span.t: PART-12
+    new text: #pd-posbox span.t: PART-12
+    new text: #pd-bar div.h.bad: 1 to fix
+    new text: #pd-bar div.d: 1 part needs a position — PART-1 — drop each on a position, or take it off this flow. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    new text: #pd-bar button.pd-chip: Take PART-1 off this flow
+    new text: #pd-bar div.prov.dirty: Unsaved changes
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+
+## Part popover: × PART-11 (on a fresh page)
+# writes, in order: PUT /api/processes/1/payloads
+### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-partlist div.none.pd-partnote: Could not take PART-11 out: the Edge refused it
+    sheet: closed
+    state: partPop.note="Could not take PART-11 out: the Edge refused it"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-partlist div.none.pd-partnote: Could not take PART-11 out: the server refused it (500)
+    sheet: closed
+    state: partPop.note="Could not take PART-11 out: the server refused it (500)"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/composer
+    new text: #pd-partlist div.none.pd-partnote: PART-11 is out of the part list. It stays here until this flow is saved.
+    sheet: closed
+    state: partPop.note="PART-11 is out of the part list. It stays here until this flow is saved."
+    unhandled rejection: none
+
+## Settings › Parts: + PART-13
+# writes, in order: PUT /api/processes/1/payloads
+### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-root div.pd-refusal: the server refused it (500)
+    sheet: closed
+    state: settingsError="the server refused it (500)"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/composer
+    new text: #pd-root span.pd-nchip: PART-13
+    sheet: closed
+    state: no message set
+    unhandled rejection: none
+
+## Settings › Parts: × PART-11
+# writes, in order: PUT /api/processes/1/payloads
+### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-root div.pd-refusal: the server refused it (500)
+    sheet: closed
+    state: settingsError="the server refused it (500)"
+    unhandled rejection: none
+### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/composer
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: none

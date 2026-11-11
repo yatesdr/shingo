@@ -1,0 +1,103 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## Save as recipe… on Style A
+# writes, in order: POST /api/processes/1/presets
+### POST /api/processes/1/presets  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Save Style A as a recipe", status "the Edge refused it" (bad), OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/presets → sheet: closed
+### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Save Style A as a recipe", status "the server refused it (500)" (bad), OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/presets → sheet: closed
+### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Save Style A as a recipe", no status, OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/presets → sheet: closed
+### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/presets
+    new text: #pd-root div.pd-notice: Saved recipe From A. It is in the rail under Recipes.
+    sheet: closed
+    state: notice="Saved recipe From A. It is in the rail under Recipes.", presets.error="Could not reach this edge."
+    unhandled rejection: none
+
+## Save recipe… on a new draft (cells)
+# writes, in order: POST /api/processes/1/presets
+### POST /api/processes/1/presets  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Name this recipe", status "the Edge refused it" (bad), OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Name this recipe", status "the server refused it (500)" (bad), OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Name this recipe", no status, OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/composer · POST /api/processes/1/flow/preview
+    new text: #pd-root div.pd-notice: Saved recipe Fresh.
+    new text: #pd-bar div.h: running — saved changes take effect on the next trip
+    new text: #pd-bar div.d: not previewed while running · an order already on its way finishes as planned · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    new text: #pd-bar div.prov: No unsaved changes
+    new text: … and 267 more runs (the tab redrew)
+    sheet: closed
+    state: notice="Saved recipe Fresh."
+    unhandled rejection: none
+
+## Save recipe… with groups
+# writes, in order: POST /api/processes/1/presets
+### POST /api/processes/1/presets  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-root div#pd-grefusal.pd-refusal: the Edge refused it
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Save recipe Recipe One", status "the Edge refused it" (bad), OK "Save recipe" enabled
+    state: shapeDraft.refusal="the Edge refused it"
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-root div#pd-grefusal.pd-refusal: the server refused it (500)
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Save recipe Recipe One", status "the server refused it (500)" (bad), OK "Save recipe" enabled
+    state: shapeDraft.refusal="the server refused it (500)"
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Save recipe Recipe One", no status, OK "Save recipe" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/composer · GET /api/processes/1/composer · POST /api/processes/1/flow/preview
+    new text: #pd-root div.pd-notice: Saved recipe Recipe One.
+    new text: #pd-bar div.h: running — saved changes take effect on the next trip
+    new text: #pd-bar div.d: not previewed while running · an order already on its way finishes as planned · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    new text: #pd-bar div.prov: No unsaved changes
+    new text: … and 251 more runs (the tab redrew)
+    sheet: closed
+    state: notice="Saved recipe Recipe One."
+    unhandled rejection: none

@@ -11,6 +11,17 @@
 //     suggestions, the Recipes tab's rename/archive/apply, and the reads the
 //     tab clicks and the rail's re-read send. Same format as U0's.
 //
+//   refusals-*.txt: every write of every act pinned (U0's and these), run
+//     again with that one write answered the way the Edge refuses: the
+//     handler's own 4xx shape (writeError's {"error"}, and flow's 409/422
+//     shapes where the handler has them, handlers_flow.go), a 500 with no
+//     body (chi's Recoverer on a panic, router.go:195), no answer at all
+//     (fetch rejects, a dead Edge), and — for the admin routes only — the
+//     login page an expired session's 303 lands on (adminMiddleware,
+//     router.go:820). Each says what followed, what text appeared and where,
+//     whether the sheet is open and its OK pressable, and whether the page
+//     let a rejection go unhandled.
+//
 // THE PLANT IS U0's (fixture.json); the routes an act needs that the base
 // plant does not answer (a health strip, a station counter) are added per act
 // here, synthetic like the rest.
@@ -23,6 +34,34 @@ const path = require('path');
 let T = null;               // pins.js's helpers: see run()
 const MSG = 'the Edge refused it';
 const PAGE = path.join(__dirname, '..', '..', 'static', 'js', 'pages', 'processes-desktop.js');
+
+// ── unhandled rejections, per run ────────────────────────────────────────────
+//
+// A page act whose fetch rejects with no catch is an unhandled rejection: in a
+// browser it reaches the page's own window listener (processes-desktop.js:43,
+// which writes body[data-pd-error]) and the console, and the engineer sees
+// nothing. Here it reaches node's, which hands it to the page that is running
+// and records it for the run's outcome.
+//
+// THE WORDS ARE THE PIN'S, NOT V8's: a SyntaxError's message (JSON.parse of
+// the login page) is the engine's sentence and moves with node's version, so
+// a rejection is its name, and its message only when this harness wrote it
+// (fetch's "Failed to fetch").
+const reasonOf = r => (!r || !r.name ? String(r)
+    : r.name === 'SyntaxError' ? 'SyntaxError (JSON.parse of a body that is not JSON)' : r.name + ': ' + r.message);
+let running = null;
+process.on('unhandledRejection', reason => {
+    if (!running) { process.stderr.write('p0 pins: an unhandled rejection with no page running: ' + reason + '\n'); process.exit(1); }
+    running.rejections.push({ text: reasonOf(reason), message: String((reason && reason.message) || reason) });
+    running.page.fireWindow('unhandledrejection', { reason: reason });
+});
+function rejectionLine(r, page) {
+    if (!r.rejections.length) return 'unhandled rejection: none';
+    const pd = page.doc.body.dataset.pdError || '';
+    const last = r.rejections[r.rejections.length - 1];
+    return 'unhandled rejection: ' + r.rejections.map(x => x.text).join('; ') + ' (body data-pd-error ' +
+        (pd === last.message.slice(0, 300) ? 'set to its message' : JSON.stringify(pd)) + ')';
+}
 
 // ── small helpers ────────────────────────────────────────────────────────────
 const lineOf = c => c.method + ' ' + c.url;
@@ -82,6 +121,166 @@ function stateLine(page) {
         ['partPop.note', S.partPop && S.partPop.note], ['papply.status', S.papply && S.papply.status],
     ].filter(x => x[1]);
     return f.length ? 'state: ' + f.map(x => x[0] + '=' + JSON.stringify(x[1])).join(', ') : 'state: no message set';
+}
+
+// ── refusal answers ──────────────────────────────────────────────────────
+//
+// The answers a write is refused with. The 4xx shapes are the handler's own:
+// writeError's {"error": msg} (handlers_api.go:28) for every write on this
+// page, plus, for the flow routes, the shapes handlers_flow.go writes beside
+// it — 409 from writeFlowRefusal (:84-91, with stale:true for a stale
+// fingerprint), 422 with the validation findings (:219-223, :307-311), 422
+// from writeMintRefusal (:263-275), and the preview's 400 that carries the
+// findings and fingerprint (:133-146). writeAdvisoryRefusal (notice:true)
+// and writeErrorWithExit (exit) are station-action shapes
+// (handlers_operator_actions.go) that no route this page writes answers.
+const FINDING = { core_node_name: 'POS_A1', side: 'to', field: 'inbound_source', severity: 'error', message: 'POS_A1 needs a source' };
+// THE PUBLIC ROUTES this page calls: router.go:290-413 sit outside the admin
+// group, so no session answers them. Every other route it calls, read or
+// write, is behind adminMiddleware (router.go:414-415), which answers a
+// caller with no session by a 303 to /login (:820): fetch follows it and the
+// page gets the login page, 200 text/html. A lapsed session lapses for every
+// later call too, so that answer is STICKY: the refused write and every admin
+// call after it get the login page.
+const PUBLIC = [
+    /^\/api\/processes\/\d+\/flow\/(preview|save|mint)$/, /^\/api\/processes\/\d+\/changeover\/(start|gate-status)$/,
+    /^\/api\/processes\/\d+\/catid-health$/, /^\/api\/catid-health$/, /^\/api\/core-nodes$/, /^\/api\/payload-catalog$/,
+];
+const isPublic = url => PUBLIC.some(re => re.test(url.split('?')[0]));
+function answersFor(method, url) {
+    const u = url.split('?')[0];
+    let four;
+    if (/\/flow\/preview$/.test(u)) {
+        four = [
+            ['409 {"error"} (writeFlowRefusal)', { status: 409, body: { error: MSG } }],
+            ['400 {"error", order_count:0, findings, fingerprint} (no orders)', { status: 400, body: { error: MSG, order_count: 0, findings: [FINDING], unresolved: [], fingerprint: 'fp-refused' } }],
+        ];
+    } else if (/\/flow\/save$/.test(u)) {
+        four = [
+            ['409 {"error"} (writeFlowRefusal)', { status: 409, body: { error: MSG } }],
+            ['409 {"error", stale:true} (a stale fingerprint)', { status: 409, body: { error: MSG, stale: true } }],
+            ['422 {"error", findings} (validation)', { status: 422, body: { error: MSG, findings: [FINDING] } }],
+        ];
+    } else if (/\/flow\/mint$/.test(u)) {
+        four = [
+            ['422 {"error"} (writeMintRefusal)', { status: 422, body: { error: MSG } }],
+            ['422 {"error", findings} (validation)', { status: 422, body: { error: MSG, findings: [FINDING] } }],
+        ];
+    } else {
+        four = [['400 {"error"} (writeError)', { status: 400, body: { error: MSG } }]];
+    }
+    const all = four.concat([
+        ['500, no body (chi Recoverer)', { status: 500, raw: '' }],
+        ['no answer (fetch rejects: TypeError "Failed to fetch")', { reject: 'Failed to fetch' }],
+    ]);
+    if (!isPublic(u)) {
+        all.push(['session lapsed (303 to /login, 200 text/html, for it and every admin call after)',
+            { status: 200, raw: '<!doctype html><title>Log in</title>', redirected: true, sticky: true }]);
+    }
+    return all;
+}
+
+// ── the refusal runner ───────────────────────────────────────────────────
+//
+// A spec is an act: {title, drive, setup?, hash?, page?, search?, extra?,
+// previews?, again?}. Its writes are the non-GET calls the act sends against
+// the fixture's answers, less the previews (a preview is the act only where
+// `previews` says so: the flow edit, the apply modal). Each write is then
+// refused, one at a time and with each answer in turn, on a fresh page: the
+// k-th call with that method and url after setup is the one refused, which is
+// the same request, because every call before it is the same.
+async function runOnce(spec, target, answer) {
+    let page = null, armed = false, k = 0, hit = null;
+    page = await T.openPage({
+        hash: spec.hash, page: spec.page, search: spec.search, extra: spec.extra,
+        answer: (m, u) => {
+            if (hit && answer.sticky && !isPublic(u)) return answer;
+            if (!armed || !target || m !== target.method || u !== target.url) return undefined;
+            if (k++ !== target.k) return undefined;
+            hit = { at: page.calls.length - 1, before: new Set(page.segments()) };
+            return answer;
+        },
+    });
+    running = { page: page, rejections: [] };
+    if (spec.setup) await spec.setup(page);
+    await page.settle();
+    const from = page.mark();
+    armed = true;
+    // A refused write can leave the act nothing to do next (no sheet to
+    // press): the driver stops there, and the run says where.
+    let stopped = "";
+    try { await spec.drive(page); } catch (e) { if (!target) throw e; stopped = String(e.message).split(":")[0]; }
+    await page.settle();
+    const r = { page: page, from: from, hit: hit, rejections: running.rejections, stopped: stopped };
+    return r;
+}
+function writesOf(spec, calls) {
+    const seenK = {};
+    const out = [];
+    for (const c of calls) {
+        if (c.method === 'GET') continue;
+        if (isPreview(c) && !spec.previews) continue;
+        const key = lineOf(c);
+        const k = seenK[key] = (seenK[key] === undefined ? 0 : seenK[key] + 1);
+        out.push({ method: c.method, url: c.url, k: k });
+    }
+    return out;
+}
+async function refusalBlock(spec) {
+    T.setCurrent(spec.golden);
+    const clean = await runOnce(spec, null, null);
+    // spec.refuse, when given, picks which of the act's writes are refused
+    // (an act split in two: the sheet a read opens, then its OK).
+    const writes = writesOf(spec, clean.page.since(clean.from)).filter(w => !spec.refuse || spec.refuse.test(w.method + ' ' + w.url));
+    const lines = ['## ' + spec.title];
+    if (!writes.length) { lines.push('# (this act sends no write)'); return lines; }
+    lines.push('# writes, in order: ' + writes.map(w => w.method + ' ' + w.url + (w.k ? ' (#' + (w.k + 1) + ')' : '')).join(' · '));
+    for (const w of writes) {
+        for (const [label, answer] of answersFor(w.method, w.url)) {
+            const r = await runOnce(spec, w, answer);
+            if (!r.hit) throw new Error(spec.title + ': ' + w.method + ' ' + w.url + ' was not sent on the refused run');
+            const page = r.page;
+            const after = page.calls.slice(r.hit.at + 1);
+            lines.push('### ' + w.method + ' ' + w.url + (w.k ? ' (#' + (w.k + 1) + ')' : '') + '  ←  ' + label);
+            lines.push('    then: ' + (after.length ? after.map(lineOf).join(' · ') : 'nothing'));
+            const fresh = page.segments().filter(s => !r.hit.before.has(s));
+            if (!fresh.length) lines.push('    new text: none');
+            // A TAB THAT REDREW is dozens of runs of text, most of them the same
+            // words in a new place; past eight, only the runs in a message
+            // element are listed and the rest are counted.
+            const shown = fresh.length > 8 ? fresh.filter(s => MESSAGE.test(s)) : fresh;
+            for (const s of shown) lines.push("    new text: " + s);
+            if (shown.length < fresh.length) lines.push("    new text: … and " + (fresh.length - shown.length) + " more runs (the tab redrew)");
+            if (r.stopped) lines.push('    the act stopped: ' + r.stopped);
+            lines.push('    ' + sheetLine(page));
+            lines.push('    ' + stateLine(page));
+            lines.push('    ' + rejectionLine(r, page));
+            // PRESSED AGAIN: a sheet that stays open after a refusal, its OK
+            // live, is pressed once more, answered as the fixture answers (a
+            // lapsed session stays lapsed) — what the second press re-sends
+            // is the act's retry.
+            if (spec.again && page.sheetOpen() && okButton(page) && !okButton(page).disabled) {
+                const mark = page.mark();
+                await pressOK(page);
+                const again = page.since(mark);
+                lines.push('    pressed again: ' + (again.length ? again.map(lineOf).join(' · ') : 'nothing sent') +
+                    ' → ' + sheetLine(page));
+            }
+            for (const c of page.calls.slice(r.from)) T.SEEN.push({ site: c.site, stack: c.stack, golden: spec.golden });
+            running = null;
+        }
+    }
+    return lines;
+}
+async function refusals(golden, specs) {
+    const lines = ['# Each write of each act, refused one at a time on a fresh page. A block: the write and the',
+        '# answer; the requests that followed it; each run of text that appeared on the page (container,',
+        '# innermost element); the sheet; the page\'s message state; any rejection the page left unhandled.', ''];
+    for (const s of specs) {
+        s.golden = golden;
+        lines.push(...(await refusalBlock(s)), '');
+    }
+    T.out[golden] = lines.join('\n').replace(/\n+$/, '\n');
 }
 
 // ── the routes these acts need ───────────────────────────────────────────
@@ -402,6 +601,110 @@ async function pinReads() {
     T.out['requests-reads.txt'] = lines.join('\n').replace(/\n+$/, '\n');
 }
 
+// ── the refusal goldens ──────────────────────────────────────────────────
+//
+// BUGS THESE PIN, AS THEY ARE (each is a line of a golden below, and stays
+// one until a named change moves it; processes-desktop.js unless named):
+//   - A 500 with no body previews as "Preview OK · null orders": runPreview
+//     parses whatever came back (:2400) with no res.ok, and the bar prints
+//     the count it did not get (composer-model.js:2053, :2074).
+//   - A preview with no answer is silent: the catch (:2404) swallows it and
+//     the bar keeps the last preview's words. Save style with no answer is
+//     an unhandled rejection and nothing on screen (FINDINGS F22's silence;
+//     every postJSON write with no answer is the same: :6049 has no catch).
+//   - A lapsed session's write reads as done: adminMiddleware's 303 lands on
+//     the login page, 200, and postJSON takes any 2xx as ok with an empty
+//     body (:6056). Add process then writes to /api/processes/NaN/… (:6785),
+//     recipes and the catalog sync claim "Saved", and the next read throws.
+//   - A refused routing-set write shows nothing: the refusal is set (:3715)
+//     and loadRouting's next good read clears it (:3746) before the draw.
+//   - A refused Save settings throws the typed draft away: the draft is
+//     rebuilt from the stored process whatever the answer (:5368). With no
+//     answer it clears its own messages (:5306) and never redraws.
+//   - The catalog sync drops the server's sentence for its status (:7084).
+//   - Apply with no answer wedges the modal: S.papply.running stays true,
+//     runSheet's finally re-enables the button (:5917), and every press after
+//     returns at :7895 — "Saving…", forever.
+//   - A refusal midway through a chain is retried from the top by the next
+//     press: Add process POSTs a second process, New station counter… a
+//     second counter (:4825), the mint a second mint.
+//   - "Creating…" stays on Add process's status line on a dead Edge (:6781).
+//   - Apply retries a plain 409 as if it were stale (desktop-bodies.js:431).
+async function pinRefusals() {
+    const U = T.DRIVE;
+    await refusals('refusals-flow.txt', [
+        specOf('flow edit: the debounced preview (POS_A5 source, POS_A1 key route)', U.flowEdit, { previews: true }),
+        specOf('Save style', U.flowSave),
+    ]);
+    await refusals('refusals-style-create.txt', [specOf('+ New style with no recipe (Style C, CAT-C)', U.styleCreate, { again: true })]);
+    await refusals('refusals-flow-mint.txt', [specOf('+ New style from Recipe One, a part per slot and a CATID', U.mint, { again: true })]);
+    await refusals('refusals-add-process.txt', [specOf('Add process (the chain of five writes)', U.addProcess, { again: true })]);
+    await refusals('refusals-settings-save.txt', [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]);
+    await refusals('refusals-screen-sheet.txt', [
+        specOf('Edit Screen A (POS_A11 off, NEW_3 on)', U.screenEdit, { again: true }),
+        specOf('Add operator screen (Screen C on NEW_1)', U.screenAdd, { again: true }),
+    ]);
+    await refusals('refusals-part-set.txt', [
+        specOf('Part popover: + PART-12 (on a fresh page)', U.partPopAdd),
+        specOf('Part popover: × PART-11 (on a fresh page)', U.partPopDrop),
+        specOf('Settings › Parts: + PART-13', U.partSettingsAdd),
+        specOf('Settings › Parts: × PART-11', U.partSettingsDrop),
+    ]);
+    await refusals('refusals-routing-set.txt', [
+        specOf('Routing set: add SRC_2 (POST)', U.routingAddNew),
+        specOf('Routing set: add DST_9 (PATCH adopts)', U.routingAdopt),
+        specOf('Routing set: × STG_3 (DELETE)', U.routingDrop),
+        specOf('Routing set: click STG_1 (DELETE)', U.routingToggleOff),
+        specOf('Routing set: Turn all 1 on (Staging)', U.routingAllOn),
+    ]);
+    await refusals('refusals-recipe-create.txt', [
+        specOf('Save as recipe… on Style A', U.recipeFromStyle, { again: true }),
+        specOf('Save recipe… on a new draft (cells)', U.recipeCells, { again: true }),
+        specOf('Save recipe… with groups', U.recipeGrouped, { again: true }),
+    ]);
+    await refusals('refusals-catid-strip.txt', [
+        specOf('Start changeover to Style B', D.chStart),
+        specOf('Pin to Style B', D.chPin, { again: true }),
+        specOf('the chooser\'s Pin (Style A)', D.chPinPick, { again: true }),
+        specOf('Count Slot2', D.chRepoint, { again: true }),
+        specOf('Charge: the sheet its preview opens', D.chChargeAsk),
+        specOf('Charge: the sheet\'s Charge', D.chCharge, { again: true, refuse: /mode=charge/ }),
+        specOf('Write off', D.chWriteOff, { again: true }),
+    ]);
+    await refusals('refusals-style-menu.txt', [
+        specOf('Rename Style B', D.styleRename, { again: true }),
+        specOf('Expected CATID on Style A', D.styleCatid, { again: true }),
+        specOf('Clone Style A', D.styleClone, { again: true }),
+        specOf('Mark Style B as running', D.styleRunning, { again: true }),
+        specOf('Delete Style B', D.styleDelete, { again: true }),
+    ]);
+    await refusals('refusals-station-counters.txt', [
+        specOf('+ Add station counter', D.scNew, { again: true }),
+        specOf('Edit Station 1', D.scEdit, { again: true }),
+        specOf('POS_A1 › Counted at: Station 1', D.scCountedAt),
+        specOf('POS_A2 › Counted at: New station counter… (the create, then the bind)', D.scCountedAtNew, { again: true }),
+        specOf('Change positions… › Save positions (two binds)', D.scPositions, { again: true }),
+        specOf('Remove Station 1', D.scDelete, { again: true }),
+    ]);
+    await refusals('refusals-positions.txt', [
+        specOf('Add positions: NEW_1', D.posAdd, { again: true }),
+        specOf('Remove POS_A11: the sheet the impact read opens', D.posRemoveAsk),
+        specOf('Remove POS_A11: the sheet\'s Remove', D.posRemove, { again: true, refuse: /^PUT / }),
+        specOf('Make a screen for LDR_1', D.bindLoader),
+    ]);
+    await refusals('refusals-settings-misc.txt', [
+        specOf('Sync from Core', D.sync),
+        specOf('Delete process', D.deleteProcess, { again: true }),
+        specOf('Add group', D.addGroup, { again: true }),
+    ]);
+    await refusals('refusals-presets.txt', [
+        specOf('Rename Recipe One', D.presetRename, { again: true }),
+        specOf('Archive Recipe One', D.presetArchive, { again: true }),
+        specOf('Apply: the tick\'s preview (and each pick\'s)', D.applyPreview),
+        specOf('Apply: Save to 1 part', D.applySave, { again: true }),
+    ]);
+}
+
 // ── the fetch( site table (`node pins.js --sites`) ───────────────────────
 function sitesTable(seen) {
     const src = fs.readFileSync(PAGE, 'utf8').split('\n');
@@ -443,6 +746,7 @@ function sitesTable(seen) {
 async function run(t) {
     T = t;
     await pinRequests();
+    await pinRefusals();
 }
 
 module.exports = { run, sitesTable };

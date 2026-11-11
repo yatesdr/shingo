@@ -1,0 +1,129 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## Add positions: NEW_1
+# writes, in order: PUT /api/operator-stations/11/claimed-nodes
+### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Add positions", status "the Edge refused it" (bad), OK "Add 1" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Add positions", status "the server refused it (500)" (bad), OK "Add 1" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add positions", no status, OK "Add 1" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/operator-stations/11/claimed-nodes
+    new text: … and 36 more runs (the tab redrew)
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+
+## Remove POS_A11: the sheet the impact read opens
+# writes, in order: POST /api/operator-stations/11/claimed-nodes/impact
+### POST /api/operator-stations/11/claimed-nodes/impact  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim h2: Remove POS_A11
+    new text: #pd-scrim p: from Screen A
+    new text: #pd-scrim p.pd-note: What still names it could not be read (the Edge refused it). Removing it takes its tile off the screen.
+    new text: #pd-scrim button.pd-btn: Cancel
+    new text: #pd-scrim button.pd-btn.danger: Remove
+    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
+    state: no message set
+    unhandled rejection: none
+### POST /api/operator-stations/11/claimed-nodes/impact  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim h2: Remove POS_A11
+    new text: #pd-scrim p: from Screen A
+    new text: #pd-scrim p.pd-note: What still names it could not be read (the server refused it (500)). Removing it takes its tile off the screen.
+    new text: #pd-scrim button.pd-btn: Cancel
+    new text: #pd-scrim button.pd-btn.danger: Remove
+    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
+    state: no message set
+    unhandled rejection: none
+### POST /api/operator-stations/11/claimed-nodes/impact  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### POST /api/operator-stations/11/claimed-nodes/impact  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-scrim h2: Remove POS_A11
+    new text: #pd-scrim p: from Screen A
+    new text: #pd-scrim p.pd-note: No recipe or style of this process names it. Removing it takes its tile off the screen.
+    new text: #pd-scrim button.pd-btn: Cancel
+    new text: #pd-scrim button.pd-btn.danger: Remove
+    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
+    state: no message set
+    unhandled rejection: none
+
+## Remove POS_A11: the sheet's Remove
+# writes, in order: PUT /api/operator-stations/11/claimed-nodes
+### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Remove POS_A11", status "the Edge refused it" (bad), OK "Remove" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Remove POS_A11", status "the server refused it (500)" (bad), OK "Remove" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/operator-stations/11/claimed-nodes
+    new text: … and 36 more runs (the tab redrew)
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+
+## Make a screen for LDR_1
+# writes, in order: POST /api/loader-boards
+### POST /api/loader-boards  ←  400 {"error"} (writeError)
+    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
+    new text: #pd-root div.pd-refusal: Could not make a screen for LDR_1: the Edge refused it
+    sheet: closed
+    state: settingsError="Could not make a screen for LDR_1: the Edge refused it"
+    unhandled rejection: none
+### POST /api/loader-boards  ←  500, no body (chi Recoverer)
+    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
+    new text: #pd-root div.pd-refusal: Could not make a screen for LDR_1: the server refused it (500)
+    sheet: closed
+    state: settingsError="Could not make a screen for LDR_1: the server refused it (500)"
+    unhandled rejection: none
+### POST /api/loader-boards  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### POST /api/loader-boards  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/operator-stations
+    new text: none
+    sheet: closed
+    state: settingsNotice="LDR_1 now has a screen on this process, with its windows bound to it."
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)

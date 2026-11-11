@@ -1,6 +1,6 @@
 // pins.js — the Processes page's process-setup characterisation (U0-page),
-// and the P0 pins beside it (p0-page.js: the acts U0 left out), which run on
-// this file's drivers and plant.
+// and the P0 pins beside it (p0-page.js: the acts U0 left out, and every
+// write's refusals), which run on this file's drivers and plant.
 //
 // Run by www/processes_desktop_setup_pins_test.go, which compares what this
 // prints against www/testdata/process-setup-page/*. It prints ONE JSON object,

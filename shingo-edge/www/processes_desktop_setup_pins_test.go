@@ -32,7 +32,11 @@ var updateProcessSetupPageGolden = flag.Bool("update-process-setup-page-golden",
 //     url and body — driven through the page's own click handlers: U0's ten
 //     acts, then the rest of the page's writes and reads (the health strip,
 //     the style menu, station counters, positions, Recipes, the tab reads),
-//     so that every fetch( site in the page is reached by one of them.
+//     so that every fetch( site in the page is reached by one of them;
+//   - refusals-*.txt: every write of every act, refused one at a time — the
+//     handler's own 4xx shape, a 500 with no body, no answer at all, and a
+//     lapsed session's login page — with what the page then sent, showed,
+//     left open and left unhandled.
 //
 // The harness and the synthetic plant are in testdata/process-setup-harness
 // (pins.js and p0-page.js say what each pin covers and how each act is

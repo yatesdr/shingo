@@ -1,0 +1,61 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## + New style from Recipe One, a part per slot and a CATID
+# writes, in order: POST /api/processes/1/flow/mint · PUT /api/styles/9
+### POST /api/processes/1/flow/mint  ←  422 {"error"} (writeMintRefusal)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "New style", status "the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/flow/mint  ←  422 {"error", findings} (validation)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "New style", status "the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/flow/mint  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "New style", status "the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### POST /api/processes/1/flow/mint  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "New style", no status, OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### PUT /api/styles/9  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Minted PART-1 PART-3, but its CATID did not save: the Edge refused it
+    sheet: open "New style", status "Minted PART-1 PART-3, but its CATID did not save: the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### PUT /api/styles/9  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Minted PART-1 PART-3, but its CATID did not save: the server refused it (500)
+    sheet: open "New style", status "Minted PART-1 PART-3, but its CATID did not save: the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### PUT /api/styles/9  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "New style", no status, OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+### PUT /api/styles/9  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes
+    new text: none
+    sheet: closed
+    state: notice="Minted PART-1 PART-3."
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)

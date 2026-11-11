@@ -1,0 +1,141 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## Add process (the chain of five writes)
+# writes, in order: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads
+### POST /api/processes  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    sheet: open "Add process", status "the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### POST /api/processes  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
+    sheet: open "Add process", status "the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### POST /api/processes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add process", status "Creating…", OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### POST /api/processes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: POST /api/operator-stations · PUT /api/operator-stations/NaN/claimed-nodes · PUT /api/processes/NaN/routing-nodes · PUT /api/processes/NaN/payloads · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### POST /api/operator-stations  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created. Its operator screen was refused: the Edge refused it
+    sheet: open "Add process", status "The process was created. Its operator screen was refused: the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### POST /api/operator-stations  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created. Its operator screen was refused: the server refused it (500)
+    sheet: open "Add process", status "The process was created. Its operator screen was refused: the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### POST /api/operator-stations  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add process", status "Creating…", OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### POST /api/operator-stations  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: PUT /api/operator-stations/NaN/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### PUT /api/operator-stations/31/claimed-nodes  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added. Its positions was refused: the Edge refused it
+    sheet: open "Add process", status "The process was created; its screen added. Its positions was refused: the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/operator-stations/31/claimed-nodes  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added. Its positions was refused: the server refused it (500)
+    sheet: open "Add process", status "The process was created; its screen added. Its positions was refused: the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/operator-stations/31/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add process", status "Creating…", OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/operator-stations/31/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### PUT /api/processes/5/routing-nodes  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its routing set was refused: the Edge refused it
+    sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its routing set was refused: the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/processes/5/routing-nodes  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its routing set was refused: the server refused it (500)
+    sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its routing set was refused: the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/processes/5/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add process", status "Creating…", OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/processes/5/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: PUT /api/processes/5/payloads · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### PUT /api/processes/5/payloads  ←  400 {"error"} (writeError)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its part set was refused: the Edge refused it
+    sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its part set was refused: the Edge refused it" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/processes/5/payloads  ←  500, no body (chi Recoverer)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its part set was refused: the server refused it (500)
+    sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its part set was refused: the server refused it (500)" (bad), OK "Create" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/processes/5/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: open "Add process", status "Creating…", OK "Create" enabled
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
+### PUT /api/processes/5/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)

@@ -1,0 +1,166 @@
+# Each write of each act, refused one at a time on a fresh page. A block: the write and the
+# answer; the requests that followed it; each run of text that appeared on the page (container,
+# innermost element); the sheet; the page's message state; any rejection the page left unhandled.
+
+## Save settings (U0's act: five writes)
+# writes, in order: PUT /api/processes/1 · PATCH /api/processes/1 · POST /api/processes/1/containment-setting · POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting
+### PUT /api/processes/1  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### PUT /api/processes/1  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    sheet: closed
+    state: settingsError="The server refused the change (500)."
+    unhandled rejection: none
+### PUT /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### PUT /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: PATCH /api/processes/1 · POST /api/processes/1/containment-setting · POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### PATCH /api/processes/1  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### PATCH /api/processes/1  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    sheet: closed
+    state: settingsError="The server refused the change (500)."
+    unhandled rejection: none
+### PATCH /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### PATCH /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: POST /api/processes/1/containment-setting · POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### POST /api/processes/1/containment-setting  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    sheet: closed
+    state: settingsError="The server refused the change (500)."
+    unhandled rejection: none
+### POST /api/processes/1/containment-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### POST /api/processes/1/containment-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### POST /api/process-nodes/201/curtain-setting  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    sheet: closed
+    state: settingsError="The server refused the change (500)."
+    unhandled rejection: none
+### POST /api/process-nodes/201/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### POST /api/process-nodes/201/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    sheet: closed
+    state: settingsError="the Edge refused it"
+    unhandled rejection: none
+### POST /api/process-nodes/203/curtain-setting  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    sheet: closed
+    state: settingsError="The server refused the change (500)."
+    unhandled rejection: none
+### POST /api/process-nodes/203/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: nothing
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+### POST /api/process-nodes/203/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: none
+    sheet: closed
+    state: no message set
+    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
