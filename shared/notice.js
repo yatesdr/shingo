@@ -21,7 +21,7 @@
 //
 // NOTHING HAPPENS AT IMPORT: the region is made by the first toast or banner.
 
-import { el } from './utils.js';
+import { el } from '/static/shared/dom.js';
 
 const LEVELS = ['info', 'success', 'warning', 'error'];
 const LIFETIME_MS = { error: 5000 };

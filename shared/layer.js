@@ -29,7 +29,7 @@
 // one click) go on with the first entry and stay: a page that never opens one
 // pays nothing.
 
-import { el } from './utils.js';
+import { el } from '/static/shared/dom.js';
 
 // The defaults per kind. A popover is a list or menu anchored to a control: it
 // does not lock the page, has no typed work to lose, keeps its fields and

@@ -35,10 +35,10 @@
 // AbortController and its own timer, cleared when the answer is read: nothing
 // outlives the request.
 
-import { toast } from './notice.js';
+import { toast } from '/static/shared/notice.js';
 
 export const REQUEST_TIMEOUT_MS = 30000;
-export const LOGIN_PATH = '/login';
+const LOGIN_PATH = '/login';
 const SIGNED_OUT = 'Signed out';
 const NO_ANSWER = 'No answer from the server';
 

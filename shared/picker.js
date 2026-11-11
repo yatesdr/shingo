@@ -28,8 +28,8 @@
 // into it is not work a sheet asks before discarding; a selection that moved
 // marks the picker data-dirty, which is.
 
-import { el } from './utils.js';
-import { openLayer } from './layer.js';
+import { el } from '/static/shared/dom.js';
+import { openLayer } from '/static/shared/layer.js';
 
 let seq = 0;
 let dropped = null;   // the picker whose dropdown list is open
