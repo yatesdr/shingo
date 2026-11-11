@@ -110,6 +110,41 @@ station's renderers and the node tests. It leaves `'` alone where `escapeHtml`
 escapes it, so the two are not one helper; `dom.js`'s header says why they stay
 in two files.
 
+### The HTTP door
+
+`shared/http.js` is the one HTTP door, and it never throws. `send(method, url,
+body, opts)`, and `http.get`, `post`, `put`, `patch`, `del`, resolve to
+`{ ok, status, body, error, fieldErrors }`:
+
+- `status` 0 is no answer: no connection, or the request's deadline passed.
+- A 204 or an empty 2xx is `ok` with `body` null.
+- `error` is one sentence on every failure: the server's `error` (the Edge's
+  `{"error"}`, Core's configRefusal and kanbanHeld), else its `message`, else an
+  `http.Error` text line, else one made from the status (`Refused (400)`,
+  `Server error (500)`). A `null` or non-JSON body still has one.
+- `fieldErrors` is `{field: message}`: configRefusal's `errors`, or a
+  `field_errors` list.
+- A lapsed session is `{ ok: false, status: 401, error: 'Signed out' }`: a
+  redirect to `/login`, HTML where JSON was asked, or a 401.
+
+**A failure shows once, from the door.** It puts the error on the notice
+(`shared/notice.js`), and a lapsed session's notice carries the **Sign in**
+link back to the page. A caller that draws the error inline passes
+`{ notice: false }` for that call. A write given no body sends `{}`; `null`
+sends none.
+
+**Every request has a deadline**, `REQUEST_TIMEOUT_MS` (30 s, the operator
+station's own): its own AbortController and timer, cleared when the answer is
+read. `opts.timeout` changes it for one call. A caller's `opts.signal` that
+aborts resolves `{ aborted: true }` and shows nothing.
+
+`hookHtmxErrors(root)` puts htmx's failed requests (`htmx:responseError`,
+`htmx:sendError`, `htmx:timeout`) on the same notice and returns the function
+that takes it off again. Nothing installs it yet.
+
+`TestSharedComponentSpecs` holds each rule; `TestSharedComponentPins` runs
+the helper pins' api cases on the door.
+
 ### Module shape
 
 **ES modules.** Shared utilities and page JS use `import`/`export`, and their
