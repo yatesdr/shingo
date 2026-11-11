@@ -16,8 +16,12 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration.
+Deploy: no migration. Core before any Edge that names its press on plain orders.
 
+- Every order request can name the press it serves; Core stores it for plain orders as for multi-step ones
+- A plain empty for a press is served by a strict kanban that supports that press
+- A press's plain move of a contained part to finished goods goes to containment
+- An order with no steps draws its pickup and its drop, never the press as a stop between
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
 - A robot's lift clears the spot it lifted from whichever order it belongs to, and only for the cart it lifted
 
