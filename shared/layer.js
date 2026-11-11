@@ -50,14 +50,12 @@ let overflowBefore = '';
 
 // openLayer registers node as the innermost entry and shows it. opts:
 //   kind          'modal' (default), 'sheet', 'dialog' or 'popover' (KINDS)
-//   card          the element a press must start outside of to be a backdrop
-//                 press (default: the node's first element child; a popover is
-//                 its own card)
 //   reveal        how it shows and hides: 'active' (the .active class),
 //                 'hidden' (the hidden property), 'remove' (taken out of the
 //                 document on close) or 'none' (the page shows and hides it)
-//   backdrop      true: a click on the backdrop is Escape for this entry
-//                 (ruling 2: opt-in per entry)
+//   backdrop      true: a click on the backdrop (the node itself, pressed
+//                 and released there) is Escape for this entry (ruling 2:
+//                 opt-in per entry)
 //   ask           ask before Escape or the backdrop discards typed work
 //   preserveState keep the fields as they are when it closes
 //   anchor        a popover's control: a press on it is not outside
@@ -84,7 +82,6 @@ export function openLayer(node, opts) {
     const e = {
         el: node,
         kind,
-        card: o.card || (kind === 'popover' ? node : (node.firstElementChild || node)),
         reveal: o.reveal || k.reveal,
         lock: o.lock !== undefined ? !!o.lock : k.lock,
         ask: o.ask !== undefined ? !!o.ask : k.ask,
@@ -223,7 +220,7 @@ export function openSheet(opts) {
     const scrim = el('div', { className: 'layer-scrim' }, card);
     document.body.appendChild(scrim);
     const h = openLayer(scrim, {
-        kind: 'sheet', card, reveal: 'remove', preserveState: true,
+        kind: 'sheet', reveal: 'remove', preserveState: true,
         backdrop: !!o.backdrop, ask: o.ask, focus: o.focus, onClose: o.onClose,
     });
     ok.addEventListener('click', () => { if (o.run) h.run(o.run); });
@@ -483,7 +480,7 @@ function dialog(message, o, input, answer) {
         const scrim = el('div', { className: 'layer-scrim' }, card);
         document.body.appendChild(scrim);
         const h = openLayer(scrim, {
-            kind: 'dialog', card, backdrop: !!o.backdrop,
+            kind: 'dialog', backdrop: !!o.backdrop,
             onClose: () => finish(false),
         });
         ok.addEventListener('click', () => { finish(true); h.close('ok'); });
