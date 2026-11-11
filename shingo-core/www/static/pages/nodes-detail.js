@@ -43,7 +43,7 @@ export function openNodeModal(el, opts) {
   }
   var isDirectChildOfGroup = isLeafChild && parentTypeCode === 'NGRP';
   var isLaneSlot = isLeafChild && parentTypeCode === 'LANE';
-  loadNodeDetail(d.id, d.synthetic === 'true');
+  loadNodeDetail(d.id, d.synthetic === 'true', opts);
 
   // Hide associations for lane slots (inherit from lane), show for direct children of NGRP
   var assocDiv = document.getElementById('modal-associations');
@@ -110,7 +110,11 @@ export function openNodeModal(el, opts) {
   m.classList.add('active');
 }
 
-function loadNodeDetail(nodeID, isSynthetic) {
+// opts is openNodeModal's (its focus is read when the group's waiting spots
+// are drawn). It was read here without being passed from 2026-10-08, and the
+// ReferenceError stopped the detail before any stored property reached the
+// form: the pop-up showed defaults, and Save wrote them back.
+function loadNodeDetail(nodeID, isSynthetic, opts) {
   var assocDiv = document.getElementById('modal-associations');
 
   if (assocDiv) assocDiv.classList.add('hide');
