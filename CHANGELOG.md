@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge names it.
+Deploy: Edge v47. Update Core and every Edge at a plant in one window.
 
 - Every order request can name the press it serves; Core stores it for plain orders as for multi-step ones
 - A plain empty for a press is served by a strict kanban that supports that press
@@ -35,6 +35,13 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - Which robot brings a press's next carrier is stored as Robot 1, 2 or 3 (Edge v47)
 - An index press can use Robot 3: a third trip brings the back its carrier when Robot 2 lifts it
 - The index press's mode is called Index Swap on every screen and in every refusal
+- A changeover onto a press position the old style never used delivers to it, where it planned a swap that waited for nothing
+- A carrier Core sends elsewhere at a release gets the lane and table-turn waits of where it now goes, so the route can finish
+- A partial home or a kanban with lanes is entered through its lane's gate
+- A parked loader return and a contained part with no wait before its drop go there with the robot's first instructions
+- Containment catches a press whose outbound is a group, and the full an index press's Robot 1 carries
+- A tool change's carry-over carrier always comes back to its position
+- A carrier of another part goes to its own part's outbound: Core decides from the bin, the Edge no longer guesses
 - Core stops guessing an order's press for a tops & bottoms pull and a cancelled cart's return (once every Edge names it)
 - An empty asked for no press, a loader's included, takes nothing from a strict kanban, wherever it searches (once every Edge names it)
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
