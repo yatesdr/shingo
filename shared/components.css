@@ -351,7 +351,7 @@ thead th { vertical-align: bottom; }
 th[data-sort] { white-space: nowrap; }
 
 /* Sortable column indicator. Empty by default; populated by
- * shared/utils.js installTableSort() with ▲ / ▼ on the active column. */
+ * shared/list.js installTableSort() with ▲ / ▼ on the active column. */
 .sort-indicator {
   display: inline-block;
   width: 1ch;
@@ -1209,7 +1209,7 @@ nav {
 
 /* TABS (style guide §22) — the one tab pattern, for both apps, at one size.
  * A row of .tab buttons in a .tabs bar switches .tab-panel siblings by
- * data-tab, through the shared switchTab handler in utils.js. A panel shows
+ * data-tab, through the shared switchTab handler in dom.js. A panel shows
  * only with .active, so a page that used bare .tab-panel with .hide (Core's
  * bin detail) was moved to .active in the same change. A tab that changes
  * page is a link, <a class="tab">, so it never takes a link's underline. The

@@ -105,6 +105,13 @@ two buses).
 
 <!-- /generated -->
 
+Four more modules are the shared components, which no page imports yet (wave
+C moves the hubs and the Processes page onto them, and their names in
+`utils.js` and the hubs go): `layer.js`, the one overlay stack
+([Modals](10-modals.md)); `notice.js`, the toast and the banner
+([Dialog UX](11-dialog-ux-confirmation-prompt-toast.md)); `http.js`, the HTTP
+door (below); and `picker.js`, the picker's shell ([Picker](34-picker.md)).
+
 `shared/esc.js` exports `esc`, an escape with no imports and no DOM, for the
 station's renderers and the node tests. It leaves `'` alone where `escapeHtml`
 escapes it, so the two are not one helper; `dom.js`'s header says why they stay
