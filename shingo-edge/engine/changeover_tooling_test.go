@@ -1,13 +1,17 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
+	"shingoedge/release"
 	"shingoedge/store/processes"
 )
 
@@ -836,5 +840,61 @@ func TestToolChange_StartLocksTheDepartingCount(t *testing.T) {
 		if again, _ := h.paperworkSinceMark(); again != 0 {
 			t.Errorf("%s: the release at Tooling done shipped %d more ingest(s), want none", c.role, again)
 		}
+	}
+}
+
+// TestToolChange_TheTileNamesTheDecisionOnEveryMode: the tile's RELEASE is
+// named from the purpose of the wait a leg is parked at (release_purposes;
+// changeoverReleaseAction draws RELEASE: TOOLING DONE from it), never from the
+// mode. A single-robot, a two-robot and a sequential cell standing at their
+// tool change's wait owe Tooling done, and a press marked at its front only
+// owes Ready at its unmarked back position, where its ordinary per-position
+// swap stands.
+func TestToolChange_TheTileNamesTheDecisionOnEveryMode(t *testing.T) {
+	t.Parallel()
+	tile := func(h *relHarness, nodeID int64) []domain.ReleasePurpose {
+		t.Helper()
+		view, err := h.eng.stationService.BuildView(context.Background(), h.stationID)
+		testutil.MustNoErr(t, err, "BuildView")
+		for i := range view.Nodes {
+			if view.Nodes[i].Node.ID == nodeID {
+				return view.Nodes[i].ReleasePurposes
+			}
+		}
+		t.Fatalf("no tile for node %d", nodeID)
+		return nil
+	}
+	toolingDone := []domain.ReleasePurpose{{Purpose: string(release.PurposeToolingDone), Ready: true}}
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot, protocol.SwapModeSequential} {
+		h := newRelHarness(t)
+		coAt(coSpec{mode: mode, tooling: true}, "supply", protocol.StatusStaged)(h)
+		h.coreStagesAt("supply", 0)
+		if got := tile(h, h.nodeID); !reflect.DeepEqual(got, toolingDone) {
+			t.Errorf("%s at its tool change's wait: the tile owes %+v, want %+v", mode, got, toolingDone)
+		}
+		// And the button's door releases it, whatever the mode.
+		testutil.MustNoErr(t, nodeCOClick(dispNone)(h), string(mode)+": the node's Tooling done")
+		if got := h.order("supply").Status; got != protocol.StatusInTransit {
+			t.Errorf("%s: the leg is %s after Tooling done, want in_transit", mode, got)
+		}
+	}
+
+	h := newRelHarness(t)
+	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, markedOnly: []string{fxPress}}, "supply", protocol.StatusStaged)(h)
+	co, err := h.db.GetActiveProcessChangeover(h.processID)
+	testutil.MustNoErr(t, err, "the changeover")
+	back, err := h.db.GetProcessNodeByCoreNodeName(fxPressB)
+	testutil.MustNoErr(t, err, "the back position's node")
+	task, err := h.db.GetChangeoverNodeTaskByNode(co.ID, back.ID)
+	testutil.MustNoErr(t, err, "the back position's task")
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("the unmarked back position has no order: a part-marked press must still plan it")
+	}
+	h.addLeg("back", *task.NextMaterialOrderID)
+	h.setStatus("back", protocol.StatusStaged)
+	h.coreStagesAt("back", 0)
+	ready := []domain.ReleasePurpose{{Purpose: string(release.PurposeReady), Ready: true}}
+	if got := tile(h, back.ID); !reflect.DeepEqual(got, ready) {
+		t.Errorf("the unmarked back position at its swap's wait: the tile owes %+v, want %+v", got, ready)
 	}
 }
