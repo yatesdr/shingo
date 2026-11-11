@@ -50,6 +50,10 @@ type RetrieveSpec struct {
 	// Origin is REQUIRED. There is no unattributed twin of this any more — see
 	// the Origin type, and see specimen (c) for what the twin cost.
 	Origin Origin
+	// Press is the press the order serves, named by a maker whose Process is
+	// not the press's own row (an index press's outside position); blank reads
+	// it from Process's claim (pressOf).
+	Press string
 }
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the
@@ -60,7 +64,10 @@ func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 	claim := m.resolveClaimForNode(s.Process)
 	payloadDesc, payloadCode := m.payloadMetaOf(claim, s.Payload)
-	press := pressOf(claim)
+	press := s.Press
+	if press == "" {
+		press = pressOf(claim)
+	}
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
 		s.Process, s.Empty,
@@ -156,6 +163,13 @@ func (m *Manager) CreateMoveOrderCarrying(processNodeID *int64, sourceNode, deli
 // away whatever lands there after.
 func (m *Manager) CreateMoveOrderForBin(processNodeID *int64, sourceNode, deliveryNode, carried string, binID int64, origin Origin) (*orders.Order, error) {
 	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{id: binID}, "", origin)
+}
+
+// CreateMoveOrderForBinServing is CreateMoveOrderForBin made against a row
+// that is not the press's own (an index press's outside position, SEND BACK's
+// cart), naming the press it serves (protocol.OrderRequest.ProcessNode).
+func (m *Manager) CreateMoveOrderForBinServing(press string, processNodeID *int64, sourceNode, deliveryNode, carried string, binID int64, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{id: binID}, press, origin)
 }
 
 // namedBin is the bin a move names and the hold it asks for: id 0 names none

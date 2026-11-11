@@ -256,6 +256,7 @@ func TestCensus_EdgeConstructorFunnel(t *testing.T) {
 		"CreateMoveOrderCarrying":              "createMoveOrder",
 		"CreateMoveOrderCarryingTo":            "createMoveOrder",
 		"CreateMoveOrderForBin":                "createMoveOrder",
+		"CreateMoveOrderForBinServing":         "createMoveOrder",
 		"CreateHoldMoveOrder":                  "createMoveOrder",
 		"CreateMoveOrderWithPayloadCodeForBin": "createMoveOrder",
 		"CreateComplexOrder":                   "createComplexOrder",
@@ -334,7 +335,7 @@ var edgeCreationSites = map[string]string{
 	"engine/changeover_cancel_park.go:finishParkedTrips": "CreateMoveOrderCarrying",
 	// SEND BACK on a tote press (press tranche 2, W12): the cart by name to
 	// the outbound, and tops & bottoms in its place
-	"engine/operator_send_back.go:SendBack": "CreateMoveOrderForBin,CreateRetrieveOrder",
+	"engine/operator_send_back.go:SendBack": "CreateMoveOrderForBinServing,CreateRetrieveOrder",
 	// quality containment (main, 2026-09-25)
 	"engine/operator_quality_hold.go:RecallContainedPayload": "CreateHoldMoveOrder",
 	"engine/operator_quality_hold.go:ReleaseFromContainment": "CreateMoveOrderWithPayloadCode",

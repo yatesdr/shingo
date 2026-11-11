@@ -8,13 +8,15 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // Every plain order the Edge makes for a cell names that cell's press on the
 // wire (protocol.OrderRequest.ProcessNode), as every multi-step order does:
 // the claim's Core node, read from the claim that governs the order's process
 // node, which is the claim its payload is read from. An order with no process
-// node, or a loader's, names none.
+// node, or a loader's, names none. A maker whose row is not the press's own
+// names the press itself.
 
 const ppPress = "PP-PRESS"
 
@@ -117,5 +119,37 @@ func TestPlainOrdersNameNoPressWithoutAClaimedCell(t *testing.T) {
 	}
 	if got := mgr.PressOf(&nid); got != "" {
 		t.Errorf("PressOf(a loader's node) = %q, want none", got)
+	}
+}
+
+// TestPlainOrdersOnAnOutsideRowNameThePressTheyAreGiven: an index press's
+// outside position has a process node row and no claim of its own, so the
+// funnel finds no press there; a maker that creates on that row (SEND BACK)
+// names it, and the wire carries what it named.
+func TestPlainOrdersOnAnOutsideRowNameThePressTheyAreGiven(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+	pid, sid, _ := seedProcessStyleNode(t, db, "PP-IDX-PROC", "PP-IDX-STYLE", ppPress)
+	seedClaim(t, db, sid, ppPress, "PP-PART")
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &sid), "active style")
+	outside, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "PP-OUT", Name: "PP-OUT", Enabled: true})
+	testutil.MustNoErr(t, err, "outside row")
+
+	unnamed, err := mgr.CreateMoveOrderForBin(&outside, "PP-OUT", "PP-FG", "PP-PART", 9, NoDemand())
+	testutil.MustNoErr(t, err, "a move on the outside's row")
+	move, err := mgr.CreateMoveOrderForBinServing(ppPress, &outside, "PP-OUT", "PP-FG", "PP-PART", 9, NoDemand())
+	testutil.MustNoErr(t, err, "a move naming its press")
+	pull, err := mgr.CreateRetrieveOrder(RetrieveSpec{Process: &outside, Delivery: "PP-OUT", Quantity: 1, Empty: true,
+		Origin: NoDemand(), Press: ppPress})
+	testutil.MustNoErr(t, err, "a pull naming its press")
+
+	if got := wireOrderRequest(t, db, unnamed.UUID).ProcessNode; got != "" {
+		t.Errorf("a move on the outside's row with no press named carries %q; the outside has no claim to read it from", got)
+	}
+	for name, o := range map[string]*orders.Order{"the move": move, "the pull": pull} {
+		if got := wireOrderRequest(t, db, o.UUID).ProcessNode; got != ppPress {
+			t.Errorf("%s: process_node = %q, want the press it named, %q", name, got, ppPress)
+		}
 	}
 }

@@ -137,6 +137,36 @@ func TestSendBack_TheMoveAndThePullOnTheOutside(t *testing.T) {
 	}
 }
 
+// TestSendBack_BothOrdersNameThePress: the move and the pull are made on the
+// outside's row, which has no claim of its own, and each names the press on
+// the wire (protocol.OrderRequest.ProcessNode): the strict kanban the pull
+// asks admits the press it supports, and the move of a contained cart goes to
+// containment. Made from the row alone, both named no press.
+func TestSendBack_BothOrdersNameThePress(t *testing.T) {
+	t.Parallel()
+	c := seedSendBackPress(t, testEngineDB(t))
+	res, err := c.eng.SendBack(c.press)
+	testutil.MustNoErr(t, err, "SEND BACK")
+	msgs, err := c.db.ListPendingOutbox(100)
+	testutil.MustNoErr(t, err, "outbox")
+	press := map[string]string{}
+	for _, msg := range msgs {
+		var env protocol.Envelope
+		testutil.MustNoErr(t, json.Unmarshal(msg.Payload, &env), "envelope")
+		var req protocol.OrderRequest
+		if msg.MsgType == protocol.TypeOrderRequest && env.DecodePayload(&req) == nil {
+			press[req.OrderUUID] = req.ProcessNode
+		}
+	}
+	for name, uuid := range map[string]string{"the move": res.Move.UUID, "the pull": res.Pull.UUID} {
+		if got, ok := press[uuid]; !ok {
+			t.Errorf("%s is not in the outbox", name)
+		} else if got != sbPress {
+			t.Errorf("%s: process_node = %q, want the press %q", name, got, sbPress)
+		}
+	}
+}
+
 // TestSendBack_ThePullIsAPlainEmptyStatingItsWant: SEND BACK's pull goes on
 // the wire as a plain empty retrieve stating tops & bottoms, the owner's want
 // for the outside, and its row keeps the want: no order type of its own, no
