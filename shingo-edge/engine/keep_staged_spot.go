@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -237,9 +238,27 @@ func isRetrieve(t protocol.OrderType) bool {
 }
 
 // worksTheCell is orderWorksTheCell for the line a claim governs, with a
-// keep-staged claim's refills excused.
+// carrier coming to one of its other positions excused (comingToAnotherPosition).
+// Its two readers are the line's REQUEST gate (positionWorkedBy) and the level
+// sweep (sweepNodeLevel), so they excuse the same rows.
 func worksTheCell(o *domain.Order, c *processes.NodeClaim) bool {
-	return orderWorksTheCell(o) && !isSpotRefill(o, c)
+	return orderWorksTheCell(o) && !comingToAnotherPosition(o, c)
+}
+
+// comingToAnotherPosition reports whether o is a carrier coming to one of the
+// claim's positions other than its line: a plain order (a retrieve or a move)
+// bound for its keep-staged spot (isSpotRefill) or, on an index press, for a
+// position behind the front (a prime), that never lifts from the line. It
+// brings the line no bin. Read as working the cell, a prime to the back
+// refused the line's REQUEST with "a bin is already on its way" and silenced
+// its level sweep for the whole trip, while no bin was on its way to the line.
+func comingToAnotherPosition(o *domain.Order, c *processes.NodeClaim) bool {
+	if isSpotRefill(o, c) {
+		return true
+	}
+	return c != nil && o.SourceNode != c.CoreNodeName && o.DeliveryNode != "" &&
+		(isRetrieve(o.OrderType) || o.OrderType == protocol.OrderTypeMove) &&
+		slices.Contains(c.DependentPositions(), o.DeliveryNode)
 }
 
 // spotComing counts what is on its way to the spot from the line's rows: plain

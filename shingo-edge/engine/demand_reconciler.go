@@ -310,9 +310,10 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	// above CanAcceptOrders, so without the filter a departed leg stops the
 	// sweep here and the guards downstream never get asked. See leg_departure.go.
 	for _, o := range rows {
-		// A keep-staged refill does not work the cell (isSpotRefill): read as
-		// working it, every refill trip would silence the keeper, and a dry market
-		// would silence it for good.
+		// A carrier coming to another of the claim's positions (a keep-staged
+		// refill, a prime to an index press's back) does not work the cell
+		// (comingToAnotherPosition): read as working it, every such trip would
+		// silence the keeper, and a dry market would silence it for good.
 		if !worksTheCell(&o, claim) {
 			continue
 		}
