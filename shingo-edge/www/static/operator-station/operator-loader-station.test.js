@@ -176,6 +176,10 @@ const manifestBroken = new Set();
 const CLEAR_DONE = 'Full recorded · two robots trade the empty and the partial';
 // clearRefusal, set, is the error the next home clear is refused with.
 let clearRefusal = null;
+// scripted answers the next posts in order (section 19): {status, body} as a
+// handler writes it, {status, raw} for a body that is not JSON (a panic's
+// empty 500), or 'reject' for a fetch that rejects.
+let scripted = [];
 function fetchStub(url, opts) {
     opts = opts || {};
     const method = opts.method || 'GET';
@@ -199,10 +203,16 @@ function fetchStub(url, opts) {
         if (clearRefusal) status = 409;
         clearRefusal = null;
     }
+    let raw;
+    if (method !== 'GET' && scripted.length) {
+        const s = scripted.shift();
+        if (s === 'reject') return Promise.reject(new TypeError('Failed to fetch'));
+        status = s.status; answer = s.body; raw = s.raw;
+    }
     const res = {
         ok: status >= 200 && status < 300, status: status,
-        json: async () => answer,
-        text: async () => JSON.stringify(answer),
+        json: async () => (raw !== undefined ? JSON.parse(raw) : answer),
+        text: async () => (raw !== undefined ? raw : JSON.stringify(answer)),
         clone() { return res; },
     };
     return Promise.resolve(res);
@@ -1497,6 +1507,165 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
     eq([posts(), toasts.slice(-1)], [[], ['Set UoP Count first']], 'LOAD: a count of 0 posts nothing');
     ctx.openKeypad = realKeypad;
+}
+
+// ── 19. REQUEST EMPTY's part, and the parts the glass offers (P0 pins) ────
+//
+// What each REQUEST EMPTY door posts for the part, today, so the shared
+// picker and the brief's REQUEST EMPTY ruling change it on purpose (census
+// rows 48–49, bug 12). Three doors, three answers:
+//   - the board bar's Request empty posts no part (sections 1 and 2);
+//   - the node modal's demand cards on a loader tile post THEIR card's part:
+//     one card per allowed part, so a person picks by the card they tap;
+//   - a claim tile's REQUEST EMPTY (cellCardAction) posts the claim's FIRST
+//     allowed part, allowed_payload_codes[0], with no choice. BuildView ships
+//     a loader window as a loader tile with no claim, and a stored claim may
+//     not be manual_swap (protocol.ConfigurableSwapModes), so the manual_swap
+//     claim tile below is not a shape the server sends today; the swap-mode
+//     line is, and RequestEmptyBin's swap-mode arm reads no part.
+// Then each answer apiRequestEmptyBin gives — writeError's 400, writeAskPending's
+// 202, the router's Recoverer's empty 500 for a panic — and a fetch that
+// rejects: what the glass shows and does next. The station's postAction reads
+// a `notice` and an `exit` too; apiRequestEmptyBin writes neither.
+{
+    // The toasts shown since seen was taken (the container keeps three, so a
+    // count would miss one that pushed an older one out).
+    const toastEls = () => document.getElementById('os-toast').children.filter(n => !n.removed);
+    const toastsSince = (seen) => toastEls().filter(n => seen.indexOf(n) < 0)
+        .map(n => [n.className.replace('os-toast-msg', '').trim(), n.textContent]);
+    const reqActs = () => modalActions().map(a => a.dataset.action).filter(a => /request-(empty|full)/.test(a));
+    const modalHTML = () => document.getElementById('node-modal-content').innerHTML;
+    const cardWords = (html) => (html.match(/TAP TO REQUEST (EMPTY|FULL)/g) || []);
+
+    // A loader tile, one allowed part: one card, its part posted.
+    setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE })]);
+    resetDOM();
+    ctx.openModal(1);
+    eq([reqActs(), cardWords(modalHTML())], [['/api/process-nodes/1/request-empty|PART-A'], ['TAP TO REQUEST EMPTY']],
+        'loader tile, one part: one TAP TO REQUEST EMPTY card');
+    await tapModal('/api/process-nodes/1/request-empty|PART-A');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-empty', body: { payload_code: 'PART-A' } }],
+        'loader tile, one part: the card posts its part');
+
+    // Several: a card per part in the loader's order, and the SECOND card posts
+    // the second part (the card is the pick; nothing takes the first allowed).
+    setView([loaderTile(1, 'SMN_A1', { parts: ['PART-B', 'PART-A', 'PART-C'], bin: NONE })]);
+    resetDOM();
+    ctx.openModal(1);
+    eq(reqActs(), ['/api/process-nodes/1/request-empty|PART-B', '/api/process-nodes/1/request-empty|PART-A',
+        '/api/process-nodes/1/request-empty|PART-C'], 'loader tile, three parts: a card per part, in the loader\'s order');
+    await tapModal('/api/process-nodes/1/request-empty|PART-A');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-empty', body: { payload_code: 'PART-A' } }],
+        'loader tile, three parts: the second card posts the second part');
+
+    // None: no card, the sentence, and the board bar still asks with no part.
+    setView([loaderTile(1, 'SMN_A1', { parts: [], bin: NONE })]);
+    resetDOM();
+    ctx.openModal(1);
+    eq([reqActs(), modalHTML().includes('No payloads configured')], [[], true],
+        'loader tile, no parts: no request card, "No payloads configured"');
+    render();
+    eq(barButtons().map(b => b.textContent), ['Request empty', 'Pull from market'], 'loader tile, no parts: the bar still offers Request empty');
+    await tap(barButtons()[0]);
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-empty', body: {} }],
+        'loader tile, no parts: the bar posts no part');
+
+    // An unloader's card asks for a full of its part.
+    setView([loaderTile(1, 'SMN_U1', { role: 'consume', parts: ['PART-A'], bin: NONE })]);
+    resetDOM();
+    ctx.openModal(1);
+    eq([reqActs(), cardWords(modalHTML())], [['/api/process-nodes/1/request-full|PART-A'], ['TAP TO REQUEST FULL']],
+        'unloader tile: the card asks for a full of its part');
+    await tapModal('/api/process-nodes/1/request-full|PART-A');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-full', body: { payload_code: 'PART-A' } }],
+        'unloader tile: the card posts request-full with its part');
+
+    // A claim tile at 0 left, nothing live: cellCardAction's REQUEST EMPTY.
+    const claimTile = (claim) => ({
+        node: { id: 5, process_id: 1, core_node_name: 'PRESS-5', name: 'PRESS-5' },
+        runtime: { remaining_uop_cached: 0 }, active_claim: Object.assign({ role: 'produce', uop_capacity: 24 }, claim),
+        orders: [], bin_state: NONE, swap_ready: false, releases_as_pair: false,
+    });
+    const claimCases = [
+        ['manual_swap claim, one allowed', { swap_mode: 'manual_swap', payload_code: 'PART-A', allowed_payload_codes: ['PART-A'] },
+            ['/api/process-nodes/5/request-empty|PART-A'], { payload_code: 'PART-A' }],
+        ['manual_swap claim, three allowed (the first is sent)', { swap_mode: 'manual_swap', payload_code: 'PART-A', allowed_payload_codes: ['PART-B', 'PART-A', 'PART-C'] },
+            ['/api/process-nodes/5/request-empty|PART-B'], { payload_code: 'PART-B' }],
+        // The fallback to the primary part is taken for a null list (a nil
+        // slice on the wire) and NOT for an empty one: [] is truthy, so a claim
+        // whose list is [] offers nothing although it names a part (today).
+        ['manual_swap claim, a null list and a primary part (the fallback)', { swap_mode: 'manual_swap', payload_code: 'PART-C', allowed_payload_codes: null },
+            ['/api/process-nodes/5/request-empty|PART-C'], { payload_code: 'PART-C' }],
+        ['manual_swap claim, an empty list and a primary part (no fallback, today)', { swap_mode: 'manual_swap', payload_code: 'PART-C', allowed_payload_codes: [] },
+            [], null],
+        ['manual_swap claim, no part at all', { swap_mode: 'manual_swap', payload_code: '', allowed_payload_codes: [] }, [], null],
+        ['swap-mode line, three allowed (the first is sent; RequestEmptyBin reads none)', { swap_mode: 'two_robot', payload_code: 'PART-A', allowed_payload_codes: ['PART-B', 'PART-A', 'PART-C'] },
+            ['/api/process-nodes/5/request-empty|PART-B'], { payload_code: 'PART-B' }],
+    ];
+    for (const [what, claim, acts, body] of claimCases) {
+        setView([claimTile(claim)]);
+        resetDOM();
+        ctx.openModal(5);
+        eq(reqActs(), acts, 'claim tile, ' + what + ': the REQUEST EMPTY action');
+        if (!acts.length) continue;
+        eq(modalButtons().includes('REQUEST EMPTY'), true, 'claim tile, ' + what + ': labelled REQUEST EMPTY');
+        await tapModal(acts[0]);
+        eq(posts(), [{ method: 'POST', url: '/api/process-nodes/5/request-empty', body: body }], 'claim tile, ' + what + ': the body');
+    }
+
+    // The answers, on the loader tile's PART-A card.
+    const ASK = '/api/process-nodes/1/request-empty|PART-A';
+    const answers = [
+        ['refused (writeError 400)', { status: 400, body: { error: 'payload "PART-A" not in allowed list for node SMN_A1' } },
+            [['error', 'payload "PART-A" not in allowed list for node SMN_A1']], true, 0],
+        ['500 from a panic (Recoverer, empty body): an empty red toast', { status: 500, raw: '' }, [['error', '']], true, 0],
+        ['fetch rejects', 'reject', [['error', 'Network error']], true, 0],
+        ['pending (writeAskPending 202)', { status: 202, body: { status: 'pending', pending: true, notice: 'sent — waiting for Core' } },
+            [['info', 'sent — waiting for Core']], false, 1],
+    ];
+    for (const [what, answer, shown, stillOpen, loads] of answers) {
+        setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE })]);
+        resetDOM();
+        const seen = toastEls();
+        ctx.openModal(1);
+        scripted = [answer];
+        await tapModal(ASK);
+        eq([posts().length, toastsSince(seen), document.getElementById('node-modal').classList.contains('active'), viewLoads],
+            [1, shown, stillOpen, loads], 'REQUEST EMPTY ' + what + ': one post; what it shows; the modal ' +
+            (stillOpen ? 'stays open' : 'closes') + '; ' + loads + ' board reload(s)');
+    }
+    // Inside the hold the same card posts nothing and says the notice again.
+    resetDOM();
+    const seen = toastEls();
+    ctx.openModal(1);
+    await tapModal(ASK);
+    eq([posts(), toastsSince(seen)], [[], [['info', 'sent — waiting for Core']]],
+        'REQUEST EMPTY pending: the same card inside the hold posts nothing and says the notice');
+    scripted = [];
+}
+
+// ── 20. The load modal's part buttons (census row 48) ──────────────────────
+{
+    // One part: one button, selected on open (its template drawn). Several: a
+    // button per part in the order given, none selected, "Select a payload
+    // above" until one is tapped.
+    const buttons = () => document.getElementById('load-bin-payload').children.map(b => b.textContent);
+    const rowsText = () => document.getElementById('load-bin-rows').innerHTML.replace(/<[^>]*>/g, '');
+    setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A', 'PART-B'], bin: EMPTY })]);
+    resetDOM();
+    ctx.openLoadBin(1, ['PART-A'], 0);
+    await flush();
+    eq([buttons(), rowsText().includes('Select a payload above')], [['PART-A'], false],
+        'load modal, one part: one button, selected on open');
+    resetDOM();
+    ctx.openLoadBin(1, ['PART-B', 'PART-A'], 0);
+    await flush();
+    eq([buttons(), rowsText()], [['PART-B', 'PART-A'], 'Select a payload above'],
+        'load modal, two parts: a button each in the order given, none selected');
+    resetDOM();
+    ctx.openLoadBin(1, [], 0);
+    await flush();
+    eq([buttons(), rowsText()], [[], 'Select a payload above'], 'load modal, no parts: no button');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
