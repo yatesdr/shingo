@@ -201,6 +201,39 @@ func TestPlaceForContainment_FlagOff_NoDivert(t *testing.T) {
 	}
 }
 
+// TestPlaceForContainment_APlainMoveToFGIsDiverted: the press's plain move of
+// its finished carrier to the claim's outbound (the produce release, the
+// clear, SEND BACK) is diverted to containment as the multi-step leg is, when
+// it names its press: the press's claim is the route. A move naming no press
+// (an Edge older than protocol.OrderRequest.ProcessNode) has no claim to read
+// the route from and keeps its drop, as it did.
+func TestPlaceForContainment_APlainMoveToFGIsDiverted(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	prod, fgn, hold := containmentFixture(t, db)
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-QC", UOPCapacity: 4}), "the part")
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	move := func(uuid, press string) *orders.Order {
+		t.Helper()
+		bin := makeLoaderBin(t, db, "PART-QC", prod.ID, uuid+"-bin", 4, time.Now().UTC())
+		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: uuid, OrderType: OrderTypeMove,
+			PayloadCode: "PART-QC", SourceNode: prod.Name, DeliveryNode: fgn.Name, ProcessNode: press,
+			BinID: bin.ID, Quantity: 1})
+		o := testdb.RequireOrder(t, db, uuid)
+		if o.Status == protocol.StatusFailed {
+			t.Fatalf("%s failed: %s", uuid, o.ErrorDetail)
+		}
+		return o
+	}
+	if o := move("qc-plain-blank", ""); o.DeliveryNode != fgn.Name {
+		t.Errorf("naming no press: the move goes to %q, want its authored %s", o.DeliveryNode, fgn.Name)
+	}
+	if o := move("qc-plain-press", prod.Name); o.DeliveryNode != hold.Name {
+		t.Errorf("naming its press: the move goes to %q, want containment %s", o.DeliveryNode, hold.Name)
+	}
+}
+
 // TestPartialHome_GroupHomeTakesAFreeWindowOrKeepsTheDrop: a group home (a
 // synthetic group of two windows, the shape Core makes for a two-stage pair's
 // stage 2) gives an unfinished carrier a free window; with both taken the

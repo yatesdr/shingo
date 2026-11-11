@@ -10,6 +10,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -587,42 +588,6 @@ func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl place
 // group and the NGRP resolution spreads across its free children, parking on
 // full; only a CONCRETE node's capacity gate parks here.
 func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedStep) *dispatchStep {
-	payload := order.PayloadCode
-	if payload == "" {
-		return nil
-	}
-	contained, err := d.db.PayloadContainmentActive(payload)
-	if err != nil {
-		log.Printf("dispatch: containment read for %s failed — order %d continues (fail-open on read): %v",
-			payload, order.ID, err)
-		return nil
-	}
-	if !contained {
-		return nil
-	}
-	outbound, containment, ambiguous, err := d.db.ContainmentRouteForNode(order.ProcessNode)
-	if err != nil {
-		log.Printf("dispatch: containment route read for node %s failed — order %d continues: %v",
-			order.ProcessNode, order.ID, err)
-		return nil
-	}
-	if ambiguous {
-		log.Printf("WARN: containment route for node %s is ambiguous (claims disagree on the destination) — "+
-			"order %d continues to its authored destination. Fix the claims: one node, one containment route.",
-			order.ProcessNode, order.ID)
-		return nil
-	}
-	if containment == "" {
-		// The flag is on but this node's claim declares no route: visible, not
-		// guessed. The toggle's guard refuses activation when NO claim for the
-		// payload has a route, so reaching here means a route existed and was
-		// edited away (or the claim's payload binding changed) mid-containment.
-		log.Printf("WARN: payload %s is contained but node %s's claim declares no containment destination — "+
-			"order %d continues to its authored destination", payload, order.ProcessNode, order.ID)
-		return nil
-	}
-	// Scope check: this leg must be the claim's own FG flow. Anything else
-	// (swap return, evac, refill) passes through — see the header.
 	final := ""
 	for i := len(steps) - 1; i >= 0; i-- {
 		if steps[i].Action == protocol.ActionDropoff {
@@ -630,25 +595,18 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 			break
 		}
 	}
-	if final == "" || final != outbound {
-		d.dbg("containment: order %d's final dropoff %q is not the claim's outbound %q — not an FG leg, no divert",
-			order.ID, final, outbound)
+	destNode := containmentDivert(d.db, order, final, d.dbg)
+	if destNode == nil {
 		return nil
 	}
-	// The destination must resolve. A GROUP is the expected shape for a
-	// containment area with several spots: the re-pointed dropoff re-enters
-	// the NGRP resolution on the next tick, which spreads bins across the
-	// free children (round-robin to vacancies) and parks the order on
-	// ngrp-full — so for a group the local capacity gate is deliberately
-	// SKIPPED: capacity is the group resolver's business, and this hook
-	// cannot see children yet anyway. A concrete node keeps the gate: a full
-	// containment node parks the order here, fail-closed.
-	destNode, err := d.db.GetNodeByDotName(containment)
-	if err != nil || destNode == nil {
-		log.Printf("WARN: containment destination %q for node %s does not resolve to a node — "+
-			"order %d continues to its authored destination", containment, order.ProcessNode, order.ID)
-		return nil
-	}
+	containment, payload := destNode.Name, order.PayloadCode
+	// A GROUP is the expected shape for a containment area with several spots:
+	// the re-pointed dropoff re-enters the NGRP resolution on the next tick,
+	// which spreads bins across the free children (round-robin to vacancies)
+	// and parks the order on ngrp-full — so for a group the local capacity gate
+	// is deliberately SKIPPED: capacity is the group resolver's business, and
+	// this hook cannot see children yet anyway. A concrete node keeps the gate:
+	// a full containment node parks the order here, fail-closed.
 	//
 	// Another order's reservation or hard claim on the concrete node parks it
 	// too, asked first: the claim door refuses a slot another order holds. An
@@ -677,6 +635,69 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 	}
 	d.dbg("containment: order %d (payload %s, contained) diverted → %s", order.ID, payload, containment)
 	return nil
+}
+
+// containmentDivert is the divert's decision, one rule for the multi-step leg
+// (placeForContainment, at dispatch) and the plain move (decideTransport, at
+// planning): the node a leg whose last dropoff is final goes to instead, nil to
+// keep it. It diverts only when the order's payload is contained, the claim at
+// the order's process node declares a containment route, final IS that
+// claim's outbound destination, and the containment destination resolves to a
+// node. A failed read, an ambiguous route and a destination that does not
+// resolve keep the drop and say so (fail-open on read; misconfiguration is
+// visible, not guessed). An order that names no process node has no claim to
+// read the route from and keeps its drop. It writes nothing.
+func containmentDivert(db *store.DB, order *orders.Order, final string, dbg func(string, ...any)) *nodes.Node {
+	payload := order.PayloadCode
+	if payload == "" || order.ProcessNode == "" {
+		return nil
+	}
+	contained, err := db.PayloadContainmentActive(payload)
+	if err != nil {
+		log.Printf("dispatch: containment read for %s failed — order %d continues (fail-open on read): %v",
+			payload, order.ID, err)
+		return nil
+	}
+	if !contained {
+		return nil
+	}
+	outbound, containment, ambiguous, err := db.ContainmentRouteForNode(order.ProcessNode)
+	if err != nil {
+		log.Printf("dispatch: containment route read for node %s failed — order %d continues: %v",
+			order.ProcessNode, order.ID, err)
+		return nil
+	}
+	if ambiguous {
+		log.Printf("WARN: containment route for node %s is ambiguous (claims disagree on the destination) — "+
+			"order %d continues to its authored destination. Fix the claims: one node, one containment route.",
+			order.ProcessNode, order.ID)
+		return nil
+	}
+	if containment == "" {
+		// The flag is on but this node's claim declares no route: visible, not
+		// guessed. The toggle's guard refuses activation when NO claim for the
+		// payload has a route, so reaching here means a route existed and was
+		// edited away (or the claim's payload binding changed) mid-containment.
+		log.Printf("WARN: payload %s is contained but node %s's claim declares no containment destination — "+
+			"order %d continues to its authored destination", payload, order.ProcessNode, order.ID)
+		return nil
+	}
+	// Scope check: this leg must be the claim's own FG flow. Anything else
+	// (swap return, evac, refill) passes through — see placeForContainment.
+	if final == "" || final != outbound {
+		if dbg != nil {
+			dbg("containment: order %d's final dropoff %q is not the claim's outbound %q — not an FG leg, no divert",
+				order.ID, final, outbound)
+		}
+		return nil
+	}
+	destNode, err := db.GetNodeByDotName(containment)
+	if err != nil || destNode == nil {
+		log.Printf("WARN: containment destination %q for node %s does not resolve to a node — "+
+			"order %d continues to its authored destination", containment, order.ProcessNode, order.ID)
+		return nil
+	}
+	return destNode
 }
 
 // orderDeliversTo reports whether any dropoff step in this order targets node. Used

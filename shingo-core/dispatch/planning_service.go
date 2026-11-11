@@ -353,6 +353,10 @@ type transportDecision struct {
 	// byContentsWhy is the log's sentence.
 	byContents    *nodes.Node
 	byContentsWhy string
+	// contained: a move of a contained part to its press's outbound, the
+	// containment node it goes to instead (containmentDivert); nil keeps the
+	// drop.
+	contained *nodes.Node
 	// group: a group destination's chosen child, or why none (groupErr).
 	group    *nodes.Node
 	groupErr error
@@ -376,6 +380,8 @@ func (d transportDecision) Plan() plan.Plan {
 		p.Dest = d.group
 	case d.byContents != nil:
 		p.Dest = d.byContents
+	case d.contained != nil:
+		p.Dest = d.contained
 	}
 	return p
 }
@@ -467,6 +473,14 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 				d.byContents, d.byContentsWhy = c.Slot, c.Why
 				gateNode = c.Slot.Name
 			}
+		}
+	}
+	// A CONTAINED PART'S MOVE TO ITS PRESS'S OUTBOUND GOES TO CONTAINMENT, by the
+	// rule the multi-step leg follows (containmentDivert): the press's claim is
+	// the route, and the gate asks about the containment node.
+	if isMove {
+		if c := containmentDivert(s.db, order, gateNode, s.dbg); c != nil {
+			d.contained, gateNode = c, c.Name
 		}
 	}
 	if d.blocked, d.capacity = CheckDropoffCapacity(s.db, gateNode, order.ID); d.blocked {
@@ -640,6 +654,17 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 		if d.group != nil {
 			s.dbg("move: dest NGRP %s resolved -> %s for order %d", order.DeliveryNode, d.group.Name, order.ID)
 			destNode = d.group
+			order.DeliveryNode = destNode.Name
+			if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
+				log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
+			}
+		}
+		// A contained part's move goes to containment (decideTransport): the row
+		// says so, since the scanner dispatches to its delivery. A group
+		// containment area's chosen child was written just above.
+		if d.contained != nil && d.group == nil && order.DeliveryNode != destNode.Name {
+			log.Printf("dispatch: move %d: payload %s is contained — to %s instead of %s",
+				order.ID, order.PayloadCode, destNode.Name, order.DeliveryNode)
 			order.DeliveryNode = destNode.Name
 			if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
 				log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
