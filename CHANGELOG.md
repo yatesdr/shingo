@@ -28,6 +28,7 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - A claim with marks names inbound staging: the new carrier waits there for Tooling done
 - A tool change clears its marked positions at START and indexes nothing onto the press
 - Clearing at START locks the departing count and waits at a live light curtain
+- A marked position the next style does not use is cleared at START too; an unmarked one still waits for Ready
 - A light curtain's release no longer releases Tooling done by itself
 - Evacuate on changeover is gone; a claim that had it on with no marks is logged (Edge v47)
 - Which robot brings a press's next carrier is stored as Robot 1, 2 or 3 (Edge v47)

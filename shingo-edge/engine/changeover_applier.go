@@ -153,6 +153,9 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 			return
 		}
 		evacID = &id
+		if action.ClearsAtStart && supplyID == nil {
+			e.lockClearingCount(nodeID, id) // a marked drop: its evac is the lift
+		}
 	}
 
 	if supplyID != nil || evacID != nil {
@@ -298,6 +301,10 @@ func logChangeoverAction(action changeover.NodeAction, supplyID, evacID *int64) 
 	case "carryover_outbound_staging":
 		log.Printf("changeover: tool change node %s — order=%d (its part carries over: out to staging and back on Tooling done)", action.NodeName, derefID(supplyID))
 	case "drop":
+		if action.ClearsAtStart {
+			log.Printf("changeover: drop node %s — evac=%d (marked: cleared at START, nothing comes back)", action.NodeName, derefID(evacID))
+			break
+		}
 		log.Printf("changeover: drop node %s — evac=%d (single-robot release w/ staged wait)", action.NodeName, derefID(evacID))
 	case "fallback_staging":
 		log.Printf("changeover: FALLBACK staging node %s — supply=%d (stage-only; the mode's swap builder was bypassed because InboundStaging was blank)", action.NodeName, derefID(supplyID))

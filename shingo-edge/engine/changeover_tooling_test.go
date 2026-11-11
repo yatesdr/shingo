@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -839,6 +840,46 @@ func TestToolChange_StartLocksTheDepartingCount(t *testing.T) {
 		testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the leg at Tooling done")
 		if again, _ := h.paperworkSinceMark(); again != 0 {
 			t.Errorf("%s: the release at Tooling done shipped %d more ingest(s), want none", c.role, again)
+		}
+	}
+}
+
+// TestToolChange_AMarkedDropClearsAtStart: a marked position the incoming style
+// does not use is the tool change's drop, cleared at START as the clearing leg
+// is: nothing waits in front of its lift but a live light curtain's wait, and
+// START locks the departing produce count. An unmarked drop still waits for
+// Ready, and START locks nothing for it.
+func TestToolChange_AMarkedDropClearsAtStart(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		spec       coSpec
+		wantSteps  string
+		wantIngest int
+		wantSeat   int
+	}{
+		{"marked", coSpec{mode: protocol.SwapModeSingleRobot, tooling: true, drop: true},
+			"pickup " + fxPress + ", dropoff " + fxOutDest, 1, 0},
+		{"marked, curtained", coSpec{mode: protocol.SwapModeSingleRobot, tooling: true, drop: true, curtained: true},
+			"wait " + fxPress + "(ready), pickup " + fxPress + ", dropoff " + fxOutDest, 1, 0},
+		{"unmarked", coSpec{mode: protocol.SwapModeSingleRobot, drop: true},
+			"wait " + fxPress + "(ready), pickup " + fxPress + ", dropoff " + fxOutDest, 0, fxCount},
+	} {
+		h := newRelHarness(t)
+		coAt(c.spec)(h)
+		raw, err := h.db.GetOrderStepsJSON(h.leg("evac"))
+		testutil.MustNoErr(t, err, c.name+": read the drop's steps")
+		var steps []protocol.ComplexOrderStep
+		testutil.MustNoErr(t, json.Unmarshal([]byte(raw), &steps), c.name+": decode the drop's steps")
+		if got := stepsString(steps); got != c.wantSteps {
+			t.Errorf("%s: the drop's leg is %q, want %q", c.name, got, c.wantSteps)
+		}
+		ingest, _ := h.paperworkSinceMark()
+		if ingest != c.wantIngest {
+			t.Errorf("%s: %d ingest(s) shipped at START, want %d", c.name, ingest, c.wantIngest)
+		}
+		if got := remainingUOP(t, h.db, h.nodeID); got != c.wantSeat {
+			t.Errorf("%s: the seat counts %d after START, want %d", c.name, got, c.wantSeat)
 		}
 	}
 }

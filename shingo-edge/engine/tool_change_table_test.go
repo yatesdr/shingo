@@ -14,7 +14,8 @@ import (
 
 // tool_change_table_test.go — the tool change on every line mode, as a table:
 // mode × layout × flip × the same or a new part × the same or a new carrier
-// type × marks (none, some, all). Every row is planned through the pipeline
+// type × marks (none, some, all) × whether the incoming style leaves a position
+// out (a drop). Every row is planned through the pipeline
 // planChangeover runs (toolingTestPlanSeated) and checked against the rules,
 // which read steps and never a swap mode's name:
 //
@@ -22,7 +23,11 @@ import (
 //     that leg;
 //   - no leg lifts from one position of a marked cell and sets it down on
 //     another (nothing indexes during a tool change);
-//   - a marked position's lift has no wait in front of it (it goes at START);
+//   - a marked position's lift has no wait in front of it (it goes at START),
+//     drops included, and START does for it what a Ready press does: its
+//     action locks the departing count (ClearsAtStart) and its leg asks for
+//     curtain waits;
+//   - an unmarked drop still waits for Ready, and START locks nothing for it;
 //   - every unmarked position whose part changes is still planned;
 //   - no order ends on a wait;
 //   - a changeover with no marks has no tooling_done wait, and no builder
@@ -35,7 +40,9 @@ type tcCell struct {
 	from, to  []processes.NodeClaim
 	positions []string
 	marked    []string
-	nodes     []string
+	// dropped are the positions the incoming style does not use.
+	dropped []string
+	nodes   []string
 }
 
 // tcCase is one row of the table.
@@ -46,6 +53,9 @@ type tcCase struct {
 	samePart bool
 	sameType bool
 	marks    string // none, some, all
+	// drop: the incoming style leaves the cell's last position out. A press of
+	// three keeps two; any other cell has no incoming claim at all.
+	drop bool
 }
 
 func (c tcCase) String() string {
@@ -60,7 +70,11 @@ func (c tcCase) String() string {
 	if c.flip {
 		flip = " flipped"
 	}
-	return fmt.Sprintf("%s/%d%s/%s/%s/marks %s", c.mode, c.layout, flip, part, carrier, c.marks)
+	drop := ""
+	if c.drop {
+		drop = "/drops the last"
+	}
+	return fmt.Sprintf("%s/%d%s/%s/%s/marks %s%s", c.mode, c.layout, flip, part, carrier, c.marks, drop)
 }
 
 // tcClaim is a claim of mode at node with every field a changeover of that
@@ -111,6 +125,10 @@ func (c tcCase) build() tcCell {
 		to.PayloadCode, to.ChangeoverEvacNodes = toPart, nil
 		mark(&from, cell.positions)
 		cell.from, cell.to = []processes.NodeClaim{from}, []processes.NodeClaim{to}
+		if c.drop && c.layout == 3 {
+			cell.to[0].SecondPairedCoreNode = ""
+			cell.dropped = []string{"P3"}
+		}
 	case "sequential":
 		cell.positions = []string{"SA", "SB"}
 		for _, pair := range [][2]string{{"SA", "SB"}, {"SB", "SA"}} {
@@ -133,6 +151,9 @@ func (c tcCase) build() tcCell {
 			mark(&from, cell.positions)
 		}
 		cell.from, cell.to = []processes.NodeClaim{from}, []processes.NodeClaim{to}
+	}
+	if c.drop && cell.dropped == nil {
+		cell.to, cell.dropped = nil, slices.Clone(cell.positions)
 	}
 	cell.nodes = append(slices.Clone(cell.positions), "SRC", "IN_STG", "OUT_STG", "MARKET")
 	return cell
@@ -162,7 +183,9 @@ func tcCases() []tcCase {
 					if s.layout == 1 && marks == "some" {
 						continue // one position: some is all
 					}
-					out = append(out, tcCase{s.mode, s.layout, s.flip, samePart, sameType, marks})
+					for _, drop := range []bool{false, true} {
+						out = append(out, tcCase{s.mode, s.layout, s.flip, samePart, sameType, marks, drop})
+					}
 				}
 			}
 		}
@@ -205,6 +228,7 @@ func TestToolChange_TheTable(t *testing.T) {
 		name := c.String()
 		inCell := func(n string) bool { return slices.Contains(cell.positions, n) }
 		marked := func(n string) bool { return slices.Contains(cell.marked, n) }
+		dropped := func(n string) bool { return slices.Contains(cell.dropped, n) }
 		for _, a := range plan.Actions {
 			if a.Err != nil {
 				t.Errorf("%s: %s planned an error: %v", name, a.CoreNodeName, a.Err)
@@ -241,8 +265,54 @@ func TestToolChange_TheTable(t *testing.T) {
 				}
 			}
 		}
+		// START does for a marked lift what a Ready press does, and an unmarked
+		// drop still waits for its Ready.
+		for _, a := range plan.Actions {
+			for leg, spec := range map[string]*changeover.OrderSpec{"supply": a.SupplyOrder, "evac": a.EvacOrder} {
+				if spec == nil || spec.Complex == nil {
+					continue
+				}
+				steps := spec.Complex.Steps
+				i := slices.IndexFunc(steps, func(s protocol.ComplexOrderStep) bool {
+					return s.Action == protocol.ActionPickup && s.Node == a.CoreNodeName
+				})
+				if i < 0 {
+					continue
+				}
+				waited := i > 0 && steps[i-1].Action == protocol.ActionWait
+				switch {
+				case marked(a.CoreNodeName) && !waited:
+					if !a.ClearsAtStart {
+						t.Errorf("%s: %s/%s lifts marked %s at START and does not lock its count there: %s",
+							name, a.CoreNodeName, leg, a.CoreNodeName, stepsString(steps))
+					}
+					if !spec.Complex.CurtainWaits {
+						t.Errorf("%s: %s/%s lifts marked %s at START and asks for no curtain wait: %s",
+							name, a.CoreNodeName, leg, a.CoreNodeName, stepsString(steps))
+					}
+				case dropped(a.CoreNodeName) && !marked(a.CoreNodeName):
+					if !waited || steps[i-1].Purpose != string(release.PurposeReady) {
+						t.Errorf("%s: %s/%s drops unmarked %s with no Ready in front of the lift: %s",
+							name, a.CoreNodeName, leg, a.CoreNodeName, stepsString(steps))
+					}
+					if a.ClearsAtStart {
+						t.Errorf("%s: %s locks its count at START, but an unmarked drop waits for Ready", name, a.CoreNodeName)
+					}
+				}
+			}
+		}
+		for _, p := range cell.dropped {
+			if !slices.ContainsFunc(plan.Actions, func(a changeover.NodeAction) bool {
+				return a.CoreNodeName == p && a.Situation == string(SituationDrop)
+			}) {
+				t.Errorf("%s: the incoming style leaves %s out and nothing drops it", name, p)
+			}
+		}
 		if !c.samePart {
 			for _, p := range cell.positions {
+				if dropped(p) {
+					continue
+				}
 				if !setDown[p] {
 					t.Errorf("%s: nothing sets the new part down on %s", name, p)
 				}

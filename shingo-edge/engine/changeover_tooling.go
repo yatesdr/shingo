@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"shingo/protocol"
@@ -413,14 +414,23 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 //     at its staging, so the carrier stays out of the cell until the operator
 //     releases it.
 //
+// A marked position the incoming style does not use is a drop, and it is
+// cleared at START like the clearing leg (clearDropAtStart), whether the press
+// is refilled elsewhere or torn down.
+//
 // An unmarked position keeps the action the pipeline planned: its ordinary
-// changeover, released by its own Ready press.
+// changeover, released by its own Ready press. An unmarked drop still waits
+// for its Ready.
 func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t toolingChangeover, fallbackAutoConfirm bool) changeover.Plan {
 	if !t.active() {
 		return p
 	}
 	cleared := map[string]toolingPress{}
+	marked := map[string]bool{}
 	for _, press := range t.presses {
+		for _, position := range press.positions {
+			marked[position] = true
+		}
 		if !press.expandsPositions() {
 			continue // a teardown: nothing comes back, its drops stand as planned
 		}
@@ -439,6 +449,9 @@ func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t tooling
 				}
 			}
 			continue
+		}
+		if marked[a.CoreNodeName] && a.Situation == string(SituationDrop) {
+			clearDropAtStart(a)
 		}
 		if dest := t.evacDest[a.CoreNodeName]; dest != "" {
 			retargetOutbound(a.SupplyOrder, a.CoreNodeName, dest)
@@ -504,6 +517,24 @@ func toolingPositionAction(press toolingPress, position string, node *processes.
 		LogTag:        "evacuate_staged_position",
 		ClearsAtStart: true,
 	}
+}
+
+// clearDropAtStart is a marked drop's clearance: the position leaves the
+// style, so nothing comes back, and its lift goes at START as the clearing
+// leg's does. The Ready wait in front of the lift goes; START does what that
+// press does elsewhere, as for the clearing leg: a live light curtain holds
+// the lift (CurtainWaits) and the departing produce count is locked when the
+// leg is created (ClearsAtStart, on the drop's evac leg).
+func clearDropAtStart(a *changeover.NodeAction) {
+	if a.Err != nil || a.EvacOrder == nil || a.EvacOrder.Complex == nil {
+		return
+	}
+	c := a.EvacOrder.Complex
+	c.Steps = slices.DeleteFunc(slices.Clone(c.Steps), func(s protocol.ComplexOrderStep) bool {
+		return s.Action == protocol.ActionWait && s.Node == a.CoreNodeName && s.Purpose == string(release.PurposeReady)
+	})
+	c.CurtainWaits = true
+	a.ClearsAtStart = true
 }
 
 // pressRoundTrips narrows the changeover-wide round-trip map to one press's
