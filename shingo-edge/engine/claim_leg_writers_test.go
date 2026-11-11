@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -262,4 +263,49 @@ func engStoredNode(t *testing.T, db *store.DB, styleID int64, leg, name string) 
 		}
 	}
 	return false
+}
+
+// TestRefusedSetups_ListsWhatTheRuleRefuses pins the Edge's report of saved
+// setups, run when Core's node list changes: a claim, a routing row and a
+// recipe saved before the rule, each naming a member of a group where Core
+// picks, are each listed with the rule's sentence. The claim's staging spot
+// naming the same member is not listed (a staging spot names the exact node),
+// nor is a leg naming the group.
+func TestRefusedSetups_ListsWhatTheRuleRefuses(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	pid, err := db.CreateProcess("RS-PROC", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	sid, err := db.CreateStyle("RS-STYLE", "", pid)
+	testutil.MustNoErr(t, err, "create style")
+	none := domain.CoreNodeKinds{}
+	_, err = db.UpsertStyleNodeClaim(none, processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "RS-PRESS", Role: protocol.ClaimRoleProduce,
+		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-RS",
+		InboundSource: "RS-GRP", OutboundDestination: "RS-SLOT", InboundStaging: "RS-SLOT", OutboundStaging: "RS-SLOT",
+	})
+	testutil.MustNoErr(t, err, "a claim saved before the rule")
+	_, err = db.UpsertRoutingNode(none, processes.RoutingNodeInput{ProcessID: pid, CoreNodeName: "RS-SLOT",
+		Role: domain.RoutingRoleSource, Origin: domain.RoutingOriginEngineer})
+	testutil.MustNoErr(t, err, "a routing row saved before the rule")
+	_, err = db.Exec(`INSERT INTO flow_presets (process_id, name, version, flow_json, created_by) VALUES (?, ?, 1, ?, 'test')`,
+		pid, "RS-RECIPE", `{"cells":[{"core_node_name":"RS-PRESS","swap_mode":"single_robot","outbound_destination":"RS-SLOT"}]}`)
+	testutil.MustNoErr(t, err, "a recipe saved before the rule")
+
+	eng := testEngine(t, db)
+	if got := eng.refusedSetups(); len(got) != 0 {
+		t.Fatalf("with no node list heard the report lists %q, want nothing", got)
+	}
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "RS-GRP", NodeType: protocol.NodeClassNGRP},
+		{Name: "RS-GRP.RS-SLOT"}, {Name: "RS-PRESS"}})
+	got := eng.refusedSetups()
+	member := protocol.MsgMemberIsCoresToPick + `: "RS-SLOT" is in "RS-GRP"`
+	want := []string{
+		"claim RS-PROC / RS-STYLE at RS-PRESS: outbound_destination: " + member,
+		"routing set of RS-PROC: source row: " + member,
+		"recipe RS-RECIPE v1 of RS-PROC, cell 1: outbound_destination: " + member,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the report lists\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }

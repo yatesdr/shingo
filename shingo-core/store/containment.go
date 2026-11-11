@@ -554,3 +554,80 @@ func (db *DB) StampContainmentArrival(binID, landedNodeID int64, payloadCode, by
 	}
 	return n > 0, nil
 }
+
+// MemberLeg is a claim leg, in a role where Core picks, that names a member of
+// a node group: the rule the Edge's claim editor now refuses (protocol
+// MsgMemberIsCoresToPick), found among claims saved before it.
+type MemberLeg struct {
+	Process, Style, Node string // the claim: its process, its style, its position
+	Leg                  string // the style_claims column naming the member
+	Name                 string // the member
+	Group                string // the group it is a member of
+	LoaderHome           bool   // the member is also a loader's home or buffer (bin_loader_homes)
+}
+
+// ClaimPickLegsNamingMembers lists every claim leg where Core picks (a claim's
+// inbound_source, outbound_destination, containment_destination and
+// partial_destination) that names a member of a node group, with whether the
+// member is a loader home, ordered by claim. A name that does not resolve to a
+// node is not listed: it names no member.
+func (db *DB) ClaimPickLegsNamingMembers() ([]MemberLeg, error) {
+	rows, err := db.DB.Query(`
+		SELECT process_id, style_id, core_node_name, leg, name FROM (
+			SELECT process_id, style_id, core_node_name, 'inbound_source' AS leg, inbound_source AS name FROM style_claims
+			UNION ALL SELECT process_id, style_id, core_node_name, 'outbound_destination', outbound_destination FROM style_claims
+			UNION ALL SELECT process_id, style_id, core_node_name, 'containment_destination', containment_destination FROM style_claims
+			UNION ALL SELECT process_id, style_id, core_node_name, 'partial_destination', partial_destination FROM style_claims
+		) legs WHERE name <> ''
+		ORDER BY process_id, style_id, core_node_name, leg`)
+	if err != nil {
+		return nil, fmt.Errorf("claim pick legs: %w", err)
+	}
+	var legs []MemberLeg
+	for rows.Next() {
+		var l MemberLeg
+		if err := rows.Scan(&l.Process, &l.Style, &l.Node, &l.Leg, &l.Name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("claim pick legs: scan: %w", err)
+		}
+		legs = append(legs, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("claim pick legs: %w", err)
+	}
+	type membership struct {
+		group      string
+		loaderHome bool
+	}
+	seen := map[string]*membership{}
+	var out []MemberLeg
+	for _, l := range legs {
+		m, ok := seen[l.Name]
+		if !ok {
+			n, err := db.GetNodeByDotName(l.Name)
+			if err != nil || n == nil {
+				seen[l.Name] = nil
+				continue
+			}
+			g, err := db.GroupOf(n.ID)
+			if err != nil {
+				return nil, fmt.Errorf("claim pick legs: group of %s: %w", l.Name, err)
+			}
+			if g != nil {
+				m = &membership{group: g.Name}
+				if err := db.DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM bin_loader_homes WHERE position_node_id = $1)`,
+					n.ID).Scan(&m.loaderHome); err != nil {
+					return nil, fmt.Errorf("claim pick legs: loader home %s: %w", l.Name, err)
+				}
+			}
+			seen[l.Name] = m
+		}
+		if m == nil {
+			continue
+		}
+		l.Group, l.LoaderHome = m.group, m.loaderHome
+		out = append(out, l)
+	}
+	return out, nil
+}
