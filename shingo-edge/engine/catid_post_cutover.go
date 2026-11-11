@@ -6,11 +6,14 @@
 // window, the changeover is flagged for operator confirmation on the station —
 // "set to style A, but the press reports style B (or nothing)". It never blocks
 // beyond the existing request-path mismatch guard; it is a confirmation prompt.
+// It clears when the press later reports a part of style A (the die changed
+// after the robots finished), and the station can Dismiss it.
 
 package engine
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -81,14 +84,21 @@ type PostCutoverFlag struct {
 	MappedStyleName string           `json:"mapped_style_name,omitempty"`
 	HasMapped       bool             `json:"has_mapped"`
 	Candidates      []CATIDCandidate `json:"candidates,omitempty"`
-	Message         string           `json:"message"`
+	// CanUpdateCATID is whether the flag's Update CATID (ConfirmPostCutoverFlag)
+	// would land: the live value names a part and no other style of the process
+	// runs it (CheckStyleCATIDPin, the check the Update makes). The station shows
+	// the button only then: a part another style runs is that style's, and the
+	// Update would be refused (HK P400 2026-11-11, the KK21 part offered to LK41).
+	CanUpdateCATID bool   `json:"can_update_catid"`
+	Message        string `json:"message"`
 }
 
 // PostCutoverFlag returns the process's active post-cutover verification flag, or
 // (nil, false) when none. ExpectedStyle is the style the changeover was set to;
 // the live part is resolved against every style's CATID set — exactly one match
-// gives a one-tap corrective changeover, more than one names the candidates, none
-// points the operator at the part-id config. Message is the operator prompt.
+// names the style to change over to, more than one names the candidates, none
+// leaves the part free for Update CATID (CanUpdateCATID). Message is the
+// operator prompt.
 func (e *Engine) PostCutoverFlag(processID int64) (*PostCutoverFlag, bool) {
 	co, err := e.db.LatestFlaggedChangeover(processID)
 	if err != nil || co == nil {
@@ -123,6 +133,8 @@ func (e *Engine) PostCutoverFlag(processID int64) (*PostCutoverFlag, bool) {
 	}
 	msg += " — please confirm."
 	flag.Message = msg
+	flag.CanUpdateCATID = isIdentity(co.VerifyLiveCATID) &&
+		e.CheckStyleCATIDPin(processID, co.ToStyleID, co.VerifyLiveCATID) == nil
 	return flag, true
 }
 
@@ -153,9 +165,55 @@ func (e *Engine) ClearPostCutoverFlag(processID int64) error {
 	if err != nil || co == nil {
 		return err
 	}
-	if err := e.db.SetChangeoverVerifyMismatch(co.ID, ""); err != nil {
+	return e.clearFlagOn(processID, co.ID)
+}
+
+// clearFlagOn is every clear's one write: the flag off changeover coID, and
+// the event that takes the banner down on every station of the process.
+func (e *Engine) clearFlagOn(processID, coID int64) error {
+	if err := e.db.SetChangeoverVerifyMismatch(coID, ""); err != nil {
 		return err
+	}
+	if e.Events != nil {
+		e.Events.Emit(Event{Type: EventChangeoverVerifyCleared,
+			Payload: CATIDVerifyClearedEvent{ProcessID: processID, ChangeoverID: coID}})
 	}
 	e.catidHealthChanged(processID)
 	return nil
+}
+
+// DismissPostCutoverFlag is the flag's Dismiss: the operator has seen it, and
+// it comes down on every screen of the process, writing no pin and starting
+// nothing. Only the prompt goes: the request guard (guardCatidMismatch) still
+// refuses material for a part the running style does not run. No-op when
+// nothing is flagged.
+func (e *Engine) DismissPostCutoverFlag(processID int64) error {
+	co, err := e.db.LatestFlaggedChangeover(processID)
+	if err != nil || co == nil {
+		return err
+	}
+	e.logFn("post-cutover flag on changeover %d dismissed at the station: set to %s, the process reported %s",
+		co.ID, e.styleName(co.ToStyleID), co.VerifyLiveCATID)
+	return e.clearFlagOn(processID, co.ID)
+}
+
+// clearAnsweredPostCutoverFlag clears a standing flag the press has answered:
+// the PLC now reports liveCATID, a part of styleID, and the flag is on a
+// changeover to styleID. The watch that raises a flag closes when it flags, so
+// before this a press changed after shingo's cutover (the robots done before
+// the die change) kept its banner until someone confirmed a part that was
+// never wrong, and Confirm is refused when that part is the old style's (HK
+// P400 2026-11-11). Called by the monitor on a confirm edge, with cm.mu held,
+// as the watch's own clear is.
+func (e *Engine) clearAnsweredPostCutoverFlag(processID, styleID int64, liveCATID string) {
+	co, err := e.db.LatestFlaggedChangeover(processID)
+	if err != nil || co == nil || co.ToStyleID != styleID {
+		return
+	}
+	if err := e.clearFlagOn(processID, co.ID); err != nil {
+		log.Printf("plc-catid: clear the answered post-cutover flag on changeover %d: %v", co.ID, err)
+		return
+	}
+	log.Printf("CATID post-cutover flag on changeover %d cleared: process %d now reports %s, a part of style %d",
+		co.ID, processID, liveCATID, styleID)
 }

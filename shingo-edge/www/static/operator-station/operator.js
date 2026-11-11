@@ -461,9 +461,15 @@ function handleCatidAutoCutover(data) {
 // After a cutover, if the press's live part id still disagrees with the style it
 // was set to, the Edge flags the changeover. The flag is fetched when the
 // changeover state moved (postCutoverKey) and when its event names this
-// process; the banner offers the two resolutions in place: a one-tap corrective
-// changeover to the mapped style, and a link to review the style's expected
-// part-id config. "Confirm" clears it.
+// process. The banner offers three answers: Changeover (the picker, on the
+// style the part maps to when exactly one does), Update CATID (the part joins
+// the style the changeover set; only when no other style runs it, as the
+// Edge would refuse it), and Dismiss. Every one clears it on the Edge, which
+// takes it down on every station (changeover-verify-cleared), and so does the
+// press reporting a part of the style it was set to.
+//
+// NO DESKTOP LINK. It used to offer "Review part-id config", which opened the
+// desktop's /processes on the kiosk (owner 2026-11-11).
 //
 // ONLY WHEN THE KEY MOVED OR THE EVENT ASKED. This is an HTTP request, and it
 // used to run on every CHANGED view, which stopped being fine once a flow save
@@ -521,37 +527,32 @@ function clearPostCutoverFlag(data) {
     removeAlert('postcutover');
 }
 
-function renderPostCutoverFlag(pid, flag) {
-    const buttons = [];
-    // Resolution 1 — one-tap corrective changeover to the mapped style.
-    if (flag.has_mapped) {
-        buttons.push({ label: 'Change over to ' + flag.mapped_style_name, primary: true, onClick: async function (btn) {
-            btn.disabled = true;
-            const ok = await postAction('/api/processes/' + pid + '/changeover/start', {
-                to_style_id: flag.mapped_style_id,
-                called_by: 'post-cutover-correction',
-                notes: 'corrective changeover from post-cutover part-id mismatch',
-            }, loadView);
-            // A refused or unanswered POST gives the button back.
-            if (!ok) { btn.disabled = false; return; }
-            showToast('Corrective changeover to ' + flag.mapped_style_name + ' started', 'success');
-            removeAlert('postcutover');
-        } });
-    }
-    // Resolution 2 — review the style's expected part-id config.
-    buttons.push({ label: 'Review part-id config', onClick: function () { window.open('/processes', '_blank'); } });
-    // Confirm the press is correct: the live CATID is pinned to the style the
-    // changeover set, then the flag clears. A pin lets that part switch the
-    // process to the style, so the button says it pins.
-    buttons.push({ label: 'Confirm — pin CATID ' + flag.live_catid + ' to ' + flag.expected_style_name, onClick: async function (btn) {
+// clearFlagButton is a banner answer that POSTs to the flag's route (confirm,
+// dismiss) and takes the banner down when it lands. A refused or unanswered
+// POST gives the button back.
+function clearFlagButton(pid, label, route) {
+    return { label: label, onClick: async function (btn) {
         btn.disabled = true;
-        const ok = await postAction('/api/processes/' + pid + '/post-cutover-flag/confirm', {}, loadView);
+        const ok = await postAction('/api/processes/' + pid + '/post-cutover-flag/' + route, {}, loadView);
         if (!ok) { btn.disabled = false; return; }
         removeAlert('postcutover');
         // The flag moved without the changeover state moving, so the key has
         // to be cleared or the next view would skip the re-check.
         lastPostCutoverKey = null;
+    } };
+}
+
+function renderPostCutoverFlag(pid, flag) {
+    const buttons = [];
+    // Changeover: the picker, never a one-tap start (a start sends robots).
+    // The banner stays until the start clears the flag.
+    buttons.push({ label: 'Changeover', onClick: function () {
+        openComposerPicker(flag.has_mapped ? flag.mapped_style_id : 0);
     } });
+    // Update CATID: the live part joins the style the changeover set. Shown
+    // only when no other style runs that part (the Edge refuses it then).
+    if (flag.can_update_catid) buttons.push(clearFlagButton(pid, 'Update CATID', 'confirm'));
+    buttons.push(clearFlagButton(pid, 'Dismiss', 'dismiss'));
     showAlert('postcutover', 'red', flag.message, buttons);
 }
 

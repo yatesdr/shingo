@@ -129,6 +129,9 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/post-cutover-flag/confirm": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/post-cutover-flag/confirm", map[string]any{}
 		})},
+		"POST /api/processes/{id}/post-cutover-flag/dismiss": {want: 200, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/post-cutover-flag/dismiss", map[string]any{}
+		})},
 		"POST /api/processes/{id}/changeover/stage-node/{nodeID}": {want: 400, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/changeover/stage-node/" + id(w.pressNode), map[string]any{}
 		})},

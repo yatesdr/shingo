@@ -375,6 +375,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 			r.Get("/processes/{id}/post-cutover-flag", h.apiGetPostCutoverFlag)
 			r.Post("/processes/{id}/post-cutover-flag/confirm", h.apiConfirmPostCutoverFlag)
+			r.Post("/processes/{id}/post-cutover-flag/dismiss", h.apiDismissPostCutoverFlag)
 			r.Post("/processes/{id}/changeover/stage-node/{nodeID}", h.apiStageNodeChangeoverMaterial)
 			r.Post("/processes/{id}/changeover/evacuate-node/{nodeID}", h.apiEvacuateNode)
 			r.Post("/processes/{id}/changeover/deliver-material/{nodeID}", h.apiDeliverNewMaterialForChangeover)

@@ -150,9 +150,10 @@ func (h *Handlers) apiGetPostCutoverFlag(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]any{"flagged": true, "flag": flag})
 }
 
-// apiConfirmPostCutoverFlag clears the flag — the operator confirmed the press
-// is correct (or handled it another way). The corrective-changeover exit clears
-// it on its own via StartProcessChangeover.
+// apiConfirmPostCutoverFlag is the flag's Update CATID: the reported part joins
+// the style the changeover set, and the flag clears. The corrective-changeover
+// exit clears it on its own via StartProcessChangeover. The clear's event
+// (EventChangeoverVerifyCleared) takes the banner down on every station.
 func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
@@ -163,7 +164,22 @@ func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Requ
 		writeCATIDPinError(w, err)
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-verify-cleared", Data: map[string]int64{"process_id": processID}})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
+// apiDismissPostCutoverFlag is the flag's Dismiss: the flag clears with no pin
+// written and nothing started. The request guard still refuses material for a
+// part the running style does not run.
+func (h *Handlers) apiDismissPostCutoverFlag(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	if err := h.orchestration.DismissPostCutoverFlag(processID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 

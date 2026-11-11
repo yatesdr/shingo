@@ -693,6 +693,12 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 		return
 	}
 	styleID, styleName, set, ok := cm.eng.activeStyleCATIDSet(processID)
+	// The press caught up: the part is one of the running style's, so a standing
+	// post-cutover flag on a changeover to it is answered (the watch that raised
+	// it closed when it flagged). A baseline read after a restart answers it too.
+	if ok && len(set) > 0 && catidSetHas(set, st.lastConfirmed) {
+		cm.eng.clearAnsweredPostCutoverFlag(processID, styleID, st.lastConfirmed)
+	}
 	// A5: alert when the active style has configured/derivable CATIDs and the live
 	// part is NONE of them (not just != a single value — a two-position style runs
 	// two parts, and either side is fine). Empty set = inert (never alert).

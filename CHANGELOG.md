@@ -16,6 +16,12 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- The red "set to X, but the process is reporting Y" banner clears itself once the press reports a part of X: a die changed after the robots finished no longer leaves it up
+- The banner offers Changeover, Update CATID and Dismiss; Update CATID shows only when no other style runs that part, and the desktop "Review part-id config" link is gone from the HMI
+- The banner's Changeover opens the changeover picker instead of starting one with a single tap
+
 ## v0.3.0 — 2026-11-11
 
 Deploy: no migration.

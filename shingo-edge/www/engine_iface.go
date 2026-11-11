@@ -233,9 +233,12 @@ type EngineOrchestration interface {
 	// (the press's live part disagrees with the style the cutover was set to), or
 	// (nil, false) when none.
 	PostCutoverFlag(processID int64) (*engine.PostCutoverFlag, bool)
-	// ConfirmPostCutoverFlag is the flag's Confirm: the reported part joins
+	// ConfirmPostCutoverFlag is the flag's Update CATID: the reported part joins
 	// the to-style's set, and the flag clears.
 	ConfirmPostCutoverFlag(processID int64) error
+	// DismissPostCutoverFlag is the flag's Dismiss: it clears with no pin
+	// written and nothing started.
+	DismissPostCutoverFlag(processID int64) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)
 	DeliverNewMaterialForChangeover(processID, nodeID int64) (*domain.Order, error)

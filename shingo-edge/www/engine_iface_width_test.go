@@ -96,6 +96,9 @@ func TestServiceAccessWidth(t *testing.T) {
 
 // TestEngineOrchestrationWidth pins Edge's wide surface at 78 methods -
 // ServiceAccess's 22 embedded, plus 56 orchestration verbs of its own.
+// (2026-11-11: +1, DismissPostCutoverFlag, the owner's ask for the HK P400
+// banner's Dismiss. The want-list below is 93 entries with it; the 78 above
+// had already drifted, and is left for the width study rather than re-derived.)
 // (2026-10-23: 76 -> 78, SendBack and CancelSendBack, the owner's ruling in
 // the press tranche 2 brief: the tote press's SEND BACK and its CANCEL,
 // POST /process-nodes/{id}/send-back and /send-back/cancel.)
@@ -208,6 +211,9 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CreateRetrieveForAPI",
 		"DeleteProcess",
 		"DeliverNewMaterialForChangeover",
+		// Added 2026-11-11 (owner, HK P400): the post-cutover banner's Dismiss,
+		// POST /processes/{id}/post-cutover-flag/dismiss.
+		"DismissPostCutoverFlag",
 		"EditProcessCounter",
 		"EnsureTagPublished",
 		"EvacuateNode",

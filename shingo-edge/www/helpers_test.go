@@ -363,6 +363,10 @@ func (s *stubEngine) ConfirmPostCutoverFlag(int64) error {
 	s.clearFlagCalls++
 	return nil
 }
+func (s *stubEngine) DismissPostCutoverFlag(int64) error {
+	s.clearFlagCalls++
+	return nil
+}
 
 // CatidHealth canned: process 1 has one red wrong-part item; others none.
 func (s *stubEngine) CatidHealth(processID int64) ([]engine.CatidHealthItem, error) {

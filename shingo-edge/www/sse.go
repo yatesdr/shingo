@@ -608,6 +608,12 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CATIDVerifyMismatchEvent); ok {
 				sseEvt = SSEEvent{Type: "changeover-verify-mismatch", Data: p}
 			}
+		case engine.EventChangeoverVerifyCleared:
+			// The flag cleared (the press caught up, a Dismiss, an Update CATID,
+			// a new changeover): every station of the process takes the banner down.
+			if p, ok := evt.Payload.(engine.CATIDVerifyClearedEvent); ok {
+				sseEvt = SSEEvent{Type: "changeover-verify-cleared", Data: p}
+			}
 		case engine.EventContainmentUpdated:
 			// The held copy of Core's containment feed changed digest. The
 			// containment page reloads on it. A state change, so it rides the

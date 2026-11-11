@@ -792,13 +792,34 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     await advance(600);
     eq(alertTexts(), ['PRESS-1 reports CAT-9 after the cutover to STYLE-1'],
         'the next view fetch tries the flag again (a bug fixed: a failed fetch was never retried)');
+    // A part no other style runs: Changeover, Update CATID and Dismiss, and
+    // no desktop link (owner 2026-11-11: the kiosk does not open /processes).
+    const flagButtons = () => alerts().flatMap(a => a.descendants().filter(n => n.tagName === 'BUTTON').map(n => n.textContent));
+    eq(flagButtons(), ['Changeover', 'Dismiss'], 'a part another style runs: no Update CATID');
+    cutoverFlag = Object.assign({}, cutoverFlag, { can_update_catid: true });
+    fire('changeover-verify-mismatch', { process_id: 1 });
+    await advance(600);
+    eq(flagButtons(), ['Changeover', 'Update CATID', 'Dismiss'], 'a part no other style runs: Update CATID too');
     // Its buttons come back after a failed POST.
     postFails = 1;
-    await tapAlert('Confirm — pin CATID CAT-9 to STYLE-1');
-    eq(alertButton('Confirm — pin CATID CAT-9 to STYLE-1').disabled, false, 'a refused confirm leaves its button live');
+    await tapAlert('Update CATID');
+    eq(alertButton('Update CATID').disabled, false, 'a refused Update CATID leaves its button live');
     cutoverFlag = null;
-    await tapAlert('Confirm — pin CATID CAT-9 to STYLE-1');
-    eq(alerts().length, 0, 'a confirm that lands takes the banner down');
+    await tapAlert('Update CATID');
+    eq(alerts().length, 0, 'an Update CATID that lands takes the banner down');
+    // Changeover opens the picker, on the style the part maps to; it starts nothing.
+    cutoverFlag = { message: 'PRESS-1 reports CAT-9 after the cutover to STYLE-1', has_mapped: true,
+        mapped_style_id: 14, mapped_style_name: 'STYLE-4', live_catid: 'CAT-9', expected_style_name: 'STYLE-1' };
+    fire('changeover-verify-mismatch', { process_id: 1 });
+    await advance(600);
+    composerOpens = 0;
+    await tapAlert('Changeover');
+    eq([composerOpens, composerTarget, alerts().length], [1, 14, 1],
+        'Changeover opens the picker on the mapped style, and the banner stays until a start clears it');
+    // Dismiss takes it down.
+    cutoverFlag = null;
+    await tapAlert('Dismiss');
+    eq(alerts().length, 0, 'Dismiss takes the banner down');
 
     // No post-cutover banner on a board of loader tiles.
     served = boardView();

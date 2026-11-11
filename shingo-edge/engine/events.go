@@ -157,6 +157,13 @@ const (
 	// post-cutover flag changing). Pages refetch; the items are computed from
 	// state on each read, so a missed hint costs a refresh, never a wrong item.
 	EventCATIDHealthChanged
+
+	// EventChangeoverVerifyCleared fires when a standing post-cutover flag
+	// clears, by whatever path (ClearPostCutoverFlag): the press now reports a
+	// part of the style it was set to, the station's Dismiss or Update CATID, a
+	// new changeover, a switch. Every station of the process takes the banner
+	// down (SSE "changeover-verify-cleared").
+	EventChangeoverVerifyCleared
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -508,6 +515,13 @@ type CATIDVerifyMismatchEvent struct {
 	StyleID       int64  `json:"style_id"`
 	ExpectedCATID string `json:"expected_catid"`
 	LiveCATID     string `json:"live_catid"`
+}
+
+// CATIDVerifyClearedEvent names the process whose post-cutover flag (on
+// ChangeoverID) cleared.
+type CATIDVerifyClearedEvent struct {
+	ProcessID    int64 `json:"process_id"`
+	ChangeoverID int64 `json:"changeover_id"`
 }
 
 // DeliveredNotBoundEvent carries the detail for a delivery that arrived at one

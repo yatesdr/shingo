@@ -80,6 +80,9 @@ func TestPostCutoverVerify_MismatchMapped(t *testing.T) {
 	if flag.ExpectedStyleName != "PROD-STYLE" || !flag.HasMapped || flag.MappedStyleName != "STYLE-B" {
 		t.Errorf("flag = %+v, want expected PROD-STYLE, mapped STYLE-B", flag)
 	}
+	if flag.CanUpdateCATID {
+		t.Error("a part STYLE-B runs must not offer Update CATID: the pin would be refused")
+	}
 	for _, want := range []string{"PROD-STYLE", "50029999", "STYLE-B", "please confirm"} {
 		if !strings.Contains(flag.Message, want) {
 			t.Errorf("message %q missing %q", flag.Message, want)
@@ -121,6 +124,106 @@ func TestPostCutoverVerify_MismatchUnmapped(t *testing.T) {
 	}
 	if !strings.Contains(flag.Message, "99999999") || !strings.Contains(flag.Message, "PROD-STYLE") {
 		t.Errorf("message %q must name the live part and the set style", flag.Message)
+	}
+	if !flag.CanUpdateCATID {
+		t.Error("a part no style runs must offer Update CATID")
+	}
+}
+
+// flagWithLive flags a changeover to the process's active style (styleA, set
+// {70000001}) with live part live, as the watch does when its window elapses,
+// and returns the changeover id and the monitor.
+func flagWithLive(t *testing.T, eng *Engine, db *store.DB, processID, styleA int64, live string) (int64, *catidMonitor) {
+	t.Helper()
+	coID := seedChangeoverTo(t, eng, db, processID, styleA)
+	seedCatidMonitor(eng, processID, "PROC", live)
+	cm := eng.catidMon
+	now := time.Now()
+	cm.openPostCutoverVerify(processID, coID, styleA, verifySet(t, eng, styleA), now)
+	cm.checkPostCutoverVerify(processID, cm.states[processID], now)
+	if co, err := db.LatestFlaggedChangeover(processID); err != nil || co == nil || co.ID != coID {
+		t.Fatalf("setup: changeover %d not flagged: %+v, %v", coID, co, err)
+	}
+	return coID, cm
+}
+
+// clearedEvents records every EventChangeoverVerifyCleared.
+func clearedEvents(eng *Engine) *[]CATIDVerifyClearedEvent {
+	var got []CATIDVerifyClearedEvent
+	eng.Events.SubscribeTypes(func(evt Event) {
+		if p, ok := evt.Payload.(CATIDVerifyClearedEvent); ok {
+			got = append(got, p)
+		}
+	}, EventChangeoverVerifyCleared)
+	return &got
+}
+
+// TestPostCutoverFlag_ClearsWhenThePressCatchesUp: shingo's cutover finished
+// before the die change, so the watch flagged the old part (HK P400
+// 2026-11-11). When the PLC then reports a part of the style the changeover
+// set, the flag clears and every station is told; a part of another style
+// leaves it standing.
+func TestPostCutoverFlag_ClearsWhenThePressCatchesUp(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "70000001"), "expected A")
+	styleB, err := db.CreateStyle("STYLE-B", "b", processID)
+	testutil.MustNoErr(t, err, "create style B")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleB, "50029999"), "expected B")
+	eng := testEngine(t, db)
+	cleared := clearedEvents(eng)
+	coID, cm := flagWithLive(t, eng, db, processID, styleA, "50029999") // still the old part
+	st := cm.states[processID]
+
+	// A part no style of the changeover runs: the flag stands.
+	st.lastConfirmed = "99999999"
+	cm.onConfirmedCATID(processID, st, true)
+	if co, _ := db.LatestFlaggedChangeover(processID); co == nil {
+		t.Fatal("a part that is not the set style's must leave the flag standing")
+	}
+
+	// The die is changed: the PLC reports the set style's part.
+	st.lastConfirmed = "70000001"
+	cm.onConfirmedCATID(processID, st, true)
+	if co, err := db.LatestFlaggedChangeover(processID); err != nil || co != nil {
+		t.Fatalf("the press reporting the set style's part must clear the flag, still %+v (%v)", co, err)
+	}
+	if _, ok := eng.PostCutoverFlag(processID); ok {
+		t.Error("PostCutoverFlag must report no flag once the press caught up")
+	}
+	if len(*cleared) != 1 || (*cleared)[0].ProcessID != processID || (*cleared)[0].ChangeoverID != coID {
+		t.Errorf("cleared events = %+v, want one naming process %d changeover %d", *cleared, processID, coID)
+	}
+	if s, err := db.GetStyle(styleA); err != nil || s.ExpectedCATID != "70000001" {
+		t.Errorf("catching up must write no pin: style A pin = %q (%v)", s.ExpectedCATID, err)
+	}
+}
+
+// TestDismissPostCutoverFlag: Dismiss clears the flag and tells every station,
+// writing no pin; with nothing flagged it is a no-op.
+func TestDismissPostCutoverFlag(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "70000001"), "expected A")
+	eng := testEngine(t, db)
+	cleared := clearedEvents(eng)
+	coID, _ := flagWithLive(t, eng, db, processID, styleA, "99999999")
+
+	testutil.MustNoErr(t, eng.DismissPostCutoverFlag(processID), "dismiss")
+	if co, err := db.LatestFlaggedChangeover(processID); err != nil || co != nil {
+		t.Fatalf("Dismiss must clear the flag, still %+v (%v)", co, err)
+	}
+	if len(*cleared) != 1 || (*cleared)[0].ChangeoverID != coID {
+		t.Errorf("cleared events = %+v, want one naming changeover %d", *cleared, coID)
+	}
+	if s, err := db.GetStyle(styleA); err != nil || s.ExpectedCATID != "70000001" {
+		t.Errorf("Dismiss must write no pin: style A pin = %q (%v)", s.ExpectedCATID, err)
+	}
+	testutil.MustNoErr(t, eng.DismissPostCutoverFlag(processID), "dismiss with nothing flagged")
+	if len(*cleared) != 1 {
+		t.Errorf("a Dismiss with nothing flagged must emit nothing, got %d events", len(*cleared))
 	}
 }
 
