@@ -65,3 +65,43 @@ func TestMarkedEvacNodes_IsNotPressShaped(t *testing.T) {
 			"any subset of them, whatever kind of cell it is", got)
 	}
 }
+
+// TestChangeoverSituation_EveryArm: the one decision the planner and the
+// readiness card both read, arm by arm. A press whose positions are marked
+// evacuates whatever its parts do, unless every marked position keeps its
+// part lineside.
+func TestChangeoverSituation_EveryArm(t *testing.T) {
+	t.Parallel()
+	claim := func(part string) *NodeClaim {
+		return &NodeClaim{CoreNodeName: "N", PayloadCode: part, Role: "consume", SwapMode: "single_robot"}
+	}
+	press := func(part string, marks ...string) *NodeClaim {
+		c := markedClaim()
+		c.PayloadCode, c.Role, c.SwapMode, c.ChangeoverEvacNodes = part, "produce", "two_robot_press_index", marks
+		return c
+	}
+	keep := press("A", "PRESS_A")
+	keep.ChangeoverCarryoverDisposition = CarryoverKeepLineside
+	for _, tc := range []struct {
+		name     string
+		from, to *NodeClaim
+		want     Situation
+	}{
+		{"no claim either side", nil, nil, SituationUnchanged},
+		{"the incoming style adds the node", nil, claim("A"), SituationAdd},
+		{"the incoming style holds it empty", nil, claim(emptyPayload), SituationUnchanged},
+		{"the outgoing style drops the node", claim("A"), nil, SituationDrop},
+		{"the incoming style clears it", claim("A"), claim(emptyPayload), SituationDrop},
+		{"empty on both sides", claim(emptyPayload), claim(emptyPayload), SituationUnchanged},
+		{"empty before, a part after", claim(emptyPayload), claim("A"), SituationAdd},
+		{"the same part", claim("A"), claim("A"), SituationUnchanged},
+		{"another part", claim("A"), claim("B"), SituationSwap},
+		{"a marked press, another part", press("A", "PRESS_A"), press("B"), SituationEvacuate},
+		{"a marked press, the same part", press("A", "PRESS_A"), press("A"), SituationEvacuate},
+		{"a marked press whose every marked part stays lineside", keep, press("A"), SituationUnchanged},
+	} {
+		if got := ChangeoverSituation(tc.from, tc.to); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}

@@ -152,3 +152,58 @@ func BlockersToReasons(blockers []Blocker) []string {
 	}
 	return reasons
 }
+
+// Situation is what a changeover does at one node, decided from the outgoing
+// and the incoming claim on it (ChangeoverSituation).
+type Situation string
+
+const (
+	SituationUnchanged Situation = "unchanged" // nothing moves
+	SituationEvacuate  Situation = "evacuate"  // a tool change: marked positions are cleared before anything is set down
+	SituationSwap      Situation = "swap"      // a different part: old out, new in
+	SituationDrop      Situation = "drop"      // the outgoing style uses the node, the incoming does not
+	SituationAdd       Situation = "add"       // the incoming style uses the node, the outgoing did not
+)
+
+// emptyPayload is how a flow says a node is deliberately clear.
+const emptyPayload = "__empty__"
+
+// ChangeoverSituation is THE decision of what a changeover does at a node, for
+// every reader: the planner (engine.DiffStyleClaims) and the readiness card
+// (ValidateFlowChangeoverReadiness) ask it, so the two cannot disagree on
+// which nodes build orders. from is the outgoing style's claim on the node,
+// to the incoming one's; nil is a style that does not use the node.
+//
+// A tool change is not a payload question: marked positions select Evacuate
+// whatever the parts do (ToolingClearanceApplies), unless every marked
+// position keeps its part lineside, which is what the same-part arm answers.
+func ChangeoverSituation(from, to *NodeClaim) Situation {
+	switch {
+	case from == nil && to == nil:
+		return SituationUnchanged
+	case from == nil:
+		if to.PayloadCode == emptyPayload {
+			return SituationUnchanged // node was empty, stays empty
+		}
+		return SituationAdd
+	case to == nil:
+		return SituationDrop
+	case to.PayloadCode == emptyPayload:
+		if from.PayloadCode == emptyPayload {
+			return SituationUnchanged // both empty: nothing to do
+		}
+		return SituationDrop // explicitly clear the node
+	case from.PayloadCode == emptyPayload:
+		return SituationAdd // node was empty, now needs material
+	case ToolingClearanceApplies(from, to):
+		return SituationEvacuate
+	case from.PayloadCode == to.PayloadCode && from.Role == to.Role:
+		// Same part, whole-node evacuation: read off the outgoing claim.
+		if from.EvacuateOnChangeover {
+			return SituationEvacuate
+		}
+		return SituationUnchanged
+	default:
+		return SituationSwap
+	}
+}

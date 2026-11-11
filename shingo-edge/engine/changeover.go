@@ -9,15 +9,16 @@ import (
 )
 
 // ChangeoverSituation classifies what needs to happen at a physical node
-// when transitioning between two styles.
-type ChangeoverSituation string
+// when transitioning between two styles: domain.Situation, decided by
+// domain.ChangeoverSituation for the planner and the readiness card alike.
+type ChangeoverSituation = domain.Situation
 
 const (
-	SituationUnchanged ChangeoverSituation = "unchanged" // same payload, no evacuation needed
-	SituationEvacuate  ChangeoverSituation = "evacuate"  // same payload, but evacuation required
-	SituationSwap      ChangeoverSituation = "swap"      // different payload — old out, new in
-	SituationDrop      ChangeoverSituation = "drop"      // old style uses node, new style doesn't
-	SituationAdd       ChangeoverSituation = "add"       // new style uses node, old style didn't
+	SituationUnchanged = domain.SituationUnchanged
+	SituationEvacuate  = domain.SituationEvacuate
+	SituationSwap      = domain.SituationSwap
+	SituationDrop      = domain.SituationDrop
+	SituationAdd       = domain.SituationAdd
 )
 
 // ChangeoverNodeDiff represents the material change needed at a single physical
@@ -36,7 +37,8 @@ type ChangeoverNodeDiff struct {
 }
 
 // DiffStyleClaims computes the material changes needed at each physical node
-// when transitioning from one style to another.
+// when transitioning from one style to another: one diff per node either style
+// claims, its situation domain.ChangeoverSituation's.
 func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNodeDiff {
 	fromMap := make(map[string]*processes.NodeClaim, len(fromClaims))
 	for i := range fromClaims {
@@ -69,63 +71,10 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 
 	var diffs []ChangeoverNodeDiff
 	for _, name := range names {
-		from := fromMap[name]
-		to := toMap[name]
-
-		var situation ChangeoverSituation
-		switch {
-		case from == nil && to != nil:
-			if to.PayloadCode == "__empty__" {
-				situation = SituationUnchanged // node was empty, stays empty
-			} else {
-				situation = SituationAdd
-			}
-		case from != nil && to == nil:
-			situation = SituationDrop
-		case to != nil && to.PayloadCode == "__empty__":
-			if from != nil && from.PayloadCode == "__empty__" {
-				situation = SituationUnchanged // both empty → nothing to do
-			} else {
-				situation = SituationDrop // explicitly clear the node
-			}
-		case from != nil && from.PayloadCode == "__empty__":
-			situation = SituationAdd // node was empty, now needs material
-		// A TOOLING EVACUATION IS NOT A PAYLOAD QUESTION.
-		//
-		// SituationEvacuate used to hang off the same-payload arm, which made
-		// it unreachable on the common case it exists for: a press whose
-		// tooling changes almost always changes what it makes, so the payloads
-		// differ, the switch fell to Swap, and the flag was inert. Marked
-		// positions now select it whatever the payloads do — the staged
-		// choreography subsumes the swap, since the incoming bins arrive
-		// through staging either way.
-		//
-		// Read off the OUTGOING claim; see domain.StagedToolingChangeover for
-		// why the outgoing setup owns the answer.
-		// ...unless every marked position is KEEPING its part. A press whose parts
-		// all carry over and whose cell said keep_lineside clears nothing: the
-		// tool change happens around bins that never move, which is precisely
-		// what the same-payload arm below already answers. Standing down here
-		// is cheaper and truer than planning an evacuation for a later pass to
-		// un-plan.
-		case domain.ToolingClearanceApplies(from, to):
-			situation = SituationEvacuate
-		case from.PayloadCode == to.PayloadCode && from.Role == to.Role:
-			// Same-payload, whole-node evacuation — the single-position shape.
-			// Also the outgoing claim now, where this read said `to`: one flag,
-			// one owner, and the planner's Drop branch already read it this way.
-			if from.EvacuateOnChangeover {
-				situation = SituationEvacuate
-			} else {
-				situation = SituationUnchanged
-			}
-		default:
-			situation = SituationSwap
-		}
-
+		from, to := fromMap[name], toMap[name]
 		diffs = append(diffs, ChangeoverNodeDiff{
 			CoreNodeName: name,
-			Situation:    situation,
+			Situation:    domain.ChangeoverSituation(from, to),
 			FromClaim:    from,
 			ToClaim:      to,
 		})
