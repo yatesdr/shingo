@@ -185,7 +185,8 @@
       "DeliveryNodeA": "DST",
       "AutoConfirmA": true,
       "StepsB": null,
-      "AutoConfirmB": false
+      "AutoConfirmB": false,
+      "FollowOns": 1
     }
   },
   "consume/single_robot/base": {
@@ -2723,7 +2724,8 @@
       "DeliveryNodeA": "DST",
       "AutoConfirmA": true,
       "StepsB": null,
-      "AutoConfirmB": false
+      "AutoConfirmB": false,
+      "FollowOns": 1
     }
   },
   "produce/single_robot/base": {
