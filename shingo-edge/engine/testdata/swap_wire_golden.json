@@ -138,7 +138,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -345,7 +345,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -669,7 +669,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1014,7 +1014,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1056,7 +1056,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1398,7 +1398,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1440,7 +1440,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1790,7 +1790,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1832,7 +1832,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -1874,7 +1874,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -2248,7 +2248,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -2290,7 +2290,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -2332,7 +2332,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -2676,7 +2676,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -2885,7 +2885,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -3214,7 +3214,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -3565,7 +3565,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -3608,7 +3608,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -3959,7 +3959,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4002,7 +4002,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4362,7 +4362,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4405,7 +4405,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4448,7 +4448,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4835,7 +4835,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4878,7 +4878,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }
@@ -4921,7 +4921,7 @@
               ],
               "AutoConfirm": true,
               "PayloadCode": "P-FROM",
-              "CurtainWaits": false
+              "CurtainWaits": true
             },
             "Retrieve": null
           }

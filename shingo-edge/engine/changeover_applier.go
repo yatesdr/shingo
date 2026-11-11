@@ -129,6 +129,9 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 			return
 		}
 		supplyID = &id
+		if action.ClearsAtStart {
+			e.lockClearingCount(nodeID, id)
+		}
 	}
 	if action.EvacOrder != nil {
 		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, evacSib, evacUUID, origin)
@@ -402,4 +405,37 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); "+
 		"the process is down, so the line is pulling from nothing; a sequential pair is lit again "+
 		"on the position the next carrier lands on", node.CoreNodeName, len(ids))
+}
+
+// lockClearingCount is what a Ready press's release does, for a lift a tool
+// change makes at START with no release in front of it (NodeAction.ClearsAtStart):
+// the departing produce carrier's count is final here, so its release-time
+// ingest ships and the seat lets the carrier go (finalizeDepartingProduce),
+// before the robot lifts. START is the operator's press. A consume position
+// ships no count, as its release ships none; a seat with no count ships
+// nothing. Once per order, through the release ledger, so a later release of
+// the same leg ships nothing more.
+func (e *Engine) lockClearingCount(nodeID, orderID int64) {
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil || node == nil {
+		log.Printf("changeover: lock the count at START for node %d: read node: %v", nodeID, err)
+		return
+	}
+	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		log.Printf("changeover: lock the count at START for node %s: read seat: %v", node.Name, err)
+		return
+	}
+	resident, err := e.residentClaim(node, runtime)
+	if err != nil || resident == nil || resident.Role != protocol.ClaimRoleProduce {
+		return
+	}
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		log.Printf("changeover: lock the count at START for node %s: read order %d: %v", node.Name, orderID, err)
+		return
+	}
+	if err := e.finalizeDepartingProduce(node, order, finalizeBy{origin: release.OriginChangeoverNode, changeover: true}); err != nil {
+		log.Printf("changeover: lock the count at START for node %s: %v", node.Name, err)
+	}
 }

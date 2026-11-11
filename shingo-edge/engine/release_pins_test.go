@@ -190,7 +190,14 @@ func releasePinCells() []relCell {
 		// ── N-a: a second release on a multi-wait leg ────────────────────
 		// The switch's evacuate legs, which carried a ready and a tooling done
 		// wait, are gone; a tool change's leg carries one, and a second only at
-		// a curtained position.
+		// a curtained position: a curtain wait in front of the lift at START,
+		// with the creation's standing intent on it. The curtain reading safe,
+		// the intent releases the lift with no press; at Tooling done it is
+		// consumed, never carried on, so that wait holds for the operator.
+		{name: "N-a/a curtained tool change: the intent lifts at START, Tooling done holds",
+			want:  "ok | supply=staged | rel=supply | ingest=0 capred=0",
+			build: coAt(coSpec{mode: protocol.SwapModeSingleRobot, tooling: true, curtained: true}, "supply", S),
+			act:   seq(stagesAt("supply", 0), stagesAt("supply", 1))},
 
 		// ── §6.4: the station button on a single_robot changeover node ────────
 		// Its task carries one order (since 2026-10-16), and the pair path

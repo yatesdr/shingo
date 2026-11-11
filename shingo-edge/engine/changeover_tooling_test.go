@@ -577,11 +577,12 @@ func TestPressIndex_ThePressSeatPullsForThePairsLife(t *testing.T) {
 	}
 }
 
-// TestPressIndex_ToolingEvacuateLeavesThePressPulling — a tooling evacuate on a
-// two_robot_press_index pair leaves the press seat pulling: the outgoing
-// style's ticks land on the bound bin while the evacuate is staged, and after
-// the evac's release (door 5) and the cutover the incoming style's ticks land
-// at the press (held for the carrier R2 is placing there).
+// TestPressIndex_ToolingEvacuateLeavesThePressPulling — a tool change on a
+// two_robot_press_index pair leaves the press seat pulling. START locks the
+// departing carrier's count (lockClearingCount, as a release does), so a tick
+// in the tool change is held for the next carrier rather than charged to the
+// one leaving, and after the leg's release (door 5) and the cutover the
+// incoming style's ticks land at the press.
 //
 // At the base the evacuate cleared the bit on the press seat and nothing on a
 // press-index pair ever set it again, so every produce tick at the press was
@@ -604,9 +605,10 @@ func TestPressIndex_ToolingEvacuateLeavesThePressPulling(t *testing.T) {
 		t.Fatal("press seat active_pull = false after the tooling evacuate, want true: a press-index pair has no parked side")
 	}
 	charSPTick(h.eng, h.processID, fromStyle, 2)
-	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != fxCount+2 || rt.PendingUOPDelta != 0 {
-		t.Errorf("after a tick at the evacuating press: count %d hold %d, want %d and 0: the bound bin takes it",
-			rt.RemainingUOPCached, rt.PendingUOPDelta, fxCount+2)
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != 0 || rt.PendingUOPDelta != 2 {
+		t.Errorf("after a tick at the press in its tool change: count %d hold %d, want 0 and 2: START "+
+			"locked the departing carrier's count, and the tick waits for the next one",
+			rt.RemainingUOPCached, rt.PendingUOPDelta)
 	}
 
 	testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the evacuate's legs")
@@ -801,5 +803,38 @@ func TestStrictPack_PressIndexPacksHoldsAndReplaysOntoTheNextBin(t *testing.T) {
 	seat(fmt.Sprintf("bin %d count 6 hold 0 of %q", next, ""))
 	if got, want := produceTicks(), []string{fmt.Sprintf("bin %d +6", next)}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("the replay emitted %v, want %v", got, want)
+	}
+}
+
+// TestToolChange_StartLocksTheDepartingCount: a tool change's clearing leg
+// lifts at START with no release in front of it, so START locks the produce
+// carrier's count as a release does (lockClearingCount): its ingest ships once,
+// with the seat's count, and the seat lets the carrier go. The leg's release at
+// Tooling done ships no second one. A consume position ships no count, as its
+// release ships none.
+func TestToolChange_StartLocksTheDepartingCount(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		role       protocol.ClaimRole
+		wantIngest int
+		wantSeat   int
+	}{
+		{protocol.ClaimRoleProduce, 1, 0},
+		{protocol.ClaimRoleConsume, 0, fxCount},
+	} {
+		h := newRelHarness(t)
+		coAt(coSpec{mode: protocol.SwapModeSingleRobot, role: c.role, tooling: true}, "supply", protocol.StatusStaged)(h)
+		ingest, _ := h.paperworkSinceMark()
+		if ingest != c.wantIngest {
+			t.Errorf("%s: %d ingest(s) shipped at START, want %d", c.role, ingest, c.wantIngest)
+		}
+		if got := remainingUOP(t, h.db, h.nodeID); got != c.wantSeat {
+			t.Errorf("%s: the seat counts %d after START, want %d", c.role, got, c.wantSeat)
+		}
+		h.mark()
+		testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the leg at Tooling done")
+		if again, _ := h.paperworkSinceMark(); again != 0 {
+			t.Errorf("%s: the release at Tooling done shipped %d more ingest(s), want none", c.role, again)
+		}
 	}
 }

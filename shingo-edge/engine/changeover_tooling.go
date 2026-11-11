@@ -484,17 +484,25 @@ func toolingPositionAction(press toolingPress, position string, node *processes.
 	// names the incoming style when the carrier type changes — refillPickup owns
 	// both, inside buildToolingEvacSteps.
 	steps := buildToolingEvacSteps(position, press.evacDest, fromPosition, toPosition, press.staging)
+	// The order OPENS by lifting the old bin off the position, so it carries the
+	// from-style payload; without it the pickup filters for the new payload and
+	// finds no bin (the ALN_001 shape).
+	supply := complexSpecWithPayload(position, position, steps, true, fromPosition.PayloadCode)
+	// THE LIFT GOES AT START, with no Ready press in front of it, so START
+	// does what that press does elsewhere: a position behind a live light
+	// curtain gets its curtain wait before the lift (CurtainWaits, S7), and the
+	// departing produce count is locked when the leg is created
+	// (ClearsAtStart; the applier's lockClearingCount).
+	supply.Complex.CurtainWaits = true
 	return changeover.NodeAction{
-		NodeID:       node.ID,
-		NodeName:     node.Name,
-		CoreNodeName: position,
-		Situation:    string(SituationEvacuate),
-		// The order OPENS by lifting the old bin off the position, so it carries the
-		// from-style payload; without it the pickup filters for the new payload
-		// and finds no bin (the ALN_001 shape).
-		SupplyOrder: complexSpecWithPayload(position, position, steps, true, fromPosition.PayloadCode),
-		NextState:   domain.NodeTaskStagingRequested,
-		LogTag:      "evacuate_staged_position",
+		NodeID:        node.ID,
+		NodeName:      node.Name,
+		CoreNodeName:  position,
+		Situation:     string(SituationEvacuate),
+		SupplyOrder:   supply,
+		NextState:     domain.NodeTaskStagingRequested,
+		LogTag:        "evacuate_staged_position",
+		ClearsAtStart: true,
 	}
 }
 
@@ -549,6 +557,11 @@ func setCarryoverRoundTrip(a *changeover.NodeAction, staging string) {
 		payload = a.SupplyOrder.Complex.PayloadCode
 	}
 	a.SupplyOrder = complexSpecWithPayload(position, position, steps, true, payload)
+	// It lifts at START too, so a live light curtain holds it as it holds the
+	// clearing leg. Its count is not locked there: the bin that leaves is the
+	// bin that comes back, its count carrying on.
+	a.SupplyOrder.Complex.CurtainWaits = true
+	a.ClearsAtStart = false
 	a.EvacOrder = nil
 	a.Situation = string(SituationEvacuate)
 	a.NextState = domain.NodeTaskStagingRequested
