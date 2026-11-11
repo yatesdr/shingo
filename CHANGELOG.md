@@ -44,6 +44,11 @@ Deploy: Edge v47. Update Core and every Edge at a plant in one window.
 - A carrier of another part goes to its own part's outbound: Core decides from the bin, the Edge no longer guesses
 - Core stops guessing an order's press for a tops & bottoms pull and a cancelled cart's return (once every Edge names it)
 - An empty asked for no press, a loader's included, takes nothing from a strict kanban, wherever it searches (once every Edge names it)
+- Where Core picks (a claim's source and its outbound, containment and partial destinations, routing sets, recipes, an API order's source and drop), the Edge refuses a spot inside a node group: name the group, or a node in no group
+- There the Edge also refuses a name Core's node list does not have, a slot inside a lane included
+- The pickers for those fields no longer offer a group's spots; staging and a cell's own positions still name the exact node
+- A contained part whose claim names a spot inside a group for containment waits, held, until the claim names the group; it never goes to finished goods
+- Core logs at start every claim leg that names a spot inside a group, and which are loader homes; the Edge logs the claims, routing rows and recipes the rule refuses when Core's node list changes
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
 - A robot's lift clears the spot it lifted from whichever order it belongs to, and only for the cart it lifted
 
