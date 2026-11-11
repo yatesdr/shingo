@@ -11,6 +11,10 @@
 //      localized.
 //   3. Run convertTimestamps once on DOMContentLoaded for the
 //      initial full-page render.
+//   4. Put every failed htmx request on the notice (shared/http.js's
+//      hookHtmxErrors): a partial refresh or an hx-post action that is
+//      refused, or never answered, used to keep the old content and say
+//      nothing.
 //
 // The IIFE wrap that used to populate `var ShingoEdge = {}` was
 // dropped in SPRINT 4. Helpers are now top-level `export function` /
@@ -28,7 +32,11 @@ import {
 } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { installBackdropClose } from '/static/shared/utils.js';
+import { hookHtmxErrors } from '/static/shared/http.js';
 installBackdropClose();
+// Once per page, on the body every htmx event bubbles to. A module runs after
+// the document is parsed, so the body is there.
+hookHtmxErrors(document.body);
 installHtmxTimestampConversion();
 // Live elapsed/countdown spans, re-armed after htmx swaps. The interval only
 // runs while such nodes exist, so pages without them pay nothing.

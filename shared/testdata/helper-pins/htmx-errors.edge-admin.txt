@@ -27,3 +27,14 @@ shared/clock.js: htmx:afterSwap
 
 ## so, on a partial refresh (hx-get) that answers 4xx/5xx, or never answers
 a page listens for htmx:responseError or htmx:sendError: see above.
+
+## what an Edge admin page shows (the hub loaded; htmx's error event fired on an element in it)
+hx-get partial answers 500 {"error"}: notice-toast notice-toast--error "database not answering"
+hx-post action refused 409 (writeError): notice-toast notice-toast--error "lane held"
+hx-post answers 400 plain text (http.Error): notice-toast notice-toast--error "invalid node"
+500 with an empty body (a panic under Recoverer): notice-toast notice-toast--error "Server error (500)"
+502 HTML from a proxy: notice-toast notice-toast--error "Server error (502)"
+401 with no HX-Redirect: notice-toast notice-toast--error is-sticky "Signed out" + a "Sign in" href=/login?next=%2F
+no answer (htmx:sendError): notice-toast notice-toast--error "No answer from the server"
+htmx's own timeout (htmx:timeout): notice-toast notice-toast--error "No answer from the server"
+the same 500 twice: notice-toast notice-toast--error "database not answering"

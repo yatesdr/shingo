@@ -1032,8 +1032,8 @@ function htmxErrorPins() {
     // shared modules define. Only the shared modules Edge admin reaches: a
     // file that an Edge script or template names (/static/shared/<file>), or
     // that such a shared module names in turn. A shared module no Edge page
-    // loads (shared/http.js's htmx hook, before wave C installs it) handles
-    // nothing on Edge admin, whatever its text says.
+    // loads handles nothing on Edge admin, whatever its text says. The census
+    // reads text, so what the hub's hook does is htmxErrorShown's, below.
     const edge = walkFiles(path.join(www, 'static'), (p) => p.endsWith('.js') && !p.endsWith('.min.js'))
         .concat(walkFiles(path.join(www, 'templates'), (p) => p.endsWith('.html')));
     const files = edge.concat(reachedShared(edge));
@@ -1088,6 +1088,47 @@ function htmxErrorPins() {
         ? '4xx/5xx: htmx does not swap (responseHandling [45].. swap:false error:true) and fires htmx:responseError; nothing on the page listens, so the panel keeps its old content and the operator is shown nothing.'
         : 'a page listens for htmx:responseError or htmx:sendError: see above.');
     if (nobody) out.push('no answer: htmx fires htmx:sendError (and htmx:afterRequest); nothing on the page listens, so the same.');
+    return out;
+}
+
+// htmxErrorShown is what an Edge admin page shows when an htmx request fails:
+// the Edge hub loaded as header.html loads it, then htmx's own error event
+// dispatched as htmx dispatches it (on the requesting element, bubbling, the
+// request in detail.xhr). htmx answers an HX-Redirect (the Edge's auth bounce
+// for an htmx request, router.go) before its response handling, so a lapsed
+// session that bounces fires no error event; the 401 case is one without it.
+// Each case is a fresh page; the last fires one failure twice.
+function htmxErrorShown() {
+    const out = ['', '## what an Edge admin page shows (the hub loaded; htmx\'s error event fired on an element in it)'];
+    const xhr = (status, text, ct) => ({
+        status, responseText: text, responseURL: 'http://surface.test/orders/partial',
+        getResponseHeader: (k) => (String(k).toLowerCase() === 'content-type' ? ct : null),
+    });
+    const DB = '{"error":"database not answering"}\n';
+    const cases = [
+        ['hx-get partial answers 500 {"error"}', [['htmx:responseError', xhr(500, DB, 'application/json')]]],
+        ['hx-post action refused 409 (writeError)', [['htmx:responseError', xhr(409, '{"error":"lane held"}\n', 'application/json')]]],
+        ['hx-post answers 400 plain text (http.Error)', [['htmx:responseError', xhr(400, 'invalid node\n', 'text/plain; charset=utf-8')]]],
+        ['500 with an empty body (a panic under Recoverer)', [['htmx:responseError', xhr(500, '', '')]]],
+        ['502 HTML from a proxy', [['htmx:responseError', xhr(502, '<html><body>Bad Gateway</body></html>', 'text/html')]]],
+        ['401 with no HX-Redirect', [['htmx:responseError', xhr(401, '', '')]]],
+        ['no answer (htmx:sendError)', [['htmx:sendError', null]]],
+        ['htmx\'s own timeout (htmx:timeout)', [['htmx:timeout', null]]],
+        ['the same 500 twice', [['htmx:responseError', xhr(500, DB, 'application/json')], ['htmx:responseError', xhr(500, DB, 'application/json')]]],
+    ];
+    for (const [label, fired] of cases) {
+        const r = makeRealm({ surface: 'edge' });
+        r.load('/static/js/shingoedge.js');
+        const elt = mk(r, 'div', { id: 'orders-content', 'hx-get': '/orders/partial' });
+        r.doc.body.appendChild(elt);
+        for (const [type, x] of fired) elt.dispatchEvent(ev(type, { detail: x ? { xhr: x, elt } : { elt } }));
+        const shown = r.doc.querySelectorAll('.notice-toast').map((t) => {
+            const a = t.querySelector('.notice-action');
+            return t.className + ' ' + JSON.stringify(t.querySelector('.notice-text').textContent)
+                + (a ? ' + ' + a.tagName.toLowerCase() + ' ' + JSON.stringify(a.textContent) + (a.getAttribute('href') ? ' href=' + a.getAttribute('href') : '') : '');
+        });
+        out.push(label + ': ' + (shown.length ? shown.join(' | ') : 'nothing shown'));
+    }
     return out;
 }
 
@@ -1166,7 +1207,7 @@ if (require.main === module) (async function main() {
     golden('sse.shared-bus.txt', await busPins());
     golden('sse.core-hub.txt', await coreHubBusPins());
     golden('sse.htmx-sse.txt', await htmxSSEPins());
-    golden('htmx-errors.edge-admin.txt', htmxErrorPins());
+    golden('htmx-errors.edge-admin.txt', htmxErrorPins().concat(htmxErrorShown()));
     process.stdout.write(JSON.stringify(goldens));
 })().catch((e) => {
     console.error('helper pins crashed:', e && e.stack ? e.stack : e);
