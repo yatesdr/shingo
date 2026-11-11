@@ -179,8 +179,8 @@ func TestPostCutoverFlag_ClearsWhenThePressCatchesUp(t *testing.T) {
 	// A part no style of the changeover runs: the flag stands.
 	st.lastConfirmed = "99999999"
 	cm.onConfirmedCATID(processID, st, true)
-	if co, _ := db.LatestFlaggedChangeover(processID); co == nil {
-		t.Fatal("a part that is not the set style's must leave the flag standing")
+	if co, err := db.LatestFlaggedChangeover(processID); err != nil || co == nil {
+		t.Fatalf("a part that is not the set style's must leave the flag standing, got %+v (%v)", co, err)
 	}
 
 	// The die is changed: the PLC reports the set style's part.
