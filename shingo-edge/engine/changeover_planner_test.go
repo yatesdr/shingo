@@ -1067,7 +1067,7 @@ func TestPlanNodeAction_Sequential_IsPerNode(t *testing.T) {
 // "Waiting for material: PANEL-B in PLN_004" — which is the second of the two
 // blockers the sim surfaced. Flagging the pickup Empty drops Core's payload
 // filter (not its bin-type compatibility, N1-c), so it takes the on-deck
-// carrier whatever is stamped on it. Direct port of markPressIndexOnDeckEmpty,
+// carrier whatever is stamped on it. Direct port of composePressIndexPair's on-deck flag,
 // which solved this same asymmetry for press-index's paired positions.
 //
 // Produce-only, for press-index's reason: a CONSUME sequential press parks a

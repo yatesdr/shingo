@@ -109,7 +109,7 @@ func TestBuildPressIndexSwapSteps_UnflippedIsUnchanged(t *testing.T) {
 
 // TWO FLAGGERS, ONE LEG, AND THEY MUST COMPOSE.
 //
-// markPressIndexOnDeckEmpty flags the on-deck pickups (B, and C on a
+// composePressIndexPair flags the on-deck pickups (B, and C on a
 // 3-position press) so Core sources the carrier whatever payload is stamped on
 // it; refillPickup builds the supermarket pickup already flagged, so it fetches
 // an empty rather than hunting a full. Unflipped they live on different legs

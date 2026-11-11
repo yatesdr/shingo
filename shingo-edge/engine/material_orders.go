@@ -435,90 +435,83 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {
 		return nil, nil
 	}
-	// R1's opening is the same either way: drive to the press, hold, lift the
-	// full tote off, take it away.
-	orderR1 = []protocol.ComplexOrderStep{
-		stationWait(claim.CoreNodeName, release.PurposeSwap),
-		{Action: "pickup", Node: claim.CoreNodeName},
-		buildStep("dropoff", claim.OutboundDestination),
-	}
-	backfill := claim.PairedCoreNode
-	if claim.SecondPairedCoreNode != "" {
-		backfill = claim.SecondPairedCoreNode
-	}
-	if claim.IndexRobotFetches() {
-		// FLIPPED: R1 stops at the destination; R2 indexes forward and then
-		// goes for the replacement itself. One robot leaves the cell the
-		// moment the press is clear.
-		orderR2 = []protocol.ComplexOrderStep{
-			stationWait(claim.PairedCoreNode, release.PurposeSwap),
-			{Action: "pickup", Node: claim.PairedCoreNode},
-			{Action: "dropoff", Node: claim.CoreNodeName},
-		}
-		if claim.SecondPairedCoreNode != "" {
-			orderR2 = append(orderR2,
-				protocol.ComplexOrderStep{Action: "pickup", Node: claim.SecondPairedCoreNode},
-				protocol.ComplexOrderStep{Action: "dropoff", Node: claim.PairedCoreNode})
-		}
-		orderR2 = append(orderR2,
-			refillPickup(nil, claim),
-			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
-	} else {
-		// UNFLIPPED (today): R1 carries on to the supermarket and backfills the
-		// rearmost position; R2 only shifts the on-deck carrier forward.
-		orderR1 = append(orderR1,
-			refillPickup(nil, claim),
-			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
-		orderR2 = []protocol.ComplexOrderStep{
-			stationWait(claim.PairedCoreNode, release.PurposeSwap),
-			{Action: "pickup", Node: claim.PairedCoreNode},
-			{Action: "dropoff", Node: claim.CoreNodeName},
-		}
-		if claim.SecondPairedCoreNode != "" {
-			orderR2 = append(orderR2,
-				protocol.ComplexOrderStep{Action: "pickup", Node: claim.SecondPairedCoreNode},
-				protocol.ComplexOrderStep{Action: "dropoff", Node: claim.PairedCoreNode})
-		}
-	}
-	// hop A3 (2026-07-23): a PRODUCE press-index indexes ON-DECK EMPTIES forward
-	// onto the press to be filled, so flag the index leg's (R2) paired-node
-	// pickups Empty. That drops Core's payload filter (findAvailableForNeed:
-	// claimPayload="") so the index fetches an on-deck EMPTY whichever part the
-	// order names. It does NOT take a carrier stamped with a part: Core's
-	// emptyBinsOnly keeps only a blank payload code, so a stamped on-deck carrier
-	// holds the index leg under Empty as well (this comment said the opposite;
-	// dispatch TestSpotPickup_HowTheStepFlagJudgesTheBin measures it). What hung
-	// the Hopkinsville swap was the unflagged pickup filtering an on-deck empty
-	// by the order's part. A CONSUME press-index would index
-	// FULL bins forward, so it must NOT be flagged (and doesn't occur in
-	// practice); scoping to produce also keeps the consume "full retrieve"
-	// invariant. The changeover R2 flags its on-deck pickups the same way
-	// (buildPressIndexChangeoverSwap). Produce-scoped INSIDE the builder.
-	//
-	// Under the flip R2 also carries the fetch, which refillPickup has already
-	// flagged Empty for produce (and left a full retrieve for consume). This
-	// flagger matches the on-deck nodes only and only ever SETS Empty, so the
-	// two compose (TestPressIndexFlipped_BothEmptyFlaggersCompose).
-	if claim.Role == protocol.ClaimRoleProduce {
-		markPressIndexOnDeckEmpty(orderR2, claim)
-	}
-	return orderR1, orderR2
+	return composePressIndexPair(pressIndexPair{
+		positions: pressIndexPositions(claim), outbound: claim.OutboundDestination,
+		wait:         func(node string) protocol.ComplexOrderStep { return stationWait(node, release.PurposeSwap) },
+		fetch:        refillPickup(nil, claim),
+		indexFetches: claim.IndexRobotFetches(), produce: claim.Role == protocol.ClaimRoleProduce,
+	})
 }
 
-// markPressIndexOnDeckEmpty flags the index leg's pickups at the on-deck
-// (paired / second-paired) positions as Empty, so Core sources the on-deck
-// carrier regardless of its stamped payload. See BuildTwoRobotPressIndexSwapSteps
-// (hop A3) for why this is produce-only.
-func markPressIndexOnDeckEmpty(steps []protocol.ComplexOrderStep, claim *processes.NodeClaim) {
-	for i := range steps {
-		if steps[i].Action != protocol.ActionPickup {
-			continue
-		}
-		if steps[i].Node == claim.PairedCoreNode ||
-			(claim.SecondPairedCoreNode != "" && steps[i].Node == claim.SecondPairedCoreNode) {
-			steps[i].Empty = true
-		}
+// pressIndexPair is what composePressIndexPair builds an index press's two
+// legs from.
+type pressIndexPair struct {
+	// positions is the press's positions in order, front first and the back
+	// (the position the refill sets down on) last: two or three.
+	positions []string
+	// outbound is where Robot 1 takes the front's carrier.
+	outbound string
+	// wait builds both opening waits at a position: the Swap release in steady
+	// state, Ready at a changeover (each caller names its purpose, as the
+	// release census asks of every station wait).
+	wait func(node string) protocol.ComplexOrderStep
+	// fetch is the refill's pickup (refillPickup), which says what the carrier
+	// is for.
+	fetch protocol.ComplexOrderStep
+	// indexFetches puts the refill on Robot 2 (refill_by index_robot).
+	indexFetches bool
+	// produce flags the on-deck pickups Empty.
+	produce bool
+}
+
+// pressIndexPositions is the claim's positions in the order the pair works
+// them, front first: its own node, then its paired positions (never
+// Positions()[1:], see ExtensionPositions).
+func pressIndexPositions(claim *processes.NodeClaim) []string {
+	return append([]string{claim.CoreNodeName}, claim.ExtensionPositions()...)
+}
+
+// composePressIndexPair is an index press's pair, the one composer the steady
+// swap and the changeover swap assemble from:
+//
+//	R1: wait(front) → pickup(front) → dropoff(outbound) [→ fetch → dropoff(back)]
+//	R2: wait(next) → pickup(next) → dropoff(front) → … each position behind
+//	    moved one place forward, front-most first [→ fetch → dropoff(back)]
+//
+// The refill (the bracketed pair) goes on Robot 1 unless indexFetches puts it
+// on Robot 2 after its last move. The refill setting moves only the fetch, never
+// the press pickup or the press set-down.
+//
+// hop A3 (2026-07-23): a PRODUCE press indexes ON-DECK EMPTIES forward onto the
+// press to be filled, so R2's pickups at the positions behind the front are
+// flagged Empty. That drops Core's payload filter, so the index fetches an
+// on-deck EMPTY whichever part the order names; Core's emptyBinsOnly keeps only
+// a blank payload code, so a stamped on-deck carrier holds the index leg (dispatch
+// TestSpotPickup_HowTheStepFlagJudgesTheBin). What hung the Hopkinsville swap was
+// the unflagged pickup filtering an on-deck empty by the order's part. A CONSUME
+// press indexes FULL bins forward and flags nothing. The flag is set on the
+// on-deck nodes only, and only ever set, so the fetch's own flag
+// (refillPickup) composes with it (TestPressIndexFlipped_BothEmptyFlaggersCompose).
+func composePressIndexPair(p pressIndexPair) (r1, r2 []protocol.ComplexOrderStep) {
+	front, back := p.positions[0], p.positions[len(p.positions)-1]
+	refill := []protocol.ComplexOrderStep{p.fetch, {Action: "dropoff", Node: back}}
+	r1 = []protocol.ComplexOrderStep{
+		p.wait(front),
+		{Action: "pickup", Node: front},
+		buildStep("dropoff", p.outbound),
 	}
+	r2 = []protocol.ComplexOrderStep{p.wait(p.positions[1])}
+	for i := 1; i < len(p.positions); i++ {
+		r2 = append(r2,
+			protocol.ComplexOrderStep{Action: "pickup", Node: p.positions[i], Empty: p.produce},
+			protocol.ComplexOrderStep{Action: "dropoff", Node: p.positions[i-1]})
+	}
+	if p.indexFetches {
+		r2 = append(r2, refill...)
+	} else {
+		r1 = append(r1, refill...)
+	}
+	return r1, r2
 }
 
 // BuildSequentialRemovalSteps builds Order A for sequential mode (removal robot).
@@ -799,68 +792,19 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Chan
 	if fromClaim.PairedCoreNode == "" || fromClaim.OutboundDestination == "" {
 		return ChangeoverDispatch{}
 	}
-	// R1 prefix is identical for 2-pos and 3-pos: wait, evac, dropoff destination.
-	r1 := []protocol.ComplexOrderStep{
-		stationWait(fromClaim.CoreNodeName, release.PurposeReady),
-		{Action: "pickup", Node: fromClaim.CoreNodeName},
-		buildStep("dropoff", fromClaim.OutboundDestination),
-	}
-	// ── THE FLIP APPLIES HERE TOO ────────────────────────────────────────
-	//
-	// RefillBy moves the supermarket trip between the two robots.
-	// The steady-state builder reads it; this one did not, so a press
-	// configured with the flip ran R2-supplies all shift and then inverted the
-	// two robots' roles the moment a changeover started — same cell, same
-	// hardware, opposite choreography, decided by which builder happened to be
-	// running.
-	//
-	// The flip does NOT move the press pickup or the press dropoff, only the
-	// fetch, which is why R1's prefix above and R2's index moves below are
-	// identical in both states.
-	backPosition := fromClaim.PairedCoreNode
-	if fromClaim.SecondPairedCoreNode != "" {
-		backPosition = fromClaim.SecondPairedCoreNode
-	}
-	// R1's other pickup — the old front tote — keeps the from-style payload it
-	// needs (§ carriesFromPayload below); only the fetching leg takes a fresh
-	// carrier.
-	if !fromClaim.IndexRobotFetches() {
-		r1 = append(r1, refillPickup(fromClaim, toClaim))
-		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
-	}
-	// R2's on-deck pickups are the steady-state R2's: Empty on a produce press,
-	// whose on-deck holds the empty the index carries to the press, and naming
-	// nothing on a consume one, whose index takes stock of the part the leg
-	// carries on the order, the outgoing style's (carriesFromPayload below).
-	// Core binds what the step says it lifts (ground rule 5), and it keeps a
-	// changeover's leg out of its vacant-pickup fetch by the leg's episode
-	// (dispatch reanchorVacantPickup), so the step says nothing else.
-	var r2 []protocol.ComplexOrderStep
-	if fromClaim.SecondPairedCoreNode != "" {
-		r2 = []protocol.ComplexOrderStep{
-			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
-			{Action: "pickup", Node: fromClaim.PairedCoreNode},
-			{Action: "dropoff", Node: fromClaim.CoreNodeName},
-			{Action: "pickup", Node: fromClaim.SecondPairedCoreNode},
-			{Action: "dropoff", Node: fromClaim.PairedCoreNode},
-		}
-	} else {
-		r2 = []protocol.ComplexOrderStep{
-			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
-			{Action: "pickup", Node: fromClaim.PairedCoreNode},
-			{Action: "dropoff", Node: fromClaim.CoreNodeName},
-		}
-	}
-	if fromClaim.Role == protocol.ClaimRoleProduce {
-		markPressIndexOnDeckEmpty(r2, fromClaim)
-	}
-	if fromClaim.IndexRobotFetches() {
-		// Flipped: R2 owns the supermarket trip, exactly as it does in steady
-		// state. It has just placed on the press, so the fresh carrier it
-		// fetches goes to the back position behind it.
-		r2 = append(r2, refillPickup(fromClaim, toClaim))
-		r2 = append(r2, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
-	}
+	// THE REFILL SETTING APPLIES HERE TOO. A press whose index robot refills ran
+	// that way all shift, then inverted the two robots' roles the moment a
+	// changeover started, while this builder ignored it: one composer for both
+	// is what keeps them the same choreography. The fetch names the incoming
+	// style's carrier (refillPickup with the outgoing claim); R1's lift of the
+	// old front tote keeps the from-style payload it needs (carriesFromPayload
+	// below).
+	r1, r2 := composePressIndexPair(pressIndexPair{
+		positions: pressIndexPositions(fromClaim), outbound: fromClaim.OutboundDestination,
+		wait:         func(node string) protocol.ComplexOrderStep { return stationWait(node, release.PurposeReady) },
+		fetch:        refillPickup(fromClaim, toClaim),
+		indexFetches: fromClaim.IndexRobotFetches(), produce: fromClaim.Role == protocol.ClaimRoleProduce,
+	})
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
 			// R1 lifts the spent tote off the front — evac — and refills the
@@ -1062,7 +1006,7 @@ func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *proces
 // surfaced ("Waiting for material: PANEL-B in PLN_004"). So its pickup is
 // flagged Empty — dropping Core's payload filter but not its bin-type
 // compatibility (N1-c) — and the order carries no from-payload, because there
-// is no outgoing bin here to match. Direct port of markPressIndexOnDeckEmpty,
+// is no outgoing bin here to match. Direct port of composePressIndexPair's on-deck flag,
 // produce-scoped for that rule's own reason: a CONSUME sequential press parks a
 // FULL standby bin and keeps the full-retrieve invariant.
 //
