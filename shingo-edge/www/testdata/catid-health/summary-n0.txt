@@ -1,0 +1,12 @@
+# the summary with no process the list shows: CELL-HELD's two info items are a row, worst info
+GET /api/catid-health
+200 application/json
+[
+  {
+    "process_id": 2,
+    "name": "CELL-HELD",
+    "worst": "info",
+    "count": 2,
+    "headline": "3 held on CATID 4002"
+  }
+]

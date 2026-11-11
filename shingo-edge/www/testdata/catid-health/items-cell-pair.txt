@@ -1,0 +1,18 @@
+# CELL-PAIR's items, worst first
+GET /api/processes/5/catid-health
+200 application/json
+{
+  "items": [
+    {
+      "kind": "one_way_pair",
+      "severity": "amber",
+      "headline": "PAIR-A names PAIR-B as its A/B partner; PAIR-B does not name it back",
+      "detail": "style PAIR-ONE: not a pair, so it has no fallthrough — set both sides to name each other",
+      "data": {
+        "node": "PAIR-A",
+        "partner": "PAIR-B",
+        "style_id": 9
+      }
+    }
+  ]
+}

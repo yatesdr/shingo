@@ -1,0 +1,41 @@
+# CELL-HELD's items, worst first
+GET /api/processes/2/catid-health
+200 application/json
+{
+  "items": [
+    {
+      "kind": "held",
+      "severity": "info",
+      "headline": "3 held on CATID 4002",
+      "detail": "node 1's share of PART-H, 1 strokes over <age> (held)",
+      "since": "2026-11-02T06:00:00Z",
+      "data": {
+        "catid": "4002",
+        "hold_id": 1,
+        "payload_code": "PART-H",
+        "process_node_id": 1,
+        "qty": 3,
+        "reason": "held",
+        "strokes": 1
+      }
+    },
+    {
+      "kind": "held",
+      "severity": "info",
+      "headline": "2 strokes of PART-H at HELD-POS with no PART-H cart — no cart released there yet",
+      "detail": "logged from 2026-11-02 06:00 to 06:00, 1 strokes (no CATID); Charge it to a cart of PART-H, or write it off",
+      "since": "2026-11-02T06:00:00Z",
+      "data": {
+        "catid": "",
+        "hold_id": 2,
+        "last_bin_id": 0,
+        "last_declared": 0,
+        "payload_code": "PART-H",
+        "process_node_id": 1,
+        "qty": 2,
+        "reason": "no-cart",
+        "strokes": 1
+      }
+    }
+  ]
+}

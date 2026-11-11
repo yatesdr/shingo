@@ -1,0 +1,6 @@
+# an id that is not a number
+GET /api/processes/x/catid-health
+400 application/json
+{
+  "error": "invalid process id"
+}

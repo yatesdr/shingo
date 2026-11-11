@@ -1,0 +1,12 @@
+# item 5: the summary row over it
+GET /api/catid-health
+200 application/json
+[
+  {
+    "process_id": 1,
+    "name": "CELL-TWIN",
+    "worst": "amber",
+    "count": 1,
+    "headline": "CATID 6001 is in TWIN and TWIN "
+  }
+]

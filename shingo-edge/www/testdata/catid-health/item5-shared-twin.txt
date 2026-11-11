@@ -1,0 +1,20 @@
+# item 5: styles "TWIN" and "TWIN " (a trailing space) both pin 6001; a byte-identical second name is refused by the store
+GET /api/processes/1/catid-health
+200 application/json
+{
+  "items": [
+    {
+      "kind": "shared_catid",
+      "severity": "amber",
+      "headline": "CATID 6001 is in TWIN and TWIN ",
+      "detail": "the automatic cutover between them never fires on it",
+      "data": {
+        "catid": "6001",
+        "styles": [
+          "TWIN",
+          "TWIN "
+        ]
+      }
+    }
+  ]
+}

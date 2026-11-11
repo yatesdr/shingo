@@ -1,0 +1,20 @@
+# CELL-SHARED's items, worst first
+GET /api/processes/3/catid-health
+200 application/json
+{
+  "items": [
+    {
+      "kind": "shared_catid",
+      "severity": "amber",
+      "headline": "CATID 2001 is in SHARED-ONE and SHARED-TWO",
+      "detail": "the automatic cutover between them never fires on it",
+      "data": {
+        "catid": "2001",
+        "styles": [
+          "SHARED-ONE",
+          "SHARED-TWO"
+        ]
+      }
+    }
+  ]
+}

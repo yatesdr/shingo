@@ -1,0 +1,19 @@
+# the summary with one process the list shows
+GET /api/catid-health
+200 application/json
+[
+  {
+    "process_id": 2,
+    "name": "CELL-HELD",
+    "worst": "info",
+    "count": 2,
+    "headline": "3 held on CATID 4002"
+  },
+  {
+    "process_id": 3,
+    "name": "CELL-SHARED",
+    "worst": "amber",
+    "count": 1,
+    "headline": "CATID 2001 is in SHARED-ONE and SHARED-TWO"
+  }
+]

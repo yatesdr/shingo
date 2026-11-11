@@ -1,0 +1,6 @@
+# a process id no row has
+GET /api/processes/999/catid-health
+500 application/json
+{
+  "error": "sql: no rows in result set"
+}

@@ -1,0 +1,115 @@
+# CELL-IDENT's items, worst first
+GET /api/processes/4/catid-health
+200 application/json
+{
+  "items": [
+    {
+      "kind": "unmapped_catid",
+      "severity": "red",
+      "headline": "CATID 3003 maps to no style",
+      "detail": "seen 1 times, last <now>",
+      "data": {
+        "catid": "3003",
+        "last_seen": "<now>",
+        "observations": 1,
+        "styles": [
+          {
+            "id": 7,
+            "name": "IDENT-NEXT"
+          },
+          {
+            "id": 8,
+            "name": "IDENT-OLD"
+          },
+          {
+            "id": 6,
+            "name": "IDENT-RUN"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "post_cutover_failed",
+      "severity": "red",
+      "headline": "Post-cutover check failed",
+      "detail": "This changeover was set to IDENT-RUN, but the process is reporting 3005 — please confirm.",
+      "data": {
+        "changeover_id": 2,
+        "live_catid": "3005"
+      }
+    },
+    {
+      "kind": "identity",
+      "severity": "amber",
+      "headline": "Part identity not monitored",
+      "detail": "nothing reads MES_CELL.CATID_01 for this process; it is read from the next start",
+      "data": {
+        "tag": "PLC-1.MES_CELL.CATID_01"
+      }
+    },
+    {
+      "kind": "style_no_catids",
+      "severity": "amber",
+      "headline": "The running style IDENT-RUN has no CATIDs",
+      "detail": "the catalog cannot supply this one; confirm one from a changeover",
+      "data": {
+        "style_id": 6
+      }
+    },
+    {
+      "kind": "unmapped_catid",
+      "severity": "amber",
+      "headline": "CATID 3004 maps to no style",
+      "detail": "seen 1 times, last <now>; changeover #1 to IDENT-NEXT ended on 3004",
+      "data": {
+        "catid": "3004",
+        "last_seen": "<now>",
+        "observations": 1,
+        "styles": [
+          {
+            "id": 7,
+            "name": "IDENT-NEXT"
+          },
+          {
+            "id": 8,
+            "name": "IDENT-OLD"
+          },
+          {
+            "id": 6,
+            "name": "IDENT-RUN"
+          }
+        ],
+        "suggestion": {
+          "changeover_id": 1,
+          "style_id": 7,
+          "style_name": "IDENT-NEXT"
+        }
+      }
+    },
+    {
+      "kind": "style_no_catids",
+      "severity": "info",
+      "headline": "The incoming style IDENT-NEXT has no CATIDs",
+      "detail": "the catalog cannot supply this one; confirm one from a changeover",
+      "data": {
+        "style_id": 7
+      }
+    },
+    {
+      "kind": "held",
+      "severity": "info",
+      "headline": "5 held on CATID 3003",
+      "detail": "the whole draw, 1 strokes over <age> (held)",
+      "since": "2026-11-02T06:00:00Z",
+      "data": {
+        "catid": "3003",
+        "hold_id": 3,
+        "payload_code": "",
+        "process_node_id": 0,
+        "qty": 5,
+        "reason": "held",
+        "strokes": 1
+      }
+    }
+  ]
+}
