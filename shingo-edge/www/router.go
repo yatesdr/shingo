@@ -199,35 +199,14 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	// stale connection buildup when navigating between pages.
 	r.Get("/events", h.eventHub.HandleSSE)
 
+	// Static files (no auth) — also outside compression: the handler sends
+	// the gzip it built at start-up, so Compress would only spend CPU per
+	// request on what is already done. static_assets.go.
+	h.registerStatic(r)
+
 	// Everything else gets compressed
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Compress(5))
-
-		// Favicon: under the same ETag handler as every other asset. A restart
-		// changes the ETag, which is all a cache-bust stamp ever bought.
-		// /static/favicon.ico is served by /static/* below; the root path is the
-		// same file, and its request path already matches StaticFS's root, so
-		// no StripPrefix is needed.
-		r.Handle("/favicon.ico", serverInstanceETag(http.FileServer(http.FS(StaticFS()))))
-
-		// Static files (no auth) — ETag keyed on serverInstance + path so every
-		// rebuild invalidates every /static/* URL. Files are embedded at compile
-		// time, but embed.FS reports modtime=0 across the board, so the default
-		// http.ServeContent ETag (name+size+0) survives rebuilds when byte length
-		// happens to match — which is what was leaving the operator-station ES
-		// modules stuck on stale code after a restart. Tying the ETag to
-		// serverInstance forces every request to miss-cache exactly once after
-		// each restart, then revalidate cleanly thereafter.
-		// Shared UI assets (tokens.css, status-classes.css, utils.js)
-		// served from the shingo/shared module via go:embed. Registered
-		// BEFORE /static/* so the prefix match wins.
-		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-			serverInstanceETag(http.FileServer(http.FS(shared.Files))),
-		))
-
-		r.Handle("/static/*", http.StripPrefix("/static/",
-			serverInstanceETag(http.FileServer(http.FS(StaticFS()))),
-		))
 
 		// ── On-call diagnostic surface ──────────────────────────
 		// Public so curl from a monitoring host doesn't need auth.
@@ -745,31 +724,6 @@ func (h *Handlers) ringSpecChangeDoorbell() {
 	default:
 		// Already rung; the loop will drain the set when it wakes.
 	}
-}
-
-// serverInstanceETag wraps a static-file handler so every response carries
-// an ETag derived from serverInstance + the request path. Each edge restart
-// bumps serverInstance, which invalidates every cached /static/* URL exactly
-// once. Subsequent revalidations within the same process return 304s.
-//
-// Why this exists: the embed.FS package zeros modtimes on all bundled files,
-// so the default http.ServeContent ETag (name+size+0) doesn't change across
-// rebuilds. Browsers happily 304 against the stale ETag and reuse the cache,
-// which is what made the operator-station ES modules stick on old code after
-// restarts (ES module imports carry no version query, and no template
-// stamps one: TestTemplates_NoCacheBustQuery). Tying ETag to serverInstance
-// makes the busting unconditional.
-func serverInstanceETag(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		etag := `"` + serverInstance + `:` + r.URL.Path + `"`
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-		if match := r.Header.Get("If-None-Match"); match == etag {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // nudgeAfterWrite sends the boards one nudge (EventHub.Nudge, coalesced per

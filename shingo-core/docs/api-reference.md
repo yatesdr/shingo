@@ -39,6 +39,7 @@ Base URL: `http://<host>:8083`
 | `GET` | `/diagnostics` | `handleDiagnostics` | login |
 | `GET` | `/edges` | `handleEdgesAdmin` | login |
 | `GET` | `/events` | `SSEHandler` | public |
+| `ANY` | `/favicon.ico` | `staticAssets.File` | public |
 | `GET` | `/fleet-explorer` | `handleFleetExplorer` | login |
 | `GET` | `/heartbeat` | `handleHeartbeatKiosk` | public |
 | `GET` | `/inventory` | `handleInventory` | public |
@@ -67,8 +68,7 @@ Base URL: `http://<host>:8083`
 | `POST` | `/payloads/update` | `handlePayloadUpdate` | login |
 | `GET` | `/robots` | `handleRobots` | public |
 | `GET` | `/sourcing` | `handleSourcing` | login |
-| `ANY` | `/static/*` | (static files) | public |
-| `ANY` | `/static/shared/*` | (static files) | public |
+| `ANY` | `/static/*` | `staticAssets` | public |
 | `GET` | `/test-orders` | `handleTestOrders` | login |
 | `GET` | `/wall-display/{id}` | `handleWallDisplay` | public |
 | `GET` | `/wall-displays` | `handleWallDisplaysMoved` | public |

@@ -1,216 +1,222 @@
 GET /static/operator-station/operator.js gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.js)
-  Etag: "{serverInstance}:operator-station/operator.js"
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: source
 
 GET /static/operator-station/operator.js gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Encoding: gzip
-  Content-Type: host mime table (.js)
-  Etag: "{serverInstance}:operator-station/operator.js"
+  Content-Length: length of the body
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
   Vary: Accept-Encoding
   body: gzip of source
 
 GET /static/operator-station/operator.js gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:operator-station/operator.js"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/operator-station/operator.js gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:operator-station/operator.js"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/operator-station/operator.css gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.css)
-  Etag: "{serverInstance}:operator-station/operator.css"
-  body: source
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: source, CSS comments stripped
 
 GET /static/operator-station/operator.css gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Encoding: gzip
-  Content-Type: host mime table (.css)
-  Etag: "{serverInstance}:operator-station/operator.css"
+  Content-Length: length of the body
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
   Vary: Accept-Encoding
-  body: gzip of source
+  body: gzip of source, CSS comments stripped
 
 GET /static/operator-station/operator.css gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:operator-station/operator.css"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/operator-station/operator.css gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:operator-station/operator.css"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/shared/utils.js gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.js)
-  Etag: "{serverInstance}:utils.js"
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: source
 
 GET /static/shared/utils.js gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Encoding: gzip
-  Content-Type: host mime table (.js)
-  Etag: "{serverInstance}:utils.js"
+  Content-Length: length of the body
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
   Vary: Accept-Encoding
   body: gzip of source
 
 GET /static/shared/utils.js gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:utils.js"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/shared/utils.js gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:utils.js"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/shared/tokens.css gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.css)
-  Etag: "{serverInstance}:tokens.css"
-  body: source
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: source, CSS comments stripped
 
 GET /static/shared/tokens.css gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Encoding: gzip
-  Content-Type: host mime table (.css)
-  Etag: "{serverInstance}:tokens.css"
+  Content-Length: length of the body
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
   Vary: Accept-Encoding
-  body: gzip of source
+  body: gzip of source, CSS comments stripped
 
 GET /static/shared/tokens.css gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:tokens.css"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/shared/tokens.css gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:tokens.css"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /favicon.ico gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.ico)
-  Etag: "{serverInstance}:/favicon.ico"
+  Content-Type: image/x-icon
+  Etag: "{hash of the served bytes}"
   body: source
 
 GET /favicon.ico gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.ico)
-  Etag: "{serverInstance}:/favicon.ico"
+  Content-Type: image/x-icon
+  Etag: "{hash of the served bytes}"
   body: source
 
 GET /favicon.ico gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:/favicon.ico"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
   body: empty
 
 GET /favicon.ico gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:/favicon.ico"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
   body: empty
 
 GET /static/favicon.ico gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.ico)
-  Etag: "{serverInstance}:favicon.ico"
+  Content-Type: image/x-icon
+  Etag: "{hash of the served bytes}"
   body: source
 
 GET /static/favicon.ico gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.ico)
-  Etag: "{serverInstance}:favicon.ico"
+  Content-Type: image/x-icon
+  Etag: "{hash of the served bytes}"
   body: source
 
 GET /static/favicon.ico gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:favicon.ico"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
   body: empty
 
 GET /static/favicon.ico gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:favicon.ico"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
   body: empty
 
 GET /static/favicon.svg gzip=no if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Length: length of the body
-  Content-Type: host mime table (.svg)
-  Etag: "{serverInstance}:favicon.svg"
+  Content-Type: image/svg+xml
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: source
 
 GET /static/favicon.svg gzip=yes if-none-match=no
   status 200
-  Accept-Ranges: bytes
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-cache
   Content-Encoding: gzip
-  Content-Type: host mime table (.svg)
-  Etag: "{serverInstance}:favicon.svg"
+  Content-Length: length of the body
+  Content-Type: image/svg+xml
+  Etag: "{hash of the served bytes}"
   Vary: Accept-Encoding
   body: gzip of source
 
 GET /static/favicon.svg gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:favicon.svg"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/favicon.svg gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:favicon.svg"
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
 GET /static/operator-station/missing.js gzip=no if-none-match=no
@@ -221,11 +227,9 @@ GET /static/operator-station/missing.js gzip=no if-none-match=no
 
 GET /static/operator-station/missing.js gzip=yes if-none-match=no
   status 404
-  Content-Encoding: gzip
   Content-Type: text/plain; charset=utf-8
-  Vary: Accept-Encoding
   X-Content-Type-Options: nosniff
-  body: gzip of "404 page not found\n"
+  body: "404 page not found\n"
 
 GET /static/shared/missing.css gzip=no if-none-match=no
   status 404
@@ -235,11 +239,9 @@ GET /static/shared/missing.css gzip=no if-none-match=no
 
 GET /static/shared/missing.css gzip=yes if-none-match=no
   status 404
-  Content-Encoding: gzip
   Content-Type: text/plain; charset=utf-8
-  Vary: Accept-Encoding
   X-Content-Type-Options: nosniff
-  body: gzip of "404 page not found\n"
+  body: "404 page not found\n"
 
 GET /static/js/pages/catid-health.test.js gzip=no if-none-match=no
   status 404
@@ -249,11 +251,9 @@ GET /static/js/pages/catid-health.test.js gzip=no if-none-match=no
 
 GET /static/js/pages/catid-health.test.js gzip=yes if-none-match=no
   status 404
-  Content-Encoding: gzip
   Content-Type: text/plain; charset=utf-8
-  Vary: Accept-Encoding
   X-Content-Type-Options: nosniff
-  body: gzip of "404 page not found\n"
+  body: "404 page not found\n"
 
 GET /static/shared/utils.escape.test.js gzip=no if-none-match=no
   status 404
@@ -263,37 +263,151 @@ GET /static/shared/utils.escape.test.js gzip=no if-none-match=no
 
 GET /static/shared/utils.escape.test.js gzip=yes if-none-match=no
   status 404
-  Content-Encoding: gzip
   Content-Type: text/plain; charset=utf-8
-  Vary: Accept-Encoding
   X-Content-Type-Options: nosniff
-  body: gzip of "404 page not found\n"
+  body: "404 page not found\n"
 
 GET /static/operator-station/ gzip=no if-none-match=no
-  status 200
-  Cache-Control: no-cache, must-revalidate
-  Content-Type: text/html; charset=utf-8
-  Etag: "{serverInstance}:operator-station/"
-  body: directory listing, *.test.js listed: no
+  status 404
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+  body: "404 page not found\n"
 
 GET /static/operator-station/ gzip=yes if-none-match=no
-  status 200
-  Cache-Control: no-cache, must-revalidate
-  Content-Encoding: gzip
-  Content-Type: text/html; charset=utf-8
-  Etag: "{serverInstance}:operator-station/"
-  Vary: Accept-Encoding
-  body: gzip of directory listing, *.test.js listed: no
+  status 404
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+  body: "404 page not found\n"
 
-GET /static/operator-station/ gzip=no if-none-match=yes
+GET {assetURL}/static/operator-station/operator.js gzip=no if-none-match=no
+  status 200
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Length: length of the body
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: source
+
+GET {assetURL}/static/operator-station/operator.js gzip=yes if-none-match=no
+  status 200
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Encoding: gzip
+  Content-Length: length of the body
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET {assetURL}/static/operator-station/operator.js gzip=no if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:operator-station/"
+  Cache-Control: public, max-age=31536000, immutable
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 
-GET /static/operator-station/ gzip=yes if-none-match=yes
+GET {assetURL}/static/operator-station/operator.js gzip=yes if-none-match=yes
   status 304
-  Cache-Control: no-cache, must-revalidate
-  Etag: "{serverInstance}:operator-station/"
+  Cache-Control: public, max-age=31536000, immutable
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: empty
+
+GET {stale}/static/operator-station/operator.js gzip=no if-none-match=no
+  status 200
+  Cache-Control: no-cache
+  Content-Length: length of the body
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: source
+
+GET {stale}/static/operator-station/operator.js gzip=yes if-none-match=no
+  status 200
+  Cache-Control: no-cache
+  Content-Encoding: gzip
+  Content-Length: length of the body
+  Content-Type: text/javascript; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET {stale}/static/operator-station/operator.js gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: empty
+
+GET {stale}/static/operator-station/operator.js gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: empty
+
+GET {assetURL}/static/shared/tokens.css gzip=no if-none-match=no
+  status 200
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Length: length of the body
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: source, CSS comments stripped
+
+GET {assetURL}/static/shared/tokens.css gzip=yes if-none-match=no
+  status 200
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Encoding: gzip
+  Content-Length: length of the body
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: gzip of source, CSS comments stripped
+
+GET {assetURL}/static/shared/tokens.css gzip=no if-none-match=yes
+  status 304
+  Cache-Control: public, max-age=31536000, immutable
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: empty
+
+GET {assetURL}/static/shared/tokens.css gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: public, max-age=31536000, immutable
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: empty
+
+GET {stale}/static/shared/tokens.css gzip=no if-none-match=no
+  status 200
+  Cache-Control: no-cache
+  Content-Length: length of the body
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: source, CSS comments stripped
+
+GET {stale}/static/shared/tokens.css gzip=yes if-none-match=no
+  status 200
+  Cache-Control: no-cache
+  Content-Encoding: gzip
+  Content-Length: length of the body
+  Content-Type: text/css; charset=utf-8
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: gzip of source, CSS comments stripped
+
+GET {stale}/static/shared/tokens.css gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
+  body: empty
+
+GET {stale}/static/shared/tokens.css gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache
+  Etag: "{hash of the served bytes}"
+  Vary: Accept-Encoding
   body: empty
 

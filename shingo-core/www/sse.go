@@ -22,7 +22,8 @@ import (
 // changes, the core has been restarted (likely with a new JS bundle)
 // and the tab hard-reloads. Without this, a long-lived admin tab keeps
 // its previously-cached static assets forever — an asset's ETag is only
-// revalidated on a fresh page load.
+// revalidated on a fresh page load. It is the build id only: an asset's ETag
+// is its content hash (static_assets.go), not this.
 var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 
 type SSEEvent struct {

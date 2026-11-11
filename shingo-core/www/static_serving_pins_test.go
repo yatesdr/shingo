@@ -3,11 +3,12 @@ package www
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,10 +19,10 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 
 	"shingo/protocol/testutil"
 	"shingo/shared"
+	"shingo/shared/assets"
 )
 
 var updateStaticServingGolden = flag.Bool("update-static-serving-golden", false,
@@ -30,18 +31,21 @@ var updateStaticServingGolden = flag.Bool("update-static-serving-golden", false,
 // TestStaticServingPins characterises what Core's static routes answer —
 // status, every header but Date, and what the body is relative to the
 // embedded source — for a representative set: a JS module, a CSS file, a
-// shared file of each kind, the favicon, an SVG, a missing file, a *.test.js,
-// and a directory. Each is asked with and without Accept-Encoding: gzip, and
-// again with If-None-Match carrying the ETag the plain answer gave (the 304
-// path). The Edge twin is shingo-edge/www/static_serving_pins_test.go.
+// shared file of each kind, both favicon paths, an SVG, a missing file, a
+// *.test.js, a directory, and the hashed and a stale-hashed URL of a module
+// and a shared stylesheet (probeURL). Each is asked with and without
+// Accept-Encoding: gzip, and again with If-None-Match carrying the ETag the
+// plain answer gave (the 304 path). The Edge twin is
+// shingo-edge/www/static_serving_pins_test.go, which also holds the
+// /static/shared/ answers here to its own
+// (TestStaticServing_SharedFilesAnswerAlikeOnCore).
 //
-// THE ROUTES ARE NewRouter's static block, built by coreStaticRouter without
-// the engine NewRouter needs (a Postgres): chi's Compress, staticCache and
-// http.FileServer as router.go wires them.
+// THE ROUTES ARE registerStatic's, the helper NewRouter wires them with, on
+// a bare router: NewRouter itself needs an engine and a Postgres.
 //
-// BODIES ARE DESCRIBED, NOT COPIED, and host-dependent values are named (the
-// serverInstance in the ETag, a Content-Type taken from this host's mime
-// table): the Edge twin says why.
+// BODIES ARE DESCRIBED, NOT COPIED, the content-hash ETag is named rather
+// than written, and a Content-Type is written as served: the Edge twin says
+// why.
 //
 // Regenerate with
 //
@@ -54,6 +58,7 @@ func TestStaticServingPins(t *testing.T) {
 		"/static/style.css",
 		"/static/shared/utils.js",
 		"/static/shared/tokens.css",
+		"/favicon.ico",
 		"/static/favicon.ico",
 		"/static/favicon.svg",
 		"/static/missing.js",
@@ -61,30 +66,29 @@ func TestStaticServingPins(t *testing.T) {
 		"/static/app.entersubmits.test.js",
 		"/static/shared/utils.escape.test.js",
 		"/static/pages/",
+		"{assetURL}/static/app.js",
+		"{stale}/static/app.js",
+		"{assetURL}/static/shared/tokens.css",
+		"{stale}/static/shared/tokens.css",
 	})
 	checkStaticServingGolden(t, filepath.Join("testdata", "static-serving"), "core.txt", got)
 }
 
-// coreStaticRouter is router.go's static block as NewRouter wires it.
+// coreStaticRouter is the static routes as NewRouter mounts them.
 func coreStaticRouter() http.Handler {
 	r := chi.NewRouter()
-	r.Group(func(r chi.Router) {
-		r.Use(middleware.Compress(5))
-		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-			staticCache(http.FileServer(http.FS(shared.Files))),
-		))
-		staticSub, _ := fs.Sub(staticFS, "static")
-		r.Handle("/static/*", http.StripPrefix("/static/", staticCache(http.FileServer(http.FS(staticSub)))))
-	})
+	(&Handlers{}).registerStatic(r)
 	return r
 }
 
 // coreStaticSource is the embedded file a static URL names: /static/shared/
-// on shared.Files, /static/ on the static tree.
+// on shared.Files, /static/ and /favicon.ico on the static tree.
 func coreStaticSource(urlPath string) ([]byte, bool) {
 	var fsys fs.FS
 	var name string
 	switch {
+	case urlPath == "/favicon.ico":
+		fsys, name = staticFS, "static/favicon.ico"
 	case strings.HasPrefix(urlPath, "/static/shared/"):
 		fsys, name = shared.Files, strings.TrimPrefix(urlPath, "/static/shared/")
 	case strings.HasPrefix(urlPath, "/static/"):
@@ -97,11 +101,15 @@ func coreStaticSource(urlPath string) ([]byte, bool) {
 }
 
 // staticServingPins asks every path the four ways and describes each answer.
+// A path may be a probe (probeURL): the hashed or a stale-hashed URL of a
+// file, written by the plain path it stands for so the golden does not move
+// with the file's content.
 func staticServingPins(t *testing.T, h http.Handler, source func(string) ([]byte, bool), paths []string) string {
 	t.Helper()
 	var out strings.Builder
 	for _, p := range paths {
-		plain := serveStatic(h, http.MethodGet, p, false, "")
+		u, src := probeURL(p)
+		plain := serveStatic(h, http.MethodGet, u, false, "")
 		etag := plain.Header.Get("ETag")
 		for _, c := range []struct {
 			gzip bool
@@ -114,13 +122,29 @@ func staticServingPins(t *testing.T, h http.Handler, source func(string) ([]byte
 			if c.cond {
 				inm = etag
 			}
-			rec := serveStatic(h, http.MethodGet, p, c.gzip, inm)
+			rec := serveStatic(h, http.MethodGet, u, c.gzip, inm)
 			fmt.Fprintf(&out, "GET %s gzip=%s if-none-match=%s\n", p, yesNo(c.gzip), yesNo(c.cond))
-			out.WriteString(describeStaticAnswer(t, rec, p, source))
+			out.WriteString(describeStaticAnswer(t, rec, src, source))
 			out.WriteString("\n")
 		}
 	}
 	return out.String()
+}
+
+// probeURL is the URL a pinned path asks and the plain path whose source it
+// answers: "{assetURL}/static/x.js" is the handler's hashed URL of
+// /static/x.js (assetURL, as a template will call it), "{stale}/static/x.js"
+// the same name with a hash no build gave, as a page rendered before a
+// restart would still ask. Any other path is itself.
+func probeURL(p string) (u, src string) {
+	if plain, ok := strings.CutPrefix(p, "{assetURL}"); ok {
+		return staticAssets().URL(plain), plain
+	}
+	if plain, ok := strings.CutPrefix(p, "{stale}"); ok {
+		ext := path.Ext(plain)
+		return strings.TrimSuffix(plain, ext) + ".0000000000000000" + ext, plain
+	}
+	return p, p
 }
 
 func yesNo(b bool) string {
@@ -172,12 +196,10 @@ func describeStaticAnswer(t *testing.T, resp *http.Response, urlPath string, sou
 func normalizeStaticHeader(k, v, urlPath string, body, src []byte) string {
 	switch k {
 	case "Etag":
-		return strings.ReplaceAll(v, serverInstance, "{serverInstance}")
-	case "Content-Type":
-		ext := path.Ext(urlPath)
-		if ext != "" && v == mime.TypeByExtension(ext) {
-			return "host mime table (" + ext + ")"
+		if v == contentETag(urlPath, src) {
+			return `"{hash of the served bytes}"`
 		}
+		return strings.ReplaceAll(v, serverInstance, "{serverInstance}")
 	case "Content-Length":
 		switch v {
 		case fmt.Sprint(len(body)):
@@ -189,6 +211,21 @@ func normalizeStaticHeader(k, v, urlPath string, body, src []byte) string {
 	return v
 }
 
+// contentETag is the ETag the static handler gives a file: the first 16 hex
+// of the sha256 of the bytes it serves, which for a stylesheet are the
+// source with its comments stripped.
+func contentETag(urlPath string, src []byte) string {
+	sum := sha256.Sum256(servedBytes(urlPath, src))
+	return `"` + hex.EncodeToString(sum[:])[:16] + `"`
+}
+
+func servedBytes(urlPath string, src []byte) []byte {
+	if path.Ext(urlPath) == ".css" {
+		return assets.StripCSSComments(src)
+	}
+	return src
+}
+
 func describeStaticBody(t *testing.T, body, src []byte, haveSrc bool) string {
 	t.Helper()
 	switch {
@@ -196,13 +233,12 @@ func describeStaticBody(t *testing.T, body, src []byte, haveSrc bool) string {
 		return "empty"
 	case haveSrc && bytes.Equal(body, src):
 		return "source"
+	case haveSrc && bytes.Equal(body, assets.StripCSSComments(src)):
+		return "source, CSS comments stripped"
 	}
 	if zr, err := gzip.NewReader(bytes.NewReader(body)); err == nil {
 		dec, err := io.ReadAll(zr)
 		testutil.MustNoErr(t, err, "gunzip")
-		if haveSrc && bytes.Equal(dec, src) {
-			return "gzip of source"
-		}
 		return "gzip of " + describeStaticBody(t, dec, src, haveSrc)
 	}
 	if bytes.HasPrefix(body, []byte("<!doctype html>")) && bytes.Contains(body, []byte("<pre>")) {

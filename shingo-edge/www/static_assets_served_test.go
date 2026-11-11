@@ -35,8 +35,9 @@ import (
 //     meant to set — which surfaces as a throw in some unrelated state, a long
 //     way from its cause. That is how www/static/js/pages/desktop-bodies.js
 //     went undetected (2026-09-13).
-//  2. chi's Compress decides on Content-Type, and a route that leaves the
-//     header unset ships every byte uncompressed with nothing said. Every
+//  2. Compression is decided on Content-Type (the static handler's own
+//     table now, chi's Compress before it), and a file whose type falls
+//     outside it ships every byte uncompressed with nothing said. Every
 //     station asset crosses plant WiFi to a Pi.
 
 // assetRefRe reads the /static tags out of a served page.
@@ -189,8 +190,8 @@ func assertAssetsServed(t *testing.T, base, label, path string, extra ...string)
 		// Small files are below the compressor's floor and are not a finding.
 		if n > 1024 && (strings.HasSuffix(refPath, ".js") || strings.HasSuffix(refPath, ".css")) &&
 			ar.Header.Get("Content-Encoding") != "gzip" {
-			t.Errorf("%s: %s came back uncompressed (%d bytes, Content-Type %q) — chi's Compress "+
-				"decides on Content-Type, and every station asset crosses plant WiFi to a Pi",
+			t.Errorf("%s: %s came back uncompressed (%d bytes, Content-Type %q) — the static handler "+
+				"gzips by Content-Type, and every station asset crosses plant WiFi to a Pi",
 				label, ref, n, ar.Header.Get("Content-Type"))
 		}
 	}
@@ -203,11 +204,11 @@ func assertAssetsServed(t *testing.T, base, label, path string, extra ...string)
 	t.Logf("%s: %d assets, all served and compressed", label, checked)
 }
 
-// TestStaticAssets_FaviconUnderTheETagHandler: both favicon paths answer under
-// serverInstanceETag like every other asset — 200 with an ETag, then 304 when
+// TestStaticAssets_FaviconUnderTheETagHandler: both favicon paths answer from
+// the static handler like every other asset — 200 with an ETag, then 304 when
 // the browser presents it. They used to have a no-store handler of their own
-// (Safari), so the icon was refetched in full on every page view; a restart
-// changing the ETag is all freshness needs.
+// (Safari), so the icon was refetched in full on every page view; an ETag that
+// changes with the file is all freshness needs.
 func TestStaticAssets_FaviconUnderTheETagHandler(t *testing.T) {
 	_, router := realFlowRouter(t, testdb.Open(t))
 	srv := httptest.NewServer(router)
@@ -227,7 +228,7 @@ func TestStaticAssets_FaviconUnderTheETagHandler(t *testing.T) {
 			}
 			etag := resp.Header.Get("ETag")
 			if etag == "" {
-				t.Fatalf("%s carries no ETag — it is not under serverInstanceETag", path)
+				t.Fatalf("%s carries no ETag — it is not under the static handler", path)
 			}
 			if cc := resp.Header.Get("Cache-Control"); strings.Contains(cc, "no-store") {
 				t.Errorf("%s Cache-Control %q: no-store forbids the 304 this test wants", path, cc)

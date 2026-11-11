@@ -30,13 +30,14 @@ import (
 //     way from its cause. That is how Edge's desktop-bodies.js went
 //     undetected (2026-09-13). Core's layout pins /static/app.js,
 //     /static/theme.js and /static/shared/*.css on every page.
-//  2. chi's Compress decides on Content-Type, and a route that leaves the
-//     header unset ships every byte uncompressed with nothing said. Core's
+//  2. Compression is decided on Content-Type (the static handler's own
+//     table now, chi's Compress before it), and a file whose type falls
+//     outside it ships every byte uncompressed with nothing said. Core's
 //     www crosses the plant network to a shop-floor display just as Edge's
 //     does to a Pi.
 //
 // /static/shared/* is deliberately in scope: it is served from shingo/shared's
-// embedded FS (router.go:132), and a stylesheet renamed there without a
+// embedded FS (static_assets.go), and a stylesheet renamed there without a
 // layout.html update is exactly the silent-404 above.
 
 // assetRefRe reads the /static tags out of a served page.
@@ -169,8 +170,8 @@ func assertAssetsServed(t *testing.T, base, label, path string) {
 		// Small files are below the compressor's floor and are not a finding.
 		if n > 1024 && (strings.HasSuffix(refPath, ".js") || strings.HasSuffix(refPath, ".css")) &&
 			ar.Header.Get("Content-Encoding") != "gzip" {
-			t.Errorf("%s: %s came back uncompressed (%d bytes, Content-Type %q) — chi's Compress "+
-				"decides on Content-Type, and every shop-floor display fetches this over the plant network",
+			t.Errorf("%s: %s came back uncompressed (%d bytes, Content-Type %q) — the static handler "+
+				"gzips by Content-Type, and every shop-floor display fetches this over the plant network",
 				label, ref, n, ar.Header.Get("Content-Type"))
 		}
 	}

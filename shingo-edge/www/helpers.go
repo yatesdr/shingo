@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"html/template"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,7 +44,7 @@ func resolveProcessFromQuery(r *http.Request, processes []domain.Process) *domai
 // has had this as a named function in its own helpers.go all along; this is the
 // same shape. No closure body changed.
 func templateFuncs() template.FuncMap {
-	return template.FuncMap{
+	funcs := template.FuncMap{
 		"join": strings.Join,
 		"truncate": func(s string, n int) string {
 			if len(s) <= n {
@@ -136,6 +137,10 @@ func templateFuncs() template.FuncMap {
 			return template.HTML(line.HTML())
 		},
 	}
+	// assetURL and importMap: an asset's hashed URL and a page's import map,
+	// from the handler that serves them (static_assets.go).
+	maps.Copy(funcs, staticAssets().FuncMap())
+	return funcs
 }
 
 // triggeredByLabels are the history panel's words for each triggered_by value

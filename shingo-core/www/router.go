@@ -147,20 +147,14 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 	// navigating between pages.
 	r.Get("/events", hub.SSEHandler)
 
+	// Static files — also outside compression: the handler sends the gzip it
+	// built at start-up, so Compress would only spend CPU per request on what
+	// is already done. static_assets.go.
+	h.registerStatic(r)
+
 	// Everything else gets compressed
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Compress(5))
-
-		// Shared UI assets (tokens.css, status-classes.css, utils.js)
-		// from the shingo/shared module. Registered BEFORE /static/* so
-		// the more specific prefix wins.
-		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-			staticCache(http.FileServer(http.FS(shared.Files))),
-		))
-
-		// Static files
-		staticSub, _ := fs.Sub(staticFS, "static")
-		r.Handle("/static/*", http.StripPrefix("/static/", staticCache(http.FileServer(http.FS(staticSub)))))
 
 		// ── Public pages ───────────────────────────────────────
 		// Wave 2 (Q-035): "/" is now the Operations Overview (the snapshot page).

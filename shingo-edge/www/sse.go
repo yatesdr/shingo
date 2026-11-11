@@ -30,9 +30,9 @@ type SSEEvent struct {
 // connect. The HMI compares it across reconnects: if it changes, the
 // edge has been restarted (likely with a new JS bundle) and the tab
 // hard-reloads. Without this, a long-lived operator-station tab keeps
-// the previously-cached ES module graph forever: the static files' ETags
-// change with a restart (serverInstanceETag), but only a fresh page load
-// asks for them again.
+// the previously-cached ES module graph forever: a changed file answers a
+// new ETag (its content hash, static_assets.go), but only a fresh page load
+// asks for it again. It is the build id only: no asset's ETag carries it.
 var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 
 // sseKeepaliveInterval is the shipped heartbeat tick. NewEventHub copies it

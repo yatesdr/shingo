@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -195,7 +196,7 @@ var routeStateWords = map[domain.RouteState]string{
 // does when a station has no registry row. There is deliberately no separate
 // "no namer" rendering path to keep in sync with the real one.
 func templateFuncs(namer stationNamer) template.FuncMap {
-	return template.FuncMap{
+	funcs := template.FuncMap{
 		// orderRoute is an order's route for the order-route partial: the one
 		// rule (domain.RouteStops, where the robot is read off the row's
 		// steps_done) and its strip (domain.RouteViewOf). No read of its own.
@@ -388,4 +389,8 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 			return "" // Styling handled via tile state CSS classes
 		},
 	}
+	// assetURL and importMap: an asset's hashed URL and a page's import map,
+	// from the handler that serves them (static_assets.go).
+	maps.Copy(funcs, staticAssets().FuncMap())
+	return funcs
 }

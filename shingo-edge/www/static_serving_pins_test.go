@@ -3,11 +3,12 @@ package www
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingo/shared"
+	"shingo/shared/assets"
 	"shingoedge/internal/testdb"
 )
 
@@ -29,26 +31,28 @@ var updateStaticServingGolden = flag.Bool("update-static-serving-golden", false,
 // status, every header but Date, and what the body is relative to the
 // embedded source — for a representative set: a JS module, a CSS file, a
 // shared file of each kind, both favicon paths, an SVG, a missing file, a
-// *.test.js, and a directory. Each is asked with and without
+// *.test.js, a directory, and the hashed and a stale-hashed URL of a module
+// and a shared stylesheet (probeURL). Each is asked with and without
 // Accept-Encoding: gzip, and again with If-None-Match carrying the ETag the
 // plain answer gave (the 304 path).
 //
 // THE ROUTER IS THE REAL ONE (NewRouter through realFlowRouter), so the chain
-// pinned is the production chain: chi's Compress, serverInstanceETag and
-// http.FileServer as router.go wires them.
+// pinned is the production chain: the static handler as registerStatic wires
+// it, outside chi's Compress.
 //
 // BODIES ARE DESCRIBED, NOT COPIED. "source" means byte-for-byte the embedded
-// file; "gzip of source" means one gzip layer over it. Sizes are left out on
+// file; "source, CSS comments stripped" is what assets.StripCSSComments makes
+// of it; "gzip of …" means one gzip layer over that. Sizes are left out on
 // purpose: a golden that moved every time someone edited operator.js would pin
-// nothing about serving.
+// nothing about serving. So is the content-hash ETag: it is written
+// "{hash of the served bytes}" when it is that hash (contentETag), and
+// {serverInstance} stands for the per-process id wherever an ETag carries it.
+// A Content-Type is written as served: the handler's own table, the same on
+// every host, so a value read from a host's mime database would fail here on
+// the other host.
 //
-// HOST-DEPENDENT VALUES ARE NAMED, NOT WRITTEN. The ETag carries the
-// per-process serverInstance, written {serverInstance}; a Content-Type that is
-// whatever this host's mime table says for the extension is written
-// "host mime table (.ext)", because http.FileServer asks mime.TypeByExtension,
-// which reads the registry on Windows and /etc/mime.types or the shared MIME
-// database on Linux — a .ico is image/x-icon on one and
-// image/vnd.microsoft.icon on another.
+// TestStaticServing_SharedFilesAnswerAlikeOnCore holds the /static/shared/
+// answers here to Core's golden.
 //
 // Regenerate with
 //
@@ -70,8 +74,54 @@ func TestStaticServingPins(t *testing.T) {
 		"/static/js/pages/catid-health.test.js",
 		"/static/shared/utils.escape.test.js",
 		"/static/operator-station/",
+		"{assetURL}/static/operator-station/operator.js",
+		"{stale}/static/operator-station/operator.js",
+		"{assetURL}/static/shared/tokens.css",
+		"{stale}/static/shared/tokens.css",
 	})
 	checkStaticServingGolden(t, filepath.Join("testdata", "static-serving"), "edge.txt", got)
+}
+
+// TestStaticServing_SharedFilesAnswerAlikeOnCore: every /static/shared/
+// answer in this golden is the same answer, line for line, in Core's
+// (shingo-core/www/testdata/static-serving/core.txt). The two routers mount
+// one handler type over one shared.Files, and each golden is held to its own
+// router by TestStaticServingPins, so a shared file that answered one way on
+// Core and another on Edge — a header, an encoding, a 304, an ETag that is
+// not the same hash of the same bytes — fails here.
+func TestStaticServing_SharedFilesAnswerAlikeOnCore(t *testing.T) {
+	t.Parallel()
+	read := func(p string) map[string]string {
+		b, err := os.ReadFile(p)
+		testutil.MustNoErr(t, err, "read "+p)
+		out := map[string]string{}
+		for _, block := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n\n") {
+			head, _, _ := strings.Cut(block, "\n")
+			if f := strings.Fields(head); len(f) > 1 && strings.Contains(f[1], "/static/shared/") {
+				out[head] = block
+			}
+		}
+		return out
+	}
+	edge := read(filepath.Join("testdata", "static-serving", "edge.txt"))
+	core := read(filepath.Join("..", "..", "shingo-core", "www", "testdata", "static-serving", "core.txt"))
+	if len(edge) == 0 {
+		t.Fatal("the Edge golden asks no /static/shared/ path")
+	}
+	for head, e := range edge {
+		c, ok := core[head]
+		switch {
+		case !ok:
+			t.Errorf("Core's golden does not ask %q", head)
+		case c != e:
+			t.Errorf("%s answers differently:\n  Edge:\n%s\n  Core:\n%s", head, e, c)
+		}
+	}
+	for head := range core {
+		if _, ok := edge[head]; !ok {
+			t.Errorf("Edge's golden does not ask %q", head)
+		}
+	}
 }
 
 // edgeStaticSource is the embedded file a static URL names, as router.go
@@ -94,12 +144,16 @@ func edgeStaticSource(urlPath string) ([]byte, bool) {
 	return b, err == nil
 }
 
-// staticServingPins asks every path the five ways and describes each answer.
+// staticServingPins asks every path the four ways and describes each answer.
+// A path may be a probe (probeURL): the hashed or a stale-hashed URL of a
+// file, written by the plain path it stands for so the golden does not move
+// with the file's content.
 func staticServingPins(t *testing.T, h http.Handler, source func(string) ([]byte, bool), paths []string) string {
 	t.Helper()
 	var out strings.Builder
 	for _, p := range paths {
-		plain := serveStatic(h, http.MethodGet, p, false, "")
+		u, src := probeURL(p)
+		plain := serveStatic(h, http.MethodGet, u, false, "")
 		etag := plain.Header.Get("ETag")
 		for _, c := range []struct {
 			gzip bool
@@ -112,13 +166,29 @@ func staticServingPins(t *testing.T, h http.Handler, source func(string) ([]byte
 			if c.cond {
 				inm = etag
 			}
-			rec := serveStatic(h, http.MethodGet, p, c.gzip, inm)
+			rec := serveStatic(h, http.MethodGet, u, c.gzip, inm)
 			fmt.Fprintf(&out, "GET %s gzip=%s if-none-match=%s\n", p, yesNo(c.gzip), yesNo(c.cond))
-			out.WriteString(describeStaticAnswer(t, rec, p, source))
+			out.WriteString(describeStaticAnswer(t, rec, src, source))
 			out.WriteString("\n")
 		}
 	}
 	return out.String()
+}
+
+// probeURL is the URL a pinned path asks and the plain path whose source it
+// answers: "{assetURL}/static/x.js" is the handler's hashed URL of
+// /static/x.js (assetURL, as a template will call it), "{stale}/static/x.js"
+// the same name with a hash no build gave, as a page rendered before a
+// restart would still ask. Any other path is itself.
+func probeURL(p string) (u, src string) {
+	if plain, ok := strings.CutPrefix(p, "{assetURL}"); ok {
+		return staticAssets().URL(plain), plain
+	}
+	if plain, ok := strings.CutPrefix(p, "{stale}"); ok {
+		ext := path.Ext(plain)
+		return strings.TrimSuffix(plain, ext) + ".0000000000000000" + ext, plain
+	}
+	return p, p
 }
 
 func yesNo(b bool) string {
@@ -170,12 +240,10 @@ func describeStaticAnswer(t *testing.T, resp *http.Response, urlPath string, sou
 func normalizeStaticHeader(k, v, urlPath string, body, src []byte) string {
 	switch k {
 	case "Etag":
-		return strings.ReplaceAll(v, serverInstance, "{serverInstance}")
-	case "Content-Type":
-		ext := path.Ext(urlPath)
-		if ext != "" && v == mime.TypeByExtension(ext) {
-			return "host mime table (" + ext + ")"
+		if v == contentETag(urlPath, src) {
+			return `"{hash of the served bytes}"`
 		}
+		return strings.ReplaceAll(v, serverInstance, "{serverInstance}")
 	case "Content-Length":
 		switch v {
 		case fmt.Sprint(len(body)):
@@ -187,6 +255,21 @@ func normalizeStaticHeader(k, v, urlPath string, body, src []byte) string {
 	return v
 }
 
+// contentETag is the ETag the static handler gives a file: the first 16 hex
+// of the sha256 of the bytes it serves, which for a stylesheet are the
+// source with its comments stripped.
+func contentETag(urlPath string, src []byte) string {
+	sum := sha256.Sum256(servedBytes(urlPath, src))
+	return `"` + hex.EncodeToString(sum[:])[:16] + `"`
+}
+
+func servedBytes(urlPath string, src []byte) []byte {
+	if path.Ext(urlPath) == ".css" {
+		return assets.StripCSSComments(src)
+	}
+	return src
+}
+
 func describeStaticBody(t *testing.T, body, src []byte, haveSrc bool) string {
 	t.Helper()
 	switch {
@@ -194,13 +277,12 @@ func describeStaticBody(t *testing.T, body, src []byte, haveSrc bool) string {
 		return "empty"
 	case haveSrc && bytes.Equal(body, src):
 		return "source"
+	case haveSrc && bytes.Equal(body, assets.StripCSSComments(src)):
+		return "source, CSS comments stripped"
 	}
 	if zr, err := gzip.NewReader(bytes.NewReader(body)); err == nil {
 		dec, err := io.ReadAll(zr)
 		testutil.MustNoErr(t, err, "gunzip")
-		if haveSrc && bytes.Equal(dec, src) {
-			return "gzip of source"
-		}
 		return "gzip of " + describeStaticBody(t, dec, src, haveSrc)
 	}
 	if bytes.HasPrefix(body, []byte("<!doctype html>")) && bytes.Contains(body, []byte("<pre>")) {
