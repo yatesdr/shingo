@@ -51,6 +51,10 @@ function loadStyle(href) {
     });
 }
 
+// A TAG THAT FAILED IS TAKEN OUT. The check below skips a src whose tag is
+// already in <head>, which is right for one that loaded and wrong for one
+// that did not: left in, it made every "tap again" skip the file the first tap
+// lost (a lost flowspec-data.js opened the composer without the flowspec).
 function loadScript(src) {
     return new Promise((resolve, reject) => {
         if (document.querySelector('script[data-composer-asset="' + src + '"]')) { resolve(); return; }
@@ -58,7 +62,10 @@ function loadScript(src) {
         s.src = src + VERSION;
         s.dataset.composerAsset = src;
         s.addEventListener('load', () => resolve());
-        s.addEventListener('error', () => reject(new Error('failed to load ' + src)));
+        s.addEventListener('error', () => {
+            s.remove();
+            reject(new Error('failed to load ' + src));
+        });
         document.head.appendChild(s);
     });
 }
