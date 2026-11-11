@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/lockcheck"
+	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
@@ -136,13 +137,15 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		return nil, err
 	}
 	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
-		takeSpare = true
-		if plan, err = BuildProducePlan(node, runtime, swapClaim, occupancy, deck); err != nil {
+		takeSpare, planClaim = true, swapClaim
+		if plan, err = BuildProducePlan(node, runtime, planClaim, occupancy, deck); err != nil {
 			return nil, err
 		}
 	}
 	if ask.pick > 0 && plan.Dispatch != nil {
-		nameRefillBin(plan.Dispatch, ask.pick)
+		if err := nameRefillBin(plan.Dispatch, planClaim, ask.pick); err != nil {
+			return nil, err
+		}
 	}
 	if takeSpare && plan.SimpleMove {
 		plan.SimpleSource, plan.FromSpot = spotNode(claim), true
@@ -558,16 +561,28 @@ func (e *Engine) refreshOrder(orderID int64) (*orders.Order, error) {
 }
 
 // nameRefillBin names the operator's chosen held partial on the swap's fetch:
-// the leg's first pickup of a carrier to fill. Core lifts that bin where it
+// the pickup at the node the claim's refill comes from (refillPickup: its
+// keep-staged spot, else its inbound source). Core lifts that bin where it
 // stands, so the carrier the operator chose is the one that comes, and no
 // other is sought.
-func nameRefillBin(d *SwapDispatch, binID int64) {
+//
+// BY THE NODE, NOT "THE FIRST EMPTY PICKUP". When Robot 2 refills an index
+// press its leg opens by lifting the empty on deck, which is Empty-flagged and
+// no fetch, and the pick was named there, on a bin that is not at that node.
+//
+// A swap that fetches nothing in its pair (sequential: the backfill is made
+// after the removal) cannot carry the pick, and refuses it by name rather than
+// dropping it.
+func nameRefillBin(d *SwapDispatch, claim *processes.NodeClaim, binID int64) error {
+	fetch := refillPickup(nil, claim).Node
 	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
 		for i := range steps {
-			if steps[i].Action == protocol.ActionPickup && steps[i].Empty {
+			if fetch != "" && steps[i].Action == protocol.ActionPickup && steps[i].Node == fetch {
 				steps[i].BinID = binID
-				return
+				return nil
 			}
 		}
 	}
+	return fmt.Errorf("%s: this swap fetches no carrier in its pair (%s), so it cannot bring the held partial you chose; "+
+		"request it without a pick and the next carrier is chosen for you", claim.CoreNodeName, domain.SwapModeWord(claim.SwapMode))
 }
