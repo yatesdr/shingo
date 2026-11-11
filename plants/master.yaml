@@ -1514,6 +1514,10 @@ styles:
   # common to both styles and the carry-over disposition is the only thing that
   # decides what happens to those bins.
   - {name: PRESS-1-RETOOL, process: PRESS-1,    payload: PANEL-A}
+  # ROBOT 3. The same press with its back refilled by a third trip of its own:
+  # neither robot of the pair goes to the market, and Robot 2's lift of the
+  # back orders it its next empty (refill_by own_robot).
+  - {name: PRESS-1-R3,     process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
   # SEQUENTIAL A/B WITH A CHANGEOVER. PRESS-2 had one style, so the only
   # sequential choreography the sim ever exercised was the steady-state swap —
@@ -1725,6 +1729,23 @@ claims:
     # refuseToolingChangeoverWithoutStaging refuses to arm a staged tooling
     # changeover without one, by name — so this is what makes the -RUN → -ALT
     # changeover armable at all now that -RUN marks positions.
+    inbound_staging: SLN_014
+
+  # PRESS-1 WITH ROBOT 3: the part -RUN makes, the back refilled by a trip of
+  # the press's own, made when Robot 2 lifts it. No third rig: a changeover
+  # from -RUN (a tool change, so it names the stage -RUN's marks hold at) or
+  # from -ALT, and its steady swaps, exercise the follow-on.
+  - core_node: PLN_001
+    style: PRESS-1-R3
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    refill_by: own_robot
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
 
   # PRESS-1 RE-TOOLED IN PLACE. Same nodes, same part, new tooling — the
@@ -2492,6 +2513,7 @@ reporting_points:
   # that produces without counting is a group that drains with nothing recording
   # why. Same PLC, same tag: it is the same physical counter on the same machine.
   - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-ALT}
+  - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-R3}
   - {plc_name: PRESS-2, tag_name: PRESS-2_COUNTER, node: PLN_003, style: PRESS-2-RUN}
   - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-RUN}
   - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-ALT}
