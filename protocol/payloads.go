@@ -690,8 +690,9 @@ type ComplexOrderStep struct {
 	// keys on the same stamp.
 	//
 	// Values are WaitKindStation ("station", station-owned) and, on a plan Core
-	// authors, WaitKindLane ("lane") and WaitKindVacate ("vacate"), both
-	// Core-owned. They are declared once, in waitkind.go.
+	// authors, WaitKindLane ("lane"), WaitKindVacate ("vacate") and
+	// WaitKindTurn ("turn"), all Core-owned. They are declared once, in
+	// waitkind.go.
 	//
 	// EMPTY IS NOT A FOURTH KIND. It is an order authored before the field,
 	// read as station-owned while such orders drain; after the drain window an
@@ -924,8 +925,9 @@ type OrderStaged struct {
 	// at a lane wait, and from a Core that predates it.
 	StationWait *int `json:"station_wait,omitempty"`
 	// WaitKind is the wait's owner: WaitKindStation, or a Core kind —
-	// WaitKindLane, or WaitKindVacate when the station has released and Core
-	// holds the leg until a bin leaves the node it drops on (IsCoreWaitKind).
+	// WaitKindLane; WaitKindVacate when the station has released and Core
+	// holds the leg until a bin leaves the node it drops on; WaitKindTurn when
+	// Core holds it until the robot's table is turned (IsCoreWaitKind).
 	WaitKind string `json:"wait_kind,omitempty"`
 }
 

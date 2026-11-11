@@ -233,16 +233,22 @@ func describePoint(at *int, kind string) string {
 		return "a lane wait"
 	case kind == protocol.WaitKindVacate:
 		return "a vacate wait (Core holds it until a bin leaves the node it drops on)"
+	case kind == protocol.WaitKindTurn:
+		return "a turn wait (Core holds it until the robot's table is turned)"
 	default:
 		return "no wait"
 	}
 }
 
 // coreHeldRefusal is the sentence the station gets when it releases a wait Core
-// owns (coreOwnsWait): a lane's, or a vacate hold, naming the bin and node.
+// owns (coreOwnsWait): a lane's, a vacate hold naming the bin and node, or a
+// turn naming the node whose table Core is turning.
 func coreHeldRefusal(order *orders.Order) string {
 	steps, ok := decodeSteps(order.StepsJSON)
 	if ok {
+		if w, at := waitAt(steps, order.WaitIndex); at && coreWaitKind(w) == WaitKindTurn {
+			return fmt.Sprintf("this order is held by Core until the table at %s is turned; Core releases it then", w.Node)
+		}
 		if w, at := waitAt(steps, order.WaitIndex); at && coreWaitKind(w) == WaitKindVacate {
 			if st := heldVacateAfter(steps, order.WaitIndex); st != nil {
 				return fmt.Sprintf("this order is held by Core until bin %d leaves %s; Core releases it then",

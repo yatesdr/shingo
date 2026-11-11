@@ -130,6 +130,11 @@ const WaitKindStation = protocol.WaitKindStation
 // stamp (dispatch.coreOwnsWait).
 const WaitKindVacate = protocol.WaitKindVacate
 
+// WaitKindTurn marks a wait Core releases once the robot's jack table reads the
+// node's turn angle (protocol.WaitKindTurn, dispatch/table_turn.go). Inserted
+// only by Core, in front of a lift or a set-down at a turn node.
+const WaitKindTurn = protocol.WaitKindTurn
+
 // TransportLegs expresses a single-bin transport — retrieve, retrieve_empty, or
 // move — as the canonical two-step plan: pick the (already-resolved) source bin
 // up, drop it at the (already-resolved) delivery node. stepsToBlocks yields

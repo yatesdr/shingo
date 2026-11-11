@@ -23,8 +23,19 @@ const WaitKindLane = "lane"
 // what Core tells the station a staged leg is waiting on.
 const WaitKindVacate = "vacate"
 
+// WaitKindTurn marks a wait Core releases once the robot's jack table reads a
+// node's turn angle: Core inserts it in front of a lift (or a set-down) at a
+// node configured to turn the table, sends the turn while the robot stands
+// there, and appends the lift when the table is on angle. A station wait Core
+// holds the same way, because its release came before the table was turned,
+// is reported to the station with this kind too (dispatch.coreOwnsWait). An
+// Edge that predates it reads it as Core's, which is right
+// (IsCoreWaitKind).
+const WaitKindTurn = "turn"
+
 // IsCoreWaitKind reports whether a wait of this kind is Core's to release: a
-// lane wait, a vacate wait, and any kind this build does not know. Untagged is
+// lane wait, a vacate wait, a turn wait, and any kind this build does not
+// know. Untagged is
 // not: an older Core sends no kind, and the station keeps the point it last
 // recorded.
 //

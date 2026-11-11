@@ -29,6 +29,7 @@ func TestWaitKindsPartition(t *testing.T) {
 		{WaitKindStation, false},
 		{WaitKindLane, true},
 		{WaitKindVacate, true},
+		{WaitKindTurn, true},
 		{"supervisor", true}, // a kind added after this build
 		{"Station", true},    // not the station's spelling, so not the station's
 	} {

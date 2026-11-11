@@ -238,10 +238,13 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 		if l.Leg.ReadErr == nil && l.Point.CoreHeld {
 			// The per-order click names this one order, so it answers in
 			// Core's words rather than reporting a release that sent nothing.
+			// It does not say WHAT Core waits for: a lane, a bin leaving a
+			// drop, a table turning, or a kind this build does not know. The
+			// board shows Core's reason (the order's cause).
 			if !a.passesOverUnreleasable() && !a.Reevaluation {
 				return ActPlan{Purpose: purpose, NeedLeg: -1, Gate: G2, Refusal: fmt.Errorf(
-					"order %d is waiting on Core, not on the station: Core releases it when its lane is safe or "+
-						"the bin on its drop has been lifted", l.Leg.OrderID)}
+					"order %d is waiting on Core, not on the station: Core is holding this order; the board shows why",
+					l.Leg.OrderID)}
 			}
 			d.Verdict, d.Gate = Out, G2
 			decisions[i] = d

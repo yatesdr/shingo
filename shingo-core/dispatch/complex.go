@@ -20,6 +20,7 @@ const (
 	WaitKindLane    = plan.WaitKindLane
 	WaitKindStation = plan.WaitKindStation
 	WaitKindVacate  = plan.WaitKindVacate
+	WaitKindTurn    = plan.WaitKindTurn
 )
 
 // CoreOwnsWaitAt reports whether the wait an order is parked at is CORE's to

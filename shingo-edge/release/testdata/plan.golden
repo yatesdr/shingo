@@ -219,7 +219,7 @@ pair: the evac at a lane wait (G2)
   order 12: go lineside flip=false finalize=false suppress=true u1=false
 per-order click on a leg at a lane wait (G2)
   purpose="swap"
-  refuse G2: order 11 is waiting on Core, not on the station: Core releases it when its lane is safe or the bin on its drop has been lifted
+  refuse G2: order 11 is waiting on Core, not on the station: Core is holding this order; the board shows why
 pair: Core unreachable (G3)
   purpose="swap"
   order 11: hold G3 wake=core: waiting for Core

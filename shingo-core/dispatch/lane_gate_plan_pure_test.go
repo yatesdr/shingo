@@ -234,6 +234,8 @@ func TestEveryWaitDeclaresAnOwner(t *testing.T) {
 		{Action: protocol.ActionWait, Node: "MARK", WaitKind: WaitKindLane, WaitLane: 7},
 		{Action: protocol.ActionPickup, Node: "SLOT"},
 		{Action: protocol.ActionWait, Node: "STAGING", WaitKind: WaitKindStation},
+		{Action: protocol.ActionWait, Node: "LINE", WaitKind: WaitKindTurn},
+		{Action: protocol.ActionPickup, Node: "LINE"},
 	}
 	if err := assertEveryWaitDeclaresAnOwner(owned); err != nil {
 		t.Errorf("a plan whose waits are all owned was refused: %v", err)

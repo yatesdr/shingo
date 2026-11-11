@@ -160,7 +160,8 @@ type Order struct {
 	// Core that reports it has staged the order, and at a wait Core releases.
 	StationWait *int `json:"station_wait,omitempty"`
 	// WaitKind is the kind of that wait (protocol.WaitKindStation, or a Core
-	// kind: WaitKindLane, WaitKindVacate — protocol.IsCoreWaitKind); "" until a
+	// kind: WaitKindLane, WaitKindVacate, WaitKindTurn —
+	// protocol.IsCoreWaitKind); "" until a
 	// Core that reports it has staged the order.
 	WaitKind string `json:"wait_kind,omitempty"`
 	// ReleaseFacts is the leg's static release facts as stored

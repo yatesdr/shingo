@@ -386,7 +386,8 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 // ones this function just inserted are WaitKindLane, and the ones it copied
 // through came from the station and carry WaitKindStation; a plan Core itself
 // authors may carry WaitKindVacate (released when a named bin leaves a named
-// node). A wait with none of the three is unowned — no fence claims it, no floor covers it, and the board cannot say
+// node), and Core inserts WaitKindTurn in front of a lift or set-down at a node
+// that turns the table (table_turn.go). A wait with none of the four is unowned — no fence claims it, no floor covers it, and the board cannot say
 // whether to offer Release. That is the shape that held three robots for a whole
 // soak (§12.49), and it is worth refusing a plan over.
 //
@@ -408,7 +409,7 @@ func assertEveryWaitDeclaresAnOwner(steps []resolvedStep) error {
 			continue
 		}
 		switch s.WaitKind {
-		case WaitKindLane, WaitKindStation, WaitKindVacate:
+		case WaitKindLane, WaitKindStation, WaitKindVacate, WaitKindTurn:
 			continue
 		case "":
 			log.Printf("WAIT OWNERSHIP: step %d (%q) carries no wait_kind — reading it as station-owned "+
@@ -416,9 +417,9 @@ func assertEveryWaitDeclaresAnOwner(steps []resolvedStep) error {
 				"if this is a NEW plan rather than one authored before the field, its author is missing "+
 				"a stamp", i, s.Node)
 		default:
-			return fmt.Errorf("splice: step %d (%q) declares wait_kind %q, which is none of %q, %q, %q — "+
+			return fmt.Errorf("splice: step %d (%q) declares wait_kind %q, which is none of %q, %q, %q, %q — "+
 				"an unrecognised owner is a wait no fence will claim",
-				i, s.Node, s.WaitKind, WaitKindLane, WaitKindStation, WaitKindVacate)
+				i, s.Node, s.WaitKind, WaitKindLane, WaitKindStation, WaitKindVacate, WaitKindTurn)
 		}
 	}
 	return nil
