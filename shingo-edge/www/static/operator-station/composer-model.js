@@ -328,7 +328,7 @@ function deriveRole(claims, processClaims, node) {
 // table to flowspec-data.js for every role and mode.
 const STAGING_FORBIDDEN = {
     two_robot: ['outbound_staging'],
-    sequential: ['inbound_staging', 'outbound_staging'],
+    sequential: ['outbound_staging'],
     simple: ['inbound_staging', 'outbound_staging'],
 };
 

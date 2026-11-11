@@ -206,16 +206,17 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 		return toolingChangeover{}
 	}
 
-	// The staging set: every position of every incoming press-index claim that
-	// names a staging node. The arm gate has already refused a marked press
-	// whose incoming claims name none, so an empty set here means the incoming
-	// style has no press at all — a cell being emptied, with nothing to hold.
+	// The staging set: every position of every incoming claim that names a
+	// staging node, whatever its mode (ToolChangePositions). The arm gate has
+	// already refused a marked cell whose incoming claims name none, so an
+	// empty set here means the incoming style has no claim on the cell at all —
+	// a cell being emptied, with nothing to hold.
 	for i := range toClaims {
 		tc := &toClaims[i]
 		if tc.InboundStaging == "" {
 			continue
 		}
-		for _, position := range pressIndexPositions(tc) {
+		for _, position := range tc.ToolChangePositions() {
 			if t.stageAt == nil {
 				t.stageAt = make(map[string]string)
 			}

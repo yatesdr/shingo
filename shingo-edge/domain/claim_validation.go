@@ -559,9 +559,9 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	if len(marked) > 0 {
 		if spec[flowspec.ChangeoverEvacNodes] == flowspec.Forbidden {
 			add("changeover_evac_nodes",
-				"Per-node changeover clearance applies to a cell whose claim names several nodes; use Evacuate on changeover for a single-node claim")
+				"A tool change applies to a line a robot serves; this claim's mode has no positions to clear")
 		} else {
-			held := in.Positions()
+			held := in.ToolChangePositions()
 			for _, node := range marked {
 				if !slices.Contains(held, node) {
 					add("changeover_evac_nodes", fmt.Sprintf(

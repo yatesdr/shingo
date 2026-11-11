@@ -3,10 +3,13 @@ package domain
 import (
 	"strings"
 	"testing"
+
+	"shingo/protocol"
 )
 
 func markedClaim() *NodeClaim {
 	return &NodeClaim{
+		SwapMode:             protocol.SwapModeTwoRobotPressIndex,
 		CoreNodeName:         "PRESS_A",
 		PairedCoreNode:       "PRESS_B",
 		SecondPairedCoreNode: "PRESS_C",
@@ -54,15 +57,20 @@ func TestMarkedEvacNodes(t *testing.T) {
 	}
 }
 
-// A cell with more nodes than a press has positions is the point of the model:
-// nothing counts to three.
-func TestMarkedEvacNodes_IsNotPressShaped(t *testing.T) {
+// A tool change marks a line's own positions on every mode a robot serves:
+// a single-node cell its node, a sequential claim its own line. The paired
+// name a sequential claim carries is its partner's line, which the partner's
+// claim marks, so marking it here is dropped (and refused at save).
+func TestMarkedEvacNodes_EveryLineModeMarksItsOwnPositions(t *testing.T) {
 	t.Parallel()
-	c := &NodeClaim{CoreNodeName: "WELD_1", PairedCoreNode: "WELD_2"}
-	c.ChangeoverEvacNodes = []string{"WELD_2"}
-	if got := strings.Join(MarkedEvacNodes(c), ","); got != "WELD_2" {
-		t.Errorf("MarkedEvacNodes = %q, want WELD_2 — a claim that names several nodes can mark "+
-			"any subset of them, whatever kind of cell it is", got)
+	single := &NodeClaim{SwapMode: protocol.SwapModeSingleRobot, CoreNodeName: "CELL_1", ChangeoverEvacNodes: []string{"CELL_1"}}
+	if got := strings.Join(MarkedEvacNodes(single), ","); got != "CELL_1" {
+		t.Errorf("a single-node cell marks %q, want its node CELL_1", got)
+	}
+	seq := &NodeClaim{SwapMode: protocol.SwapModeSequential, CoreNodeName: "SEQ_A", PairedCoreNode: "SEQ_B",
+		ChangeoverEvacNodes: []string{"SEQ_A", "SEQ_B"}}
+	if got := strings.Join(MarkedEvacNodes(seq), ","); got != "SEQ_A" {
+		t.Errorf("a sequential claim marks %q, want its own line SEQ_A alone", got)
 	}
 }
 

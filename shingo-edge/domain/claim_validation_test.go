@@ -76,10 +76,10 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 			c.PairedCoreNode = ""
 			c.ChangeoverEvacNodes = Ptr([]string{"INDEX-B"})
 		}, "changeover_evac_nodes"},
-		{"nodes marked on a single-node claim", func(c *NodeClaimInput) {
+		{"a single-node claim marking a node it does not hold", func(c *NodeClaimInput) {
 			c.SwapMode = SwapModeForTest
 			c.InboundStaging = "IN"
-			c.ChangeoverEvacNodes = Ptr([]string{"PRESS"})
+			c.ChangeoverEvacNodes = Ptr([]string{"INDEX-B"})
 		}, "changeover_evac_nodes"},
 		{"a node belonging to nobody", func(c *NodeClaimInput) {
 			c.ChangeoverEvacNodes = Ptr([]string{"middle-ish"})
@@ -733,6 +733,36 @@ func TestValidateNodeClaim_PackToleranceIsZeroToTwenty(t *testing.T) {
 		in.StrictPack, in.PackTolerancePct = c.strict, c.pct
 		if got := hasField(ValidateNodeClaim(in, ClaimNodeContext{}), "pack_tolerance_pct"); got != c.refused {
 			t.Errorf("pct %d (strict %v): refused = %v, want %v", c.pct, c.strict, got, c.refused)
+		}
+	}
+}
+
+// TestValidateNodeClaim_EveryLineModeMarksItsPositions: a tool change marks a
+// line's positions on every mode a robot serves, and the save takes it; a
+// loader card has no positions to clear and is refused.
+func TestValidateNodeClaim_EveryLineModeMarksItsPositions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode    protocol.SwapMode
+		paired  string
+		refused bool
+	}{
+		{protocol.SwapModeSingleRobot, "", false},
+		{protocol.SwapModeTwoRobot, "", false},
+		{protocol.SwapModeSequential, "PARTNER", false},
+		{protocol.SwapModeTwoRobotPressIndex, "INDEX-B", false},
+		{protocol.SwapModeManualSwap, "", true},
+	} {
+		c := validClaim()
+		c.SwapMode, c.PairedCoreNode = tc.mode, tc.paired
+		c.InboundStaging, c.OutboundStaging = "IN", "OUT"
+		if tc.mode == protocol.SwapModeTwoRobot || tc.mode == protocol.SwapModeSequential {
+			c.OutboundStaging = ""
+		}
+		c.ChangeoverEvacNodes = Ptr([]string{"PRESS"})
+		got := hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "changeover_evac_nodes")
+		if got != tc.refused {
+			t.Errorf("%s marking its node: refused=%v, want %v", tc.mode, got, tc.refused)
 		}
 	}
 }

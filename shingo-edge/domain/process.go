@@ -804,6 +804,29 @@ func (in NodeClaimInput) Positions() []string {
 	return nonBlank(in.CoreNodeName, in.PairedCoreNode, in.SecondPairedCoreNode)
 }
 
+// ToolChangePositions is the positions a tool-change mark may name: every
+// position of a press-index cell, and the claim's own node on every other
+// mode. A sequential claim's paired name is its partner's line, which the
+// partner's own claim marks.
+func (c *NodeClaim) ToolChangePositions() []string {
+	if c.IsPressIndex() {
+		return c.Positions()
+	}
+	if c == nil {
+		return nil
+	}
+	return nonBlank(c.CoreNodeName)
+}
+
+// ToolChangePositions is the input-shape twin of NodeClaim.ToolChangePositions,
+// for validation.
+func (in NodeClaimInput) ToolChangePositions() []string {
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+		return in.Positions()
+	}
+	return nonBlank(in.CoreNodeName)
+}
+
 // nonBlank collects the non-empty names in order. Both geometry readers and
 // their input twin share it so that "blank means this position does not exist"
 // is decided once.
@@ -1204,38 +1227,25 @@ func MarkedEvacNodes(c *NodeClaim) []string {
 	}
 	var out []string
 	for _, node := range c.ChangeoverEvacNodes {
-		if claimOccupies(c, node) {
+		if slices.Contains(c.ToolChangePositions(), node) {
 			out = append(out, node)
 		}
 	}
 	return out
 }
 
-// StagedToolingChangeover reports whether this OUTGOING claim puts the cell
-// into the staged tooling-evacuation mode: a press-index cell with at least
-// one position marked as holding bins that block the tool change.
+// StagedToolingChangeover reports whether this OUTGOING claim puts its cell
+// into a tool change: it marks at least one of its positions as one that must
+// be clear. Any line mode a robot serves (ToolChangePositions); the save
+// refuses marks on a loader card.
 //
 // ── THE OUTGOING CLAIM OWNS THE ANSWER ────────────────────────────────────
 //
 // The question is "which bins are physically in the way of the tool change".
-// The bins on the press at that moment were put there by the OUTGOING setup
+// The bins on the cell at that moment were put there by the OUTGOING setup
 // and belong to the outgoing style; the incoming style has not placed
 // anything yet. So the claim that knows is the one being replaced.
-//
-// It also settles an inconsistency rather than adding one. The Drop branch of
-// the planner already reads fromClaim.EvacuateOnChangeover to decide whether
-// cutover waits for a bin to leave, while DiffStyleClaims read
-// to.EvacuateOnChangeover for the same concept — two readings of one flag,
-// three files apart. Both now read the outgoing claim.
-//
-// CONSEQUENCE, and it is a real one: a plant that set EvacuateOnChangeover on
-// the INCOMING style's claim and relied on the diff reading it will stop
-// evacuating. changeoverEvacConfigOnWrongSide below exists to make that
-// visible instead of silent.
 func StagedToolingChangeover(from *NodeClaim) bool {
-	if !from.IsPressIndex() {
-		return false
-	}
 	return len(MarkedEvacNodes(from)) > 0
 }
 
