@@ -64,7 +64,8 @@ let overflowBefore = '';
 //   focus         false, an element, or a selector for where focus goes in
 //   opener        where focus returns (default: what had focus at open)
 //   onClose(why)  after it closed: 'escape', 'backdrop', 'outside', 'discard',
-//                 'cancel', 'ok', 'close' or 'parent'
+//                 'cancel', 'ok', 'close', 'parent', or 'gone' (the page took
+//                 it out of the document without closing it)
 //
 // It returns a handle: { el, state, open, close(why), run(fn), status(text,
 // bad), markClean() }. `state` is the entry's own: it lives while the entry is
@@ -251,8 +252,20 @@ function wire() {
     document.addEventListener('click', onClick);
 }
 
+// prune closes the entries a page took out of the document without closing
+// them (a redraw that replaced the markup): Escape would otherwise spend a
+// press on something nobody can see, and a confirm wiped that way would never
+// resolve.
+function prune() {
+    for (let i = stack.length - 1; i >= 0; i--) {
+        const x = stack[i];
+        if (x && !x.el.isConnected) closeEntry(x, 'gone');
+    }
+}
+
 function onKey(ev) {
     if (ev.key !== 'Escape' || ev.defaultPrevented || ev.isComposing) return;
+    prune();
     const top = stack[stack.length - 1];
     if (!top) return;
     ev.preventDefault();
@@ -261,6 +274,7 @@ function onKey(ev) {
 
 function onPress(ev) {
     pressedOn = ev.target;
+    prune();
     // Every popover the press lands outside of goes, innermost first, and
     // stops at the first entry it does not close.
     for (let top = stack[stack.length - 1]; top && top.kind === 'popover' && top.outside; top = stack[stack.length - 1]) {

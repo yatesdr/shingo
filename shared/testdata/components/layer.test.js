@@ -492,6 +492,20 @@ test('two confirms stack: Escape answers the second, the first stays', async () 
     eq([a.state, b.state, b.value, question(f.r).length], ['pending', 'resolved', false, 1]);
 });
 
+test('an entry the page took out of the document is closed, not left to spend an Escape; a confirm wiped that way resolves', async () => {
+    const f = modals();
+    f.L.showModal('m1');
+    const w = watch(f.L.confirm('Delete?'));
+    f.r.doc.body.removeChild(question(f.r)[0]);
+    const pop = mk(f.r, 'div', {});
+    f.card.appendChild(pop);
+    f.L.openLayer(pop, { kind: 'popover' });
+    f.card.removeChild(pop);
+    key(f.r.doc.body, 'Escape');
+    await f.r.advance(0);
+    eq([w.state, w.value, f.open(f.m1), f.L.layerDepth()], ['resolved', false, false, 0]);
+});
+
 // ── popovers ────────────────────────────────────────────────────────────────
 
 function popover(f, opts) {
