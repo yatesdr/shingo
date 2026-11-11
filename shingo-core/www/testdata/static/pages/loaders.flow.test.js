@@ -131,6 +131,10 @@ function load(opts) {
         apiPost(url, body) { posts.push({ url: url, body: body }); return Promise.resolve(opts.post ? opts.post(url, body) : {}); },
         delegateActions() {},
         h: h,
+        // The hub's modal verbs, as far as this page reads them: the card is
+        // shown by its .active class.
+        showModal(id) { const e = els[id]; if (e) e.classList.add('active'); },
+        hideModal(id) { const e = els[id]; if (e) e.classList.remove('active'); },
         // app.js's setText: an absent value is the no-data dash.
         setText(id, v) { const e = els[id]; if (e) e.textContent = (v === null || v === undefined) ? '—' : v; },
         toast(msg, level) { toasts.push({ msg: msg, level: level }); },

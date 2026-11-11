@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, delegateActions, el, escapeHtml, openFromQuery, toast, uiConfirm } from '/static/app.js';
+import { api, apiGet, apiPost, delegateActions, el, escapeHtml, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
 import { confirmAllowedBinsNarrowing, kanbanLoading, renderKeeperLevels, renderKanbanSection, saveKanban } from '/static/pages/nodes-kanban.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
@@ -34,7 +34,6 @@ function showDetailError(text) {
 // problem line a group without any shows in place of "+ Add lane" lands here.
 export function openNodeModal(el, opts) {
   if (!el || !el.dataset) return;
-  var m = document.getElementById('node-modal');
   var inv = document.getElementById('modal-inventory');
 
   var d = el.dataset;
@@ -134,7 +133,7 @@ export function openNodeModal(el, opts) {
     document.getElementById('ro-enabled').textContent = d.enabled === 'true' ? 'Yes' : 'No';
   }
 
-  m.classList.add('active');
+  showModal('node-modal');
 }
 
 // opts is openNodeModal's (its focus is read when the group's waiting spots
@@ -406,7 +405,7 @@ function serializeChipPickers() {
 }
 
 function closeNodeModal() {
-  document.getElementById('node-modal').classList.remove('active');
+  hideModal('node-modal');
 }
 
 // onAsrsToggle shows/hides the algorithm decision controls when the operator

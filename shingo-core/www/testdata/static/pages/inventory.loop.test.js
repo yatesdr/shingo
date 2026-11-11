@@ -271,6 +271,8 @@ console.log('inventory: the calculator, from the ⓘ only');
         const ctx2 = {
             apiPost: (url, body) => { posts.push({ url, body }); return Promise.resolve({}); },
             toast: () => {}, loadAll: () => Promise.resolve(), CSS: { escape: (s) => s },
+            // The hub's modal verbs: the calculator is shown by its .active class.
+            showModal: (id) => el(id).classList.add('active'), hideModal: (id) => el(id).classList.remove('active'),
             escapeHtml: (s) => String(s == null ? '' : s), num: (n) => String(n),
             document: { querySelectorAll: () => [], getElementById: el },
             Number, authenticated, view: { lead_days: 14, safety: 1.5, rows: [

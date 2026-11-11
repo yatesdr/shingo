@@ -1,4 +1,4 @@
-import { api, apiPost, delegateActions, el, enterSubmits, escapeHtml, toast } from '/static/app.js';
+import { api, apiPost, delegateActions, el, enterSubmits, escapeHtml, hideModal, showModal, toast } from '/static/app.js';
 import { openNodeModal } from '/static/pages/nodes-detail.js';
 
 // Supermarket / node-group hierarchy: NGRP and Lane modals, layout
@@ -15,10 +15,10 @@ var isAuth = document.getElementById('page-data').dataset.authenticated === 'tru
 function openNgrpModal() {
   document.getElementById('ngrp-name').value = '';
   document.getElementById('ngrp-result').innerHTML = '';
-  document.getElementById('ngrp-modal').classList.add('active');
+  showModal('ngrp-modal');
   document.getElementById('ngrp-name').focus();
 }
-function closeNgrpModal() { document.getElementById('ngrp-modal').classList.remove('active'); }
+function closeNgrpModal() { hideModal('ngrp-modal'); }
 
 function createNodeGroup() {
   var name = document.getElementById('ngrp-name').value.trim();
@@ -64,14 +64,14 @@ function openLaneModal(groupId) {
   laneForm = { groupId: Number(groupId), name: '' };
   document.getElementById('lane-name').value = '';
   laneErrors([]);
-  document.getElementById('lane-modal').classList.add('active');
+  showModal('lane-modal');
   document.getElementById('lane-name').focus();
 }
 
 // Closing discards what was typed (clear-on-close), whichever way it was
 // closed: ×, Cancel or Esc. The backdrop does not close it.
 function closeLaneModal() {
-  document.getElementById('lane-modal').classList.remove('active');
+  hideModal('lane-modal');
   laneForm = { groupId: 0, name: '' };
   document.getElementById('lane-name').value = '';
   laneErrors([]);

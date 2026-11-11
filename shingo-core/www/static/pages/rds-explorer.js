@@ -1,4 +1,4 @@
-import { api, delegateActions, el, toast } from '/static/app.js';
+import { api, delegateActions, el, hideModal, showModal, toast } from '/static/app.js';
 
 // Template bodies for POST endpoints
 var EP_JOIN_ORDER = JSON.stringify({id:"",externalId:"",fromLoc:"",toLoc:"",priority:0,vehicle:"",group:"",goodsId:""},null,2);
@@ -589,14 +589,14 @@ function showInfo(path, el, evt) {
   if (info.params) html += '<p><strong>Parameters:</strong><br>' + info.params + '</p>';
   if (info.response) html += '<p><strong>Response:</strong> ' + info.response + '</p>';
   document.getElementById('info-body').innerHTML = html;
-  document.getElementById('info-overlay').classList.add('active');
+  showModal('info-overlay');
 }
 
 function closeInfo() {
   // Invoked via data-action="closeInfo" on the close button. Backdrop
   // close (clicking the overlay itself) is handled by data-backdrop-close
   // on the overlay element.
-  document.getElementById('info-overlay').classList.remove('active');
+  hideModal('info-overlay');
 }
 
 function sendRequest() {

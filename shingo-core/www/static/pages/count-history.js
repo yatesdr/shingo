@@ -13,7 +13,7 @@
 //   /api/inventory/ledger-exceptions — the count ledger lists.
 //   /api/inventory/anomaly-summary   — carriers flagged, stale staged, undeclared.
 
-import { apiGet, escapeHtml, delegateActions, toast, timeAgoHTML } from '/static/app.js';
+import { apiGet, escapeHtml, delegateActions, hideModal, showModal, toast, timeAgoHTML } from '/static/app.js';
 import { formatClock, formatDuration, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
@@ -420,7 +420,7 @@ function renderDeclaredStamps() {
     + '<ul class="ledger-routine__list">' + items + '</ul></div>';
 }
 
-function closeDrill() { document.getElementById('inv-drill').classList.remove('active'); }
+function closeDrill() { hideModal('inv-drill'); }
 
 // ── flagged-carrier drill ──────────────────────────────────────────────────
 // The banner's flagged-carrier count was a dead scroll — it never told the
@@ -442,7 +442,7 @@ async function showRejectedDeltas() {
   if (narr) narr.innerHTML = 'These carriers have live counter deltas the system is dropping, so their on-hand '
     + 'can drift from what is physically in the bin. Cycle-count the carrier at its node to clear the flag and realign the count.';
   detail.innerHTML = '<div class="dash-empty">Loading…</div>';
-  modal.classList.add('active');
+  showModal('inv-drill');
   let rows;
   try {
     rows = await apiGet('/api/inventory/rejected-deltas');

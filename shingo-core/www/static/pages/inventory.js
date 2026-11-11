@@ -13,7 +13,7 @@
 // uncalibrated: it is reached only from the UoP threshold column's ⓘ, and a
 // value it suggests saves only on Confirm there.
 
-import { apiGet, apiPost, escapeHtml, delegateActions, toast, debounce } from '/static/app.js';
+import { apiGet, apiPost, escapeHtml, delegateActions, hideModal, showModal, toast, debounce } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
@@ -450,7 +450,7 @@ function openCalc(key) {
     + (authenticated ? '<div class="loop-calc-actions">'
       + '<button type="button" class="btn btn-sm" data-action="runCalc">Recalculate</button> '
       + '<button type="button" class="btn btn-sm btn-primary" data-action="confirmCalc">Confirm</button></div>' : '');
-  document.getElementById('loop-calc').classList.add('active');
+  showModal('loop-calc');
 }
 
 // calcOutHtml is the modal's suggestion: the value to save (an input with a
@@ -492,7 +492,7 @@ function confirmCalc() {
   saveThreshold(calcKey, value, value === calcSuggested ? 'calculated' : 'manual');
 }
 
-function closeCalc() { const m = document.getElementById('loop-calc'); if (m) m.classList.remove('active'); }
+function closeCalc() { hideModal('loop-calc'); }
 
 // ── interactions ───────────────────────────────────────────────────────────
 const onSearch = debounce((el) => { searchTerm = (el.value || '').trim(); renderAll(); }, 150);

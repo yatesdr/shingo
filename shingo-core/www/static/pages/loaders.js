@@ -1,4 +1,4 @@
-import { apiGet, apiPost, delegateActions, h, setText, toast, uiConfirm } from '/static/app.js';
+import { apiGet, apiPost, delegateActions, h, hideModal, setText, showModal, toast, uiConfirm } from '/static/app.js';
 
 // Core-owned bin loaders ("stations"), drawn as boxes on the Nodes page.
 //
@@ -231,8 +231,7 @@ function openLoaderModal() {
   formState = blankForm();
   renderForm(formState);
   showErrors([]);
-  const m = document.getElementById('loader-modal');
-  if (m) m.classList.add('active');
+  showModal('loader-modal');
   const n = document.getElementById('loader-name');
   if (n && n.focus) n.focus();
 }
@@ -240,8 +239,7 @@ function openLoaderModal() {
 // Closing discards the card (style guide: clear-on-close), whichever way it
 // was closed: ×, Cancel or Esc. The backdrop does not close it.
 function closeLoaderModal() {
-  const m = document.getElementById('loader-modal');
-  if (m) m.classList.remove('active');
+  hideModal('loader-modal');
   formState = blankForm();
   renderForm(formState);
   showErrors([]);
