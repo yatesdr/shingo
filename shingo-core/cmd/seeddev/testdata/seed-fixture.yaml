@@ -13,7 +13,7 @@
 #   separate namespaces (left readable).
 #
 # SWAP MODES EXERCISED (one per cell):
-#   PRESS-1  two_robot_press_index  front PLN_001 + paired back PLN_002 (in-line index, no staging)
+#   PRESS-1  two_robot_press_index  front PLN_001 + paired back PLN_002 (in-line index; SLN_016 holds its tool change)
 #   PRESS-2  sequential / A/B       PLN_003 (active) + PLN_004 (parked)  — two bins rotate, no staging
 #   WELD-1   two_robot              consume + produce, inbound staging only
 #   WELD-2   single_robot           consume + produce, DISTINCT inbound + outbound staging
@@ -215,6 +215,7 @@ stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
   - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-LH)
   - {name: PLN_002, kind: press}     # PRESS-1 back / paired position (no own claim)
+  - {name: SLN_016, kind: staging}   # PRESS-1 inbound stage: its tool change holds the new carrier here
   # ── PRESS-2: A/B sequential (two bins rotate, no staging) ──
   - {name: PLN_003, kind: press}     # PRESS-2 A (active)  produce PANEL-RH
   - {name: PLN_004, kind: press}     # PRESS-2 B (parked)  produce PANEL-RH
@@ -450,6 +451,9 @@ claims:
     # two-point route in an order that is not sorted.
     changeover_evac_nodes: [PLN_001, PLN_002]
     changeover_evac_destination: SYN_MT_Return
+    # A claim with marks names inbound staging: the tool change holds the new
+    # carrier there until Tooling done (the Edge's save rule, and Validate's).
+    inbound_staging: SLN_016
     key_route: [WP_AISLE_S, WP_AISLE_N]
     key_task: unload
     # Robot 2 brings the next carrier: a word, not the 0/1 the old column

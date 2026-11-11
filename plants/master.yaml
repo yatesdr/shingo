@@ -1666,7 +1666,7 @@ claims:
     # the fan-out produce two diffs, which is the shape a single mark cannot
     # distinguish from no fan-out at all.
     #
-    # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
+    # The OUTGOING claim owns the decision — the tool change reads the
     # from-side — so these live here and not on -ALT.
     changeover_evac_nodes: [PLN_001, PLN_002]
     # NO changeover_evac_destination, and that is the scenario: the marked positions
@@ -1722,7 +1722,7 @@ claims:
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
     # The incoming style's bins WAIT here while the tool is changed.
-    # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
+    # refuseToolingChangeoverWithoutStaging refuses to arm a staged tooling
     # changeover without one, by name — so this is what makes the -RUN → -ALT
     # changeover armable at all now that -RUN marks positions.
     inbound_staging: SLN_014

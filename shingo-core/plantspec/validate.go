@@ -411,11 +411,6 @@ func (p *Plant) Validate() error {
 					add("%s: second_paired_core_node %q must differ from the front and back positions", where, c.SecondPairedCoreNode)
 				}
 			}
-		default:
-			// Marked evacuation positions are press positions.
-			if len(c.ChangeoverEvacNodes) > 0 {
-				add("%s: changeover_evac_nodes applies to two_robot_press_index only", where)
-			}
 		}
 		// ── WHO BRINGS THE NEXT CARRIER ─────────────────────────────────────
 		//
@@ -429,6 +424,19 @@ func (p *Plant) Validate() error {
 		} else if c.RefillBy.OrDefault() != protocol.RefillByClearingRobot &&
 			protocol.SwapMode(c.SwapMode) != protocol.SwapModeTwoRobotPressIndex {
 			add("%s: refill_by %q applies to two_robot_press_index only", where, c.RefillBy)
+		}
+		// ── A TOOL CHANGE'S MARKS ───────────────────────────────────────────
+		//
+		// Every line mode a robot serves may mark positions; a manual_swap
+		// loader has none to clear. A tool change holds the incoming carrier at
+		// inbound staging until the operator's Tooling done, so a claim with
+		// marks names where. Both are the Edge's save rules.
+		if len(c.ChangeoverEvacNodes) > 0 {
+			if c.IsLoader() {
+				add("%s: changeover_evac_nodes applies to a line a robot serves; a manual_swap loader has no positions to clear", where)
+			} else if c.InboundStaging == "" {
+				add("%s: changeover_evac_nodes needs inbound_staging: a tool change holds the new carrier there until Tooling done", where)
+			}
 		}
 		// ── A MARKED NODE MUST BE ONE THIS CLAIM HOLDS ─────────────────────
 		//

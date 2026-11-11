@@ -107,6 +107,10 @@ line (`plantspec.Validate` restates the Edge's `CheckKeepStagedSpots` rule over 
 index_robot` (Robot 2 brings the next carrier) belongs to `two_robot_press_index` only (§3); blank or
 `clearing_robot` is Robot 1.
 
+A tool change's marks (`changeover_evac_nodes`) may name the positions of any mode but `manual_swap`, and a
+claim with marks requires `inbound_staging`: the new carrier waits there for the operator's Tooling done.
+`plantspec.Validate` refuses both, as the Edge's save does.
+
 ---
 
 ## 3. Choreographies (what each mode actually does)

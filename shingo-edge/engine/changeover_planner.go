@@ -31,7 +31,7 @@ import (
 // processor (FanOutPressIndexDifferentBinType in changeover.go) before
 // BuildChangeoverPlan sees the diffs; per-position diffs reach the
 // planner with SwapMode = "press_position" and route through the
-// dedicated case in BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps.
+// dedicated case in BuildSwapChangeoverSteps.
 func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool, tooling toolingChangeover) changeover.Plan {
 	plan, _ := BuildChangeoverPlanReporting(diffs, nodes, fallbackAutoConfirm, activePullByCoreNode, tooling)
 	return plan
