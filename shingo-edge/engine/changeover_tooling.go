@@ -54,24 +54,17 @@ import (
 // earlier pass rewrote, and it edits legs the pipeline already produced. There
 // is no changeover shape it can miss, because it never has to recognise one.
 //
-// ── THE ONE THING IT DOES CREATE, AND WHY ───────────────────────────────────
+// ── A MARKED PRESS NEVER INDEXES ────────────────────────────────────────────
 //
-// For a marked press whose positions did NOT already get one action each, this pass
-// expands the press into one action per marked position (expandMarkedPress). That
-// is not a second mechanism sneaking back in — it is the same rule, and it has
-// to happen HERE because only this pass knows the press is marked:
-//
-//	buildPressIndexChangeoverSwap — the whole-cell same-bin-type builder —
-//	evacuates ONLY the front position and then INDEXES the paired bin forward
-//	onto it. That index motion is exactly what a tool change forbids: the
-//	paired bin never leaves the press. Decorating its legs cannot fix that,
-//	because the leg that would have to change is a supply leg doing a
-//	different job.
-//
-// So a marked press must reach per-position granularity however it got here. When
-// the bin-type fan-out already split it (different bin type) or the nodes are
-// disjoint (Drops and Adds are per-node by construction), the positions already
-// have their own actions and this step does nothing.
+// The whole-cell same-bin-type builder (buildPressIndexChangeoverSwap)
+// evacuates ONLY the front position and then INDEXES the paired bin forward
+// onto it. That index motion is exactly what a tool change forbids. So the diff
+// pipeline splits a marked press position by position, as it splits a press
+// changing carrier type (shouldFanOutPressIndex), each position's situation
+// its own (domain.ChangeoverSituation): this pass then replaces the marked
+// positions' legs and leaves every unmarked position its ordinary per-position
+// changeover. It creates no node of its own; the marks only choose which
+// planned legs are the tool change's.
 
 // toolingPress is one marked press in a changeover.
 type toolingPress struct {
@@ -319,14 +312,10 @@ func (e *Engine) resolveToolingNodes(processID int64, t toolingChangeover,
 	return nodes, nil
 }
 
-// expandsPositions reports whether this press's marked positions need actions built for
-// them — the same question expandMarkedPress answers, asked before the plan
-// exists so the positions can be given node rows and node tasks to hang off.
-//
-// A press with no incoming claim on its own node is a teardown: there is
-// nothing to refill with, expandMarkedPress declines to touch it, and inventing
-// tasks for positions that will get no orders would block the cutover on work
-// nobody planned.
+// expandsPositions reports whether this press's marked positions are refilled:
+// an incoming claim stands on its own node. A press with none is a teardown:
+// there is nothing to refill with, its positions are drops as the pipeline
+// planned them, and nothing waits at staging for them.
 func (p toolingPress) expandsPositions() bool { return p.to != nil }
 
 // changeoverTouchedNodes is every node this changeover acts on, deduped: the
@@ -361,57 +350,6 @@ func changeoverTouchedNodes(t toolingChangeover, participants []domain.Participa
 		}
 	}
 	return out
-}
-
-// appendToolingClearanceTasks gives every marked position that the diffs did not already
-// cover a node task of its own.
-//
-// WITHOUT THIS THE PLAN IS DISCARDED WHERE IT MATTERS MOST. applyChangeoverPlan
-// finds a node task by node id and skips the action when there is none, and the
-// task list is built from the DIFFS — which never mention a position the tooling
-// pass expanded. So on a same-bin-type marked press the paired position's leg was
-// planned correctly, logged as "cannot find node task", and dropped.
-//
-// The positions the diffs DID cover (the bin-type fan-out split them, or they are
-// per-node Drops) already have tasks and are left alone, which is the same
-// idempotence rule expandMarkedPress follows.
-func appendToolingClearanceTasks(processID int64, t toolingChangeover, nodeTasks []processes.NodeTaskInput) []processes.NodeTaskInput {
-	if !t.active() {
-		return nodeTasks
-	}
-	have := make(map[string]bool, len(nodeTasks))
-	for _, nt := range nodeTasks {
-		have[nt.CoreNodeName] = true
-	}
-	for _, press := range t.presses {
-		if !press.expandsPositions() {
-			continue
-		}
-		for _, position := range press.positions {
-			if have[position] {
-				continue
-			}
-			have[position] = true
-			var fromClaimID, toClaimID *int64
-			if press.from != nil {
-				id := press.from.ID
-				fromClaimID = &id
-			}
-			if press.to != nil {
-				id := press.to.ID
-				toClaimID = &id
-			}
-			nodeTasks = append(nodeTasks, processes.NodeTaskInput{
-				ProcessID:    processID,
-				CoreNodeName: position,
-				FromClaimID:  fromClaimID,
-				ToClaimID:    toClaimID,
-				Situation:    string(SituationEvacuate),
-				State:        "swap_required",
-			})
-		}
-	}
-	return nodeTasks
 }
 
 // refuseToolingChangeoverWithoutStaging is START's backstop for the save's rule
@@ -459,34 +397,47 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 }
 
 // applyToolingChangeover is the decorator. It runs LAST, over the finished
-// plan, and makes two edits:
+// plan, in which the diff pipeline has already planned a marked press position
+// by position (shouldFanOutPressIndex) and every other marked cell node by
+// node. It makes three edits:
 //
-//   - the OUTBOUND leg of a marked position is redirected, but ONLY when the cell
-//     set ChangeoverEvacDestination — otherwise clearance is normal routing and
-//     the leg is left exactly as the pipeline planned it;
-//   - every INBOUND leg to a press position gains a wait at inbound staging, so the
-//     bin holds out of the cell until the operator releases it.
+//   - every MARKED position whose action lifts the old carrier and brings the
+//     new one is given the tool change's leg instead (toolingPositionAction):
+//     lift at START, take it out, fetch the replacement, hold it at staging
+//     until Tooling done, set it down. A carried-over part whose cell chose
+//     outbound_staging walks out and back instead (setCarryoverRoundTrip);
+//   - the OUTBOUND leg of a marked position is redirected, but ONLY when the
+//     cell set ChangeoverEvacDestination — otherwise clearance is normal
+//     routing and the leg is left exactly as the pipeline planned it;
+//   - every leg that delivers to a held position (toolChangeHolds) gains a wait
+//     at its staging, so the carrier stays out of the cell until the operator
+//     releases it.
 //
-// Plus the per-position expansion described at the top of this file, for a marked
-// press the pipeline planned as one whole cell.
+// An unmarked position keeps the action the pipeline planned: its ordinary
+// changeover, released by its own Ready press.
 func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t toolingChangeover, fallbackAutoConfirm bool) changeover.Plan {
 	if !t.active() {
 		return p
 	}
-	actions := p.Actions
+	cleared := map[string]toolingPress{}
 	for _, press := range t.presses {
-		actions = expandMarkedPress(actions, nodes, press)
+		if !press.expandsPositions() {
+			continue // a teardown: nothing comes back, its drops stand as planned
+		}
+		for _, position := range press.positions {
+			cleared[position] = press
+		}
 	}
+	actions := append([]changeover.NodeAction(nil), p.Actions...)
 	for i := range actions {
 		a := &actions[i]
-		// A CARRIED-OVER BIN IS NOT CLEARED AND REFILLED, so its leg is
-		// replaced rather than edited: there is no outbound destination to
-		// retarget and no inbound leg to hold, because the bin that comes back
-		// is the bin that left. Not for an Add: its position stands empty
-		// (ApplyNodeState), so no bin leaves and the carrier it brings is held
-		// at staging below like any other.
-		if staging := t.roundTrip[a.CoreNodeName]; staging != "" && a.Situation != string(SituationAdd) {
-			setCarryoverRoundTrip(a, staging)
+		if press, ok := cleared[a.CoreNodeName]; ok && liftsAndRefills(a) {
+			if node := findNodeByCoreName(nodes, a.CoreNodeName); node != nil {
+				*a = toolingPositionAction(press, a.CoreNodeName, node)
+				if staging := press.roundTrip[a.CoreNodeName]; staging != "" {
+					setCarryoverRoundTrip(a, staging)
+				}
+			}
 			continue
 		}
 		if dest := t.evacDest[a.CoreNodeName]; dest != "" {
@@ -500,57 +451,15 @@ func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t tooling
 	return changeover.Plan{Actions: actions}
 }
 
-// expandMarkedPress gives a marked press one action per marked position when the
-// pipeline left it as a single whole-cell action. See the file header for why
-// this cannot be decoration.
-//
-// Idempotent by construction: if every marked position already has an action — the
-// different-bin-type fan-out split it, or the positions are per-node Drops — there
-// is nothing missing and the plan is returned untouched.
-func expandMarkedPress(actions []changeover.NodeAction, nodes []processes.Node, press toolingPress) []changeover.NodeAction {
-	covered := make(map[string]bool, len(actions))
-	for _, a := range actions {
-		covered[a.CoreNodeName] = true
+// liftsAndRefills reports whether the pipeline planned this node as a carrier
+// out and a carrier in: a swap or an evacuation. An Add only brings one (it is
+// held, never cleared), a Drop only takes one away, and an errored action is
+// left to report its error.
+func liftsAndRefills(a *changeover.NodeAction) bool {
+	if a.Err != nil {
+		return false
 	}
-	missing := false
-	for _, position := range press.positions {
-		if !covered[position] {
-			missing = true
-			break
-		}
-	}
-	if !missing {
-		return actions
-	}
-	// The incoming claim is what the replacement bin is fetched against. With
-	// no incoming claim on this press there is nothing to refill with, so the
-	// whole-cell action — a teardown — is left exactly as planned.
-	if press.to == nil {
-		return actions
-	}
-
-	out := make([]changeover.NodeAction, 0, len(actions)+len(press.positions))
-	for _, a := range actions {
-		// Drop the whole-cell action; its positions are about to replace it.
-		if a.CoreNodeName == press.from.CoreNodeName {
-			continue
-		}
-		out = append(out, a)
-	}
-	for _, position := range press.positions {
-		if covered[position] && position != press.from.CoreNodeName {
-			continue // already has its own action
-		}
-		node := findNodeByCoreName(nodes, position)
-		if node == nil {
-			continue // the process does not have this position as a node
-		}
-		out = append(out, toolingPositionAction(press, position, node))
-		if staging := press.roundTrip[position]; staging != "" {
-			setCarryoverRoundTrip(&out[len(out)-1], staging)
-		}
-	}
-	return out
+	return a.Situation == string(SituationSwap) || a.Situation == string(SituationEvacuate)
 }
 
 // toolingPositionAction is ONE marked position's clearance: one robot lifts the bin off
@@ -699,9 +608,11 @@ func holdInbound(a *changeover.NodeAction, staging string, fallbackAutoConfirm b
 // holdComplexInbound inserts the staging wait immediately before the LAST
 // dropoff at this position — the step that actually sets the new bin down on it.
 //
-// A leg that already waits there is retargeted rather than given a second wait:
-// the fused position shape this pass produces itself arrives already correct, and a
-// pass that is not idempotent is one nobody can re-run.
+// A leg whose step before that dropoff is already a Tooling done wait is
+// retargeted rather than given a second one: the clearing leg this pass builds
+// arrives already held, and a pass that is not idempotent is one nobody can
+// re-run. Any other wait there (a Ready, the release of another decision) is
+// never overwritten: the hold is inserted after it.
 func holdComplexInbound(spec *changeover.OrderSpec, node, staging string) {
 	if spec == nil || spec.Complex == nil || staging == "" {
 		return
@@ -716,7 +627,7 @@ func holdComplexInbound(spec *changeover.OrderSpec, node, staging string) {
 	if last < 0 {
 		return // this leg does not deliver to the position; nothing inbound to hold
 	}
-	if last > 0 && steps[last-1].Action == protocol.ActionWait {
+	if last > 0 && steps[last-1].Action == protocol.ActionWait && steps[last-1].Purpose == string(release.PurposeToolingDone) {
 		steps[last-1] = stationWait(staging, release.PurposeToolingDone)
 		return
 	}

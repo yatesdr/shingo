@@ -179,11 +179,6 @@ func releasePinCells() []relCell {
 	coPITooling := coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}
 	coSRTooling := coSpec{mode: protocol.SwapModeSingleRobot, tooling: true}
 	coTwoRobot := coSpec{mode: protocol.SwapModeTwoRobot}
-	// A 3-position press marked for tooling at the FRONT position only: the
-	// pair survives the decorator, the evac (R1) carries "ready" and "tooling
-	// done", and the index leg (R2) carries "ready" and a staging hold before it
-	// sets its bin on the press (holdComplexInbound).
-	coPI3MarkedFront := coSpec{mode: protocol.SwapModeTwoRobotPressIndex, threePos: true, markedOnly: []string{fxPress}}
 	S, D, T := protocol.StatusStaged, protocol.StatusDispatched, protocol.StatusInTransit
 	withBinAt := func(b func(h *relHarness)) func(h *relHarness) {
 		return func(h *relHarness) {
@@ -236,20 +231,10 @@ func releasePinCells() []relCell {
 			build: coAt(coSRTooling, "evac", S),
 			act:   pairClick(dispNone)},
 
-		// ── N-a′: the pickup chain releases a supply the pair click released ─
-		{name: "N-a'/pickup chain, R2 still driving to its hold",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0",
-			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
-			act:   seq(pairClick(dispNone), picks("evac"))},
-		{name: "N-a'/pickup chain, R2 already parked at its hold",
-			want:  "ok | evac=in_transit supply=staged | rel=evac,supply | ingest=1 capred=0",
-			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
-			act:   seq(pairClick(dispNone), stages("supply"), picks("evac"))},
-		// KEEP: the sweep defers the holdInbound supply to the evac's lift.
-		{name: "keep/sweep defers the held supply to the evac's pickup",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
-			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
-			act:   seq(sweepClick(dispNone), picks("evac"))},
+		// ── The pickup chain releases a supply the pair click released ──────
+		// (A marked press no longer keeps its index pair: each marked position
+		// is one clearing leg, the matrix's "co pi marked" rows. The pair's
+		// held-supply variants went with it.)
 		{name: "keep/two_robot changeover supply released at the evac's pickup",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
 			build: coAt(coTwoRobot, "evac", S, "supply", S),
@@ -263,10 +248,6 @@ func releasePinCells() []relCell {
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coPITooling, "evac", S, "supply", T),
 			act:   confirms("supply")},
-		{name: "L1c/tooling done sweep, R2 parked at its hold",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,supply,evac | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
-			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
-			act:   seq(pairClick(dispNone), stages("evac"), stages("supply"), sweepClick(dispNone))},
 
 		// ── The press-index pair (keep) ──────────────────────────────────────
 		{name: "keep/pi changeover pair, both staged",

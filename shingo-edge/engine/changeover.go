@@ -290,8 +290,11 @@ func sequentialParkedSideReuses(
 }
 
 // shouldFanOutPressIndex reports whether the diff is a press-index
-// changeover whose bin types differ between from and to. Only those
-// expand into per-position diffs.
+// changeover that is planned position by position: its bin types differ
+// between from and to, or it is a tool change (the outgoing claim marks a
+// position). A tool change never indexes: each marked position is cleared on
+// its own and each unmarked one gets its own ordinary changeover, so the
+// whole-cell index pair is never built for a marked press.
 func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bool {
 	if d.Situation != SituationSwap && d.Situation != SituationEvacuate {
 		return false
@@ -302,7 +305,7 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 	if !d.FromClaim.IsPressIndex() {
 		return false
 	}
-	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes)
+	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes) || domain.StagedToolingChangeover(d.FromClaim)
 }
 
 // fanOutPositions expands one press-index diff into up to three
@@ -339,12 +342,16 @@ func fanOutPositions(parent ChangeoverNodeDiff) []ChangeoverNodeDiff {
 		}
 		switch {
 		case s.fromName != "" && s.toName != "":
-			// Full per-position swap (both sides occupy).
+			// Both sides occupy: the position's own situation, from its own
+			// claims. On a tool change a marked position evacuates and an unmarked
+			// one is the ordinary swap, or unchanged when its part carries over;
+			// elsewhere it is the parent's, the parts being the parent's.
+			pf, pt := synthesizePressPositionClaim(from, coreNodeName), synthesizePressPositionClaim(to, coreNodeName)
 			diffs = append(diffs, ChangeoverNodeDiff{
 				CoreNodeName: coreNodeName,
-				Situation:    parent.Situation,
-				FromClaim:    synthesizePressPositionClaim(from, coreNodeName),
-				ToClaim:      synthesizePressPositionClaim(to, coreNodeName),
+				Situation:    domain.ChangeoverSituation(pf, pt),
+				FromClaim:    pf,
+				ToClaim:      pt,
 			})
 		case s.fromName != "" && s.toName == "":
 			// Evac only — from-style had this position, to-style

@@ -232,7 +232,6 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 			State:        state,
 		})
 	}
-	nodeTasks = appendToolingClearanceTasks(processID, tooling, nodeTasks)
 
 	unresolved := assertParticipantsResolve(participants, nodes)
 
