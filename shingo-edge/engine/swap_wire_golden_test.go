@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
 
@@ -71,7 +72,26 @@ func renderChangeoverDispatch(d ChangeoverDispatch) map[string]any {
 
 func renderPlanActions(diffs []ChangeoverNodeDiff) []map[string]any {
 	nodes := []processes.Node{{ID: 1, Name: "LINE", CoreNodeName: "LINE", ProcessID: 1}}
-	plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
+	return renderActions(BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{}))
+}
+
+// renderToolChangePlan is a tool change from from to to, through the pipeline
+// planChangeover runs and the decorator (applyToolingChangeover): the
+// outgoing claim marks every position it may (ToolChangePositions).
+func renderToolChangePlan(from, to *processes.NodeClaim) []map[string]any {
+	f := *from
+	f.ChangeoverEvacNodes = f.ToolChangePositions()
+	fromClaims, toClaims := []processes.NodeClaim{f}, []processes.NodeClaim{*to}
+	diffs := FanOutPressIndex(DiffStyleClaims(fromClaims, toClaims), nil, nil)
+	diffs = FanOutPressIndexCrossMode(diffs, nil)
+	var nodes []processes.Node
+	for i, n := range f.ToolChangePositions() {
+		nodes = append(nodes, processes.Node{ID: int64(i + 1), Name: n, CoreNodeName: n, ProcessID: 1})
+	}
+	return renderActions(BuildChangeoverPlan(diffs, nodes, false, nil, planToolingChangeover(fromClaims, toClaims)))
+}
+
+func renderActions(plan changeover.Plan) []map[string]any {
 	var out []map[string]any
 	for _, a := range plan.Actions {
 		errText := ""
@@ -115,6 +135,9 @@ func buildSwapWireGolden(t *testing.T) map[string]any {
 					"swap": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: from, ToClaim: to}}),
 					"add":  renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationAdd, ToClaim: to}}),
 					"drop": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationDrop, FromClaim: from}}),
+					// A tool change: the decorator's rows, the only place a
+					// Tooling done wait is written.
+					"toolChange": renderToolChangePlan(from, to),
 				}
 				golden[key] = entry
 			}
