@@ -72,6 +72,7 @@ const immutableCacheControl = "public, max-age=31536000, immutable"
 // Handler serves every file of its mounts. Build it with New.
 type Handler struct {
 	files map[string]*file // by plain URL path
+	maps  sync.Map         // import map tags by entry list, see ImportMapTag
 	stats Stats
 }
 
@@ -90,6 +91,7 @@ type file struct {
 	// sourceServed: the served bytes are the embed's own, so a client
 	// without gzip is answered by streaming the embed.
 	sourceServed bool
+	deps         []string // the plain URLs a module imports, see imports.go
 }
 
 // Stats is what New built, for the start-up cost a report or a test reads.
@@ -184,11 +186,14 @@ func New(mounts ...Mount) (*Handler, error) {
 		h.stats.ServedBytes += f.size
 		h.stats.HeldBytes += int64(len(f.gz) + len(f.plain))
 	}
-	for u := range h.files {
+	for u, f := range h.files {
 		// A real file named like another's hashed form would make one URL
 		// mean two files.
 		if plain, _, ok := splitHashed(u); ok && h.files[plain] != nil {
 			return nil, fmt.Errorf("assets: %s is named like the hashed URL of %s", u, plain)
+		}
+		if f.deps != nil {
+			f.deps = h.resolveDeps(u, f.deps)
 		}
 	}
 	h.stats.Took = time.Since(t0)
@@ -225,6 +230,12 @@ func buildFile(u string, fsys fs.FS, name string, zw *gzip.Writer, buf *bytes.Bu
 	}
 	if f.gz == nil && !f.sourceServed {
 		f.plain = served
+	}
+	if path.Ext(name) == ".js" {
+		f.deps = scanImports(b)
+		if f.deps == nil {
+			f.deps = []string{}
+		}
 	}
 	return f, int64(len(b)), nil
 }
