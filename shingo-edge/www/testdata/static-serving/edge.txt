@@ -1,0 +1,299 @@
+GET /static/operator-station/operator.js gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.js)
+  Etag: "{serverInstance}:operator-station/operator.js"
+  body: source
+
+GET /static/operator-station/operator.js gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Encoding: gzip
+  Content-Type: host mime table (.js)
+  Etag: "{serverInstance}:operator-station/operator.js"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET /static/operator-station/operator.js gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:operator-station/operator.js"
+  body: empty
+
+GET /static/operator-station/operator.js gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:operator-station/operator.js"
+  body: empty
+
+GET /static/operator-station/operator.css gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.css)
+  Etag: "{serverInstance}:operator-station/operator.css"
+  body: source
+
+GET /static/operator-station/operator.css gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Encoding: gzip
+  Content-Type: host mime table (.css)
+  Etag: "{serverInstance}:operator-station/operator.css"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET /static/operator-station/operator.css gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:operator-station/operator.css"
+  body: empty
+
+GET /static/operator-station/operator.css gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:operator-station/operator.css"
+  body: empty
+
+GET /static/shared/utils.js gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.js)
+  Etag: "{serverInstance}:utils.js"
+  body: source
+
+GET /static/shared/utils.js gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Encoding: gzip
+  Content-Type: host mime table (.js)
+  Etag: "{serverInstance}:utils.js"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET /static/shared/utils.js gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:utils.js"
+  body: empty
+
+GET /static/shared/utils.js gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:utils.js"
+  body: empty
+
+GET /static/shared/tokens.css gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.css)
+  Etag: "{serverInstance}:tokens.css"
+  body: source
+
+GET /static/shared/tokens.css gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Encoding: gzip
+  Content-Type: host mime table (.css)
+  Etag: "{serverInstance}:tokens.css"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET /static/shared/tokens.css gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:tokens.css"
+  body: empty
+
+GET /static/shared/tokens.css gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:tokens.css"
+  body: empty
+
+GET /favicon.ico gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.ico)
+  Etag: "{serverInstance}:/favicon.ico"
+  body: source
+
+GET /favicon.ico gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.ico)
+  Etag: "{serverInstance}:/favicon.ico"
+  body: source
+
+GET /favicon.ico gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:/favicon.ico"
+  body: empty
+
+GET /favicon.ico gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:/favicon.ico"
+  body: empty
+
+GET /static/favicon.ico gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.ico)
+  Etag: "{serverInstance}:favicon.ico"
+  body: source
+
+GET /static/favicon.ico gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.ico)
+  Etag: "{serverInstance}:favicon.ico"
+  body: source
+
+GET /static/favicon.ico gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:favicon.ico"
+  body: empty
+
+GET /static/favicon.ico gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:favicon.ico"
+  body: empty
+
+GET /static/favicon.svg gzip=no if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Length: length of the body
+  Content-Type: host mime table (.svg)
+  Etag: "{serverInstance}:favicon.svg"
+  body: source
+
+GET /static/favicon.svg gzip=yes if-none-match=no
+  status 200
+  Accept-Ranges: bytes
+  Cache-Control: no-cache, must-revalidate
+  Content-Encoding: gzip
+  Content-Type: host mime table (.svg)
+  Etag: "{serverInstance}:favicon.svg"
+  Vary: Accept-Encoding
+  body: gzip of source
+
+GET /static/favicon.svg gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:favicon.svg"
+  body: empty
+
+GET /static/favicon.svg gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:favicon.svg"
+  body: empty
+
+GET /static/operator-station/missing.js gzip=no if-none-match=no
+  status 404
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+  body: "404 page not found\n"
+
+GET /static/operator-station/missing.js gzip=yes if-none-match=no
+  status 404
+  Content-Encoding: gzip
+  Content-Type: text/plain; charset=utf-8
+  Vary: Accept-Encoding
+  X-Content-Type-Options: nosniff
+  body: gzip of "404 page not found\n"
+
+GET /static/shared/missing.css gzip=no if-none-match=no
+  status 404
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+  body: "404 page not found\n"
+
+GET /static/shared/missing.css gzip=yes if-none-match=no
+  status 404
+  Content-Encoding: gzip
+  Content-Type: text/plain; charset=utf-8
+  Vary: Accept-Encoding
+  X-Content-Type-Options: nosniff
+  body: gzip of "404 page not found\n"
+
+GET /static/js/pages/catid-health.test.js gzip=no if-none-match=no
+  status 404
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+  body: "404 page not found\n"
+
+GET /static/js/pages/catid-health.test.js gzip=yes if-none-match=no
+  status 404
+  Content-Encoding: gzip
+  Content-Type: text/plain; charset=utf-8
+  Vary: Accept-Encoding
+  X-Content-Type-Options: nosniff
+  body: gzip of "404 page not found\n"
+
+GET /static/shared/utils.escape.test.js gzip=no if-none-match=no
+  status 404
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+  body: "404 page not found\n"
+
+GET /static/shared/utils.escape.test.js gzip=yes if-none-match=no
+  status 404
+  Content-Encoding: gzip
+  Content-Type: text/plain; charset=utf-8
+  Vary: Accept-Encoding
+  X-Content-Type-Options: nosniff
+  body: gzip of "404 page not found\n"
+
+GET /static/operator-station/ gzip=no if-none-match=no
+  status 200
+  Cache-Control: no-cache, must-revalidate
+  Content-Type: text/html; charset=utf-8
+  Etag: "{serverInstance}:operator-station/"
+  body: directory listing, *.test.js listed: no
+
+GET /static/operator-station/ gzip=yes if-none-match=no
+  status 200
+  Cache-Control: no-cache, must-revalidate
+  Content-Encoding: gzip
+  Content-Type: text/html; charset=utf-8
+  Etag: "{serverInstance}:operator-station/"
+  Vary: Accept-Encoding
+  body: gzip of directory listing, *.test.js listed: no
+
+GET /static/operator-station/ gzip=no if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:operator-station/"
+  body: empty
+
+GET /static/operator-station/ gzip=yes if-none-match=yes
+  status 304
+  Cache-Control: no-cache, must-revalidate
+  Etag: "{serverInstance}:operator-station/"
+  body: empty
+
