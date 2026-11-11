@@ -1,4 +1,4 @@
-// Unit tests for the settings-page helpers in /static/shared/utils.js:
+// Unit tests for the settings-page helpers in /static/shared/settings.js:
 // durationFromText / durationToText, collectList, apiResult and settingsPage.
 // Run under plain Node via the Go wrapper settings_page_test.go. Exit 0 on
 // pass, 1 on any assertion failure.
@@ -148,7 +148,7 @@ function mk(tag, cls, data, children) {
 }
 
 function loadUtils(fetchImpl) {
-    const src = sharedSource(['dom.js', 'utils.js']);
+    const src = sharedSource(['dom.js', 'utils.js', 'settings.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');
@@ -475,5 +475,5 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         console.error('FAILED: ' + failed + ' of ' + (passed + failed));
         process.exit(1);
     }
-    console.log('PASS: ' + passed + ' assertions for settings helpers in shared/utils.js');
+    console.log('PASS: ' + passed + ' assertions for settings helpers in shared/settings.js');
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

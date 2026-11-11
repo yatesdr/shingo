@@ -59,6 +59,19 @@ two buses).
 
 <!-- /generated -->
 
+#### `settings.js`: the settings page
+
+<!-- generated: shared/settings.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `durationFromText` | function | durationFromText is what the page sends for a duration box: the typed text ("45 min", or a Go string typed in) as a Go duration string. |
+| `durationToText` | function | durationToText is what the box shows for a stored Go duration: one box with its unit in it ("45 min", "10 s", "1 h", "1 h 30 min"), never "45m0s". |
+| `collectList` | function | collectList reads a list section from the rows that are on the page, in order, NOT by index: removing row 0 must never lose the rows after it (an index walk stops at the first missing index). |
+| `settingsPage` | function | settingsPage binds a settings page's draft, save bar and answers. |
+
+<!-- /generated -->
+
 #### `utils.js`: HTTP, modals, confirm / prompt / toast, the SSE factory
 
 <!-- generated: shared/utils.js -->
@@ -80,10 +93,6 @@ two buses).
 | `setSSEReloadOnBuild` | function | setSSEReloadOnBuild switches the bus's build-id-mismatch behavior from the dismissible refresh banner (admin pages) to an immediate location.reload() (kiosk pages — no operator to dismiss; the right move is to adopt the new Core build). |
 | `onSSE` | function | — |
 | `closeSSEBus` | function | closeSSEBus — tear down the shared EventSource (page unload / tests). |
-| `durationFromText` | function | durationFromText is what the page sends for a duration box: the typed text ("45 min", or a Go string typed in) as a Go duration string. |
-| `durationToText` | function | durationToText is what the box shows for a stored Go duration: one box with its unit in it ("45 min", "10 s", "1 h", "1 h 30 min"), never "45m0s". |
-| `collectList` | function | collectList reads a list section from the rows that are on the page, in order, NOT by index: removing row 0 must never lose the rows after it (an index walk stops at the first missing index). |
-| `settingsPage` | function | settingsPage binds a settings page's draft, save bar and answers. |
 
 <!-- /generated -->
 

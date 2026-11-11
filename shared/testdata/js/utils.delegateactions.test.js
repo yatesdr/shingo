@@ -314,5 +314,5 @@ if (failed > 0) {
     console.error(`\nFAILED: ${failed} of ${passed + failed}`);
     process.exit(1);
 }
-console.log(`PASS: ${passed} assertions for shared/utils.js`);
+console.log(`PASS: ${passed} assertions for shared/dom.js and shared/clock.js`);
 process.exit(0);

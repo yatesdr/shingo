@@ -14,7 +14,8 @@
 // what is not a scene point or is a lane slot.
 import { debounce, escapeHtml } from '/static/shared/dom.js';
 import { formatTime } from '/static/shared/clock.js';
-import { apiResult, collectList, settingsPage } from '/static/shared/utils.js';
+import { collectList, settingsPage } from '/static/shared/settings.js';
+import { apiResult } from '/static/shared/utils.js';
 
 const root = () => document.getElementById('cleaning-setup');
 const pointsBox = () => document.getElementById('cleaning-points');

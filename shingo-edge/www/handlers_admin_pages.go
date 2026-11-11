@@ -114,7 +114,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // durationText is a stored duration as the settings page shows it: one box
 // with its unit in it ("45 min", "10 s", "1 h 30 min"), never "45m0s"
-// (§33 rule 5). The Go twin of durationToText in shared/utils.js, used so the
+// (§33 rule 5). The Go twin of durationToText in shared/settings.js, used so the
 // first paint already reads that way; the page sends it back through
 // durationFromText.
 func durationText(d time.Duration) string {

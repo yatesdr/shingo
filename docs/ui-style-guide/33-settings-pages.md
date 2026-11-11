@@ -5,7 +5,7 @@ Verified against: 51489c78
 A settings page is the shape of the Edge Processes page's Settings tab,
 shared so the Core and Edge Configuration pages are built from it too. The
 CSS is one set of rules in `shared/components.css`; the behaviour is
-`settingsPage` in `shared/utils.js`. Sizes and colours come from those rules.
+`settingsPage` in `shared/settings.js`. Sizes and colours come from those rules.
 
 ### What a settings page looks like
 
@@ -98,7 +98,8 @@ stacks (label above control), the note and error lines lose their indent, and a
 ### The behaviour: `settingsPage`
 
 ```js
-import { settingsPage, apiResult, durationFromText, durationToText, collectList } from '/static/shared/utils.js';
+import { settingsPage, durationFromText, durationToText, collectList } from '/static/shared/settings.js';
+import { apiResult } from '/static/shared/utils.js';
 
 const page = settingsPage(document.getElementById('config'), {
     url: '/api/config',                 // the one save door, PUT

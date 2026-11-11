@@ -7,9 +7,8 @@
 // /config/test-* doors, with the draft's mail settings), Change password
 // (POST /config/password).
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
-import {
-    apiResult, collectList, durationFromText, durationToText, hideModal, settingsPage, showModal,
-} from '/static/shared/utils.js';
+import { collectList, durationFromText, durationToText, settingsPage } from '/static/shared/settings.js';
+import { apiResult, hideModal, showModal } from '/static/shared/utils.js';
 
 const root = document.getElementById('config-page');
 const $ = (sel) => root.querySelector(sel);

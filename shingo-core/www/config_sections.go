@@ -423,7 +423,7 @@ func (b bootSnapshot) pending(c *config.Config) []string {
 
 // durationText writes a duration the way the page shows one: one box with its
 // unit in it ("45 min", "10 s", "1 h 30 min"), never "45m0s". The page's
-// durationToText (shared/utils.js) writes the same.
+// durationToText (shared/settings.js) writes the same.
 func durationText(d time.Duration) string {
 	if d == 0 {
 		return "0 s"

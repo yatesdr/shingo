@@ -7,7 +7,7 @@ import (
 )
 
 // TestUtilsJSSettingsPage runs the Node-based unit tests for the settings-page
-// helpers in utils.js (durations both ways, list collect after remove-first,
+// helpers in settings.js (durations both ways, list collect after remove-first,
 // apiResult, settingsPage's dirty tracking and save). Skipped if `node` is not
 // on PATH (matches the existing JS test wrappers).
 func TestUtilsJSSettingsPage(t *testing.T) {

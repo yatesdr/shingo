@@ -49,10 +49,11 @@ func TestJSExports_ListsEveryExport(t *testing.T) {
 
 func TestJSExports_TheRealModule(t *testing.T) {
 	for file, names := range map[string][]string{
-		"shared/dom.js":   {"escapeHtml", "h", "el", "debounce"},
-		"shared/clock.js": {"serverNow", "formatTime", "formatDuration"},
-		"shared/list.js":  {"installTableSort", "reconcileList", "createStore"},
-		"shared/utils.js": {"api", "createSSE"},
+		"shared/dom.js":      {"escapeHtml", "h", "el", "debounce"},
+		"shared/clock.js":    {"serverNow", "formatTime", "formatDuration"},
+		"shared/list.js":     {"installTableSort", "reconcileList", "createStore"},
+		"shared/settings.js": {"settingsPage", "durationFromText", "collectList"},
+		"shared/utils.js":    {"api", "createSSE"},
 	} {
 		got, err := jsexportsTable(repoRoot, file)
 		if err != nil {

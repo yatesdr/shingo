@@ -18,8 +18,8 @@ What it holds, by kind:
   `status-classes.css` (one badge class per protocol status), `components.css`
   (the component rules both apps share), the JS primitives one job per file
   (`dom.js` the HTML escape and DOM helpers, `clock.js` the server's clock and
-  the time formatters, `list.js` table sort and keyed lists, `utils.js` the
-  rest; see
+  the time formatters, `list.js` table sort and keyed lists, `settings.js`
+  the settings page, `utils.js` the rest; see
   [JavaScript primitives](17-javascript-primitives.md)), `esc.js` (the HTML
   escape for string-built markup), `scene-geom.js` (the map projection) and
   `icons.svg` (the icon sprite).
