@@ -111,7 +111,7 @@ function newDocument() {
     doc.getElementById('page-data').dataset = { authenticated: 'true', binTypes: '[]', edges: '[]' };
     // As the template draws them: the group sections start hidden, the two
     // switches are checkboxes.
-    ['ngrp-algorithms', 'nf-table-turn', 'lane-gate', 'nf-asrs-controls'].forEach((id) => doc.getElementById(id).classList.add('hide'));
+    ['ngrp-algorithms', 'nf-table-turn', 'nf-kanban', 'lane-gate', 'nf-asrs-controls'].forEach((id) => doc.getElementById(id).classList.add('hide'));
     doc.getElementById('nf-asrs-enabled').type = 'checkbox';
     doc.getElementById('nf-resolve-around').type = 'checkbox';
     doc.getElementById('lane-gate').appendChild(doc.getElementById('lane-gate-list'));
@@ -182,10 +182,12 @@ function load(gets, post) {
         setTimeout() {}, clearTimeout() {},
         JSON, Promise, Error, Set, Map, Array, Object, Number, String, Math,
         parseInt, parseFloat, isFinite, encodeURIComponent,
-        // The kanban's confirmable posts go through fetch, not apiPost.
+        // The kanban's confirmable posts go through fetch, not apiPost. A post
+        // refused answers non-2xx with the server's {error}, as Core does.
         fetch(url, opts) {
+            const reply = (ok, body) => ({ ok, text: () => Promise.resolve(JSON.stringify(body || {})) });
             return answer(url, JSON.parse(opts.body)).then(
-                (res) => ({ ok: true, text: () => Promise.resolve(JSON.stringify(res || {})) }));
+                (res) => reply(true, res), (err) => reply(false, { error: String(err) }));
         },
     });
     const fromApp = (n) => app[n];
@@ -219,10 +221,14 @@ function detail(id, props) {
 // The settings a group has stored that are none of the defaults (FIFO, LKND,
 // ASRS on, resolve-around off).
 const STORED = { retrieve_algorithm: 'COST', store_algorithm: 'DPTH', asrs_enabled: 'off', resolve_around: 'on' };
+const DEFAULTS = { retrieve: 'FIFO', store: 'LKND', asrs: true, resolveAround: false };
 const DETAIL = '/api/nodes/detail';
 const LANE_GATE = '/api/nodes/lane-gate-points';
 const KANBAN = '/api/nodes/kanban?id=';
 const FAILED = "Could not load this node's saved settings. Nothing will be saved. Close and reopen.";
+
+// idOf is the node id a URL asks about (?id= or ?group_id=).
+const idOf = (url) => Number(/id=(\d+)/.exec(url)[1]);
 
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
 
@@ -394,6 +400,122 @@ async function main() {
         await ctx.handleNodeSave(null, null);
         check('13 saves, and writes none of its settings', form.submitted === 1 && props(posts).length === 0,
             'submitted ' + form.submitted + ', ' + JSON.stringify(props(posts)));
+    }
+
+    console.log("a group opened after one with resolve-around on shows its own settings");
+    {
+        const answers = { 12: detail(12, STORED), 13: detail(13, {}) };
+        const { ctx, doc, posts, form } = load({ [DETAIL]: (url) => Promise.resolve(answers[idOf(url)]) });
+        ctx.openNodeModal(group(12, 'SMN-A'));
+        await settle();
+        same("12's resolve-around is on", shown(doc).resolveAround, true);
+        ctx.openNodeModal(group(13, 'SMN-B'));
+        await settle();
+        same("13 shows the defaults, none of 12's settings", shown(doc), DEFAULTS);
+        await ctx.handleNodeSave(null, null);
+        same('Save writes none of the four', props(posts), []);
+        check('the form is submitted', form.submitted === 1, 'submitted ' + form.submitted);
+    }
+
+    console.log("a late waiting-spots answer for the last group opened is dropped");
+    {
+        const spots = { 12: deferred(), 13: deferred() };
+        const { ctx, doc, posts } = load({
+            [DETAIL]: (url) => Promise.resolve(detail(idOf(url), {})),
+            [LANE_GATE]: (url) => spots[idOf(url)].p,
+        });
+        ctx.openNodeModal(group(12, 'SMN-A'));
+        await settle();
+        ctx.openNodeModal(group(13, 'SMN-B'));
+        await settle();
+        spots[12].resolve({ group_wait_points: 'AISLE-A-WAIT', lanes: [{ lane_id: 21, name: 'LANE-A1', point: 'A1-WAIT' }] });
+        await settle();
+        spots[13].resolve({ group_wait_points: 'AISLE-B-WAIT', lanes: [] });
+        await settle();
+        const box = doc.getElementById('lane-gate');
+        same("only 13's spots are drawn", box.querySelectorAll('[data-group-id]').map((r) => String(r.dataset.groupId)), ['13']);
+        same("and none of 12's lanes", box.querySelectorAll('[data-lane-id]').length, 0);
+        box.querySelector('[data-group-id]').querySelector('.group-wait-input').value = 'AISLE-B-WAIT, AISLE-B-WAIT2';
+        await ctx.handleNodeSave(null, null);
+        same("Save writes the spots typed, against 13", props(posts),
+            [{ node_id: 13, key: 'group_wait_points', value: 'AISLE-B-WAIT, AISLE-B-WAIT2' }]);
+    }
+
+    console.log("a late waiting-spots failure for the last group opened leaves the next one's shown");
+    {
+        const spots = { 12: deferred(), 13: deferred() };
+        const { ctx, doc } = load({
+            [DETAIL]: (url) => Promise.resolve(detail(idOf(url), {})),
+            [LANE_GATE]: (url) => spots[idOf(url)].p,
+        });
+        ctx.openNodeModal(group(12, 'SMN-A'));
+        await settle();
+        ctx.openNodeModal(group(13, 'SMN-B'));
+        await settle();
+        spots[13].resolve({ group_wait_points: 'AISLE-B-WAIT', lanes: [] });
+        await settle();
+        spots[12].reject('timeout');
+        await settle();
+        check("13's waiting spots are still shown", !doc.getElementById('lane-gate').classList.contains('hide'));
+    }
+
+    console.log("a kanban refusal stops the save and shows the reason");
+    {
+        const REFUSAL = 'SMN-A is already the staging group for loader CT-L';
+        let refuse = true;
+        const { ctx, posts, toasts, form } = await opened(STORED, (url) =>
+            (refuse && url === '/api/nodes/kanban/settings' ? Promise.reject(REFUSAL) : Promise.resolve({})));
+        await ctx.handleNodeSave(null, null);
+        check('the kanban post was made', posts.some((p) => p.url === '/api/nodes/kanban/settings'));
+        check('the form is not submitted', form.submitted === 0, 'submitted ' + form.submitted);
+        check('the reason is shown', toasts.some((t) => t.level === 'error' && t.message === REFUSAL), JSON.stringify(toasts));
+        refuse = false;
+        await ctx.handleNodeSave(null, null);
+        check('Save again, once it is allowed, goes through', form.submitted === 1, 'submitted ' + form.submitted);
+    }
+
+    // kanbanLoads answers each kanban load in turn from the list it returns.
+    function kanbanLoads() {
+        const loads = [];
+        return { loads, get: () => { const d = deferred(); loads.push(d); return d.p; } };
+    }
+
+    console.log("a kanban load failure for a group no longer on screen changes nothing");
+    for (const [first, then] of [[12, 13], [12, 12]]) {
+        const k = kanbanLoads();
+        const { ctx, doc, posts, toasts, form } = load({
+            [DETAIL]: (url) => Promise.resolve(detail(idOf(url), {})),
+            [KANBAN]: k.get,
+        });
+        ctx.openNodeModal(group(first, 'SMN-' + first));
+        ctx.openNodeModal(group(then, 'SMN-' + then));
+        k.loads[1].resolve({});
+        await settle();
+        k.loads[0].reject('timeout');
+        await settle();
+        const was = first === then ? "this group's earlier open" : 'group ' + first;
+        check(was + ": the kanban section is still shown", !doc.getElementById('nf-kanban').classList.contains('hide'));
+        same(was + ": no load error is shown", toasts, []);
+        await ctx.handleNodeSave(null, null);
+        same(was + ": Save writes the kanban on screen", posts.filter((p) => p.url === '/api/nodes/kanban/settings')
+            .map((p) => p.body.group_node_id), [then]);
+        check(was + ': the form is submitted', form.submitted === 1, 'submitted ' + form.submitted);
+    }
+
+    console.log("a late kanban answer for this group's earlier open does not count as this one's");
+    {
+        const k = kanbanLoads();
+        const { ctx, posts, form } = load({
+            [DETAIL]: (url) => Promise.resolve(detail(idOf(url), {})),
+            [KANBAN]: k.get,
+        });
+        ctx.openNodeModal(group(12, 'SMN-A'));
+        ctx.openNodeModal(group(12, 'SMN-A'));
+        k.loads[0].resolve({});
+        await settle();
+        await ctx.handleNodeSave(null, null);
+        check('Save writes nothing while this open is loading', form.submitted === 0 && posts.length === 0,
+            'submitted ' + form.submitted + ', posts ' + posts.length);
     }
 
     if (failures) {

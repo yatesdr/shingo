@@ -81,7 +81,11 @@ export function renderKanbanSection(isGroupType, nodeID) {
     return;
   }
   box.classList.remove('hide');
-  _kanban = blank(Number(nodeID));
+  // mine is this open's state. An answer that finds another in _kanban is for
+  // an open no longer on screen, this group's earlier one included, and changes
+  // nothing: a late failure used to hide the section of the group opened since.
+  var mine = blank(Number(nodeID));
+  _kanban = mine;
 
   Promise.all([
     apiGet('/api/nodes/kanban?id=' + nodeID),
@@ -98,7 +102,7 @@ export function renderKanbanSection(isGroupType, nodeID) {
   ]).then(function (res) {
     var cfg = res[0] || {};
     var opts = (res[1] && res[1].processes) || [];
-    if (!_kanban || _kanban.nodeID !== Number(nodeID)) return; // modal moved on
+    if (_kanban !== mine) return; // modal moved on
     _kanban.levels = (cfg.levels || []).map(function (l) {
       return {
         bin_type_id: Number(l.bin_type_id), bin_type_code: l.bin_type_code, want: Number(l.want),
@@ -135,6 +139,7 @@ export function renderKanbanSection(isGroupType, nodeID) {
     renderSupports();
     _kanban.loaded = true;
   }).catch(function (err) {
+    if (_kanban !== mine) return; // modal moved on
     console.error('renderKanbanSection', err);
     // Loud, and the section stays hidden. A section rendered from a failed fetch
     // shows an empty level an operator can save, which turns a read error into a
@@ -594,9 +599,13 @@ export async function confirmAllowedBinsNarrowing(nodeID, binTypeIDs, form) {
 // loader's staging group" wants it against the switch they just flipped, not
 // against a level row they did not touch. The station comes ahead of the supports
 // because the supports need it.
+//
+// Returns false when a post was refused or failed, with the reason shown: the
+// modal's Save stops there, since the form post would reload the page over it.
+// An operator who answers no to a "Save anyway?" has refused nothing.
 export async function saveKanban() {
   var box = document.getElementById('nf-kanban');
-  if (!box || box.classList.contains('hide') || !_kanban) return;
+  if (!box || box.classList.contains('hide') || !_kanban) return true;
 
   var nodeID = _kanban.nodeID;
   var strict = document.getElementById('nf-kanban-strict').checked;
@@ -685,7 +694,9 @@ export async function saveKanban() {
     // as-is rather than wrapped, because the string already names the setting:
     // "GRP-A is already the staging group for loader CT-L" is the whole message.
     toast('' + err, 'error', { sticky: true });
+    return false;
   }
+  return true;
 }
 
 delegateActions(document.body, {

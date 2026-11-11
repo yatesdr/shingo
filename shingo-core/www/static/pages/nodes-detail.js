@@ -93,6 +93,10 @@ export function openNodeModal(el, opts) {
       if (asrsBox) asrsBox.checked = true;
       var asrsControls = document.getElementById('nf-asrs-controls');
       if (asrsControls) asrsControls.classList.remove('hide');
+      // Resolve-around defaults OFF; loadNodeDetail ticks it for a group with
+      // resolve_around=on stored. Without this the box kept the last group's.
+      var raBox = document.getElementById('nf-resolve-around');
+      if (raBox) raBox.checked = false;
     }
   }
 
@@ -185,7 +189,8 @@ function loadNodeDetail(nodeID, isSynthetic, opts, open) {
       renderLaneGate(
         data.node && data.node.node_type_code === 'NGRP',
         data.node ? data.node.id : 0,
-        !!(opts && opts.focus === 'waiting-spots'));
+        !!(opts && opts.focus === 'waiting-spots'),
+        open);
 
       var props = data.properties || [];
       props.forEach(function(p) {
@@ -570,7 +575,8 @@ async function handleNodeSave(el, evt) {
   if (await saveTableTurn() === false) return;
   // This one can ask the human a question (a mark the map does not know).
   if (await saveLaneGatePoints() === false) return;
-  await saveKanban();
+  // A refusal (a group already a loader's staging group, say) stops here.
+  if (await saveKanban() === false) return;
 
   form.submit();
 }
@@ -632,7 +638,12 @@ var _gateRowSeq = 0;
 // without lanes: a lane cannot be added until the group has a waiting spot, so
 // a new group's spots are set here first. Hidden for anything that is not a
 // group. focus puts the waiting spots in view and the cursor in them.
-function renderLaneGate(isGroup, groupID, focus) {
+//
+// open is the _detailOpen the detail was loaded under. An answer that comes
+// back after another open is for a node no longer on screen, and is dropped.
+// Drawn, it added that group's rows to this one's section, and Save saves the
+// first group row it finds, against the group that row names.
+function renderLaneGate(isGroup, groupID, focus, open) {
   var box = document.getElementById('lane-gate');
   var list = document.getElementById('lane-gate-list');
   if (!box || !list) return;
@@ -648,6 +659,7 @@ function renderLaneGate(isGroup, groupID, focus) {
   // override.
   apiGet('/api/nodes/lane-gate-points?group_id=' + groupID)
     .then(function(data) {
+      if (open !== _detailOpen) return;
       var lanes = (data && data.lanes) || [];
       box.classList.remove('hide');
       _gateGroupID = groupID;
@@ -660,6 +672,7 @@ function renderLaneGate(isGroup, groupID, focus) {
       }
     })
     .catch(function(err) {
+      if (open !== _detailOpen) return;
       console.warn('lane gate: list lanes', err);
       box.classList.add('hide');
     });
