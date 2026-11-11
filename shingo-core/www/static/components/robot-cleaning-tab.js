@@ -13,7 +13,8 @@
 // not just LocationMarks: the knife could sit anywhere, and the server refuses
 // what is not a scene point or is a lane slot.
 import { debounce, escapeHtml } from '/static/shared/dom.js';
-import { apiResult, collectList, formatTime, settingsPage } from '/static/shared/utils.js';
+import { formatTime } from '/static/shared/clock.js';
+import { apiResult, collectList, settingsPage } from '/static/shared/utils.js';
 
 const root = () => document.getElementById('cleaning-setup');
 const pointsBox = () => document.getElementById('cleaning-points');

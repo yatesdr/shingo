@@ -49,7 +49,7 @@
 //     queue until both are empty. setInterval and requestAnimationFrame are
 //     collected and never run (the rail's re-read and the re-measure pass
 //     are not acts a pin drives).
-//   - formatClock / formatTime (shared/utils.js): the timestamp as given —
+//   - formatClock / formatTime (shared/clock.js): the timestamp as given —
 //     the plant clock is not what these pins are about.
 //   - Date: a fixed instant, so a "Saved 14:05" can never make a golden flap.
 //

@@ -1,9 +1,9 @@
 import { apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
-import { formatDuration, formatTime } from '/static/shared/utils.js';
+import { formatDuration, formatTime, installLiveDurations, serverNow } from '/static/shared/clock.js';
 import { formatClockSeconds, plantDate } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';
 import { routeStripHTML, routeTimelineHTML } from '/static/components/route-strip.js';
-import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/shared/utils.js';
+import { onSSE, reconcileList } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
 // (detail page with a child-step modal open over it), so the status line is

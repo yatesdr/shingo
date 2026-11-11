@@ -239,7 +239,7 @@ const ctx = vm.createContext({
     document: document,
     window: { innerWidth: 1280, addEventListener() {} },
     fetch: fetchStub,
-    // The shared clock helpers (/static/shared/utils.js).
+    // The shared clock helpers (/static/shared/clock.js).
     serverNow: () => Date.now(),
     formatClock: (iso) => String(iso),
     // Not the loader's: the flow picture, the composer, the keypad, the

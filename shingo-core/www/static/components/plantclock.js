@@ -1,18 +1,18 @@
-// plantclock.js — Core's plant-clock helpers that shared/utils.js does not
+// plantclock.js — Core's plant-clock helpers that shared/clock.js does not
 // carry: the plant calendar date, the clock with seconds, the range window and
 // the chart bucket labels. ONE module for all of them; page modules and
 // charts.js keep no time helper of their own (guarded by
 // clock_globals_drift_test.go).
 //
 // It is not a second clock. The zone is window.PLANT_TZ with the same fallback
-// as shared/utils.js (absent → the browser zone, degraded but never garbage),
+// as shared/clock.js (absent → the browser zone, degraded but never garbage),
 // and "now" is serverNow() — never Date.now() or new Date(). Agreement with
-// shared/utils.js formatClock / formatTime is pinned by plantclock.test.js.
+// shared/clock.js formatClock / formatTime is pinned by plantclock.test.js.
 //
 // Stays in Core until Edge computes any of it (docs/shared-layer-promotion.md,
 // clause 2).
 
-import { serverNow } from '/static/shared/utils.js';
+import { serverNow } from '/static/shared/clock.js';
 
 function plantZone() {
     return (typeof window !== 'undefined' && window.PLANT_TZ) || undefined;

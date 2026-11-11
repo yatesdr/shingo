@@ -14,7 +14,7 @@
 // so the client never parses the server's lane string back apart.
 
 import { makeProjector, cubicPathD, laneKey } from '/static/shared/scene-geom.js';
-import { formatTime, serverNow } from '/static/shared/utils.js';
+import { formatTime, serverNow } from '/static/shared/clock.js';
 import { plantDate, addDays } from '/static/components/plantclock.js';
 
 // BAND_STROKE carries the ordering a SECOND time, in weight.

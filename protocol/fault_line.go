@@ -77,7 +77,7 @@ func (f FaultLine) Sentence() string {
 // string; callers wrap it in their own template.HTML, since protocol must not
 // depend on html/template's type just to hand back a fragment.
 //
-// The markup is the contract shared/utils.js installLiveDurations reads:
+// The markup is the contract shared/clock.js installLiveDurations reads:
 // data-since ticks the elapsed, data-until counts down to the give-up, and
 // data-notice-after tells the client when to swap the word beside them. The
 // grace countdown carries data-notice-only-over because it is noise beside a

@@ -7,11 +7,11 @@ import (
 )
 
 // TestEveryClockPageCarriesGlobals is Edge's half of the shared rule: a full
-// page whose scripts reach a clock function in shared/utils.js must carry
+// page whose scripts reach a clock function in shared/clock.js must carry
 // window.PLANT_TZ and window.SHINGO_CLOCK.
 //
 // The audit lives in shingo/shared/clockglobals because the contract does —
-// utils.js is shipped from that module and read by both trees, and one rule
+// clock.js is shipped from that module and read by both trees, and one rule
 // implemented twice is how the halves drift apart. See that package for what
 // this catches and why nothing failed while it was broken.
 //

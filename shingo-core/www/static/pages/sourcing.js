@@ -1,5 +1,6 @@
 import { h } from '/static/shared/dom.js';
-import { api, convertTimestamps, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
+import { convertTimestamps, formatTime, serverNow } from '/static/shared/clock.js';
+import { api, onSSE } from '/static/shared/utils.js';
 
 // Sourcing page — direction B (two-pane): a process rail on the left, that
 // process's changeover detail on the right.
@@ -193,7 +194,7 @@ const HISTORY_LIMIT = 400;
 // decimal, and a measured zero is a number. Returns null when the inputs cannot
 // support a duration, so the caller renders an absence instead of a value.
 //
-// NOT shared/utils.js formatDuration, deliberately. That helper opens with
+// NOT shared/clock.js formatDuration, deliberately. That helper opens with
 // `if (!ms || ms <= 0) return '-'`, which renders a real measured zero as the
 // absence glyph — two verdict changes inside the same second is a genuine 0 s,
 // and the doctrine's load-bearing rule is that zero, no-data and n/a must not

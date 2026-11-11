@@ -14,7 +14,8 @@
 //   • Clock is server-synced (offset from the connected + cell-heartbeat ts) so
 //     "X ago" doesn't drift over a long soak.
 
-import { formatClock, isSimClock, onSSE, serverNow, setSSEReloadOnBuild, simSpeed, syncServerClock } from '/static/shared/utils.js';
+import { formatClock, isSimClock, serverNow, simSpeed, syncServerClock } from '/static/shared/clock.js';
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 
@@ -23,7 +24,7 @@ setSSEReloadOnBuild(true);
 // ─── server-synced clock ────────────────────────────────────────────────────
 //
 // This page had the right idea first and kept a local offset. It is now the
-// shared one (shared/utils.js serverNow), for two reasons: a fixed offset does
+// shared one (shared/clock.js serverNow), for two reasons: a fixed offset does
 // not survive a speed multiplier — under a 2x clock it falls a second behind
 // per real second — and every other surface needed the same thing, which is
 // what makes it shared rather than local.

@@ -16,7 +16,8 @@
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
 import { escapeHtml } from '/static/shared/dom.js';
-import { formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, formatDuration, serverNow } from '/static/shared/clock.js';
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 import { routeStripHTML } from '/static/components/route-strip.js';
 
 (function () {
@@ -44,7 +45,7 @@ import { routeStripHTML } from '/static/components/route-strip.js';
     var d = new Date(str);
     if (isNaN(d.getTime())) return '-';
     // The ETA is the server's instant, so the countdown is taken in the
-    // server's frame. See serverNow in shared/utils.js.
+    // server's frame. See serverNow in shared/clock.js.
     var diff = d - serverNow();
     if (diff <= 0) return 'arriving';
     return formatDuration(diff);

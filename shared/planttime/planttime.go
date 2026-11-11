@@ -65,7 +65,7 @@ func FormatPtr(t *time.Time, loc *time.Location) template.HTML {
 
 // Clock renders a time-of-day-only string plant-local (e.g. "15:04") for
 // wall-clock displays and log-style columns whose shape is deliberately
-// not a full datetime. The JS twin is shared/utils.js formatClock — the
+// not a full datetime. The JS twin is shared/clock.js formatClock — the
 // two must agree, the same rule formatDuration follows.
 func Clock(t time.Time, loc *time.Location) string {
 	if loc == nil {

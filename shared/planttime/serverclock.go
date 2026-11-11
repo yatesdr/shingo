@@ -65,7 +65,7 @@ func CurrentServerClock() ServerClock {
 }
 
 // ServerClockJS renders the inline the page head carries, feeding
-// shared/utils.js's clock. Inline and synchronous for the same reason
+// shared/clock.js's clock. Inline and synchronous for the same reason
 // window.PLANT_TZ is: a fetched value paints wrong text first, and the flicker
 // is what the plant-local convention removed.
 //

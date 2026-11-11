@@ -16,7 +16,7 @@
 
 import { renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
-import { formatClock, formatTime } from '/static/shared/utils.js';
+import { formatClock, formatTime } from '/static/shared/clock.js';
 import {
     makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
 } from '/static/shared/scene-geom.js';

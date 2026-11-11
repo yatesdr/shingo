@@ -15,11 +15,11 @@ import (
 )
 
 // TestEveryClockPageCarriesGlobals is Core's half of the shared rule: a full
-// page whose scripts reach a clock function in shared/utils.js must carry
+// page whose scripts reach a clock function in shared/clock.js must carry
 // window.PLANT_TZ and window.SHINGO_CLOCK.
 //
 // The audit lives in shingo/shared/clockglobals because the contract does —
-// utils.js is shipped from that module and read by both trees, and one rule
+// clock.js is shipped from that module and read by both trees, and one rule
 // implemented twice is how the halves drift apart. See that package for what
 // this catches and why nothing failed while it was broken.
 //
@@ -103,7 +103,7 @@ func stripLineComments(src string) string { return lineComment.ReplaceAllString(
 // (getHours for axis labels, getDate for "today"), so a viewer in another zone
 // saw the plant's day start at 23:00 and captions carrying yesterday's date.
 // Plant-local dates, clocks, windows and bucket labels come from
-// components/plantclock.js; full stamps from shared/utils.js formatTime.
+// components/plantclock.js; full stamps from shared/clock.js formatTime.
 // The UTC getters stay legal — they are zone-free arithmetic.
 func TestNoPageModuleReadsTheBrowserCalendar(t *testing.T) {
 	// Number(n).toLocaleString() (a thousands separator) is not a clock read;
@@ -124,7 +124,7 @@ func TestNoPageModuleReadsTheBrowserCalendar(t *testing.T) {
 }
 
 // TestNoPageModuleDefinesADurationFormatter: there is one duration ladder,
-// shared/utils.js formatDuration (the twin of protocol.FormatDuration, guide
+// shared/clock.js formatDuration (the twin of protocol.FormatDuration, guide
 // "Durations are compound"). Core had four more, which between them printed
 // "21m 60s", "500ms", "76h 0m" and "0m" for no data.
 //
@@ -145,7 +145,7 @@ func TestNoPageModuleDefinesADurationFormatter(t *testing.T) {
 	}
 	sort.Strings(bad)
 	for _, b := range bad {
-		t.Errorf("page-local duration formatter (import formatDuration from /static/shared/utils.js): %s", b)
+		t.Errorf("page-local duration formatter (import formatDuration from /static/shared/clock.js): %s", b)
 	}
 }
 
@@ -201,7 +201,7 @@ func TestEscapeHtmlDefinedOnce(t *testing.T) {
 }
 
 // TestPlantTZReadInTwoFiles: the plant zone is read in exactly two browser
-// files — shared/utils.js (formatTime, formatClock) and Core's
+// files — shared/clock.js (formatTime, formatClock) and Core's
 // components/plantclock.js (plant date, seconds, windows, bucket labels). A
 // third reader is a third clock.
 func TestPlantTZReadInTwoFiles(t *testing.T) {
@@ -229,7 +229,7 @@ func TestPlantTZReadInTwoFiles(t *testing.T) {
 			readers["shared/"+n] = true
 		}
 	}
-	want := []string{"shared/utils.js", "static/components/plantclock.js"}
+	want := []string{"shared/clock.js", "static/components/plantclock.js"}
 	var got []string
 	for r := range readers {
 		got = append(got, r)

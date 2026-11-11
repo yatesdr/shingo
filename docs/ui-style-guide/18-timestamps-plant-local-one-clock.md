@@ -19,7 +19,7 @@ The convention, one rule each layer:
   wrong. Full datetimes render `Sep 5, 2026 09:23 CDT` inside
   `<time data-utc="2026-09-05T14:23:01Z">` — plant-local text, machine instant
   in the attribute.
-- **Client (JS)** — `shared/utils.js` `formatTime` / `formatClock` read
+- **Client (JS)** — `shared/clock.js` `formatTime` / `formatClock` read
   `window.PLANT_TZ`, inlined synchronously by each module's
   `templates/partials/clock-globals.html` (with `window.SHINGO_CLOCK`, the
   server's clock) as `window.PLANT_TZ = "{{ plantTZ }}"`. JS-rendered rows
@@ -42,20 +42,20 @@ The convention, one rule each layer:
   disambiguated by the zone abbreviation in the label, which is why the
   label is not optional decoration.
 
-**Core's plant-clock module.** What `shared/utils.js` does not carry, and Core
+**Core's plant-clock module.** What `shared/clock.js` does not carry, and Core
 alone computes, lives in one Core module,
 `shingo-core/www/static/components/plantclock.js`: the plant date
 (`plantDate`), the clock with seconds (`formatClockSeconds`), the range window
 (`windowFor`, from `serverNow()` on the plant calendar), the chart bucket label
 (`bucketLabel`) and the in-progress test (`inProgress`). It reads `PLANT_TZ`
-with the same fallback as `utils.js` and has no "now" of its own. It is Core's
+with the same fallback as `clock.js` and has no "now" of its own. It is Core's
 because only Core computes any of it (clause 2 of
 [shared-layer-promotion.md](../shared-layer-promotion.md)). It is pinned against
 `formatClock` and `formatTime` by `plantclock.test.js` (`TestPlantClockJS`), and
 Core's `clock_globals_drift_test.go` holds three rules: no page module reads the
 browser's calendar (`TestNoPageModuleReadsTheBrowserCalendar`), none defines a
 duration formatter (`TestNoPageModuleDefinesADurationFormatter`), and
-`PLANT_TZ` is read in exactly `shared/utils.js` and `plantclock.js`
+`PLANT_TZ` is read in exactly `shared/clock.js` and `plantclock.js`
 (`TestPlantTZReadInTwoFiles`).
 
 **Rows that share a minute show seconds.** In a list where several rows can

@@ -14,9 +14,8 @@
 
 import { api, delegateActions, prompt, showModal, hideModal } from '/static/js/shingoedge.js';
 import { el } from '/static/shared/dom.js';
-import {
-    settingsPage, apiResult, durationFromText, collectList, formatClock, formatTime, toast,
-} from '/static/shared/utils.js';
+import { formatClock, formatTime } from '/static/shared/clock.js';
+import { settingsPage, apiResult, durationFromText, collectList, toast } from '/static/shared/utils.js';
 import { backupRow, backupWords, makeStageRestore, stationBody, stationErrors } from '/static/js/pages/config-backups.js';
 
 const root = document.getElementById('config');

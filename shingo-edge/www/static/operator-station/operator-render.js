@@ -1,5 +1,5 @@
 import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
-import { formatClock } from '/static/shared/utils.js';
+import { formatClock } from '/static/shared/clock.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';

@@ -124,7 +124,7 @@ func TestOrdersPage_AWaitCarriesItsOwnClock(t *testing.T) {
 	}
 	if !strings.Contains(body, "data-since=") {
 		t.Error("the clock is not a live duration span — data-since is the contract " +
-			"shared/utils.js installLiveDurations reads, and every other clock on this page uses it")
+			"shared/clock.js installLiveDurations reads, and every other clock on this page uses it")
 	}
 }
 

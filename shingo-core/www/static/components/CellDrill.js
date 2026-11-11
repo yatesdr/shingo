@@ -10,7 +10,7 @@
 // plus a 60s idle auto-dismiss, matching DrillModal.
 
 import { el, h } from '/static/app.js';
-import { formatClock, formatDuration, formatTime } from '/static/shared/utils.js';
+import { formatClock, formatDuration, formatTime } from '/static/shared/clock.js';
 
 let _active = null;
 const MAX_DOTS = 400; // cap per strip; a wider window samples down to this

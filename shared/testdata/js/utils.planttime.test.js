@@ -1,4 +1,4 @@
-// Unit tests for the plant-local time formatters in shared/utils.js —
+// Unit tests for the plant-local time formatters in shared/clock.js —
 // formatTime, formatClock, and the convertTimestamps rollover shim.
 // Run under plain Node via the Go test wrapper. Exit 0 on pass, 1 on
 // any assertion failure.
@@ -35,7 +35,7 @@ function assert(cond, label) {
 }
 
 function loadUtils(windowObj) {
-    const src = sharedSource(['dom.js', 'utils.js']);
+    const src = sharedSource(['clock.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');
@@ -48,7 +48,7 @@ function loadUtils(windowObj) {
         window: win,
     };
     const ctx = vm.createContext(ctxObj);
-    vm.runInContext(transformed, ctx, { filename: 'utils.js' });
+    vm.runInContext(transformed, ctx, { filename: 'clock.js' });
     return ctxObj;
 }
 

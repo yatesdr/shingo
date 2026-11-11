@@ -361,7 +361,7 @@ served = pressView();
 // The shared bus the station takes its events from, first, so a station
 // module's own export of a name wins as its import does in the page; the
 // fake clock's server time stays the station's clock.
-['../../../../shared/dom.js', '../../../../shared/utils.js'].forEach(loadModule);
+['../../../../shared/dom.js', '../../../../shared/clock.js', '../../../../shared/utils.js'].forEach(loadModule);
 ctx.serverNow = () => now;
 ctx.formatClock = (iso) => String(iso);
 ['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',

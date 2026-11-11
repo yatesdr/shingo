@@ -368,7 +368,7 @@ console.log('sourcing/history: a measured zero is a number, not a dash');
             since: '2026-07-20T00:00:00Z',
             events: [
                 { process_key: 'SNF2', style_id: 'A', status: 'green', missing_payload: '', reason: '', observed_at: '2026-07-26T09:14:00Z' },
-                // same second: a real 0 s, which shared/utils.js formatDuration
+                // same second: a real 0 s, which shared/clock.js formatDuration
                 // would render as '-' — i.e. as an absence.
                 { process_key: 'SNF2', style_id: 'A', status: 'red', missing_payload: 'X', reason: 'missing X', observed_at: '2026-07-26T09:14:00Z' },
             ],

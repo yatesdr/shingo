@@ -7,7 +7,7 @@
 // chart.destroy() on dismiss to avoid the Chart.js leak vector (§13).
 
 import { el, h } from '/static/app.js';
-import { formatDuration } from '/static/shared/utils.js';
+import { formatDuration } from '/static/shared/clock.js';
 import { makeChart, registerZoom, chartColors, progressBarColors, progressSegment } from '/static/components/charts.js';
 import { windowFor, bucketLabel, inProgress } from '/static/components/plantclock.js';
 

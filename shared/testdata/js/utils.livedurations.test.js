@@ -1,4 +1,4 @@
-// Unit tests for installLiveDurations / renderLiveDurations in utils.js.
+// Unit tests for installLiveDurations / renderLiveDurations in clock.js.
 // Run via the Go wrapper live_durations_test.go. Exit 0 on pass, 1 on failure.
 //
 // Self-contained: brings a DOM stub with just enough querySelectorAll and
@@ -63,7 +63,7 @@ function node(attrs) {
 
 // ─── module loader with a controllable clock ──────────────────────────────
 function loadUtils(nowMs) {
-    const src = sharedSource(['dom.js', 'utils.js']);
+    const src = sharedSource(['clock.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

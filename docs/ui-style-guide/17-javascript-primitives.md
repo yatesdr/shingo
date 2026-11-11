@@ -25,14 +25,12 @@ two buses).
 
 <!-- /generated -->
 
-#### `utils.js`: HTTP, modals, confirm / prompt / toast, the SSE factory
+#### `clock.js`: the server's clock, the plant-local formatters, live durations
 
-<!-- generated: shared/utils.js -->
+<!-- generated: shared/clock.js -->
 
 | Export | Kind | What it does |
 |---|---|---|
-| `api` | const | — |
-| `apiResult` | const | apiResult is api's non-throwing twin: it always resolves to { ok, status, body }, so a 400 carrying errors{field: msg} reaches the page whole. |
 | `syncServerClock` | function | syncServerClock re-pins the origin. |
 | `serverNow` | function | serverNow is the drop-in for Date.now() ANYWHERE the result is compared against a server-supplied timestamp. |
 | `isSimClock` | function | isSimClock reports whether the server's now is simulated — for the marker that makes a sim page say so. |
@@ -45,6 +43,18 @@ two buses).
 | `renderLiveDurations` | function | Paint one frame; report whether anything remains to tick. |
 | `installHtmxLiveDurations` | function | Re-render live durations after an htmx swap, as installHtmxTimestampConversion does for &lt;time data-utc&gt;. |
 | `convertTimestamps` | function | Rewrite &lt;time data-utc="..."&gt; elements to plant-local. |
+| `installHtmxTimestampConversion` | function | installHtmxTimestampConversion wires a document.body listener for `htmx:afterSwap` that re-runs convertTimestamps() against the swapped-in subtree (event.detail.target). |
+
+<!-- /generated -->
+
+#### `utils.js`: HTTP, modals, confirm / prompt / toast, the SSE factory
+
+<!-- generated: shared/utils.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `api` | const | — |
+| `apiResult` | const | apiResult is api's non-throwing twin: it always resolves to { ok, status, body }, so a 400 carrying errors{field: msg} reaches the page whole. |
 | `createSSE` | function | Wraps EventSource with exponential backoff and build-id auto-reload. |
 | `showRefreshBanner` | function | showRefreshBanner pins a non-modal banner at the top of the viewport telling the operator a new server build is available. |
 | `showModal` | function | Open a modal. |
@@ -53,7 +63,6 @@ two buses).
 | `prompt` | function | Promise-based async prompt. |
 | `toast` | function | Auto-dismissing toast notification. |
 | `installBackdropClose` | function | installBackdropClose registers a single document-level click listener that closes any .modal-overlay element marked `data-backdrop-close` when the click target IS the overlay (not an inner .modal child). |
-| `installHtmxTimestampConversion` | function | installHtmxTimestampConversion wires a document.body listener for `htmx:afterSwap` that re-runs convertTimestamps() against the swapped-in subtree (event.detail.target). |
 | `installTableSort` | function | installTableSort(root) wires click-to-sort onto any &lt;table data-sortable&gt; under `root` (default: document). |
 | `reconcileList` | function | reconcileList — keyed create-or-update-or-remove for SSE-driven lists. |
 | `createStore` | function | createStore — minimal observable backing the global filter bar. |

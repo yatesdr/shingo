@@ -9,7 +9,7 @@
 // characterisation pins were taken on before the change (F1–F3); what each
 // showed before is recorded beside the expectation it was replaced by.
 //
-// The page runs against the REAL formatters (shared/utils.js formatDuration and
+// The page runs against the REAL formatters (shared/clock.js formatDuration and
 // formatTime, components/plantclock.js formatClockSeconds) with the plant zone
 // pinned to UTC, so the strings asserted here are the strings an operator reads.
 
@@ -38,12 +38,12 @@ function check(name, cond, detail) {
 // Enough DOM for the page's render calls, a fetch that serves one canned
 // mission payload, and the server clock pinned to `now`. Returns every element
 // the page wrote to.
-const UTILS = ['dom.js', 'utils.js']
+const UTILS = ['dom.js', 'clock.js', 'utils.js']
     .map((f) => fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', f), 'utf8'))
     .join('\n')
     .replace(/^import[^;]+;\s*/gm, '')
     .replace(/^export /gm, '');
-// plantclock.js imports serverNow from utils.js and keeps its own formatter
+// plantclock.js imports serverNow from clock.js and keeps its own formatter
 // cache, so it runs in a context of its own with serverNow handed in.
 const PLANTCLOCK = fs.readFileSync(path.join(SRC_DIR, '..', 'components', 'plantclock.js'), 'utf8')
     .replace(/^import[^;]+;\s*/gm, '')

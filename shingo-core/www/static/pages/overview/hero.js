@@ -13,7 +13,8 @@
 
 import { apiGet, h } from '/static/app.js';
 import { debounce } from '/static/shared/dom.js';
-import { onSSE, formatDuration } from '/static/shared/utils.js';
+import { formatDuration } from '/static/shared/clock.js';
+import { onSSE } from '/static/shared/utils.js';
 import { windowFor } from '/static/components/plantclock.js';
 import { KpiTile, updateKpiTile } from '/static/components/KpiTile.js';
 import { RUN_TIME_TITLE } from '/static/components/DrillModal.js';

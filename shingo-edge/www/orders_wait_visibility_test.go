@@ -61,7 +61,7 @@ func TestEdgeOrders_ASourcingOrderSaysWhyAndForHowLong(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-since="`+since.Format(time.RFC3339)+`"`) {
 		t.Errorf("the clock is not a live duration span at the wait's own instant — data-since is "+
-			"the contract shared/utils.js installLiveDurations reads, and the staged countdown and "+
+			"the contract shared/clock.js installLiveDurations reads, and the staged countdown and "+
 			"fault line on this same row already use it.\n%s", html)
 	}
 }

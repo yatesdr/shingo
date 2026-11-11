@@ -36,7 +36,7 @@ function deepEq(got, want, label) {
 }
 
 // operator-util.js reads document.body at module scope and imports serverNow
-// from shared/utils.js (formatETA differences a SERVER instant, not the
+// from shared/clock.js (formatETA differences a SERVER instant, not the
 // browser's). Strip the import and inject the function, the way the sourcing
 // harness injects onSSE and api.
 const utilSrc = fs.readFileSync(path.join(SRC_DIR, 'operator-util.js'), 'utf8')

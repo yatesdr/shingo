@@ -7,7 +7,7 @@
 // /api/missions/timeseries fetch powers all four.
 
 import { apiGet } from '/static/app.js';
-import { formatDuration } from '/static/shared/utils.js';
+import { formatDuration } from '/static/shared/clock.js';
 import { makeChart, installChartThemeHook, chartColors, withAlpha, progressBarColors, progressSegment } from '/static/components/charts.js';
 import { windowFor, bucketLabel, inProgress } from '/static/components/plantclock.js';
 import { RUN_TIME_TITLE } from '/static/components/DrillModal.js';

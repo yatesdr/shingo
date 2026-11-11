@@ -55,7 +55,7 @@ func TestFormatNilLocationFallsBackUTC(t *testing.T) {
 }
 
 // TestClockVariants pins the time-of-day shapes. These twin the JS
-// formatClock in shared/utils.js — change them in both or in neither.
+// formatClock in shared/clock.js — change them in both or in neither.
 func TestClockVariants(t *testing.T) {
 	loc := chicago(t)
 	in := time.Date(2026, 9, 5, 14, 23, 1, 500000000, time.UTC)

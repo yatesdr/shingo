@@ -273,7 +273,7 @@ function loadPage(loadOpts) {
     win.DesktopBodies = require(path.join(SRC_DIR, 'desktop-bodies.js'));
     Object.assign(global, { esc, showModal: sheetOpener, hideModal: sheetCloser });
     Object.assign(win, { esc, showModal: sheetOpener, hideModal: sheetCloser });
-    // The plant-local time formats the page imports from shared/utils.js; the
+    // The plant-local time formats the page imports from shared/clock.js; the
     // imports are stripped, so the Settings tab's live words read these.
     Object.assign(global, { formatTime: ts => String(ts || ''), formatClock: ts => String(ts || '') });
     global.fetch = (url, init) => {

@@ -1,5 +1,5 @@
 // plantclock.test.js — agreement between Core's plantclock.js and the shared
-// plant-clock helpers in shared/utils.js, on one vector table. Run under plain
+// plant-clock helpers in shared/clock.js, on one vector table. Run under plain
 // node by TestPlantClockJS (clock_globals_drift_test.go). Exit 0 on pass.
 //
 // plantclock.js must not become a second clock: for every instant and zone
@@ -24,18 +24,17 @@ function check(name, cond, detail) {
     console.log('FAIL ' + name + (detail ? ': ' + detail : ''));
 }
 
-const sharedPath = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'utils.js');
+const sharedPath = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'clock.js');
 const plantPath = path.join(SRC_DIR, 'plantclock.js');
 
 function load(win) {
     const usrc = fs.readFileSync(sharedPath, 'utf8')
-        .replace(/^import[^;]+;\s*/mg, '')
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');
     const window = Object.assign({ addEventListener: () => {} }, win);
     const u = { console, Intl, Date, Map, Set, window };
     vm.createContext(u);
-    vm.runInContext(usrc + '\n;__out = { formatClock, formatTime, serverNow };', u, { filename: 'utils.js' });
+    vm.runInContext(usrc + '\n;__out = { formatClock, formatTime, serverNow };', u, { filename: 'clock.js' });
 
     const raw = fs.readFileSync(plantPath, 'utf8');
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
@@ -117,7 +116,7 @@ for (const tz of ZONES) {
     check('plant yesterday finished', !ch.inProgress('2026-10-03T05:00:00Z', 'day'));
 }
 
-// No PLANT_TZ: degrades to the browser zone, same as shared/utils.js.
+// No PLANT_TZ: degrades to the browser zone, same as shared/clock.js.
 {
     const c = load({});
     const ts = '2026-09-05T14:23:01Z';

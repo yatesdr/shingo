@@ -16,7 +16,7 @@ that's fine. Don't migrate.
 Each module keeps its partials in its own `templates/partials/`, embedded and
 parsed with its templates; there is no template directory the two modules
 share. A partial both render the same way is written once per module and held
-together by a test: `clock-globals.html` (the globals `utils.js` reads) is
+together by a test: `clock-globals.html` (the globals `clock.js` reads) is
 audited for both trees by `shared/clockglobals`. Add a partial when a fragment
 repeats within a module; don't populate ahead of need.
 
@@ -26,7 +26,7 @@ repeats within a module; don't populate ahead of need.
 on Core, `static/js/pages/<page>.js` on Edge), loaded as modules. Two inline
 scripts are by design, both because they must run before any module does: the
 theme pre-paint in each layout's head, and the clock globals partial
-(`window.PLANT_TZ`, `window.SHINGO_CLOCK`), which `utils.js` reads
+(`window.PLANT_TZ`, `window.SHINGO_CLOCK`), which `clock.js` reads
 synchronously.
 
 Data handed from the server to a page goes in a JSON attribute, not a

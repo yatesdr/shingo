@@ -28,7 +28,8 @@ import {
 } from './operator-modal.js';
 import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
-import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog, serverNow } from '/static/shared/utils.js';
+import { serverNow } from '/static/shared/clock.js';
+import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog } from '/static/shared/utils.js';
 
 let refreshTimer = null;
 // Wall-clock deadline of the pending refreshTimer, so armRefresh can tell

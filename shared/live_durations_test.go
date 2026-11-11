@@ -7,7 +7,7 @@ import (
 )
 
 // TestUtilsJSLiveDurations runs the Node-based unit tests for
-// installLiveDurations / renderLiveDurations in utils.js. Skipped if `node` is
+// installLiveDurations / renderLiveDurations in clock.js. Skipped if `node` is
 // not on PATH (matches the existing JS test wrappers).
 func TestUtilsJSLiveDurations(t *testing.T) {
 	nodePath, err := exec.LookPath("node")

@@ -1,8 +1,8 @@
 // Pure helpers — no DOM mutation outside showToast/postAction's container lookups.
 
 // serverNow, not Date.now: formatETA below differences a SERVER instant, and
-// the two clocks are not the same one. See shared/utils.js.
-import { serverNow } from '/static/shared/utils.js';
+// the two clocks are not the same one. See shared/clock.js.
+import { serverNow } from '/static/shared/clock.js';
 
 export const stationID = parseInt(document.body.dataset.stationId, 10);
 

@@ -55,7 +55,7 @@
 
          Absent for anything not waiting, which is what keeps a ticking duration
          off an order the fleet is already carrying. data-since is the contract
-         shared/utils.js installLiveDurations reads — the same one the fault line
+         shared/clock.js installLiveDurations reads — the same one the fault line
          and the staged countdown use. */}}
     {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
     {{if $.FaultLines}}{{with index $.FaultLines .ID}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}{{end}}

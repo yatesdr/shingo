@@ -14,7 +14,8 @@
 //   /api/inventory/anomaly-summary   — carriers flagged, stale staged, undeclared.
 
 import { apiGet, escapeHtml, delegateActions, toast, timeAgoHTML } from '/static/app.js';
-import { formatClock, formatDuration, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
+import { formatClock, formatDuration, formatTime, serverNow } from '/static/shared/clock.js';
+import { onSSE } from '/static/shared/utils.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
 
 // ── state ──────────────────────────────────────────────────────────────

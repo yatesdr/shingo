@@ -1,8 +1,8 @@
-// Package clockglobals audits page templates for the globals shared/utils.js
+// Package clockglobals audits page templates for the globals shared/clock.js
 // needs before it can render a time.
 //
-// THE RULE BELONGS TO shared BECAUSE THE CONTRACT DOES. utils.js is shipped
-// from this module and read by both Core and Edge, and it is utils.js that
+// THE RULE BELONGS TO shared BECAUSE THE CONTRACT DOES. clock.js is shipped
+// from this module and read by both Core and Edge, and it is clock.js that
 // says "if you import formatClock or serverNow, your page must inline
 // window.PLANT_TZ and window.SHINGO_CLOCK". Auditing that in each tree
 // separately would mean two copies of one rule, and the next person to relax
@@ -14,7 +14,7 @@
 // layout.html), so every page using that chrome got them without anyone
 // deciding to. Five full pages do not use it — Edge's operator-display.html,
 // a touch kiosk with its own header, and Core's dashboard-display,
-// dashboard-map, dashboard-node-report and heartbeat. utils.js degrades rather
+// dashboard-map, dashboard-node-report and heartbeat. clock.js degrades rather
 // than throwing when the globals are missing: plantTZ() returns undefined and
 // formatting falls back to the VIEWER's timezone, serverNow() falls back to
 // Date.now(). So those pages rendered every timestamp on the viewer's clock
@@ -36,7 +36,7 @@ import (
 	"shingo/shared"
 )
 
-// ClockFuncs are the utils.js exports that silently fall back when the globals
+// ClockFuncs are the clock.js exports that silently fall back when the globals
 // are absent. Importing any of them makes a page subject to the rule.
 var ClockFuncs = []string{
 	"formatClock", "serverNow", "formatTime", "timeAgo", "formatDuration", "syncServerClock",
@@ -92,12 +92,12 @@ func resolveSpec(fromURL, spec string) string {
 }
 
 // takesClockFunc reports whether this source imports a clock function OUT of
-// shared/utils.js. Reading the import list is the whole point: matching only
+// shared/clock.js. Reading the import list is the whole point: matching only
 // the `from '...'` tail cannot see the names, so a detector built on it matches
 // nothing and every page trivially passes.
 func takesClockFunc(src, fromURL string) bool {
 	for _, m := range namedImportRe.FindAllStringSubmatch(src, -1) {
-		if !strings.HasSuffix(resolveSpec(fromURL, m[2]), "/shared/utils.js") {
+		if !strings.HasSuffix(resolveSpec(fromURL, m[2]), "/shared/clock.js") {
 			continue
 		}
 		names := strings.FieldsFunc(m[1], func(r rune) bool {
@@ -201,7 +201,7 @@ func Explain(r Result) string {
 	return fmt.Sprintf(
 		"%s loads %s, which reads the plant clock, but the page carries no clock globals.\n"+
 			"  Add {{template \"clock-globals\" .}} to its <head>.\n"+
-			"  Without it shared/utils.js does not fail — it falls back to the VIEWER's timezone\n"+
+			"  Without it shared/clock.js does not fail — it falls back to the VIEWER's timezone\n"+
 			"  and the VIEWER's clock, so every timestamp on this page renders plausibly and\n"+
 			"  wrongly. That is exactly how five pages shipped unnoticed.",
 		r.Page, r.Script)

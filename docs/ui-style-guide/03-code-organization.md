@@ -17,7 +17,8 @@ What it holds, by kind:
   (`//go:embed *.css *.js *.svg`): `tokens.css` (the design tokens),
   `status-classes.css` (one badge class per protocol status), `components.css`
   (the component rules both apps share), the JS primitives one job per file
-  (`dom.js` the HTML escape and DOM helpers, `utils.js` the rest; see
+  (`dom.js` the HTML escape and DOM helpers, `clock.js` the server's clock and
+  the time formatters, `utils.js` the rest; see
   [JavaScript primitives](17-javascript-primitives.md)), `esc.js` (the HTML
   escape for string-built markup), `scene-geom.js` (the map projection) and
   `icons.svg` (the icon sprite).
@@ -27,7 +28,7 @@ What it holds, by kind:
   (`emoji.go`), the layer scale (`zlayer.go`), and two HTTP helpers
   (`shared.SetHTMLContentType`, `shared.SafeNextPath`).
 - **Cross-surface answers**, one package each: `planttime` (timestamps on the
-  plant clock), `clockglobals` (the page globals `utils.js` needs),
+  plant clock), `clockglobals` (the page globals `clock.js` needs),
   `windoworder` (the order of a loader's windows).
 - **Cross-module fixtures** pinning Core against Edge: `loadervectors`,
   `comingvectors`, `fedshape`, `scenefixtures`.

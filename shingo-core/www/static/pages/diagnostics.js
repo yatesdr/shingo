@@ -1,5 +1,5 @@
 import { api, delegateActions, el, escapeHtml, toast, uiConfirm } from '/static/app.js';
-import { formatTime } from '/static/shared/utils.js';
+import { formatTime } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/utils.js';
 // formatTime above is the shared plant-timezone formatter — diagnostics.js
 // previously imported its browser-local twin from app.js.

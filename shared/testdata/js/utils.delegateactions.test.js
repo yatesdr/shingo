@@ -1,6 +1,6 @@
-// Unit tests for delegateActions (/static/shared/dom.js) +
-// installHtmxTimestampConversion (/static/shared/utils.js). Run under plain Node via the Go test
-// wrapper utils_js_test.go. Exit 0 on pass, 1 on any assertion
+// Unit tests for delegateActions (/static/shared/dom.js) and
+// installHtmxTimestampConversion (/static/shared/clock.js). Run under
+// plain Node via the Go test wrapper utils_js_test.go. Exit 0 on pass, 1 on any assertion
 // failure.
 
 'use strict';
@@ -88,7 +88,7 @@ function loadUtils() {
 // document stub whose body remembers listeners and whose readyState
 // is 'complete' so the install path attaches synchronously.
 function loadUtilsForHtmx() {
-    const src = sharedSource(['dom.js', 'utils.js']);
+    const src = sharedSource(['clock.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

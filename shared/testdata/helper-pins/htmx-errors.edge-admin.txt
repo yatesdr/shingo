@@ -22,8 +22,8 @@ shingo-edge/www/static/js/pages/changeover.js: htmx:beforeSwap
 shingo-edge/www/static/js/pages/changeover.js: htmx:afterSwap
 shingo-edge/www/static/js/pages/changeover.js: htmx:afterSettle
 shingo-edge/www/static/js/pages/orders.js: htmx:afterSwap
-shared/utils.js: htmx:afterSwap
-shared/utils.js: htmx:afterSwap
+shared/clock.js: htmx:afterSwap
+shared/clock.js: htmx:afterSwap
 
 ## so, on a partial refresh (hx-get) that answers 4xx/5xx, or never answers
 4xx/5xx: htmx does not swap (responseHandling [45].. swap:false error:true) and fires htmx:responseError; nothing on the page listens, so the panel keeps its old content and the operator is shown nothing.

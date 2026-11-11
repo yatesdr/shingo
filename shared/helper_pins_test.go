@@ -211,7 +211,7 @@ var sharedExportsNoImporter = map[string]string{
 	// The bus's teardown and the clock's single repaint: exported for the
 	// node tests (testdata/js) and for a page that needs one.
 	"utils.js closeSSEBus":         "teardown, read by utils.dashboard.test.js",
-	"utils.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
+	"clock.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
 }
 
 var (

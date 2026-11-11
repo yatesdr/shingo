@@ -21,12 +21,14 @@
 
 import { escapeHtml } from '/static/shared/dom.js';
 import {
-    installBackdropClose,
     installHtmxLiveDurations,
     installHtmxTimestampConversion,
     installLiveDurations,
-    installTableSort,
     convertTimestamps,
+} from '/static/shared/clock.js';
+import {
+    installBackdropClose,
+    installTableSort,
 } from '/static/shared/utils.js';
 installBackdropClose();
 installHtmxTimestampConversion();

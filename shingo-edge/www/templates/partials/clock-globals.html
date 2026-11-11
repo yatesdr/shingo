@@ -1,4 +1,4 @@
-{{/* clock-globals — the two values shared/utils.js needs before it paints.
+{{/* clock-globals — the two values shared/clock.js needs before it paints.
 
      BOTH ARE INLINE AND SYNCHRONOUS ON PURPOSE. A fetch would paint wrong text
      first, which is the exact flicker the plant-local convention removed.
@@ -8,7 +8,7 @@
      IT IS A PARTIAL BECAUSE ONE PAGE DID NOT HAVE IT. These lines lived only
      in header.html, and operator-display.html is the one full page that does
      not include header.html — it is a touch kiosk with its own header, so it
-     never picked them up. shared/utils.js degrades instead of throwing when
+     never picked them up. shared/clock.js degrades instead of throwing when
      they are absent (plantTZ() -> undefined -> the VIEWER's zone, serverNow()
      -> Date.now()), so the operator boards silently rendered times on the
      tablet's clock and computed every age against it. At Hopkinsville that is

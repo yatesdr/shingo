@@ -9,7 +9,7 @@
 // zone). Numbers only and right-aligned; a span with no record is a dash,
 // never 0, because zero is a measurement and absence is not.
 import { escapeHtml } from '/static/shared/dom.js';
-import { formatTime } from '/static/shared/utils.js';
+import { formatTime } from '/static/shared/clock.js';
 
 const DASH = '—';
 
