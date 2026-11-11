@@ -724,13 +724,14 @@ async function createSSEPins(surfaceName) {
 async function busPins() {
     const out = [
         '# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus',
-        '# of shared/bus.js, showRefreshBanner of shared/utils.js. One page (shared/bus.js, as the',
+        '# of shared/bus.js; it dispatches build-changed, and BC shows showRefreshBanner of shared/utils.js',
+        '# as the Core hub (app.js) does. One page (shared/bus.js, as the',
         '# operator station loads it), steps in order; a "second page" is a fresh one.',
         '',
     ];
     const surface = SURFACES.find((s) => s.name === 'shared');
     // busPage is a page with the bus loaded beside utils.js, one instance of
-    // each (bus.js takes the banner from utils.js).
+    // each. The bus shows no banner: a page subscribes build-changed to show it.
     const busPage = () => { const q = page(surface); q.bus = q.r.load('/static/shared/bus.js'); return q; };
     const p = busPage();
     const r = p.r;
@@ -764,6 +765,10 @@ async function busPins() {
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":10}', async () => s2.emit('heartbeat', { build: 'b1', seq: 10 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":12}', async () => s2.emit('heartbeat', { build: 'b1', seq: 12 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1"}  (no seq: Core)', async () => s2.emit('heartbeat', { build: 'b1' }));
+    await step('onSSE("build-changed", BC), BC calling showRefreshBanner() as the Core hub (app.js) does', async () => {
+        const note = handlerNote(r, 'BC');
+        bus.onSSE('build-changed', function () { note.apply(null, arguments); m.showRefreshBanner(); });
+    });
     await step('#' + s2.n + ' ← heartbeat {"build":"b2","seq":12}  (a new build)', async () => s2.emit('heartbeat', { build: 'b2', seq: 12 }));
     if (r.doc.getElementById('shingo-refresh-banner')) {
         out.push('    the banner:');
@@ -818,6 +823,7 @@ async function busPins() {
         ['onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.bus.onSSE('b', () => {}); }],
         ['onSSE("a"), stream up, then setSSEQuery({station:7}) and the stream errors', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.r.streams[0].fail(0); await q.r.advance(2000); }],
         ['window beforeunload with the stream up', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.r.window.dispatchEvent(new Event('beforeunload')); }],
+        ['onSSE("a"), stream up, ← connected {"build":"b1"} then {"build":"b2"}, nothing subscribed to build-changed', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.r.streams[0].emit('connected', { build: 'b1' }); q.r.streams[0].emit('connected', { build: 'b2' }); q.r.note('refresh banner in the DOM: ' + !!q.r.doc.getElementById('shingo-refresh-banner')); }],
     ]) {
         const q = busPage();
         const qs = [];

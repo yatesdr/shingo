@@ -1,5 +1,6 @@
 # onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus
-# of shared/bus.js, showRefreshBanner of shared/utils.js. One page (shared/bus.js, as the
+# of shared/bus.js; it dispatches build-changed, and BC shows showRefreshBanner of shared/utils.js
+# as the Core hub (app.js) does. One page (shared/bus.js, as the
 # operator station loads it), steps in order; a "second page" is a fresh one.
 
 onSSE("order-update", A); onSSE("order-update", B); onSSE("connected", C); onSSE("disconnected", D) — before a microtask
@@ -36,7 +37,10 @@ onSSE("stream-gap", G); onSSE("heartbeat", H)
     t=0 handler H({"build":"b1","seq":12}, <event>)
 #2 ← heartbeat {"build":"b1"}  (no seq: Core)
     t=0 handler H({"build":"b1"}, <event>)
+onSSE("build-changed", BC), BC calling showRefreshBanner() as the Core hub (app.js) does
+    (nothing)
 #2 ← heartbeat {"build":"b2","seq":12}  (a new build)
+    t=0 handler BC({"build":"b2","seq":12}, <event>)
     t=0 handler H({"build":"b2","seq":12}, <event>)
     t=0 refresh banner shown
     the banner:
@@ -52,6 +56,7 @@ showRefreshBanner() again while it is shown
 click Dismiss
     t=0 refresh banner gone
 #2 ← connected {"build":"b2"}  (the new build again, after Dismiss)
+    t=0 handler BC({"build":"b2"}, <event>)
     t=0 handler C({"build":"b2"}, <event>)
     t=0 refresh banner shown
 click Refresh
@@ -144,3 +149,6 @@ a second page: onSSE("a"), stream up, then setSSEQuery({station:7}) and the stre
 a second page: window beforeunload with the stream up
     t=0 open #1 /events?topics=a
     t=0 close #1
+a second page: onSSE("a"), stream up, ← connected {"build":"b1"} then {"build":"b2"}, nothing subscribed to build-changed
+    t=0 open #1 /events?topics=a
+    t=0 refresh banner in the DOM: false

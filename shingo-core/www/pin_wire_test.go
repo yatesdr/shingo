@@ -110,9 +110,10 @@ func TestPinWire_W1_CoreTestOrdersHideModalMapped(t *testing.T) {
 // "/"), and dashboard-landing.js swaps it in on order-update on a 1500 ms
 // debounce, never in a hidden tab, with one catch-up when the tab is shown,
 // re-arming the wait clocks after each swap and setting the strip's count
-// from the same answer. app.js (on every page) still subscribes to
-// system-status only: RM4 empties that handler's body and keeps the
-// subscription.
+// from the same answer. app.js (on every page) still subscribes to one
+// server topic, system-status: RM4 empties that handler's body and keeps the
+// subscription. Its other subscription, build-changed, is the bus's own
+// signal (a stream type, no topic) that it turns into the refresh banner.
 func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 	page := pinReadFile(t, "templates/dashboard.html")
 	if !strings.Contains(page, `src="/static/pages/dashboard-landing.js`) {
@@ -157,8 +158,20 @@ func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 
 	app := pinReadFile(t, "static/app.js")
 	subs := regexp.MustCompile(`onSSE\(\s*'([\w-]+)'`).FindAllStringSubmatch(app, -1)
-	if len(subs) != 1 || subs[0][1] != "system-status" {
-		t.Errorf("app.js onSSE subscriptions = %v, want exactly [system-status]", subs)
+	var topics []string
+	banner := false
+	for _, s := range subs {
+		if s[1] == "build-changed" {
+			banner = true
+			continue
+		}
+		topics = append(topics, s[1])
+	}
+	if len(topics) != 1 || topics[0] != "system-status" {
+		t.Errorf("app.js onSSE topics = %v, want exactly [system-status]", topics)
+	}
+	if !banner {
+		t.Errorf("app.js no longer subscribes build-changed: a Core redeploy would show no refresh banner")
 	}
 }
 

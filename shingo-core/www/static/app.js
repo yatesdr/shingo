@@ -22,7 +22,7 @@ import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
 import { formatTime, timeAgo } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
-import { installBackdropClose } from '/static/shared/utils.js';
+import { installBackdropClose, showRefreshBanner } from '/static/shared/utils.js';
 installBackdropClose();
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep
@@ -302,9 +302,10 @@ export function setText(id, v) {
 
 // ─── SSE bus: the subscription every page has ───────────────────────────
 //
-// The shared onSSE bus (shared/utils.js) maintains ONE EventSource per tab,
-// handles reconnect/backoff, and shows the build-id refresh banner on a Core
-// redeploy — so this file no longer opens its own EventSource. app.js loads on
+// The shared onSSE bus (shared/bus.js) maintains ONE EventSource per tab,
+// handles reconnect/backoff, and dispatches 'build-changed' on a Core
+// redeploy, which the subscription below turns into the refresh banner — so
+// this file no longer opens its own EventSource. app.js loads on
 // every page, and because the bus opens its connection on the first
 // subscription, subscribing here keeps build-id detection running on every
 // page. Page-specific events
@@ -319,11 +320,16 @@ export function setText(id, v) {
 // The handler is empty on purpose (RM4): the nav pills it used to paint
 // (#fleet-status, #msg-status, #redis-status) are in no template. The
 // SUBSCRIPTION is what matters: it is the one every layout page has, so
-// without it _busSync (shared/utils.js) never connects on a page with no
+// without it _busSync (shared/bus.js) never connects on a page with no
 // handler of its own and the new-build banner stops there. Do not swap it for
 // 'connected': that topic is excluded from the filter list, so the page would
 // become an unfiltered client and receive every event.
 onSSE('system-status', function() {});
+
+// The bus only says the build changed; a Core admin page shows the banner. A
+// kiosk (the dashboards) sets setSSEReloadOnBuild and never dispatches this.
+// 'build-changed' is a stream type, so it adds no topic and opens nothing.
+onSSE('build-changed', function() { showRefreshBanner(); });
 
 // ─── Auto-dispatching delegated click handler ─────────────────────────
 //

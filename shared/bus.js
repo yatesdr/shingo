@@ -5,9 +5,10 @@
 // ES module, served at /static/shared/bus.js; a page imports each helper from
 // here, so a page has one bus. Nothing runs at import: the stream opens on the
 // first subscribe, and the close on tab unload is wired on the first connect.
-// It takes showRefreshBanner (the new-build banner) from utils.js.
-
-import { showRefreshBanner } from '/static/shared/utils.js';
+// It imports nothing, and no UI: a build change is the synthetic
+// 'build-changed' it dispatches, and the page that shows the new-build banner
+// subscribes to it (Core's app.js), so a kiosk that reloads instead
+// (setSSEReloadOnBuild) loads no banner code at all.
 
 // onSSE — single-connection, multi-subscriber SSE event bus.
 //
@@ -30,8 +31,9 @@ import { showRefreshBanner } from '/static/shared/utils.js';
 //
 // On every (re)connect the bus dispatches a synthetic 'connected' event, so
 // sections can re-fetch their snapshot and close the gap of events missed
-// while disconnected (§13). Build-id mismatch shows the shared refresh
-// banner. handler receives (parsedJSON, rawEvent).
+// while disconnected (§13). A build-id mismatch dispatches the synthetic
+// 'build-changed' with the frame that carried the new build, or reloads a
+// kiosk. handler receives (parsedJSON, rawEvent).
 //
 // A LOST FRAME IS NOT SILENT on a server that numbers its frames (the Edge's
 // /events: each frame's SSE id is the hub's sequence number, and the connected
@@ -58,7 +60,7 @@ let _busWatchdog = null;
 
 // Frames the stream itself makes, or the bus makes locally: never requested
 // as a topic, never listened to as a server type.
-const _busStreamTypes = { connected: true, disconnected: true, heartbeat: true, 'stream-gap': true };
+const _busStreamTypes = { connected: true, disconnected: true, heartbeat: true, 'stream-gap': true, 'build-changed': true };
 
 function _busDesiredTopics() {
     const out = [];
@@ -122,9 +124,9 @@ function _busDispatch(type, ev) {
 let _busReloadOnBuild = false;
 
 // setSSEReloadOnBuild switches the bus's build-id-mismatch behavior from the
-// dismissible refresh banner (admin pages) to an immediate location.reload()
-// (kiosk pages — no operator to dismiss; the right move is to adopt the new
-// Core build). Applies to mismatches seen on both the connected and heartbeat
+// 'build-changed' dispatch (admin pages show the refresh banner on it) to an
+// immediate location.reload() (kiosk pages — no operator to dismiss; the
+// right move is to adopt the new Core build). Applies to mismatches seen on both the connected and heartbeat
 // frames, so a kiosk reloads even when a proxy holds the SSE socket open
 // through a Core restart. Idempotent.
 export function setSSEReloadOnBuild(on) { _busReloadOnBuild = !!on; }
@@ -138,7 +140,7 @@ function _busCheckBuild(e) {
     if (_busReloadOnBuild) {
         if (typeof location !== 'undefined') location.reload();
     } else {
-        showRefreshBanner();
+        _busDispatch('build-changed', e);
     }
 }
 
