@@ -73,20 +73,20 @@ func TestStuckContext(t *testing.T) {
 	}
 }
 
-// TestCarrierProcessNodes_AnOrderThatNamesItsPressIsThatPress: the press a
-// cancelled order names is the whole answer to whose claims are its own; the
-// cart's own drop and pick nodes are the guess for an order that names none
-// (an Edge older than protocol.OrderRequest.ProcessNode).
-func TestCarrierProcessNodes_AnOrderThatNamesItsPressIsThatPress(t *testing.T) {
+// TestOwnProcessNodes_TheOrdersPressIsTheWholeAnswer: the press a cancelled
+// order names is the whole answer to whose claims are its own, and an order
+// that names none has none. The cart's own drop and pick nodes were the guess
+// for it; they no longer are.
+func TestOwnProcessNodes_TheOrdersPressIsTheWholeAnswer(t *testing.T) {
 	t.Parallel()
 	pick, drop := 0, 1
 	o := &orders.Order{SourceNode: "KAN-1", DeliveryNode: "POS"}
 	o.Carts = []domain.Cart{{BinID: 5, PickStep: &pick, DropStep: &drop}}
-	if got := carrierProcessNodes(o, 5); !slices.Equal(got, []string{"POS", "KAN-1"}) {
-		t.Errorf("naming no press: %v, want the cart's drop then its pick", got)
+	if got := ownProcessNodes(o); got != nil {
+		t.Errorf("naming no press: %v, want none (the cart's nodes are no guess)", got)
 	}
 	o.ProcessNode = "PRESS"
-	if got := carrierProcessNodes(o, 5); !slices.Equal(got, []string{"PRESS"}) {
+	if got := ownProcessNodes(o); !slices.Equal(got, []string{"PRESS"}) {
 		t.Errorf("naming its press: %v, want the press alone", got)
 	}
 }
