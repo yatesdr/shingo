@@ -3268,8 +3268,9 @@ async function recipeGroupPins(h) {
         const opts = wireOptions(advpop);
         click(ctx.scrim, ctx.doc, { advkind: 'pick', adv: 'refill_by' });
         await settle();
-        if (advpop.innerHTML !== '<button data-opt="0" class="on">Robot 1</button><button data-opt="1" class="">Robot 2</button>') {
-            throw new Error('the robot picker is not Robot 1 (on) / Robot 2: ' + advpop.innerHTML);
+        if (advpop.innerHTML !== '<button data-opt="0" class="on">Robot 1</button><button data-opt="1" class="">Robot 2</button>' +
+            '<button data-opt="2" class="">Robot 3</button>') {
+            throw new Error('the robot picker is not Robot 1 (on) / Robot 2 / Robot 3: ' + advpop.innerHTML);
         }
         bubble(opts[1], 'click', ctx.doc);
         click(ctx.scrim, ctx.doc, { act: 'adv-apply' });

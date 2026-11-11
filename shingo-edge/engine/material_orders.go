@@ -437,9 +437,9 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	}
 	return composePressIndexPair(pressIndexPair{
 		positions: pressIndexPositions(claim), outbound: claim.OutboundDestination,
-		wait:         func(node string) protocol.ComplexOrderStep { return stationWait(node, release.PurposeSwap) },
-		fetch:        refillPickup(nil, claim),
-		indexFetches: claim.IndexRobotFetches(), produce: claim.Role == protocol.ClaimRoleProduce,
+		wait:   func(node string) protocol.ComplexOrderStep { return stationWait(node, release.PurposeSwap) },
+		fetch:  refillPickup(nil, claim),
+		refill: claim.RefillBy.OrDefault(), produce: claim.Role == protocol.ClaimRoleProduce,
 	})
 }
 
@@ -458,8 +458,10 @@ type pressIndexPair struct {
 	// fetch is the refill's pickup (refillPickup), which says what the carrier
 	// is for.
 	fetch protocol.ComplexOrderStep
-	// indexFetches puts the refill on Robot 2 (refill_by index_robot).
-	indexFetches bool
+	// refill is who brings the back its next carrier: Robot 1 after its clear,
+	// Robot 2 after its last move, or Robot 3, in neither leg (a follow-on made
+	// at Robot 2's lift of the back, followOnOnPickup).
+	refill protocol.RefillBy
 	// produce flags the on-deck pickups Empty.
 	produce bool
 }
@@ -478,9 +480,11 @@ func pressIndexPositions(claim *processes.NodeClaim) []string {
 //	R2: wait(next) → pickup(next) → dropoff(front) → … each position behind
 //	    moved one place forward, front-most first [→ fetch → dropoff(back)]
 //
-// The refill (the bracketed pair) goes on Robot 1 unless indexFetches puts it
-// on Robot 2 after its last move. The refill setting moves only the fetch, never
-// the press pickup or the press set-down.
+// The refill (the bracketed pair) goes on Robot 1, or on Robot 2 after its last
+// move, or on neither when Robot 3 brings it: then the back is a position the
+// pair lifts and sets nothing down on, owed one follow-on (followOnPositions).
+// The refill setting moves only the fetch, never the press pickup or the press
+// set-down.
 //
 // hop A3 (2026-07-23): a PRODUCE press indexes ON-DECK EMPTIES forward onto the
 // press to be filled, so R2's pickups at the positions behind the front are
@@ -506,9 +510,12 @@ func composePressIndexPair(p pressIndexPair) (r1, r2 []protocol.ComplexOrderStep
 			protocol.ComplexOrderStep{Action: "pickup", Node: p.positions[i], Empty: p.produce},
 			protocol.ComplexOrderStep{Action: "dropoff", Node: p.positions[i-1]})
 	}
-	if p.indexFetches {
+	switch p.refill {
+	case protocol.RefillByIndexRobot:
 		r2 = append(r2, refill...)
-	} else {
+	case protocol.RefillByOwnRobot:
+		// Robot 3: neither leg fetches.
+	default:
 		r1 = append(r1, refill...)
 	}
 	return r1, r2
@@ -801,9 +808,9 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Chan
 	// below).
 	r1, r2 := composePressIndexPair(pressIndexPair{
 		positions: pressIndexPositions(fromClaim), outbound: fromClaim.OutboundDestination,
-		wait:         func(node string) protocol.ComplexOrderStep { return stationWait(node, release.PurposeReady) },
-		fetch:        refillPickup(fromClaim, toClaim),
-		indexFetches: fromClaim.IndexRobotFetches(), produce: fromClaim.Role == protocol.ClaimRoleProduce,
+		wait:   func(node string) protocol.ComplexOrderStep { return stationWait(node, release.PurposeReady) },
+		fetch:  refillPickup(fromClaim, toClaim),
+		refill: fromClaim.RefillBy.OrDefault(), produce: fromClaim.Role == protocol.ClaimRoleProduce,
 	})
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{

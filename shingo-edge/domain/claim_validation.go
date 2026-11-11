@@ -608,7 +608,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		add("refill_by", fmt.Sprintf("%q is not a robot that brings the next carrier", *in.RefillBy))
 	} else if ClaimInputHas(in, flowspec.RefillBy) && spec[flowspec.RefillBy] == flowspec.Forbidden {
 		add("refill_by",
-			"Robot 2 bringing the next carrier applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
+			"Robot 2 or Robot 3 bringing the next carrier applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
 	}
 
 	// A kept spare is what a swap fetches its carrier from, and only the four

@@ -1646,7 +1646,7 @@ function groupAdvSummary(g) {
         const v = a[key];
         if (key === 'changeover_carryover_disposition') return W(key) + ' ' + (CARRYOVER[v] || v);
         // The sheet says it as a choice of robot, so the card does too.
-        if (key === 'refill_by') return (v === 'index_robot' ? 'Robot 2' : 'Robot 1') + ' supplies';
+        if (key === 'refill_by') return refillRobot(v) + ' supplies';
         if (typeof v === 'boolean') return W(key) + ' on';
         return W(key) + ' ' + v;
     });
@@ -4016,6 +4016,16 @@ function advNumber(key) {
         'data-was="' + esc(was ? String(was) : '') + '" value="' + esc(v ? String(v) : '') + '" placeholder="—">';
 }
 
+// REFILL_ROBOT is the refill setting's stored words (protocol.RefillBy) as the
+// screens say them; blank or unknown reads as Robot 1, the default.
+const REFILL_ROBOT = { clearing_robot: 'Robot 1', index_robot: 'Robot 2', own_robot: 'Robot 3' };
+const REFILL_NOTE = {
+    clearing_robot: 'Robot 2 indexes',
+    index_robot: 'Robot 1 evacuates and leaves',
+    own_robot: 'Robot 1 evacuates, Robot 2 indexes, and Robot 3 brings the back its carrier when Robot 2 lifts it',
+};
+function refillRobot(v) { return REFILL_ROBOT[v] || REFILL_ROBOT.clearing_robot; }
+
 function advPick(key, label, cls) {
     return '<button class="pd-sel' + (cls ? ' ' + cls : '') + '" data-adv="' + key +
         '" data-advkind="pick">' + label + '<i class="car"></i></button>';
@@ -4089,10 +4099,9 @@ function advField(key) {
             break;
         }
         case 'refill_by': {
-            // A choice between two named robots, not a flag called "flipped".
-            const on = S.adv.a.refill_by === 'index_robot';
-            control = advPick(key, on ? 'Robot 2' : 'Robot 1') +
-                '<span class="pd-note">' + (on ? 'Robot 1 evacuates and leaves' : 'Robot 2 indexes') + '</span>';
+            // A choice between three named robots, not a flag called "flipped".
+            const v = S.adv.a.refill_by;
+            control = advPick(key, refillRobot(v)) + '<span class="pd-note">' + esc(REFILL_NOTE[v] || REFILL_NOTE.clearing_robot) + '</span>';
             break;
         }
         default: control = advToggle(key);
@@ -4211,10 +4220,10 @@ function advOptions(key) {
                 run: () => { S.adv.a.changeover_carryover_disposition = k; },
             }));
         case 'refill_by':
-            return [
-                { label: 'Robot 1', on: S.adv.a.refill_by !== 'index_robot', run: () => { S.adv.a.refill_by = 'clearing_robot'; } },
-                { label: 'Robot 2', on: S.adv.a.refill_by === 'index_robot', run: () => { S.adv.a.refill_by = 'index_robot'; } },
-            ];
+            return Object.keys(REFILL_ROBOT).map(k => ({
+                label: REFILL_ROBOT[k], on: refillRobot(S.adv.a.refill_by) === REFILL_ROBOT[k],
+                run: () => { S.adv.a.refill_by = k; },
+            }));
         case 'evac_nodes': {
             // THE CELL'S OWN POSITIONS, not the press's. changeover_evac_nodes
             // marks which of THIS cell's nodes are in the way of a setup.

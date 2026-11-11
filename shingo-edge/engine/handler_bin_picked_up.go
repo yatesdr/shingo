@@ -85,6 +85,7 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 	// And the keep-staged keeper, when the lift was at the line's spot: the
 	// refill behind the spare is ordered now, not at the swap's end.
 	e.keepSpotOnPickup(order, location)
+	e.followOnOnPickup(order, location)
 	// And a changeover evac's drop task, when the evac lifted at its own node.
 	e.advanceEvacDropOnPickup(order, location)
 

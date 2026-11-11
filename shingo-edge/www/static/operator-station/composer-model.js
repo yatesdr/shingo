@@ -118,9 +118,12 @@ function fieldWord(state, field) {
 // Advanced as stored or drafted (cellAdvanced); absent reads as Robot 1, the
 // minted default.
 const CARDLINE = {
-    two_robot_press_index: (c, a) => (a && a.refill_by === 'index_robot')
-        ? 'Robot 2 indexes · Robot 2 supplies ' + (c.paired || '?')
-        : 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
+    two_robot_press_index: (c, a) => {
+        const r = a && a.refill_by;
+        if (r === 'index_robot') return 'Robot 2 indexes · Robot 2 supplies ' + (c.paired || '?');
+        if (r === 'own_robot') return 'Robot 2 indexes · Robot 3 supplies ' + (c.paired || '?');
+        return 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes';
+    },
     two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
     single_robot: c => ((c.staging || c.parkOld)
         ? [c.staging && 'Robot 1 moves in', c.parkOld && 'Robot 1 clears old'].filter(Boolean).join(' · ')
