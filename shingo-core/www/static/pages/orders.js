@@ -4,7 +4,7 @@ import { formatClockSeconds, plantDate } from '/static/components/plantclock.js'
 import { relevantNotices } from '/static/pages/fleet-notices.js';
 import { routeStripHTML, routeTimelineHTML } from '/static/components/route-strip.js';
 import { reconcileList } from '/static/shared/list.js';
-import { onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
 // (detail page with a child-step modal open over it), so the status line is

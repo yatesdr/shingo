@@ -1,6 +1,6 @@
 import { escapeHtml } from '/static/shared/dom.js';
 import { formatClock, serverNow } from '/static/shared/clock.js';
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
 
 (function () {
   var body = document.body;

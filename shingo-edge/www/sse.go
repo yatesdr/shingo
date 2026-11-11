@@ -111,7 +111,7 @@ func (c *sseClient) wants(typ string) bool {
 }
 
 // parseTopics reads ?topics=a,b into a set, nil when absent or blank: the
-// shared bus (shared/utils.js onSSE) asks for exactly the types it listens to.
+// shared bus (shared/bus.js onSSE) asks for exactly the types it listens to.
 func parseTopics(raw string) map[string]bool {
 	var out map[string]bool
 	for _, t := range strings.Split(raw, ",") {
@@ -442,7 +442,7 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			// is in the queue by then (fanOut stores it after the send), so
 			// draining first means the heartbeat never runs ahead of a frame
 			// that is merely waiting to be written. A client whose last id is
-			// lower lost a frame and refetches (shared/utils.js).
+			// lower lost a frame and refetches (shared/bus.js).
 			seq := client.queued.Load()
 			if !drainSSEFrames(w, client.events) {
 				return

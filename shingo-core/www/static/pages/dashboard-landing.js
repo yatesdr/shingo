@@ -14,7 +14,7 @@
 // button the template emits.
 
 import { installLiveDurations } from '/static/shared/clock.js';
-import { onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
 import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/static/app.js';
 
 // Known kinds. A kind needs a renderer template + dashboard.js branch to display.

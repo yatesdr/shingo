@@ -19,7 +19,7 @@ What it holds, by kind:
   (the component rules both apps share), the JS primitives one job per file
   (`dom.js` the HTML escape and DOM helpers, `clock.js` the server's clock and
   the time formatters, `list.js` table sort and keyed lists, `settings.js`
-  the settings page, `utils.js` the rest; see
+  the settings page, `bus.js` the live bus, `utils.js` the rest; see
   [JavaScript primitives](17-javascript-primitives.md)), `esc.js` (the HTML
   escape for string-built markup), `scene-geom.js` (the map projection) and
   `icons.svg` (the icon sprite).

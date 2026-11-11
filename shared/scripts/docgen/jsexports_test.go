@@ -53,6 +53,7 @@ func TestJSExports_TheRealModule(t *testing.T) {
 		"shared/clock.js":    {"serverNow", "formatTime", "formatDuration"},
 		"shared/list.js":     {"installTableSort", "reconcileList", "createStore"},
 		"shared/settings.js": {"settingsPage", "durationFromText", "collectList"},
+		"shared/bus.js":      {"onSSE", "setSSEWatchdog", "closeSSEBus"},
 		"shared/utils.js":    {"api", "createSSE"},
 	} {
 		got, err := jsexportsTable(repoRoot, file)

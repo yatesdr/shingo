@@ -1,6 +1,6 @@
 // Unit tests for the dashboard primitives — reconcileList and createStore
-// (/static/shared/list.js), and the onSSE event bus (/static/shared/utils.js) (mission-telemetry
-// plan §6). Run via the Go wrapper dashboard_test.go. Exit 0 on pass, 1 on
+// (/static/shared/list.js), and the onSSE event bus (/static/shared/bus.js)
+// (mission-telemetry plan §6). Run via the Go wrapper dashboard_test.go. Exit 0 on pass, 1 on
 // any assertion failure.
 //
 // Self-contained: brings its own linked-list DOM stub (so insertBefore /
@@ -98,7 +98,7 @@ function ESStub(url) {
 }
 
 function loadUtils() {
-    const src = sharedSource(['dom.js', 'utils.js', 'list.js']);
+    const src = sharedSource(['dom.js', 'utils.js', 'list.js', 'bus.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

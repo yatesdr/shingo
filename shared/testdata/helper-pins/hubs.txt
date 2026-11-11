@@ -26,7 +26,7 @@ apiPut                own       -         -
 apiDelete             own       -         -
 apiResult             -         -         utils.js
 createSSE             -         own       utils.js
-onSSE                 -         -         utils.js
+onSSE                 -         -         bus.js
 showRefreshBanner     -         -         utils.js
 
 edge-hub window.ShingoEdge: {escapeHtml, createSSE, showModal, hideModal, confirm, prompt, populateForm, getFormData, removeRow, replaceRowCells, api, toast}

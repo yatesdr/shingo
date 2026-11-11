@@ -2,7 +2,7 @@ import { api, debounce, delegateActions, el, hideModal, openFromQuery, showModal
 import { switchTab as showTab } from '/static/shared/dom.js';
 import { installLiveDurations } from '/static/shared/clock.js';
 import { reconcileList } from '/static/shared/list.js';
-import { onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
 import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
 import { createBoard } from '/static/components/localization-board.js';
 import { loadEMaintReport, loadRobotHours } from '/static/components/robot-fleet-tab.js';
@@ -230,7 +230,7 @@ delegateActions(document.body, {
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
 // ─── live robot-grid rebuild ──────────────────────────
-// Subscribed on the shared onSSE bus (shared/utils.js) for 'robot-update'
+// Subscribed on the shared onSSE bus (shared/bus.js) for 'robot-update'
 // (Q-002 — replaces app.js's retired window.onRobotUpdate dispatch). The
 // rebuild lives in this module so it runs in the
 // scope where openRobotModal / filterRobots / currentRobotVehicle exist —

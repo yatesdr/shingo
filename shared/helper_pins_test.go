@@ -206,11 +206,9 @@ var sharedExportsNoImporter = map[string]string{
 	"utils.js confirm":   "wave C: layer",
 	"utils.js prompt":    "wave C: layer",
 	"utils.js createSSE": "wave C: the bus is the one client",
-	// The bus's banner, called from inside utils.js only.
-	"utils.js showRefreshBanner": "the bus and createSSE call it in this file",
 	// The bus's teardown and the clock's single repaint: exported for the
 	// node tests (testdata/js) and for a page that needs one.
-	"utils.js closeSSEBus":         "teardown, read by utils.dashboard.test.js",
+	"bus.js closeSSEBus":           "teardown, read by utils.dashboard.test.js",
 	"clock.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
 }
 

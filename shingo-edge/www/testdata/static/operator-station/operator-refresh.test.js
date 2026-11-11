@@ -361,7 +361,8 @@ served = pressView();
 // The shared bus the station takes its events from, first, so a station
 // module's own export of a name wins as its import does in the page; the
 // fake clock's server time stays the station's clock.
-['../../../../shared/dom.js', '../../../../shared/clock.js', '../../../../shared/utils.js'].forEach(loadModule);
+['../../../../shared/dom.js', '../../../../shared/clock.js', '../../../../shared/utils.js',
+    '../../../../shared/bus.js'].forEach(loadModule);
 ctx.serverNow = () => now;
 ctx.formatClock = (iso) => String(iso);
 ['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
@@ -706,7 +707,7 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
 //
 // What the station's stream does TODAY, before the shared-UI brief moves the
 // bus and puts a lost-connection banner on this screen (S5): pinned so that
-// change shows up here. The bus is shared/utils.js's; these are the station's
+// change shows up here. The bus is shared/bus.js's; these are the station's
 // settings of it (operator.js: setSSEReloadOnBuild, setSSEQuery,
 // setSSEWatchdog).
 {

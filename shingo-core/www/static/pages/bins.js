@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, openFromQuery, showModal, timeAgoHTML, toast, uiConfirm, uiPrompt } from '/static/app.js';
-import { onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
 
@@ -1051,7 +1051,7 @@ function ccSummary() {
 }
 
 // ===== SSE =====
-// Subscribed on the shared onSSE bus (shared/utils.js); the handler receives
+// Subscribed on the shared onSSE bus (shared/bus.js); the handler receives
 // the parsed payload. Replaces the retired app.js IIFE window.onBinUpdate
 // dispatch (Q-002).
 //

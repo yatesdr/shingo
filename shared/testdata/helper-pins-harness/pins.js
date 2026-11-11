@@ -12,7 +12,8 @@
 //   edge-hub  shingo-edge/www/static/js/shingoedge.js  createSSE showModal
 //             hideModal confirm prompt api handleResponse toast window.ShingoEdge
 //   shared    shared/utils.js  api apiResult createSSE showRefreshBanner showModal
-//             hideModal confirm prompt toast installBackdropClose, the onSSE bus
+//             hideModal confirm prompt toast installBackdropClose; shared/bus.js
+//             the onSSE bus
 //
 // plus htmx-sse.js (the htmx SSE extension Edge's changeover and orders pages
 // connect through) and a census of htmx request-error handling on Edge admin.
@@ -20,8 +21,9 @@
 // A hub loads as a page loads it: the hub module and the shared modules in one
 // realm (world.js), so a hub's import-time side effects (installBackdropClose,
 // app.js's bus subscription) are part of what its helpers do. The shared
-// surface is shared/utils.js loaded alone, as the operator station loads it;
-// a case that depends on a page having called installBackdropClose says so.
+// surface is shared/utils.js loaded with no hub, as on the operator station
+// (which reaches it through bus.js); a case that depends on a page having
+// called installBackdropClose says so.
 //
 // Every case starts a fresh page unless its label says it continues one. A
 // golden records behaviour, bugs included, and a bug is pinned as it is, never
@@ -30,36 +32,36 @@
 // BUGS PINNED AS IS (golden: case label — source):
 //   modal.edge-hub.txt "m1 has data-backdrop-close, show, press and click the
 //     overlay": the modal closes but body overflow stays "hidden" (the scroll
-//     lock is never released) — shingoedge.js:129 locks, shared/utils.js:408
+//     lock is never released) — shingoedge.js:129 locks, shared/utils.js:412
 //     (installBackdropClose) only strips .active.
 //   modal.shared.txt "show m1 {closeOnBackdrop:true}, press in the card,
 //     release on the overlay": closes on a drag that began in the card, the
-//     case installBackdropClose guards — shared/utils.js:268.
+//     case installBackdropClose guards — shared/utils.js:272.
 //   modal.shared.txt "show m2, show m1 (m1 first in the document), Escape":
 //     closes m2, the last open overlay in document order, not the last opened
-//     — shared/utils.js:259.
+//     — shared/utils.js:263.
 //   dialog.shared.txt "confirm: the page opened and hid a modal with this
 //     surface's showModal first, then Escape on body": Escape strips .active
 //     from the dialog's overlay, which stays in the DOM, and the promise never
-//     resolves — shared/utils.js:259 (the document Escape) over confirm's
+//     resolves — shared/utils.js:263 (the document Escape) over confirm's
 //     "modal-overlay active" class.
 //   dialog.shared.txt "prompt: over an open modal (this surface's showModal),
 //     Escape in the input": resolves null AND closes the modal underneath (the
-//     input's Escape, then the document's) — shared/utils.js:320 then :259.
+//     input's Escape, then the document's) — shared/utils.js:324 then :263.
 //   sse.edge-hub.txt / sse.shared-createSSE.txt "#n error, then client.close()
 //     before the reconnect fires": a stream opens after close() — the pending
-//     timer is not cancelled — shingoedge.js:97, shared/utils.js:161.
+//     timer is not cancelled — shingoedge.js:97, shared/utils.js:165.
 //   sse.edge-hub.txt handler names: "onfoo" listens for "oo", "onSSEPing" for
 //     "s-s-e-ping" — shingoedge.js:82.
 //   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
 //     0 does not disarm a watchdog already armed; the stream is dropped once
-//     more — shared/utils.js:493, :496.
+//     more — shared/bus.js:80, :83.
 //   api.core-hub.txt / api.edge-hub.txt "204 no content", "200 empty body":
-//     a 2xx with no body rejects (SyntaxError) — app.js:256, shingoedge.js:349.
+//     a 2xx with no body rejects (SyntaxError) — app.js:257, shingoedge.js:349.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
-//     app.js:252.
+//     app.js:253.
 //   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
-//     lives 3200 ms, not 5000 — shared/utils.js:371.
+//     lives 3200 ms, not 5000 — shared/utils.js:375.
 
 'use strict';
 
@@ -713,39 +715,43 @@ async function createSSEPins(surfaceName) {
 async function busPins() {
     const out = [
         '# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus',
-        '# showRefreshBanner of shared/utils.js. One page (shared/utils.js alone, as the operator',
-        '# station loads it), steps in order; a "second page" is a fresh one.',
+        '# of shared/bus.js, showRefreshBanner of shared/utils.js. One page (shared/bus.js, as the',
+        '# operator station loads it), steps in order; a "second page" is a fresh one.',
         '',
     ];
     const surface = SURFACES.find((s) => s.name === 'shared');
-    const p = page(surface);
+    // busPage is a page with the bus loaded beside utils.js, one instance of
+    // each (bus.js takes the banner from utils.js).
+    const busPage = () => { const q = page(surface); q.bus = q.r.load('/static/shared/bus.js'); return q; };
+    const p = busPage();
     const r = p.r;
     const m = p.m;
+    const bus = p.bus;
     const step = timeline(r, out);
     let offA;
     await step('onSSE("order-update", A); onSSE("order-update", B); onSSE("connected", C); onSSE("disconnected", D) — before a microtask', async () => {
-        offA = m.onSSE('order-update', handlerNote(r, 'A'));
-        m.onSSE('order-update', handlerNote(r, 'B'));
-        m.onSSE('connected', handlerNote(r, 'C'));
-        m.onSSE('disconnected', handlerNote(r, 'D'));
+        offA = bus.onSSE('order-update', handlerNote(r, 'A'));
+        bus.onSSE('order-update', handlerNote(r, 'B'));
+        bus.onSSE('connected', handlerNote(r, 'C'));
+        bus.onSSE('disconnected', handlerNote(r, 'D'));
         r.note('streams open before the microtask: ' + r.streams.length);
     });
     out.push('    #1 listens for: ' + r.streams[0].types().join(', '));
     const s1 = r.streams[0];
-    await step('onSSE("order-update", "not a function")', async () => { const off = m.onSSE('order-update', 'nope'); r.note('returns a ' + typeof off); });
+    await step('onSSE("order-update", "not a function")', async () => { const off = bus.onSSE('order-update', 'nope'); r.note('returns a ' + typeof off); });
     await step('#1 ← connected {"build":"b1","seq":5}', async () => s1.emit('connected', { build: 'b1', seq: 5 }));
     await step('#1 ← order-update {"id":1} id 6', async () => s1.emit('order-update', { id: 1 }, '6'));
     await step('#1 ← order-update "not json"', async () => s1.emit('order-update', 'not json'));
     await step('onSSE("order-update", T that throws) then #1 ← order-update {"id":2}, then T unsubscribed', async () => {
-        const offT = m.onSSE('order-update', () => { throw new Error('page bug'); });
+        const offT = bus.onSSE('order-update', () => { throw new Error('page bug'); });
         s1.emit('order-update', { id: 2 });
         offT();
     });
-    await step('onSSE("bins", E) after the stream is up', async () => { m.onSSE('bins', handlerNote(r, 'E')); });
+    await step('onSSE("bins", E) after the stream is up', async () => { bus.onSSE('bins', handlerNote(r, 'E')); });
     const s2 = r.lastStream();
     await step('A unsubscribed (offA())', async () => { offA(); });
     await step('#' + s2.n + ' ← connected {"build":"b1","seq":10}; ← order-update {"id":3}', async () => { s2.emit('connected', { build: 'b1', seq: 10 }); s2.emit('order-update', { id: 3 }); });
-    await step('onSSE("stream-gap", G); onSSE("heartbeat", H)', async () => { m.onSSE('stream-gap', handlerNote(r, 'G')); m.onSSE('heartbeat', handlerNote(r, 'H')); });
+    await step('onSSE("stream-gap", G); onSSE("heartbeat", H)', async () => { bus.onSSE('stream-gap', handlerNote(r, 'G')); bus.onSSE('heartbeat', handlerNote(r, 'H')); });
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":10}', async () => s2.emit('heartbeat', { build: 'b1', seq: 10 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":12}', async () => s2.emit('heartbeat', { build: 'b1', seq: 12 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1"}  (no seq: Core)', async () => s2.emit('heartbeat', { build: 'b1' }));
@@ -774,17 +780,17 @@ async function busPins() {
     out.push('## watchdog');
     {
         const s = r.lastStream();
-        await step('setSSEWatchdog(5000) on the open #' + s.n + ', then 6 s with no frame', async () => { m.setSSEWatchdog(5000); await r.advance(6000); });
+        await step('setSSEWatchdog(5000) on the open #' + s.n + ', then 6 s with no frame', async () => { bus.setSSEWatchdog(5000); await r.advance(6000); });
         await step('#' + s.n + ' ← heartbeat {"build":"b1"} (re-arms), then 4.9 s, a frame, 4.9 s', async () => { s.emit('heartbeat', { build: 'b1' }); await r.advance(4900); s.emit('order-update', { id: 9 }); await r.advance(4900); });
         await step('then 0.2 s more (5.1 s since the last frame)', async () => { await r.advance(200); return waitForOpen(r, 70000); });
         await step('as #' + (s.n + 1) + ' opens (its watchdog armed): setSSEWatchdog(0), #' + (s.n + 1) + ' ← connected {"build":"b1"}, then 60 s with no frame',
-            async () => { m.setSSEWatchdog(0); r.lastStream().emit('connected', { build: 'b1' }); await r.advance(60000); });
+            async () => { bus.setSSEWatchdog(0); r.lastStream().emit('connected', { build: 'b1' }); await r.advance(60000); });
     }
     out.push('');
     out.push('## reload on build');
     {
         const s = r.lastStream();
-        await step('setSSEReloadOnBuild(true); #' + s.n + ' ← connected {"build":"b3"}', async () => { m.setSSEReloadOnBuild(true); s.emit('connected', { build: 'b3' }); });
+        await step('setSSEReloadOnBuild(true); #' + s.n + ' ← connected {"build":"b3"}', async () => { bus.setSSEReloadOnBuild(true); s.emit('connected', { build: 'b3' }); });
         await step('#' + s.n + ' ← heartbeat {"build":"b3"}', async () => s.emit('heartbeat', { build: 'b3' }));
         await step('#' + s.n + ' ← heartbeat {"build":"b1"}', async () => s.emit('heartbeat', { build: 'b1' }));
     }
@@ -792,19 +798,19 @@ async function busPins() {
     out.push('## close');
     {
         const s = r.lastStream();
-        await step('#' + s.n + ' error, then closeSSEBus() before the reconnect fires', async () => { s.fail(0); m.closeSSEBus(); return waitForOpen(r, 70000); });
-        await step('onSSE("later", F) after closeSSEBus()', async () => { m.onSSE('later', handlerNote(r, 'F')); });
+        await step('#' + s.n + ' error, then closeSSEBus() before the reconnect fires', async () => { s.fail(0); bus.closeSSEBus(); return waitForOpen(r, 70000); });
+        await step('onSSE("later", F) after closeSSEBus()', async () => { bus.onSSE('later', handlerNote(r, 'F')); });
     }
     out.push('');
     out.push('## the URL');
     for (const [label, fn] of [
-        ['only stream frames subscribed: onSSE("connected", C)', (q) => q.m.onSSE('connected', () => {})],
-        ['setSSEQuery({station:7, a:"x y"}) then onSSE("b"), onSSE("a")', (q) => { q.m.setSSEQuery({ station: 7, a: 'x y' }); q.m.onSSE('b', () => {}); q.m.onSSE('a', () => {}); }],
-        ['onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")', async (q) => { q.m.onSSE('a', () => {}); await q.r.advance(0); q.m.setSSEQuery({ station: 7 }); q.m.onSSE('b', () => {}); }],
-        ['onSSE("a"), stream up, then setSSEQuery({station:7}) and the stream errors', async (q) => { q.m.onSSE('a', () => {}); await q.r.advance(0); q.m.setSSEQuery({ station: 7 }); q.r.streams[0].fail(0); await q.r.advance(2000); }],
-        ['window beforeunload with the stream up', async (q) => { q.m.onSSE('a', () => {}); await q.r.advance(0); q.r.window.dispatchEvent(new Event('beforeunload')); }],
+        ['only stream frames subscribed: onSSE("connected", C)', (q) => q.bus.onSSE('connected', () => {})],
+        ['setSSEQuery({station:7, a:"x y"}) then onSSE("b"), onSSE("a")', (q) => { q.bus.setSSEQuery({ station: 7, a: 'x y' }); q.bus.onSSE('b', () => {}); q.bus.onSSE('a', () => {}); }],
+        ['onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.bus.onSSE('b', () => {}); }],
+        ['onSSE("a"), stream up, then setSSEQuery({station:7}) and the stream errors', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.r.streams[0].fail(0); await q.r.advance(2000); }],
+        ['window beforeunload with the stream up', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.r.window.dispatchEvent(new Event('beforeunload')); }],
     ]) {
-        const q = page(surface);
+        const q = busPage();
         const qs = [];
         await timeline(q.r, qs)('a second page: ' + label, async () => { await fn(q); });
         out.push(...qs);
@@ -821,7 +827,7 @@ async function coreHubBusPins() {
     const r = makeRealm({ surface: 'core' });
     const step = timeline(r, out);
     await step('a Core page imports app.js', async () => { r.load('/static/app.js'); });
-    const shared = r.load('/static/shared/utils.js');
+    const bus = r.load('/static/shared/bus.js');
     out.push('    #1 listens for: ' + r.streams[0].types().join(', '));
     const s1 = r.streams[0];
     await step('#1 ← connected {"build":"b1"}', async () => s1.emit('connected', { build: 'b1' }));
@@ -833,7 +839,7 @@ async function coreHubBusPins() {
         out.push('    the banner:');
         out.push(dump(r.doc.getElementById('shingo-refresh-banner'), '      '));
     }
-    await step('a page module subscribes onSSE("order-update") after the stream is up', async () => { shared.onSSE('order-update', () => {}); });
+    await step('a page module subscribes onSSE("order-update") after the stream is up', async () => { bus.onSSE('order-update', () => {}); });
     await step('#' + r.lastStream().n + ' error: what the page shows while it is down', async () => {
         const before = r.doc.querySelectorAll('*').length;
         r.lastStream().fail(0);

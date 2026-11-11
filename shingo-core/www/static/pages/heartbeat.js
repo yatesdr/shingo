@@ -15,7 +15,7 @@
 //     "X ago" doesn't drift over a long soak.
 
 import { formatClock, isSimClock, serverNow, simSpeed, syncServerClock } from '/static/shared/clock.js';
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 

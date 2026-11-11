@@ -29,7 +29,7 @@ import {
 import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
 import { serverNow } from '/static/shared/clock.js';
-import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog } from '/static/shared/utils.js';
+import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog } from '/static/shared/bus.js';
 
 let refreshTimer = null;
 // Wall-clock deadline of the pending refreshTimer, so armRefresh can tell
@@ -566,7 +566,7 @@ setReleaseRefs({ renderModal, modalOpening, closeModalFrom, loadView });
 
 // ─── SSE ───
 //
-// The station takes its events from the shared bus (shared/utils.js onSSE):
+// The station takes its events from the shared bus (shared/bus.js onSSE):
 // one EventSource for every type, reconnecting after 1 s and doubling to 10 s,
 // back to 1 s on each connect, and reloading the kiosk when a connect or a
 // heartbeat names a new build (setSSEReloadOnBuild). Every type is subscribed

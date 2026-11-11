@@ -15,7 +15,7 @@
 
 import { apiGet, apiPost, escapeHtml, delegateActions, toast, debounce } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
-import { onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
 
 // ── state ──────────────────────────────────────────────────────────────

@@ -116,7 +116,7 @@
 
     {{/* BOOT WATCHDOG — deliberately a classic inline script, not a module.
 
-         The station's event bus (shared/utils.js onSSE, with
+         The station's event bus (shared/bus.js onSSE, with
          setSSEReloadOnBuild) already reloads a long-lived board when the
          build id changes, and that is the right mechanism. Its flaw is location: it
          lives INSIDE the module graph it protects, so it is reachable only

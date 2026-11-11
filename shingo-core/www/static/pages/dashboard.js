@@ -17,7 +17,7 @@
 
 import { escapeHtml } from '/static/shared/dom.js';
 import { formatClock, formatDuration, serverNow } from '/static/shared/clock.js';
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
 import { routeStripHTML } from '/static/components/route-strip.js';
 
 (function () {

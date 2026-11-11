@@ -1,6 +1,6 @@
 # onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus
-# showRefreshBanner of shared/utils.js. One page (shared/utils.js alone, as the operator
-# station loads it), steps in order; a "second page" is a fresh one.
+# of shared/bus.js, showRefreshBanner of shared/utils.js. One page (shared/bus.js, as the
+# operator station loads it), steps in order; a "second page" is a fresh one.
 
 onSSE("order-update", A); onSSE("order-update", B); onSSE("connected", C); onSSE("disconnected", D) — before a microtask
     t=0 streams open before the microtask: 0

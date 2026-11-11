@@ -1,6 +1,7 @@
 import { h } from '/static/shared/dom.js';
 import { convertTimestamps, formatTime, serverNow } from '/static/shared/clock.js';
-import { api, onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
+import { api } from '/static/shared/utils.js';
 
 // Sourcing page — direction B (two-pane): a process rail on the left, that
 // process's changeover detail on the right.

@@ -1,6 +1,6 @@
 import { api, delegateActions, escapeHtml, h, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
 import { formatTime } from '/static/shared/clock.js';
-import { onSSE } from '/static/shared/utils.js';
+import { onSSE } from '/static/shared/bus.js';
 
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
 
@@ -509,7 +509,7 @@ function showToast(msg, type) {
 }
 
 // --- SSE ---
-// Subscribed on the shared onSSE bus (shared/utils.js); the handler receives
+// Subscribed on the shared onSSE bus (shared/bus.js); the handler receives
 // the parsed payload (the bus does JSON.parse + reconnect). Replaces the
 // retired app.js IIFE window.onOrderUpdate dispatch (Q-002).
 onSSE('order-update', function(data) {

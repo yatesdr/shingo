@@ -114,6 +114,7 @@ function cellSortValue(row, columnIndex) {
 // streams": reconcileList (keyed list diffing), createStore (observable for
 // the global filter bar), and onSSE (single-connection multi-subscriber SSE
 // bus). The fourth piece — the static/components/ directory — lives in Core.
+// onSSE is bus.js's.
 
 // reconcileList — keyed create-or-update-or-remove for SSE-driven lists.
 //

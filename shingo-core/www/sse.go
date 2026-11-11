@@ -77,7 +77,7 @@ type EventHub struct {
 	mu lockcheck.RWMutex[lockorder.SSEHub]
 	// clients holds every subscriber. Each carries its own topic filter: a
 	// set of event names the client wants, nil meaning "all events". Topic
-	// filtering lets the dashboard SSE bus (shared/utils.js onSSE) request
+	// filtering lets the dashboard SSE bus (shared/bus.js onSSE) request
 	// only the event types a tab subscribed to via /events?topics=…, so a tab
 	// receives the per-pulse cell-heartbeat stream only if it asks for it.
 	// /missions does ask (missions.js subscribes to cell-heartbeat and pulses
