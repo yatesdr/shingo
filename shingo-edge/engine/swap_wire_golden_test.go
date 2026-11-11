@@ -42,6 +42,8 @@ type goldenVariant struct {
 	name         string
 	secondPaired string
 	flip         bool
+	// robot3 sets the refill to Robot 3 (own_robot): neither leg fetches.
+	robot3 bool
 }
 
 func goldenVariants(mode protocol.SwapMode) []goldenVariant {
@@ -51,6 +53,7 @@ func goldenVariants(mode protocol.SwapMode) []goldenVariant {
 	return []goldenVariant{
 		{name: "2pos"}, {name: "3pos", secondPaired: "PAIR-2"},
 		{name: "2pos-flip", flip: true}, {name: "3pos-flip", secondPaired: "PAIR-2", flip: true},
+		{name: "2pos-robot3", robot3: true}, {name: "3pos-robot3", secondPaired: "PAIR-2", robot3: true},
 	}
 }
 
@@ -114,8 +117,15 @@ func buildSwapWireGolden(t *testing.T) map[string]any {
 		for _, mode := range protocol.ConfigurableSwapModes() {
 			for _, v := range goldenVariants(mode) {
 				key := fmt.Sprintf("%s/%s/%s", role, mode, v.name)
+				vc := func(payload string) *processes.NodeClaim {
+					c := goldenClaim(role, mode, payload, v.secondPaired, v.flip)
+					if v.robot3 {
+						c.RefillBy = protocol.RefillByOwnRobot
+					}
+					return c
+				}
 
-				claim := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
+				claim := vc("P-FROM")
 				disp, err := BuildSwapDispatch(node, claim)
 				entry := map[string]any{"BuildSwapDispatch": disp}
 				if err != nil {
@@ -123,14 +133,14 @@ func buildSwapWireGolden(t *testing.T) map[string]any {
 				}
 
 				for _, pay := range []struct{ name, to string }{{"samePayload", "P-FROM"}, {"newPayload", "P-TO"}} {
-					from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
-					to := goldenClaim(role, mode, pay.to, v.secondPaired, v.flip)
+					from := vc("P-FROM")
+					to := vc(pay.to)
 					entry["BuildSwapChangeoverSteps/"+pay.name] = renderChangeoverDispatch(
 						BuildSwapChangeoverSteps(from, to, "", ""))
 				}
 
-				from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
-				to := goldenClaim(role, mode, "P-TO", v.secondPaired, v.flip)
+				from := vc("P-FROM")
+				to := vc("P-TO")
 				entry["BuildChangeoverPlan"] = map[string]any{
 					"swap": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: from, ToClaim: to}}),
 					"add":  renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationAdd, ToClaim: to}}),
