@@ -1,8 +1,13 @@
 package engine
 
 import (
-	"shingo/protocol"
+	"bytes"
+	"log"
+	"strings"
 	"testing"
+
+	"shingo/protocol"
+	"shingoedge/engine/changeover"
 )
 
 // The changeover applier must repoint the node's runtime slots at the legs it
@@ -73,5 +78,26 @@ func TestChangeoverApplier_RepointsRuntimeAtNewLegs(t *testing.T) {
 	if *rt.StagedOrderID != *task.OldMaterialReleaseOrderID {
 		t.Errorf("staged_order_id = %d, want the new evac leg %d (stale value was %d)",
 			*rt.StagedOrderID, *task.OldMaterialReleaseOrderID, stalePrevEvac)
+	}
+}
+
+// TestLogChangeoverAction_EveryPlannedShapeSaysWhatItCreated: the apply-time
+// log line names the node for every tag the planner and the decorator stamp,
+// the tool change's two included, and for a tag it has never heard of (the
+// default arm): no shape is applied silently.
+func TestLogChangeoverAction_EveryPlannedShapeSaysWhatItCreated(t *testing.T) {
+	var buf bytes.Buffer
+	prev, flags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(prev); log.SetFlags(flags) }()
+	id := int64(7)
+	for _, tag := range []string{"swap", "swap_sequential", "evacuate_staged_position", "carryover_outbound_staging",
+		"drop", "fallback_staging", "fallback_retrieve", "add", "a-shape-not-yet-named"} {
+		buf.Reset()
+		logChangeoverAction(changeover.NodeAction{NodeName: "NODE-" + tag, LogTag: tag}, &id, &id)
+		if !strings.Contains(buf.String(), "NODE-"+tag) {
+			t.Errorf("%s: logged %q, want a line naming the node", tag, buf.String())
+		}
 	}
 }

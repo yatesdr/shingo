@@ -291,8 +291,12 @@ func logChangeoverAction(action changeover.NodeAction, supplyID, evacID *int64) 
 	switch action.LogTag {
 	case "swap":
 		log.Printf("changeover: swap node %s — supply=%d (staging), evac=%d (swap w/ wait)", action.NodeName, derefID(supplyID), derefID(evacID))
-	case "evacuate":
-		log.Printf("changeover: evacuate node %s — supply=%d (staging), evac=%d (evacuate w/ 2 waits)", action.NodeName, derefID(supplyID), derefID(evacID))
+	case "swap_sequential":
+		log.Printf("changeover: swap node %s — order=%d (this position's own trip, at its ready wait)", action.NodeName, derefID(supplyID))
+	case "evacuate_staged_position":
+		log.Printf("changeover: tool change node %s — order=%d (cleared at START, held at staging for Tooling done)", action.NodeName, derefID(supplyID))
+	case "carryover_outbound_staging":
+		log.Printf("changeover: tool change node %s — order=%d (its part carries over: out to staging and back on Tooling done)", action.NodeName, derefID(supplyID))
 	case "drop":
 		log.Printf("changeover: drop node %s — evac=%d (single-robot release w/ staged wait)", action.NodeName, derefID(evacID))
 	case "fallback_staging":
@@ -301,6 +305,10 @@ func logChangeoverAction(action changeover.NodeAction, supplyID, evacID *int64) 
 		log.Printf("changeover: FALLBACK retrieve node %s — supply=%d (retrieve-only; the mode's swap builder was bypassed because InboundStaging was blank)", action.NodeName, derefID(supplyID))
 	case "add":
 		log.Printf("changeover: add node %s — supply=%d (direct deliver; node is new in this style, no evacuation)", action.NodeName, derefID(supplyID))
+	default:
+		// A tag this switch does not name still says what it created: a new
+		// shape is never applied silently.
+		log.Printf("changeover: %s node %s — supply=%d evac=%d", action.LogTag, action.NodeName, derefID(supplyID), derefID(evacID))
 	}
 }
 
