@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.3.1 — 2026-11-11
+
 Deploy: no migration.
 
 - The red "set to X, but the process is reporting Y" banner clears itself once the press reports a part of X: a die changed after the robots finished no longer leaves it up
