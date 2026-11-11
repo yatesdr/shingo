@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_PRESS_EMPTIES",
+    "payload": "PANEL-A",
+    "delivery": "PLN_001",
+    "intent": "empty"
+  },
+  "decision": {
+    "outcome": "wait",
+    "queue_code": "waiting_for_material",
+    "queue_cause": "finder-group-fenced"
+  }
+}
