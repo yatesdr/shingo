@@ -1285,3 +1285,44 @@ nav {
 .notice-toast.is-sticky { cursor: pointer; }
 .notice-action { margin-left: var(--sp-2); padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-weight: var(--fw-bold); cursor: pointer; }
 .notice-dismiss { padding: 0 var(--sp-1); border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+
+/* ── THE PICKER (style guide §34, shared/picker.js) ──────────────────────
+ * The shell's own parts. A dropdown list hangs under its search box on the
+ * dropdown rung; an always-open one (.picker--open, a checklist) sits in the
+ * flow. A member row is indented under its group; an excluded row is greyed and
+ * carries its reason. */
+.picker { position: relative; display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.picker-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.picker-chip {
+    display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-2);
+    border: 1px solid var(--sub-2); border-radius: 999px; font-size: var(--font-sm);
+}
+.picker-chip button { padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
+.picker-q {
+    padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--text); font: inherit;
+}
+.picker-filters { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.picker-filters button {
+    padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
+    background: none; color: var(--text-muted); font: inherit; font-size: var(--font-xs); cursor: pointer;
+}
+.picker-filters button.is-on { border-color: var(--accent); color: var(--accent); }
+.picker-list {
+    max-height: 18rem; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); box-shadow: var(--shadow-md);
+}
+.picker:not(.picker--open) .picker-list { position: absolute; top: 100%; left: 0; right: 0; z-index: var(--z-dropdown); margin-top: var(--sp-1); }
+.picker-list[hidden] { display: none; }
+.picker-sect { padding: var(--sp-2) var(--sp-2) var(--sp-1); color: var(--text-muted); font-size: var(--font-xs); text-transform: uppercase; }
+.picker-row, .picker-add { display: flex; align-items: baseline; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); cursor: pointer; }
+.picker-row--member { padding-left: var(--sp-6); }
+.picker-row.is-active, .picker-add.is-active { background: var(--bg); box-shadow: inset 2px 0 0 var(--accent); }
+.picker-row.is-on .picker-label { font-weight: var(--fw-bold); }
+.picker-row.is-off { color: var(--text-muted); cursor: default; }
+.picker-box { flex: 0 0 auto; width: 12px; height: 12px; border: 1px solid var(--sub-4); border-radius: 3px; }
+.picker-row.is-on .picker-box { border-color: var(--accent-solid); background: var(--accent-solid); }
+.picker-note, .picker-why { color: var(--text-muted); font-size: var(--font-xs); }
+.picker-add { color: var(--accent); }
+.picker-add.is-busy { color: var(--text-muted); cursor: progress; }
+.picker-none { padding: var(--sp-2); color: var(--text-muted); font-size: var(--font-sm); }

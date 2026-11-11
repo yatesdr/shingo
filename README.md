@@ -145,6 +145,7 @@ Every doc in `docs/`, `shingo-core/docs/` and `shingo-edge/docs/`, by its first 
 | [Event handling — delegated actions](docs/ui-style-guide/28-event-handling-delegated-actions.md) | `docs/ui-style-guide/28-event-handling-delegated-actions.md` |
 | [Mission detail — stages](docs/ui-style-guide/31-mission-detail-stages.md) | `docs/ui-style-guide/31-mission-detail-stages.md` |
 | [Settings pages](docs/ui-style-guide/33-settings-pages.md) | `docs/ui-style-guide/33-settings-pages.md` |
+| [Picker](docs/ui-style-guide/34-picker.md) | `docs/ui-style-guide/34-picker.md` |
 
 ### Shingo Core
 

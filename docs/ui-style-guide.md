@@ -54,5 +54,6 @@ it appears here the next time the generator runs.
 1. [`28-event-handling-delegated-actions.md`](ui-style-guide/28-event-handling-delegated-actions.md) — Event handling — delegated actions
 1. [`31-mission-detail-stages.md`](ui-style-guide/31-mission-detail-stages.md) — Mission detail — stages
 1. [`33-settings-pages.md`](ui-style-guide/33-settings-pages.md) — Settings pages
+1. [`34-picker.md`](ui-style-guide/34-picker.md) — Picker
 
 <!-- /generated -->
