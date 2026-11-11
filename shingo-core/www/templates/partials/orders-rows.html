@@ -93,7 +93,7 @@
 {{/* The pager: what this page is of the whole view, and the pages either
      side. Rendered with the rows so a search (which re-fetches the rows)
      moves it too; data-no-sort pins it below the rows when a header is
-     clicked (shared/utils.js installTableSort). */}}
+     clicked (shared/list.js installTableSort). */}}
 {{with .Pager}}{{if or .Summary .PrevURL .NextURL}}
 <tr class="orders-pager" data-no-sort data-summary="{{.Summary}}"><td colspan="{{if $.Authenticated}}10{{else}}9{{end}}">
   {{if .PrevURL}}<a class="btn btn-sm" href="{{.PrevURL}}" rel="prev">&larr; Newer</a>{{end}}

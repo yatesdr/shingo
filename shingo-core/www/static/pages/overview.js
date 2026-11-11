@@ -10,7 +10,8 @@
 
 import { debounce } from '/static/shared/dom.js';
 import { serverNow } from '/static/shared/clock.js';
-import { createStore, onSSE } from '/static/shared/utils.js';
+import { createStore } from '/static/shared/list.js';
+import { onSSE } from '/static/shared/utils.js';
 import { formatClockSeconds } from '/static/components/plantclock.js';
 import { apiGet, delegateActions } from '/static/app.js';
 import { openDrillModal } from '/static/components/DrillModal.js';

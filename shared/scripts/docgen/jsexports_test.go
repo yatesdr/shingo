@@ -51,6 +51,7 @@ func TestJSExports_TheRealModule(t *testing.T) {
 	for file, names := range map[string][]string{
 		"shared/dom.js":   {"escapeHtml", "h", "el", "debounce"},
 		"shared/clock.js": {"serverNow", "formatTime", "formatDuration"},
+		"shared/list.js":  {"installTableSort", "reconcileList", "createStore"},
 		"shared/utils.js": {"api", "createSSE"},
 	} {
 		got, err := jsexportsTable(repoRoot, file)

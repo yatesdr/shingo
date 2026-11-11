@@ -47,6 +47,18 @@ two buses).
 
 <!-- /generated -->
 
+#### `list.js`: table sort, keyed lists, the filter-bar store
+
+<!-- generated: shared/list.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `installTableSort` | function | installTableSort(root) wires click-to-sort onto any &lt;table data-sortable&gt; under `root` (default: document). |
+| `reconcileList` | function | reconcileList — keyed create-or-update-or-remove for SSE-driven lists. |
+| `createStore` | function | createStore — minimal observable backing the global filter bar. |
+
+<!-- /generated -->
+
 #### `utils.js`: HTTP, modals, confirm / prompt / toast, the SSE factory
 
 <!-- generated: shared/utils.js -->
@@ -63,9 +75,6 @@ two buses).
 | `prompt` | function | Promise-based async prompt. |
 | `toast` | function | Auto-dismissing toast notification. |
 | `installBackdropClose` | function | installBackdropClose registers a single document-level click listener that closes any .modal-overlay element marked `data-backdrop-close` when the click target IS the overlay (not an inner .modal child). |
-| `installTableSort` | function | installTableSort(root) wires click-to-sort onto any &lt;table data-sortable&gt; under `root` (default: document). |
-| `reconcileList` | function | reconcileList — keyed create-or-update-or-remove for SSE-driven lists. |
-| `createStore` | function | createStore — minimal observable backing the global filter bar. |
 | `setSSEQuery` | function | setSSEQuery adds parameters to the stream's URL (the station board names its station, so the Edge marks its screen online on connect and heartbeat). |
 | `setSSEWatchdog` | function | setSSEWatchdog arms the no-frame watchdog: ms with no frame of any kind and the stream is treated as dead. |
 | `setSSEReloadOnBuild` | function | setSSEReloadOnBuild switches the bus's build-id-mismatch behavior from the dismissible refresh banner (admin pages) to an immediate location.reload() (kiosk pages — no operator to dismiss; the right move is to adopt the new Core build). |

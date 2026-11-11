@@ -7,7 +7,8 @@
 import { apiGet, el, escapeHtml, timeAgo, toast } from '/static/app.js';
 import { debounce } from '/static/shared/dom.js';
 import { formatDuration, formatTime, installLiveDurations } from '/static/shared/clock.js';
-import { createStore, onSSE } from '/static/shared/utils.js';
+import { createStore } from '/static/shared/list.js';
+import { onSSE } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 // BarList is no longer imported here: U3 replaced both breakdown panels with

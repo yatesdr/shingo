@@ -1,4 +1,4 @@
-// Unit tests for installTableSort in /static/shared/utils.js. Run via
+// Unit tests for installTableSort in /static/shared/list.js. Run via
 // the Go test wrapper table_sort_test.go. Exit 0 on pass, 1 on any
 // assertion failure.
 
@@ -144,7 +144,7 @@ function assert(cond, label) {
 }
 
 function loadUtils() {
-    const src = sharedSource(['dom.js', 'utils.js']);
+    const src = sharedSource(['list.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

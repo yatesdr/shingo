@@ -26,10 +26,8 @@ import {
     installLiveDurations,
     convertTimestamps,
 } from '/static/shared/clock.js';
-import {
-    installBackdropClose,
-    installTableSort,
-} from '/static/shared/utils.js';
+import { installTableSort } from '/static/shared/list.js';
+import { installBackdropClose } from '/static/shared/utils.js';
 installBackdropClose();
 installHtmxTimestampConversion();
 // Live elapsed/countdown spans, re-armed after htmx swaps. The interval only

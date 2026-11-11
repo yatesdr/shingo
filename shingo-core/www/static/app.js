@@ -20,7 +20,8 @@
 
 import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
 import { formatTime, timeAgo } from '/static/shared/clock.js';
-import { installBackdropClose, installTableSort, onSSE } from '/static/shared/utils.js';
+import { installTableSort } from '/static/shared/list.js';
+import { installBackdropClose, onSSE } from '/static/shared/utils.js';
 installBackdropClose();
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep

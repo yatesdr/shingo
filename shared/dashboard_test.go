@@ -7,7 +7,7 @@ import (
 )
 
 // TestUtilsJSDashboardPrimitives runs the Node-based unit tests for the
-// dashboard primitives (reconcileList, createStore, onSSE) in utils.js.
+// dashboard primitives (reconcileList, createStore in list.js; onSSE in utils.js).
 // Skipped if `node` is not on PATH (matches the existing JS test wrappers).
 func TestUtilsJSDashboardPrimitives(t *testing.T) {
 	nodePath, err := exec.LookPath("node")

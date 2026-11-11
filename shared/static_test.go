@@ -14,7 +14,7 @@ import (
 // silently 404s — catching it here is much better than catching it on
 // the first plant.
 func TestSharedFilesEmbedded(t *testing.T) {
-	required := []string{"tokens.css", "status-classes.css", "utils.js", "dom.js", "clock.js"}
+	required := []string{"tokens.css", "status-classes.css", "utils.js", "dom.js", "clock.js", "list.js"}
 	for _, name := range required {
 		f, err := Files.Open(name)
 		if err != nil {
@@ -54,6 +54,11 @@ func TestUtilsJSHasExports(t *testing.T) {
 			"export function formatDuration",
 			"export function convertTimestamps",
 			"export function installHtmxTimestampConversion",
+		},
+		"list.js": {
+			"export function installTableSort",
+			"export function reconcileList",
+			"export function createStore",
 		},
 		"utils.js": {
 			"export const api",

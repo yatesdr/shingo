@@ -1,7 +1,8 @@
 import { api, debounce, delegateActions, el, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
 import { switchTab as showTab } from '/static/shared/dom.js';
 import { installLiveDurations } from '/static/shared/clock.js';
-import { reconcileList, onSSE } from '/static/shared/utils.js';
+import { reconcileList } from '/static/shared/list.js';
+import { onSSE } from '/static/shared/utils.js';
 import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
 import { createBoard } from '/static/components/localization-board.js';
 import { loadEMaintReport, loadRobotHours } from '/static/components/robot-fleet-tab.js';

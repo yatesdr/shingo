@@ -30,36 +30,36 @@
 // BUGS PINNED AS IS (golden: case label — source):
 //   modal.edge-hub.txt "m1 has data-backdrop-close, show, press and click the
 //     overlay": the modal closes but body overflow stays "hidden" (the scroll
-//     lock is never released) — shingoedge.js:131 locks, shared/utils.js:406
+//     lock is never released) — shingoedge.js:129 locks, shared/utils.js:407
 //     (installBackdropClose) only strips .active.
 //   modal.shared.txt "show m1 {closeOnBackdrop:true}, press in the card,
 //     release on the overlay": closes on a drag that began in the card, the
-//     case installBackdropClose guards — shared/utils.js:266.
+//     case installBackdropClose guards — shared/utils.js:267.
 //   modal.shared.txt "show m2, show m1 (m1 first in the document), Escape":
 //     closes m2, the last open overlay in document order, not the last opened
-//     — shared/utils.js:257.
+//     — shared/utils.js:258.
 //   dialog.shared.txt "confirm: the page opened and hid a modal with this
 //     surface's showModal first, then Escape on body": Escape strips .active
 //     from the dialog's overlay, which stays in the DOM, and the promise never
-//     resolves — shared/utils.js:257 (the document Escape) over confirm's
+//     resolves — shared/utils.js:258 (the document Escape) over confirm's
 //     "modal-overlay active" class.
 //   dialog.shared.txt "prompt: over an open modal (this surface's showModal),
 //     Escape in the input": resolves null AND closes the modal underneath (the
-//     input's Escape, then the document's) — shared/utils.js:318 then :257.
+//     input's Escape, then the document's) — shared/utils.js:319 then :258.
 //   sse.edge-hub.txt / sse.shared-createSSE.txt "#n error, then client.close()
 //     before the reconnect fires": a stream opens after close() — the pending
-//     timer is not cancelled — shingoedge.js:99, shared/utils.js:159.
+//     timer is not cancelled — shingoedge.js:97, shared/utils.js:160.
 //   sse.edge-hub.txt handler names: "onfoo" listens for "oo", "onSSEPing" for
-//     "s-s-e-ping" — shingoedge.js:84.
+//     "s-s-e-ping" — shingoedge.js:82.
 //   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
 //     0 does not disarm a watchdog already armed; the stream is dropped once
-//     more — shared/utils.js:708, :711.
+//     more — shared/utils.js:492, :495.
 //   api.core-hub.txt / api.edge-hub.txt "204 no content", "200 empty body":
-//     a 2xx with no body rejects (SyntaxError) — app.js:255, shingoedge.js:351.
+//     a 2xx with no body rejects (SyntaxError) — app.js:256, shingoedge.js:349.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
-//     app.js:251.
+//     app.js:252.
 //   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
-//     lives 3200 ms, not 5000 — shared/utils.js:369.
+//     lives 3200 ms, not 5000 — shared/utils.js:370.
 
 'use strict';
 
