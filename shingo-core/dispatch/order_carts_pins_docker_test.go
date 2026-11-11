@@ -101,8 +101,8 @@ func TestOrderCartsPin_BinForStepResolvesARelayFromItsRow(t *testing.T) {
 
 // TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan is the
 // brief's "run first, unknown today": a two-cart order whose carts are both set
-// down at the FG outbound, at two steps, diverted to containment. The plan
-// writer re-points one dropoff (repoint); whatever
+// down at the FG outbound, at two steps, the second the press's own, diverted
+// to containment. The plan writer re-points that cart's dropoff (repoint); whatever
 // each cart's record says after the divert must be the node its own drop step
 // names in the plan. Ran at main: see PINS.md for what it found.
 func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testing.T) {
@@ -117,7 +117,7 @@ func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testin
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
 		ProcessNode: "PROD-QC",
 		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"},` +
-			`{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
+			`{"action":"pickup","node":"PROD-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
 	}
 	o.HoldFromBirth(first.ID)
 	testutil.MustNoErr(t, db.CreateOrder(o), "the order")
@@ -125,7 +125,7 @@ func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testin
 	testdb.SeedCartRow(t, db, o.ID, second.ID, 2, 3)
 	steps := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: "SRC-QC"}, {Action: protocol.ActionDropoff, Node: fgn.Name},
-		{Action: protocol.ActionPickup, Node: "SRC-QC"}, {Action: protocol.ActionDropoff, Node: fgn.Name},
+		{Action: protocol.ActionPickup, Node: "PROD-QC"}, {Action: protocol.ActionDropoff, Node: fgn.Name},
 	}
 
 	if st := d.placeForContainment(o, steps); st != nil {

@@ -560,6 +560,9 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		e.logFn("transit: get bin %d after intermediate store arrival: %v", binID, uerr)
 	}
 	if updated != nil {
+		// A contained part diverted at an interior drop lands here, not on the
+		// finished path: it is held where it lands (containment_arrival.go).
+		e.stampContainmentArrival(binID, destNode, updated.PayloadCode, "intermediate store")
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 			Action:      BinActionMoved,
 			BinID:       updated.ID,

@@ -565,7 +565,8 @@ func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl place
 //     the produce node.
 //   - Claim-scoped: the lookup keys on the order's ProcessNode (the producing
 //     node), takes the mirrored claim that DECLARES a containment route, and
-//     diverts only when the leg's final dropoff IS that claim's outbound
+//     diverts only the carrier the order lifts there (containedSetDown), when
+//     its drop as asked for (authoredDrop) IS that claim's outbound
 //     destination. Swap returns, changeover evac legs and supermarket refills
 //     drop somewhere else and pass through untouched — diverting a swap's
 //     return would strand the supermarket home and stall the whole cell.
@@ -586,11 +587,11 @@ func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl place
 // group and the NGRP resolution spreads across its free children, parking on
 // full; only a CONCRETE node's capacity gate parks here.
 func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedStep) *dispatchStep {
-	f := lastDropIndex(steps)
+	f := containedSetDown(order, steps)
 	if f < 0 {
 		return nil
 	}
-	destNode := containmentDivert(d.db, order, steps[f].Node, d.dbg)
+	destNode := containmentDivert(d.db, order, authoredDrop(steps[f]), d.dbg)
 	if destNode == nil {
 		return nil
 	}
@@ -639,12 +640,42 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 	return nil
 }
 
+// containedSetDown is the drop of the carrier the order lifts at its press —
+// the carrier the contained part is on: the pickup at order.ProcessNode, then
+// carrierSetDown (through a park at staging and the lift that follows it).
+// Not the plan's last drop: on an index press refilled by Robot 1 that is the
+// back position, where the refill goes, and the full went to finished goods
+// before it. -1 when the order lifts nothing at its press (a supply leg) or
+// sets it down nowhere.
+func containedSetDown(order *orders.Order, steps []resolvedStep) int {
+	if order.ProcessNode == "" {
+		return -1
+	}
+	p := liftOff(steps, order.ProcessNode, 0, len(steps))
+	if p < 0 {
+		return -1
+	}
+	return carrierSetDown(steps, p)
+}
+
+// authoredDrop is the drop as the order asked for it: the group a slot was
+// resolved from (Group), else the node itself. A claim's outbound may be a
+// group, and by the time the divert asks, the group re-resolve has put one of
+// its slots on the step.
+func authoredDrop(s resolvedStep) string {
+	if s.Group != "" {
+		return s.Group
+	}
+	return s.Node
+}
+
 // containmentDivert is the divert's decision, one rule for the multi-step leg
 // (placeForContainment, at dispatch) and the plain move (decideTransport, at
-// planning): the node a leg whose last dropoff is final goes to instead, nil to
-// keep it. It diverts only when the order's payload is contained, the claim at
-// the order's process node declares a containment route, final IS that
-// claim's outbound destination, and the containment destination resolves to a
+// planning): the node the press's carrier, asked for at final, goes to instead,
+// nil to keep it. It diverts only when the order's payload is contained, the
+// claim at the order's process node declares a containment route, final IS
+// that claim's outbound destination as the order asked for it (a group, when
+// the claim's outbound is one), and the containment destination resolves to a
 // node. A failed read, an ambiguous route and a destination that does not
 // resolve keep the drop and say so (fail-open on read; misconfiguration is
 // visible, not guessed). An order that names no process node has no claim to

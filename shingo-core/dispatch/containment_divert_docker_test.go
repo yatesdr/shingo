@@ -42,8 +42,9 @@ func containmentFixture(t *testing.T, db *store.DB) (prod, fgn, hold *nodes.Node
 	return prod, fgn, hold
 }
 
-// containmentOrder inserts a complex order whose final dropoff is the FG
-// outbound, with steps persisted so the re-point patches them.
+// containmentOrder inserts a complex order that brings a cart to the press and
+// takes the press's own cart to the FG outbound, with steps persisted so the
+// re-point patches them.
 func containmentOrder(t *testing.T, db *store.DB, uuid, fgnName, prodName string, binID *int64) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
@@ -51,7 +52,7 @@ func containmentOrder(t *testing.T, db *store.DB, uuid, fgnName, prodName string
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgnName, PayloadCode: "PART-QC",
 		ProcessNode: prodName,
 		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + prodName + `"},` +
-			`{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgnName + `"}]`,
+			`{"action":"pickup","node":"` + prodName + `"},{"action":"dropoff","node":"` + fgnName + `"}]`,
 	}
 	if binID != nil {
 		o.HoldFromBirth(*binID)
@@ -63,12 +64,13 @@ func containmentOrder(t *testing.T, db *store.DB, uuid, fgnName, prodName string
 }
 
 // containmentSteps is the resolved shape of that plan: an interior dropoff at
-// the process node and the FG-bound final leg the divert scopes against.
+// the process node, and the FG-bound leg of the cart lifted there, which the
+// divert scopes against.
 func containmentSteps(fgnName, prodName string) []resolvedStep {
 	return []resolvedStep{
 		{Action: protocol.ActionPickup, Node: "SRC-QC"},
 		{Action: protocol.ActionDropoff, Node: prodName},
-		{Action: protocol.ActionPickup, Node: "SRC-QC"},
+		{Action: protocol.ActionPickup, Node: prodName},
 		{Action: protocol.ActionDropoff, Node: fgnName},
 	}
 }
@@ -107,7 +109,7 @@ func TestPlaceForContainment_MultiCartDropFollowsThePlan(t *testing.T) {
 	if drops := testdb.CartDropNodes(t, db, o.ID); !reflect.DeepEqual(drops, want) {
 		t.Errorf("the carts set down at %v, want %v", drops, want)
 	}
-	if want := `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"PROD-QC"},{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"QC-HOLD"}]`; got.StepsJSON != want {
+	if want := `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"PROD-QC"},{"action":"pickup","node":"PROD-QC"},{"action":"dropoff","node":"QC-HOLD"}]`; got.StepsJSON != want {
 		t.Errorf("StepsJSON = %s\nwant          %s", got.StepsJSON, want)
 	}
 
@@ -133,12 +135,12 @@ func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 		EdgeUUID: "qc-single-1", StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
 		ProcessNode: "PROD-QC",
-		StepsJSON:   `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
+		StepsJSON:   `[{"action":"pickup","node":"PROD-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
 	}
 	o.HoldFromBirth(fgBin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(o), "the single-cart FG leg")
 	steps := []resolvedStep{
-		{Action: protocol.ActionPickup, Node: "SRC-QC"},
+		{Action: protocol.ActionPickup, Node: "PROD-QC"},
 		{Action: protocol.ActionDropoff, Node: fgn.Name},
 	}
 
@@ -176,6 +178,68 @@ func TestPlaceForContainment_ScopeRefusal(t *testing.T) {
 	testutil.MustNoErr(t, err, "reload order")
 	if got.DeliveryNode != fgn.Name {
 		t.Fatalf("DeliveryNode = %q, want untouched %q", got.DeliveryNode, fgn.Name)
+	}
+}
+
+// TestPlaceForContainment_AGroupOutboundIsDiverted: a claim whose outbound is a
+// group. By the divert, the group re-resolve has put one of its slots on the
+// drop and stamped the group on it; the drop is the outbound as it was asked
+// for, so the press's carrier goes to containment.
+func TestPlaceForContainment_AGroupOutboundIsDiverted(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, hold := containmentFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	grp, err := db.CreateNodeGroup("FG-QC-GRP")
+	testutil.MustNoErr(t, err, "the FG group")
+	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: "FG-QC-GRP-1", Enabled: true, ParentID: &grp}), "its slot")
+	_, err = db.DB.Exec(`UPDATE style_claims SET outbound_destination = 'FG-QC-GRP' WHERE core_node_name = 'PROD-QC'`)
+	testutil.MustNoErr(t, err, "the claim's outbound is the group")
+	steps := []resolvedStep{rlWait("PROD-QC", WaitKindStation), {Action: protocol.ActionPickup, Node: "PROD-QC"},
+		{Action: protocol.ActionDropoff, Node: "FG-QC-GRP-1", Group: "FG-QC-GRP"}}
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "qc-group-1", "test", OrderTypeComplex, StatusPending
+		o.ProcessNode, o.DeliveryNode, o.PayloadCode = "PROD-QC", "FG-QC-GRP-1", "PART-QC"
+		o.StepsJSON = string(mustJSON(t, steps))
+	})
+
+	if st := d.placeForContainment(o, steps); st != nil {
+		t.Fatalf("the divert parked: %+v", st)
+	}
+	if steps[2].Node != hold.Name {
+		t.Errorf("the press's carrier goes to %q, want containment %s", steps[2].Node, hold.Name)
+	}
+	if got := prReload(t, db, o.ID); got.DeliveryNode != hold.Name {
+		t.Errorf("DeliveryNode = %q, want containment %s", got.DeliveryNode, hold.Name)
+	}
+}
+
+// TestPlaceForContainment_RobotOneDivertsTheFullNotItsRefill: an index press's
+// Robot 1 takes the full to finished goods and brings the back its refill, so
+// its plan's last drop is the back position. The full is diverted; the refill
+// still goes to the back, and the order still ends there.
+func TestPlaceForContainment_RobotOneDivertsTheFullNotItsRefill(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, fgn, hold := containmentFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	steps := []resolvedStep{rlWait("PROD-QC", WaitKindStation), {Action: protocol.ActionPickup, Node: "PROD-QC"},
+		{Action: protocol.ActionDropoff, Node: fgn.Name}, {Action: protocol.ActionPickup, Node: "SRC-QC"},
+		{Action: protocol.ActionDropoff, Node: "PROD-QC-BACK"}}
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "qc-r1-1", "test", OrderTypeComplex, StatusPending
+		o.ProcessNode, o.DeliveryNode, o.PayloadCode = "PROD-QC", "PROD-QC-BACK", "PART-QC"
+		o.StepsJSON = string(mustJSON(t, steps))
+	})
+
+	if st := d.placeForContainment(o, steps); st != nil {
+		t.Fatalf("the divert parked: %+v", st)
+	}
+	if steps[2].Node != hold.Name || steps[4].Node != "PROD-QC-BACK" {
+		t.Errorf("the full goes to %q and the refill to %q, want %s and the back", steps[2].Node, steps[4].Node, hold.Name)
+	}
+	if got := prReload(t, db, o.ID); got.DeliveryNode != "PROD-QC-BACK" {
+		t.Errorf("DeliveryNode = %q, want the back still: an interior drop moves in the plan alone", got.DeliveryNode)
 	}
 }
 

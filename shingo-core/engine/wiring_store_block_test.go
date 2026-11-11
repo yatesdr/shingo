@@ -540,3 +540,45 @@ func TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode(t *tes
 		t.Fatal("no BinUpdatedEvent fired for the intermediate dropoff")
 	}
 }
+
+// TestHandleStoreBlockCompleted_AContainedPartAtAnInteriorDropIsHeld: an index
+// press's Robot 1 takes the full to containment and goes on to fill the back,
+// so the contained part lands at an interior drop, stored on its block and
+// skipped by the finished path as already there. It is held where it lands,
+// or the sourcing engine hands it straight back into production.
+func TestHandleStoreBlockCompleted_AContainedPartAtAnInteriorDropIsHeld(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+	hold, line := sd.StorageNode, sd.LineNode
+	_, err := db.DB.Exec(`INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode, payload_code,
+		outbound_destination, containment_destination) VALUES ('P-CH', 'S-CH', $1, 'produce', 'two_robot_press_index', $2, 'FG-CH', $3)`,
+		line.Name, sd.Payload.Code, hold.Name)
+	testutil.MustNoErr(t, err, "the press's claim routes containment")
+	testutil.MustNoErr(t, db.SetPayloadContainment(sd.Payload.Code, "alert", "tester", true), "contain the part")
+
+	ord := &orders.Order{
+		EdgeUUID: "contained-interior", StationID: "line-1", OrderType: dispatch.OrderTypeComplex,
+		Status: dispatch.StatusInTransit, SourceNode: line.Name, DeliveryNode: "BACK-CH", ProcessNode: line.Name,
+		PayloadCode: sd.Payload.Code,
+		StepsJSON: `[{"action":"pickup","node":"` + line.Name + `"},{"action":"dropoff","node":"` + hold.Name +
+			`"},{"action":"pickup","node":"EMPTY-SRC"},{"action":"dropoff","node":"BACK-CH"}]`,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "Robot 1's leg")
+	var transitID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM nodes WHERE name='_TRANSIT'`).Scan(&transitID), "_TRANSIT")
+	full := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-CONTAINED")
+	testdb.ClaimBinForTest(t, db, full.ID, ord.ID)
+	testdb.SeedCartRow(t, db, ord.ID, full.ID, 0, 1)
+
+	eng.handleStoreBlockCompleted(BlockCompletedEvent{OrderID: ord.ID, BlockID: "contained-interior-b2",
+		Location: hold.Name, BinTask: "JackUnload"})
+
+	testdb.RequireBinAtNode(t, db, full.ID, hold.ID)
+	got, err := db.GetBin(full.ID)
+	testutil.MustNoErr(t, err, "read the full back")
+	if !got.QualityHold {
+		t.Errorf("the contained part stands at containment %s with no hold: the sourcing engine can take it", hold.Name)
+	}
+}
