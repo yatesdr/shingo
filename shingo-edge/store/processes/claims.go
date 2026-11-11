@@ -850,32 +850,17 @@ func warnRefillByDrift(db DBTX, in NodeClaimInput) {
 		return
 	}
 	want := in.RefillBy.OrDefault()
-	rows, err := db.Query(`
-		SELECT s.name, c.refill_by
-		FROM style_node_claims c
-		JOIN styles s ON s.id = c.style_id
-		WHERE c.core_node_name = ?
-		  AND c.style_id != ?
-		  AND s.deleted_at IS NULL
-		  AND c.retired_at IS NULL
-		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)`,
-		in.CoreNodeName, in.StyleID, in.StyleID)
+	others, err := OtherStylesRefillBy(db, in.StyleID)
 	if err != nil {
 		// Cannot check is not a finding. Saying nothing is right here: the
 		// save proceeds either way and a warning we could not substantiate
 		// would be worse than none.
 		return
 	}
-	defer rows.Close()
 	var disagree []string
-	for rows.Next() {
-		var styleName string
-		var stored protocol.RefillBy
-		if err := rows.Scan(&styleName, &stored); err != nil {
-			return
-		}
-		if stored.OrDefault() != want {
-			disagree = append(disagree, styleName)
+	for _, o := range others[in.CoreNodeName] {
+		if o.RefillBy != want {
+			disagree = append(disagree, o.Style)
 		}
 	}
 	if len(disagree) > 0 {
@@ -885,6 +870,39 @@ func warnRefillByDrift(db DBTX, in NodeClaimInput) {
 			"Set it the same on every style for this node.",
 			in.CoreNodeName, want, strings.Join(disagree, ", "))
 	}
+}
+
+// OtherStylesRefillBy is, by core node, what every other live style of
+// styleID's process says about who brings the next carrier there, in
+// style-name order: one statement for the whole process, read by the save's
+// log line (warnRefillByDrift) and the editor's warning on a press whose
+// styles disagree (domain.RefillByDisagreementFinding).
+func OtherStylesRefillBy(db DBTX, styleID int64) (map[string][]domain.StyleRefillBy, error) {
+	rows, err := db.Query(`
+		SELECT c.core_node_name, s.name, c.refill_by
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE c.style_id != ?
+		  AND s.deleted_at IS NULL
+		  AND c.retired_at IS NULL
+		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)
+		ORDER BY s.name`,
+		styleID, styleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]domain.StyleRefillBy{}
+	for rows.Next() {
+		var node string
+		var v domain.StyleRefillBy
+		if err := rows.Scan(&node, &v.Style, &v.RefillBy); err != nil {
+			return nil, err
+		}
+		v.RefillBy = v.RefillBy.OrDefault()
+		out[node] = append(out[node], v)
+	}
+	return out, rows.Err()
 }
 
 func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
