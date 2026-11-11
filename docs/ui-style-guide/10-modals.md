@@ -101,6 +101,45 @@ menus. Cancel is a deliberate click and discards without
 asking; the backdrop does not close a sheet at all (the lifecycle default
 above).
 
+### The layer: one stack
+
+`shared/layer.js` is the one overlay stack. Every sheet, modal, confirm,
+prompt and popover a page opens is an entry in it, innermost last, and one set
+of rules holds for all of them. Pages move onto it in wave C; until then the
+lifecycle table above is what `utils.js` and the hubs do.
+
+| Behaviour | On the layer |
+|---|---|
+| Escape | Closes the innermost entry, one per press. With nothing open, Escape is the page's: a page's own Escape acts only when `layerDepth()` is 0. |
+| Backdrop click | Escape for the innermost entry, where the entry opts in: `data-backdrop-close`, `closeOnBackdrop`, or `backdrop: true`. A press that began inside the card never closes it. |
+| Typed work | Escape or the backdrop asks *Discard the changes?* (**Keep editing** / **Discard**); Escape on the question is Keep editing. Cancel and `hideModal` are deliberate and never ask. |
+| Scroll lock | Counted: on while any modal, sheet or dialog is open, back to the page's own value when the last one closes. A popover locks nothing. |
+| Focus | Moves in on open (the element asked for, `[autofocus]`, the first field, the first button) and back to the opener on close. |
+| Fields | Back to their markup on close (a form reset), unless the entry keeps its state (`preserveState`). A hidden input is left alone. |
+| Confirm, prompt | Always resolve: OK is `true` or the typed text, anything else that closes them is `false` or `null`. |
+| Popover | Closes on Escape, on a press outside it and its anchor, and with the entry it was opened inside. |
+
+**Typed work is what moved since the entry opened.** The layer notes every
+field's value when an entry opens; a field drawn later is read against the
+value its markup was drawn with (`data-was`, or the `value` / `checked`
+attribute). A field marked `data-scratch` (a search box) is never work; an
+element marked `data-dirty` (a picker whose selection moved) always is. A page
+that fills its fields after opening calls the handle's `markClean()`.
+
+`openLayer(el, opts)` registers an element and returns its handle; `closeLayer`
+closes one. The handle's `run(fn)` is one run per press: the entry's
+`[data-layer-ok]` buttons are off while it runs and back on when it ends,
+whatever the run did. Its `state` lives while the entry is open and is dropped
+when it closes, so a chain that refused midway resumes at the step that failed
+and nothing outlives the sheet. `status(text, bad)` writes the entry's one line
+of feedback (`[data-layer-status]`). `openSheet` is the Processes page's sheet
+shell on the layer: title, body, status line, Cancel and OK. `showModal`,
+`hideModal`, `confirm`, `prompt` and `confirmWithInput` are the hubs' names on
+the same stack.
+
+`TestSharedComponentSpecs` holds each rule; `TestSharedComponentPins` runs
+the helper pins' modal and confirm / prompt cases on the layer.
+
 ### Touch variant
 
 The Operator HMI uses the same mechanism (`.modal-overlay` + `.active`) with a

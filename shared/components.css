@@ -1224,3 +1224,33 @@ nav {
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
+
+/* ── THE LAYER (style guide §10, shared/layer.js) ────────────────────────
+ * The confirm, prompt and sheet the layer builds. A markup modal opened through
+ * showModal keeps its own .modal-overlay / .modal rules; these are only for the
+ * cards the layer draws itself. The scrim is the modal-over rung: a confirm is
+ * opened from a dialog as often as not, and must cover it. */
+.layer-scrim {
+    position: fixed; inset: 0; z-index: var(--z-modal-over);
+    display: flex; align-items: center; justify-content: center;
+    padding: var(--sp-4); background: var(--scrim);
+}
+.layer-card {
+    width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto;
+    padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg);
+}
+.layer-sheet { max-width: 640px; }
+/* A confirm's message keeps its line breaks ("…\n\nSave anyway?"). */
+.layer-msg { margin: 0 0 var(--sp-4); white-space: pre-line; }
+.layer-input {
+    display: block; width: 100%; margin: 0 0 var(--sp-4); padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--text); font: inherit;
+}
+.layer-head h2 { margin: 0; font-size: var(--font-lg); }
+.layer-head p { margin: var(--sp-1) 0 0; color: var(--text-muted); font-size: var(--font-sm); }
+.layer-body { margin: var(--sp-4) 0; }
+.layer-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.layer-status { flex: 1; color: var(--text-muted); font-size: var(--font-sm); }
+.layer-status.is-bad { color: var(--chip-ink-below); }
