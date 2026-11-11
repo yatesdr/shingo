@@ -111,14 +111,14 @@ func TestBuildPressIndexSwapSteps_UnflippedIsUnchanged(t *testing.T) {
 //
 // markPressIndexOnDeckEmpty flags the on-deck pickups (B, and C on a
 // 3-position press) so Core sources the carrier whatever payload is stamped on
-// it; markInboundEmpty flags the supermarket pickup so it fetches an empty
-// rather than hunting a full. Unflipped they live on different legs and have
-// never met. Flipped they are both on R2.
+// it; refillPickup builds the supermarket pickup already flagged, so it fetches
+// an empty rather than hunting a full. Unflipped they live on different legs
+// and have never met. Flipped they are both on R2.
 //
-// Each matches on node name and only ever SETS Empty, so neither can clear the
-// other's — but a flagger rewritten to ASSIGN rather than set would silently
-// unflag the other's pickup, and the failure is the Hopkinsville
-// waiting_for_material hang: an index pickup that matches no bin.
+// The flagger matches on node name and only ever SETS Empty, so it cannot
+// clear the fetch's flag — but one rewritten to ASSIGN rather than set would
+// silently unflag it, and the failure is the Hopkinsville waiting_for_material
+// hang: a pickup that matches no bin.
 func TestPressIndexFlipped_BothEmptyFlaggersCompose(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

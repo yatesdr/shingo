@@ -361,16 +361,9 @@ func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderSte
 		return nil
 	}
 	prefix, collect := stageSteps(nil, claim, relayPickup(claim))
-	steps := append(prefix, singleRobotTail(claim, collect)...) // 1-2, then 3-9
-	// Produce backfill pulls a fresh EMPTY carrier (the store dual of a consume's
-	// full retrieve). Step 1's pickup defaults to a full retrieve, so without this a
-	// PRODUCE node's single-robot swap hunts a full payload bin in the empty pool,
-	// the dispatch fails ("no bin of..."), and the node is left with no carrier to
-	// fill — the cell stalls. Mirrors BuildSequentialBackfillSteps.
-	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(steps, claim.InboundSource, "")
-	}
-	return steps
+	// A produce backfill's fetch is an EMPTY carrier: refillPickup, inside
+	// stageSteps, flags it.
+	return append(prefix, singleRobotTail(claim, collect)...) // 1-2, then 3-9
 }
 
 // BuildTwoRobotSwapSteps builds steps for a two-robot coordinated swap.
@@ -500,29 +493,14 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	// FULL bins forward, so it must NOT be flagged (and doesn't occur in
 	// practice); scoping to produce also keeps the consume "full retrieve"
 	// invariant. The changeover R2 flags its on-deck pickups the same way
-	// (buildPressIndexChangeoverSwap). Produce-scoped INSIDE the builder,
-	// mirroring BuildSingleSwapSteps / BuildSequentialBackfillSteps' own
-	// markInboundEmpty gate.
+	// (buildPressIndexChangeoverSwap). Produce-scoped INSIDE the builder.
+	//
+	// Under the flip R2 also carries the fetch, which refillPickup has already
+	// flagged Empty for produce (and left a full retrieve for consume). This
+	// flagger matches the on-deck nodes only and only ever SETS Empty, so the
+	// two compose (TestPressIndexFlipped_BothEmptyFlaggersCompose).
 	if claim.Role == protocol.ClaimRoleProduce {
 		markPressIndexOnDeckEmpty(orderR2, claim)
-		// TWO FLAGGERS ON ONE LEG, and only under the flip.
-		//
-		// markPressIndexOnDeckEmpty catches the on-deck pickups (B, and C on a
-		// 3-position press); markInboundEmpty catches the supermarket pickup.
-		// Unflipped those sit on different legs and never met. Flipped they are
-		// both on R2, so they have to compose — each matches on node name and
-		// only ever SETS Empty, so neither can clear the other's. Pinned by
-		// TestPressIndexFlipped_BothEmptyFlaggersCompose, because a flagger
-		// rewritten to assign rather than set would silently unflag the other's
-		// pickup and reopen the Hopkinsville waiting_for_material hang.
-		if claim.IndexRobotFetches() {
-			markInboundEmpty(orderR2, claim.InboundSource, "")
-		}
-	} else if claim.IndexRobotFetches() {
-		// Consume never flags Empty (it indexes FULL bins forward), so the
-		// flipped supermarket pickup stays a full retrieve — same invariant as
-		// the unflipped R1's.
-		_ = backfill
 	}
 	return orderR1, orderR2
 }
@@ -562,23 +540,14 @@ func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexO
 //  1. pickup(InboundSource)    — pick new from source
 //  2. dropoff(CoreNodeName)    — deliver to line
 func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
-	steps := []protocol.ComplexOrderStep{
+	// Produce/consume are duals: a consume backfill pulls a payload-matched FULL
+	// bin from the market, a produce backfill a fresh EMPTY carrier, and
+	// refillPickup sets which. This leg is auto-created by the wiring
+	// (handleSequentialBackfill) and never passes through BuildSwapDispatch.
+	return []protocol.ComplexOrderStep{
 		refillPickup(nil, claim),                      // 1
 		{Action: "dropoff", Node: claim.CoreNodeName}, // 2
 	}
-	// Produce/consume are duals: a consume backfill pulls a payload-matched FULL bin
-	// from the market; a produce backfill pulls a fresh EMPTY carrier (the store dual).
-	// The pickup defaults to a full retrieve, so without this a PRODUCE node's backfill
-	// hunts a full payload bin in the empty pool and the dispatch fails ("no bin of
-	// requested payload in <inbound group>"), stranding produce-side A/B (sequential)
-	// after its first removal. Flag the inbound pickup Empty for produce — the same
-	// thing BuildSwapDispatch does via markInboundEmpty for the other modes' StepsA/B.
-	// This leg is auto-created by the wiring (handleSequentialBackfill) and never passes
-	// through BuildSwapDispatch, so it's flagged here at the source instead.
-	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(steps, claim.InboundSource, "")
-	}
-	return steps
 }
 
 // ──────────────────────────────────────────────────────────────────────────

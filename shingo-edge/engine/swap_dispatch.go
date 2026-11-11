@@ -58,20 +58,13 @@ type SwapDispatch struct {
 // RequestProduceSwap and requestNodeFromClaim verbatim, so error
 // messages stay diff-stable across the refactor.
 //
-// After building the per-mode steps, a produce claim's inbound-source pickup
-// (the "fetch a fresh bin from the supermarket" leg) is marked Empty so Core
-// sources and claims an EMPTY carrier to fill — the store dual of a consume
-// node's full retrieve, and the same intent the simple-retrieve path already
-// carries via RetrieveEmpty (changeover_planner). Without it the complex-order
-// path delivers a full bin to the press.
+// A produce claim's fetch (the fresh carrier from the supermarket) is an
+// EMPTY pickup, the store dual of a consume node's full retrieve: each builder
+// gets it from refillPickup, which sets the flag, so nothing here marks it.
 func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	disp, err := buildSwapDispatch(node, claim)
 	if err != nil || disp == nil {
 		return disp, err
-	}
-	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(disp.StepsA, claim.InboundSource, "")
-		markInboundEmpty(disp.StepsB, claim.InboundSource, "")
 	}
 	// Derive Leg A's delivery node from its own steps rather than asserting it is
 	// the process node. The per-mode builders are the single source of truth for
@@ -95,10 +88,12 @@ func finalDropoff(steps []protocol.ComplexOrderStep) string {
 	return dest
 }
 
-// markInboundEmpty flags every pickup at inboundSource as an empty leg. The
-// inbound-source pickup is the only leg that fetches a fresh carrier from the
-// supermarket; the other pickups move bins already in the swap, so they keep
-// their contents and must not be flagged.
+// markInboundEmpty flags every pickup at inboundSource as an empty leg and
+// says which carrier it fetches. The inbound-source pickup is the only leg
+// that fetches a fresh carrier from the supermarket; the other pickups move
+// bins already in the swap, so they keep their contents and must not be
+// flagged. A steady swap's builders need no call: refillPickup sets the flag.
+// A changeover's legs call it for carrierFor.
 //
 // carrierFor is what this leg SAYS about the carrier it fetches, and it is
 // blank for almost every caller. Empty drops the full-bin content match, so
