@@ -94,6 +94,7 @@ func turnHeldOrTurnWait(steps []resolvedStep, waitIndex int) bool {
 // names (plan.StampHonoured).
 func heldVacateAfter(steps []resolvedStep, waitIndex int) *plan.Vacate {
 	seg, _, _ := splitSegment(steps, waitIndex)
+	seg = withSetDown(steps, segmentStart(steps, waitIndex), seg)
 	for _, s := range seg {
 		if s.Action != protocol.ActionDropoff {
 			continue

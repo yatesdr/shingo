@@ -108,7 +108,6 @@ func TestTableTurnDoor_RefusesATurnThatCannotWork(t *testing.T) {
 		{"not finite", f.recognizing, PropTableTurnRad, "NaN", "0 < |angle| < π"},
 		{"infinite", f.recognizing, PropTableTurnRad, "+Inf", "0 < |angle| < π"},
 		{"an unknown side", f.recognizing, PropTableTurnSide, "after", "must be"},
-		{"the set-down side before it is built", f.plain, PropTableTurnSide, TableTurnSideSetDown, "not built yet"},
 		{"a group", f.group, PropTableTurnRad, "1.57", "synthetic"},
 		{"a lane", f.lane, PropTableTurnRad, "1.57", "synthetic"},
 		{"a lane slot", f.slot, PropTableTurnRad, "1.57", "slot in lane TT-LANE"},
@@ -130,6 +129,26 @@ func TestTableTurnDoor_RefusesATurnThatCannotWork(t *testing.T) {
 		err := d.CheckTableTurnProperty(f.recognizing.ID, PropTableTurnRad, "1.57", false)
 		if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), "cannot turn") {
 			t.Fatalf("no turner wired: got %v, want a refusal", err)
+		}
+	})
+	t.Run("set-down on a Wait that recognizes", func(t *testing.T) {
+		testutil.MustNoErr(t, f.db.SetNodeProperty(f.recognizing.ID, PropTableTurnSide, TableTurnSideSetDown), "side")
+		defer func() {
+			testutil.MustNoErr(t, f.db.DeleteNodeProperty(f.recognizing.ID, PropTableTurnSide), "reset side")
+		}()
+		err := f.d.CheckTableTurnProperty(f.recognizing.ID, PropTableTurnRad, "1.57", false)
+		if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), "recognizes the cart") {
+			t.Fatalf("an angle with the set-down side on a recognizing Wait: got %v, want a refusal", err)
+		}
+		// And the other way round: the side moved to set-down under a standing angle.
+		testutil.MustNoErr(t, f.db.DeleteNodeProperty(f.recognizing.ID, PropTableTurnSide), "reset side")
+		testutil.MustNoErr(t, f.db.SetNodeProperty(f.recognizing.ID, PropTableTurnRad, "1.57"), "angle")
+		defer func() {
+			testutil.MustNoErr(t, f.db.DeleteNodeProperty(f.recognizing.ID, PropTableTurnRad), "reset angle")
+		}()
+		err = f.d.CheckTableTurnProperty(f.recognizing.ID, PropTableTurnSide, TableTurnSideSetDown, false)
+		if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), "recognizes the cart") {
+			t.Fatalf("the side moved to set-down under an angle on a recognizing Wait: got %v, want a refusal", err)
 		}
 	})
 	t.Run("a fleet whose Wait key cannot be read", func(t *testing.T) {
@@ -156,12 +175,20 @@ func TestTableTurnDoor_AdmitsAndCaches(t *testing.T) {
 		{"90° before the lift", PropTableTurnRad, "1.5707963267948966", false},
 		{"-90°", PropTableTurnRad, "-1.57", false},
 		{"the lift side, said out loud", PropTableTurnSide, TableTurnSideLift, false},
+		{"the side cleared (back to the lift)", PropTableTurnSide, "", true},
 		{"cleared by an empty value", PropTableTurnRad, "", false},
 		{"cleared by a delete", PropTableTurnRad, "", true},
 	} {
 		if err := f.d.CheckTableTurnProperty(f.recognizing.ID, tc.key, tc.value, tc.del); err != nil {
 			t.Errorf("%s: refused: %v", tc.name, err)
 		}
+	}
+	// The set-down side wants a Wait key that does NOT recognize: a loaded robot
+	// pausing there has nothing under it to find. One key holds the side, so a
+	// node turns before the lift or before the set-down, never both.
+	testutil.MustNoErr(t, f.db.SetNodeProperty(f.plain.ID, PropTableTurnSide, TableTurnSideSetDown), "side")
+	if err := f.d.CheckTableTurnProperty(f.plain.ID, PropTableTurnRad, "1.57", false); err != nil {
+		t.Errorf("a set-down angle on a Wait that does not recognize: refused: %v", err)
 	}
 	// A non-turn property is not the door's business, on any node.
 	if err := f.d.CheckTableTurnProperty(f.slot.ID, "lane_gate_point", "X", false); err != nil {

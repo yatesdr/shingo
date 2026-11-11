@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -255,4 +256,128 @@ func auditActions(t *testing.T, r turnRig, id int64) []string {
 		out = append(out, a.Action)
 	}
 	return out
+}
+
+// ── The set-down side (PLAN §5 phase 6) ─────────────────────────────────────
+
+// turnBeforeSetDown sets a node to turn its table before the set-down.
+func (r turnRig) turnBeforeSetDown(t *testing.T, node string) {
+	t.Helper()
+	n, err := r.db.GetNodeByDotName(node)
+	n = testutil.Must(t, n, err, "node "+node)
+	testutil.MustNoErr(t, r.db.SetNodeProperty(n.ID, PropTableTurnSide, TableTurnSideSetDown), "side")
+	testutil.MustNoErr(t, r.db.SetNodeProperty(n.ID, PropTableTurnRad, "1.5707963267948966"), "angle")
+	testutil.MustNoErr(t, r.d.ReloadTableTurns(), "reload")
+}
+
+// loaded is the robot's jack up with a cart on it.
+func (f *fakeTable) loaded(up bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.st.JackState, f.st.JackIsFull = 3, false
+	if up {
+		f.st.JackState, f.st.JackIsFull = 1, true
+	}
+}
+
+// TestTableTurnSetDown_SequentialBackfill: a move onto a set-down node creates
+// the lift and the drive onto the node, unsealed; the turn goes with the cart
+// up; the set-down is appended, sealed, on angle.
+func TestTableTurnSetDown_SequentialBackfill(t *testing.T) {
+	t.Parallel()
+	r := newTurnRig(t)
+	src, l := prNode(t, r.db, "TS1-SRC"), prNode(t, r.db, "TS1-L")
+	r.turnBeforeSetDown(t, l.Name)
+	order := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.DeliveryNode, o.Status = l.Name, "pending" })
+	if _, err := r.d.DispatchDirect(order, src, l); err != nil {
+		t.Fatalf("DispatchDirect: %v", err)
+	}
+	creates := r.backend.CreateRequests()
+	if len(creates) != 1 || creates[0].Complete || blockShape(creates[0].Blocks) != "JackLoad@TS1-SRC Wait@TS1-L" {
+		t.Fatalf("creates %+v, want one unsealed [JackLoad@TS1-SRC Wait@TS1-L]", creates)
+	}
+	r.table.loaded(true)
+	o := r.arrive(t, order.ID)
+	r.d.RedriveTableTurns(o.ID)
+	if r.turns() != 1 {
+		t.Fatalf("%d turns with the cart up, want 1", r.turns())
+	}
+	r.table.turn(1.569, false)
+	if got := r.d.RedriveTableTurns(0); len(got) != 1 {
+		t.Fatalf("on angle: appended %v", got)
+	}
+	if a := r.backend.ReleaseCalls()[0]; blockShape(a.Blocks) != "JackUnload@TS1-L" || !a.Complete {
+		t.Errorf("appended %s complete=%v, want [JackUnload@TS1-L] sealed", blockShape(a.Blocks), a.Complete)
+	}
+}
+
+// TestTableTurnSetDown_NoTurnWithTheJackDown: a set-down turn needs the cart
+// up; with the jack down nothing is sent and the row says why.
+func TestTableTurnSetDown_NoTurnWithTheJackDown(t *testing.T) {
+	t.Parallel()
+	r := newTurnRig(t)
+	src, l := prNode(t, r.db, "TS2-SRC"), prNode(t, r.db, "TS2-L")
+	r.turnBeforeSetDown(t, l.Name)
+	order := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.DeliveryNode, o.Status = l.Name, "pending" })
+	if _, err := r.d.DispatchDirect(order, src, l); err != nil {
+		t.Fatalf("DispatchDirect: %v", err)
+	}
+	o := r.arrive(t, order.ID) // the fake robot's jack is down
+	r.d.RedriveTableTurns(o.ID)
+	r.d.RedriveTableTurns(0)
+	if r.turns() != 0 {
+		t.Errorf("%d turns with the jack down, want none", r.turns())
+	}
+	if fresh := prReload(t, r.db, o.ID); QueueCause(fresh.QueueCause) != CauseTableTurnBlocked {
+		t.Errorf("the row says %q %q, want %q", fresh.QueueCause, fresh.QueueReason, CauseTableTurnBlocked)
+	}
+}
+
+// TestTableTurnSetDown_SupplyWaitsForTheEvac: at a line set to turn before the
+// set-down, a two_robot supply's released segment drives onto the line and
+// holds no drop. The two rules that keep a supply off an occupied line read it
+// with its set-down: the Edge is told the supply awaits the evac's lift, and a
+// press of the supply with its stamped bin still on the line is held until the
+// lift, then goes, and the set-down follows the turn.
+func TestTableTurnSetDown_SupplyWaitsForTheEvac(t *testing.T) {
+	t.Parallel()
+	r := newTurnRig(t)
+	evac, cart := ttEvac(t, r, "TS3", "TS3-supply", StatusInTransit) // not yet at its lift
+	r.turnBeforeSetDown(t, "TS3-LINE")
+	stage := prNode(t, r.db, "TS3-STAGE")
+	stamped := time.Now().UTC().Add(-time.Minute)
+	supply := vsStagedLeg(t, r.db, "TS3-supply", evac.EdgeUUID, "TS3-LINE", StatusStaged, []resolvedStep{
+		voWait(stage.Name, WaitKindStation), vsPick(stage.Name), voWait("TS3-LINE", WaitKindTurn),
+		voDrop("TS3-LINE", &vacateStamp{Node: "TS3-LINE", Bin: cart.ID, Partner: evac.ID, StampedAt: &stamped})})
+	r.backend.SetOrderVehicle(supply.VendorOrderID, ttVehicle)
+
+	pts := r.d.ReleasePoints("line-1", []string{supply.EdgeUUID})
+	if len(pts) != 1 || len(pts[0].AwaitsLift) != 1 || pts[0].AwaitsLift[0].Node != "TS3-LINE" || pts[0].AwaitsLift[0].CoRelease {
+		t.Fatalf("release points %+v, want the supply to await the evac's lift at TS3-LINE, not co-released", pts)
+	}
+	if got := r.press(t, supply, 0); got != "appends=0 wait_index=0 status=staged errors=[]" {
+		t.Fatalf("a press of the supply with the line's cart still on it: %s, want taken and held", got)
+	}
+	held := prReload(t, r.db, supply.ID)
+	if !CoreOwnsWaitAt(held.StepsJSON, held.WaitIndex) {
+		t.Fatal("the held supply is not Core's")
+	}
+	vhLift(t, r.db, cart.ID)
+	if got := r.d.RedriveVacateWaits(cart.ID); len(got) != 1 {
+		t.Fatalf("after the lift: released %v, want the supply", got)
+	}
+	if a := r.backend.ReleaseCalls()[0]; blockShape(a.Blocks) != "JackLoad@TS3-STAGE Wait@TS3-LINE" {
+		t.Fatalf("appended %s, want the lift at staging and the drive onto the line", blockShape(a.Blocks))
+	}
+	r.table.loaded(true)
+	o := prReload(t, r.db, supply.ID)
+	testutil.MustNoErr(t, r.d.lifecycle.MarkStaged(o, "fleet"), "staged at the line")
+	r.d.RedriveTableTurns(o.ID)
+	r.table.turn(1.569, false)
+	if got := r.d.RedriveTableTurns(0); len(got) != 1 {
+		t.Fatalf("on angle: appended %v, want the set-down", got)
+	}
+	if a := r.backend.ReleaseCalls()[1]; blockShape(a.Blocks) != "JackUnload@TS3-LINE" {
+		t.Errorf("appended %s, want the set-down", blockShape(a.Blocks))
+	}
 }

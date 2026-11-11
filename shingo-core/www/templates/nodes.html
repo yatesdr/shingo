@@ -231,8 +231,9 @@
     <div id="nf-table-turn" class="hide mb-2">
       <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Table turn</label>
       <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
-        Turn the robot's jack table here, while it waits under the cart, before it lifts. The angle is in
-        the robot's frame. Empty means no turn. Core holds the lift until the table reads the angle.
+        Turn the robot's jack table here before it lifts the cart (the robot waits under it), or before it
+        sets a cart down (the robot waits with it). The angle is in the robot's frame. Empty means no turn.
+        Core holds the lift or the set-down until the table reads the angle.
       </div>
       <div class="grid grid-2 text-sm">
         <div class="form-group">
@@ -243,6 +244,7 @@
           <label for="nf-turn-side">When</label>
           <select id="nf-turn-side">
             <option value="lift">Before the lift</option>
+            <option value="set_down">Before the set-down</option>
           </select>
         </div>
       </div>

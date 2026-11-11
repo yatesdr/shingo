@@ -119,6 +119,9 @@ func (d *Dispatcher) vacateHoldsAtRelease(order *orders.Order, steps []resolvedS
 	if start < 0 || stored == nil {
 		return nil
 	}
+	// Read with the set-down a set-down turn wait stands in front of: the
+	// release sends the robot onto that node loaded (withSetDown).
+	stored = withSetDown(steps, start, stored)
 	seg := append([]resolvedStep(nil), stored...)
 	d.patchRedirectSegments(seg, order, moreWaits)
 
@@ -302,6 +305,7 @@ func (d *Dispatcher) binLabel(id int64) string {
 // authors), every honoured stamp in it.
 func vacateStampsAt(steps []resolvedStep, waitIndex int, storedVacate bool) []plan.Vacate {
 	seg, _, _ := splitSegment(steps, waitIndex)
+	seg = withSetDown(steps, segmentStart(steps, waitIndex), seg)
 	var out []plan.Vacate
 	for _, s := range seg {
 		st := plan.StampHonoured(s)

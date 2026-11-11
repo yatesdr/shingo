@@ -171,5 +171,7 @@ func (d *Dispatcher) pendingSegment(o *orders.Order) ([]resolvedStep, bool) {
 		return nil, false
 	}
 	d.patchRedirectSegments(seg, o, more)
-	return seg, true
+	// A segment that drives onto a set-down turn node is read with its
+	// set-down: it places there (withSetDown).
+	return withSetDown(steps, segmentStart(steps, o.WaitIndex), seg), true
 }

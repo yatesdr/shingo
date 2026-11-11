@@ -50,12 +50,6 @@ const (
 	TableTurnSideSetDown = "set_down"
 )
 
-// setDownTurnBuilt is whether the set-down side is built (the plan's phase 6).
-// Until it is, the door refuses the side outright: a wait in front of a drop
-// changes what a swap's supply segment holds, and the rules that keep a supply
-// off an occupied line must read it first (SYNTH-round3 §6.2).
-const setDownTurnBuilt = false
-
 // turnNode is one node's turn: the angle and the side.
 type turnNode struct {
 	rad  float64
@@ -219,8 +213,7 @@ func IsTableTurnProperty(key string) bool {
 //
 // What it refuses (PLAN §3):
 //   - an angle that is not finite or not in 0 < |a| < π;
-//   - a side that is neither lift nor set-down; the set-down side at all until
-//     it is built;
+//   - a side that is neither lift nor set-down;
 //   - a lane slot, a group or a synthetic node;
 //   - a fleet that cannot turn a table;
 //   - the lift side on a node whose fleet Wait key does not recognize the cart
@@ -250,10 +243,6 @@ func (d *Dispatcher) CheckTableTurnProperty(nodeID int64, key, value string, del
 	switch side {
 	case "", TableTurnSideLift:
 	case TableTurnSideSetDown:
-		if !setDownTurnBuilt {
-			return fmt.Errorf("%w: turning the table before the set-down is not built yet — set the side to %q",
-				ErrTableTurnRefused, TableTurnSideLift)
-		}
 	default:
 		return fmt.Errorf("%w: the side must be %q or %q, not %q",
 			ErrTableTurnRefused, TableTurnSideLift, TableTurnSideSetDown, side)
@@ -364,6 +353,13 @@ func waitArgsRecognize(raw json.RawMessage) (bool, error) {
 // pickup(X) at such a node, a wait at X, kind turn, unless the step directly
 // before it is already a wait at X. A swap's lift has its station wait there
 // already, so a swap gets nothing. A node with no angle answers from memory.
+//
+// The set-down side is the same rule in front of the drop: for each dropoff(X)
+// at a node set to turn before the set-down, a wait at X, kind turn, unless a
+// wait at X already stands in front. The robot drives onto X loaded, the table
+// turns with the cart on it, and the set-down is appended. That segment holds
+// no drop, so the rules that keep a bin off an occupied node read it with the
+// set-down after it (withSetDown).
 
 // turnWaits is the turn rule's inserts for a plan, in plan order.
 func (d *Dispatcher) turnWaits(steps []resolvedStep) []insertedWait {
@@ -386,9 +382,35 @@ func (d *Dispatcher) turnWaits(steps []resolvedStep) []insertedWait {
 }
 
 // turnsBefore reports whether a step is the one a turn node turns before: the
-// lift at a lift-side node.
+// lift at a lift-side node, the drop at a set-down-side node.
 func turnsBefore(s resolvedStep, t turnNode) bool {
-	return s.Action == protocol.ActionPickup && t.side != TableTurnSideSetDown
+	if t.side == TableTurnSideSetDown {
+		return s.Action == protocol.ActionDropoff
+	}
+	return s.Action == protocol.ActionPickup
+}
+
+// withSetDown is a segment as the rules that keep a bin off an occupied node
+// read it (the partner rule, liftDependencies through pendingSegment; the
+// vacate stamp readers): the segment, and when it ends in a turn wait at X that
+// stands in front of the set-down at X, that set-down too. The segment holds no
+// drop then, yet it PLACES at X: the robot drives onto X with the bin. Read only:
+// what is appended is the segment alone. start is the segment's first index in
+// steps (segmentStart).
+func withSetDown(steps []resolvedStep, start int, seg []resolvedStep) []resolvedStep {
+	n := len(seg)
+	if n == 0 || start < 0 {
+		return seg
+	}
+	last := seg[n-1]
+	if last.Action != protocol.ActionWait || last.WaitKind != WaitKindTurn || last.Node == "" {
+		return seg
+	}
+	next := start + n
+	if next >= len(steps) || steps[next].Action != protocol.ActionDropoff || steps[next].Node != last.Node {
+		return seg
+	}
+	return append(seg[:n:n], steps[next])
 }
 
 // spliceTurnWaits is the turn rule applied: the waits inserted, then the check
@@ -431,7 +453,7 @@ func (d *Dispatcher) assertEveryTurnHasItsWait(steps []resolvedStep) error {
 // lift goes out in an append and an append is never expanded.
 func (d *Dispatcher) turnLiftWithSequence(steps []resolvedStep) (string, bool) {
 	for _, s := range steps {
-		if t, ok := d.turnAt(s.Node); ok && turnsBefore(s, t) {
+		if t, ok := d.turnAt(s.Node); ok && t.side != TableTurnSideSetDown && turnsBefore(s, t) {
 			return s.Node, true
 		}
 	}
