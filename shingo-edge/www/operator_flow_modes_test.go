@@ -189,7 +189,7 @@ func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
 		write("mode-index-staged", "PART SYN-A-INDEX-STAGED"), // two_robot_press_index naming an inbound staging
 	}
 
-	script := filepath.Join("static", "operator-station", "operator-flow.modes.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-flow.modes.test.js")
 	args := append([]string{script}, files...)
 	out, err := exec.Command(nodePath, args...).CombinedOutput()
 	if err != nil {

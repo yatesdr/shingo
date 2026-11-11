@@ -32,7 +32,7 @@ func TestDashboardMapStallJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join("static", "pages", "dashboard-map.stall.test.js")
+	scriptPath := filepath.Join("testdata", "static", "pages", "dashboard-map.stall.test.js")
 	cmd := exec.Command(nodePath, scriptPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

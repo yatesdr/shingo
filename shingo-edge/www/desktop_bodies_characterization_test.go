@@ -22,7 +22,7 @@ func TestDesktopBodiesCharacterization(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the desktop-bodies characterisation")
 	}
-	script := filepath.Join("static", "js", "pages", "desktop-bodies.characterization.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "desktop-bodies.characterization.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("desktop-bodies characterisation failed:\n%s\nerror: %v", out, err)

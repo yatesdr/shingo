@@ -19,7 +19,7 @@ func TestOperatorQueueCause(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping queue-cause test")
 	}
-	script := filepath.Join("static", "operator-station", "operator-queue-cause.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-queue-cause.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("queue-cause test failed:\n%s\nerror: %v", out, err)

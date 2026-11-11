@@ -29,7 +29,7 @@ func TestComposerFieldsCharacterization(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the composer field characterization")
 	}
-	scriptPath := filepath.Join("static", "js", "pages", "composer-fields.characterization.test.js")
+	scriptPath := filepath.Join("testdata", "static", "js", "pages", "composer-fields.characterization.test.js")
 	out, err := exec.Command(nodePath, scriptPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("composer field characterization failed:\n%s\nerror: %v", out, err)

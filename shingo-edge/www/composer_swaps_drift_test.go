@@ -25,7 +25,7 @@ import (
 // on any hand edit.
 func TestComposerCharacterizationSwapsAreProtocolModes(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join("static", "js", "pages", "composer-fields.characterization.test.js")
+	path := filepath.Join("testdata", "static", "js", "pages", "composer-fields.characterization.test.js")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

@@ -19,7 +19,7 @@ func TestChangeoverAdvisoryRenders(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping changeover advisory render test")
 	}
-	script := filepath.Join("static", "js", "pages", "changeover.advisory.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "changeover.advisory.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("changeover advisory render test failed:\n%s\nerror: %v", out, err)

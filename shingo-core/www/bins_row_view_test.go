@@ -26,7 +26,7 @@ func TestBinsRowViewJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join("static", "pages", "bins.row.test.js")
+	scriptPath := filepath.Join("testdata", "static", "pages", "bins.row.test.js")
 	cmd := exec.Command(nodePath, scriptPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

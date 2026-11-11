@@ -18,7 +18,7 @@ func TestFleetNoticesJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	cmd := exec.Command(nodePath, filepath.Join("static", "pages", "fleet-notices.test.js"))
+	cmd := exec.Command(nodePath, filepath.Join("testdata", "static", "pages", "fleet-notices.test.js"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fleet-notice tests failed:\n%s\nerror: %v", out, err)

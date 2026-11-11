@@ -16,7 +16,7 @@ func TestChangeoverRefreshJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping changeover refresh test")
 	}
-	script := filepath.Join("static", "js", "pages", "changeover.refresh.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "changeover.refresh.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("changeover refresh test failed:\n%s\nerror: %v", out, err)

@@ -18,7 +18,7 @@ func TestMissionDetailStagesJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	cmd := exec.Command(nodePath, filepath.Join("static", "pages", "mission-detail.stages.test.js"))
+	cmd := exec.Command(nodePath, filepath.Join("testdata", "static", "pages", "mission-detail.stages.test.js"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("mission-detail stage tests failed:\n%s\nerror: %v", out, err)

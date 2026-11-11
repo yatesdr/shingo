@@ -17,7 +17,7 @@ func TestOperatorFlowSurfacePins(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping surface pins")
 	}
-	script := filepath.Join("static", "operator-station", "operator-flow.surface.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-flow.surface.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("surface pins failed:\n%s\nerror: %v", out, err)

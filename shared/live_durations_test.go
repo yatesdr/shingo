@@ -14,7 +14,7 @@ func TestUtilsJSLiveDurations(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join(".", "utils.livedurations.test.js")
+	scriptPath := filepath.Join("testdata", "js", "utils.livedurations.test.js")
 	cmd := exec.Command(nodePath, scriptPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

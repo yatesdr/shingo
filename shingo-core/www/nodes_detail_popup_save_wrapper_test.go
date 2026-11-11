@@ -17,7 +17,7 @@ func TestNodesDetailPopupSaveJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	script := filepath.Join("static", "pages", "nodes-detail.popup-save.test.js")
+	script := filepath.Join("testdata", "static", "pages", "nodes-detail.popup-save.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node pop-up save JS tests failed:\n%s\nerror: %v", out, err)

@@ -17,7 +17,7 @@ func TestAppEnterSubmitsJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	script := filepath.Join("static", "app.entersubmits.test.js")
+	script := filepath.Join("testdata", "static", "app.entersubmits.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("enterSubmits JS tests failed:\n%s\nerror: %v", out, err)

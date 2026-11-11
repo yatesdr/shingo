@@ -16,7 +16,7 @@ func TestSceneGeomAgreesWithTheRecordedVectors(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping scene-geom agreement test")
 	}
-	out, err := exec.Command(nodePath, filepath.Join(".", "scene-geom.test.js")).CombinedOutput()
+	out, err := exec.Command(nodePath, filepath.Join("testdata", "js", "scene-geom.test.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("scene-geom agreement test failed:\n%s\nerror: %v", out, err)
 	}

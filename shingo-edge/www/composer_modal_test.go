@@ -34,7 +34,7 @@ func TestComposerModalJS(t *testing.T) {
 	dir := t.TempDir()
 	press6Path := writeComposerRead(t, newPress6(t), filepath.Join(dir, "press6.json"))
 	groupedPath := writeComposerRead(t, newPressGrouped(t).press6, filepath.Join(dir, "press6-grouped.json"))
-	scriptPath := filepath.Join("static", "operator-station", "composer-modal.test.js")
+	scriptPath := filepath.Join("testdata", "static", "operator-station", "composer-modal.test.js")
 	out, err := exec.Command(nodePath, scriptPath, press6Path, groupedPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("composer modal JS test failed:\n%s\nerror: %v", out, err)

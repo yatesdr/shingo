@@ -19,7 +19,7 @@ func TestLegPickersOfferNoLane(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the leg-picker test")
 	}
-	script := filepath.Join("static", "js", "pages", "leg-pickers.characterization.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "leg-pickers.characterization.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("leg-picker test failed:\n%s\nerror: %v", out, err)

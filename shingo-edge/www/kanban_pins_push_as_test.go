@@ -15,7 +15,7 @@ func TestKanbanPinPushAsJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join("static", "operator-station", "kanban_pins_push_as.test.js")
+	scriptPath := filepath.Join("testdata", "static", "operator-station", "kanban_pins_push_as.test.js")
 	out, err := exec.Command(nodePath, scriptPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("PUSH AS pins failed:\n%s\nerror: %v", out, err)

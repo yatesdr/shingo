@@ -25,7 +25,7 @@ func TestSourcingReloadTriggersJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join("static", "pages", "sourcing.reload.test.js")
+	scriptPath := filepath.Join("testdata", "static", "pages", "sourcing.reload.test.js")
 	cmd := exec.Command(nodePath, scriptPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

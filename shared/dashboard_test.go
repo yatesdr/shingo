@@ -14,7 +14,7 @@ func TestUtilsJSDashboardPrimitives(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join(".", "utils.dashboard.test.js")
+	scriptPath := filepath.Join("testdata", "js", "utils.dashboard.test.js")
 	cmd := exec.Command(nodePath, scriptPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

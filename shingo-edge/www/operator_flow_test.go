@@ -80,7 +80,7 @@ func TestOperatorFlowRendersAWholePlantCell(t *testing.T) {
 	style11 := write("style11", "PART SYN-A-S007", geom)
 	schematic := write("schematic", "PART SYN-A-S003", nil)
 
-	script := filepath.Join("static", "operator-station", "operator-flow.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-flow.test.js")
 	out, err := exec.Command(nodePath, script, style7, style11, schematic).CombinedOutput()
 	if err != nil {
 		t.Fatalf("operator-flow render test failed:\n%s\nerror: %v", out, err)

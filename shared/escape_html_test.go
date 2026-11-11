@@ -15,7 +15,7 @@ func TestUtilsEscapeJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	out, err := exec.Command(nodePath, filepath.Join(".", "utils.escape.test.js")).CombinedOutput()
+	out, err := exec.Command(nodePath, filepath.Join("testdata", "js", "utils.escape.test.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("escape JS test failed:\n%s\nerror: %v", out, err)
 	}

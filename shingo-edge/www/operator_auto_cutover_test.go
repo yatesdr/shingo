@@ -33,7 +33,7 @@ func TestCATIDAutoCutoverEvent_FieldsAreRead(t *testing.T) {
 	if err := os.WriteFile(f, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := filepath.Join("static", "operator-station", "operator-auto-cutover.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-auto-cutover.test.js")
 	out, err := exec.Command(nodePath, script, f).CombinedOutput()
 	if err != nil {
 		t.Fatalf("auto-cutover notice test failed:\n%s\nerror: %v", out, err)

@@ -16,7 +16,7 @@ func TestOperatorBoardSettingsJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join("static", "operator-station", "operator-board-settings.test.js")
+	scriptPath := filepath.Join("testdata", "static", "operator-station", "operator-board-settings.test.js")
 	out, err := exec.Command(nodePath, scriptPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("operator board settings JS test failed:\n%s\nerror: %v", out, err)

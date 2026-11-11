@@ -1,0 +1,320 @@
+// Unit tests for cellCardAction (operator-modal.js) — which ONE button a swap
+// cell's card offers, and specifically what a DEPARTED leg does to that choice.
+//
+// WHY THIS IS PINNED. The bug the departed-leg work exists for was a HIDDEN
+// BUTTON, not a wrong backend answer. Springfield press trial 2026-09-02: under
+// the IndexRobotSupplies flip, R1 clears the press and drives the full tote to
+// the supermarket while R2 puts the fresh carrier on. Every position the cell
+// needs was filled, the backend would have accepted the next swap — and the
+// card computed `inFlight` over every non-terminal order at the node, found the
+// departed R1, and rendered a disabled ROBOT IN TRANSIT for the length of a
+// supermarket round trip.
+//
+// The rule this pins: a departed leg is still LISTED (the operator can see the
+// tote leaving, labelled TO MARKET) and drives NOTHING. Control goes,
+// information stays — the same split the lane-held test pins for RELEASE.
+//
+// Runs under plain Node (no npm): extracts the real functions out of
+// operator-modal.js in a vm. Exit 0 = pass, 1 = any failure. Run via the Go
+// wrapper operator_modal_departed_test.go.
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+// The page code under test. This file lives in www/testdata, outside the
+// embedded static tree, so no binary carries or serves it
+// (TestStaticTree_HoldsNoTestJS); the code it reads stays in www/static.
+const SRC_DIR = path.join(__dirname, '..', '..', '..', 'static', 'operator-station');
+
+let passed = 0, failed = 0;
+function eq(got, want, label) {
+    if (got === want) { passed++; return; }
+    failed++;
+    console.error('FAIL: ' + label + '\n   got:  ' + JSON.stringify(got) + '\n   want: ' + JSON.stringify(want));
+}
+function ok(cond, label) { eq(!!cond, true, label); }
+
+// Same brace-matching extraction the lane-held and waitingLabel tests use, and
+// for the same reason: exercise the SHIPPING source rather than a copy that can
+// drift. operator-modal.js cannot be loaded wholesale — it touches the DOM at
+// module scope — but these functions are pure.
+function extractFn(src, name) {
+    const start = src.indexOf('function ' + name + '(');
+    if (start < 0) throw new Error('function ' + name + ' not found');
+    const open = src.indexOf('{', start);
+    if (open < 0) throw new Error('no body for ' + name);
+    let depth = 0;
+    for (let j = open; j < src.length; j++) {
+        if (src[j] === '{') depth++;
+        else if (src[j] === '}') {
+            depth--;
+            if (depth === 0) return src.slice(start, j + 1);
+        }
+    }
+    throw new Error('unbalanced braces in ' + name);
+}
+
+const modalSrc = fs.readFileSync(path.join(SRC_DIR, 'operator-modal.js'), 'utf8');
+const statusSrc = fs.readFileSync(path.join(SRC_DIR, 'order-status.js'), 'utf8');
+
+// TERMINAL_STATUSES / isActive come from the shipping order-status.js, so a
+// status added there is a status this test sees.
+const terminal = JSON.parse(
+    statusSrc.match(/export const TERMINAL_STATUSES = (\[[^\]]*\])/)[1].replace(/'/g, '"'));
+
+const ctx = {
+    console,
+    JSON,
+    Number,
+    Array,
+    isActive: (s) => !terminal.includes(s),
+    // Stubs for the collaborators cellCardAction reaches for. esc and
+    // withQueueCause are the real shapes, minimal.
+    esc: (s) => String(s),
+    withQueueCause: (base) => base,
+    formatETA: () => ({ empty: true, text: '' }),
+};
+vm.createContext(ctx);
+// TO_MARKET_LABEL first, and as `var`: each runInContext call gets its own
+// lexical scope, so a `const` would not survive to the next one or be visible
+// to the extracted functions. `var` lands on the vm global, which is what they
+// resolve against.
+vm.runInContext(
+    modalSrc.match(/const TO_MARKET_LABEL = '[^']*';/)[0].replace('const ', 'var '), ctx);
+// WAITING_BASE rides along for the same reason, and pairWaitingLabel is now what
+// the two-robot arm calls — the assertions below are unchanged.
+vm.runInContext(
+    modalSrc.match(/const WAITING_BASE = '[^']*';/)[0].replace('const ', 'var '), ctx);
+// pairWaitingLabel pools the pair's causes through distinctQueueCauses, which
+// lives in operator-util.js. Defined here from the real source rather than
+// stubbed — a stub would let the two drift.
+vm.runInContext(
+    extractFn(fs.readFileSync(path.join(SRC_DIR, 'operator-util.js'), 'utf8'), 'distinctQueueCauses')
+        .replace('export function', 'function'), ctx);
+for (const fn of ['isStationReleasable', 'changeoverReleasePurpose', 'changeoverReleaseAction', 'swapPair', 'blockerPhrase', 'waitingLabel',
+    'statusWordOf', 'pairWaitingLabel', 'orderStatusChip', 'cellCardAction']) {
+    vm.runInContext(extractFn(modalSrc, fn), ctx);
+}
+
+const { cellCardAction, orderStatusChip, TO_MARKET_LABEL } = ctx;
+
+const NODE = { id: 42, name: 'PRESS' };
+const PRODUCE = { swap_mode: 'two_robot_press_index', role: 'produce', payload_code: 'WIDGET-A' };
+
+function card(orders, opts) {
+    opts = opts || {};
+    return cellCardAction(
+        { node: NODE, orders, swap_ready: !!opts.swapReady, releases_as_pair: !!opts.releasesAsPair,
+            bin_state: opts.binState, release_short: opts.releaseShort },
+        opts.claim || PRODUCE,
+        opts.remaining != null ? opts.remaining : 40);
+}
+
+// ── THE SEQUENCE THE BRIEF ASKS FOR ──────────────────────────────────────
+//
+// A departed in_transit leg (R1, driving the full tote to the market) beside a
+// delivered placing leg (R2, which put the fresh carrier on the press).
+
+const departedR1 = { id: 101, status: 'in_transit', departed: true, sibling_order_id: 102 };
+const deliveredR2 = { id: 102, status: 'delivered', departed: false, sibling_order_id: 101 };
+
+let btn = card([departedR1, deliveredR2]);
+eq(btn.label, 'CONFIRM',
+    'a departed leg beside a delivered placing leg offers CONFIRM — the departed one is not the cell\'s');
+eq(btn.enabled, true, 'and it is tappable');
+eq(btn.action, '/api/confirm-delivery/102',
+    'CONFIRM targets the leg that PLACED the bin, not the one carrying one away');
+
+// The operator taps it. R2 goes terminal (confirmed) and drops out of every
+// list; R1 is still driving to the supermarket.
+const confirmedR2 = Object.assign({}, deliveredR2, { status: 'confirmed' });
+btn = card([departedR1, confirmedR2]);
+eq(btn.label, 'REQUEST SWAP',
+    'after CONFIRM the cell may order the next swap WHILE the departed leg is still driving — ' +
+    'this is the whole feature');
+eq(btn.enabled, true, 'and REQUEST SWAP is tappable');
+eq(btn.action, '/api/process-nodes/42/finalize', 'and it fires the finalize route');
+
+// ...and the departed leg is still LISTED, as TO MARKET.
+eq(orderStatusChip(departedR1).indexOf(TO_MARKET_LABEL) >= 0, true,
+    'the departed leg still renders on the card, labelled TO MARKET');
+eq(TO_MARKET_LABEL, 'TO MARKET', 'the label is the one the floor was told to expect');
+ok(orderStatusChip(departedR1).indexOf('in_transit') < 0,
+    'a departed leg must NOT render its raw status — it is leaving, not arriving');
+ok(orderStatusChip(deliveredR2).indexOf('delivered') >= 0,
+    'a live leg keeps its status word and its cause');
+
+// ── THE REGRESSION THIS REPLACES ─────────────────────────────────────────
+
+btn = card([departedR1]);
+eq(btn.label, 'REQUEST SWAP',
+    'a departed leg ALONE at the node must not hold the button — this is the exact trial symptom');
+ok(btn.label !== 'ROBOT IN TRANSIT',
+    'ROBOT IN TRANSIT means a cell waiting on a delivery; a departed leg is the opposite state');
+
+// The dual: an UNDEPARTED in_transit leg still holds the button. The fix must
+// not degenerate into "never show ROBOT IN TRANSIT".
+const undepartedR1 = Object.assign({}, departedR1, { departed: false });
+btn = card([undepartedR1]);
+eq(btn.label, 'ROBOT IN TRANSIT',
+    'an undeparted in_transit leg still blocks the button — a robot IS working this cell');
+eq(btn.enabled, false, 'and it is not tappable');
+
+// An order with no `departed` field at all — an older Edge, or a row written
+// before the column existed — must read as NOT departed, i.e. exactly today's
+// behaviour. The suppression can never be caused by a MISSING signal.
+btn = card([{ id: 101, status: 'in_transit' }]);
+eq(btn.label, 'ROBOT IN TRANSIT',
+    'absent `departed` degrades to blocking, not to admitting');
+
+// ── DEPARTED IS NOT UNCONFIRMABLE ────────────────────────────────────────
+//
+// single_robot's one leg places the fresh bin on the press (step 7), departs
+// when it lifts the old bin off outbound staging (step 8), and reaches
+// `delivered` at the supermarket (step 9). The filter above would take its
+// CONFIRM away — and that CONFIRM is the cell's only count receipt for the
+// cycle. The `delivered` fallback is the one thing a departed leg may still
+// drive, and only when it is not auto-confirming.
+
+const SINGLE = { swap_mode: 'single_robot', role: 'produce', payload_code: 'WIDGET-A' };
+const singleRobotLeg = { id: 401, status: 'delivered', departed: true, auto_confirm: false };
+
+btn = card([singleRobotLeg], { claim: SINGLE });
+eq(btn.label, 'CONFIRM',
+    'single_robot departs at step 8 and is delivered at step 9 — its CONFIRM is the cycle\'s only ' +
+    'count receipt and the departed filter must not swallow it');
+eq(btn.enabled, true, 'and it is tappable');
+eq(btn.action, '/api/confirm-delivery/401', 'and it targets that leg');
+
+// The dual, and the pre-existing hazard it closes: an AUTO-confirm leg passes
+// through `delivered` for about a second on its way to confirmed. Nobody signs
+// for it — it is going to the supermarket — and a card refreshed inside that
+// window must not arm CONFIRM on it.
+const autoConfirmDeparted = { id: 402, status: 'delivered', departed: true, auto_confirm: true };
+btn = card([autoConfirmDeparted]);
+ok(btn.label.indexOf('CONFIRM') < 0,
+    'a departed AUTO-confirm leg in its delivered window offers no CONFIRM — there is no receipt ' +
+    'to take, and the tap would close an order nobody looked at');
+eq(btn.label, 'REQUEST SWAP', 'the cell is balanced, so it offers the next swap instead');
+
+// A live (undeparted) leg still reaches the arm through `active`, unchanged.
+btn = card([{ id: 403, status: 'delivered', departed: false, auto_confirm: false }]);
+eq(btn.action, '/api/confirm-delivery/403', 'an undeparted delivered leg is unaffected by the fallback');
+
+// The leg the fallback's copy of !auto_confirm cannot reach: unflipped
+// press-index R1 auto-confirms AND never departs (its last cell step is its own
+// final step), so it arrives at this arm through `active`, not the fallback.
+// For ~1s in its delivered window the card would offer CONFIRM on the leg
+// heading for the supermarket instead of REQUEST SWAP.
+const autoConfirmUndeparted = { id: 404, status: 'delivered', departed: false, auto_confirm: true };
+btn = card([autoConfirmUndeparted]);
+ok(btn.label.indexOf('CONFIRM') < 0,
+    'an UNDEPARTED auto-confirm leg in its delivered window offers no CONFIRM either — the ' +
+    'predicate belongs on both terms, not just the fallback');
+
+// WHERE IT LANDS INSTEAD, and why that is the acceptable answer rather than the
+// ideal one. Unlike its departed twin, this leg is NOT filtered out of `active`
+// — it has not departed — so it reaches the inFlight arm and renders a disabled
+// ROBOT IN TRANSIT for the second before it self-confirms.
+//
+// That is a downgrade from an actionable-but-wrong button to an inert one, on a
+// leg that closes itself: no receipt can be taken against the wrong tote, and
+// the window ends without anyone doing anything. Getting REQUEST SWAP here
+// instead would mean teaching the inFlight arm that a delivered auto-confirm
+// leg is not a robot in transit, which is a real change to what `active` means
+// and not this fix's business.
+eq(btn.label, 'ROBOT IN TRANSIT',
+    'it falls to the inFlight arm — inert for ~1s, not a receipt on the wrong leg');
+eq(btn.enabled, false, 'and it is not tappable, so the window cannot be acted on wrongly');
+
+// And the pair as the plant actually sees it: R1 auto-confirming through its
+// delivered window beside R2, the leg that placed on the press. The receipt
+// must land on R2.
+btn = card([autoConfirmUndeparted, { id: 405, status: 'delivered', departed: false, auto_confirm: false }]);
+eq(btn.action, '/api/confirm-delivery/405',
+    'with both legs delivered, CONFIRM targets the one that needs a receipt, whatever the list order');
+
+// ── THE PAIR COUNT ───────────────────────────────────────────────────────
+//
+// The two_robot waiting arm counts the PAIR. A departed leg leaves `active`
+// before the count is taken, so a pair whose evac has left reads as one leg,
+// the arm steps aside, and the survivor's own branch offers a button.
+
+const twoRobot = { swap_mode: 'two_robot', role: 'produce', payload_code: 'WIDGET-A' };
+const supplyInTransit = { id: 201, status: 'in_transit', departed: false, sibling_order_id: 202 };
+const evacUndeparted = { id: 202, status: 'in_transit', departed: false, sibling_order_id: 201 };
+btn = card([supplyInTransit, evacUndeparted], { claim: twoRobot, releasesAsPair: true });
+ok(btn.label.indexOf('WAITING FOR OTHER ROBOT') === 0,
+    'two live legs still raise the pair waiting label');
+
+const evacDeparted = Object.assign({}, evacUndeparted, { departed: true });
+btn = card([supplyInTransit, evacDeparted], { claim: twoRobot, releasesAsPair: true });
+eq(btn.label, 'ROBOT IN TRANSIT',
+    'once the evac has departed the pair reads as one leg, and the survivor drives the card');
+
+// ── THE ARMS ABOVE MUST STILL WIN ────────────────────────────────────────
+//
+// swap_ready and a station-releasable staged leg both sit above everything the
+// departed filter touches, and a departed leg must not disturb either.
+
+btn = card([departedR1, deliveredR2], { swapReady: true });
+eq(btn.label, 'RELEASE', 'swap_ready still wins over everything, departed leg present or not');
+
+const stagedLeg = { id: 301, status: 'staged', lane_held: false, departed: false };
+btn = card([departedR1, stagedLeg]);
+eq(btn.label, 'RELEASE', 'a station-releasable staged leg still offers RELEASE');
+eq(btn.action, 'release-prompt:/api/orders/301/release', 'and it targets that leg');
+
+// RELEASE SHORT: the server says this release ships the bin short (a strict
+// claim, outside its pack tolerance; NodeClaim.ReleaseShort). The word changes
+// at both produce arms and nothing else does: same tap, same action.
+btn = card([departedR1, deliveredR2], { swapReady: true, releaseShort: true });
+eq(btn.label, 'RELEASE SHORT', 'swap_ready on a short release reads RELEASE SHORT');
+eq(btn.action, 'release-prompt:/api/process-nodes/42/release-staged', 'and it is the same pair release');
+btn = card([departedR1, stagedLeg], { releaseShort: true });
+eq(btn.label, 'RELEASE SHORT', 'a staged leg on a short release reads RELEASE SHORT');
+eq(btn.action, 'release-prompt:/api/orders/301/release', 'and it is the same leg release');
+btn = card([departedR1, stagedLeg], { releaseShort: false });
+eq(btn.label, 'RELEASE', 'within the tolerance, or not strict, it reads RELEASE');
+// A changeover tile keeps its decision's word: a changeover never declares.
+btn = cellCardAction({ node: NODE, orders: [stagedLeg], release_short: true,
+    changeover_task: { situation: 'swap' }, release_purposes: [{ purpose: 'ready', ready: true }] }, PRODUCE, 40);
+eq(btn.label, 'RELEASE: READY', 'a changeover tile reads its decision, not RELEASE SHORT');
+
+// A DEPARTED staged leg offers nothing — it is not the station's to release.
+// (Not a shape that occurs today; the pin is that the filter is applied before
+// isStationReleasable, not after.)
+const stagedDeparted = Object.assign({}, stagedLeg, { departed: true });
+btn = card([stagedDeparted]);
+eq(btn.label, 'REQUEST SWAP', 'a departed staged leg does not offer RELEASE');
+
+// ── CONFIRM ──────────────────────────────────────────────────────────────
+//
+// The manifest-aware label this used to pin is gone with the code. It read a
+// `quantity` the manifest line no longer carries, behind an Array.isArray gate
+// that Core's object-shaped manifest never satisfied — so the only place that
+// label ever rendered was this assertion, which built the array by hand. A
+// fixture that manufactures a state production cannot reach does not pin
+// behaviour; it pins itself.
+
+btn = card([deliveredR2], { binState: { manifest: '{"items":[{"catid":"PART-A"}]}' } });
+eq(btn.label, 'CONFIRM', 'the CONFIRM label is plain — no count is derived on this page');
+
+btn = card([{ id: 0, status: 'delivered', departed: false }]);
+eq(btn.label, 'CONFIRM (refresh)', 'a half-built order with no id still renders the refresh guard');
+eq(btn.enabled, false, 'and it is not tappable');
+
+// ── AND THE IDLE ARMS ────────────────────────────────────────────────────
+
+btn = card([], { remaining: 0 });
+eq(btn.label, 'REQUEST EMPTY', 'an empty produce cell asks for a carrier');
+btn = card([], { remaining: 0, claim: { swap_mode: 'two_robot', role: 'produce' } });
+eq(btn, null, 'a produce cell with no configured payload has nothing to ask for');
+btn = card([], { claim: { swap_mode: 'two_robot', role: 'consume' } });
+eq(btn.label, 'REQUEST MATERIAL', 'a consume cell asks for material');
+
+console.log('operator-modal cellCardAction (departed legs): ' + passed + ' passed, ' + failed + ' failed');
+process.exit(failed === 0 ? 0 : 1);

@@ -21,7 +21,7 @@ func TestProcessesDesktopPopoverActs(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the popover-acts pin")
 	}
-	script := filepath.Join("static", "js", "pages", "processes-desktop.popover-acts.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "processes-desktop.popover-acts.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("popover-acts pin failed:\n%s\nerror: %v", out, err)

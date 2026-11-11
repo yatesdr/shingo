@@ -17,7 +17,7 @@ func TestOperatorReleaseChangeover(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping release changeover test")
 	}
-	script := filepath.Join("static", "operator-station", "operator-release-changeover.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-release-changeover.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("release changeover test failed:\n%s\nerror: %v", out, err)

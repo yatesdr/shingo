@@ -19,7 +19,7 @@ func TestContainmentJS_FeedsPin(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the containment JS pins")
 	}
-	script := filepath.Join("static", "js", "pages", "containment.feedspin.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "containment.feedspin.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("containment JS pins failed:\n%s\nerror: %v", out, err)

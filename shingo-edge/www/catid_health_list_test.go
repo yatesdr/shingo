@@ -15,7 +15,7 @@ func TestCatidHealthListJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the catid-health renderer test")
 	}
-	script := filepath.Join("static", "js", "pages", "catid-health.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "catid-health.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("catid-health renderer test failed:\n%s\nerror: %v", out, err)

@@ -37,7 +37,7 @@ func runPageNodeTest(t *testing.T, file, what string) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	out, err := exec.Command(nodePath, filepath.Join("static", "pages", file)).CombinedOutput()
+	out, err := exec.Command(nodePath, filepath.Join("testdata", "static", "pages", file)).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s tests failed:\n%s\nerror: %v", what, out, err)
 	}

@@ -24,7 +24,7 @@ func TestPresetApplyLoop(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the apply-loop test")
 	}
-	script := filepath.Join("static", "js", "pages", "apply-loop.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "apply-loop.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("apply loop test failed:\n%s\nerror: %v", out, err)

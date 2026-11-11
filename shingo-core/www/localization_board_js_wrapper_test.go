@@ -21,7 +21,7 @@ func TestLocalizationBoardJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	script := filepath.Join("static", "pages", "localization-board.test.js")
+	script := filepath.Join("testdata", "static", "pages", "localization-board.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("localization board JS tests failed:\n%s\nerror: %v", out, err)

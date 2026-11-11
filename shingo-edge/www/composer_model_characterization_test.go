@@ -164,7 +164,7 @@ func TestComposerModelCharacterization(t *testing.T) {
 		t.Fatalf("write fixtures: %v", err)
 	}
 
-	scriptPath := filepath.Join("static", "operator-station", "composer-model.test.js")
+	scriptPath := filepath.Join("testdata", "static", "operator-station", "composer-model.test.js")
 	cmd := exec.Command(nodePath, scriptPath, fixturePath)
 	got, err := cmd.CombinedOutput()
 	if err != nil {
@@ -203,7 +203,7 @@ func TestComposerModelGrid(t *testing.T) {
 	// Written to a temp file, not beside the script: static/ is embedded and
 	// served (see TestComposerModelCharacterization's fixture).
 	outPath := filepath.Join(t.TempDir(), "composer-model-grid.txt")
-	scriptPath := filepath.Join("static", "operator-station", "composer-model.test.js")
+	scriptPath := filepath.Join("testdata", "static", "operator-station", "composer-model.test.js")
 	if msg, err := exec.Command(nodePath, scriptPath, "--grid", outPath).CombinedOutput(); err != nil {
 		t.Fatalf("build the grid:\n%s\nerror: %v", msg, err)
 	}

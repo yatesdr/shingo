@@ -17,7 +17,7 @@ func TestDesktopPagesSayAnAskIsPending(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the desktop pages' pending-ask test")
 	}
-	script := filepath.Join("static", "js", "pages", "ask-pending.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "ask-pending.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("desktop pages' pending-ask test failed:\n%s\nerror: %v", out, err)

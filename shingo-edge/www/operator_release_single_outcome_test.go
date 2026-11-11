@@ -24,7 +24,7 @@ func TestOperatorReleaseSingleOutcome(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping release single-outcome test")
 	}
-	script := filepath.Join("static", "operator-station", "operator-release-single-outcome.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-release-single-outcome.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("release single-outcome test failed:\n%s\nerror: %v", out, err)

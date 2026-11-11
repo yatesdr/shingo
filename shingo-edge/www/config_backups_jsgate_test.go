@@ -18,7 +18,7 @@ func TestConfigBackupsJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the config backups JS test")
 	}
-	script := filepath.Join("static", "js", "pages", "config-backups.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "config-backups.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("config backups JS test failed:\n%s\nerror: %v", out, err)

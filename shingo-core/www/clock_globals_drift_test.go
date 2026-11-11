@@ -248,7 +248,7 @@ func TestPlantClockJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	script := filepath.Join("static", "components", "plantclock.test.js")
+	script := filepath.Join("testdata", "static", "components", "plantclock.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("plantclock JS tests failed:\n%s\nerror: %v", out, err)

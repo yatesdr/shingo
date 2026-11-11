@@ -47,7 +47,7 @@ func desktopPage(t *testing.T, mode, read string) map[string]any {
 		t.Skipf("node not on PATH; skipping the deploy note's walk")
 	}
 	out := filepath.Join(t.TempDir(), "page-out.json")
-	script := filepath.Join("static", "js", "pages", "processes-desktop.popover-acts.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "processes-desktop.popover-acts.test.js")
 	if b, err := exec.Command(nodePath, script, mode, read, out).CombinedOutput(); err != nil {
 		t.Fatalf("the page under node (%s) failed:\n%s\nerror: %v", mode, b, err)
 	}

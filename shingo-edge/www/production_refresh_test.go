@@ -18,7 +18,7 @@ func TestProductionRefreshJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the production refresh JS tests")
 	}
-	script := filepath.Join("static", "js", "pages", "production-refresh.test.js")
+	script := filepath.Join("testdata", "static", "js", "pages", "production-refresh.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("production refresh JS tests failed:\n%s\nerror: %v", out, err)

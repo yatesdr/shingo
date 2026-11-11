@@ -14,7 +14,7 @@ func runStationCardJS(t *testing.T, only string) {
 	if err != nil {
 		t.Skip("node not on PATH; skipping the station card test")
 	}
-	out, err := exec.Command(nodePath, filepath.Join("static", "js", "pages", "station-card.test.js"), only).CombinedOutput()
+	out, err := exec.Command(nodePath, filepath.Join("testdata", "static", "js", "pages", "station-card.test.js"), only).CombinedOutput()
 	if err != nil {
 		t.Fatalf("station card test failed:\n%s\nerror: %v", out, err)
 	}

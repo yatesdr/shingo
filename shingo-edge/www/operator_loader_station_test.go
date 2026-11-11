@@ -18,7 +18,7 @@ func TestOperatorLoaderStationJS(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")
 	}
-	scriptPath := filepath.Join("static", "operator-station", "operator-loader-station.test.js")
+	scriptPath := filepath.Join("testdata", "static", "operator-station", "operator-loader-station.test.js")
 	out, err := exec.Command(nodePath, scriptPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("operator loader station JS test failed:\n%s\nerror: %v", out, err)

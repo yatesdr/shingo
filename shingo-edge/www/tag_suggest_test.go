@@ -14,7 +14,7 @@ func runTagSuggestJS(t *testing.T, only string) {
 	if err != nil {
 		t.Skip("node not on PATH; skipping the tag-suggest test")
 	}
-	out, err := exec.Command(nodePath, filepath.Join("static", "js", "pages", "tag-suggest.test.js"), only).CombinedOutput()
+	out, err := exec.Command(nodePath, filepath.Join("testdata", "static", "js", "pages", "tag-suggest.test.js"), only).CombinedOutput()
 	if err != nil {
 		t.Fatalf("tag-suggest test failed:\n%s\nerror: %v", out, err)
 	}

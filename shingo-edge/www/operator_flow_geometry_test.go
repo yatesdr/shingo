@@ -24,7 +24,7 @@ func TestOperatorFlowGeometryPins(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping geometry pins")
 	}
-	script := filepath.Join("static", "operator-station", "operator-flow.geometry.test.js")
+	script := filepath.Join("testdata", "static", "operator-station", "operator-flow.geometry.test.js")
 	out, err := exec.Command(nodePath, script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("geometry pins failed:\n%s\nerror: %v", out, err)
