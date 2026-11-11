@@ -177,8 +177,11 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 		processNodeID = &req.ProcessNodeID
 	}
 
-	order, err := h.engine.OrderManager().CreateComplexOrder(
-		processNodeID, req.Quantity, "", "", req.Steps, ordermgr.NoDemand(),
+	// The press is named by the plain funnels' rule (PressOf): the claim's
+	// node, blank with no process node or a loader's.
+	mgr := h.engine.OrderManager()
+	order, err := mgr.CreateComplexOrder(
+		processNodeID, req.Quantity, "", mgr.PressOf(processNodeID), req.Steps, ordermgr.NoDemand(),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -8,9 +8,11 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -312,6 +314,64 @@ func TestApiOrders_CreateComplexOrder_Success(t *testing.T) {
 	db.QueryRow("SELECT COALESCE(steps_json,'') FROM orders WHERE id=?", order.ID).Scan(&stepsJSON)
 	if stepsJSON == "" {
 		t.Error("expected steps_json to be populated for complex order")
+	}
+}
+
+// TestApiOrders_CreateComplexOrder_NamesItsNodesPress: a multi-step order
+// posted for a claimed process node names that node's press on the wire, by
+// the plain funnels' rule (orders.Manager.PressOf); posted for none, it names
+// none. It sent a blank press for both.
+func TestApiOrders_CreateComplexOrder_NamesItsNodesPress(t *testing.T) {
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
+	pid := seedProcess(t, db, "API-PRESS-LINE")
+	sid := seedStyle(t, db, "API-PRESS-STYLE", pid)
+	if err := db.SetActiveStyle(pid, &sid); err != nil {
+		t.Fatalf("active style: %v", err)
+	}
+	nodeID := seedProcessNode(t, db, pid, 0, "API-PRESS")
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "API-PRESS", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeSingleRobot, InboundStaging: "API-IN", OutboundStaging: "API-OUT",
+		OutboundDestination: "API-DEST", PayloadCode: "API-PART",
+	}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	steps := []protocol.ComplexOrderStep{{Action: "pickup", Node: "API-SRC"}, {Action: "dropoff", Node: "API-PRESS"}}
+
+	wire := func(uuid string) protocol.ComplexOrderRequest {
+		t.Helper()
+		msgs, err := db.ListPendingOutbox(100)
+		if err != nil {
+			t.Fatalf("outbox: %v", err)
+		}
+		for _, m := range msgs {
+			var env protocol.Envelope
+			var req protocol.ComplexOrderRequest
+			if m.MsgType == protocol.TypeComplexOrderRequest && json.Unmarshal(m.Payload, &env) == nil &&
+				env.DecodePayload(&req) == nil && req.OrderUUID == uuid {
+				return req
+			}
+		}
+		t.Fatalf("no complex order request for %s", uuid)
+		return protocol.ComplexOrderRequest{}
+	}
+	for _, c := range []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{"for the press", map[string]any{"process_node_id": nodeID, "quantity": 1, "steps": steps}, "API-PRESS"},
+		{"for no node", map[string]any{"quantity": 1, "steps": steps}, ""},
+	} {
+		resp := doRequest(t, router, "POST", "/api/orders/complex", c.body, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var order storeorders.Order
+		decodeJSON(t, resp, &order)
+		if got := wire(order.UUID).ProcessNode; got != c.want {
+			t.Errorf("%s: process_node = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 
