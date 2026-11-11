@@ -566,7 +566,9 @@ function makeRealm(opts) {
         setInterval: clock.setInterval, clearInterval: clock.clearInterval,
         fetch: fetchStub, EventSource: FakeEventSource,
         Node, Element, Text, Event, CustomEvent, MouseEvent: Event, KeyboardEvent: Event,
-        URLSearchParams,
+        // shared/http.js gives every request its own deadline; the fetch stub
+        // ignores the signal unless a pin answers through its own stub.
+        URLSearchParams, AbortController,
     });
     realm.ctx = ctx;
     // window is the page's global in a browser; the names a script reaches
@@ -618,6 +620,10 @@ function makeResponse(realm, a) {
         ok: a.status >= 200 && a.status < 300,
         status: a.status,
         statusText: '',
+        // A followed redirect (a lapsed session's 303 to the login page)
+        // answers with the page it landed on.
+        redirected: !!a.redirected,
+        url: a.url || '',
         headers: { get: (k) => (a.headers || {})[String(k).toLowerCase()] || null },
         get bodyUsed() { return used; },
         text: read,

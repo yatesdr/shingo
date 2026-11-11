@@ -95,10 +95,14 @@ const SURFACES = [
     },
 ];
 
+// A surface outside this file (shared/testdata/components/cases.js runs these
+// case lists on the shared components) may name its own shared module and the
+// selectors its dialogs and toasts carry; the three below use the defaults.
 function page(surface, opts) {
     const r = makeRealm(Object.assign({ surface: surface.root }, opts || {}));
+    r.sel = surface.sel || {};
     const m = r.load(surface.entry);
-    const shared = r.load('/static/shared/utils.js');
+    const shared = r.load(surface.sharedEntry || '/static/shared/utils.js');
     return { r, m, s: surface.pick(m), shared };
 }
 
@@ -241,7 +245,7 @@ function fixtureType(p) {
 
 // ═══ confirm / prompt ════════════════════════════════════════════════════════
 
-function overlays(r) { return r.doc.querySelectorAll('.confirm-overlay'); }
+function overlays(r) { return r.doc.querySelectorAll(r.sel.dialog || '.confirm-overlay'); }
 function buttonsOf(ov) { return ov.querySelectorAll('button'); }
 function cancelOf(ov) { return buttonsOf(ov).find((b) => b.textContent === 'Cancel'); }
 function okOf(ov) { return buttonsOf(ov).find((b) => b.textContent !== 'Cancel'); }
@@ -363,7 +367,10 @@ async function dialogPins(surface) {
 
 // ═══ toast ═══════════════════════════════════════════════════════════════════
 
-function toastBox(r) { return r.doc.getElementById('toast-container') || r.doc.querySelector('.toast-container'); }
+function toastBox(r) {
+    if (r.sel.toastBox) return r.doc.querySelector(r.sel.toastBox);
+    return r.doc.getElementById('toast-container') || r.doc.querySelector('.toast-container');
+}
 function toastsIn(r) { const b = toastBox(r); return b ? b.children : []; }
 
 // lifetime steps the fake clock 100 ms at a time and says when the toast went
@@ -484,7 +491,7 @@ async function callDoor(surface, door, status, body) {
     let w;
     try { w = watch(Promise.resolve(door(p))); } catch (e) { return { line: 'throws synchronously ' + describeThrown(e), req: null }; }
     await p.r.advance(0);
-    const toasts = p.r.doc.querySelectorAll('.toast').length;
+    const toasts = p.r.doc.querySelectorAll(p.r.sel.toast || '.toast').length;
     const cons = consoleNotes(p.r);
     return {
         line: said(w) + (toasts ? ', toasts ' + toasts : ', no toast') + (cons.length ? ', ' + cons.join('; ') : ''),
@@ -499,7 +506,7 @@ async function apiPins(surface) {
         '',
     ];
     const probe = page(surface);
-    const doors = {
+    const doors = surface.doors ? surface.doors(probe) : {
         'core-hub': {
             shape: () => 'api is a ' + typeof probe.m.api + ' (method, url, body); verbs apiGet apiPost apiPut apiDelete: ' + ['apiGet', 'apiPost', 'apiPut', 'apiDelete'].map((n) => n + ' ' + typeof probe.m[n]).join(', ') + '; no non-throwing door',
             requests: [
@@ -1094,7 +1101,9 @@ function sharedHome() {
 
 // ═══ main ════════════════════════════════════════════════════════════════════
 
-(async function main() {
+module.exports = { modalPins, dialogPins, toastPins, apiPins };
+
+if (require.main === module) (async function main() {
     golden('hubs.txt', hubCensus());
     for (const s of SURFACES) {
         golden('modal.' + s.name + '.txt', modalPins(s));
