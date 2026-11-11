@@ -34,7 +34,7 @@ func scanForEmoji(t *testing.T, fsys fs.FS, root string) {
 		if ext := filepath.Ext(p); ext != ".html" && ext != ".js" {
 			return nil
 		}
-		if strings.Contains(p, "/vendor/") || strings.HasSuffix(p, ".min.js") || strings.HasSuffix(p, ".test.js") {
+		if strings.Contains(p, "/vendor/") || strings.HasSuffix(p, ".min.js") {
 			return nil
 		}
 		body, err := fs.ReadFile(fsys, p)

@@ -199,7 +199,7 @@ func TestGlass_ReadsNoBinCount(t *testing.T) {
 	checked := 0
 	for _, f := range files {
 		base := filepath.Base(f)
-		if strings.HasSuffix(base, ".test.js") || strings.HasPrefix(base, "operator-flow") {
+		if strings.HasPrefix(base, "operator-flow") {
 			continue
 		}
 		src, err := os.ReadFile(f)

@@ -181,7 +181,7 @@ func TestPinWire_W5_EnterSubmitsMappedAndMapResolved(t *testing.T) {
 	var mapped []string
 	total := 0
 	err := filepath.Walk("static", func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".js") || strings.HasSuffix(p, ".test.js") {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".js") {
 			return err
 		}
 		b, err := os.ReadFile(p)

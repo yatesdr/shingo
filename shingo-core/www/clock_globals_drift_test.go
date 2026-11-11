@@ -58,7 +58,8 @@ func TestEveryClockPageCarriesGlobals(t *testing.T) {
 }
 
 // pageJS lists Core's own browser modules — every .js under static except the
-// vendored libraries and the node test files — as path → source.
+// vendored libraries — as path → source. The node tests are not there to skip
+// (TestEmbeddedStatic_HoldsNoTestJS).
 func pageJS(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -72,7 +73,7 @@ func pageJS(t *testing.T) map[string]string {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".test.js") {
+		if !strings.HasSuffix(path, ".js") {
 			return nil
 		}
 		b, err := fs.ReadFile(staticFS, path)
@@ -169,7 +170,7 @@ func TestEscapeHtmlDefinedOnce(t *testing.T) {
 	}
 	for _, e := range entries {
 		n := e.Name()
-		if !strings.HasSuffix(n, ".js") || strings.HasSuffix(n, ".test.js") {
+		if !strings.HasSuffix(n, ".js") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(sharedDir, n))
@@ -216,7 +217,7 @@ func TestPlantTZReadInTwoFiles(t *testing.T) {
 	}
 	for _, e := range entries {
 		n := e.Name()
-		if !strings.HasSuffix(n, ".js") || strings.HasSuffix(n, ".test.js") {
+		if !strings.HasSuffix(n, ".js") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(sharedDir, n))

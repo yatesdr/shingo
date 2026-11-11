@@ -36,9 +36,9 @@ func scanForEmoji(t *testing.T, fsys fs.FS, root string) {
 		if ext := filepath.Ext(p); ext != ".html" && ext != ".js" {
 			return nil
 		}
-		// Skip third-party / minified / test files — only first-party UI source
+		// Skip third-party / minified files — only first-party UI source
 		// is held to the policy.
-		if strings.Contains(p, "/vendor/") || strings.HasSuffix(p, ".min.js") || strings.HasSuffix(p, ".test.js") {
+		if strings.Contains(p, "/vendor/") || strings.HasSuffix(p, ".min.js") {
 			return nil
 		}
 		body, err := fs.ReadFile(fsys, p)

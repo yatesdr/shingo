@@ -126,10 +126,6 @@ func TestPageLinks_EveryLinkTheFrontEndNamesHasARoute(t *testing.T) {
 				return nil
 			}
 			name := d.Name()
-			// Skip the JS unit tests: a fixture URL there navigates nothing.
-			if strings.HasSuffix(name, ".test.js") {
-				return nil
-			}
 			if !strings.HasSuffix(name, ".js") && !strings.HasSuffix(name, ".html") {
 				return nil
 			}

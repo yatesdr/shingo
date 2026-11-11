@@ -223,9 +223,6 @@ func TestPinWire_W3_RefreshMaterialHeardOnProduction(t *testing.T) {
 			if err != nil || info.IsDir() {
 				return err
 			}
-			if strings.HasSuffix(p, ".test.js") {
-				return nil
-			}
 			b, err := os.ReadFile(p)
 			if err == nil && strings.Contains(string(b), "refreshMaterial") {
 				listeners = append(listeners, filepath.ToSlash(p))

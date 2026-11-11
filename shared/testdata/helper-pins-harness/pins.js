@@ -970,7 +970,7 @@ function htmxErrorPins() {
     const www = path.join(REPO, 'shingo-edge', 'www');
     const rel = (p) => path.relative(REPO, p).split(path.sep).join('/');
     // shared/utils.js too: the Edge hub installs its htmx:afterSwap listeners.
-    const files = walkFiles(path.join(www, 'static'), (p) => p.endsWith('.js') && !p.endsWith('.test.js') && !p.endsWith('.min.js'))
+    const files = walkFiles(path.join(www, 'static'), (p) => p.endsWith('.js') && !p.endsWith('.min.js'))
         .concat(walkFiles(path.join(www, 'templates'), (p) => p.endsWith('.html')))
         .concat([path.join(REPO, 'shared', 'utils.js')]);
     const listens = [];
