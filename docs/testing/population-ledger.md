@@ -1017,3 +1017,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### STALE — `TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails`
+- test: `TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails` · pkg `shingocore/engine` · run `-run '^TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails$'` · `shingo-core/engine/tops_and_bottoms_pull_docker_test.go:136` @ `8e076d27` · tags `docker`
+- code: STALE (the find no longer looks a pull's press up from its outside: every Edge names the press, and intake is the one check, "refactor(core): the find looks no press up for a pull of tops & bottoms")
+- assertion map: a waiting pull whose press stops carrying the part is failed at the replay with intake's sentence → `TestTopsAndBottomsPull_AReplayAsksForNoPress`: the same plant and the same edit, and the replay now takes the tops & bottoms that lands (the pull names its press; the Edge's START cancels SEND BACK's orders at a style change). Intake's refusal of a pull to no fed press's outside stays pinned by `TestTopsAndBottomsPull_IntakeRefuses`.
+- mutation: the old test against the new find, before it was rewritten: `go test -count=1 -tags docker -run '^TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails$' ./engine/` → `tops_and_bottoms_pull_docker_test.go:150: the replay left the pull dispatched with "", want failed with "TBN-OUT is not the outside position of a press fed with TBN-PART"`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
