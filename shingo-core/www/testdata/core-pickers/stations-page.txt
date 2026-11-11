@@ -197,7 +197,7 @@
   GET /api/nodes
   GET /api/payloads
   GET /api/loader/list
-  toast error: unauthorized
+  toast error: Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
@@ -209,13 +209,13 @@
   GET /api/nodes
   GET /api/payloads
   GET /api/loader/list
-  toast error: <html><body>502 Bad Gateway</body></html>
+  toast error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/payloads
   GET /api/loader/list
-  toast error: TypeError: Failed to fetch
+  toast error: No answer from the server
 
 == refusals: UNL-A Windows, tap LINE-1 (appendWindow re-reads in its catch)
 -- set-home loader.set-home.400: 400 "{\"error\":\"loader_id and position_node_id are required\"}"
@@ -229,7 +229,7 @@
   GET /api/nodes
   GET /api/payloads
   GET /api/loader/list
-  toast error: TypeError: Failed to fetch
+  toast error: No answer from the server
 -- reorder-homes json.500: 500 "{\"error\":\"failed: the store's error\"}" (the window was added)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
   POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,8]}
@@ -244,7 +244,7 @@
   toast error: loader_id and position_node_id are required
 -- set-home fetch rejects (TypeError: Failed to fetch)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
-  toast error: TypeError: Failed to fetch
+  toast error: No answer from the server
 
 == refusals: pick PART-A on GRP-B-N2 (no re-read after a refusal)
 -- set-home json.400: 400 "{\"error\":\"refused: the service's sentence\"}"

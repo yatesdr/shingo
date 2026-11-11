@@ -32,8 +32,8 @@
   toast error: Reparent error: failed: the store's error
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
   POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
-  toast error: Reparent error: <html><body>502 Bad Gateway</body></html>
+  toast error: Reparent error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
-  toast error: Reparent error: TypeError: Failed to fetch
+  toast error: Reparent error: No answer from the server
   The 409's order_ids are dropped: api() throws the error string only.

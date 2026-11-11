@@ -2,11 +2,12 @@
 // TestCorePickerPins in core_pickers_pins_test.go). Plain Node, no packages.
 //
 // A page runs UNMODIFIED but for its ES module syntax: each imported name is
-// lent by the pin, and the five helpers every page's markup and requests go
+// lent by the pin, and the helpers every page's markup and requests go
 // through are the tree's own, evaluated inside the page's context, so a page's
 // fetch is the harness's and a refusal is unwrapped exactly as the page sees it:
-//   - api, apiGet, apiPost from static/app.js (a non-2xx throws the server's
-//     `error` string, or the raw text when there is none);
+//   - api, apiGet, apiPost from static/app.js, and the HTTP door they answer
+//     through (shared/http.js's send, its notice off): a refusal rejects an
+//     ApiError whose string is the door's sentence;
 //   - escapeHtml and h from shared/dom.js.
 //
 // The DOM is what the pages touch and no more: elements by id (made on first
@@ -41,10 +42,18 @@ function fnSource(src, name) {
 
 const sharedSrc = fs.readFileSync(path.join(REPO, 'shared', 'dom.js'), 'utf8');
 const appSrc = readWWW('static/app.js');
+// The door, its module syntax dropped and its private names kept inside a
+// function so none can meet a page's own. The context has no AbortController,
+// so the door arms no deadline timer here: the pins record the page's timers.
+const httpSrc = fs.readFileSync(path.join(REPO, 'shared', 'http.js'), 'utf8')
+    .replace(/^import [^;]+;[ \t]*$/mg, '')
+    .replace(/^export (?=(?:async )?function |const )/mg, '');
 const HELPERS = [
     sharedSrc.match(/^const HTML_ESCAPES = .*$/m)[0],
     fnSource(sharedSrc, 'escapeHtml'),
     fnSource(sharedSrc, 'h'),
+    'var send = (function () {\n' + httpSrc + '\nreturn send;\n})();',
+    fnSource(appSrc, 'apiError'),
     fnSource(appSrc, 'api'),
     fnSource(appSrc, 'apiGet'),
     fnSource(appSrc, 'apiPost'),

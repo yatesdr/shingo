@@ -500,10 +500,10 @@ export function toggleKanbanSupport(el) {
 
 // rawPost is apiPost without the envelope-unwrapping.
 //
-// app.js's api() throws the server's `error` STRING on a non-2xx, which is the
-// right shape almost everywhere and the wrong one here: the holds-bins refusal
-// carries `needs_force` and `drain` alongside the message, and unwrapping to the
-// string throws both away. Ten lines of fetch rather than widening a helper the
+// app.js's api() rejects a non-2xx with the server's `error` sentence alone,
+// which is the right shape almost everywhere and the wrong one here: the
+// holds-bins refusal carries `needs_force` and `drain` alongside the message,
+// and unwrapping to the sentence throws both away. Ten lines of fetch rather than widening a helper the
 // whole application shares.
 function rawPost(url, body) {
   return fetch(url, {
@@ -689,8 +689,8 @@ export async function saveKanban() {
     // appeared, not long enough to read what it said.
     }).forEach(function (m) { toast(m, 'warning', { sticky: true }); });
   } catch (err) {
-    // A refusal (409) arrives as a rejected request whose value IS the server's
-    // error string — api() unwraps the JSON envelope before throwing. Shown
+    // A refusal (409) arrives as a rejected request whose string IS the
+    // server's error sentence — api() unwraps the JSON envelope. Shown
     // as-is rather than wrapped, because the string already names the setting:
     // "GRP-A is already the staging group for loader CT-L" is the whole message.
     toast('' + err, 'error', { sticky: true });

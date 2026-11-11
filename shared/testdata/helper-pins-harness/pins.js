@@ -524,7 +524,10 @@ async function apiPins(surface) {
                 ['api("PATCH", url, {a:1})', (p) => p.m.api('PATCH', '/api/x', { a: 1 })],
                 ['api("POST", url, null)', (p) => p.m.api('POST', '/api/x', null)],
             ],
-            throwing: [['apiGet', (p) => p.m.apiGet('/api/x')], ['apiPost', (p) => p.m.apiPost('/api/x', { a: 1 })], ['apiDelete', (p) => p.m.apiDelete('/api/x')]],
+            // The hub's rejection is an Error carrying the door's sentence (its
+            // String() is that sentence), not the engine's words: keep it.
+            throwing: [['apiGet', (p) => p.m.apiGet('/api/x')], ['apiPost', (p) => p.m.apiPost('/api/x', { a: 1 })], ['apiDelete', (p) => p.m.apiDelete('/api/x')]]
+                .map(([n, door]) => [n, (p) => door(p).catch((e) => { if (e && typeof e === 'object' && String(e) === e.message) e.__harness = true; throw e; })]),
             safe: [],
         },
         'edge-hub': {

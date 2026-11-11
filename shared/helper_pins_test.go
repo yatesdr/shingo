@@ -225,7 +225,6 @@ var sharedExportsNoImporter = map[string]string{
 	"layer.js openSheet":         "adopted in wave C (s2-processes)",
 	"layer.js closeLayer":        "adopted in wave C (s2-processes)",
 	"layer.js layerDepth":        "adopted in wave C (s2-processes): the page's own Escape",
-	"http.js send":               "adopted in wave C (s2-hubs / s2-processes)",
 	"http.js http":               "adopted in wave C (s2-hubs / s2-processes)",
 	"http.js hookHtmxErrors":     "adopted in wave C (s2-hubs): installed on Edge admin",
 	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",

@@ -25,6 +25,7 @@ import { onSSE } from '/static/shared/bus.js';
 import { showRefreshBanner } from '/static/shared/utils.js';
 import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { send } from '/static/shared/http.js';
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep
 // importing them from here.
@@ -89,24 +90,31 @@ export { showModal, hideModal, uiConfirm, uiPrompt, uiConfirmWithInput };
 // at the same level are said once.
 export { toast };
 
-// Generic JSON request. Throws the server error string (or parsed object's
-// `error` field) on non-2xx responses; returns parsed JSON on success.
+// The hub's door verbs keep the contract Core's pages were written to: they
+// resolve the answer's body and reject on anything else. Behind them is the
+// one HTTP door (shared/http.js) with its notice off, because each page says
+// a refusal in its own words ('Save failed: ' + e). So a 204 or an empty 2xx
+// resolves null, a 4xx whose body is null is still a refusal with a sentence,
+// a lapsed session is "Signed out", and an answer that does not come within
+// the door's deadline is a refusal too.
+//
+// THE REJECTION IS AN ERROR WHOSE STRING IS THE SENTENCE. Pages catch it the
+// way they caught the string this file used to throw: 'Save failed: ' + e,
+// e.message || e, toast(e). An Error prints as "Error: <sentence>", so this
+// one prints the sentence alone. Its name is 'ApiError', so a page that shows
+// the door's sentence and a fallback for its own failures tells them apart
+// (where it used to ask whether the rejection was a string).
 export function api(method, url, body) {
-  var opts = { method: method };
-  if (body !== undefined && body !== null) {
-    opts.headers = { 'Content-Type': 'application/json' };
-    opts.body = JSON.stringify(body);
-  }
-  return fetch(url, opts).then(function(r) {
-    if (!r.ok) return r.text().then(function(t) {
-      try { throw JSON.parse(t); }
-      catch(e) {
-        if (typeof e === 'object' && e.error) throw e.error;
-        throw t;
-      }
-    });
-    return r.json();
+  return send(method, url, body, { notice: false }).then(function(res) {
+    if (res.ok) return res.body;
+    throw apiError(res.error);
   });
+}
+function apiError(sentence) {
+  var err = new Error(sentence);
+  err.name = 'ApiError';
+  err.toString = function() { return this.message; };
+  return err;
 }
 export function apiGet(url)        { return api('GET', url); }
 export function apiPost(url, body) { return api('POST', url, body || {}); }

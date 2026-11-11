@@ -60,7 +60,7 @@ function orderControlPost(url, body, el) {
     })
     .catch(function(e) {
       console.error('orderControl', url, e);
-      if (msg) msg.textContent = (typeof e === 'string' && e) ? e : 'Network error';
+      if (msg) msg.textContent = (e && e.name === 'ApiError') ? e.message : 'Network error';
     });
 }
 
@@ -93,7 +93,7 @@ async function cancelOrderFromRow(id, el) {
     .then(function() { location.reload(); })
     .catch(function(e) {
       console.error('cancelOrderFromRow', oid, e);
-      toast('Cancel failed: ' + ((typeof e === 'string' && e) ? e : 'network error'), 'error');
+      toast('Cancel failed: ' + ((e && e.name === 'ApiError') ? e.message : 'network error'), 'error');
     });
 }
 
@@ -183,7 +183,7 @@ function openOrderModal(id, el, evt) {
     .catch(function(e) {
       console.error('openOrderModal', id, e);
       loading.classList.add('hide');
-      errEl.textContent = (typeof e === 'string' && e) ? e : 'Failed to load order';
+      errEl.textContent = (e && e.name === 'ApiError') ? e.message : 'Failed to load order';
       errEl.classList.remove('hide');
     });
 }
@@ -1112,7 +1112,7 @@ function submitManualOrder() {
       })
       .catch(function(e) {
         console.error('moveRobot', e);
-        status.textContent = (typeof e === 'string' && e) ? e : 'Network error';
+        status.textContent = (e && e.name === 'ApiError') ? e.message : 'Network error';
         status.style.color = 'var(--danger)';
         btn.disabled = false;
       });
@@ -1141,7 +1141,7 @@ function submitManualOrder() {
     })
     .catch(function(e) {
       console.error('submitManualOrder', e);
-      status.textContent = (typeof e === 'string' && e) ? e : 'Network error';
+      status.textContent = (e && e.name === 'ApiError') ? e.message : 'Network error';
       status.style.color = 'var(--danger)';
       btn.disabled = false;
     });

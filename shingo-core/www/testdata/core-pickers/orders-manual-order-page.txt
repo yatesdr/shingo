@@ -113,20 +113,20 @@ staged payload after the load: read-out: "Select a source node."
   mo-status "refused: the service's sentence" color var(--danger); submit button enabled
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
   POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
-  console.error submitManualOrder unauthorized
-  mo-status "unauthorized" color var(--danger); submit button enabled
+  console.error submitManualOrder Signed out
+  mo-status "Signed out" color var(--danger); submit button enabled
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
   console.error submitManualOrder failed: the store's error
   mo-status "failed: the store's error" color var(--danger); submit button enabled
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
   POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
-  console.error submitManualOrder <html><body>502 Bad Gateway</body></html>
-  mo-status "<html><body>502 Bad Gateway</body></html>" color var(--danger); submit button enabled
+  console.error submitManualOrder Server error (502)
+  mo-status "Server error (502)" color var(--danger); submit button enabled
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
-  console.error submitManualOrder TypeError: Failed to fetch
-  mo-status "Network error" color var(--danger); submit button enabled
+  console.error submitManualOrder No answer from the server
+  mo-status "No answer from the server" color var(--danger); submit button enabled
 
 == refusals: move robot to VIRT-1
 -- robots.move.400: 400 "{\"error\":\"destination node is required\"}"
@@ -139,17 +139,17 @@ staged payload after the load: read-out: "Select a source node."
   mo-status "failed: the store's error" color var(--danger); submit button enabled
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/robots/move {"delivery_node":"VIRT-1","priority":0}
-  console.error moveRobot TypeError: Failed to fetch
-  mo-status "Network error" color var(--danger); submit button enabled
+  console.error moveRobot No answer from the server
+  mo-status "No answer from the server" color var(--danger); submit button enabled
 
 == census #7 (pinned as is): the first /api/nodes read fails
 -- open
   GET /api/nodes
   GET /api/payloads/templates
   GET /api/bins/available
-  console.error loadManualOrderBinDropdown TypeError: Failed to fetch
+  console.error loadManualOrderBinDropdown No answer from the server
   console.error loadManualOrderDropdowns nodes failed: the store's error
-  console.error loadManualOrderDropdowns payloads <html><body>502 Bad Gateway</body></html>
+  console.error loadManualOrderDropdowns payloads Server error (502)
   modal: show manual-order-modal
   mo-source: Loading...
   mo-delivery: Loading...

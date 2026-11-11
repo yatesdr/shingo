@@ -55,16 +55,16 @@
   toast error: Error: refused: the service's sentence
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
-  toast error: Error: unauthorized
+  toast error: Error: Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
   toast error: Error: failed: the store's error
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
-  toast error: Error: <html><body>502 Bad Gateway</body></html>
+  toast error: Error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
-  toast error: Error: TypeError: Failed to fetch
+  toast error: Error: No answer from the server
 
 == refusals: Request Move to GRP-B-N1
 -- json.409: 409 "{\"error\":\"refused: the service's sentence\"}"
@@ -72,7 +72,7 @@
   toast error: Error: refused: the service's sentence
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/bins/request-move {"bin_id":50,"destination_node_id":6}
-  toast error: Error: TypeError: Failed to fetch
+  toast error: Error: No answer from the server
 
 == refusals: Load PART-A
 -- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
@@ -80,7 +80,7 @@
   toast error: Error: refused: the service's sentence
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A"}}
-  toast error: Error: TypeError: Failed to fetch
+  toast error: Error: No answer from the server
 
 == Create bin: confirmBinCreate, the label checked against PAGE_NODES (every node)
 -- label "LINE-1" x1: checked as ["LINE-1"]; default prevented 1, form.submit() x0

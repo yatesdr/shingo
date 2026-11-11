@@ -25,8 +25,10 @@ function readBin(id, withHistory) {
   return apiGet('/api/bins/detail?id=' + id + (withHistory ? '' : '&history=0'));
 }
 
+// errText is the door's sentence when the hub's api refused (an ApiError,
+// app.js), else 'unknown'.
 function errText(e) {
-  return (typeof e === 'string' && e) || (e && e.error) || 'unknown';
+  return (e && e.name === 'ApiError' && e.message) || 'unknown';
 }
 
 // ===== OWN-ACTION ECHOES =====
