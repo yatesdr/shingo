@@ -49,8 +49,6 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.PackTolerancePct = 5
 	case flowspec.ChangeoverEvacNodes:
 		c.ChangeoverEvacNodes = []string{v}
-	case flowspec.ChangeoverEvacDestination:
-		c.ChangeoverEvacDestination = v
 	case flowspec.PartialDestination:
 		c.PartialDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:
@@ -115,8 +113,6 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 	case flowspec.ChangeoverEvacNodes:
 		nodes := []string{v}
 		in.ChangeoverEvacNodes = &nodes
-	case flowspec.ChangeoverEvacDestination:
-		in.ChangeoverEvacDestination = &v
 	case flowspec.PartialDestination:
 		in.PartialDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:

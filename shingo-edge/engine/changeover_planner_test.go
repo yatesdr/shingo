@@ -1234,8 +1234,6 @@ func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
 		c.KeepStagedNode = v
 	case flowspec.ChangeoverEvacNodes:
 		c.ChangeoverEvacNodes = []string{v}
-	case flowspec.ChangeoverEvacDestination:
-		c.ChangeoverEvacDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:
 		c.ChangeoverCarryoverDisposition = domain.CarryoverKeepLineside
 	case flowspec.ReuseCompatibleBins:

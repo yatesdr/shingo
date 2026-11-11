@@ -98,7 +98,7 @@ func TestChangeoverLift_EachModesLifterIsToldFromItsSteps(t *testing.T) {
 			to := *from
 			to.PayloadCode = "NEXT"
 			tool := toolingPositionAction(toolingPress{from: from, to: &to, positions: []string{"LINE"},
-				evacDest: "OUT", staging: "IN-STG"}, "LINE", &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"})
+				staging: "IN-STG"}, "LINE", &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"})
 			leg(fmt.Sprintf("tool_change/%s/%s", mode, role), "tool_change", "A", tool.SupplyOrder.Complex.Steps)
 			if mode != pressPositionSwapMode {
 				continue

@@ -1035,3 +1035,48 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### DEAD — `TestValidateNodeClaim_EvacDestinationIsFreeForm`
+- test: `TestValidateNodeClaim_EvacDestinationIsFreeForm` · pkg `shingoedge/domain` · run `-run '^TestValidateNodeClaim_EvacDestinationIsFreeForm$'` · `shingo-edge/domain/claim_validation_test.go:220` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: a free-form clearance destination (node or group, blank) is never refused → nothing: the field is gone
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_IgnoresTheToolingDestination`
+- test: `TestResidentEvacDest_IgnoresTheToolingDestination` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_IgnoresTheToolingDestination$'` · `shingo-edge/engine/swap_evac_dest_fourth_door_test.go:96` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: the resident carrier's aim ignores the clearance override → nothing: there is no override to ignore
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestToolingChangeover_BlankDestinationMeansNormalRouting`
+- test: `TestToolingChangeover_BlankDestinationMeansNormalRouting` · pkg `shingoedge/engine` · run `-run '^TestToolingChangeover_BlankDestinationMeansNormalRouting$'` · `shingo-edge/engine/changeover_position_builder_test.go:99` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: with no override, nothing is redirected and the expanded leg is built against OutboundDestination → `TestToolingPositionAction_Shape` (the leg drops at the outgoing claim's outbound, MARKET) and `TestToolingBeatsRelabel`'s check that a marked position clears where an unmarked one does
+- mutation: none to run: the decorator's override map and the press's evacDest field are deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestToolingClearanceOverrideRedirectsOnlyMarkedPositions`
+- test: `TestToolingClearanceOverrideRedirectsOnlyMarkedPositions` · pkg `shingoedge/engine` · run `-run '^TestToolingClearanceOverrideRedirectsOnlyMarkedPositions$'` · `shingo-edge/engine/changeover_tooling_test.go:235` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: a marked position goes to the override and an unmarked one does not → nothing: the override is gone; a marked position's clearance is the ordinary one (`TestToolingPositionAction_Shape`)
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestToolingWithoutOverridePlansNoOutboundEdit`
+- test: `TestToolingWithoutOverridePlansNoOutboundEdit` · pkg `shingoedge/engine` · run `-run '^TestToolingWithoutOverridePlansNoOutboundEdit$'` · `shingo-edge/engine/changeover_tooling_test.go:266` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: with no override no outbound edit is queued; the staging hold is planned → nothing for the first (there is no edit to queue); the hold, `TestToolingAcrossDisjointNodes` and `TestToolChange_TheTable`
+- mutation: none to run: the decorator's override map is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

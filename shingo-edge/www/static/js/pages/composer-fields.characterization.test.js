@@ -103,7 +103,6 @@ const CELL_FIELDS = {
     parkOld: 'outbound_staging',
     source: 'inbound_source',
     dest: 'outbound_destination',
-    evacDest: 'changeover_evac_destination',
     evacNodes: 'changeover_evac_nodes',
     keyRoute: 'key_route',
 };
@@ -219,7 +218,7 @@ function runForbiddenClearing() {
 // The same rule over the fields the PICTURE draws. These were the claim
 // modal's fieldsets; they are the positions table's columns now.
 function runCellForbiddenClearing() {
-    const empty = { part: null, paired: '', secondPaired: '', staging: '', parkOld: '', source: '', dest: '', evacDest: '', evacNodes: [], keyRoute: [] };
+    const empty = { part: null, paired: '', secondPaired: '', staging: '', parkOld: '', source: '', dest: '', evacNodes: [], keyRoute: [] };
     for (const role of ROLES) {
         for (const swap of SWAPS) {
             let s = stateFor(role, 'two_robot_press_index', 'PLN_01');
@@ -230,7 +229,6 @@ function runCellForbiddenClearing() {
             s = M.reduce(s, { type: 'setSource', node: 'PLN_01', source: 'Supermarket Empty Totes' });
             s = M.reduce(s, { type: 'setDest', node: 'PLN_01', dest: 'Supermarket Area' });
             s = M.reduce(s, { type: 'setVia', node: 'PLN_01', via: 'LM167' });
-            s = M.reduce(s, { type: 'setEvacDest', node: 'PLN_01', dest: 'Supermarket Area' });
             s = M.reduce(s, { type: 'setEvacNodes', node: 'PLN_01', nodes: ['PLN_01'] });
             const before = s.cells.PLN_01;
             s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: swap });
@@ -335,7 +333,7 @@ function runSaveShapeCase() {
     // reason. And advanced is absent because the sheet was never opened,
     // which is the one of these whose absence carries meaning: it is Expand's
     // carry-through rather than an opinion.
-    for (const k of ['paired_core_node', 'second_paired_core_node', 'changeover_evac_destination',
+    for (const k of ['paired_core_node', 'second_paired_core_node',
         'changeover_evac_nodes', 'key_route', 'advanced']) {
         check('save shape ' + k + ' is absent', k in cell, false);
     }

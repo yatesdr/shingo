@@ -245,16 +245,16 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   reorder_point, auto_reorder, inbound_staging, outbound_staging,
 			   inbound_source, outbound_destination, allowed_payload_codes,
 			   paired_core_node, second_paired_core_node, refill_by,
-			   changeover_evac_nodes, changeover_evac_destination,
+			   changeover_evac_nodes,
 			   changeover_carryover_disposition,
 			   key_route, key_task,
 			   auto_push, auto_confirm, keep_staged_node, partial_destination)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
 			c.PairedCoreNode, c.SecondPairedCoreNode, string(c.RefillBy.OrDefault()),
-			jsonList(c.ChangeoverEvacNodes), c.ChangeoverEvacDestination,
+			jsonList(c.ChangeoverEvacNodes),
 			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
 			jsonList(c.KeyRoute), c.KeyTask,
 			b2i(c.AutoPush), b2i(c.AutoConfirm), c.KeepStagedNode, c.PartialDestination); err != nil {
@@ -316,7 +316,6 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		for _, leg := range []struct{ name, role string }{
 			{c.InboundSource, "source"},
 			{c.OutboundDestination, "destination"},
-			{c.ChangeoverEvacDestination, "destination"},
 			{c.InboundStaging, "staging"},
 			{c.OutboundStaging, "staging"},
 		} {

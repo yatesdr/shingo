@@ -57,7 +57,6 @@ var recipeRoutingFields = []struct {
 	{flowspec.InboundStaging, RoutingRoleStaging, RecipeFollowsStaging, func(c *FlowCell) *string { return &c.InboundStaging }},
 	{flowspec.OutboundStaging, RoutingRoleStaging, RecipeFollowsStaging, func(c *FlowCell) *string { return &c.OutboundStaging }},
 	{flowspec.OutboundDestination, RoutingRoleDestination, RecipeFollowsDestination, func(c *FlowCell) *string { return &c.OutboundDestination }},
-	{flowspec.ChangeoverEvacDestination, RoutingRoleDestination, RecipeFollowsDestination, func(c *FlowCell) *string { return &c.ChangeoverEvacDestination }},
 }
 
 // isRecipeMarker reports whether v is a role marker rather than a node.

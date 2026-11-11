@@ -45,9 +45,8 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 		PairedCoreNode:        c.PairedCoreNode,
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,
 		AutoConfirm:           c.AutoConfirm,
-		// Round 3: the editor owns controls for both, so the body carries them.
-		ChangeoverEvacNodes:       &c.ChangeoverEvacNodes,
-		ChangeoverEvacDestination: &c.ChangeoverEvacDestination,
+		// Round 3: the editor owns the marks' control, so the body carries them.
+		ChangeoverEvacNodes: &c.ChangeoverEvacNodes,
 		// Round 4: the Routing fieldset owns both, so the body carries them.
 		KeyRoute: &c.KeyRoute,
 		KeyTask:  &c.KeyTask,
@@ -98,11 +97,9 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		SecondPairedCoreNode:  "RT-NODE-C",
 		AutoConfirm:           true,
 		// A new column is not done until something reads it back and asserts on
-		// the value. Distinctive on both: a two-position selection (not one, not
-		// all three) and a destination that is NOT outbound_destination, so a
-		// fallback silently standing in for the real column would show.
-		ChangeoverEvacNodes:       domain.Ptr([]string{"RT-NODE", "RT-NODE-C"}),
-		ChangeoverEvacDestination: domain.Ptr("RT-TOOLING-EVAC"),
+		// the value. Distinctive: a two-position selection (not one, not all
+		// three).
+		ChangeoverEvacNodes: domain.Ptr([]string{"RT-NODE", "RT-NODE-C"}),
 		// Pointer-typed and NOT sent by the editor body below, so an editor
 		// save must leave it alone: it describes the press's hardware.
 		RefillBy: domain.Ptr(protocol.RefillByIndexRobot),
@@ -159,7 +156,6 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"auto_push", before.AutoPush, after.AutoPush},
 		{"strict_pack", before.StrictPack, after.StrictPack},
 		{"pack_tolerance_pct", before.PackTolerancePct, after.PackTolerancePct},
-		{"changeover_evac_destination", before.ChangeoverEvacDestination, after.ChangeoverEvacDestination},
 		{"refill_by", before.RefillBy, after.RefillBy},
 	} {
 		if c.before != c.got {
@@ -179,9 +175,8 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	// would pass no matter what updateClaim did.
 	// The round-3 columns must have taken too, or their assertions above are
 	// comparing two blanks and proving nothing.
-	if len(before.ChangeoverEvacNodes) != 2 || before.ChangeoverEvacDestination != "RT-TOOLING-EVAC" {
-		t.Fatalf("round-3 seed did not take: positions=%v dest=%q",
-			before.ChangeoverEvacNodes, before.ChangeoverEvacDestination)
+	if len(before.ChangeoverEvacNodes) != 2 {
+		t.Fatalf("round-3 seed did not take: positions=%v", before.ChangeoverEvacNodes)
 	}
 	if !before.IndexRobotFetches() {
 		t.Fatal("round-4 seed did not take: refill_by is Robot 1, so its no-op assertion proves nothing")
@@ -290,23 +285,21 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	testutil.MustNoErr(t, err, "create style")
 
 	base := processes.NodeClaimInput{
-		StyleID:                   styleID,
-		CoreNodeName:              "EV-PRESS",
-		Role:                      protocol.ClaimRoleProduce,
-		SwapMode:                  protocol.SwapModeTwoRobotPressIndex,
-		PayloadCode:               "PART-EV",
-		OutboundDestination:       "EV-MARKET",
-		PairedCoreNode:            "EV-PRESS-B",
-		SecondPairedCoreNode:      "EV-PRESS-C",
-		ChangeoverEvacNodes:       domain.Ptr([]string{"EV-PRESS"}),
-		ChangeoverEvacDestination: domain.Ptr("EV-BAY-1"),
+		StyleID:              styleID,
+		CoreNodeName:         "EV-PRESS",
+		Role:                 protocol.ClaimRoleProduce,
+		SwapMode:             protocol.SwapModeTwoRobotPressIndex,
+		PayloadCode:          "PART-EV",
+		OutboundDestination:  "EV-MARKET",
+		PairedCoreNode:       "EV-PRESS-B",
+		SecondPairedCoreNode: "EV-PRESS-C",
+		ChangeoverEvacNodes:  domain.Ptr([]string{"EV-PRESS"}),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, base)
 	testutil.MustNoErr(t, err, "seed claim")
 
 	upd := base
 	upd.ChangeoverEvacNodes = domain.Ptr([]string{"EV-PRESS-B", "EV-PRESS-C"})
-	upd.ChangeoverEvacDestination = domain.Ptr("EV-BAY-2")
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, upd); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -316,9 +309,6 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	if got := strings.Join(after.ChangeoverEvacNodes, ","); got != "EV-PRESS-B,EV-PRESS-C" {
 		t.Errorf("changeover_evac_nodes = %q, want EV-PRESS-B,EV-PRESS-C", got)
 	}
-	if after.ChangeoverEvacDestination != "EV-BAY-2" {
-		t.Errorf("changeover_evac_destination = %q, want EV-BAY-2", after.ChangeoverEvacDestination)
-	}
 
 	// Clearing the selection has to persist too — an empty set is a real
 	// answer ("no position blocks the tool"), not an absent one. Under the pointer
@@ -327,7 +317,6 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	// would be the writer saying nothing, and would correctly change nothing.
 	clr := base
 	clr.ChangeoverEvacNodes = domain.Ptr([]string{})
-	clr.ChangeoverEvacDestination = domain.Ptr("")
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, clr); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
@@ -335,9 +324,6 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	testutil.MustNoErr(t, err, "fetch cleared")
 	if len(cleared.ChangeoverEvacNodes) != 0 {
 		t.Errorf("cleared marks = %v, want none", cleared.ChangeoverEvacNodes)
-	}
-	if cleared.ChangeoverEvacDestination != "" {
-		t.Errorf("cleared destination = %q, want empty", cleared.ChangeoverEvacDestination)
 	}
 }
 

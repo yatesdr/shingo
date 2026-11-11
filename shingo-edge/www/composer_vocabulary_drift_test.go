@@ -74,7 +74,7 @@ func TestFlowspecLabelsReachTheStation(t *testing.T) {
 		flowspec.SwapMode, flowspec.Role, flowspec.PairedCoreNode,
 		flowspec.SecondPairedCoreNode, flowspec.InboundStaging, flowspec.OutboundStaging,
 		flowspec.InboundSource, flowspec.OutboundDestination,
-		flowspec.ChangeoverEvacDestination, flowspec.ChangeoverEvacNodes, flowspec.KeyRoute,
+		flowspec.ChangeoverEvacNodes, flowspec.KeyRoute,
 	} {
 		want := `"` + string(f) + `": "` + flowspec.Label(f) + `"`
 		if !strings.Contains(string(body), want) {

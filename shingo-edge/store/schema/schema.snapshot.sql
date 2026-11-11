@@ -899,11 +899,6 @@ CREATE TABLE style_node_claims (
     -- because an index-paired node has no claim row of its own to hang it on.
     -- Empty = nothing marked = today's behaviour.
     changeover_evac_nodes   TEXT NOT NULL DEFAULT '',
-    -- Where a marked position's bin is CLEARED to, when this cell wants it
-    -- somewhere other than its ordinary outbound destination. A node OR a group
-    -- name; blank means normal routing, which is the default and the common
-    -- case. There is no bay: see engine/changeover_tooling.go.
-    changeover_evac_destination TEXT NOT NULL DEFAULT '',
     -- What happens to a marked position's bin when its part CARRIES OVER — the same
     -- payload on that position in both styles. "replace" (the default) clears it
     -- like any other marked position and brings a fresh carrier through staging;
@@ -1009,7 +1004,6 @@ CREATE TABLE style_node_claims_quarantine(
   lineside_soft_threshold INT,
   reuse_compatible_bins INT,
   changeover_evac_nodes TEXT,
-  changeover_evac_destination TEXT,
   changeover_carryover_disposition TEXT,
   refill_by TEXT,
   key_route TEXT,

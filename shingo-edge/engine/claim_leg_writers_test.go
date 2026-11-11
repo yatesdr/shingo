@@ -30,7 +30,6 @@ var engLaneCore = []protocol.NodeInfo{
 var composerLegCensus = []struct{ leg, want string }{
 	{"inbound_source", engLegRefused},
 	{"outbound_destination", engLegRefused},
-	{"changeover_evac_destination", engLegRefused},
 	{"inbound_staging", engLegRefused},
 }
 
@@ -57,8 +56,6 @@ func TestSaveFlow_ALaneOnEachLeg(t *testing.T) {
 					cells[i].InboundSource = "CW-LANE"
 				case "outbound_destination":
 					cells[i].OutboundDestination = "CW-LANE"
-				case "changeover_evac_destination":
-					cells[i].ChangeoverEvacDestination = "CW-LANE"
 				case "inbound_staging":
 					cells[i].InboundStaging = "CW-LANE"
 				}
@@ -85,14 +82,10 @@ func TestSaveFlow_ALaneOnEachLeg(t *testing.T) {
 
 // reorderLegCensus is the replenishment page's reorder edit on a claim that
 // already names a lane. The edit is about the reorder point, but the write
-// echoes the claim's legs, so it is refused until the leg is fixed. The evac
-// destination is the exception: it is absent-means-untouched and the echo
-// leaves it out (domain.InputFromClaimUngated), so this write neither stores
-// it nor asks about it.
+// echoes the claim's legs, so it is refused until the leg is fixed.
 var reorderLegCensus = []struct{ leg, want string }{
 	{"inbound_source", engLegRefused},
 	{"outbound_destination", engLegRefused},
-	{"changeover_evac_destination", engLegSaved},
 	{"containment_destination", engLegRefused},
 	{"inbound_staging", engLegRefused},
 	{"outbound_staging", engLegRefused},
@@ -108,13 +101,12 @@ func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
 			testutil.MustNoErr(t, err, "create process")
 			sid, err := db.CreateStyle("CW-STYLE", "", pid)
 			testutil.MustNoErr(t, err, "create style")
-			evac := "CW-SUP"
 			in := processes.NodeClaimInput{
 				StyleID: sid, CoreNodeName: "CW-PRESS", Role: protocol.ClaimRoleProduce,
 				SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-CW", ReorderPoint: 5,
 				InboundSource: "CW-SUP", OutboundDestination: "CW-SUP",
-				ChangeoverEvacDestination: &evac, ContainmentDestination: "CW-HOLD",
-				InboundStaging: "CW-STG", OutboundStaging: "CW-STG2",
+				ContainmentDestination: "CW-HOLD",
+				InboundStaging:         "CW-STG", OutboundStaging: "CW-STG2",
 			}
 			lane := "CW-LANE"
 			switch row.leg {
@@ -122,8 +114,6 @@ func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
 				in.InboundSource = lane
 			case "outbound_destination":
 				in.OutboundDestination = lane
-			case "changeover_evac_destination":
-				in.ChangeoverEvacDestination = &lane
 			case "containment_destination":
 				in.ContainmentDestination = lane
 			case "inbound_staging":
@@ -163,7 +153,7 @@ func engStoredLane(t *testing.T, db *store.DB, styleID int64, leg string) bool {
 	for _, c := range claims {
 		v := map[string]string{
 			"inbound_source": c.InboundSource, "outbound_destination": c.OutboundDestination,
-			"changeover_evac_destination": c.ChangeoverEvacDestination, "inbound_staging": c.InboundStaging,
+			"inbound_staging": c.InboundStaging,
 		}[leg]
 		if v == "CW-LANE" {
 			return true

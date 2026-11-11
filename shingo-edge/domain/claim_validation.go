@@ -172,7 +172,6 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 	return []ClaimLeg{
 		{"inbound_source", RoutingRoleSource, in.InboundSource},
 		{"outbound_destination", RoutingRoleDestination, in.OutboundDestination},
-		{"changeover_evac_destination", RoutingRoleDestination, OptValue(in.ChangeoverEvacDestination)},
 		{"containment_destination", RoutingRoleDestination, in.ContainmentDestination},
 		{"partial_destination", RoutingRoleDestination, in.PartialDestination},
 		{"inbound_staging", RoutingRoleStaging, in.InboundStaging},

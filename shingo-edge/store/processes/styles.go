@@ -277,7 +277,7 @@ const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-	changeover_evac_nodes, changeover_evac_destination,
+	changeover_evac_nodes,
 	refill_by, key_route, key_task, changeover_carryover_disposition,
 	source_preset_id, source_preset_version`
 
@@ -381,7 +381,7 @@ type copiedClaim struct {
 	allowed                            []string
 	inboundSource, outboundDestination string
 	inboundStaging, outboundStaging    string
-	evacDestination, containment       string
+	containment                        string
 	partial                            string
 	paired, second                     string
 	keepStagedNode                     string
@@ -391,9 +391,9 @@ type copiedClaim struct {
 func (c *copiedClaim) legs() NodeClaimInput {
 	return NodeClaimInput{
 		InboundSource: c.inboundSource, OutboundDestination: c.outboundDestination,
-		ChangeoverEvacDestination: &c.evacDestination, ContainmentDestination: c.containment,
-		PartialDestination: c.partial,
-		InboundStaging:     c.inboundStaging, OutboundStaging: c.outboundStaging,
+		ContainmentDestination: c.containment,
+		PartialDestination:     c.partial,
+		InboundStaging:         c.inboundStaging, OutboundStaging: c.outboundStaging,
 		KeepStagedNode: &c.keepStagedNode,
 	}
 }
@@ -435,7 +435,7 @@ func refuseCopiedLaneLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedCla
 func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, error) {
 	gr, err := tx.Query(`SELECT core_node_name, swap_mode, payload_code, allowed_payload_codes,
 		inbound_source, outbound_destination, inbound_staging, outbound_staging,
-		changeover_evac_destination, containment_destination, partial_destination,
+		containment_destination, partial_destination,
 		paired_core_node, second_paired_core_node, keep_staged_node FROM style_node_claims WHERE style_id = ? AND`+liveClaims, targetID)
 	if err != nil {
 		return nil, err
@@ -447,7 +447,7 @@ func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, erro
 		var allowed string
 		if err := gr.Scan(&c.node, &c.swapMode, &c.payload, &allowed, &c.inboundSource,
 			&c.outboundDestination, &c.inboundStaging, &c.outboundStaging,
-			&c.evacDestination, &c.containment, &c.partial, &c.paired, &c.second, &c.keepStagedNode); err != nil {
+			&c.containment, &c.partial, &c.paired, &c.second, &c.keepStagedNode); err != nil {
 			return nil, err
 		}
 		var allowedList []string

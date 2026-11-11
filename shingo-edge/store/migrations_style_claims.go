@@ -271,7 +271,6 @@ CREATE TABLE style_node_claims (
     mode                    TEXT NOT NULL DEFAULT 'loader',
     second_paired_core_node TEXT NOT NULL DEFAULT '',
     changeover_evac_nodes   TEXT NOT NULL DEFAULT '',
-    changeover_evac_destination TEXT NOT NULL DEFAULT '',
     refill_by               TEXT NOT NULL DEFAULT 'clearing_robot',
     key_route               TEXT NOT NULL DEFAULT '',
     key_task                TEXT NOT NULL DEFAULT '',
@@ -293,7 +292,7 @@ INSERT INTO style_node_claims (
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
     outbound_source, mode, second_paired_core_node,
-    changeover_evac_nodes, changeover_evac_destination,
+    changeover_evac_nodes,
     key_route, key_task, changeover_carryover_disposition,
     source, called_by, updated_at, retired_at, source_preset_id, source_preset_version
 )
@@ -306,7 +305,7 @@ SELECT
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
     outbound_source, mode, second_paired_core_node,
-    changeover_evac_nodes, changeover_evac_destination,
+    changeover_evac_nodes,
     key_route, key_task, changeover_carryover_disposition,
     source, called_by, updated_at, retired_at, source_preset_id, source_preset_version
 FROM style_node_claims_legacy;

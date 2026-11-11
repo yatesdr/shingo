@@ -446,10 +446,8 @@ type Claim struct {
 	// ChangeoverEvacNodes names the CORE NODES whose bins block the tooling
 	// change — e.g. ["PLN_001", "PLN_002"]. Validation refuses a node the claim
 	// does not hold, so a re-pairing cannot silently re-target a clearance.
-	// ChangeoverEvacDestination is where those bins go (blank falls back to
-	// outbound_destination).
-	ChangeoverEvacNodes       []string `yaml:"changeover_evac_nodes,omitempty"`
-	ChangeoverEvacDestination string   `yaml:"changeover_evac_destination,omitempty"`
+	// Those bins go where the claim's bins ordinarily go (outbound_destination).
+	ChangeoverEvacNodes []string `yaml:"changeover_evac_nodes,omitempty"`
 	// ChangeoverCarryoverDisposition decides what happens to a marked position's bin
 	// when the SAME part runs on that position in both styles: "replace" (default —
 	// clear it and bring a fresh carrier through staging), "keep_lineside" (the

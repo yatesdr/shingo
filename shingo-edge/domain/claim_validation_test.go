@@ -219,19 +219,6 @@ func TestValidateNodeClaim_MarkedNodeNotOnThisClaimIsRefused(t *testing.T) {
 	}
 }
 
-// A free-form evac destination is never refused — node OR group, and blank is
-// the ordinary default.
-func TestValidateNodeClaim_EvacDestinationIsFreeForm(t *testing.T) {
-	t.Parallel()
-	for _, dest := range []string{"", "TOOLING-BAY", "SMG_01", "some.group.name"} {
-		c := validClaim()
-		c.ChangeoverEvacDestination = &dest
-		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
-			t.Errorf("evac destination %q must be accepted; findings = %+v", dest, got)
-		}
-	}
-}
-
 // TestValidateNodeClaim_ManualSwapIsNotAConfigurableInput replaces
 // TestValidateNodeClaim_ManualSwapNeedsNoPayload, which asserted the opposite:
 // that a manual_swap claim with a blank payload was ACCEPTED, because Core owns

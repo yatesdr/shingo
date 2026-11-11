@@ -395,17 +395,11 @@ zones:
       - {name: PEB_011, depth: 1}
       - {name: PEB_012, depth: 1}
 
-  # ── Changeover clearance zone — the OPTIONAL OVERRIDE, demonstrated honestly ──
+  # ── SYN_CLEAR: a small laned group of its own ──
   #
-  # A cell whose ordinary outbound is the wrong place to put material during a
-  # setup can name somewhere else in changeover_evac_destination. It is a
-  # DESTINATION like any other, so this is a node group with lanes, not a
-  # dedicated station: if it fills, ordinary store-slot behaviour applies and
-  # the order waits for a slot instead of a robot parking on an occupied spot.
-  #
-  # PRESS-1-MOVED points at it (see claims). PRESS-1-RUN deliberately does NOT —
-  # the default path is normal routing, and the fixture has to exercise the
-  # default, or the thing everyone actually gets is the thing nothing covers.
+  # One lane of two slots, which the planner golden stores into and fills (a
+  # store into a lane; a move queued to a full group). No claim names it: a tool
+  # change clears to the cell's ordinary destination.
   - name: SYN_CLEAR
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -1031,9 +1025,7 @@ stations:
   # sim showed what that costs: a two-position press sends TWO bins, the bay holds
   # one, nothing ever empties it, and robots dwell on it holding bins
   # ("HOLDING at TBN_001 — a robot cannot place onto an occupied position").
-  # The clearance OVERRIDE demo is now SYN_CLEAR, a node group — see
-  # PRESS-1-MOVED's claim — so what an override names gets ordinary capacity
-  # behaviour instead of being a special place with special rules.
+  # A tool change has no destination of its own: it clears to the cell's.
   - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage (incoming style waits here)
   # Where a CARRIED-OVER bin waits out the setup. A part common to both styles
   # does not have to make a round trip through the supermarket to get out of the
@@ -1673,10 +1665,8 @@ claims:
     # The OUTGOING claim owns the decision — the tool change reads the
     # from-side — so these live here and not on -ALT.
     changeover_evac_nodes: [PLN_001, PLN_002]
-    # NO changeover_evac_destination, and that is the scenario: the marked positions
-    # are cleared BY NORMAL ROUTING, to outbound_destination like any other
-    # press bin. This is the default path and the one every plant gets unless it
-    # says otherwise, so it is the one the fixture must exercise.
+    # The marked positions are cleared BY NORMAL ROUTING, to outbound_destination
+    # like any other press bin: a tool change has no destination of its own.
     #
     # It is also an INCOMING style — PRESS-1-MOVED changes over back to it — so
     # it names the stage its own returning bins wait at.
@@ -1772,14 +1762,10 @@ claims:
   # marked for clearance and leave the style entirely (Drops), PLN_005/PLN_006
   # arrive with no outgoing bin to remove (Adds).
   #
-  # In THAT direction the outgoing claim (PRESS-1-RUN) owns the marks and names
-  # no override, so the disjoint shape runs on normal routing.
-  #
-  # AND THIS CLAIM IS THE OVERRIDE DEMO, in the other direction. Changing back
-  # (PRESS-1-MOVED -> PRESS-1-RUN) makes THIS the outgoing claim, so its marks
-  # and its changeover_evac_destination are the ones that count — and it sends
-  # its cleared bins to SYN_CLEAR instead of to the market. One fixture, both
-  # halves of the rule: default routing one way, override the other.
+  # In THAT direction the outgoing claim (PRESS-1-RUN) owns the marks; changing
+  # back (PRESS-1-MOVED -> PRESS-1-RUN) makes THIS the outgoing claim, so its
+  # marks count. Both directions clear to the market, the cells' ordinary
+  # destination.
   - core_node: PLN_005
     style: PRESS-1-MOVED
     role: produce
@@ -1792,10 +1778,6 @@ claims:
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
     changeover_evac_nodes: [PLN_005, PLN_006]
-    # THE OVERRIDE, and the only one in this plant. A node group, not a station:
-    # whatever an override names is an ordinary destination and gets ordinary
-    # capacity behaviour.
-    changeover_evac_destination: SYN_CLEAR
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003

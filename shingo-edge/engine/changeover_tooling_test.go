@@ -34,13 +34,9 @@ import (
 // on different nodes.
 //
 // CLEARED MEANS NORMAL ROUTING. A marked position's bin goes wherever that cell's
-// bins ordinarily go — its unloader, its buffer, its market — and the leg the
-// pipeline already planned is left alone. `changeover_evac_destination` is an
-// OPTIONAL OVERRIDE for a cell that wants its clearance somewhere else, like a
-// different node group; empty is the default and empty means untouched. There
-// is no bay: the one-slot "tooling bay" in the demo fixture was built on the
-// wrong premise and produced robots dwelling on an occupied station with bins
-// nothing would ever take away.
+// bins ordinarily go — its unloader, its buffer, its market: the outgoing
+// claim's outbound — and the leg the pipeline already planned is left alone.
+// There is no destination of the tool change's own, and no bay.
 //
 // The three shapes below are the three ways a changeover can present that
 // rule. Before the decorator, the first two produced NO tooling behaviour at
@@ -149,8 +145,8 @@ func toolingTestPlanSeated(t *testing.T, from, to []processes.NodeClaim, binType
 	return BuildChangeoverPlan(diffs, nodes, false, nil, planToolingChangeover(from, to))
 }
 
-// pressClaim builds a press-index claim. positions/evacDest belong on the OUTGOING
-// claim; inboundStaging on the INCOMING one.
+// pressClaim builds a press-index claim. Marks belong on the OUTGOING claim;
+// inboundStaging on the INCOMING one.
 func pressClaim(node, paired, payload string) processes.NodeClaim {
 	return processes.NodeClaim{
 		CoreNodeName:        node,
@@ -199,9 +195,8 @@ func TestToolingBeatsRelabel(t *testing.T) {
 	if !strings.Contains(got, "dropoff@MARKET") {
 		t.Errorf("marked position PRESS lost its ordinary clearance destination.\n"+
 			"steps = %s\n"+
-			"With no changeover_evac_destination set, a marked position is cleared by NORMAL "+
-			"ROUTING — wherever this cell's bins ordinarily go. The decorator does not own "+
-			"the outbound side unless an override says so.", got)
+			"A marked position is cleared by NORMAL ROUTING — wherever this cell's bins "+
+			"ordinarily go. The decorator does not own the outbound side.", got)
 	}
 
 	// An UNMARKED position of the marked press is not part of the tool change:
@@ -215,75 +210,14 @@ func TestToolingBeatsRelabel(t *testing.T) {
 			"It opens with its own Ready wait and holds nothing for Tooling done.", ugot)
 	}
 
-	// And with no override, the OUTBOUND half of a marked position is
-	// indistinguishable from an unmarked one. That is by design: clearing a
-	// position is not a different journey, it is the same journey done now.
+	// The OUTBOUND half of a marked position is indistinguishable from an
+	// unmarked one. That is by design: clearing a position is not a different
+	// journey, it is the same journey done now.
 	if outboundOf(t, marked) != outboundOf(t, unmarked) {
 		t.Errorf("marked position PRESS clears to %q but unmarked PRESS_B to %q.\n"+
-			"With no override both are ordinary evacuations to the same place; a difference "+
-			"here means the decorator is still steering the outbound leg.",
+			"Both are ordinary evacuations to the same place; a difference here means the "+
+			"decorator is steering the outbound leg.",
 			outboundOf(t, marked), outboundOf(t, unmarked))
-	}
-}
-
-// TestToolingClearanceOverrideRedirectsOnlyMarkedPositions is the OTHER half of the
-// same rule, and it is the half a fixture must keep exercising: when a cell
-// names a clearance destination, its MARKED positions go there and nothing else
-// does.
-//
-// The override exists for a cell whose ordinary outbound is the wrong place to
-// put bins during a setup — "somewhere new, like a different node group". It is
-// not a bay, it is not special, and whatever it names gets ordinary capacity
-// behaviour, which is why the fixture points it at a group.
-func TestToolingClearanceOverrideRedirectsOnlyMarkedPositions(t *testing.T) {
-	t.Parallel()
-	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacNodes = []string{"PRESS"}
-	from.ChangeoverEvacDestination = "CLEARANCE-GROUP"
-
-	to := pressClaim("PRESS", "PRESS_B", "PART-B")
-	to.InboundStaging = "IN-STAGE"
-
-	binTypes := map[string]string{"PART-A": "BIG", "PART-B": "SMALL"}
-	plan := toolingTestPlan(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
-		binTypes, "PRESS", "PRESS_B")
-
-	marked := actionFor(t, plan, "PRESS")
-	if got := allSteps(marked); !strings.Contains(got, "dropoff@CLEARANCE-GROUP") {
-		t.Errorf("marked position PRESS ignored changeover_evac_destination.\nsteps = %s\n"+
-			"An override that does not redirect is an override that ships unexercised.", got)
-	}
-	unmarked := actionFor(t, plan, "PRESS_B")
-	if got := allSteps(unmarked); strings.Contains(got, "CLEARANCE-GROUP") {
-		t.Errorf("unmarked position PRESS_B was redirected to the clearance destination.\n"+
-			"steps = %s\nOnly MARKED positions are cleared; an unmarked position keeps whatever the "+
-			"normal machinery gives it.", got)
-	}
-}
-
-// TestToolingWithoutOverridePlansNoOutboundEdit pins the contract at the seam
-// rather than through a shape: with no override there is nothing for the
-// decorator to do on the outbound side, so it must not have an edit queued at
-// all. A pass that "redirects" every marked position to the destination the leg
-// already had is one config change away from redirecting it somewhere else.
-func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
-	t.Parallel()
-	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
-	to := pressClaim("PRESS", "PRESS_B", "PART-A")
-	to.InboundStaging = "IN-STAGE"
-
-	tc := planToolingChangeover([]processes.NodeClaim{from}, []processes.NodeClaim{to})
-	if !tc.active() {
-		t.Fatal("a marked press is a tooling changeover whether or not it overrides clearance")
-	}
-	if len(tc.evacDest) != 0 {
-		t.Errorf("planToolingChangeover queued outbound redirects %v with no override set.\n"+
-			"Empty changeover_evac_destination means the outbound leg is UNTOUCHED — not "+
-			"redirected to the value it already had.", tc.evacDest)
-	}
-	if len(tc.stageAt) == 0 {
-		t.Error("no staging hold planned — the hold is the half that is never optional")
 	}
 }
 

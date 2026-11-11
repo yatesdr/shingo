@@ -26,7 +26,7 @@ func fullClaim(mode protocol.SwapMode, role protocol.ClaimRole) NodeClaim {
 		ID: 41, StyleID: 7, CoreNodeName: "PLN_01", Role: role, SwapMode: mode,
 		PayloadCode: "SYN-A-P002", PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
 		InboundSource: "Supermarket Empty Totes", InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
-		OutboundDestination: "Supermarket Area", ChangeoverEvacDestination: "Supermarket Area",
+		OutboundDestination: "Supermarket Area",
 		ChangeoverEvacNodes: []string{"PLN_01", "PLN_02"}, KeyRoute: []string{"LM314", "LM315"},
 		ReorderPointSource: "legacy", ChangeoverCarryoverDisposition: CarryoverReplace,
 		Sequence: 3, Source: ClaimSourceAdmin, CalledBy: "engineer",
@@ -153,15 +153,12 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 		!in.AutoConfirm || !in.ReuseCompatibleBins || !in.AutoPush || !in.StrictPack || in.PackTolerancePct != 10 {
 		t.Errorf("unconditional columns not carried from the prior: %+v", in)
 	}
-	// Spoken: the three pointer-gated fields the cell carries.
+	// Spoken: the two pointer-gated fields the cell carries.
 	if in.KeyRoute == nil || !reflect.DeepEqual(*in.KeyRoute, []string{"LM1"}) {
 		t.Errorf("key_route not spoken: %v", in.KeyRoute)
 	}
 	if in.ChangeoverEvacNodes == nil || len(*in.ChangeoverEvacNodes) != 0 {
 		t.Errorf("changeover_evac_nodes must be spoken as empty for a cell that marks nothing: %v", in.ChangeoverEvacNodes)
-	}
-	if in.ChangeoverEvacDestination == nil || *in.ChangeoverEvacDestination != "" {
-		t.Errorf("changeover_evac_destination must be spoken as blank: %v", in.ChangeoverEvacDestination)
 	}
 	// Silent: the nine the composer never speaks about.
 	if in.ReorderPointSource != nil || in.AutoReorder != nil || in.KeepStagedNode != nil || in.Sequence != nil ||

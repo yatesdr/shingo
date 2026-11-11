@@ -63,7 +63,6 @@ const SHAPE_FIELDS = [
     { field: 'outbound_staging', of: c => c.parkOld || '' },
     { field: 'inbound_source', of: c => c.source || '' },
     { field: 'outbound_destination', of: c => c.dest || '' },
-    { field: 'changeover_evac_destination', of: c => c.evacDest || '' },
     { field: 'partial_destination', of: c => c.partialDest || '' },
     { field: 'changeover_evac_nodes', of: c => (c.evacNodes || []).join(',') },
     { field: 'key_route', of: c => (c.keyRoute || []).join(' › ') },
@@ -196,7 +195,6 @@ const CELL_TO_FIELD = {
     parkOld: 'outbound_staging',
     source: 'inbound_source',
     dest: 'outbound_destination',
-    evacDest: 'changeover_evac_destination',
     partialDest: 'partial_destination',
     evacNodes: 'changeover_evac_nodes',
     keyRoute: 'key_route',
@@ -255,7 +253,7 @@ const clone = v => JSON.parse(JSON.stringify(v));
 const blankCell = () => ({
     on: false, mode: null, part: null, source: '', dest: '',
     staging: '', parkOld: '', paired: '', secondPaired: '',
-    keyRoute: [], evacNodes: [], evacDest: '', partialDest: '', role: '',
+    keyRoute: [], evacNodes: [], partialDest: '', role: '',
     // null until an engineer opens the Advanced modal and presses Apply. It is
     // the same nil FlowCell.Advanced carries: untouched means Expand's
     // carry-through keeps the stored row's policy, and there is no way to say
@@ -649,7 +647,6 @@ function init(opts) {
         cell.secondPaired = c.second_paired_core_node || '';
         cell.keyRoute = (c.key_route || []).slice();
         cell.evacNodes = (c.changeover_evac_nodes || []).slice();
-        cell.evacDest = c.changeover_evac_destination || '';
         cell.partialDest = c.partial_destination || '';
         cell.role = c.role || cell.role;
     }
@@ -896,12 +893,11 @@ function reduce(state, action) {
 
         case 'select': s.selected = action.node || null; break;
 
-        // The two changeover fields the cell already carries, from the same
-        // sheet as the advanced block. They are HERE and not in it because the
-        // picture draws what they do — a marked position is a card the setup
-        // clears — and a field the picture draws is the cell's.
+        // The changeover marks the cell carries, from the same sheet as the
+        // advanced block. They are HERE and not in it because the picture
+        // draws what they do — a marked position is a card the setup clears —
+        // and a field the picture draws is the cell's.
         case 'setEvacNodes': if (cell) cell.evacNodes = (action.nodes || []).slice(); break;
-        case 'setEvacDest': if (cell) cell.evacDest = action.dest || ''; break;
         // Where this cell's carrier waits when it leaves unfinished (the
         // Advanced sheet's Unfinished carriers section). Blank = where a full goes.
         case 'setPartialDest': if (cell) cell.partialDest = action.dest || ''; break;
@@ -1001,7 +997,6 @@ function toCells(state) {
             inbound_staging: c.staging,
             outbound_staging: c.parkOld,
             outbound_destination: c.dest,
-            changeover_evac_destination: c.evacDest,
             partial_destination: c.partialDest,
         };
         for (const k of Object.keys(optional)) {
@@ -2210,7 +2205,6 @@ function presetCells(preset) {
             parkOld: r.outbound_staging || r.parkOld || '',
             paired: r.paired_core_node || r.paired || '',
             secondPaired: r.second_paired_core_node || r.secondPaired || '',
-            evacDest: r.changeover_evac_destination || r.evacDest || '',
             partialDest: r.partial_destination || r.partialDest || '',
             evacNodes: (r.changeover_evac_nodes || r.evacNodes || []).slice(),
             keyRoute: (r.key_route || r.keyRoute || []).slice(),

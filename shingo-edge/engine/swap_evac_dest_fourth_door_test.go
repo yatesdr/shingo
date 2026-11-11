@@ -2,9 +2,6 @@ package engine
 
 import (
 	"testing"
-
-	"shingoedge/domain"
-	"shingoedge/store/processes"
 )
 
 // THE FOURTH DOOR.
@@ -84,52 +81,5 @@ func TestReleaseNodeWithClaim_SameStyleResidentIsUnchanged(t *testing.T) {
 		t.Errorf("release sent the carrier to %q, want HOME-NEW — the resident and the requested "+
 			"style agree, so this is the ordinary path and must be byte-identical to before.",
 			order.DeliveryNode)
-	}
-}
-
-// residentEvacDest asks "where does THIS carrier live". It used to answer with
-// EvacDestinationFor, which prefers ChangeoverEvacDestination — the TOOLING
-// clearance destination. This path runs on every routine consume and produce
-// swap, so preferring the tooling field would send an ordinary outgoing carrier
-// to the tooling area whenever a cell happened to hold a foreign style. That is
-// a different wrong place, not a right one.
-func TestResidentEvacDest_IgnoresTheToolingDestination(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	e := testEngine(t, db)
-	nodeID, oldClaimID, newClaimID := residentClaimFixture(t, db)
-
-	// Give the OUTGOING claim a tooling-clearance destination. Empty at both
-	// plants today, which is a fuse length, not a verdict.
-	old, err := db.GetStyleNodeClaim(oldClaimID)
-	if err != nil {
-		t.Fatalf("read outgoing claim: %v", err)
-	}
-	in := processes.NodeClaimInput{
-		StyleID: old.StyleID, CoreNodeName: old.CoreNodeName, Role: old.Role,
-		SwapMode: old.SwapMode, PayloadCode: old.PayloadCode, UOPCapacity: old.UOPCapacity,
-		InboundSource: old.InboundSource, InboundStaging: old.InboundStaging,
-		OutboundStaging: old.OutboundStaging, OutboundDestination: old.OutboundDestination,
-		ChangeoverEvacDestination: domain.Ptr("TOOLING-CLEARANCE"),
-	}
-	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
-		t.Fatalf("set the tooling destination: %v", err)
-	}
-
-	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &oldClaimID, nil, 0); err != nil {
-		t.Fatalf("seat the outgoing carrier: %v", err)
-	}
-	rt, err := db.GetProcessNodeRuntime(nodeID)
-	if err != nil {
-		t.Fatalf("read runtime: %v", err)
-	}
-	requested, err := db.GetStyleNodeClaim(newClaimID)
-	if err != nil {
-		t.Fatalf("read requested claim: %v", err)
-	}
-
-	if got := e.residentEvacDest(rt, requested); got != "HOME-OLD" {
-		t.Fatalf("residentEvacDest = %q, want HOME-OLD. This is a routine swap, not a changeover: "+
-			"the carrier goes to the home it lives at, never to the tooling clearance area.", got)
 	}
 }

@@ -71,7 +71,7 @@ CREATE TABLE style_node_claims (
   reuse_compatible_bins INTEGER NOT NULL DEFAULT 0, auto_push INTEGER NOT NULL DEFAULT 0,
   reorder_point_source TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT (datetime('now')),
   below_reorder_since TEXT,
-  changeover_evac_nodes TEXT NOT NULL DEFAULT '', changeover_evac_destination TEXT NOT NULL DEFAULT '',
+  changeover_evac_nodes TEXT NOT NULL DEFAULT '',
   changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
   key_route TEXT NOT NULL DEFAULT '', key_task TEXT NOT NULL DEFAULT '',
   staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '',
@@ -430,7 +430,6 @@ func TestSeedEdge_WritesRoutingAndPartSets(t *testing.T) {
 		proc := styleProc[c.Style]
 		for _, leg := range []struct{ name, role string }{
 			{c.InboundSource, "source"}, {c.OutboundDestination, "destination"},
-			{c.ChangeoverEvacDestination, "destination"},
 			{c.InboundStaging, "staging"}, {c.OutboundStaging, "staging"},
 		} {
 			if leg.name == "" || positions[proc+"|"+leg.name] {

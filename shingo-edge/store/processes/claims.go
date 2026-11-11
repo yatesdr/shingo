@@ -72,7 +72,7 @@ var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_nodes, changeover_evac_destination,
+	changeover_evac_nodes,
 	refill_by, key_route, key_task, changeover_carryover_disposition,
 	source, called_by, updated_at, retired_at, source_preset_id, source_preset_version`
 
@@ -95,7 +95,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacNodesJSON, &c.ChangeoverEvacDestination,
+		&evacNodesJSON,
 		&c.RefillBy, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition,
 		&c.Source, &c.CalledBy, &updatedAt, &retiredAt, &presetID, &presetVersion); err != nil {
 		return c, err
@@ -717,17 +717,16 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
 		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_nodes, changeover_evac_destination,
+		changeover_evac_nodes,
 		refill_by, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON, in.AutoRequestPayload,
 		keepStagedNode, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
-		domain.OptValue(in.ChangeoverEvacDestination),
 		refillBy, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
 		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition),
 		in.Source, in.CalledBy, in.SourcePresetID, in.SourcePresetVersion)
@@ -960,9 +959,6 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	}
 	if in.ChangeoverEvacNodes != nil {
 		sets, args = append(sets, `changeover_evac_nodes=?`), append(args, marshalEvacNodes(*in.ChangeoverEvacNodes))
-	}
-	if in.ChangeoverEvacDestination != nil {
-		sets, args = append(sets, `changeover_evac_destination=?`), append(args, *in.ChangeoverEvacDestination)
 	}
 	if in.ChangeoverCarryoverDisposition != nil {
 		sets, args = append(sets, `changeover_carryover_disposition=?`), append(args, string(*in.ChangeoverCarryoverDisposition))

@@ -119,7 +119,6 @@ type fingerprintClaim struct {
 	ReuseCompatibleBins            bool                 `json:"reuse_compatible_bins"`
 	AutoPush                       bool                 `json:"auto_push"`
 	ChangeoverEvacNodes            []string             `json:"changeover_evac_nodes"`
-	ChangeoverEvacDestination      string               `json:"changeover_evac_destination"`
 	RefillBy                       protocol.RefillBy    `json:"refill_by"`
 	KeyRoute                       []string             `json:"key_route"`
 	ChangeoverCarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition"`
@@ -177,7 +176,7 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,
 			LinesideSoftThreshold: c.LinesideSoftThreshold, SecondPairedCoreNode: c.SecondPairedCoreNode,
 			ReuseCompatibleBins: c.ReuseCompatibleBins, AutoPush: c.AutoPush,
-			ChangeoverEvacNodes: cloneStrings(c.ChangeoverEvacNodes), ChangeoverEvacDestination: c.ChangeoverEvacDestination,
+			ChangeoverEvacNodes:            cloneStrings(c.ChangeoverEvacNodes),
 			RefillBy:                       c.RefillBy.OrDefault(),
 			KeyRoute:                       cloneStrings(c.KeyRoute),
 			ChangeoverCarryoverDisposition: c.ChangeoverCarryoverDisposition,

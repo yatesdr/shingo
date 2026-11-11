@@ -14,8 +14,8 @@ import (
 //
 // A FlowCell's JSON keys are the ones domain.ValidateFlowPreset reads
 // (core_node_name, paired_core_node, second_paired_core_node, inbound_source,
-// outbound_destination, changeover_evac_destination, inbound_staging,
-// outbound_staging, changeover_evac_nodes[]) plus role, swap_mode,
+// outbound_destination, inbound_staging, outbound_staging,
+// changeover_evac_nodes[]) plus role, swap_mode,
 // payload_code, key_route and locked — so a preset is a flow with the parts
 // blank, and the two shapes cannot drift.
 //
@@ -54,9 +54,6 @@ type FlowCell struct {
 	InboundStaging       string `json:"inbound_staging,omitempty"`
 	OutboundStaging      string `json:"outbound_staging,omitempty"`
 	OutboundDestination  string `json:"outbound_destination,omitempty"`
-	// ChangeoverEvacDestination is where a tooling evacuation sends this
-	// cell's bins; blank falls back to OutboundDestination.
-	ChangeoverEvacDestination string `json:"changeover_evac_destination,omitempty"`
 	// PartialDestination is where this cell's carrier goes when it leaves the
 	// line unfinished, to wait and be called back; blank = where a full goes.
 	PartialDestination string `json:"partial_destination,omitempty"`
@@ -220,20 +217,19 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 // Collapse is the cell a claim reads as. Pure.
 func Collapse(c NodeClaim) FlowCell {
 	return FlowCell{
-		CoreNodeName:              c.CoreNodeName,
-		Role:                      c.Role,
-		SwapMode:                  c.SwapMode,
-		PayloadCode:               c.PayloadCode,
-		PairedCoreNode:            c.PairedCoreNode,
-		SecondPairedCoreNode:      c.SecondPairedCoreNode,
-		InboundSource:             c.InboundSource,
-		InboundStaging:            c.InboundStaging,
-		OutboundStaging:           c.OutboundStaging,
-		OutboundDestination:       c.OutboundDestination,
-		ChangeoverEvacDestination: c.ChangeoverEvacDestination,
-		ChangeoverEvacNodes:       cloneStrings(c.ChangeoverEvacNodes),
-		PartialDestination:        c.PartialDestination,
-		KeyRoute:                  cloneStrings(c.KeyRoute),
+		CoreNodeName:         c.CoreNodeName,
+		Role:                 c.Role,
+		SwapMode:             c.SwapMode,
+		PayloadCode:          c.PayloadCode,
+		PairedCoreNode:       c.PairedCoreNode,
+		SecondPairedCoreNode: c.SecondPairedCoreNode,
+		InboundSource:        c.InboundSource,
+		InboundStaging:       c.InboundStaging,
+		OutboundStaging:      c.OutboundStaging,
+		OutboundDestination:  c.OutboundDestination,
+		ChangeoverEvacNodes:  cloneStrings(c.ChangeoverEvacNodes),
+		PartialDestination:   c.PartialDestination,
+		KeyRoute:             cloneStrings(c.KeyRoute),
 	}
 }
 
@@ -246,10 +242,9 @@ func Collapse(c NodeClaim) FlowCell {
 // auto_confirm, lineside_soft_threshold,
 // reuse_compatible_bins, auto_push) are copied from the prior claim — or take
 // the INSERT defaults with no prior — because a value type cannot say "no
-// opinion" and the composer has none. Of the twelve pointer-gated columns it
-// speaks exactly the three the cell carries (changeover_evac_nodes,
-// changeover_evac_destination, key_route) and leaves the other nine nil, so an
-// update leaves them alone.
+// opinion" and the composer has none. Of the eleven pointer-gated columns it
+// speaks exactly the two the cell carries (changeover_evac_nodes, key_route)
+// and leaves the other nine nil, so an update leaves them alone.
 //
 // StyleID comes from the prior; a caller writing a new claim sets it. The
 // prior's degenerate allowed list — exactly its one payload — follows the
@@ -261,22 +256,21 @@ func Collapse(c NodeClaim) FlowCell {
 // six of the nine silent ones, at the bottom of the function — see FlowCell.
 func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimInput {
 	in := NodeClaimInput{
-		CoreNodeName:              cell.CoreNodeName,
-		Role:                      cell.Role,
-		SwapMode:                  cell.SwapMode,
-		PayloadCode:               cell.PayloadCode,
-		PairedCoreNode:            cell.PairedCoreNode,
-		SecondPairedCoreNode:      cell.SecondPairedCoreNode,
-		InboundSource:             cell.InboundSource,
-		InboundStaging:            cell.InboundStaging,
-		OutboundStaging:           cell.OutboundStaging,
-		OutboundDestination:       cell.OutboundDestination,
-		ChangeoverEvacDestination: Ptr(cell.ChangeoverEvacDestination),
-		PartialDestination:        cell.PartialDestination,
-		ChangeoverEvacNodes:       Ptr(nonNilStrings(cell.ChangeoverEvacNodes)),
-		KeyRoute:                  Ptr(nonNilStrings(cell.KeyRoute)),
-		Source:                    source,
-		CalledBy:                  calledBy,
+		CoreNodeName:         cell.CoreNodeName,
+		Role:                 cell.Role,
+		SwapMode:             cell.SwapMode,
+		PayloadCode:          cell.PayloadCode,
+		PairedCoreNode:       cell.PairedCoreNode,
+		SecondPairedCoreNode: cell.SecondPairedCoreNode,
+		InboundSource:        cell.InboundSource,
+		InboundStaging:       cell.InboundStaging,
+		OutboundStaging:      cell.OutboundStaging,
+		OutboundDestination:  cell.OutboundDestination,
+		PartialDestination:   cell.PartialDestination,
+		ChangeoverEvacNodes:  Ptr(nonNilStrings(cell.ChangeoverEvacNodes)),
+		KeyRoute:             Ptr(nonNilStrings(cell.KeyRoute)),
+		Source:               source,
+		CalledBy:             calledBy,
 	}
 	if prior != nil {
 		in.StyleID = prior.StyleID
@@ -364,7 +358,6 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		PairedCoreNode:                 c.PairedCoreNode,
 		SecondPairedCoreNode:           c.SecondPairedCoreNode,
 		ChangeoverEvacNodes:            Ptr(nonNilStrings(c.ChangeoverEvacNodes)),
-		ChangeoverEvacDestination:      Ptr(c.ChangeoverEvacDestination),
 		ChangeoverCarryoverDisposition: Ptr(c.ChangeoverCarryoverDisposition),
 		RefillBy:                       Ptr(c.RefillBy.OrDefault()),
 		KeyRoute:                       Ptr(nonNilStrings(c.KeyRoute)),
@@ -407,7 +400,6 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 func InputFromClaimUngated(c NodeClaim) NodeClaimInput {
 	in := InputFromClaim(c)
 	in.ChangeoverEvacNodes = nil
-	in.ChangeoverEvacDestination = nil
 	in.ChangeoverCarryoverDisposition = nil
 	in.RefillBy = nil
 	in.KeyRoute = nil
@@ -495,9 +487,6 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	}
 	if in.ChangeoverEvacNodes != nil {
 		c.ChangeoverEvacNodes = cloneStrings(*in.ChangeoverEvacNodes)
-	}
-	if in.ChangeoverEvacDestination != nil {
-		c.ChangeoverEvacDestination = *in.ChangeoverEvacDestination
 	}
 	if in.ChangeoverCarryoverDisposition != nil {
 		c.ChangeoverCarryoverDisposition = *in.ChangeoverCarryoverDisposition

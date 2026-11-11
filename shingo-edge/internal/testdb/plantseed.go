@@ -208,7 +208,6 @@ func SeedRoutingSet(t *testing.T, db *store.DB, processID int64, by string) {
 	for _, c := range claims {
 		add(c.InboundSource, domain.RoutingRoleSource)
 		add(c.OutboundDestination, domain.RoutingRoleDestination)
-		add(c.ChangeoverEvacDestination, domain.RoutingRoleDestination)
 		add(c.InboundStaging, domain.RoutingRoleStaging)
 		add(c.OutboundStaging, domain.RoutingRoleStaging)
 	}

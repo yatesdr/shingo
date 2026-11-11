@@ -94,7 +94,7 @@ func TestKeepStagedNode_SequentialAndPressFetchFromTheSpot(t *testing.T) {
 			// refill lifts the spare from the spot too.
 			tool := func(to *processes.NodeClaim) []protocol.ComplexOrderStep {
 				a := toolingPositionAction(toolingPress{from: from, to: to, positions: []string{"LINE"},
-					evacDest: "OUT", staging: "STG"}, "LINE", node)
+					staging: "STG"}, "LINE", node)
 				return a.SupplyOrder.Complex.Steps
 			}
 			assertOnlyTheFetchMoved(t, what+" changeover tool change", tool(to), tool(withSpot(to)), to)

@@ -115,7 +115,6 @@ const (
 	Sequence                       Field = "sequence"
 	KeepStagedNode                 Field = "keep_staged_node"
 	ChangeoverEvacNodes            Field = "changeover_evac_nodes"
-	ChangeoverEvacDestination      Field = "changeover_evac_destination"
 	ChangeoverCarryoverDisposition Field = "changeover_carryover_disposition"
 	ReuseCompatibleBins            Field = "reuse_compatible_bins"
 	RefillBy                       Field = "refill_by"
@@ -184,7 +183,6 @@ var fieldLabels = map[Field]string{
 	Sequence:                       "Board order",
 	KeepStagedNode:                 "Keep staged node",
 	ChangeoverEvacNodes:            "Tool change",
-	ChangeoverEvacDestination:      "Changeover evac destination",
 	ChangeoverCarryoverDisposition: "Carry-over disposition",
 	ReuseCompatibleBins:            "Reuse compatible bins",
 	RefillBy:                       "Next carrier",
@@ -209,7 +207,7 @@ var fieldOrder = []Field{
 	SecondPairedCoreNode,
 	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
 	LinesideSoftThreshold, Sequence, KeepStagedNode,
-	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
+	ChangeoverEvacNodes, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
 	StrictPack, PackTolerancePct,
@@ -445,7 +443,6 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
-		ChangeoverEvacDestination,
 		AutoConfirm, AutoRequestPayload,
 	} {
 		ms[f] = Unused

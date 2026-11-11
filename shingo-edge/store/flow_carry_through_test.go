@@ -38,7 +38,7 @@ var composerSpeaks = map[string]bool{
 	"core_node_name": true, "role": true, "swap_mode": true, "payload_code": true,
 	"paired_core_node": true, "second_paired_core_node": true,
 	"inbound_source": true, "inbound_staging": true, "outbound_staging": true,
-	"outbound_destination": true, "changeover_evac_destination": true,
+	"outbound_destination":  true,
 	"changeover_evac_nodes": true, "key_route": true,
 	// The partial route: composer-authored, a routing field of a produce claim
 	// like outbound_destination beside it; carried through a flow copy.

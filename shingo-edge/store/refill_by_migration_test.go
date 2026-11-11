@@ -14,15 +14,17 @@ import (
 )
 
 // Edge v47 (refill_by_and_one_tool_change), over its three stores: the claims
-// table, its quarantine mirror, and the recipes' advanced blocks. A database
-// as v46 left it carries index_robot_supplies and evacuate_on_changeover on
-// both claims tables and in its recipes. Boot 1 moves the first onto
-// refill_by, drops both, and names each live claim whose switch was on with no
-// position marked. Boot 2 changes nothing.
+// table, its quarantine mirror, and the recipes' cells and advanced blocks. A
+// database as v46 left it carries index_robot_supplies, evacuate_on_changeover
+// and changeover_evac_destination on both claims tables and in its recipes.
+// Boot 1 moves the first onto refill_by, drops all three, names each live
+// claim whose switch was on with no position marked, and names each live claim
+// and recipe that sent a tool change's clearance somewhere of its own. Boot 2
+// changes nothing.
 
 const (
 	v47OldColumns = `SELECT COUNT(*) FROM pragma_table_info('%s')
-		WHERE name IN ('index_robot_supplies', 'evacuate_on_changeover')`
+		WHERE name IN ('index_robot_supplies', 'evacuate_on_changeover', 'changeover_evac_destination')`
 	v47RefillBy = `SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = 'refill_by'`
 )
 
@@ -53,6 +55,18 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 	}
 
 	// The v46 shape, on the live table and on its mirror.
+	addOld := func(table, decl string) {
+		t.Helper()
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + table + `') WHERE name = 'changeover_evac_destination'`).Scan(&n); err != nil {
+			t.Fatalf("%s columns: %v", table, err)
+		}
+		if n == 0 {
+			exec("old "+table+" column", `ALTER TABLE `+table+` ADD COLUMN changeover_evac_destination `+decl)
+		}
+	}
+	addOld("style_node_claims", `TEXT NOT NULL DEFAULT ''`)
+	addOld(ClaimQuarantineTable, `TEXT`)
 	exec("old live columns", `ALTER TABLE style_node_claims ADD COLUMN evacuate_on_changeover INTEGER NOT NULL DEFAULT 0`)
 	exec("old live columns", `ALTER TABLE style_node_claims ADD COLUMN index_robot_supplies INTEGER NOT NULL DEFAULT 0`)
 	exec("old live columns", `ALTER TABLE style_node_claims DROP COLUMN refill_by`)
@@ -72,8 +86,11 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 	unmarked := claim("V47-UNMARKED", 0, 1, "", "")
 	marked := claim("V47-MARKED", 0, 1, `["V47-MARKED"]`, "")
 	retired := claim("V47-RETIRED", 0, 1, "", "2026-11-01 00:00:00")
-	exec("mirror rows", `INSERT INTO `+ClaimQuarantineTable+` (id, style_id, core_node_name, index_robot_supplies, evacuate_on_changeover)
-		VALUES (901, ?, 'V47-Q-FLIPPED', 1, 1), (902, ?, 'V47-Q-OLD', NULL, NULL)`, style, style)
+	cleared := claim("V47-CLEARED", 0, 0, `["V47-CLEARED"]`, "")
+	exec("a clearance destination", `UPDATE style_node_claims SET changeover_evac_destination = 'V47-CLEAR-AREA'
+		WHERE id IN (?, ?)`, cleared, retired)
+	exec("mirror rows", `INSERT INTO `+ClaimQuarantineTable+` (id, style_id, core_node_name, index_robot_supplies, evacuate_on_changeover,
+		changeover_evac_destination) VALUES (901, ?, 'V47-Q-FLIPPED', 1, 1, 'V47-Q-AREA'), (902, ?, 'V47-Q-OLD', NULL, NULL, NULL)`, style, style)
 
 	process := exec("process", `INSERT INTO processes (name) VALUES ('V47-PROCESS')`)
 	preset := func(name, flow, archived string) int64 {
@@ -88,6 +105,9 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 		`"payload_code":"","advanced":{"index_robot_supplies":true}}]}`, "2026-11-02 00:00:00")
 	const untouchedFlow = `{"cells":[{"core_node_name":"V47-MARKED","role":"produce","swap_mode":"two_robot","payload_code":"","advanced":{"auto_confirm":true}}]}`
 	untouched := preset("Untouched", untouchedFlow, "")
+	clearing := preset("Clearing", `{"cells":[{"core_node_name":"V47-CLEARED","role":"produce","swap_mode":"two_robot",`+
+		`"payload_code":"","outbound_destination":"V47-OUT","changeover_evac_destination":"V47-CLEAR-AREA",`+
+		`"changeover_evac_nodes":["V47-CLEARED"]}]}`, "2026-11-03 00:00:00")
 	const brokenFlow = `not json`
 	broken := preset("Broken", brokenFlow, "")
 	if err := db.Close(); err != nil {
@@ -101,7 +121,7 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 
 	for _, table := range []string{"style_node_claims", ClaimQuarantineTable} {
 		if n := v47Probe(t, path, v47OldColumns, table); n != 0 {
-			t.Errorf("%s keeps %d of the two old columns after the upgrade", table, n)
+			t.Errorf("%s keeps %d of the three old columns after the upgrade", table, n)
 		}
 		if n := v47Probe(t, path, v47RefillBy, table); n != 1 {
 			t.Errorf("%s has no refill_by after the upgrade", table)
@@ -138,11 +158,18 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 		}
 	}
 
+	// One line for the live claim that cleared somewhere of its own, one for
+	// the recipe that did; none for the retired claim that did too.
+	if out := logged.String(); !strings.Contains(out, "claim "+strconv.FormatInt(cleared, 10)+" (style") ||
+		!strings.Contains(out, `recipe "Clearing"`) || strings.Count(out, "V47-CLEAR-AREA") != 1 {
+		t.Errorf("the upgrade did not name, once each, the live claim and the recipe that cleared somewhere of their own:\n%s", out)
+	}
+
 	// One line, for the live claim whose switch was on with nothing marked.
 	if out := logged.String(); !strings.Contains(out, "V47-UNMARKED") {
 		t.Errorf("the upgrade did not name the claim that had the switch on and marks nothing:\n%s", out)
 	} else {
-		for _, quiet := range []string{"V47-MARKED", "V47-RETIRED", "V47-FLIPPED"} {
+		for _, quiet := range []string{"V47-MARKED", "V47-RETIRED", "V47-FLIPPED", "V47-Q-AREA"} {
 			if strings.Contains(out, quiet) {
 				t.Errorf("the upgrade named %s, which marks positions, is retired, or never had the switch on:\n%s", quiet, out)
 			}
@@ -188,11 +215,15 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 	if got, _ := readFlow(untouched); got != untouchedFlow {
 		t.Errorf("a recipe with neither key was rewritten: %s", got)
 	}
+	if got, _ := readFlow(clearing); strings.Contains(got, "changeover_evac_destination") ||
+		!strings.Contains(got, `"outbound_destination":"V47-OUT"`) || !strings.Contains(got, `"changeover_evac_nodes":["V47-CLEARED"]`) {
+		t.Errorf("an archived recipe's clearance destination: %s, want the key gone and the cell's other fields kept", got)
+	}
 	if got, _ := readFlow(broken); got != brokenFlow {
 		t.Errorf("a recipe that does not parse was rewritten: %s", got)
 	}
 	before := map[int64]string{}
-	for _, id := range []int64{both, archived, untouched, broken} {
+	for _, id := range []int64{both, archived, untouched, broken, clearing} {
 		before[id], _ = readFlow(id)
 	}
 	if err := db.Close(); err != nil {

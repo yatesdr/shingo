@@ -18,9 +18,9 @@ import (
 // claim_leg_writers_test.go — every writer of a claim leg or a routing row,
 // handed a lane, and what it does with it.
 //
-// A claim has seven legs: inbound_source, outbound_destination,
-// changeover_evac_destination, containment_destination, inbound_staging,
-// outbound_staging and keep_staged_node. A routing row is what the composer offers on one of them.
+// A claim has six legs: inbound_source, outbound_destination,
+// containment_destination, inbound_staging, outbound_staging and
+// keep_staged_node. A routing row is what the composer offers on one of them.
 // Lines name node groups, never lanes, so a lane on any leg is a claim that
 // searches or stores into that one lane only.
 //
@@ -52,7 +52,7 @@ func writersCore() map[string]protocol.NodeInfo {
 }
 
 // cleanLegClaim is a single_robot produce claim that names a plain node or a
-// group on all six legs and saves through every door.
+// group on all five legs and saves through every door.
 //
 // THE PAYLOAD IS THE STYLE'S OWN. Every claim here declares a containment
 // destination, and the station view reads every such claim in the database
@@ -60,13 +60,12 @@ func writersCore() map[string]protocol.NodeInfo {
 // on the outbound destination would read as a conflict in the census's other
 // cases, which share the test's database.
 func cleanLegClaim(sid int64) processes.NodeClaimInput {
-	evac := "LL-SUP"
 	return processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "LL-PRESS", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: fmt.Sprintf("PART-LL-%d", sid),
 		InboundSource: "LL-SUP", OutboundDestination: "LL-SUP",
-		ChangeoverEvacDestination: &evac, ContainmentDestination: "LL-HOLD",
-		InboundStaging: "LL-STG", OutboundStaging: "LL-STG2",
+		ContainmentDestination: "LL-HOLD",
+		InboundStaging:         "LL-STG", OutboundStaging: "LL-STG2",
 	}
 }
 
@@ -78,9 +77,6 @@ func withLaneOn(in processes.NodeClaimInput, leg string) processes.NodeClaimInpu
 		in.InboundSource = lane
 	case "outbound_destination":
 		in.OutboundDestination = lane
-	case "changeover_evac_destination":
-		v := lane
-		in.ChangeoverEvacDestination = &v
 	case "containment_destination":
 		in.ContainmentDestination = lane
 	case "inbound_staging":
@@ -103,8 +99,6 @@ func legValue(c processes.NodeClaim, leg string) string {
 		return c.InboundSource
 	case "outbound_destination":
 		return c.OutboundDestination
-	case "changeover_evac_destination":
-		return c.ChangeoverEvacDestination
 	case "containment_destination":
 		return c.ContainmentDestination
 	case "inbound_staging":
@@ -191,7 +185,6 @@ var claimWriterCensus = []legCensusRow{
 
 	{"clone", "inbound_source", legRefused},
 	{"clone", "outbound_destination", legRefused},
-	{"clone", "changeover_evac_destination", legRefused},
 	{"clone", "containment_destination", legRefused},
 	{"clone", "inbound_staging", legRefused},
 	{"clone", "outbound_staging", legRefused},
@@ -390,7 +383,6 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 var deriveWriterCensus = []legCensusRow{
 	{"migration v25", "inbound_source", legSaved},
 	{"migration v25", "outbound_destination", legSaved},
-	{"migration v25", "changeover_evac_destination", legSaved},
 	{"migration v25", "inbound_staging", legSaved},
 	{"migration v25", "outbound_staging", legSaved},
 }

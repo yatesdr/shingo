@@ -110,7 +110,6 @@ func TestFlowFingerprint_ChangesOnEveryListedColumn(t *testing.T) {
 		"reuse_compatible_bins":            func(c *NodeClaim) { c.ReuseCompatibleBins = true },
 		"auto_push":                        func(c *NodeClaim) { c.AutoPush = true },
 		"changeover_evac_nodes":            func(c *NodeClaim) { c.ChangeoverEvacNodes = []string{"PLN_01"} },
-		"changeover_evac_destination":      func(c *NodeClaim) { c.ChangeoverEvacDestination += "X" },
 		"refill_by":                        func(c *NodeClaim) { c.RefillBy = protocol.RefillByIndexRobot },
 		"key_route":                        func(c *NodeClaim) { c.KeyRoute = []string{"LM1"} },
 		"changeover_carryover_disposition": func(c *NodeClaim) { c.ChangeoverCarryoverDisposition = CarryoverKeepLineside },

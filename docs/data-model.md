@@ -1978,8 +1978,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 51 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 55 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 50 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 54 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2643,7 +2643,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `lineside_soft_threshold` | `INTEGER` | yes | `0` |  |  |
 | `reuse_compatible_bins` | `INTEGER` | yes | `0` |  | DEAD AS A SWITCH. It armed the no-swap shortcut for a press-index cell whose next style makes the same part; that shortcut is baked in (ApplyReuseCompatibleBinsShortcut, 2026-09-09) and reads this column no more. Kept, and flowspec marks it Unused rather than Forbidden, so the seven Hopkinsville rows that carry it keep their value instead of being cleared by the next save. |
 | `changeover_evac_nodes` | `TEXT` | yes | `''` |  | Which core NODES hold bins that block the tooling change, as a JSON array of node names ("PLN_001"/"PLN_002"). Same shape and same reasoning as allowed_payload_codes: a small set on one row rather than a child table, because an index-paired node has no claim row of its own to hang it on. Empty = nothing marked = today's behaviour. |
-| `changeover_evac_destination` | `TEXT` | yes | `''` |  | Where a marked position's bin is CLEARED to, when this cell wants it somewhere other than its ordinary outbound destination. A node OR a group name; blank means normal routing, which is the default and the common case. There is no bay: see engine/changeover_tooling.go. |
 | `changeover_carryover_disposition` | `TEXT` | yes | `'replace'` |  | What happens to a marked position's bin when its part CARRIES OVER — the same payload on that position in both styles. "replace" (the default) clears it like any other marked position and brings a fresh carrier through staging; "keep_lineside" leaves the bin where it is, because that part does not have to move for the setup; "outbound_staging" walks the SAME bin to the cell's outbound staging spot to clear the floor and brings it back on the tooling-done release. Never consulted when the payloads differ — the bin has to change anyway. |
 | `refill_by` | `TEXT` | yes | `'clearing_robot'` |  | Which robot of a press-index pair brings the back position its next carrier: clearing_robot (Robot 1, R1 evacuates and refills) or index_robot (Robot 2, R2 indexes and refills). Describes the cell's hardware, so UpsertClaim warns when two styles on one press disagree. |
 | `key_route` | `TEXT` | yes | `''` |  | SEER robot-SELECTION hints, carried through to the fleet request. key_route is a JSON array of map points to prefer passing through, IN ORDER; key_task is 'load'/'unload'. Both empty on every claim until one is configured, and empty means the fleet picks freely. A point that does not resolve terminates the robot's waybill on issue, which is why ValidateNodeClaim checks each one against Core's synced node list. |
@@ -2701,7 +2700,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `lineside_soft_threshold` | `INT` |  |  |  |
 | `reuse_compatible_bins` | `INT` |  |  |  |
 | `changeover_evac_nodes` | `TEXT` |  |  |  |
-| `changeover_evac_destination` | `TEXT` |  |  |  |
 | `changeover_carryover_disposition` | `TEXT` |  |  |  |
 | `refill_by` | `TEXT` |  |  |  |
 | `key_route` | `TEXT` |  |  |  |

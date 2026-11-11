@@ -64,7 +64,7 @@ const S = {
     selected: null,      // the selected position, shared by the picture and the table
     picRows: {},         // node -> 'front' | 'back' | '', from pictureRows (never claim kind)
     openAs: '',          // the one dim cell currently drawn as a chip, because it was clicked
-    adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, evacDest}
+    adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, partialDest}
     routing: null,       // D3's rows — every one, the disabled backfills included
     routingError: '',    // the server's refusal, by name
     routingWarning: '',  // what the last removal orphans, by name
@@ -2271,14 +2271,13 @@ function syncPosHead(e) {
 }
 
 // The row's `N set` badge. The model counts it, by domain.ClaimHas's rule, so
-// the badge and the server agree on what "set" means; the two evacuation
-// fields and the partial home are the cell's own and are counted here beside
-// them because the modal draws all eighteen in one sheet.
+// the badge and the server agree on what "set" means; the tool change's marks
+// and the partial home are the cell's own and are counted here beside them
+// because the modal draws them all in one sheet.
 function advancedCount(node) {
     const c = S.model.cells[node];
     let n = M().advancedSet(S.model, node).length;
     if ((c.evacNodes || []).length) n++;
-    if (c.evacDest) n++;
     if (c.partialDest) n++;
     return n;
 }
@@ -3862,7 +3861,7 @@ const ADV_SECTIONS = [
     // ONE TOOL CHANGE: the marks are the whole of it on every line mode. The
     // destination override and the carry-over disposition are the marks'
     // options, drawn with them.
-    ['Changeover specials', ['evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
+    ['Changeover specials', ['evac_nodes', 'changeover_carryover_disposition']],
     // FINISHED GOODS: what a produce position's bin is counted to and where it
     // goes when it leaves short, in the order an engineer decides them — the
     // pack cap, the miscount tolerance (drawn only while the cap is on: it has
@@ -3893,7 +3892,7 @@ const ADV_SECTIONS = [
 // DOES on this screen and have no equivalent anywhere else, so they stay; the
 // names come from flowspec like every other word.
 //
-// Two keys are the sheet's own (evac_nodes, evac_dest) because the sheet had
+// Two keys are the sheet's own (evac_nodes, partial_dest) because the sheet had
 // short names for them before the fields did; the field each one edits is
 // named here rather than guessed from the key.
 const ADV_COPY = {
@@ -3905,7 +3904,6 @@ const ADV_COPY = {
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
     keep_staged_node: ['keep_staged_node', 'the node the full or empty comes from instead of the market; a spare is kept on it'],
     evac_nodes: ['changeover_evac_nodes', 'which positions must be clear. The changeover pauses for Tooling done'],
-    evac_dest: ['changeover_evac_destination', ''],
     // What each kind of home does, because the picker cannot say it: the
     // routing row is a name. An unloader home unloads the bin; it does not
     // hold it for the line.
@@ -3949,7 +3947,6 @@ function openAdvanced(node) {
         // onEscape.
         was: Object.assign({}, a),
         evacNodes: (c.evacNodes || []).slice(),
-        evacDest: c.evacDest || '',
         partialDest: c.partialDest || '',
     };
     drawAdvanced();
@@ -3972,7 +3969,7 @@ function openGroupAdvanced(i) {
     }
     // The mint stamps a group's reorder point as typed by an engineer.
     if (a.reorder_point) a.reorder_point_source = 'manual';
-    S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], evacDest: '', partialDest: '' };
+    S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], partialDest: '' };
     drawAdvanced();
 }
 
@@ -3982,7 +3979,7 @@ function advShows(key) {
     // stays when the cap is switched off; nothing reads it then.
     if (key === 'pack_tolerance_pct' && !S.adv.a.strict_pack) return false;
     if (S.adv.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, S.adv.node, key);
-    if (key === 'evac_nodes' || key === 'evac_dest') {
+    if (key === 'evac_nodes') {
         return M().advancedShows(S.model, S.adv.node, 'changeover_evac_nodes');
     }
     if (key === 'partial_dest') return M().advancedShows(S.model, S.adv.node, 'partial_destination');
@@ -3991,7 +3988,6 @@ function advShows(key) {
 
 function advValue(key) {
     if (key === 'evac_nodes') return S.adv.evacNodes;
-    if (key === 'evac_dest') return S.adv.evacDest;
     if (key === 'partial_dest') return S.adv.partialDest;
     return S.adv.a[key];
 }
@@ -4077,14 +4073,6 @@ function advField(key) {
             control = list.length
                 ? advPick(key, esc(list.join(' · ')))
                 : '<button class="pd-chip add" data-adv="evac_nodes" data-advkind="pick">+ pick positions</button>';
-            break;
-        }
-        case 'evac_dest': {
-            const v = S.adv.evacDest;
-            const fallback = S.model.cells[S.adv.node].dest || '—';
-            // The default is "wherever this position's outbound bins go",
-            // named by the field rather than by a second word for it.
-            control = advPick(key, v ? esc(v) : '<span class="k">' + esc(W('outbound_destination')) + ' ·</span> ' + esc(fallback), v ? '' : 'dflt');
             break;
         }
         case 'partial_dest': {
@@ -4181,7 +4169,6 @@ function applyAdvanced() {
     const node = S.adv.node;
     let m = M().reduce(S.model, { type: 'setAdvanced', node: node, advanced: S.adv.a });
     m = M().reduce(m, { type: 'setEvacNodes', node: node, nodes: S.adv.evacNodes });
-    m = M().reduce(m, { type: 'setEvacDest', node: node, dest: S.adv.evacDest });
     m = M().reduce(m, { type: 'setPartialDest', node: node, dest: S.adv.partialDest });
     S.model = m;
     closeAdvanced();
@@ -4236,14 +4223,6 @@ function advOptions(key) {
                 },
             }));
         }
-        case 'evac_dest':
-            return [{
-                label: W('outbound_destination') + ' · ' + (c.dest || '—'), on: !S.adv.evacDest,
-                run: () => { S.adv.evacDest = ''; },
-            }].concat(routing.filter(r => r.role === 'destination').map(r => ({
-                label: r.label || r.core_node_name, on: S.adv.evacDest === r.core_node_name,
-                run: () => { S.adv.evacDest = r.core_node_name; },
-            })));
         case 'partial_dest':
             return [{
                 label: W('outbound_destination') + ' · ' + (c.dest || '—'), on: !S.adv.partialDest,

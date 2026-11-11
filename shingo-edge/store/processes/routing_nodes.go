@@ -257,7 +257,7 @@ func routingFieldMatch(role string) string {
 	case domain.RoutingRoleStaging:
 		return `(TRIM(c.inbound_staging) = ?1 OR TRIM(c.outbound_staging) = ?1)`
 	default:
-		return `(TRIM(c.outbound_destination) = ?1 OR TRIM(c.changeover_evac_destination) = ?1)`
+		return `TRIM(c.outbound_destination) = ?1`
 	}
 }
 

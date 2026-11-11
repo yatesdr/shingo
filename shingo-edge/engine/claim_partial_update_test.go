@@ -50,11 +50,10 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 		PayloadCode:    "PART-X", UOPCapacity: 100, ReorderPoint: 10,
 		InboundSource: "MARKET", OutboundDestination: "MARKET",
 
-		ChangeoverEvacNodes:       &[]string{"PU-FRONT", "PU-BACK"},
-		ChangeoverEvacDestination: strPtr("TOOLING-BAY"),
-		RefillBy:                  refillPtr(yes),
-		KeyRoute:                  &[]string{"WP_AISLE_N", "WP_AISLE_S"},
-		KeyTask:                   strPtr("load"),
+		ChangeoverEvacNodes: &[]string{"PU-FRONT", "PU-BACK"},
+		RefillBy:            refillPtr(yes),
+		KeyRoute:            &[]string{"WP_AISLE_N", "WP_AISLE_S"},
+		KeyTask:             strPtr("load"),
 	})
 	testutil.MustNoErr(t, err, "seed claim")
 	return claimID, styleID
@@ -62,18 +61,15 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 
 func strPtr(s string) *string { return &s }
 
-// assertSixSurvive reads the claim back and checks every optional column the
+// assertOptionalsSurvive reads the claim back and checks every optional column the
 // partial-update callers do not mention.
-func assertSixSurvive(t *testing.T, db *store.DB, claimID int64, after string) {
+func assertOptionalsSurvive(t *testing.T, db *store.DB, claimID int64, after string) {
 	t.Helper()
 	got, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "read claim back")
 
 	if !slices.Equal(got.ChangeoverEvacNodes, []string{"PU-FRONT", "PU-BACK"}) {
 		t.Errorf("%s: changeover_evac_nodes = %v, want [PU-FRONT PU-BACK]", after, got.ChangeoverEvacNodes)
-	}
-	if got.ChangeoverEvacDestination != "TOOLING-BAY" {
-		t.Errorf("%s: changeover_evac_destination = %q, want TOOLING-BAY", after, got.ChangeoverEvacDestination)
 	}
 	if !got.IndexRobotFetches() {
 		t.Errorf("%s: refill_by = %q, want index_robot", after, got.RefillBy)
@@ -109,19 +105,19 @@ func TestUpdateCellReorder_LeavesUnmentionedColumnsAlone(t *testing.T) {
 		t.Fatalf("reorder_point = %d, want 25 — the edit under test did not apply", got.ReorderPoint)
 	}
 
-	assertSixSurvive(t, db, claimID, "after a reorder-point edit")
+	assertOptionalsSurvive(t, db, claimID, "after a reorder-point edit")
 }
 
 // TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone is the contract itself,
-// independent of any one caller: an UpsertClaim that names none of the six
-// leaves all six as they were. Any future partial-update path is covered by
+// independent of any one caller: an UpsertClaim that names none of them
+// leaves them all as they were. Any future partial-update path is covered by
 // this the day it is written.
 func TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	claimID, styleID := fullyConfiguredClaim(t, db)
 
-	// The same claim, re-sent by a writer with no opinion about the six.
+	// The same claim, re-sent by a writer with no opinion about them.
 	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PU-FRONT", Role: protocol.ClaimRoleProduce,
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
@@ -131,7 +127,7 @@ func TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone(t *testing.T) {
 	})
 	testutil.MustNoErr(t, err, "partial upsert")
 
-	assertSixSurvive(t, db, claimID, "after a partial upsert that named none of them")
+	assertOptionalsSurvive(t, db, claimID, "after a partial upsert that named none of them")
 }
 
 // TestClaimUpdate_ExplicitEmptyStillClears is the other half of the pointer
@@ -151,11 +147,10 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 		PayloadCode:    "PART-X", UOPCapacity: 100, ReorderPoint: 10,
 		InboundSource: "MARKET", OutboundDestination: "MARKET",
 
-		ChangeoverEvacNodes:       &[]string{},
-		ChangeoverEvacDestination: strPtr(""),
-		RefillBy:                  refillPtr(no),
-		KeyRoute:                  &[]string{},
-		KeyTask:                   strPtr(""),
+		ChangeoverEvacNodes: &[]string{},
+		RefillBy:            refillPtr(no),
+		KeyRoute:            &[]string{},
+		KeyTask:             strPtr(""),
 	})
 	testutil.MustNoErr(t, err, "clearing upsert")
 
@@ -163,9 +158,6 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 	testutil.MustNoErr(t, err, "read claim back")
 	if len(got.ChangeoverEvacNodes) != 0 {
 		t.Errorf("changeover_evac_nodes = %v, want empty", got.ChangeoverEvacNodes)
-	}
-	if got.ChangeoverEvacDestination != "" {
-		t.Errorf("changeover_evac_destination = %q, want empty", got.ChangeoverEvacDestination)
 	}
 	if got.IndexRobotFetches() {
 		t.Errorf("refill_by = %q, want clearing_robot", got.RefillBy)

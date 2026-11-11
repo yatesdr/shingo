@@ -854,7 +854,6 @@ func (db *DB) migrate() error {
 	// v37 (2026-08-24, B1): the six the private list was swallowing. Same
 	// definitions as the baseline CREATE.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_nodes TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_route TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_task TEXT NOT NULL DEFAULT ''")
 
@@ -2465,10 +2464,13 @@ func edgeMigrations() []migrate.Migration {
 			// refill_by replaces index_robot_supplies (off is clearing_robot,
 			// Robot 1; on is index_robot, Robot 2), and evacuate_on_changeover
 			// goes: a row that had it on and marks no position is logged by
-			// claim, and nothing converts it. flow_presets' advanced blocks,
-			// cells and recipe groups, archived rows included, carry the same
-			// change. Guarded per column, so a re-run changes nothing; final,
-			// with no Verify, as the column drops before it (v3, v42).
+			// claim, and nothing converts it. changeover_evac_destination goes
+			// too: a tool change clears to the cell's ordinary destination, and
+			// a claim that named one is logged. flow_presets' cells and recipe
+			// groups, their advanced blocks included, archived rows included,
+			// carry the same change. Guarded per column, so a re-run changes
+			// nothing; final, with no Verify, as the column drops before it
+			// (v3, v42).
 			Version: 47,
 			Name:    "refill_by_and_one_tool_change",
 			Fn:      refillByAndOneToolChange,
@@ -2487,7 +2489,7 @@ func refillByAndOneToolChange(tx *sql.Tx) error {
 }
 
 // refillByOnClaims moves one claims table (the live one or its quarantine
-// mirror) onto refill_by and drops the two columns. A table that does not
+// mirror) onto refill_by and drops the three columns. A table that does not
 // exist (a mirror never created) is left alone.
 func refillByOnClaims(tx *sql.Tx, table string) error {
 	rows, err := tx.Query(`SELECT name FROM pragma_table_info('` + table + `')`)
@@ -2535,7 +2537,39 @@ func refillByOnClaims(tx *sql.Tx, table string) error {
 			return err
 		}
 	}
+	if has["changeover_evac_destination"] {
+		if table == "style_node_claims" {
+			if err := logClearanceDestinations(tx); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP COLUMN changeover_evac_destination`); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// logClearanceDestinations names, one line each, the live claims that sent a
+// tool change's clearance somewhere of its own: after v47 their marked
+// positions clear to the claim's ordinary destination.
+func logClearanceDestinations(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, style_id, core_node_name, changeover_evac_destination FROM style_node_claims
+		WHERE COALESCE(changeover_evac_destination, '') <> '' AND retired_at IS NULL ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, style int64
+		var node, dest string
+		if err := rows.Scan(&id, &style, &node, &dest); err != nil {
+			return err
+		}
+		log.Printf("store: v47 claim %d (style %d, node %s) cleared a tool change to %s; that setting is gone, so its "+
+			"marked positions clear to the claim's ordinary destination", id, style, node, dest)
+	}
+	return rows.Err()
 }
 
 // logSwitchWithNoMarks names, one line each, the live claims that had the old
@@ -2562,10 +2596,11 @@ func logSwitchWithNoMarks(tx *sql.Tx) error {
 	return rows.Err()
 }
 
-// refillByInPresets rewrites every flow_presets row's advanced blocks, the
-// cells' and the recipe groups', archived rows included: index_robot_supplies
-// true becomes refill_by index_robot, and both it and evacuate_on_changeover
-// are dropped. A row that does not parse is logged and left as it is.
+// refillByInPresets rewrites every flow_presets row's cells and recipe groups,
+// archived rows included: in their advanced blocks index_robot_supplies true
+// becomes refill_by index_robot, and both it and evacuate_on_changeover are
+// dropped; on the cells changeover_evac_destination is dropped, and a row that
+// named one is logged. A row that does not parse is logged and left as it is.
 func refillByInPresets(tx *sql.Tx) error {
 	rows, err := tx.Query(`SELECT id, name, flow_json FROM flow_presets ORDER BY id`)
 	if err != nil {
@@ -2589,10 +2624,14 @@ func refillByInPresets(tx *sql.Tx) error {
 		return err
 	}
 	for _, p := range all {
-		out, changed, ok := refillByInFlow(p.flow)
+		out, changed, cleared, ok := refillByInFlow(p.flow)
 		if !ok {
 			log.Printf("store: v47 recipe %q (id %d) does not parse, left as it is", p.name, p.id)
 			continue
+		}
+		if cleared {
+			log.Printf("store: v47 recipe %q (id %d) cleared a tool change somewhere of its own; that setting is gone, "+
+				"so its marked positions clear to their ordinary destination", p.name, p.id)
 		}
 		if !changed {
 			continue
@@ -2605,11 +2644,12 @@ func refillByInPresets(tx *sql.Tx) error {
 }
 
 // refillByInFlow is one flow document's rewrite: changed reports whether any
-// advanced block moved, ok whether the document parsed.
-func refillByInFlow(flow string) (out string, changed, ok bool) {
+// item moved, cleared whether an item named a clearance destination, ok
+// whether the document parsed.
+func refillByInFlow(flow string) (out string, changed, cleared, ok bool) {
 	var env map[string]json.RawMessage
 	if json.Unmarshal([]byte(flow), &env) != nil {
-		return "", false, false
+		return "", false, false, false
 	}
 	for _, list := range []string{"cells", "groups"} {
 		raw, present := env[list]
@@ -2618,10 +2658,18 @@ func refillByInFlow(flow string) (out string, changed, ok bool) {
 		}
 		var items []map[string]json.RawMessage
 		if json.Unmarshal(raw, &items) != nil {
-			return "", false, false
+			return "", false, false, false
 		}
 		moved := false
 		for _, item := range items {
+			if dest, has := item["changeover_evac_destination"]; has {
+				var named string
+				if json.Unmarshal(dest, &named) == nil && named != "" {
+					cleared = true
+				}
+				delete(item, "changeover_evac_destination")
+				moved = true
+			}
 			var adv map[string]json.RawMessage
 			if a, has := item["advanced"]; !has || string(a) == "null" || json.Unmarshal(a, &adv) != nil {
 				continue
@@ -2631,7 +2679,7 @@ func refillByInFlow(flow string) (out string, changed, ok bool) {
 			}
 			blob, err := json.Marshal(adv)
 			if err != nil {
-				return "", false, false
+				return "", false, false, false
 			}
 			item["advanced"], moved = blob, true
 		}
@@ -2640,18 +2688,18 @@ func refillByInFlow(flow string) (out string, changed, ok bool) {
 		}
 		blob, err := json.Marshal(items)
 		if err != nil {
-			return "", false, false
+			return "", false, false, false
 		}
 		env[list], changed = blob, true
 	}
 	if !changed {
-		return "", false, true
+		return "", false, cleared, true
 	}
 	blob, err := json.Marshal(env)
 	if err != nil {
-		return "", false, false
+		return "", false, false, false
 	}
-	return string(blob), true, true
+	return string(blob), true, cleared, true
 }
 
 // refillByInAdvanced edits one advanced block in place and reports whether it
@@ -2904,8 +2952,20 @@ func backfillRoutingSetsOnce(tx *sql.Tx) error {
 		{"inbound_staging", "staging"},
 		{"outbound_staging", "staging"},
 	}
+	// The tool change's own clearance destination is read only where the column
+	// still stands. v47 drops it, and the style_node_claims rebuild an aged
+	// database crosses before this step no longer carries it, so on such a
+	// database there is nothing of it to backfill.
+	var evacDest int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+		WHERE name = 'changeover_evac_destination'`).Scan(&evacDest); err != nil {
+		return err
+	}
 	for _, id := range ids {
 		for _, l := range legs {
+			if l.field == "changeover_evac_destination" && evacDest == 0 {
+				continue
+			}
 			if _, err := tx.Exec(`INSERT OR IGNORE INTO process_routing_nodes
 				(process_id, core_node_name, role, origin, enabled)
 				SELECT DISTINCT s.process_id, TRIM(c.`+l.field+`), ?, ?, 1

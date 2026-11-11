@@ -107,22 +107,21 @@ type Style struct {
 // StyleNodeClaim is an Edge style_node_claims row, the columns the picture
 // reads. JSON-text columns are left as the strings the database holds.
 type StyleNodeClaim struct {
-	ID                        int64  `json:"id"`
-	StyleID                   int64  `json:"style_id"`
-	CoreNodeName              string `json:"core_node_name"`
-	Role                      string `json:"role"`
-	SwapMode                  string `json:"swap_mode"`
-	PayloadCode               string `json:"payload_code"`
-	UOPCapacity               int    `json:"uop_capacity"`
-	InboundStaging            string `json:"inbound_staging"`
-	OutboundStaging           string `json:"outbound_staging"`
-	InboundSource             string `json:"inbound_source"`
-	OutboundDestination       string `json:"outbound_destination"`
-	PairedCoreNode            string `json:"paired_core_node"`
-	SecondPairedCoreNode      string `json:"second_paired_core_node"`
-	AllowedPayloadCodes       string `json:"allowed_payload_codes"`
-	KeyRoute                  string `json:"key_route"`
-	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
+	ID                   int64  `json:"id"`
+	StyleID              int64  `json:"style_id"`
+	CoreNodeName         string `json:"core_node_name"`
+	Role                 string `json:"role"`
+	SwapMode             string `json:"swap_mode"`
+	PayloadCode          string `json:"payload_code"`
+	UOPCapacity          int    `json:"uop_capacity"`
+	InboundStaging       string `json:"inbound_staging"`
+	OutboundStaging      string `json:"outbound_staging"`
+	InboundSource        string `json:"inbound_source"`
+	OutboundDestination  string `json:"outbound_destination"`
+	PairedCoreNode       string `json:"paired_core_node"`
+	SecondPairedCoreNode string `json:"second_paired_core_node"`
+	AllowedPayloadCodes  string `json:"allowed_payload_codes"`
+	KeyRoute             string `json:"key_route"`
 }
 
 // ScenePoint is a Core scene_points row.

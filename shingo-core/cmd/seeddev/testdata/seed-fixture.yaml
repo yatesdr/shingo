@@ -447,10 +447,8 @@ claims:
     outbound_destination: SYN_SM_Stamp
     # The round-3/4 claim config, present so the seeder round-trip asserts it
     # lands. Distinctive on every axis a wrong encoding would flatten: TWO positions
-    # (not one, not all), a destination that is NOT outbound_destination, and a
-    # two-point route in an order that is not sorted.
+    # (not one, not all), and a two-point route in an order that is not sorted.
     changeover_evac_nodes: [PLN_001, PLN_002]
-    changeover_evac_destination: SYN_MT_Return
     # A claim with marks names inbound staging: the tool change holds the new
     # carrier there until Tooling done (the Edge's save rule, and Validate's).
     inbound_staging: SLN_016

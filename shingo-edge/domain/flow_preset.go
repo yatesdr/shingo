@@ -104,7 +104,6 @@ var presetNodeFields = []struct {
 	{"second_paired_core_node", func(c FlowCell) []string { return []string{c.SecondPairedCoreNode} }},
 	{"inbound_source", func(c FlowCell) []string { return []string{c.InboundSource} }},
 	{"outbound_destination", func(c FlowCell) []string { return []string{c.OutboundDestination} }},
-	{"changeover_evac_destination", func(c FlowCell) []string { return []string{c.ChangeoverEvacDestination} }},
 	{"inbound_staging", func(c FlowCell) []string { return []string{c.InboundStaging} }},
 	{"outbound_staging", func(c FlowCell) []string { return []string{c.OutboundStaging} }},
 	{"changeover_evac_nodes", func(c FlowCell) []string { return c.ChangeoverEvacNodes }},
@@ -155,7 +154,7 @@ func StaleSentence(recipe string, s StaleNode) string {
 	gone := "which is no longer a position here"
 	var says string
 	switch s.Field {
-	case "outbound_destination", "changeover_evac_destination":
+	case "outbound_destination":
 		says = "sends " + cell + " to " + s.Node
 	case "inbound_source":
 		says, gone = "fills "+cell+" from "+s.Node, "which is no longer in this process's routing set"

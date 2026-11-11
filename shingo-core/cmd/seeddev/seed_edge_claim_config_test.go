@@ -10,11 +10,10 @@ import (
 // ---------------------------------------------------------------------------
 // The round-3/4 claim config must survive the seeder.
 //
-// changeover_evac_nodes, changeover_evac_destination,
-// key_route and key_task were added to
+// changeover_evac_nodes, key_route and key_task were added to
 // style_node_claims and to the claim editor, and left out of plantspec and out
 // of this seeder — so staged tooling evacuation, evacuation-destination
-// precedence, the loader card and key routes could not be SET by any scenario.
+// marks, the loader card and key routes could not be SET by any scenario.
 // Not "were untested": unreachable. Those features had never executed on a sim
 // and there was no way to make them.
 //
@@ -29,14 +28,14 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	t.Parallel()
 	db, _, _ := openSeededEdge(t)
 
-	var positions, dest, route, task, allowed, refill string
+	var positions, route, task, allowed, refill string
 	err := db.QueryRow(`
-		SELECT changeover_evac_nodes, changeover_evac_destination,
+		SELECT changeover_evac_nodes,
 		       key_route, key_task, allowed_payload_codes, refill_by
 		  FROM style_node_claims c
 		  JOIN styles s ON s.id = c.style_id
 		 WHERE c.core_node_name = 'PLN_001' AND s.name = 'PRESS-1-RUN'`).
-		Scan(&positions, &dest, &route, &task, &allowed, &refill)
+		Scan(&positions, &route, &task, &allowed, &refill)
 	if err == sql.ErrNoRows {
 		t.Fatal("the press-index claim was not seeded at all")
 	}
@@ -56,11 +55,6 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	}
 	if want := `["PANEL-LH","PANEL-RH"]`; allowed != want {
 		t.Errorf("allowed_payload_codes = %q, want %q", allowed, want)
-	}
-	// Distinctive on purpose: NOT the claim's outbound_destination, so a
-	// fallback silently standing in for the real column would show.
-	if dest != "SYN_MT_Return" {
-		t.Errorf("changeover_evac_destination = %q, want SYN_MT_Return", dest)
 	}
 	if task != "unload" {
 		t.Errorf("key_task = %q, want unload", task)

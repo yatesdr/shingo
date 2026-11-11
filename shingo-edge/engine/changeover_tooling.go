@@ -29,14 +29,13 @@ import (
 // all, because their tool change happens internally.
 //
 // So CLEARANCE IS NORMAL ROUTING. A marked position's bin goes wherever that cell's
-// bins ordinarily go — its unloader, its buffer, its market — and this pass
-// leaves that leg alone. ChangeoverEvacDestination is an OPTIONAL OVERRIDE for
-// a cell that wants clearance somewhere else, like a different node group;
-// empty is the default and empty means untouched. Whatever it names is an
-// ordinary destination with ordinary capacity behaviour. An earlier round read
-// this field as a dedicated "tooling bay" and the demo fixture grew a one-slot
-// station to match: the second bin of a two-position press had nowhere to go, and
-// robots dwelt on it holding bins that nothing would ever take away.
+// bins ordinarily go — its unloader, its buffer, its market: the outgoing
+// claim's outbound, where Core sends the carrier by what it holds as it does any
+// carrier lifted off a line — and this pass leaves that leg alone. There is no
+// destination of the tool change's own: one existed (an override, and before it
+// a "tooling bay" with one slot, where the second bin of a two-position press
+// had nowhere to go and robots dwelt holding bins nothing would take away), and
+// it was a second place to answer where a carrier goes.
 //
 // WHY THIS IS A PASS OVER THE FINISHED PLAN AND NOT A FIFTH FAN-OUT.
 //
@@ -73,7 +72,6 @@ type toolingPress struct {
 	to   *processes.NodeClaim // the incoming claim on the SAME node, if any
 	// positions are the core nodes of every marked position the layout actually has.
 	positions []string
-	evacDest  string
 	staging   string
 	// roundTrip is the subset of positions whose part carries over and whose cell
 	// chose outbound_staging, mapped to the spot their bin waits at.
@@ -84,11 +82,6 @@ type toolingPress struct {
 // value is "not a tooling changeover" and decorates nothing.
 type toolingChangeover struct {
 	presses []toolingPress
-	// evacDest maps a MARKED position's core node to the OVERRIDE destination its
-	// bin is redirected to. Only marked positions of a cell that set the override
-	// appear at all: with no override there is nothing to redirect, and an
-	// unmarked position keeps whatever the normal machinery gave it either way.
-	evacDest map[string]string
 	// stageAt maps a press position's core node to the staging node its INCOMING
 	// bin waits at. Every position of the cell appears, marked or not — the press
 	// is down and a human is inside it, so nothing may drive to lineside.
@@ -153,31 +146,11 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 		if len(positions) == 0 {
 			continue // every marked position keeps its part; nothing to decorate
 		}
-		// THE OVERRIDE IS THE ONLY REASON TO TOUCH AN OUTBOUND LEG, and it is
-		// empty by default. Clearing a position is not a different journey from
-		// evacuating it — it is the same journey, made to happen now — so with
-		// no override the leg the pipeline planned is exactly right and this
-		// pass leaves it alone. Mapping every marked position to the destination it
-		// already had would read as harmless and be one config change away from
-		// steering legs nobody asked it to steer.
-		if override := fc.ChangeoverEvacDestination; override != "" {
-			if t.evacDest == nil {
-				t.evacDest = make(map[string]string)
-			}
-			for _, position := range positions {
-				t.evacDest[position] = override
-			}
-		}
 		t.presses = append(t.presses, toolingPress{
 			from:      fc,
 			to:        toByNode[fc.CoreNodeName],
 			positions: positions,
 			roundTrip: pressRoundTrips(t.roundTrip, positions),
-			// The EXPANSION builds a leg from nothing, so it has to name a
-			// destination: the override when set, this cell's ordinary outbound
-			// otherwise. That is EvacDestinationFor's whole job, and it is the
-			// one caller that still wants the fallback.
-			evacDest: domain.EvacDestinationFor(fc),
 		})
 	}
 	if !t.active() {
@@ -400,16 +373,14 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 // applyToolingChangeover is the decorator. It runs LAST, over the finished
 // plan, in which the diff pipeline has already planned a marked press position
 // by position (shouldFanOutPressIndex) and every other marked cell node by
-// node. It makes three edits:
+// node. It makes two edits:
 //
 //   - every MARKED position whose action lifts the old carrier and brings the
 //     new one is given the tool change's leg instead (toolingPositionAction):
-//     lift at START, take it out, fetch the replacement, hold it at staging
-//     until Tooling done, set it down. A carried-over part whose cell chose
-//     outbound_staging walks out and back instead (setCarryoverRoundTrip);
-//   - the OUTBOUND leg of a marked position is redirected, but ONLY when the
-//     cell set ChangeoverEvacDestination — otherwise clearance is normal
-//     routing and the leg is left exactly as the pipeline planned it;
+//     lift at START, take it out to the outgoing claim's outbound, fetch the
+//     replacement, hold it at staging until Tooling done, set it down. A
+//     carried-over part whose cell chose outbound_staging walks out and back
+//     instead (setCarryoverRoundTrip);
 //   - every leg that delivers to a held position (toolChangeHolds) gains a wait
 //     at its staging, so the carrier stays out of the cell until the operator
 //     releases it.
@@ -453,10 +424,6 @@ func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t tooling
 		if marked[a.CoreNodeName] && a.Situation == string(SituationDrop) {
 			clearDropAtStart(a)
 		}
-		if dest := t.evacDest[a.CoreNodeName]; dest != "" {
-			retargetOutbound(a.SupplyOrder, a.CoreNodeName, dest)
-			retargetOutbound(a.EvacOrder, a.CoreNodeName, dest)
-		}
 		if stage := t.stageAt[a.CoreNodeName]; stage != "" {
 			holdInbound(a, stage, fallbackAutoConfirm)
 		}
@@ -496,7 +463,7 @@ func toolingPositionAction(press toolingPress, position string, node *processes.
 	// The replacement leg is a fresh EMPTY carrier for a produce position, and
 	// names the incoming style when the carrier type changes — refillPickup owns
 	// both, inside buildToolingEvacSteps.
-	steps := buildToolingEvacSteps(position, press.evacDest, fromPosition, toPosition, press.staging)
+	steps := buildToolingEvacSteps(position, press.from.OutboundDestination, fromPosition, toPosition, press.staging)
 	// The order OPENS by lifting the old bin off the position, so it carries the
 	// from-style payload; without it the pickup filters for the new payload and
 	// finds no bin (the ALN_001 shape).
@@ -597,33 +564,6 @@ func setCarryoverRoundTrip(a *changeover.NodeAction, staging string) {
 	a.Situation = string(SituationEvacuate)
 	a.NextState = domain.NodeTaskStagingRequested
 	a.LogTag = "carryover_outbound_staging"
-}
-
-// retargetOutbound rewrites the dropoff that disposes of the bin lifted off
-// `node` so it lands at `dest`.
-//
-// "The dropoff after the pickup at my own node" is the definition of an
-// outbound leg here, and it is deliberately positional rather than a match on
-// the old destination: an overriding cell sends its marked positions' bins to the
-// override whatever the normal machinery had chosen, including a destination
-// this pass has already set (which makes it idempotent).
-func retargetOutbound(spec *changeover.OrderSpec, node, dest string) {
-	if spec == nil || spec.Complex == nil || dest == "" {
-		return
-	}
-	steps := spec.Complex.Steps
-	for i := range steps {
-		if steps[i].Action != protocol.ActionPickup || steps[i].Node != node {
-			continue
-		}
-		for j := i + 1; j < len(steps); j++ {
-			if steps[j].Action == protocol.ActionDropoff {
-				steps[j].Node = dest
-				return
-			}
-		}
-		return
-	}
 }
 
 // holdInbound makes the leg that delivers to this position wait at `staging` first.

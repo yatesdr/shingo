@@ -460,10 +460,6 @@ func (p *Plant) Validate() error {
 			}
 			seenMark[node] = true
 		}
-		// An evacuation destination that names nothing sends the bins nowhere.
-		if c.ChangeoverEvacDestination != "" && !ref(c.ChangeoverEvacDestination) {
-			add("%s: unknown changeover_evac_destination %q", where, c.ChangeoverEvacDestination)
-		}
 		// ── KEY ROUTE ───────────────────────────────────────────────────────
 		//
 		// Shape only. The POINTS are deliberately not resolved against the

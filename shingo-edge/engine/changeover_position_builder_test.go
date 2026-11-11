@@ -28,14 +28,13 @@ func stepTrace(steps []protocol.ComplexOrderStep) string {
 // the marks reachable no matter what the earlier passes did to the diffs.
 func positionPress() toolingPress {
 	from := &processes.NodeClaim{
-		CoreNodeName:              "PRESS",
-		Role:                      protocol.ClaimRoleProduce,
-		SwapMode:                  protocol.SwapModeTwoRobotPressIndex,
-		PayloadCode:               "PART-A",
-		PairedCoreNode:            "PRESS_B",
-		OutboundDestination:       "MARKET",
-		ChangeoverEvacDestination: "TOOLING-BAY",
-		ChangeoverEvacNodes:       []string{"PRESS_B"},
+		CoreNodeName:        "PRESS",
+		Role:                protocol.ClaimRoleProduce,
+		SwapMode:            protocol.SwapModeTwoRobotPressIndex,
+		PayloadCode:         "PART-A",
+		PairedCoreNode:      "PRESS_B",
+		OutboundDestination: "MARKET",
+		ChangeoverEvacNodes: []string{"PRESS_B"},
 	}
 	to := &processes.NodeClaim{
 		CoreNodeName:   "PRESS",
@@ -49,7 +48,6 @@ func positionPress() toolingPress {
 	return toolingPress{
 		from: from, to: to,
 		positions: []string{"PRESS_B"},
-		evacDest:  "TOOLING-BAY",
 		staging:   "IN-STAGE",
 	}
 }
@@ -63,14 +61,16 @@ func positionSteps(t *testing.T, press toolingPress, position string) []protocol
 	return a.SupplyOrder.Complex.Steps
 }
 
-// The staged shape: lift the blocking bin off the position, get it off the line,
-// fetch the replacement, PARK AT STAGING holding it, and deliver on release.
+// The staged shape: lift the blocking bin off the position, get it off the line
+// to the outgoing claim's ordinary destination, fetch the replacement, PARK AT
+// STAGING holding it, and deliver on release. A tool change has no destination
+// of its own: its clearance is the cell's ordinary setup.
 func TestToolingPositionAction_Shape(t *testing.T) {
 	t.Parallel()
 	press := positionPress()
 	a := toolingPositionAction(press, "PRESS_B", &processes.Node{ID: 1, CoreNodeName: "PRESS_B", Name: "PRESS_B"})
 
-	want := "pickup@PRESS_B dropoff@TOOLING-BAY pickup@EMPTIES wait@IN-STAGE dropoff@PRESS_B"
+	want := "pickup@PRESS_B dropoff@MARKET pickup@EMPTIES wait@IN-STAGE dropoff@PRESS_B"
 	if got := stepTrace(a.SupplyOrder.Complex.Steps); got != want {
 		t.Errorf("steps =\n  %s\nwant\n  %s", got, want)
 	}
@@ -85,34 +85,6 @@ func TestToolingPositionAction_Shape(t *testing.T) {
 	}
 	if a.LogTag != "evacuate_staged_position" {
 		t.Errorf("LogTag = %q, want evacuate_staged_position", a.LogTag)
-	}
-}
-
-// Blank ChangeoverEvacDestination means NORMAL ROUTING, and the two halves of
-// the pass want that answered differently.
-//
-// A leg the pipeline already planned is left alone — nothing to redirect, so
-// nothing queued. A position this pass EXPANDS has no leg yet, so it still has to
-// name somewhere for the bin to go, and normal routing for a press is its own
-// outbound destination. One field, two readings, and the reason they differ is
-// that only one of them is an edit.
-func TestToolingChangeover_BlankDestinationMeansNormalRouting(t *testing.T) {
-	t.Parallel()
-	press := positionPress()
-	from := *press.from
-	from.ChangeoverEvacDestination = ""
-	to := *press.to
-
-	tc := planToolingChangeover([]processes.NodeClaim{from}, []processes.NodeClaim{to})
-	if got, ok := tc.evacDest["PRESS_B"]; ok {
-		t.Errorf("blank evac destination queued a redirect to %q; it must queue nothing", got)
-	}
-	if len(tc.presses) != 1 {
-		t.Fatalf("expected one marked press, got %d", len(tc.presses))
-	}
-	if got := tc.presses[0].evacDest; got != "MARKET" {
-		t.Errorf("an expanded position has no leg to leave alone, so it must be built against "+
-			"OutboundDestination; got %q", got)
 	}
 }
 

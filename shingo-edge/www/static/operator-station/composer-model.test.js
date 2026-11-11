@@ -1252,7 +1252,6 @@ function presetFromStyle(styleId) {
             mode: c.swap_mode, source: c.inbound_source || '', dest: c.outbound_destination || '',
             staging: c.inbound_staging || '', parkOld: c.outbound_staging || '',
             paired: c.paired_core_node || '', secondPaired: c.second_paired_core_node || '',
-            evacDest: c.changeover_evac_destination || '',
             evacNodes: (c.changeover_evac_nodes || []).slice(),
             keyRoute: (c.key_route || []).slice(),
         };

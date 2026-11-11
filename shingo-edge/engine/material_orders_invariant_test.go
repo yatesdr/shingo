@@ -443,7 +443,7 @@ func keepStagedLegs(base, from, to *processes.NodeClaim) map[string][]protocol.C
 // held at inbound staging, for the builder walks.
 func toolChangeLeg(from, to *processes.NodeClaim) []protocol.ComplexOrderStep {
 	a := toolingPositionAction(toolingPress{from: from, to: to, positions: []string{from.CoreNodeName},
-		evacDest: from.OutboundDestination, staging: "IN-STAGING"},
+		staging: "IN-STAGING"},
 		from.CoreNodeName, &processes.Node{ID: 1, Name: from.CoreNodeName, CoreNodeName: from.CoreNodeName})
 	return a.SupplyOrder.Complex.Steps
 }

@@ -452,15 +452,6 @@ type NodeClaim struct {
 	// ordinary choreography. Unmarked nodes stay put. It is the whole answer on
 	// every line mode (ToolChangePositions).
 	ChangeoverEvacNodes []string `json:"changeover_evac_nodes,omitempty"`
-	// ChangeoverEvacDestination is where a tooling evacuation sends the bins
-	// it lifts off the press. Free-form: a node name or a group name, exactly
-	// like InboundSource — Core resolves either.
-	//
-	// Blank means today's behaviour: the evacuation falls back to
-	// OutboundDestination. There is deliberately no enum and no unloader
-	// special case; an unloader is reached by naming a group it projects over,
-	// which keeps this field ignorant of what is on the other end.
-	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
 	// ChangeoverCarryoverDisposition decides what happens to a marked position's
 	// bin when its part CARRIES OVER — the same payload on that position in both
 	// styles.
@@ -1254,20 +1245,6 @@ func MarksNode(c *NodeClaim, node string) bool {
 	return node != "" && slices.Contains(MarkedEvacNodes(c), node)
 }
 
-// EvacDestinationFor is where a tooling evacuation sends this claim's bins.
-// ChangeoverEvacDestination when set, else the ordinary OutboundDestination —
-// blank means "unchanged from today", which is the whole compatibility story
-// for the field.
-func EvacDestinationFor(c *NodeClaim) string {
-	if c == nil {
-		return ""
-	}
-	if c.ChangeoverEvacDestination != "" {
-		return c.ChangeoverEvacDestination
-	}
-	return c.OutboundDestination
-}
-
 // OptValue reads an absent-means-untouched field as the value its caller
 // expressed, or the zero value when the caller said nothing.
 //
@@ -1340,8 +1317,7 @@ type NodeClaimInput struct {
 	// am thinking of always fills this in" is not a property of a struct, and
 	// the pointer is what makes the class unrepresentable rather than fixing
 	// each caller as it is discovered.
-	ChangeoverEvacNodes       *[]string `json:"changeover_evac_nodes,omitempty"`
-	ChangeoverEvacDestination *string   `json:"changeover_evac_destination,omitempty"`
+	ChangeoverEvacNodes *[]string `json:"changeover_evac_nodes,omitempty"`
 	// ChangeoverCarryoverDisposition follows the same absent-means-untouched
 	// contract as every field here: nil leaves the stored value alone, which is
 	// what stops a partial update from silently resetting a cell's answer to

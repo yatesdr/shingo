@@ -906,7 +906,7 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 // where it waits, and deliver it when the operator says the tool is done.
 //
 //	pickup(position)      lift the carrier that blocks the tool
-//	dropoff(evacDest)     get it off the line
+//	dropoff(outbound)     get it off the line: the outgoing claim's outbound
 //	pickup(inboundSource) fetch the incoming style's carrier
 //	wait(staging)         the Tooling done gate, AT inbound staging
 //	dropoff(position)     deliver on release
@@ -921,10 +921,10 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 // It takes the CLAIMS rather than a bare inbound-source name so its refill leg
 // goes through refillPickup like every other one: a name carries the node but
 // not the produce/empty question.
-func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *processes.NodeClaim, staging string) []protocol.ComplexOrderStep {
+func buildToolingEvacSteps(position, outbound string, fromClaim, toClaim *processes.NodeClaim, staging string) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: position},
-		buildStep("dropoff", evacDest),
+		buildStep("dropoff", outbound),
 		refillPickup(fromClaim, toClaim),
 		stationWait(staging, release.PurposeToolingDone),
 		{Action: "dropoff", Node: position},

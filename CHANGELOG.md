@@ -31,6 +31,7 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - A marked position the next style does not use is cleared at START too; an unmarked one still waits for Ready
 - A light curtain's release no longer releases Tooling done by itself
 - Evacuate on changeover is gone; a claim that had it on with no marks is logged (Edge v47)
+- A tool change clears to the cell's ordinary destination; its own clearance destination is gone, logged where set (Edge v47)
 - Which robot brings a press's next carrier is stored as Robot 1, 2 or 3 (Edge v47)
 - An index press can use Robot 3: a third trip brings the back its carrier when Robot 2 lifts it
 - The index press's mode is called Index Swap on every screen and in every refusal

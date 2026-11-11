@@ -3225,7 +3225,7 @@ async function recipeGroupPins(h) {
         click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
         const sheet = ctx.scrim.innerHTML;
         if (sheet.indexOf('<h2>Right Hand · Advanced</h2>') < 0) throw new Error('the sheet is not Right Hand\'s: ' + plain(sheet).slice(0, 200));
-        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'evac_dest', 'partial_dest']) {
+        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'partial_dest']) {
             if (sheet.indexOf('data-adv="' + key + '"') >= 0) throw new Error('group scope draws ' + key + ', which a recipe may not say');
         }
         // refill_by (then index_robot_supplies) joined the list 2026-11-05: a recipe that cannot
