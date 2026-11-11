@@ -954,7 +954,7 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 //
 // The binding is late by construction: the create carried no dropoff block at all,
 // so there is no stale target to correct. The tail's nodes are read from the PLAN,
-// which the re-bind has already patched by carried index through applyPlanNode —
+// which the re-bind has already patched by carried index through repoint —
 // the one writer of a step's node.
 //
 // ── WHY THERE IS NO REDIRECT OVERLAY HERE ANY MORE ────────────────────────
@@ -980,9 +980,9 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 // order.Coordinated outright (dispatcher.go), redirectStoreOffDugLane sits behind
 // the scanner's IsCoordinated fork so it is plain-path only, the planner's NGRP
 // re-resolve runs before a plan exists, the compound arm rewrites steps_json in
-// the same block, and applyDeliveryNodeAtStep patches the step itself. A column
+// the same block, and repoint moves the step with the column. A column
 // written without its step is a state this path can no longer be reached in — and
-// if one is ever added, the fix is to write the step through applyPlanNode like
+// if one is ever added, the fix is to write the step through repoint like
 // every other re-point, not to re-derive the target here by scanning.
 //
 // SINCE C2a's A.5 the shape is gone at its source as well: the re-bind writes

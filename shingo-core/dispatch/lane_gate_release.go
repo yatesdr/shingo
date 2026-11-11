@@ -672,7 +672,7 @@ type gateCandidate struct {
 	// that produced `node` and `retrieve` already knew it. The release needs it to
 	// patch the step it is actually speaking for: a swap has two dropoffs and a
 	// spliced plan two pickups, so "the last dropoff" and "the first pickup" name
-	// the wrong leg (see applyPlanNode).
+	// the wrong leg (see repoint).
 	//
 	// -1 for a dweller, and nothing reads it: there is no entry step to patch,
 	// which is the whole of what makes it a dweller. The release-time resolver

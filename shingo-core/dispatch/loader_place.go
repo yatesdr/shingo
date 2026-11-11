@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -217,7 +216,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			d.dbg("place: order %d return leg, home %s clear (occupant is this swap's own or none) — in-flight %d, err %v",
 				order.ID, homeName, inFlight, ierr)
 			if ierr == nil && inFlight == 0 {
-				d.setParkDestination(order, homeName, "home")
+				d.setParkDestination(order, steps, homeName, "home")
 				return ""
 			}
 			return d.placeForLoader(order, home.LoaderID, homeName, pl)
@@ -228,7 +227,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		if blocked {
 			return d.placeForLoader(order, home.LoaderID, homeName, pl)
 		}
-		d.setParkDestination(order, homeName, "home")
+		d.setParkDestination(order, steps, homeName, "home")
 	}
 	return ""
 }
@@ -276,7 +275,7 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 	if !orderDeliversTo(steps, homeName) && !home.HeldByStranger {
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 		if ierr == nil && inFlight == 0 {
-			d.setParkDestination(order, homeName, "home")
+			d.setParkDestination(order, steps, homeName, "home")
 			return true, ""
 		}
 	}
@@ -427,7 +426,7 @@ func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64,
 			"the carrier's own home. Something upstream picked this destination from the style being "+
 			"requested rather than the carrier being lifted; the park is corrected but the disagreement is not.",
 			order.ID, carrierPayload, homeName, own)
-		d.setParkDestination(order, own, "home")
+		d.setParkDestination(order, pl.steps, own, "home")
 		return ""
 	}
 	log.Printf("WARN: order %d carries %s, which does not belong on home %s, and its own home is "+
@@ -455,7 +454,7 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 		if blocked, _ := CheckDropoffCapacity(d.db, m.NodeName, order.ID); blocked {
 			continue
 		}
-		d.setParkDestination(order, m.NodeName, "buffer")
+		d.setParkDestination(order, pl.steps, m.NodeName, "buffer")
 		return ""
 	}
 	// NO BUFFER IS FREE. Two cases, told apart by where the order already points.
@@ -535,8 +534,7 @@ func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl place
 		if st == nil || !d.noOtherInFlight(m.NodeName, order) {
 			continue
 		}
-		d.setParkDestination(order, m.NodeName, "vacated")
-		pl.steps[f].Node = m.NodeName
+		d.setParkDestination(order, pl.steps, m.NodeName, "vacated")
 		pl.steps[f].Vacate = st
 		pl.steps[f].Anchor = homeName
 		d.persistStepStamp(order, f, st, homeName)
@@ -557,8 +555,8 @@ func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl place
 // the flag could deliver a contained bin to FG, which is the exact escape the
 // feature exists to prevent. Core is the single authority (the same LOCUS
 // rule the loader park runs on): the flag lives in Core, the divert rides
-// Core dispatch, and the re-point reaches the fleet through the same
-// redirect machinery the park uses (applyFinalDeliveryNode).
+// Core dispatch, and the re-point reaches the fleet through the one writer
+// the park uses (repoint), in the plan this pass sends.
 //
 // ── SCOPE, THREE WAYS ─────────────────────────────────────────────────────
 //   - Payload-keyed: only the payload flag gates the divert here. A held BIN
@@ -588,30 +586,28 @@ func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl place
 // group and the NGRP resolution spreads across its free children, parking on
 // full; only a CONCRETE node's capacity gate parks here.
 func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedStep) *dispatchStep {
-	final := ""
-	for i := len(steps) - 1; i >= 0; i-- {
-		if steps[i].Action == protocol.ActionDropoff {
-			final = steps[i].Node
-			break
-		}
+	f := lastDropIndex(steps)
+	if f < 0 {
+		return nil
 	}
-	destNode := containmentDivert(d.db, order, final, d.dbg)
+	destNode := containmentDivert(d.db, order, steps[f].Node, d.dbg)
 	if destNode == nil {
 		return nil
 	}
 	containment, payload := destNode.Name, order.PayloadCode
 	// A GROUP is the expected shape for a containment area with several spots:
-	// the re-pointed dropoff re-enters the NGRP resolution on the next tick,
-	// which spreads bins across the free children (round-robin to vacancies)
-	// and parks the order on ngrp-full — so for a group the local capacity gate
-	// is deliberately SKIPPED: capacity is the group resolver's business, and
-	// this hook cannot see children yet anyway. A concrete node keeps the gate:
-	// a full containment node parks the order here, fail-closed.
+	// the re-pointed dropoff names the group, and the pass stops, so the next
+	// pass's group re-resolve (prepareComplexSteps) spreads bins across its free
+	// children and parks the order on ngrp-full — so for a group the local
+	// capacity gate is deliberately SKIPPED: capacity is the group resolver's
+	// business. A concrete node keeps the gate: a full containment node parks
+	// the order here, fail-closed.
 	//
 	// Another order's reservation or hard claim on the concrete node parks it
 	// too, asked first: the claim door refuses a slot another order holds. An
 	// unreadable answer parks, as an unreadable capacity read does.
-	if destNode.NodeTypeCode != protocol.NodeClassNGRP {
+	group := destNode.NodeTypeCode == protocol.NodeClassNGRP
+	if !group {
 		held, herr := d.db.SlotHeldByStranger(destNode.ID, order.ID)
 		blocked := herr != nil || held
 		if !blocked {
@@ -626,14 +622,20 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 			return &dispatchStep{done: true, err: fmt.Errorf("containment node %s has no room", containment)}
 		}
 	}
-	if order.DeliveryNode == containment {
+	if steps[f].Node == containment {
 		return nil // already re-pointed (scanner replay) — idempotent
 	}
-	if err := applyFinalDeliveryNode(d.db, order, containment); err != nil {
+	// The plan this pass sends moves with the stored one (repoint, before the
+	// splice): a leg with no wait ahead of its drop goes to the fleet whole at
+	// this create, and an unmoved copy would send it to FG.
+	if _, err := d.repoint(order, steps, stepMove{at: f, action: protocol.ActionDropoff, node: containment}, nil); err != nil {
 		log.Printf("dispatch: containment re-point order %d → %s: %v", order.ID, containment, err)
 		return nil
 	}
 	d.dbg("containment: order %d (payload %s, contained) diverted → %s", order.ID, payload, containment)
+	if group {
+		return &dispatchStep{done: true}
+	}
 	return nil
 }
 
@@ -942,7 +944,7 @@ func (d *Dispatcher) noteSwapThroughBuffer(order *orders.Order, picked string, p
 // In a pair pass the leg placed second is handed the first leg (pairPass), and
 // when that leg is this one's sibling its row and plan are what two reads would
 // return: its phases persisted the plan they resolved (persistWidenedPlan and
-// the applyPlanNode writers), and a leg that went terminal in them ended the
+// repoint), and a leg that went terminal in them ended the
 // pass before this one ran. So the pass context answers, and the reads are
 // taken only outside a pass or when the context holds some other leg.
 func (d *Dispatcher) swapSiblingPlan(order *orders.Order, pc *pairPass) (*orders.Order, []resolvedStep, bool) {
@@ -964,144 +966,21 @@ func (d *Dispatcher) swapSiblingPlan(order *orders.Order, pc *pairPass) (*orders
 	return sib, sibSteps, true
 }
 
-// applyPlanNode is the ONE writer of a step's node in steps_json. Every
-// re-point below goes through it, so they cannot drift in HOW they patch —
-// only in WHICH step they name, and that is the caller's fact to carry.
-//
-// ── WHY THE INDEX IS A PARAMETER ──────────────────────────────────────────
-// It used to be derived here, by scanning: the delivery side took the LAST
-// dropoff walking backward, the pickup side the FIRST pickup walking forward,
-// both on the stated assumption that a gated plan is [wait, pickup, dropoff]
-// and so has exactly one of each. A SWAP has two dropoffs — store the full bin
-// in the lane, then return the empty to a press — and the lane gate re-binds
-// the FIRST of them, the lane entry. The backward scan therefore rewrote the
-// empty's return leg with the lane slot, and the order delivered BOTH its bins
-// to one slot. Downstream: the press starved waiting for the empty that was
-// driven into a lane, and the ghost eviction was forced to evict an occupant
-// Core's own plan had manufactured — wiping a live claim on the way, which the
-// arrival guard then read as a teleport. Two specimens per rig run, deterministic
-// (see PLAN §R.5).
-//
-// The index is bounds-checked and the action VERIFIED, because an index that
-// does not name the step the caller believes it does means the plan and the
-// caller disagree — a mis-spliced plan, or an index computed against a
-// different revision. Rewriting whatever sits at that offset is the defect
-// this function exists to end, so a disagreement patches nothing and says so.
-func applyPlanNode(db *store.DB, order *orders.Order, node string, stepIndex int, want string) {
-	if order.StepsJSON == "" {
-		return
-	}
-	var steps []resolvedStep
-	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
-		log.Printf("dispatch: applyPlanNode order %d → %s: steps_json unparseable: %v", order.ID, node, err)
-		return
-	}
-	if stepIndex < 0 || stepIndex >= len(steps) {
-		log.Printf("dispatch: applyPlanNode order %d → %s: step %d out of range (%d steps) — plan not patched",
-			order.ID, node, stepIndex, len(steps))
-		return
-	}
-	if steps[stepIndex].Action != want {
-		log.Printf("dispatch: applyPlanNode order %d → %s: step %d is %q, want %q — plan not patched",
-			order.ID, node, stepIndex, steps[stepIndex].Action, want)
-		return
-	}
-	steps[stepIndex].Node = node
-	steps[stepIndex].Vacate = nil // a re-pointed drop is not the drop the stamp was granted for
-	patched, err := json.Marshal(steps)
-	if err != nil {
-		log.Printf("dispatch: applyPlanNode order %d → %s: re-marshal: %v", order.ID, node, err)
-		return
-	}
-	if uErr := db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
-		log.Printf("dispatch: applyPlanNode steps_json order %d → %s: %v", order.ID, node, uErr)
-		return
-	}
-	order.StepsJSON = string(patched)
-}
-
-// applyDeliveryNodeAtStep re-points an order's destination AND the one dropoff
-// step that destination belongs to, named by index.
-//
-// The lane gate uses this: it knows which dropoff it is speaking for, because
-// laneEntryAfterWait computed that index to find the order's lane entry in the
-// first place. Carrying it here is the same move binForStep made — ask the plan
-// what it already knows instead of re-deriving it from shape.
-//
-// Steps-patch failures are logged, not returned: delivery_node is the durable
-// fact and the row is already correct; a stale steps_json is a display and
-// replay concern the next resolve corrects.
-func applyDeliveryNodeAtStep(db *store.DB, order *orders.Order, node string, stepIndex int) error {
-	if err := db.UpdateOrderDeliveryNode(order.ID, node); err != nil {
-		return err
-	}
-	order.DeliveryNode = node
-	applyPlanNode(db, order, node, stepIndex, protocol.ActionDropoff)
-	return nil
-}
-
-// applyFinalDeliveryNode re-points an order's FINAL destination — the last
-// dropoff in its plan.
-//
-// This is the loader park leg's question and it is a different one from the
-// gate's: a returning partial has no lane entry to speak for, and the leg it
-// owns genuinely is the plan's last. The scan lives here, named, rather than
-// inside the shared writer where a caller asking a different question inherited
-// it by accident.
-func applyFinalDeliveryNode(db *store.DB, order *orders.Order, node string) error {
-	last := -1
-	if order.StepsJSON != "" {
-		var steps []resolvedStep
-		if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err == nil {
-			for i := len(steps) - 1; i >= 0; i-- {
-				if steps[i].Action == protocol.ActionDropoff {
-					last = i
-					break
-				}
-			}
-		}
-	}
-	return applyDeliveryNodeAtStep(db, order, node, last)
-}
-
-// applySourceNodeAtStep is applyDeliveryNodeAtStep's pickup-side twin: it
-// updates source_node and patches the one pickup step that source belongs to,
-// named by index, so a re-pointed order and the blocks it is about to emit
-// cannot disagree. Used by the lane gate when a dig relocates a dwelling
-// retrieve's bin (rebindGatedPickup).
-//
-// IT USED TO TAKE THE FIRST PICKUP, walking forward, on the same wrong
-// assumption its delivery-side twin made — that a gated plan is
-// [wait, pickup, dropoff] and so holds exactly one. A plan whose lane entry is
-// INTERIOR (pick at a line, cross a lane, deliver to a line — the shape the
-// splice produces routinely) has an earlier pickup belonging to a leg this
-// rebind is not speaking for, and the forward scan rewrote that one instead.
-// The delivery side's version of this bug is the one that bit, and it is
-// written up at applyPlanNode; this side is the same defect unexercised, fixed
-// with it rather than left as the next one to find.
-//
-// Steps-patch failures are logged, not returned: source_node is the durable
-// fact and the row is already correct; a stale steps_json is a display and
-// replay concern that the next resolve corrects.
-func applySourceNodeAtStep(db *store.DB, order *orders.Order, node string, stepIndex int) error {
-	if err := db.UpdateOrderSourceNode(order.ID, node); err != nil {
-		return err
-	}
-	order.SourceNode = node
-	applyPlanNode(db, order, node, stepIndex, protocol.ActionPickup)
-	return nil
-}
-
 // setParkDestination commits the chosen dropoff for a dedicated-loader
-// return leg. Delegates to applyDeliveryNode to keep delivery_node and
-// steps_json in sync. It does not make the order in-flight on its own: the
-// never-2N handshake completes when the order claims its bin later in the pass
-// (see the NEVER-2N note in the header).
-func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) {
-	if order.DeliveryNode == node {
+// return leg: the plan's last drop, in the plan this pass sends and the stored
+// one (repoint, before the splice), and delivery_node with it. It does not make
+// the order in-flight on its own: the never-2N handshake completes when the
+// order claims its bin later in the pass (see the NEVER-2N note in the header).
+func (d *Dispatcher) setParkDestination(order *orders.Order, steps []resolvedStep, node, kind string) {
+	f := lastDropIndex(steps)
+	if f < 0 {
+		log.Printf("dispatch: place park dest order %d → %s: the plan drops nothing", order.ID, node)
+		return
+	}
+	if order.DeliveryNode == node && steps[f].Node == node {
 		return // already there — idempotent across scanner replays
 	}
-	if err := applyFinalDeliveryNode(d.db, order, node); err != nil {
+	if _, err := d.repoint(order, steps, stepMove{at: f, action: protocol.ActionDropoff, node: node}, nil); err != nil {
 		log.Printf("dispatch: place park dest order %d → %s: %v", order.ID, node, err)
 		return
 	}

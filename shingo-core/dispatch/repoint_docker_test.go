@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -287,4 +288,73 @@ func TestRepoint_AVacateStampLandsOnTheHeldDrop(t *testing.T) {
 	if f < 0 || steps[f].Node != dst.Name || steps[f].Vacate == nil || steps[f].Vacate.HeldAt == nil {
 		t.Errorf("stored plan %q: the stamped drop at %s carries no hold", shape(steps), dst.Name)
 	}
+}
+
+// createdUnload is where the first create the fleet was sent sets its carrier
+// down: the location of its first unload block, "" when nothing was created.
+func createdUnload(backend *testdb.MockTrackingBackend) string {
+	for _, c := range backend.CreateRequests() {
+		for _, b := range c.Blocks {
+			if strings.HasPrefix(b.BinTask, "JackUnload") {
+				return b.Location
+			}
+		}
+	}
+	return ""
+}
+
+// TestRepoint_APlanningRepointReachesTheCreate: a planning door's re-point
+// edits the plan the pass sends. A leg with no wait ahead of its drop goes to
+// the fleet whole at its create, so a divert written only to the stored plan
+// never reached the robot: a contained part's leg drove to finished goods, a
+// loader's return to the outbound it was parked away from.
+func TestRepoint_APlanningRepointReachesTheCreate(t *testing.T) {
+	t.Parallel()
+	t.Run("containment at a node", func(t *testing.T) {
+		t.Parallel()
+		db := testDB(t)
+		prod, fgn, hold := containmentFixture(t, db)
+		testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-QC", UOPCapacity: 10}), "the part")
+		d, backend := newTestDispatcherWithResolver(t, db)
+		makeLoaderBin(t, db, "PART-QC", prod.ID, "qc-nowait-bin", 4, time.Now().UTC())
+		prSubmitLeg(d, "qc-nowait", "", "PART-QC", prod.Name, prPick(prod.Name), prDrop(fgn.Name))
+		prScanPass(t, d, db, "qc-nowait")
+		if got := createdUnload(backend); got != hold.Name {
+			t.Errorf("the create sets the contained part down at %q, want containment %s", got, hold.Name)
+		}
+	})
+	t.Run("containment in a group", func(t *testing.T) {
+		t.Parallel()
+		db := testDB(t)
+		prod, fgn, _ := containmentFixture(t, db)
+		testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-QC", UOPCapacity: 10}), "the part")
+		d, backend := newTestDispatcherWithResolver(t, db)
+		area, err := db.CreateNodeGroup("QC-AREA")
+		testutil.MustNoErr(t, err, "the containment area")
+		for _, n := range []string{"QC-AREA-1", "QC-AREA-2"} {
+			testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: n, Enabled: true, ParentID: &area}), n)
+		}
+		_, err = db.DB.Exec(`UPDATE style_claims SET containment_destination = 'QC-AREA' WHERE core_node_name = 'PROD-QC'`)
+		testutil.MustNoErr(t, err, "contain into the area")
+		makeLoaderBin(t, db, "PART-QC", prod.ID, "qc-area-bin", 4, time.Now().UTC())
+		prSubmitLeg(d, "qc-area", "", "PART-QC", prod.Name, prPick(prod.Name), prDrop(fgn.Name))
+		prScanPass(t, d, db, "qc-area")
+		prScanPass(t, d, db, "qc-area")
+		if got := createdUnload(backend); !strings.HasPrefix(got, "QC-AREA-") {
+			t.Errorf("the create sets the contained part down at %q, want a slot of the containment area", got)
+		}
+	})
+	t.Run("a loader's return parked at its buffer", func(t *testing.T) {
+		t.Parallel()
+		db := testDB(t)
+		home, buffer, outbound, _ := parkFixture(t, db)
+		d, backend := newTestDispatcherWithResolver(t, db)
+		makeLoaderBin(t, db, "PART-X", home.ID, "park-create-bin", 4, time.Now().UTC())
+		makeInFlightTo(t, db, "park-create-restock", home.Name)
+		prSubmitLeg(d, "park-create", "", "PART-X", "", prPick(home.Name), prDrop(outbound.Name))
+		prScanPass(t, d, db, "park-create")
+		if got := createdUnload(backend); got != buffer.Name {
+			t.Errorf("the create sets the return down at %q, want the buffer %s it was parked at", got, buffer.Name)
+		}
+	})
 }

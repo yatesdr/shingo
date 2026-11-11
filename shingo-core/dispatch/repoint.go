@@ -73,12 +73,17 @@ func (d *Dispatcher) repoint(order *orders.Order, steps []resolvedStep, mv stepM
 	}
 	was := steps[mv.at].Node
 	if after == nil {
+		if order.StepsJSON == "" {
+			// No stored plan (a row written before its plan): the column alone.
+			moveStep(&steps[mv.at], mv)
+			return steps, d.storePlan(order, steps, mv, was, nil, false)
+		}
 		stored, ok := decodeSteps(order.StepsJSON)
 		if !ok || mv.at >= len(stored) || stored[mv.at].Action != mv.action {
 			return nil, fmt.Errorf("repoint order %d: its stored plan has no %s at step %d", order.ID, mv.action, mv.at)
 		}
 		moveStep(&stored[mv.at], mv)
-		if err := d.storePlan(order, stored, mv, was, nil); err != nil {
+		if err := d.storePlan(order, stored, mv, was, nil, true); err != nil {
 			return nil, err
 		}
 		moveStep(&steps[mv.at], mv)
@@ -106,7 +111,7 @@ func (d *Dispatcher) repoint(order *orders.Order, steps []resolvedStep, mv stepM
 		return nil, fmt.Errorf("repoint order %d: step %d to %s: the rest of the route cannot be planned: %w",
 			order.ID, mv.at, mv.node, err)
 	}
-	if err := d.storePlan(order, out, mv, was, planShift(steps, out)); err != nil {
+	if err := d.storePlan(order, out, mv, was, planShift(steps, out), true); err != nil {
 		return nil, err
 	}
 	if waitsDiffer(steps[after.at:], out[after.at:]) {
@@ -122,20 +127,22 @@ func moveStep(s *resolvedStep, mv stepMove) {
 	s.Node, s.Group, s.Vacate = mv.node, mv.group, nil
 }
 
-// storePlan writes the plan, then the columns that follow the moved step, then
-// the carts (shift: their positions old to new; nil when none moved). The plan
-// first: every append is cut from steps_json, so a crash after it leaves a
-// column a later pass can read the plan to correct, never a column the plan
-// does not mention.
-func (d *Dispatcher) storePlan(order *orders.Order, steps []resolvedStep, mv stepMove, was string, shift map[int]int) error {
-	j, err := json.Marshal(steps)
-	if err != nil {
-		return fmt.Errorf("repoint order %d: marshal its plan: %w", order.ID, err)
+// storePlan writes the plan (writePlan), then the columns that follow the
+// moved step, then the carts (shift: their positions old to new; nil when none
+// moved). The plan first: every append is cut from steps_json, so a crash after
+// it leaves a column a later pass can read the plan to correct, never a column
+// the plan does not mention.
+func (d *Dispatcher) storePlan(order *orders.Order, steps []resolvedStep, mv stepMove, was string, shift map[int]int, writePlan bool) error {
+	if writePlan {
+		j, err := json.Marshal(steps)
+		if err != nil {
+			return fmt.Errorf("repoint order %d: marshal its plan: %w", order.ID, err)
+		}
+		if err := d.db.UpdateOrderStepsJSON(order.ID, string(j)); err != nil {
+			return fmt.Errorf("repoint order %d: store its plan: %w", order.ID, err)
+		}
+		order.StepsJSON = string(j)
 	}
-	if err := d.db.UpdateOrderStepsJSON(order.ID, string(j)); err != nil {
-		return fmt.Errorf("repoint order %d: store its plan: %w", order.ID, err)
-	}
-	order.StepsJSON = string(j)
 	switch {
 	case mv.action == protocol.ActionDropoff && lastDropIndex(steps) == indexOfMoved(steps, mv, shift):
 		// delivery_node is the trip's end (C2a A.5): an interior drop moves in

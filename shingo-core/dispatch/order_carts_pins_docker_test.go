@@ -102,7 +102,7 @@ func TestOrderCartsPin_BinForStepResolvesARelayFromItsRow(t *testing.T) {
 // TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan is the
 // brief's "run first, unknown today": a two-cart order whose carts are both set
 // down at the FG outbound, at two steps, diverted to containment. The plan
-// writer re-points the LAST dropoff only (applyFinalDeliveryNode); whatever
+// writer re-points one dropoff (repoint); whatever
 // each cart's record says after the divert must be the node its own drop step
 // names in the plan. Ran at main: see PINS.md for what it found.
 func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testing.T) {
