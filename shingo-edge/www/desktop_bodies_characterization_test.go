@@ -12,6 +12,10 @@ import (
 // and this pin is the proof its deletion moved nothing else: the bodies the
 // survivors send read the same before and after. If a body must change, that
 // is a ruling to write down, not a silent edit.
+//
+// Since U0 of the process-setup UX run (2026-11-11) it freezes every builder
+// in desktop-bodies.js, over inputs copied from each caller's argument shapes,
+// so the sheets that run reworks cannot move a body without a red test.
 func TestDesktopBodiesCharacterization(t *testing.T) {
 	t.Parallel()
 	nodePath, err := exec.LookPath("node")
