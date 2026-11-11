@@ -1,6 +1,7 @@
 // Command repolint runs the repo-wide text rules over the tracked tree in one
 // process: one `git ls-files` listing, one `git check-attr` call, one read of
-// each tracked file, and one node process for every .js file.
+// each tracked file, and one node process for every .js file (two: js-parse's
+// and js-undeclared's).
 //
 // WHY ONE PROCESS. Each rule was a bash guard of its own (scripts/check-*.sh),
 // and on Windows a guard's cost is its process spawns, not its walk: the three
@@ -14,6 +15,7 @@
 //	conflict-markers        no merge-conflict marker line in a tracked text file
 //	expiry                  an EXPIRY: when <symbol> is gone pin names a declared symbol
 //	js-parse                every .js file parses as an ES module or as CommonJS
+//	js-undeclared           a www/static page script reads only names something declares
 //	plant-addresses         no private IPv4 address in a tracked text file
 //	swap-mode-literals      no raw swap-mode string outside its constants and the surfaces that name modes
 //	synthetic-part-numbers  no customer-shaped part number or plant PLC struct name
@@ -117,6 +119,7 @@ var rules = []rule{
 	{"conflict-markers", "Resolve the merge: a marker line that is not Go source builds and ships silently.", conflictMarkers},
 	{"expiry", "Retire the pin in the edit that deletes its symbol: rewrite or delete the scar, and say so.", expiry},
 	{"js-parse", "A module that does not parse takes its whole import graph down with it.", jsParse},
+	{"js-undeclared", "Declare it, pass it, or import it. A page global goes on window or in the template's inline script; a browser global the rule does not know goes in KNOWN in jsundeclared.js.", jsUndeclared},
 	{"plant-addresses", "Use TEST-NET (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24); 192.168.1.0/24 is reserved for doc examples. To derive a fixture from a capture, see shared/scripts/anonymiserobotsstatus.", plantAddresses},
 	{"swap-mode-literals", "Go: use the typed constant from protocol/swap_mode.go. JavaScript: key the gate on the order graph or a property the server declares (releases_as_pair).", swapModeLiterals},
 	{"synthetic-part-numbers", "Use a synthetic code (SYN-A-P007, SYN-PART07A.06) or struct (MES_Press_A1).", syntheticPartNumbers},

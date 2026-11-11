@@ -248,7 +248,31 @@ func jsCases() []ruleCase {
 		"classic.js", "with (Math) { abs(-1); }\nvar o = 010;\n",
 		"cjs.js", "return module.exports;\n",
 		"bang.js", "#!/usr/bin/env node\nconsole.log(1);\n",
-		"lib/node_modules/dep.js", "}\n"), []string{"bad.js:2"}}}
+		"lib/node_modules/dep.js", "}\n"), []string{"bad.js:2"}},
+		{"js-undeclared", "a name no scope declares fires; hoisting, patterns, page and browser globals, tests and vendor pass", jsTree(
+			// The 2026-10-08 shape: a caller's parameter read in a function it was never passed to.
+			"app/www/static/pages/bad.js", "export function open(el, opts) { load(el); }\nfunction load(el) {\n  return opts && el;\n}\nlater = 1;\n",
+			"app/www/static/pages/ok.js", "import { a } from '/static/app.js';\n"+
+				"window.pageFn = function() { return 1; };\n"+
+				"export function f({ x, y: [z] = [] }, ...rest) {\n"+
+				"  if (typeof notDefinedHere === 'undefined') pageFn();\n"+
+				"  outer: for (const k of rest) { if (k) continue outer; }\n"+
+				"  switch (x) { case 1: let w = z; return w + hoisted(); }\n"+
+				"  try { a(); } catch ({ message }) { return message; }\n"+
+				"  for (var i = 0; i < 1; i++) { var inLoop = i; }\n"+
+				"  return arguments.length + inLoop + PAGE_DATA + document.title + new Map().size;\n"+
+				"  function hoisted() { return 2; }\n"+
+				"}\n"+
+				"class C { static n = 1; #p = 2; m() { return C.n + this.#p; } }\n"+
+				"export default (function named() { return named; });\n"+
+				"export { C };\n",
+			"app/www/templates/page.html", "<script>\n  var PAGE_DATA = {{.Data}};\n</script>\n<script type=\"module\">\n  var MODULE_ONLY = 1;\n</script>\n",
+			"app/www/static/pages/uses-module-only.js", "export const v = MODULE_ONLY;\n",
+			"app/www/static/pages/page.test.js", "require('fs'); injectedByTheHarness();\n",
+			"app/www/static/vendor/lib.js", "vendorGlobal();\n",
+			"lib/outside.js", "notAPageScript();\n"),
+			[]string{"app/www/static/pages/bad.js:3", "app/www/static/pages/bad.js:5", "app/www/static/pages/uses-module-only.js:1"}},
+	}
 }
 
 func allCases() []ruleCase {
@@ -297,6 +321,15 @@ func TestJSParse_MissingNodeFails(t *testing.T) {
 	nodeBin = "node-that-is-not-installed"
 	res := jsParse(treeOf("a.js", "export {};\n"))
 	if len(res.findings) != 1 || !strings.Contains(res.findings[0].Why, "NOT verified") {
+		t.Fatalf("a missing node must fail the run, got %v", res.findings)
+	}
+}
+
+func TestJSUndeclared_MissingNodeFails(t *testing.T) {
+	defer func(n string) { nodeBin = n }(nodeBin)
+	nodeBin = "node-that-is-not-installed"
+	res := jsUndeclared(treeOf("app/www/static/a.js", "export {};\n"))
+	if len(res.findings) != 1 || !strings.Contains(res.findings[0].Why, "NOT checked") {
 		t.Fatalf("a missing node must fail the run, got %v", res.findings)
 	}
 }
