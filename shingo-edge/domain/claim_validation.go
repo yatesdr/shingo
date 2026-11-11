@@ -602,11 +602,13 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
-	// The flip is press-index choreography; nothing else has two robots to
-	// swap between.
-	if ClaimInputHas(in, flowspec.IndexRobotSupplies) && spec[flowspec.IndexRobotSupplies] == flowspec.Forbidden {
-		add("index_robot_supplies",
-			"Index robot fetches the replacement applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
+	// Which robot brings the next carrier is press-index choreography; nothing
+	// else has two robots to swap between.
+	if in.RefillBy != nil && !in.RefillBy.OrDefault().Valid() {
+		add("refill_by", fmt.Sprintf("%q is not a robot that brings the next carrier", *in.RefillBy))
+	} else if ClaimInputHas(in, flowspec.RefillBy) && spec[flowspec.RefillBy] == flowspec.Forbidden {
+		add("refill_by",
+			"Robot 2 bringing the next carrier applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
 	}
 
 	// A kept spare is what a swap fetches its carrier from, and only the four

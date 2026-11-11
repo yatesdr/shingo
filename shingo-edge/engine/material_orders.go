@@ -420,7 +420,7 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 // Both robots fire on operator release. The fleet manager handles cross-leg
 // sequencing on shared nodes (R2's dropoff(A) waits for R1's pickup(A);
 // R1's dropoff(C) waits for R2's pickup(C) in the 3-position case).
-// ── THE FLIP (IndexRobotSupplies), and why it needs no gate ──────────────────
+// ── THE FLIP (RefillBy: Robot 2), and why it needs no gate ──────────────────
 //
 // This used to explain why v1 did not touch Core's index anti-collision arm:
 // unflipped, R1 is self-sufficient and the arm let it through; flipped, the same
@@ -453,7 +453,7 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	if claim.SecondPairedCoreNode != "" {
 		backfill = claim.SecondPairedCoreNode
 	}
-	if claim.IndexRobotSupplies {
+	if claim.IndexRobotFetches() {
 		// FLIPPED: R1 stops at the destination; R2 indexes forward and then
 		// goes for the replacement itself. One robot leaves the cell the
 		// moment the press is clear.
@@ -515,10 +515,10 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 		// TestPressIndexFlipped_BothEmptyFlaggersCompose, because a flagger
 		// rewritten to assign rather than set would silently unflag the other's
 		// pickup and reopen the Hopkinsville waiting_for_material hang.
-		if claim.IndexRobotSupplies {
+		if claim.IndexRobotFetches() {
 			markInboundEmpty(orderR2, claim.InboundSource, "")
 		}
-	} else if claim.IndexRobotSupplies {
+	} else if claim.IndexRobotFetches() {
 		// Consume never flags Empty (it indexes FULL bins forward), so the
 		// flipped supermarket pickup stays a full retrieve — same invariant as
 		// the unflipped R1's.
@@ -838,7 +838,7 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Chan
 	}
 	// ── THE FLIP APPLIES HERE TOO ────────────────────────────────────────
 	//
-	// IndexRobotSupplies moves the supermarket trip between the two robots.
+	// RefillBy moves the supermarket trip between the two robots.
 	// The steady-state builder reads it; this one did not, so a press
 	// configured with the flip ran R2-supplies all shift and then inverted the
 	// two robots' roles the moment a changeover started — same cell, same
@@ -855,7 +855,7 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Chan
 	// R1's other pickup — the old front tote — keeps the from-style payload it
 	// needs (§ carriesFromPayload below); only the fetching leg takes a fresh
 	// carrier.
-	if !fromClaim.IndexRobotSupplies {
+	if !fromClaim.IndexRobotFetches() {
 		r1 = append(r1, refillPickup(fromClaim, toClaim))
 		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
 	}
@@ -885,7 +885,7 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Chan
 	if fromClaim.Role == protocol.ClaimRoleProduce {
 		markPressIndexOnDeckEmpty(r2, fromClaim)
 	}
-	if fromClaim.IndexRobotSupplies {
+	if fromClaim.IndexRobotFetches() {
 		// Flipped: R2 owns the supermarket trip, exactly as it does in steady
 		// state. It has just placed on the press, so the fresh carrier it
 		// fetches goes to the back position behind it.

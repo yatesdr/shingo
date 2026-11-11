@@ -43,13 +43,13 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
 	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
 	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
-	// Flipped (IndexRobotSupplies): R1 evac-only, R2 indexes AND refills.
+	// Flipped (RefillBy (Robot 2)): R1 evac-only, R2 indexes AND refills.
 	// Every leg invariant applies to the new shapes unchanged — that is the
 	// point of running them through the same table rather than asserting the
 	// step lists somewhere else.
 	flipped := func(secondPaired string) *processes.NodeClaim {
 		c := claim(secondPaired)
-		c.IndexRobotSupplies = true
+		c.RefillBy = protocol.RefillByIndexRobot
 		return c
 	}
 	fl2R1, fl2R2 := BuildTwoRobotPressIndexSwapSteps(flipped(""))
@@ -140,7 +140,7 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 	// of thing that rides along in a move.
 	flipped2 := func(secondPaired string) *processes.NodeClaim {
 		c := claim(secondPaired)
-		c.IndexRobotSupplies = true
+		c.RefillBy = protocol.RefillByIndexRobot
 		return c
 	}
 	fl2R1b, fl2R2b := BuildTwoRobotPressIndexSwapSteps(flipped2(""))

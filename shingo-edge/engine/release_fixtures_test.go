@@ -42,7 +42,7 @@ type pairSpec struct {
 	mode      protocol.SwapMode
 	role      protocol.ClaimRole // ClaimRoleProduce (default) or ClaimRoleConsume
 	threePos  bool               // press-index with a second paired position
-	flipped   bool               // IndexRobotSupplies
+	flipped   bool               // RefillBy: Robot 2
 	unstamped bool               // the node's first cycle: runtime.active_claim_id never written
 }
 
@@ -68,8 +68,8 @@ func (s pairSpec) claimInput(styleID int64, payload string) processes.NodeClaimI
 		OutboundDestination: fxOutDest,
 	}
 	if s.flipped {
-		flip := true
-		in.IndexRobotSupplies = &flip
+		r := protocol.RefillByIndexRobot
+		in.RefillBy = &r
 	}
 	switch s.mode {
 	case protocol.SwapModeSingleRobot:
@@ -426,4 +426,19 @@ func (h *relHarness) activePull() string {
 		}
 	}
 	return "pull=none"
+}
+
+// refillFor is the refill setting a test's flip names: Robot 2 (the index
+// robot) when flipped, Robot 1 otherwise.
+func refillFor(flipped bool) protocol.RefillBy {
+	if flipped {
+		return protocol.RefillByIndexRobot
+	}
+	return protocol.RefillByClearingRobot
+}
+
+// refillPtr is refillFor as a claim input's pointer.
+func refillPtr(flipped bool) *protocol.RefillBy {
+	r := refillFor(flipped)
+	return &r
 }

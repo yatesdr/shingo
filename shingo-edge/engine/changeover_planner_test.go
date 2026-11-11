@@ -1240,8 +1240,8 @@ func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
 		c.ChangeoverCarryoverDisposition = domain.CarryoverKeepLineside
 	case flowspec.ReuseCompatibleBins:
 		c.ReuseCompatibleBins = true
-	case flowspec.IndexRobotSupplies:
-		c.IndexRobotSupplies = true
+	case flowspec.RefillBy:
+		c.RefillBy = protocol.RefillByIndexRobot
 	case flowspec.AutoConfirm:
 		c.AutoConfirm = true
 	case flowspec.AutoRequestPayload:

@@ -572,7 +572,7 @@ function cellsAdvanced(cells) {
 function recipeAdvanced(p, mv) {
     const out = {};
     for (const g of (p && p.groups) || []) {
-        if (g.advanced && g.advanced.index_robot_supplies) out[(mv && mv[g.of]) || g.of] = { index_robot_supplies: true };
+        if (g.advanced && g.advanced.refill_by === 'index_robot') out[(mv && mv[g.of]) || g.of] = { refill_by: 'index_robot' };
     }
     return out;
 }

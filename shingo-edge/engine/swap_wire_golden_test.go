@@ -34,7 +34,7 @@ func goldenClaim(role protocol.ClaimRole, mode protocol.SwapMode, payload, secon
 		InboundStaging: "STG-IN", OutboundStaging: "STG-OUT",
 		InboundSource: "SRC", OutboundDestination: "DST",
 		PairedCoreNode: "PAIR-1", SecondPairedCoreNode: secondPaired,
-		IndexRobotSupplies: flip,
+		RefillBy: refillFor(flip),
 	}
 }
 

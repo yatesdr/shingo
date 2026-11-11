@@ -105,7 +105,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		ChangeoverEvacDestination: domain.Ptr("RT-TOOLING-EVAC"),
 		// Pointer-typed and NOT sent by the editor body below, so an editor
 		// save must leave it alone: it describes the press's hardware.
-		IndexRobotSupplies: domain.Ptr(true),
+		RefillBy: domain.Ptr(protocol.RefillByIndexRobot),
 		// Round 4: distinctive on both counts — a TWO-point route so a
 		// truncation shows, and in an order that is not sorted, so a store
 		// that treated the route as a set would say so.
@@ -160,7 +160,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"strict_pack", before.StrictPack, after.StrictPack},
 		{"pack_tolerance_pct", before.PackTolerancePct, after.PackTolerancePct},
 		{"changeover_evac_destination", before.ChangeoverEvacDestination, after.ChangeoverEvacDestination},
-		{"index_robot_supplies", before.IndexRobotSupplies, after.IndexRobotSupplies},
+		{"refill_by", before.RefillBy, after.RefillBy},
 	} {
 		if c.before != c.got {
 			t.Errorf("%s changed across an editor save: %v -> %v (the editor owns no control for it)",
@@ -183,8 +183,8 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		t.Fatalf("round-3 seed did not take: positions=%v dest=%q",
 			before.ChangeoverEvacNodes, before.ChangeoverEvacDestination)
 	}
-	if !before.IndexRobotSupplies {
-		t.Fatal("round-4 seed did not take: index_robot_supplies is false, so its no-op assertion proves nothing")
+	if !before.IndexRobotFetches() {
+		t.Fatal("round-4 seed did not take: refill_by is Robot 1, so its no-op assertion proves nothing")
 	}
 	if strings.Join(before.KeyRoute, ",") != "RT-AISLE-B,RT-AISLE-A" || before.KeyTask != "unload" {
 		t.Fatalf("round-4 key-route seed did not take (order included): route=%v task=%q",
@@ -248,7 +248,7 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	upd.ReorderPointSource = domain.Ptr("manual")
 	upd.AutoReorder = domain.Ptr(false)
 	upd.KeepStagedNode = domain.Ptr("")
-	upd.IndexRobotSupplies = domain.Ptr(true)
+	upd.RefillBy = domain.Ptr(protocol.RefillByIndexRobot)
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, upd); err != nil {
 		t.Fatalf("explicit update: %v", err)
 	}
@@ -267,8 +267,8 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	if after.KeepStagedNode != "" {
 		t.Errorf("keep_staged_node = %q, want blank — an explicit blank must write", after.KeepStagedNode)
 	}
-	if !after.IndexRobotSupplies {
-		t.Error("index_robot_supplies = false, want true — an explicit value must write")
+	if !after.IndexRobotFetches() {
+		t.Error("refill_by = Robot 1, want Robot 2 — an explicit value must write")
 	}
 }
 

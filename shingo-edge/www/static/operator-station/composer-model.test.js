@@ -603,11 +603,11 @@ test('cardLines are the reference CARDLINE, verbatim', () => {
 // at all (the board's read-only picture) reading the minted default.
 test('cardLines on a press index say which robot fetches the empty', () => {
     const stored = initStyle(7);
-    stored.priorAdvanced = { PLN_01: { index_robot_supplies: true } };
+    stored.priorAdvanced = { PLN_01: { refill_by: 'index_robot' } };
     assert.deepStrictEqual(M.cardLines(stored, 'PLN_01'), ['Robot 2 indexes', 'Robot 2 supplies PLN_02'],
         'the stored claim says Robot 2');
     const drafted = M.reduce(stored, { type: 'setAdvanced', node: 'PLN_01',
-        advanced: Object.assign(advancedDefaults(), { index_robot_supplies: false }) });
+        advanced: Object.assign(advancedDefaults(), { refill_by: 'clearing_robot' }) });
     assert.deepStrictEqual(M.cardLines(drafted, 'PLN_01'), ['Robot 1 supplies PLN_02', 'Robot 2 indexes'],
         'a drafted Advanced beats the stored claim');
     const bare = Object.assign({}, initStyle(7), { priorAdvanced: undefined });
@@ -1175,26 +1175,26 @@ test('Apply with null puts the position back on the carry-through', () => {
 
 test('changing mode clears a Forbidden advanced field and leaves an Unused one alone', () => {
     const s = initStyle(7);
-    // index_robot_supplies is press-index's alone; lineside_soft_threshold is
+    // refill_by is press-index's alone; lineside_soft_threshold is
     // Unused on produce, not Forbidden, and flowspec.go says why that matters.
-    const adv = Object.assign(M.advancedFor(s, 'PLN_01'), { index_robot_supplies: true, lineside_soft_threshold: 7 });
+    const adv = Object.assign(M.advancedFor(s, 'PLN_01'), { refill_by: 'index_robot', lineside_soft_threshold: 7 });
     let after = M.reduce(s, { type: 'setAdvanced', node: 'PLN_01', advanced: adv });
-    assert.strictEqual(M.advancedFor(after, 'PLN_01').index_robot_supplies, true);
+    assert.strictEqual(M.advancedFor(after, 'PLN_01').refill_by, 'index_robot');
 
     after = M.reduce(after, { type: 'setMode', node: 'PLN_01', mode: 'sequential' });
     const now = M.advancedFor(after, 'PLN_01');
-    assert.strictEqual(now.index_robot_supplies, false, 'a Forbidden field survived the mode change');
+    assert.strictEqual(now.refill_by, 'clearing_robot', 'a Forbidden field survived the mode change');
     assert.strictEqual(now.lineside_soft_threshold, 7, 'an Unused field was wiped by a UI decision');
 });
 
 test('the modal draws a field only when flowspec neither forbids it nor ignores it', () => {
     const s = initStyle(7);   // PLN_01 is two_robot_press_index / produce
-    assert.strictEqual(M.advancedShows(s, 'PLN_01', 'index_robot_supplies'), true);
+    assert.strictEqual(M.advancedShows(s, 'PLN_01', 'refill_by'), true);
     assert.strictEqual(M.advancedShows(s, 'PLN_01', 'lineside_soft_threshold'), false, 'produce has no lineside cap');
     assert.strictEqual(M.advancedShows(s, 'PLN_01', 'auto_push'), false, 'auto_push is the unloader s');
 
     const seq = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: 'sequential' });
-    assert.strictEqual(M.advancedShows(seq, 'PLN_01', 'index_robot_supplies'), false);
+    assert.strictEqual(M.advancedShows(seq, 'PLN_01', 'refill_by'), false);
     assert.strictEqual(M.advancedShows(seq, 'PLN_01', 'lineside_soft_threshold'), false);
 });
 

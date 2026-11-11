@@ -478,22 +478,23 @@ type NodeClaim struct {
 	// Blank reads as CarryoverReplace, so a row that predates the field
 	// behaves exactly as it did.
 	ChangeoverCarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	// IndexRobotSupplies flips which robot of a press-index pair fetches the
-	// replacement carrier.
+	// RefillBy is which robot of a press-index pair fetches the back position's
+	// replacement carrier (style_node_claims.refill_by).
 	//
-	// Unflipped (false, today): R1 evacuates the full tote AND fetches the
-	// replacement from InboundSource, dropping it on the back position; R2 just
-	// indexes the on-deck carrier forward onto the press.
+	// Robot 1 (clearing_robot, the default): R1 evacuates the full tote AND
+	// fetches the replacement from InboundSource, dropping it on the back
+	// position; R2 just indexes the on-deck carrier forward onto the press.
 	//
-	// Flipped (true): R1 does the evacuation and stops. R2 indexes forward and
-	// then goes for the replacement itself. One robot leaves the cell as soon
-	// as the press is clear; the other owns the whole refill.
+	// Robot 2 (index_robot): R1 does the evacuation and stops. R2 indexes
+	// forward and then goes for the replacement itself. One robot leaves the
+	// cell as soon as the press is clear; the other owns the whole refill.
 	//
 	// IT DESCRIBES HARDWARE, not a style. Which robot can reach the
 	// supermarket is a fact about the cell's layout and reach, so two styles on
 	// one press disagreeing about it is operator confusion rather than
-	// configuration — UpsertClaim warns on the drift.
-	IndexRobotSupplies bool `json:"index_robot_supplies"`
+	// configuration — UpsertClaim warns on the drift. Read it through
+	// IndexRobotFetches.
+	RefillBy protocol.RefillBy `json:"refill_by"`
 	// KeyRoute names map points a leg from this claim should be routed
 	// through, in order. It is SEER's keyRoute: per the vendor manual
 	// (RDSCore HTTP API 2026-04-30, setOrder field table) a robot-SELECTION
@@ -1328,7 +1329,7 @@ type NodeClaimInput struct {
 	// See the contract block below, and the same-named fields on NodeClaim for
 	// what each one means.
 	//
-	// The first version of this shipped only IndexRobotSupplies as a pointer,
+	// The first version of this shipped only the index-robot flag as a pointer,
 	// on the argument that the claim editor owns controls for the other five
 	// and therefore always has an opinion. The editor does. It is not the only
 	// writer: the replenishment admin page reads a claim, re-sends a subset,
@@ -1344,7 +1345,7 @@ type NodeClaimInput struct {
 	// what stops a partial update from silently resetting a cell's answer to
 	// the default.
 	ChangeoverCarryoverDisposition *CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	IndexRobotSupplies             *bool                 `json:"index_robot_supplies,omitempty"`
+	RefillBy                       *protocol.RefillBy    `json:"refill_by,omitempty"`
 	KeyRoute                       *[]string             `json:"key_route,omitempty"`
 	KeyTask                        *string               `json:"key_task,omitempty"`
 	AutoConfirm                    bool                  `json:"auto_confirm"`
@@ -1469,4 +1470,11 @@ type ProcessCounterEdit struct {
 	Enabled         bool
 	IdentityTagName string
 	IdentityNone    bool
+}
+
+// IndexRobotFetches reports whether the index robot (Robot 2) fetches this
+// press's replacement carrier, rather than the clearing robot (Robot 1, the
+// default and a blank).
+func (c *NodeClaim) IndexRobotFetches() bool {
+	return c != nil && c.RefillBy.OrDefault() == protocol.RefillByIndexRobot
 }

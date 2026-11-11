@@ -9,7 +9,7 @@ import (
 
 // THE FLIP STOPPED AT THE CHANGEOVER BOUNDARY.
 //
-// IndexRobotSupplies moves the supermarket trip between the two robots, and
+// RefillBy (Robot 2) moves the supermarket trip between the two robots, and
 // BuildTwoRobotPressIndexSwapSteps reads it. buildPressIndexChangeoverSwap never
 // did. So a press configured with the flip ran R2-supplies all shift and then
 // inverted the two robots' roles the moment a changeover started — same cell,

@@ -133,7 +133,7 @@ func TestChangeoverPress_AVacantOnDeckIsBroughtACarrierCoreSeesComing(t *testing
 	press := func(part string) func(protocol.ClaimRole, bool, string) processes.NodeClaim {
 		return func(role protocol.ClaimRole, flip bool, second string) processes.NodeClaim {
 			c := pressClaim("PRESS", "DECK", part)
-			c.Role, c.IndexRobotSupplies, c.SecondPairedCoreNode = role, flip, second
+			c.Role, c.RefillBy, c.SecondPairedCoreNode = role, refillFor(flip), second
 			return c
 		}
 	}

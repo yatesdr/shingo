@@ -26,7 +26,7 @@ import (
 // was still queued sent a robot to set a bin down on the backfill position that
 // nothing had lifted the on-deck carrier off.
 //
-// Under the IndexRobotSupplies flip R1 stops at the destination and places
+// Under the RefillBy (Robot 2) flip R1 stops at the destination and places
 // nowhere on the press, which is why that case must stay releasable.
 // ---------------------------------------------------------------------------
 
@@ -38,13 +38,12 @@ func seedUnflippedPressIndexPair(t *testing.T, flipped bool) (*Engine, *store.DB
 	db := testEngineDB(t)
 	nodeID, _, claim := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
 	if flipped {
-		yes := true
-		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, claimInputFrom(claim, &yes))
-		testutil.MustNoErr(t, err, "flip index_robot_supplies")
+		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, claimInputFrom(claim, refillPtr(true)))
+		testutil.MustNoErr(t, err, "flip refill_by to Robot 2")
 		node, err := db.GetProcessNode(nodeID)
 		testutil.MustNoErr(t, err, "re-read node")
 		claim = requestedClaimAtNode(db, node)
-		if claim == nil || !claim.IndexRobotSupplies {
+		if claim == nil || !claim.IndexRobotFetches() {
 			t.Fatal("the flip did not take")
 		}
 	}
@@ -64,9 +63,9 @@ func seedUnflippedPressIndexPair(t *testing.T, flipped bool) (*Engine, *store.DB
 }
 
 // claimInputFrom rebuilds an upsert body from a persisted claim, flipping
-// index_robot_supplies. Only the fields the fixture set are named — everything
+// refill_by. Only the fields the fixture set are named — everything
 // absent is absent-means-untouched.
-func claimInputFrom(c *processes.NodeClaim, indexRobotSupplies *bool) processes.NodeClaimInput {
+func claimInputFrom(c *processes.NodeClaim, refill *protocol.RefillBy) processes.NodeClaimInput {
 	return processes.NodeClaimInput{
 		StyleID:              c.StyleID,
 		CoreNodeName:         c.CoreNodeName,
@@ -80,7 +79,7 @@ func claimInputFrom(c *processes.NodeClaim, indexRobotSupplies *bool) processes.
 		OutboundDestination:  c.OutboundDestination,
 		PairedCoreNode:       c.PairedCoreNode,
 		SecondPairedCoreNode: c.SecondPairedCoreNode,
-		IndexRobotSupplies:   indexRobotSupplies,
+		RefillBy:             refill,
 	}
 }
 

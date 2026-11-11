@@ -1609,7 +1609,7 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "D4", "D4")
-	flip := true
+	indexRobot := protocol.RefillByIndexRobot
 	refused := []struct {
 		name  string
 		in    processes.NodeClaimInput
@@ -1629,8 +1629,8 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 		{
 			name: "single_robot_index_robot_flip",
 			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SR-FLIP", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL",
-				InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD", IndexRobotSupplies: &flip},
-			field: flowspec.IndexRobotSupplies,
+				InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD", RefillBy: &indexRobot},
+			field: flowspec.RefillBy,
 		},
 		{
 			name: "single_robot_paired_node",

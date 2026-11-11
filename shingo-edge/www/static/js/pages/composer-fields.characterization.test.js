@@ -89,7 +89,7 @@ const ADVANCED_FIELDS = {
     auto_push: 'auto_push',
     keep_staged_node: 'keep_staged_node',
     changeover_carryover_disposition: 'changeover_carryover_disposition',
-    index_robot_supplies: 'index_robot_supplies',
+    refill_by: 'refill_by',
     auto_confirm: 'auto_confirm',
 };
 
@@ -186,7 +186,7 @@ function runForbiddenClearing() {
         auto_reorder: true, lineside_soft_threshold: 7, auto_request_payload: 'PIA26',
         auto_push: true, keep_staged_node: 'PLN_SPOT',
         changeover_carryover_disposition: 'keep_lineside',
-        index_robot_supplies: true, auto_confirm: true,
+        refill_by: 'index_robot', auto_confirm: true,
     };
     const blank = advancedDefaults();
     for (const role of ROLES) {

@@ -3228,9 +3228,9 @@ async function recipeGroupPins(h) {
         for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'evac_dest', 'partial_dest']) {
             if (sheet.indexOf('data-adv="' + key + '"') >= 0) throw new Error('group scope draws ' + key + ', which a recipe may not say');
         }
-        // index_robot_supplies joined the list 2026-11-05: a recipe that cannot
+        // refill_by (then index_robot_supplies) joined the list 2026-11-05: a recipe that cannot
         // say which robot fetches the empty minted every floor style Robot 1.
-        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'index_robot_supplies', 'strict_pack', 'curtain_required']) {
+        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'refill_by', 'strict_pack', 'curtain_required']) {
             if (sheet.indexOf('data-adv="' + key + '"') < 0) throw new Error('group scope hides ' + key);
         }
         const live = ctx.live();
@@ -3266,7 +3266,7 @@ async function recipeGroupPins(h) {
         click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
         const advpop = ctx.doc.getElementById('pd-advpop');
         const opts = wireOptions(advpop);
-        click(ctx.scrim, ctx.doc, { advkind: 'pick', adv: 'index_robot_supplies' });
+        click(ctx.scrim, ctx.doc, { advkind: 'pick', adv: 'refill_by' });
         await settle();
         if (advpop.innerHTML !== '<button data-opt="0" class="on">Robot 1</button><button data-opt="1" class="">Robot 2</button>') {
             throw new Error('the robot picker is not Robot 1 (on) / Robot 2: ' + advpop.innerHTML);
@@ -3283,7 +3283,7 @@ async function recipeGroupPins(h) {
         const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
         if (!posted) throw new Error('the save posted nothing');
         const adv = JSON.parse(posted.body).groups[1].advanced;
-        if (JSON.stringify(adv) !== '{"index_robot_supplies":true}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
+        if (JSON.stringify(adv) !== '{"refill_by":"index_robot"}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
     });
 
     // THE DEPLOY NOTE, CLICK BY CLICK: the body is SYNTH-round2 §2's recipe,

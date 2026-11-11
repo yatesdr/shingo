@@ -59,11 +59,11 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 			OutboundDestination:  claim.OutboundDestination,
 			PairedCoreNode:       claim.PairedCoreNode,
 			SecondPairedCoreNode: claim.SecondPairedCoreNode,
-			IndexRobotSupplies:   &yes,
+			RefillBy:             refillPtr(yes),
 		})
 		testutil.MustNoErr(t, err, "flip claim")
 		claim = requestedClaimAtNode(db, node)
-		if claim == nil || !claim.IndexRobotSupplies {
+		if claim == nil || !claim.IndexRobotFetches() {
 			t.Fatal("the flip did not persist — the fixture would test the unflipped shape")
 		}
 	}

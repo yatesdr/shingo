@@ -66,9 +66,9 @@ type RecipeGroup struct {
 // source, which the mint writes. The keys are FlowAdvanced's, so the
 // desktop's Advanced sheet reads and writes one shape in either scope.
 //
-// THE PRESS HARDWARE IS HERE NOW (index_robot_supplies, 2026-11-05). It was
-// left out as "the cell's, the same for every part" — but a recipe IS one
-// cell's choreography, and leaving it out left the flag nowhere a minted
+// THE PRESS HARDWARE IS HERE NOW (refill_by, added as index_robot_supplies on
+// 2026-11-05). It was left out as "the cell's, the same for every part" — but a
+// recipe IS one cell's choreography, and leaving it out left the setting nowhere a minted
 // style could get it from: every style the floor built minted Robot 1 fetches
 // the empty. SPR Press 6 minted two that way on one day, against every
 // admin-built style on the press saying Robot 2, and the first swap of one ran
@@ -85,7 +85,7 @@ type RecipeAdvanced struct {
 	AutoPush              bool                 `json:"auto_push,omitempty"`
 	CarryoverDisposition  CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
 	KeepStagedNode        string               `json:"keep_staged_node,omitempty"`
-	IndexRobotSupplies    bool                 `json:"index_robot_supplies,omitempty"`
+	RefillBy              protocol.RefillBy    `json:"refill_by,omitempty"`
 	AutoConfirm           bool                 `json:"auto_confirm,omitempty"`
 	CurtainRequired       bool                 `json:"curtain_required,omitempty"`
 	StrictPack            bool                 `json:"strict_pack,omitempty"`
@@ -218,7 +218,7 @@ func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.ReorderPoint, a.AutoReorder = g.ReorderPoint, g.AutoReorder
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
 	a.KeepStagedNode = g.KeepStagedNode
-	a.IndexRobotSupplies = g.IndexRobotSupplies
+	a.RefillBy = g.RefillBy
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
 	a.PackTolerancePct = g.PackTolerancePct
 	if g.CarryoverDisposition != "" {
@@ -453,7 +453,7 @@ var advancedFields = []struct {
 		return a.CarryoverDisposition != "" && a.CarryoverDisposition != CarryoverReplace
 	}},
 	{flowspec.KeepStagedNode, func(a RecipeAdvanced) bool { return a.KeepStagedNode != "" }},
-	{flowspec.IndexRobotSupplies, func(a RecipeAdvanced) bool { return a.IndexRobotSupplies }},
+	{flowspec.RefillBy, func(a RecipeAdvanced) bool { return a.RefillBy.OrDefault() != protocol.RefillByClearingRobot }},
 	{flowspec.AutoConfirm, func(a RecipeAdvanced) bool { return a.AutoConfirm }},
 	{flowspec.CurtainRequired, func(a RecipeAdvanced) bool { return a.CurtainRequired }},
 	{flowspec.StrictPack, func(a RecipeAdvanced) bool { return a.StrictPack }},

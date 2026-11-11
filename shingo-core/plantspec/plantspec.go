@@ -413,15 +413,17 @@ type Claim struct {
 	// SecondPairedCoreNode is the THIRD position of a press-index cell (bins
 	// index C → B → A). Empty is the ordinary 2-position layout.
 	SecondPairedCoreNode string `yaml:"second_paired_core_node,omitempty"`
-	// IndexRobotSupplies flips a press-index cell's choreography: R1 clears the
-	// press and leaves, R2 indexes forward AND fetches the replacement, instead
-	// of R1 backfilling on its way out.
+	// RefillBy is which robot brings a press-index cell's back position its
+	// next carrier: clearing_robot (Robot 1, the default when blank) backfills
+	// on its way out; index_robot (Robot 2) indexes forward AND fetches the
+	// replacement while Robot 1 only clears the press. The Edge stores the same
+	// words (style_node_claims.refill_by).
 	//
 	// SEEDABLE BECAUSE THE SIM IS WHERE IT GETS PROVEN. It describes the cell's
 	// hardware — which robot can reach the supermarket from that press — so a
 	// plant either has it or does not, and a scenario that cannot express it
 	// can only test the shape half the presses run.
-	IndexRobotSupplies bool `yaml:"index_robot_supplies,omitempty"`
+	RefillBy protocol.RefillBy `yaml:"refill_by,omitempty"`
 	// KeepStagedNode is the keep-staged node: the node this line's full or
 	// empty comes from instead of InboundSource, with a spare kept standing on
 	// it. Blank is off. Any swap mode; it may be the claim's InboundStaging,

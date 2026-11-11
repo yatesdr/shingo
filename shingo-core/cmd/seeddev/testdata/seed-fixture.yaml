@@ -452,6 +452,9 @@ claims:
     changeover_evac_destination: SYN_MT_Return
     key_route: [WP_AISLE_S, WP_AISLE_N]
     key_task: unload
+    # Robot 2 brings the next carrier: a word, not the 0/1 the old column
+    # held, so an encoding that writes a flag shows here.
+    refill_by: index_robot
     allowed_payloads: [PANEL-LH, PANEL-RH]
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──

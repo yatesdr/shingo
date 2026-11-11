@@ -802,7 +802,7 @@ func TestPressIndexChangeoverR2_OnDeckPickupsSayWhatTheyLift(t *testing.T) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "PLN_03"} {
 				from := &processes.NodeClaim{CoreNodeName: "PLN_01", SwapMode: protocol.SwapModeTwoRobotPressIndex, Role: role,
-					PairedCoreNode: "PLN_02", SecondPairedCoreNode: second, IndexRobotSupplies: flipped,
+					PairedCoreNode: "PLN_02", SecondPairedCoreNode: second, RefillBy: refillFor(flipped),
 					PayloadCode: "OLD", InboundSource: "IN", OutboundDestination: "OUT"}
 				to := *from
 				to.PayloadCode = "NEW"

@@ -1249,7 +1249,7 @@ const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 // robot fetches the empty — is IN (2026-11-05): without it every style the
 // floor built from a recipe minted Robot 1.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
-    'changeover_carryover_disposition', 'keep_staged_node', 'index_robot_supplies',
+    'changeover_carryover_disposition', 'keep_staged_node', 'refill_by',
     'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
@@ -1413,14 +1413,16 @@ function groupsBody(groups) {
 
 // recipeAdvanced is a group's Advanced as a recipe may say it: GROUP_ADV_KEYS
 // that carry a value, by domain.ClaimHas's rule (the carry-over's blank or
-// replace is no opinion), and only those flowspec draws for the ★ cell's mode
+// replace and the refill's Robot 1 are no opinion), and only those flowspec
+// draws for the ★ cell's mode
 // and role — the server refuses the others (D26).
 function recipeAdvanced(a, head) {
     const out = {};
     for (const key of GROUP_ADV_KEYS) {
         const v = a[key];
         const set = key === 'changeover_carryover_disposition' ? !!v && v !== 'replace'
-            : Array.isArray(v) ? v.length > 0 : Boolean(v);
+            : key === 'refill_by' ? !!v && v !== 'clearing_robot'
+                : Array.isArray(v) ? v.length > 0 : Boolean(v);
         if (!set) continue;
         if (head && S.model && S.model.cells[head] && !M().advancedShows(S.model, head, key)) continue;
         out[key] = v;
@@ -1644,7 +1646,7 @@ function groupAdvSummary(g) {
         const v = a[key];
         if (key === 'changeover_carryover_disposition') return W(key) + ' ' + (CARRYOVER[v] || v);
         // The sheet says it as a choice of robot, so the card does too.
-        if (key === 'index_robot_supplies') return 'Robot 2 supplies';
+        if (key === 'refill_by') return (v === 'index_robot' ? 'Robot 2' : 'Robot 1') + ' supplies';
         if (typeof v === 'boolean') return W(key) + ' on';
         return W(key) + ' ' + v;
     });
@@ -3868,7 +3870,7 @@ const ADV_SECTIONS = [
     // where 'Unfinished carriers' and 'Counting' were two (partials-stage2,
     // 2026-10-29). Offered on a produce position only (flowspec).
     ['Finished goods', ['strict_pack', 'pack_tolerance_pct', 'partial_dest']],
-    ['Press hardware', ['index_robot_supplies']],
+    ['Press hardware', ['refill_by']],
     // THE LIGHT CURTAIN'S STYLE TIE (pick-a-part U5). It had copy and a control
     // and no section, so nothing drew it: the claim had readers
     // (engine/release_load.go) and no UI writer.
@@ -3909,7 +3911,7 @@ const ADV_COPY = {
     // hold it for the line.
     partial_dest: ['partial_destination', 'where a bin released short goes: blank sends it where full bins go, at its real count; a node group holds it there to be finished later; the unloader unloads it there'],
     changeover_carryover_disposition: ['changeover_carryover_disposition', 'what happens to a part-full bin'],
-    index_robot_supplies: ['index_robot_supplies', 'the same for every part on this press'],
+    refill_by: ['refill_by', 'the same for every part on this press'],
     auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
     sequence: ['sequence', 'where this position sits on the loader board'],
     curtain_required: ['curtain_required', 'this part\'s full-bin releases wait for the node\'s light curtain - the bin leaving decides, so a part whose exit must not stop the conveyor leaves this off'],
@@ -4086,9 +4088,9 @@ function advField(key) {
             control = advPick(key, esc(CARRYOVER[v] || v), v === 'replace' ? 'dflt' : '');
             break;
         }
-        case 'index_robot_supplies': {
+        case 'refill_by': {
             // A choice between two named robots, not a flag called "flipped".
-            const on = S.adv.a.index_robot_supplies;
+            const on = S.adv.a.refill_by === 'index_robot';
             control = advPick(key, on ? 'Robot 2' : 'Robot 1') +
                 '<span class="pd-note">' + (on ? 'Robot 1 evacuates and leaves' : 'Robot 2 indexes') + '</span>';
             break;
@@ -4208,10 +4210,10 @@ function advOptions(key) {
                 label: CARRYOVER[k], on: (S.adv.a.changeover_carryover_disposition || 'replace') === k,
                 run: () => { S.adv.a.changeover_carryover_disposition = k; },
             }));
-        case 'index_robot_supplies':
+        case 'refill_by':
             return [
-                { label: 'Robot 1', on: !S.adv.a.index_robot_supplies, run: () => { S.adv.a.index_robot_supplies = false; } },
-                { label: 'Robot 2', on: !!S.adv.a.index_robot_supplies, run: () => { S.adv.a.index_robot_supplies = true; } },
+                { label: 'Robot 1', on: S.adv.a.refill_by !== 'index_robot', run: () => { S.adv.a.refill_by = 'clearing_robot'; } },
+                { label: 'Robot 2', on: S.adv.a.refill_by === 'index_robot', run: () => { S.adv.a.refill_by = 'index_robot'; } },
             ];
         case 'evac_nodes': {
             // THE CELL'S OWN POSITIONS, not the press's. changeover_evac_nodes

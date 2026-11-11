@@ -40,7 +40,7 @@ func advancedPrior() NodeClaim {
 	c.AutoPush = true
 	c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	c.KeepStagedNode = "SPOT-1"
-	c.IndexRobotSupplies = true
+	c.RefillBy = protocol.RefillByIndexRobot
 	c.AutoConfirm = true
 	c.StrictPack, c.PackTolerancePct = true, 5
 	return c
@@ -77,7 +77,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
 		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
 		row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
-		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotSupplies || !row.AutoConfirm || !row.StrictPack || row.PackTolerancePct != 5 {
+		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotFetches() || !row.AutoConfirm || !row.StrictPack || row.PackTolerancePct != 5 {
 		t.Errorf("a column the modal owns was flattened by a save that never opened it: %+v", row)
 	}
 }
@@ -97,7 +97,7 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 		AutoRequestPayload:    "",
 		AutoPush:              false,
 		CarryoverDisposition:  CarryoverOutboundStaging,
-		IndexRobotSupplies:    false,
+		RefillBy:              refillFor(false),
 		AutoConfirm:           false,
 	}
 	in := Expand(cell, &prior, ClaimSourceAdmin, "engineer")
@@ -120,8 +120,8 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	if row.KeepStagedNode != "" {
 		t.Error("keep_staged_node survived an Apply that cleared it")
 	}
-	if row.IndexRobotSupplies || row.AutoConfirm {
-		t.Errorf("hardware/policy did not land: %v / %v", row.IndexRobotSupplies, row.AutoConfirm)
+	if row.IndexRobotFetches() || row.AutoConfirm {
+		t.Errorf("hardware/policy did not land: %v / %v", row.IndexRobotFetches(), row.AutoConfirm)
 	}
 
 	// AND NOTHING ELSE MOVED. The flow's own columns are the cell's, the

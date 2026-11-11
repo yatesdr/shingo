@@ -73,7 +73,7 @@ var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
 	changeover_evac_nodes, changeover_evac_destination,
-	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+	refill_by, key_route, key_task, changeover_carryover_disposition,
 	source, called_by, updated_at, retired_at, source_preset_id, source_preset_version`
 
 // liveClaims is the WHERE fragment for "claims that still drive anything":
@@ -96,7 +96,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
 		&evacNodesJSON, &c.ChangeoverEvacDestination,
-		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition,
+		&c.RefillBy, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition,
 		&c.Source, &c.CalledBy, &updatedAt, &retiredAt, &presetID, &presetVersion); err != nil {
 		return c, err
 	}
@@ -650,7 +650,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	if err := kinds.RefuseLaneLegs(in); err != nil {
 		return 0, nil, err
 	}
-	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach
+	// RefillBy (which robot brings the next carrier) describes the CELL'S HARDWARE — which robot can reach
 	// the supermarket from that press. Two styles on one press disagreeing
 	// about it is not a configuration, it is an operator who edited one style
 	// and not the other, and the symptom is a press that choreographs
@@ -659,7 +659,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// A WARNING, NOT A REFUSAL, and the direction matters: refusing would make
 	// the flag unsettable, because changing a press with four styles means
 	// four saves and the first three would each be refused by the other three.
-	warnIndexRobotSuppliesDrift(db, in)
+	warnRefillByDrift(db, in)
 
 	var existingID int64
 	var priorSpot, priorSource string
@@ -697,7 +697,10 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 		sequence = maxSeq + 1
 	}
 	autoReorder := in.AutoReorder != nil && *in.AutoReorder
-	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
+	refillBy := protocol.RefillByClearingRobot
+	if in.RefillBy != nil {
+		refillBy = in.RefillBy.OrDefault()
+	}
 	keepStagedNode := domain.OptValue(in.KeepStagedNode)
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
@@ -715,7 +718,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes, changeover_evac_destination,
-		index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+		refill_by, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
@@ -725,7 +728,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
 		domain.OptValue(in.ChangeoverEvacDestination),
-		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
+		refillBy, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
 		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition),
 		in.Source, in.CalledBy, in.SourcePresetID, in.SourcePresetVersion)
 	if err != nil {
@@ -833,8 +836,8 @@ func modeArmViolation(in NodeClaimInput) error {
 	return nil
 }
 
-// warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
-// same press disagreeing about which robot fetches the replacement.
+// warnRefillByDrift logs when this save would leave two styles on the same
+// press disagreeing about which robot brings the next carrier.
 //
 // Scoped to claims on the SAME core node in the same process, because that is
 // what "one press" means; two presses may legitimately differ.
@@ -842,13 +845,13 @@ func modeArmViolation(in NodeClaimInput) error {
 // Silent on a caller with no opinion (nil) — an import or the compare grid is
 // not asserting anything about the hardware and must not be reported as if it
 // were.
-func warnIndexRobotSuppliesDrift(db DBTX, in NodeClaimInput) {
-	if in.IndexRobotSupplies == nil || in.CoreNodeName == "" {
+func warnRefillByDrift(db DBTX, in NodeClaimInput) {
+	if in.RefillBy == nil || in.CoreNodeName == "" {
 		return
 	}
-	want := *in.IndexRobotSupplies
+	want := in.RefillBy.OrDefault()
 	rows, err := db.Query(`
-		SELECT s.name, c.index_robot_supplies
+		SELECT s.name, c.refill_by
 		FROM style_node_claims c
 		JOIN styles s ON s.id = c.style_id
 		WHERE c.core_node_name = ?
@@ -867,18 +870,18 @@ func warnIndexRobotSuppliesDrift(db DBTX, in NodeClaimInput) {
 	var disagree []string
 	for rows.Next() {
 		var styleName string
-		var flag bool
-		if err := rows.Scan(&styleName, &flag); err != nil {
+		var stored protocol.RefillBy
+		if err := rows.Scan(&styleName, &stored); err != nil {
 			return
 		}
-		if flag != want {
+		if stored.OrDefault() != want {
 			disagree = append(disagree, styleName)
 		}
 	}
 	if len(disagree) > 0 {
-		log.Printf("claim %s: index_robot_supplies=%v disagrees with style(s) %s on the same process. "+
-			"This flag describes which robot can reach the supermarket — a fact about the cell, not "+
-			"about a style — so the process will choreograph differently depending on what it runs. "+
+		log.Printf("claim %s: refill_by=%s disagrees with style(s) %s on the same process. "+
+			"Which robot brings the next carrier is a fact about the cell, not about a style, "+
+			"so the process will choreograph differently depending on what it runs. "+
 			"Set it the same on every style for this node.",
 			in.CoreNodeName, want, strings.Join(disagree, ", "))
 	}
@@ -934,8 +937,8 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	if in.Sequence != nil {
 		sets, args = append(sets, `sequence=?`), append(args, *in.Sequence)
 	}
-	if in.IndexRobotSupplies != nil {
-		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
+	if in.RefillBy != nil {
+		sets, args = append(sets, `refill_by=?`), append(args, in.RefillBy.OrDefault())
 	}
 	if in.ChangeoverEvacNodes != nil {
 		sets, args = append(sets, `changeover_evac_nodes=?`), append(args, marshalEvacNodes(*in.ChangeoverEvacNodes))

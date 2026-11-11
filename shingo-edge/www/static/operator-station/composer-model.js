@@ -112,13 +112,13 @@ function fieldWord(state, field) {
 // characters a line.
 //
 // THE PRESS INDEX NAMES THE ROBOT THE SWAP WILL SEND (2026-11-05). It said
-// `Robot 1 supplies` whatever index_robot_supplies said, so a press set to
+// `Robot 1 supplies` whatever the refill setting said, so a press set to
 // Robot 2 read Robot 1 on every card, and a style minted Robot 1 by mistake
 // looked no different from one set that way on purpose. `a` is the cell's
 // Advanced as stored or drafted (cellAdvanced); absent reads as Robot 1, the
 // minted default.
 const CARDLINE = {
-    two_robot_press_index: (c, a) => (a && a.index_robot_supplies)
+    two_robot_press_index: (c, a) => (a && a.refill_by === 'index_robot')
         ? 'Robot 2 indexes · Robot 2 supplies ' + (c.paired || '?')
         : 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
     two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
@@ -217,7 +217,7 @@ const ADVANCED_DEFAULTS = {
     auto_push: false,
     keep_staged_node: '',
     changeover_carryover_disposition: 'replace',
-    index_robot_supplies: false,
+    refill_by: 'clearing_robot',
     auto_confirm: false,
     // The light-curtain style tie: whether THIS style's full-bin releases at
     // this node wait for the node's curtain tag. The claim is the
@@ -435,6 +435,11 @@ function advancedSet(state, node, adv) {
         const v = a[key];
         if (key === 'changeover_carryover_disposition') {
             if (v && v !== 'replace') out.push(key);
+            continue;
+        }
+        // Robot 1 is the default, as blank-or-replace is above.
+        if (key === 'refill_by') {
+            if (v && v !== 'clearing_robot') out.push(key);
             continue;
         }
         if (key === 'reorder_point_source') continue;   // a stamp on the number, not a value of its own

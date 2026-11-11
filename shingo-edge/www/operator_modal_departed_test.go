@@ -11,7 +11,7 @@ import (
 // single button a swap cell's card offers.
 //
 // The bug behind the departed-leg work was a HIDDEN BUTTON, not a wrong backend
-// answer. Springfield press trial 2026-09-02: under the IndexRobotSupplies flip,
+// answer. Springfield press trial 2026-09-02: under the RefillBy (Robot 2) flip,
 // R1 clears the press and drives the full tote to the supermarket while R2 puts
 // the fresh carrier on. Every position the cell needed was filled and the
 // backend would have accepted the next swap — but the card computed `inFlight`

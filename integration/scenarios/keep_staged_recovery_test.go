@@ -198,7 +198,7 @@ type ksrOpts struct {
 	// plant (the buried cases need it too).
 	mirror bool
 	// flipped: every press-index claim of both styles has the index robot
-	// fetch the replacement (IndexRobotSupplies): R1 only takes the press's
+	// fetch the replacement (refill_by Robot 2): R1 only takes the press's
 	// bin away, R2 indexes forward and then refills the paired position.
 	flipped bool
 	// modeB is style B's swap mode, for a changeover across modes (B a press,
@@ -433,7 +433,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 			if s.mode == protocol.SwapModeTwoRobotPressIndex {
 				in.PairedCoreNode = ksrDeck
 				if o.flipped {
-					in.IndexRobotSupplies = domain.Ptr(true)
+					in.RefillBy = domain.Ptr(protocol.RefillByIndexRobot)
 				}
 			}
 			if o.pair {

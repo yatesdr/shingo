@@ -118,7 +118,7 @@ const (
 	ChangeoverEvacDestination      Field = "changeover_evac_destination"
 	ChangeoverCarryoverDisposition Field = "changeover_carryover_disposition"
 	ReuseCompatibleBins            Field = "reuse_compatible_bins"
-	IndexRobotSupplies             Field = "index_robot_supplies"
+	RefillBy                       Field = "refill_by"
 	AutoConfirm                    Field = "auto_confirm"
 	AutoRequestPayload             Field = "auto_request_payload"
 	AutoPush                       Field = "auto_push"
@@ -187,7 +187,7 @@ var fieldLabels = map[Field]string{
 	ChangeoverEvacDestination:      "Changeover evac destination",
 	ChangeoverCarryoverDisposition: "Carry-over disposition",
 	ReuseCompatibleBins:            "Reuse compatible bins",
-	IndexRobotSupplies:             "Index robot supplies",
+	RefillBy:                       "Next carrier",
 	AutoConfirm:                    "Auto confirm",
 	AutoRequestPayload:             "Auto request part",
 	AutoPush:                       "Auto push",
@@ -210,7 +210,7 @@ var fieldOrder = []Field{
 	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
 	LinesideSoftThreshold, Sequence, KeepStagedNode,
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
-	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
+	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
 	StrictPack, PackTolerancePct,
 }
@@ -311,7 +311,7 @@ func noChoreography(m map[Field]Need) {
 	m[PairedCoreNode] = Forbidden
 	m[SecondPairedCoreNode] = Forbidden
 	m[ReuseCompatibleBins] = Forbidden
-	m[IndexRobotSupplies] = Forbidden
+	m[RefillBy] = Forbidden
 	m[AutoPush] = Forbidden
 }
 

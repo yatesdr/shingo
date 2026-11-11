@@ -30,7 +30,7 @@ func TestInputFromClaimUngated_SpeaksNoGatedColumn(t *testing.T) {
 		StyleID: 7, CoreNodeName: "PLN_01", PayloadCode: "PIA26",
 		InboundSource: "SMN", OutboundDestination: "SMN_DST",
 		ChangeoverEvacNodes: []string{"PLN_02"}, ChangeoverEvacDestination: "SMN_EVAC",
-		ChangeoverCarryoverDisposition: CarryoverKeepLineside, IndexRobotSupplies: true,
+		ChangeoverCarryoverDisposition: CarryoverKeepLineside, RefillBy: refillFor(true),
 		KeyRoute: []string{"LM10"}, KeyTask: "load", KeepStagedNode: "SPOT-1",
 		ReorderPointSource: "manual", AutoReorder: true, Sequence: 4,
 	}

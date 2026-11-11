@@ -412,16 +412,23 @@ func (p *Plant) Validate() error {
 				}
 			}
 		default:
-			// The flip is press-index choreography; nothing else has two robots
-			// to swap between, and a spec that sets it on another mode is
-			// describing a cell that cannot exist. Marked evacuation positions are
-			// the same argument: a position is a press position.
-			if c.IndexRobotSupplies {
-				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
-			}
+			// Marked evacuation positions are press positions.
 			if len(c.ChangeoverEvacNodes) > 0 {
 				add("%s: changeover_evac_nodes applies to two_robot_press_index only", where)
 			}
+		}
+		// ── WHO BRINGS THE NEXT CARRIER ─────────────────────────────────────
+		//
+		// Robot 2 bringing it is press-index choreography; nothing else has
+		// two robots to swap between, and a spec that sets it on another mode
+		// describes a cell that cannot exist. Outside the mode switch, so it
+		// holds for every other mode. The Edge's ValidateNodeClaim refuses the
+		// same claim.
+		if c.RefillBy != "" && !c.RefillBy.Valid() {
+			add("%s: refill_by %q is not a robot that brings the next carrier (want one of %v)", where, c.RefillBy, protocol.RefillBys())
+		} else if c.RefillBy.OrDefault() != protocol.RefillByClearingRobot &&
+			protocol.SwapMode(c.SwapMode) != protocol.SwapModeTwoRobotPressIndex {
+			add("%s: refill_by %q applies to two_robot_press_index only", where, c.RefillBy)
 		}
 		// ── A MARKED NODE MUST BE ONE THIS CLAIM HOLDS ─────────────────────
 		//

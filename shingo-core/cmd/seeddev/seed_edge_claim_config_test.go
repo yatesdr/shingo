@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"testing"
+
+	"shingo/protocol"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,14 +29,14 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	t.Parallel()
 	db, _, _ := openSeededEdge(t)
 
-	var positions, dest, route, task, allowed string
+	var positions, dest, route, task, allowed, refill string
 	err := db.QueryRow(`
 		SELECT changeover_evac_nodes, changeover_evac_destination,
-		       key_route, key_task, allowed_payload_codes
+		       key_route, key_task, allowed_payload_codes, refill_by
 		  FROM style_node_claims c
 		  JOIN styles s ON s.id = c.style_id
 		 WHERE c.core_node_name = 'PLN_001' AND s.name = 'PRESS-1-RUN'`).
-		Scan(&positions, &dest, &route, &task, &allowed)
+		Scan(&positions, &dest, &route, &task, &allowed, &refill)
 	if err == sql.ErrNoRows {
 		t.Fatal("the press-index claim was not seeded at all")
 	}
@@ -62,5 +64,9 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	}
 	if task != "unload" {
 		t.Errorf("key_task = %q, want unload", task)
+	}
+	// The stored word the Edge reads (protocol.RefillBy), not a 0/1 flag.
+	if refill != string(protocol.RefillByIndexRobot) {
+		t.Errorf("refill_by = %q, want %q", refill, protocol.RefillByIndexRobot)
 	}
 }

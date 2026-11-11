@@ -139,9 +139,9 @@ type FlowAdvanced struct {
 	// off. The modal draws it where flowspec says the mode uses it: every swap
 	// mode.
 	KeepStagedNode string `json:"keep_staged_node,omitempty"`
-	// IndexRobotSupplies describes the cell's hardware, so the modal's note
-	// says it is the same for every part on this press.
-	IndexRobotSupplies bool `json:"index_robot_supplies,omitempty"`
+	// RefillBy (which robot brings the next carrier) describes the cell's
+	// hardware, so the modal's note says it is the same for every part here.
+	RefillBy protocol.RefillBy `json:"refill_by,omitempty"`
 	// AutoConfirm is station policy; the plant setting applies unless set.
 	AutoConfirm bool `json:"auto_confirm,omitempty"`
 	// Sequence is the order the loader board draws this position in. It is
@@ -185,7 +185,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		AutoPush:              c.AutoPush,
 		CarryoverDisposition:  CarryoverFor(c),
 		KeepStagedNode:        c.KeepStagedNode,
-		IndexRobotSupplies:    c.IndexRobotSupplies,
+		RefillBy:              c.RefillBy.OrDefault(),
 		AutoConfirm:           c.AutoConfirm,
 		Sequence:              c.Sequence,
 		CurtainRequired:       c.CurtainRequired,
@@ -321,7 +321,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.ReorderPointSource = Ptr(a.ReorderPointSource)
 		in.AutoReorder = Ptr(a.AutoReorder)
 		in.KeepStagedNode = Ptr(a.KeepStagedNode)
-		in.IndexRobotSupplies = Ptr(a.IndexRobotSupplies)
+		in.RefillBy = Ptr(a.RefillBy.OrDefault())
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)
 		in.CurtainRequired = a.CurtainRequired
@@ -366,7 +366,7 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		ChangeoverEvacNodes:            Ptr(nonNilStrings(c.ChangeoverEvacNodes)),
 		ChangeoverEvacDestination:      Ptr(c.ChangeoverEvacDestination),
 		ChangeoverCarryoverDisposition: Ptr(c.ChangeoverCarryoverDisposition),
-		IndexRobotSupplies:             Ptr(c.IndexRobotSupplies),
+		RefillBy:                       Ptr(c.RefillBy.OrDefault()),
 		KeyRoute:                       Ptr(nonNilStrings(c.KeyRoute)),
 		KeyTask:                        Ptr(c.KeyTask),
 		AutoConfirm:                    c.AutoConfirm,
@@ -409,7 +409,7 @@ func InputFromClaimUngated(c NodeClaim) NodeClaimInput {
 	in.ChangeoverEvacNodes = nil
 	in.ChangeoverEvacDestination = nil
 	in.ChangeoverCarryoverDisposition = nil
-	in.IndexRobotSupplies = nil
+	in.RefillBy = nil
 	in.KeyRoute = nil
 	in.KeyTask = nil
 	in.KeepStagedNode = nil
@@ -436,6 +436,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	} else {
 		c.ReorderPointSource = "legacy"
 		c.ChangeoverCarryoverDisposition = CarryoverReplace
+		c.RefillBy = protocol.RefillByClearingRobot
 	}
 	if in.StyleID != 0 {
 		c.StyleID = in.StyleID
@@ -489,8 +490,8 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	if in.Sequence != nil && (prior != nil || *in.Sequence > 0) {
 		c.Sequence = *in.Sequence
 	}
-	if in.IndexRobotSupplies != nil {
-		c.IndexRobotSupplies = *in.IndexRobotSupplies
+	if in.RefillBy != nil {
+		c.RefillBy = *in.RefillBy
 	}
 	if in.ChangeoverEvacNodes != nil {
 		c.ChangeoverEvacNodes = cloneStrings(*in.ChangeoverEvacNodes)

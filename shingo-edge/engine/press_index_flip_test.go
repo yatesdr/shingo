@@ -18,7 +18,7 @@ func flipClaim(role protocol.ClaimRole, secondPaired string, flipped bool) *proc
 		OutboundDestination:  "MARKET",
 		PairedCoreNode:       "INDEX-B",
 		SecondPairedCoreNode: secondPaired,
-		IndexRobotSupplies:   flipped,
+		RefillBy:             refillFor(flipped),
 	}
 }
 

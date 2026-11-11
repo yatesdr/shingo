@@ -285,7 +285,7 @@ func standardClaim(mode protocol.SwapMode, secondPaired string, flipped bool) *p
 		InboundStaging:       "STANDARD-IN-STAGE",
 		OutboundStaging:      "STANDARD-OUT-STAGE",
 		OutboundDestination:  "STANDARD-MARKET-OUT",
-		IndexRobotSupplies:   flipped,
+		RefillBy:             refillFor(flipped),
 	}
 }
 

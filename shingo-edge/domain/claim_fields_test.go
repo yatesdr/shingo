@@ -3,6 +3,7 @@ package domain
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/domain/flowspec"
 )
 
@@ -56,8 +57,8 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	case flowspec.ReuseCompatibleBins:
 		c.ReuseCompatibleBins = true
-	case flowspec.IndexRobotSupplies:
-		c.IndexRobotSupplies = true
+	case flowspec.RefillBy:
+		c.RefillBy = protocol.RefillByIndexRobot
 	case flowspec.AutoConfirm:
 		c.AutoConfirm = true
 	case flowspec.AutoRequestPayload:
@@ -123,8 +124,8 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.ChangeoverCarryoverDisposition = &d
 	case flowspec.ReuseCompatibleBins:
 		in.ReuseCompatibleBins = true
-	case flowspec.IndexRobotSupplies:
-		in.IndexRobotSupplies = &t
+	case flowspec.RefillBy:
+		in.RefillBy = Ptr(protocol.RefillByIndexRobot)
 	case flowspec.AutoConfirm:
 		in.AutoConfirm = true
 	case flowspec.AutoRequestPayload:

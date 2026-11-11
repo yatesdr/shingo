@@ -278,7 +278,7 @@ const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,
-	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+	refill_by, key_route, key_task, changeover_carryover_disposition,
 	source_preset_id, source_preset_version`
 
 // notLoaderClaim is the WHERE fragment the style copy (cloneStyleTx) selects

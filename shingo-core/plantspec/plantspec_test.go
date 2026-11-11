@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"shingo/protocol"
 )
 
 // validPlant returns a minimal spec that passes Validate; tests mutate a copy
@@ -89,6 +91,14 @@ func TestValidate_CatchesProblems(t *testing.T) {
 		{"keep_staged_node that is the claim's own outbound staging", func(p *Plant) {
 			p.Claims[1].KeepStagedNode = p.Claims[1].OutboundStaging
 		}, "also names it as outbound_staging"},
+		// The Edge's save rule for who refills, over a mode the old
+		// press-index-only arm never reached.
+		{"refill_by Robot 2 off a press-index cell", func(p *Plant) {
+			p.Claims[1].RefillBy = protocol.RefillByIndexRobot
+		}, "refill_by \"index_robot\" applies to two_robot_press_index only"},
+		{"refill_by that names no robot", func(p *Plant) {
+			p.Claims[1].RefillBy = "robot_9"
+		}, "refill_by \"robot_9\" is not a robot"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

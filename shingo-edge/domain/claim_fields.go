@@ -69,8 +69,8 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.ChangeoverCarryoverDisposition != "" && c.ChangeoverCarryoverDisposition != CarryoverReplace
 	case flowspec.ReuseCompatibleBins:
 		return c.ReuseCompatibleBins
-	case flowspec.IndexRobotSupplies:
-		return c.IndexRobotSupplies
+	case flowspec.RefillBy:
+		return c.IndexRobotFetches()
 	case flowspec.AutoConfirm:
 		return c.AutoConfirm
 	case flowspec.AutoRequestPayload:
@@ -133,8 +133,8 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return d != "" && d != CarryoverReplace
 	case flowspec.ReuseCompatibleBins:
 		return in.ReuseCompatibleBins
-	case flowspec.IndexRobotSupplies:
-		return in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
+	case flowspec.RefillBy:
+		return in.RefillBy != nil && in.RefillBy.OrDefault() != protocol.RefillByClearingRobot
 	case flowspec.AutoConfirm:
 		return in.AutoConfirm
 	case flowspec.AutoRequestPayload:

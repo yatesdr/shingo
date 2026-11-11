@@ -286,7 +286,7 @@ func TestDependentPositions_AreTheBuildersNonLinePositions(t *testing.T) {
 			for _, flipped := range []bool{false, true} {
 				for _, second := range []string{"", "C"} {
 					claim := &processes.NodeClaim{CoreNodeName: "LINE", SwapMode: mode, Role: role,
-						PairedCoreNode: "B", SecondPairedCoreNode: second, IndexRobotSupplies: flipped,
+						PairedCoreNode: "B", SecondPairedCoreNode: second, RefillBy: refillFor(flipped),
 						InboundSource: "IN", InboundStaging: "IN-STG", OutboundStaging: "OUT-STG",
 						OutboundDestination: "OUT", PayloadCode: "PART"}
 					d, err := buildSwapDispatch(node, claim)

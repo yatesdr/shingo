@@ -496,7 +496,7 @@ func errorFieldSet(findings []FieldError) []string {
 // StrictSteadyModes in the commit that gives the server the rule.
 var serverEnforcedForbids = map[flowspec.Field]bool{
 	flowspec.ChangeoverEvacNodes:            true,
-	flowspec.IndexRobotSupplies:             true,
+	flowspec.RefillBy:                       true,
 	flowspec.KeyRoute:                       true,
 	flowspec.ChangeoverCarryoverDisposition: true,
 	flowspec.KeepStagedNode:                 true,
@@ -770,4 +770,13 @@ func TestValidateNodeClaim_EveryLineModeMarksItsPositions(t *testing.T) {
 			t.Errorf("%s marking its node: refused=%v, want %v", tc.mode, got, tc.refused)
 		}
 	}
+}
+
+// refillFor is the refill setting a test's flip names: Robot 2 (the index
+// robot) when flipped, Robot 1 otherwise.
+func refillFor(flipped bool) protocol.RefillBy {
+	if flipped {
+		return protocol.RefillByIndexRobot
+	}
+	return protocol.RefillByClearingRobot
 }

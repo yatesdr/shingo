@@ -81,7 +81,7 @@ import (
 // Sequential needed no change and that is worth having checked: its removal leg
 // is a pure evac and its backfill a pure filler, so the two predicates already
 // agree about both. The press-index rows hold under BOTH sides of the
-// IndexRobotSupplies flip — the flip moves the supermarket fetch between the
+// refill_by flip (Robot 2) — the flip moves the supermarket fetch between the
 // legs, and neither the line pickup nor the line dropoff moves with it.
 //
 // CHANGEOVER — BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps. This is

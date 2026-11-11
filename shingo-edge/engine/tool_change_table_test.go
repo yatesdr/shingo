@@ -106,7 +106,7 @@ func (c tcCase) build() tcCell {
 		if c.layout == 3 {
 			from.SecondPairedCoreNode = "P3"
 		}
-		from.IndexRobotSupplies = c.flip
+		from.RefillBy = refillFor(c.flip)
 		to := from
 		to.PayloadCode, to.ChangeoverEvacNodes = toPart, nil
 		mark(&from, cell.positions)

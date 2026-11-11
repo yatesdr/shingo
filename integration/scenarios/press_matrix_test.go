@@ -96,7 +96,7 @@ const (
 	pmNoOnDeck = "no on-deck off a press: the swap lifts only at the line (DependentPositions nil), so " +
 		"a carrier standing elsewhere is no step of it"
 	pmNoMarker = "the marker is press-index only: a marker on an on-deck needs an on-deck"
-	pmFlipOnly = "the flip (IndexRobotSupplies) is press-index only: it shapes only " +
+	pmFlipOnly = "the flip (refill_by Robot 2) is press-index only: it shapes only " +
 		"BuildTwoRobotPressIndexSwapSteps, and every other mode's swap is the same either way"
 	pmFlipNoIndex = "the flip shapes only the press's index swap; a changeover into a vacant press plans " +
 		"each position an Add (a plain delivery), which the flip does not shape, and the outgoing mode " +
@@ -223,7 +223,7 @@ func TestScenario_PressMatrix_TheCellsThatDoNotExist(t *testing.T) {
 			claim := func(flipped bool) *processes.NodeClaim {
 				return &processes.NodeClaim{CoreNodeName: ksrLine, Role: role, SwapMode: mode, PayloadCode: ksrPartA,
 					InboundSource: ksrMktA, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
-					OutboundDestination: ksrDest, PairedCoreNode: ksrDeck, IndexRobotSupplies: flipped}
+					OutboundDestination: ksrDest, PairedCoreNode: ksrDeck, RefillBy: refillFor(flipped)}
 			}
 			dep := claim(false).DependentPositions()
 			if mode == protocol.SwapModeTwoRobotPressIndex {

@@ -162,7 +162,7 @@ func refillCarrierPayload(fromClaim, toClaim *processes.NodeClaim) string {
 // buildSwapDispatch, and it should stay that way.
 //
 // AutoConfirmA/AutoConfirmB were positional literals, and position is not what
-// the operator signs for. The IndexRobotSupplies flip moves the supermarket trip
+// the operator signs for. The RefillBy flip (Robot 2) moves the supermarket trip
 // between R1 and R2 without moving the press pickup or the press dropoff, so
 // under the flip the leg carrying AutoConfirmA=false became the one ending at
 // the SUPERMARKET. Springfield press trial 2026-09-02: the order landed

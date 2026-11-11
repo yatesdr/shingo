@@ -52,7 +52,7 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 
 		ChangeoverEvacNodes:       &[]string{"PU-FRONT", "PU-BACK"},
 		ChangeoverEvacDestination: strPtr("TOOLING-BAY"),
-		IndexRobotSupplies:        &yes,
+		RefillBy:                  refillPtr(yes),
 		KeyRoute:                  &[]string{"WP_AISLE_N", "WP_AISLE_S"},
 		KeyTask:                   strPtr("load"),
 	})
@@ -75,8 +75,8 @@ func assertSixSurvive(t *testing.T, db *store.DB, claimID int64, after string) {
 	if got.ChangeoverEvacDestination != "TOOLING-BAY" {
 		t.Errorf("%s: changeover_evac_destination = %q, want TOOLING-BAY", after, got.ChangeoverEvacDestination)
 	}
-	if !got.IndexRobotSupplies {
-		t.Errorf("%s: index_robot_supplies = false, want true", after)
+	if !got.IndexRobotFetches() {
+		t.Errorf("%s: refill_by = %q, want index_robot", after, got.RefillBy)
 	}
 	if !slices.Equal(got.KeyRoute, []string{"WP_AISLE_N", "WP_AISLE_S"}) {
 		t.Errorf("%s: key_route = %v, want [WP_AISLE_N WP_AISLE_S]", after, got.KeyRoute)
@@ -153,7 +153,7 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 
 		ChangeoverEvacNodes:       &[]string{},
 		ChangeoverEvacDestination: strPtr(""),
-		IndexRobotSupplies:        &no,
+		RefillBy:                  refillPtr(no),
 		KeyRoute:                  &[]string{},
 		KeyTask:                   strPtr(""),
 	})
@@ -167,8 +167,8 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 	if got.ChangeoverEvacDestination != "" {
 		t.Errorf("changeover_evac_destination = %q, want empty", got.ChangeoverEvacDestination)
 	}
-	if got.IndexRobotSupplies {
-		t.Error("index_robot_supplies = true, want false")
+	if got.IndexRobotFetches() {
+		t.Errorf("refill_by = %q, want clearing_robot", got.RefillBy)
 	}
 	if len(got.KeyRoute) != 0 {
 		t.Errorf("key_route = %v, want empty", got.KeyRoute)

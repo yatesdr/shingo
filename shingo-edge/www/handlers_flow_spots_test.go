@@ -409,7 +409,7 @@ func TestFlowMint_ARecipeCarryingGroupsMintsItsCells(t *testing.T) {
 func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
 	f := newPress6(t)
 	flow := strings.Replace(press6GroupedJSON, `"advanced":{"reorder_point":1,"auto_reorder":true}`,
-		`"advanced":{"reorder_point":1,"auto_reorder":true,"index_robot_supplies":true}`, 1)
+		`"advanced":{"reorder_point":1,"auto_reorder":true,"refill_by":"index_robot"}`, 1)
 	id, err := f.db.CreateFlowPreset(processes.FlowPresetInput{ProcessID: f.processID, Name: "Two spot, Robot 2 supplies",
 		FlowJSON: flow, CreatedBy: "test"})
 	must(t, err, "store the grouped recipe")
@@ -424,10 +424,10 @@ func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
 	must(t, err, "claims")
 	robot := map[string]bool{}
 	for _, c := range claims {
-		robot[c.CoreNodeName] = c.IndexRobotSupplies
+		robot[c.CoreNodeName] = c.IndexRobotFetches()
 	}
 	if want := map[string]bool{"PLN_006": false, "PLN_007": true}; !maps.Equal(robot, want) {
-		t.Errorf("index_robot_supplies by node = %v, want Right Hand's Robot 2 on PLN_007 and the default on PLN_006 %v", robot, want)
+		t.Errorf("refill_by Robot 2 by node = %v, want Right Hand's Robot 2 on PLN_007 and the default on PLN_006 %v", robot, want)
 	}
 
 	// The Go screen draws a saved style from the preview's cells, and its card
@@ -440,7 +440,7 @@ func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
 	for _, c := range cells {
 		m, _ := c.(map[string]any)
 		adv, _ := m["advanced"].(map[string]any)
-		shown[m["core_node_name"].(string)] = adv["index_robot_supplies"] == true
+		shown[m["core_node_name"].(string)] = adv["refill_by"] == "index_robot"
 	}
 	if want := map[string]bool{"PLN_006": false, "PLN_007": true}; !maps.Equal(shown, want) {
 		t.Errorf("the saved style's preview cells say Robot 2 at %v, want %v", shown, want)

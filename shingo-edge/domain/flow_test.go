@@ -165,7 +165,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	}
 	// Silent: the nine the composer never speaks about.
 	if in.ReorderPointSource != nil || in.AutoReorder != nil || in.KeepStagedNode != nil || in.Sequence != nil ||
-		in.IndexRobotSupplies != nil || in.ChangeoverCarryoverDisposition != nil || in.KeyTask != nil ||
+		in.RefillBy != nil || in.ChangeoverCarryoverDisposition != nil || in.KeyTask != nil ||
 		in.SourcePresetID != nil || in.SourcePresetVersion != nil {
 		t.Errorf("a pointer-gated column the composer does not author was spoken: %+v", in)
 	}
@@ -190,7 +190,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 func TestFlowExpand_EditsLandAndTheEngineersColumnsSurvive(t *testing.T) {
 	t.Parallel()
 	prior := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
-	prior.KeepStagedNode, prior.IndexRobotSupplies, prior.KeyTask = "SPOT-1", true, "load"
+	prior.KeepStagedNode, prior.RefillBy, prior.KeyTask = "SPOT-1", protocol.RefillByIndexRobot, "load"
 	prior.ReorderPoint, prior.ReorderPointSource, prior.AutoReorder = 60, "manual", true
 
 	cell := Collapse(prior)
@@ -206,12 +206,12 @@ func TestFlowExpand_EditsLandAndTheEngineersColumnsSurvive(t *testing.T) {
 	// only one of them puts a value on the input. Expand copies the
 	// unconditional columns from the prior (reorder_point below), and leaves
 	// the pointer-gated ones nil so updateClaim does not name them at all
-	// (keep_staged_node, index_robot_supplies, key_task, reorder_point_source,
+	// (keep_staged_node, refill_by, key_task, reorder_point_source,
 	// auto_reorder). MaterializeClaim models both.
 	got := MaterializeClaim(in, &prior)
-	if got.KeepStagedNode != "SPOT-1" || !got.IndexRobotSupplies || got.KeyTask != "load" {
-		t.Errorf("a changeover special did not survive the edit: keep_staged_node %q, index_robot_supplies %v, key_task %q",
-			got.KeepStagedNode, got.IndexRobotSupplies, got.KeyTask)
+	if got.KeepStagedNode != "SPOT-1" || !got.IndexRobotFetches() || got.KeyTask != "load" {
+		t.Errorf("a changeover special did not survive the edit: keep_staged_node %q, refill_by %v, key_task %q",
+			got.KeepStagedNode, got.RefillBy, got.KeyTask)
 	}
 	if got.ReorderPoint != 60 || got.ReorderPointSource != "manual" || !got.AutoReorder {
 		t.Errorf("the replenishment policy did not survive the edit: %d / %q / %v",
@@ -250,13 +250,13 @@ func TestFlowExpand_DegenerateAllowedListFollowsThePayload(t *testing.T) {
 func TestFlowInputFromClaim_IsTotal(t *testing.T) {
 	t.Parallel()
 	c := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
-	c.KeepStagedNode, c.AutoReorder, c.IndexRobotSupplies, c.KeyTask = "SPOT-1", true, true, "load"
+	c.KeepStagedNode, c.AutoReorder, c.RefillBy, c.KeyTask = "SPOT-1", true, protocol.RefillByIndexRobot, "load"
 	c.ReorderPointSource, c.ChangeoverCarryoverDisposition = "manual", CarryoverKeepLineside
 	pid, pv := int64(3), 2
 	c.SourcePresetID, c.SourcePresetVersion = &pid, &pv
 	in := InputFromClaim(c)
 	claimColumnsEqual(t, "InputFromClaim", MaterializeClaim(in, &c), c)
-	if in.KeepStagedNode == nil || in.AutoReorder == nil || in.IndexRobotSupplies == nil || in.KeyTask == nil ||
+	if in.KeepStagedNode == nil || in.AutoReorder == nil || in.RefillBy == nil || in.KeyTask == nil ||
 		in.ReorderPointSource == nil || in.ChangeoverCarryoverDisposition == nil || in.Sequence == nil ||
 		in.SourcePresetID == nil || in.SourcePresetVersion == nil {
 		t.Errorf("InputFromClaim left a pointer-gated column silent: %+v", in)

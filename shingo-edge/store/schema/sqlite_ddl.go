@@ -747,7 +747,6 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- Blank is off. Replaced the keep_staged flag, which armed a spot on
     -- inbound_staging and so gave that column a second meaning.
     keep_staged_node        TEXT NOT NULL DEFAULT '',
-    evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
     paired_core_node        TEXT NOT NULL DEFAULT '',
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
@@ -779,11 +778,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- tooling-done release. Never consulted when the payloads differ — the bin
     -- has to change anyway.
     changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
-    -- Which robot of a press-index pair fetches the replacement carrier.
-    -- 0 = today's shape (R1 evacuates and refills); 1 = flipped (R1 evacuates
-    -- only, R2 indexes and refills). Describes the cell's hardware, so
-    -- UpsertClaim warns when two styles on one press disagree.
-    index_robot_supplies    INTEGER NOT NULL DEFAULT 0,
+    -- Which robot of a press-index pair brings the back position its next
+    -- carrier: clearing_robot (Robot 1, R1 evacuates and refills) or
+    -- index_robot (Robot 2, R2 indexes and refills). Describes the cell's
+    -- hardware, so UpsertClaim warns when two styles on one press disagree.
+    refill_by               TEXT NOT NULL DEFAULT 'clearing_robot',
     -- SEER robot-SELECTION hints, carried through to the fleet request.
     -- key_route is a JSON array of map points to prefer passing through, IN
     -- ORDER; key_task is 'load'/'unload'. Both empty on every claim until one

@@ -216,11 +216,11 @@ func seedConsumeSwapPair(t *testing.T, db *store.DB, mode protocol.SwapMode, sec
 		OutboundDestination:  claim.OutboundDestination,
 		PairedCoreNode:       claim.PairedCoreNode,
 		SecondPairedCoreNode: secondPaired,
-		IndexRobotSupplies:   &flipped,
+		RefillBy:             refillPtr(flipped),
 	})
 	testutil.MustNoErr(t, err, "persist consume claim")
 	claim = requestedClaimAtNode(db, node)
-	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IndexRobotSupplies != flipped {
+	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IndexRobotFetches() != flipped {
 		t.Fatalf("claim seed did not take: %+v", claim)
 	}
 
