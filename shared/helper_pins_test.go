@@ -216,6 +216,9 @@ var sharedExportsNoImporter = map[string]string{
 	"utils.js confirm":   "pages take the Edge hub's copy",
 	"utils.js prompt":    "pages take the Edge hub's copy",
 	"utils.js createSSE": "pages take the Edge hub's copy or the bus",
+	// utils.js's own banner, still shown by its createSSE; Core's hub shows
+	// notice.js's banner on the bus's build-changed instead.
+	"utils.js showRefreshBanner": "read by createSSE alone; Core's hub shows notice.js's banner",
 	// The bus's teardown and the clock's single repaint: exported for the
 	// node tests (testdata/js) and for a page that needs one.
 	"bus.js closeSSEBus":           "teardown, read by utils.dashboard.test.js",
@@ -229,7 +232,6 @@ var sharedExportsNoImporter = map[string]string{
 	"http.js hookHtmxErrors":     "adopted in wave C (s2-hubs): installed on Edge admin",
 	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",
 	"picker.js createPicker":     "adopted in wave C (s2-processes), its adapters in S3",
-	"notice.js banner":           "adopted in S5 (the new-version and lost-connection banners)",
 	"notice.js clearBanner":      "adopted in S5 (the lost-connection banner)",
 }
 

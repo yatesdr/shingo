@@ -22,9 +22,8 @@ import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
 import { formatTime, timeAgo } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
-import { showRefreshBanner } from '/static/shared/utils.js';
 import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
-import { toast } from '/static/shared/notice.js';
+import { banner, toast } from '/static/shared/notice.js';
 import { send } from '/static/shared/http.js';
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep
@@ -185,10 +184,24 @@ export function setText(id, v) {
 // become an unfiltered client and receive every event.
 onSSE('system-status', function() {});
 
-// The bus only says the build changed; a Core admin page shows the banner. A
-// kiosk (the dashboards) sets setSSEReloadOnBuild and never dispatches this.
-// 'build-changed' is a stream type, so it adds no topic and opens nothing.
-onSSE('build-changed', function() { showRefreshBanner(); });
+// The bus only says the build changed; a Core admin page shows the notice's
+// banner (ruling 4), in the words and with the Refresh the old refresh banner
+// had (S5 sets the final wording). A kiosk (the dashboards) sets
+// setSSEReloadOnBuild and never dispatches this. 'build-changed' is a stream
+// type, so it adds no topic and opens nothing.
+//
+// The bus dispatches it on every frame that carries the new build (each
+// heartbeat), so a banner that is up is left as it is: redrawing it would
+// take the focus off its Refresh. Dismissed, it comes back on the next frame,
+// as the old one did.
+var buildBanner = null;
+onSSE('build-changed', function() {
+  if (buildBanner && buildBanner.isConnected) return;
+  buildBanner = banner('build', {
+    text: 'A new version is available.',
+    action: { label: 'Refresh', onClick: function() { location.reload(); } },
+  });
+});
 
 // ─── Auto-dispatching delegated click handler ─────────────────────────
 //

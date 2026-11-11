@@ -13,18 +13,30 @@ a Core page imports app.js
     t=1000 open #2 /events?topics=system-status
     = #2 opened 1000 ms after #1 closed
 #2 ← connected {"build":"b2"}  (Core redeployed)
-    t=1000 refresh banner shown
+    (nothing)
+    = "build" banners in the page: 1
     the banner:
-      div id="shingo-refresh-banner" role="status" style="position:fixed;top:0;left:0;right:0;z-index:var(--z-toast);background:#fff3cd;border-bottom:1px solid #ffe69c;color:#664d03;padding:0.6rem 1rem;display:flex;align-items:center;gap:0.75rem;justify-content:center;font-size:0.95rem;box-shadow:0 2px 6px rgba(0,0,0,0.08)"
-        span
+      div class="notice-banner notice-banner--info" role="status" data-banner="build"
+        span class="notice-text"
           "A new version is available."
-        button style="padding:0.3rem 0.9rem;background:#0d6efd;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600" listens=click
+        button class="notice-action" type="button" listens=click
           "Refresh"
-        button style="padding:0.3rem 0.7rem;background:transparent;color:#664d03;border:1px solid #c9a85e;border-radius:4px;cursor:pointer" listens=click
-          "Dismiss"
+        button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+          "×"
+#2 ← heartbeat {"build":"b2"} while it is up
+    (nothing)
+    = "build" banners in the page: 1, the same node
+click its Dismiss (×)
+    (nothing)
+    = "build" banners in the page: 0
+#2 ← heartbeat {"build":"b2"} after Dismiss
+    (nothing)
+    = "build" banners in the page: 1
+click its Refresh
+    t=1000 location.reload()
 a page module subscribes onSSE("order-update") after the stream is up
     t=1000 close #2
     t=1000 open #3 /events?topics=order-update%2Csystem-status
 #3 error: what the page shows while it is down
     t=1000 close #3
-    = elements in the page before the drop 7, 10 ms into it 7
+    = elements in the page before the drop 10, 10 ms into it 10

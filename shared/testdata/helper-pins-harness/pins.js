@@ -734,7 +734,7 @@ async function busPins() {
     const out = [
         '# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus',
         '# of shared/bus.js; it dispatches build-changed, and BC shows showRefreshBanner of shared/utils.js',
-        '# as the Core hub (app.js) does. One page (shared/bus.js, as the',
+        '# (a subscriber; Core\'s hub shows notice.js\'s banner, sse.core-hub.txt). One page (shared/bus.js, as the',
         '# operator station loads it), steps in order; a "second page" is a fresh one.',
         '',
     ];
@@ -774,7 +774,7 @@ async function busPins() {
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":10}', async () => s2.emit('heartbeat', { build: 'b1', seq: 10 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":12}', async () => s2.emit('heartbeat', { build: 'b1', seq: 12 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1"}  (no seq: Core)', async () => s2.emit('heartbeat', { build: 'b1' }));
-    await step('onSSE("build-changed", BC), BC calling showRefreshBanner() as the Core hub (app.js) does', async () => {
+    await step('onSSE("build-changed", BC), BC calling showRefreshBanner()', async () => {
         const note = handlerNote(r, 'BC');
         bus.onSSE('build-changed', function () { note.apply(null, arguments); m.showRefreshBanner(); });
     });
@@ -858,11 +858,23 @@ async function coreHubBusPins() {
     await step('#1 ← system-status {"fleet":"ok"}', async () => s1.emit('system-status', { fleet: 'ok' }));
     await step('#1 error', async () => { s1.fail(0); return waitForOpen(r, 70000); });
     const s2 = r.lastStream();
-    await step('#2 ← connected {"build":"b2"}  (Core redeployed)', async () => s2.emit('connected', { build: 'b2' }));
-    if (r.doc.getElementById('shingo-refresh-banner')) {
+    // The new-build banner is the notice's, under the key "build" (wave C,
+    // s2-hubs-core).
+    const shown = () => r.doc.querySelectorAll('[data-banner="build"]');
+    const said = () => '"build" banners in the page: ' + shown().length;
+    await step('#2 ← connected {"build":"b2"}  (Core redeployed)', async () => { s2.emit('connected', { build: 'b2' }); await r.advance(0); return said(); });
+    if (shown().length) {
         out.push('    the banner:');
-        out.push(dump(r.doc.getElementById('shingo-refresh-banner'), '      '));
+        out.push(dump(shown()[0], '      '));
     }
+    await step('#2 ← heartbeat {"build":"b2"} while it is up', async () => {
+        const before = shown()[0];
+        s2.emit('heartbeat', { build: 'b2' }); await r.advance(0);
+        return said() + (shown()[0] === before ? ', the same node' : ', a new node');
+    });
+    await step('click its Dismiss (×)', async () => { shown()[0].querySelector('[aria-label="Dismiss"]').click(); await r.advance(0); return said(); });
+    await step('#2 ← heartbeat {"build":"b2"} after Dismiss', async () => { s2.emit('heartbeat', { build: 'b2' }); await r.advance(0); return said(); });
+    await step('click its Refresh', async () => { shown()[0].querySelector('.notice-action').click(); });
     await step('a page module subscribes onSSE("order-update") after the stream is up', async () => { bus.onSSE('order-update', () => {}); });
     await step('#' + r.lastStream().n + ' error: what the page shows while it is down', async () => {
         const before = r.doc.querySelectorAll('*').length;
