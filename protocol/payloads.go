@@ -220,9 +220,9 @@ type OrderRequest struct {
 	// strict kanban admits the presses it supports and fences the rest, the
 	// futility tuple, the history row's reference and the labels name it. The
 	// Edge authors it once, at creation; blank is an order for no press (a
-	// person's move, a loader's, an older Edge's), which Core reads as it
-	// always has. ComplexOrderRequest carries the same field under the same tag
-	// and meaning.
+	// person's move, a loader's, an older Edge's), an outsider at every strict
+	// kanban. ComplexOrderRequest carries the same field under the same tag and
+	// meaning.
 	ProcessNode string `json:"process_node,omitempty"`
 	// RetrieveEmpty asks for an empty carrier rather than a full one. An older
 	// Edge's retrieve with this set is promoted to retrieve_empty at intake.

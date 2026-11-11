@@ -270,16 +270,18 @@ func (f *Finder) NoToteCarrier(need Need, p Plan) Plan {
 // ask is filling a group it may therefore not source from. Both come straight
 // off the order; neither is re-derived.
 //
-// SHARING IS THE DEFAULT, so a need with neither returns the zero fence and the
-// query renders without a CTE or an arm — byte-for-byte what it was before
-// MG3-1. Only an ask that names a process or carries a kanban origin can be
-// fenced at all.
+// EVERY NEED IS AN ASK (EmptyFence.Asking), so a need that names no press is an
+// outsider at every strict kanban on this scan, as it is at a strict group it
+// names (nodes.GroupFencesAsker): a loader's empty, a person's, an older
+// Edge's. Sharing is still the default everywhere else: a group that is not a
+// strict kanban fences nobody.
 //
-// A READ FAILURE RETURNS THE ZERO FENCE rather than refusing to source, and the
-// direction is chosen: the failure it restores is a carrier taken from a fenced
-// group, which the next tick corrects, against parking every empty pull in the
-// plant on a database blip. The alternative — treat an unreadable episode as
-// "fence everything" — would turn one bad read into a plant-wide stall.
+// A READ FAILURE RETURNS NO ORIGIN rather than refusing to source, and the
+// direction is chosen: the failure it restores is a carrier taken from the
+// group the ask fills, which the next tick corrects, against parking every
+// empty pull in the plant on a database blip. The alternative — treat an
+// unreadable episode as "fence everything" — would turn one bad read into a
+// plant-wide stall. The press and the ask come off the order, not the read.
 //
 // THE SOURCES RIDE THE SAME READ. A keeper's ask names no source (its order stays
 // plant-scoped, TestKanbanPin_TheKeepersAskIsBornWithNoSource), and the group it
@@ -287,7 +289,7 @@ func (f *Finder) NoToteCarrier(need Need, p Plan) Plan {
 // fence and no scoped tier does.
 func (f *Finder) emptyFenceFor(need Need) bins.EmptyFence {
 	ep := f.keeperAsk(need)
-	return bins.EmptyFence{ProcessNode: need.ProcessNode, OriginGroup: ep.Group, Sources: ep.Sources}
+	return bins.EmptyFence{ProcessNode: need.ProcessNode, OriginGroup: ep.Group, Sources: ep.Sources, Asking: true}
 }
 
 // keeperAsk is the need's open kanban episode: the read Pick has already made

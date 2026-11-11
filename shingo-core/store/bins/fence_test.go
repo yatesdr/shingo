@@ -110,6 +110,7 @@ func TestFence_SharingIsTheDefault(t *testing.T) {
 	}{
 		{"no fence at all", bins.EmptyFence{}},
 		{"an asker with a process, group NOT strict", bins.EmptyFence{ProcessNode: "SHARE-OUTSIDER"}},
+		{"an ask that names no press, group NOT strict", bins.EmptyFence{Asking: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := bins.FindEmptyOfType(db.DB, "SHARE-45x58", "", 0, tc.fence, reservations.Anyone, domain.Height{})
@@ -162,6 +163,50 @@ func TestFence_StrictGroupHidesFromOutsidersAndNotFromSupported(t *testing.T) {
 				"anywhere, and the safe reading of that is 'not for you'", got, outside)
 		}
 	})
+
+	t.Run("an ask that names no press is an outsider", func(t *testing.T) {
+		// An order's ask with no press and no group to fill (a loader's, a
+		// person's): the answer it gets when it names the group.
+		got, err := bins.FindEmptyOfType(db.DB, "STRICT-45x58", "", 0,
+			bins.EmptyFence{Asking: true}, reservations.Anyone, domain.Height{})
+		testutil.MustNoErr(t, err, "find")
+		if got == nil || got.ID != outside {
+			t.Errorf("got %v, want %d — an ask naming no press is supported nowhere, "+
+				"on the plant-wide scan as at the group it names", got, outside)
+		}
+	})
+
+	t.Run("a read with no order in hand sees it", func(t *testing.T) {
+		got, err := bins.FindEmptyOfType(db.DB, "STRICT-45x58", "", 0,
+			bins.EmptyFence{}, reservations.Anyone, domain.Height{})
+		testutil.MustNoErr(t, err, "find")
+		if got == nil || got.ID != inside {
+			t.Errorf("got %v, want the group's carrier %d — the zero fence is no ask, and "+
+				"fences nothing", got, inside)
+		}
+	})
+}
+
+// THE KEEPER'S TOP-OFF IS THE SAME ASK: it names no press, and its fence was
+// always rendered by the group it fills (OriginGroup), so marking it an ask
+// changes nothing it finds. At a strict group it fills it is caught by rule (ii);
+// at another strict group it is an outsider; it reaches outside both.
+func TestFence_TheKeepersTopOffIsUnchangedByTheAsk(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	grpID, inside, outside := fenceFixture(t, db, "KTOP", "KTOP-45x58", true)
+	supportProcess(t, db, grpID, "KTOP-PRESS")
+	for _, filling := range []string{"KTOP-GRP", "KTOP-ANOTHER-GRP"} {
+		for _, asking := range []bool{false, true} {
+			got, err := bins.FindEmptyOfType(db.DB, "KTOP-45x58", "", 0,
+				bins.EmptyFence{OriginGroup: filling, Asking: asking}, reservations.Anyone, domain.Height{})
+			testutil.MustNoErr(t, err, "find")
+			if got == nil || got.ID != outside {
+				t.Errorf("a keeper filling %s (asking %v) got %v, want %d outside the strict group (%d inside)",
+					filling, asking, got, outside, inside)
+			}
+		}
+	}
 }
 
 // A GROUP THAT SUPPORTS NOBODY FENCES EVERYBODY, which is right rather than

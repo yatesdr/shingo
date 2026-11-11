@@ -35,6 +35,7 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - An index press can use Robot 3: a third trip brings the back its carrier when Robot 2 lifts it
 - The index press's mode is called Index Swap on every screen and in every refusal
 - Core stops guessing an order's press for a tops & bottoms pull and a cancelled cart's return (once every Edge names it)
+- An empty asked for no press, a loader's included, takes nothing from a strict kanban, wherever it searches (once every Edge names it)
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
 - A robot's lift clears the spot it lifted from whichever order it belongs to, and only for the cart it lifted
 

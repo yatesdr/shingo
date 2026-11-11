@@ -213,27 +213,27 @@ func TestEmptyFence_ReachesThePlantWideSearch(t *testing.T) {
 		want bins.EmptyFence
 	}{
 		{
-			name: "an ordinary ask fences nothing",
+			name: "an ask that names no press is an outsider at every strict kanban",
 			need: SourceNeed{DeliveryNode: "FN-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty},
-			want: bins.EmptyFence{},
+			want: bins.EmptyFence{Asking: true},
 		},
 		{
 			name: "a press carries its process node — rule (i)'s input",
 			need: SourceNeed{DeliveryNode: "FN-DEST", PayloadCode: "PANEL-A", Intent: IntentEmpty,
 				ProcessNode: "FN-PRESS-1"},
-			want: bins.EmptyFence{ProcessNode: "FN-PRESS-1"},
+			want: bins.EmptyFence{ProcessNode: "FN-PRESS-1", Asking: true},
 		},
 		{
 			name: "a keeper top-off carries its own group — rule (ii)'s input",
 			need: SourceNeed{DeliveryNode: "FN-DEST", Intent: IntentEmpty,
 				OriginID: "11111111-2222-3333-4444-555555555555"},
-			want: bins.EmptyFence{OriginGroup: "FN-KEEPER-GRP"},
+			want: bins.EmptyFence{OriginGroup: "FN-KEEPER-GRP", Asking: true},
 		},
 		{
 			name: "both, when both are known",
 			need: SourceNeed{DeliveryNode: "FN-DEST", Intent: IntentEmpty,
 				ProcessNode: "FN-PRESS-1", OriginID: "11111111-2222-3333-4444-555555555555"},
-			want: bins.EmptyFence{ProcessNode: "FN-PRESS-1", OriginGroup: "FN-KEEPER-GRP"},
+			want: bins.EmptyFence{ProcessNode: "FN-PRESS-1", OriginGroup: "FN-KEEPER-GRP", Asking: true},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
