@@ -1864,6 +1864,12 @@ claims:
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_001
     outbound_staging: SLN_011
+    # A TOOL CHANGE ON A TWO-ROBOT CELL. Changing over from this style clears
+    # ALN_001 at START (one robot, no Ready press), holds the PANEL-C cart at
+    # SLN_001 (this claim's inbound staging) until the operator's Tooling done,
+    # then sets it down. ALN_002 is not marked: its part carries over, so it is
+    # left as it stands. The press's marks above are the index-press case.
+    changeover_evac_nodes: [ALN_001]
   - core_node: ALN_002
     style: WELD-1-RUN
     role: produce
