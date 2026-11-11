@@ -84,12 +84,14 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 
 	steps := BuildSequentialBackfillSteps(claim)
 	nodeID := node.ID
-	// ATTRIBUTED, and it was not. This order is the plant continuing to serve the
-	// demand that produced Order A, so it belongs to that demand's episode — see
-	// cellEpisodeOrigin for what an unattributed one costs downstream. It JOINS
-	// and never mints: a backfill is never itself the origin of a demand.
+	// ATTRIBUTED to the demand that produced Order A, whose plan counted this
+	// order as its follow-on (SwapDispatch.FollowOns): it carries Order A's own
+	// origin (liftingLegOrigin). It joined the cell's open episode, which
+	// counted it again as the demand asked a second time: one rerequest on
+	// every healthy cycle. See cellEpisodeOrigin for what an unattributed order
+	// costs downstream.
 	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, claim.CoreNodeName, steps,
-		e.cellEpisodeOrigin(node, claim)) // delivery_node = CoreNodeName → resets UOP
+		e.liftingLegOrigin(order)) // delivery_node = CoreNodeName → resets UOP
 	if err != nil {
 		log.Printf("sequential backfill for node %s: %v", node.Name, err)
 		return

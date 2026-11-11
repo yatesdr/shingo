@@ -152,6 +152,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		return action
 	}
 	markChangeoverRefillEmpty(&action, diff.FromClaim, diff.ToClaim)
+	action.FollowOns = len(followOnPositions(diff.ToClaim.Positions(), actionLegs(action)...))
 	return action
 }
 

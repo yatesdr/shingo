@@ -45,6 +45,12 @@ type SwapDispatch struct {
 	// order.
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
+
+	// FollowOns is how many orders the pair leaves to be made after a lift:
+	// one per position its legs lift from and set nothing down on
+	// (followOnPositions), a sequential line's backfill. The plans count them
+	// (OrderCount), so the episode expects them.
+	FollowOns int `json:",omitempty"`
 }
 
 // BuildSwapDispatch validates per-mode required fields and returns the
@@ -71,6 +77,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 	// where a leg ends; anything that restates it by hand can drift out of step
 	// with them, and did — see DeliveryNodeA.
 	disp.DeliveryNodeA = finalDropoff(disp.StepsA)
+	disp.FollowOns = len(followOnPositions(claim.Positions(), disp.StepsA, disp.StepsB))
 	return disp, nil
 }
 

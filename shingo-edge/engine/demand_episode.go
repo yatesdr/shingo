@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -82,8 +83,10 @@ func (e *Engine) joinOpenCellEpisode(key, trigger string) (string, bool, error) 
 	return joined.OriginID, true, nil
 }
 
-// cellEpisodeOrigin is the origin a sequential backfill carries: its cell's
-// open episode, joined, or nothing.
+// cellEpisodeOrigin is the origin a release of the cell's carrier carries
+// (commitMaterial): its cell's open episode, joined, or nothing. The
+// sequential backfill carried it too, until its plan counted it as a
+// follow-on and it took its removal's own origin (liftingLegOrigin).
 //
 // ── WHY THIS EXISTS ───────────────────────────────────────────────────────
 //
@@ -739,4 +742,21 @@ func (e *Engine) resendUnsentOpen(ep *store.OpenOrigin) {
 // clearing it would throw that away to save nothing.
 func (e *Engine) closeChangeoverEpisode(changeoverID int64, reason, closedBy string) {
 	e.closeEpisode(protocol.ChangeoverEpisodeKey(e.cfg.StationID(), changeoverID), reason, closedBy)
+}
+
+// liftingLegOrigin is the origin a follow-on carries: the lifting leg's own,
+// attached, never a join of the cell's open episode. The follow-on is part of
+// the demand that leg serves, and its plan already counted it (FollowOns), so a
+// join would count it a second time as the demand asked again. A leg that
+// belongs to no demand passes that on. A leg with no origin passes none, and
+// says so: Core classifies the follow-on as it classified the leg.
+func (e *Engine) liftingLegOrigin(leg *domain.Order) ordermgr.Origin {
+	switch {
+	case leg.OriginID != "":
+		return ordermgr.Attached(leg.OriginID)
+	case leg.OriginClass == protocol.OriginClassNoDemand:
+		return ordermgr.NoDemand()
+	}
+	e.logFn("demand_episode: order %d carries no origin, so its follow-on carries none", leg.ID)
+	return ordermgr.Origin{}
 }

@@ -75,6 +75,7 @@ func (p *ConsumePlan) OrderCount() int {
 		if p.Dispatch.StepsB != nil {
 			n++
 		}
+		n += p.Dispatch.FollowOns
 	}
 	return n
 }

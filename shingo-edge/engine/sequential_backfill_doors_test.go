@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strconv"
 	"testing"
 
 	"shingo/protocol"
@@ -114,4 +115,62 @@ func TestSequentialEmptyBin_RemovalMintsOneBackfill(t *testing.T) {
 	if rt.StagedOrderID == nil || *rt.StagedOrderID != after[0] {
 		t.Errorf("StagedOrderID = %v, want the backfill %d", rt.StagedOrderID, after[0])
 	}
+}
+
+// TestSequentialBackfill_IsCountedAndCarriesItsRemovalsOrigin: the removal's
+// plan counts the backfill it leaves to be made (SwapDispatch.FollowOns), so
+// the episode the REQUEST opens expects two orders, and the backfill made at
+// the removal's lift carries the removal's own origin. It joined the cell's
+// open episode instead: the episode expected one, received two, and counted a
+// rerequest on every healthy cycle.
+func TestSequentialBackfill_IsCountedAndCarriesItsRemovalsOrigin(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	nodeID := seedLineSwapClaim(t, db, "SEQO", protocol.SwapModeSequential)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	if _, err := eng.RequestNodeMaterial(nodeID, 1); err != nil {
+		t.Fatalf("consume REQUEST on a sequential cell: %v", err)
+	}
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "runtime")
+	if rt.ActiveOrderID == nil {
+		t.Fatal("fixture: the REQUEST left no active order on the cell")
+	}
+	removal, err := db.GetOrder(*rt.ActiveOrderID)
+	testutil.MustNoErr(t, err, "the removal")
+	open, err := db.ListOpenDemandOrigins()
+	testutil.MustNoErr(t, err, "open episodes")
+	if len(open) != 1 || removal.OriginID != open[0].OriginID {
+		t.Fatalf("fixture: open episodes %+v, removal origin %q; want the REQUEST's one episode on the removal", open, removal.OriginID)
+	}
+	if e := open[0].ExpectedOrders; e == nil || *e != 2 {
+		t.Errorf("the episode expects %s orders, want 2: the removal and the backfill it leaves", fmtExpected(e))
+	}
+
+	driveToInTransit(t, eng, removal.ID, nodeID)
+
+	after := ordersDroppingAt(t, db, "SEQO-LINE")
+	if len(after) != 1 {
+		t.Fatalf("%d backfills, want 1", len(after))
+	}
+	backfill, err := db.GetOrder(after[0])
+	testutil.MustNoErr(t, err, "the backfill")
+	if backfill.OriginID != removal.OriginID || backfill.OriginClass != string(protocol.OriginClassAttached) {
+		t.Errorf("the backfill carries origin %q (%s), want the removal's %q, attached",
+			backfill.OriginID, backfill.OriginClass, removal.OriginID)
+	}
+	open, err = db.ListOpenDemandOrigins()
+	testutil.MustNoErr(t, err, "open episodes after")
+	if len(open) != 1 || open[0].RerequestCount != 0 {
+		t.Errorf("after the backfill the episodes are %+v, want the one, asked again 0 times", open)
+	}
+}
+
+func fmtExpected(e *int) string {
+	if e == nil {
+		return "unknown"
+	}
+	return strconv.Itoa(*e)
 }
