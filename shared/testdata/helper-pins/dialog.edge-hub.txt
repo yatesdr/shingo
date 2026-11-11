@@ -1,0 +1,48 @@
+# confirm / prompt — edge-hub: confirm / prompt of shingo-edge/www/static/js/shingoedge.js
+# a fresh page per case; #opener has focus when the dialog opens. "after 60 s" is the
+# fake clock moved a minute on: a dialog still pending then never resolves by itself.
+
+## confirm
+confirm(msg): the DOM it writes: focus #opener
+    div class="confirm-overlay"
+      div class="confirm-box"
+        html "<p>Delete &lt;b&gt;BIN-1&lt;/b&gt; &amp; &quot;its&quot; tags?</p>"
+        button class="btn" onclick
+          "Cancel"
+        button class="btn btn-danger" onclick
+          "Confirm"
+confirm: OK: resolves true, no overlay left, focus #opener
+confirm: Cancel: resolves false, no overlay left, focus #opener
+confirm: Escape on body, after 60 s: pending, 1 overlay(s) left: "confirm-overlay"
+confirm: Escape on its OK button, after 60 s: pending, 1 overlay(s) left: "confirm-overlay"
+confirm: the page opened and hid a modal with this surface's showModal first, then Escape on body, after 60 s: pending, 1 overlay(s) left: "confirm-overlay"
+confirm: press and click the overlay (backdrop), after 60 s: pending, 1 overlay(s) left: "confirm-overlay"
+confirm: a second one opened while the first is open: 2 overlays; OK on the second: first pending, second resolves true; then Cancel on the first: first resolves false, no overlay left
+confirm: OK clicked twice: resolves true, no overlay left
+confirm(non-string message 42): the message node:
+    html "<p>42</p>"
+
+## prompt
+prompt(msg): the DOM it writes, focus after a tick: focus at open #opener, after a tick input.form-input
+    div class="confirm-overlay"
+      div class="confirm-box"
+        html "<p>Delete &lt;b&gt;BIN-1&lt;/b&gt; &amp; &quot;its&quot; tags?</p>"
+        input class="form-input" type="text" style="margin:0.5rem 0 1rem;display:block;width:100%" listens=keydown
+        button class="btn" onclick
+          "Cancel"
+        button class="btn btn-primary" onclick
+          "OK"
+prompt(msg, {type:"number", min:1, max:9, value:5}): the input: type "number", min "1", max "9", value "5"
+prompt(msg, {type:"date"}): the input type: "text"
+prompt: OK untouched, no default: resolves "", no overlay left, focus body
+prompt: OK untouched, {value:"5"}: resolves "5"
+prompt: OK untouched, {value:0}: resolves "0"
+prompt: {value:"5"}, cleared to empty, OK: resolves ""
+prompt: typed "abc", OK: resolves "abc"
+prompt: typed "abc", Enter in the input: resolves "abc", no overlay left
+prompt: typed "abc", Escape in the input: resolves null, no overlay left
+prompt: typed "abc", Cancel: resolves null, no overlay left
+prompt: Escape on body, after 60 s: pending, 1 overlay(s) left: "confirm-overlay"
+prompt: press and click the overlay (backdrop), after 60 s: pending, 1 overlay(s) left: "confirm-overlay"
+prompt: over an open modal (this surface's showModal), Escape in the input: resolves null, the modal underneath open
+prompt: a second one opened while the first is open: 2 overlays, focus input.form-input in overlay 2; Enter in the first: first resolves "one", second pending, 1 overlay(s) left: "confirm-overlay"

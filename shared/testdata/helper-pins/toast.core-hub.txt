@@ -1,0 +1,43 @@
+# toast — core-hub: toast of shingo-core/www/static/app.js
+# a fresh page per case; nothing in the page markup holds a toast container.
+
+toast("Saved", "success"): returns, and the DOM it writes: returns the toast element (same node)
+    div id="toast-container" style="position:fixed;top:1rem;right:1rem;display:flex;flex-direction:column;gap:0.5rem;z-index:var(--z-toast);pointer-events:none"
+      div class="toast toast-success" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--success);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+        "Saved"
+level (none): the toast node:
+    div class="toast toast-info" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--info);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "Msg"
+level "info": the toast node:
+    div class="toast toast-info" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--info);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "Msg"
+level "success": the toast node:
+    div class="toast toast-success" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--success);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "Msg"
+level "warning": the toast node:
+    div class="toast toast-warning" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--warning);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "Msg"
+level "error": the toast node:
+    div class="toast toast-error" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--danger);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "Msg"
+level "bogus": the toast node:
+    div class="toast toast-bogus" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--info);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "Msg"
+lifetime, level (none): removed at 3200 ms
+lifetime, level "success": removed at 3200 ms
+lifetime, level "warning": removed at 3200 ms
+lifetime, level "error": removed at 5000 ms
+lifetime, level "bogus": removed at 3200 ms
+lifetime, "error", {sticky:false}: removed at 5000 ms
+{sticky:true}, "error": the node, after 60 s, then a click on it: still there after 60 s; a click removes it
+    div class="toast toast-error" title="Click to dismiss" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--danger);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem;cursor:pointer" listens=click
+      "Msg"
+three toasts: the container's children, in order: "one" toast toast-info | "two" toast toast-error | "three" toast toast-success (1 child(ren) of body)
+twelve toasts at once: how many are in the DOM: 12 toasts, first "n0"
+message with markup <img src=x onerror=alert(1)> & "q": the toast's children:
+    div class="toast toast-error" style="padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--danger);box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem"
+      "<img src=x onerror=alert(1)> & \"q\""
+toast(null): ""
+toast(42): "42"
+toast(an Error("boom")): "TypeError: boom"
+toast({error:"x"}): "[object Object]"

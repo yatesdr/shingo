@@ -1,0 +1,41 @@
+# modal — edge-hub: showModal / hideModal of shingo-edge/www/static/js/shingoedge.js
+# a fresh page per case: #m1 and #m2 are .modal-overlay (m1 holds a text input with
+# value attribute "dflt", a checkbox, a 3-option select, a textarea "area-dflt" and a
+# hidden input "keep"); #opener has focus before every case.
+
+show m1: m1 open, m2 closed, body overflow "hidden", focus #opener
+show m1, hide m1: m1 closed, m2 closed, body overflow "", focus #opener
+hide on a modal never shown: m1 closed, m2 closed, body overflow "", focus #opener
+show missing id: ok
+hide missing id: ok
+show unknown opts are ignored ({bogus:1}): m1 open, m2 closed, body overflow "hidden", focus #opener
+
+## fields on hide
+typed, then hide m1: text "dflt", checkbox false, select index 0, textarea "area-dflt", hidden "changed"
+typed, then hide m1 {preserveState:true}: text "typed", checkbox true, select index 2, textarea "typed-area", hidden "changed"
+
+## Escape
+show m1, Escape on body: m1 open, m2 closed, body overflow "hidden", focus #opener
+show m1, Escape in its text input: m1 open, m2 closed, body overflow "hidden", focus #opener
+show m1, typed, Escape: fields: text "typed", checkbox true, select index 2, textarea "typed-area", hidden "changed"
+show m1, show m2, Escape: m1 open, m2 open, body overflow "hidden", focus #opener
+show m1, show m2, Escape, Escape: m1 open, m2 open, body overflow "hidden", focus #opener
+show m2, show m1 (m1 first in the document), Escape: m1 open, m2 open, body overflow "hidden", focus #opener
+another key (Enter) on body: m1 open, m2 closed, body overflow "hidden", focus #opener
+
+## backdrop
+show m1, press and click the overlay: m1 open, m2 closed, body overflow "hidden", focus #opener, backdropclose events 0
+m1 has data-backdrop-close, show, press and click the overlay: m1 closed, m2 closed, body overflow "hidden", focus #opener, backdropclose events 1
+m1 has data-backdrop-close, page called installBackdropClose(), press and click the overlay: m1 closed, m2 closed, body overflow "hidden", focus #opener, backdropclose events 1
+m1 has data-backdrop-close, page called installBackdropClose(), press in the card, release on the overlay: m1 open, m2 closed, body overflow "hidden", focus #opener, backdropclose events 0
+m1 has data-backdrop-close, page called installBackdropClose(), click in the card: m1 open, m2 closed, body overflow "hidden", focus #opener, backdropclose events 0
+m1 has data-backdrop-close, page called installBackdropClose(), typed, backdrop close: fields: text "typed", checkbox true, select index 2, textarea "typed-area", hidden "changed"
+show m1 {closeOnBackdrop:true}, press and click the overlay: m1 open, m2 closed, body overflow "hidden", focus #opener, backdropclose events 0
+show m1 {closeOnBackdrop:true}, click in the card: m1 open, m2 closed, body overflow "hidden", focus #opener, backdropclose events 0
+show m1 {closeOnBackdrop:true}, press in the card, release on the overlay: m1 open, m2 closed, body overflow "hidden", focus #opener, backdropclose events 0
+
+## scroll lock (body overflow)
+show m1, show m2, hide m1: m1 closed, m2 open, body overflow "hidden", focus #opener
+show m1, show m2, hide m1, hide m2: m1 closed, m2 closed, body overflow "", focus #opener
+show m1 twice, hide once: m1 closed, m2 closed, body overflow "", focus #opener
+page body overflow "auto" before: show m1, hide m1: m1 closed, m2 closed, body overflow "", focus #opener

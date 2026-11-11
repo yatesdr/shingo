@@ -1,0 +1,97 @@
+# api — edge-hub: the HTTP helpers of shingo-edge/www/static/js/shingoedge.js
+# a fresh page per call; "resolves"/"rejects" is the promise the page awaits.
+
+shape: api is an object {get, post, put, patch, del, postDetailed}; handleResponse is module-private
+
+## the request each verb sends (answered 200 {})
+api.get(url): /api/x (no init: GET)
+api.post(url, {a:1}): /api/x "POST", headers {"Content-Type":"application/json"}, body "{\"a\":1}"
+api.post(url): /api/x "POST", headers {"Content-Type":"application/json"}, body none
+api.put(url, {a:1}): /api/x "PUT", headers {"Content-Type":"application/json"}, body "{\"a\":1}"
+api.patch(url, {a:1}): /api/x "PATCH", headers {"Content-Type":"application/json"}, body "{\"a\":1}"
+api.del(url): /api/x "DELETE", headers none, body none
+api.postDetailed(url, {a:1}): /api/x "POST", headers {"Content-Type":"application/json"}, body "{\"a\":1}"
+
+## api.get: every answer
+200 JSON object: resolves {"id":7,"name":"PRESS-1"}, no toast
+200 JSON {"ok":false,"error":"refused"}: resolves {"error":"refused","ok":false}, no toast
+200 empty body: rejects SyntaxError, no toast
+204 no content: rejects SyntaxError, no toast
+200 not JSON ("ok"): rejects SyntaxError, no toast
+400 Edge writeError / Core jsonError {"error"}: rejects string "process not found", no toast
+400 Edge writeAdvisoryRefusal {"error","notice"}: rejects string "changeover already running", no toast
+409 Edge writeErrorWithExit {"error","exit"}: rejects string "lane held", no toast
+400 Core configRefusal {"error","errors","ok"}: rejects string "Port must be a number.", no toast
+409 Core kanbanHeld {"drain","error","needs_force"}: rejects string "position holds bins", no toast
+400 JSON {"error":""}: rejects string "{\"error\":\"\"}\n", no toast
+400 JSON with no error key: rejects string "{\"needs_force\":true}\n", no toast
+400 JSON whose error is an object: rejects string "{\"error\":{\"code\":7}}\n", no toast
+400 JSON null: rejects string "null\n", no toast
+400 plain text (http.Error): rejects string "invalid bin type\n", no toast
+400 empty body: rejects string "", no toast
+500 JSON {"error"}: rejects string "database not answering", no toast
+502 HTML from a proxy: rejects string "<html><body>Bad Gateway</body></html>", no toast
+no answer (fetch rejects TypeError "Failed to fetch"): rejects TypeError "Failed to fetch", no toast
+
+## api.post: every answer
+200 JSON object: resolves {"id":7,"name":"PRESS-1"}, no toast
+200 JSON {"ok":false,"error":"refused"}: resolves {"error":"refused","ok":false}, no toast
+200 empty body: rejects SyntaxError, no toast
+204 no content: rejects SyntaxError, no toast
+200 not JSON ("ok"): rejects SyntaxError, no toast
+400 Edge writeError / Core jsonError {"error"}: rejects string "process not found", no toast
+400 Edge writeAdvisoryRefusal {"error","notice"}: rejects string "changeover already running", no toast
+409 Edge writeErrorWithExit {"error","exit"}: rejects string "lane held", no toast
+400 Core configRefusal {"error","errors","ok"}: rejects string "Port must be a number.", no toast
+409 Core kanbanHeld {"drain","error","needs_force"}: rejects string "position holds bins", no toast
+400 JSON {"error":""}: rejects string "{\"error\":\"\"}\n", no toast
+400 JSON with no error key: rejects string "{\"needs_force\":true}\n", no toast
+400 JSON whose error is an object: rejects string "{\"error\":{\"code\":7}}\n", no toast
+400 JSON null: rejects string "null\n", no toast
+400 plain text (http.Error): rejects string "invalid bin type\n", no toast
+400 empty body: rejects string "", no toast
+500 JSON {"error"}: rejects string "database not answering", no toast
+502 HTML from a proxy: rejects string "<html><body>Bad Gateway</body></html>", no toast
+no answer (fetch rejects TypeError "Failed to fetch"): rejects TypeError "Failed to fetch", no toast
+
+## api.del: every answer
+200 JSON object: resolves {"id":7,"name":"PRESS-1"}, no toast
+200 JSON {"ok":false,"error":"refused"}: resolves {"error":"refused","ok":false}, no toast
+200 empty body: rejects SyntaxError, no toast
+204 no content: rejects SyntaxError, no toast
+200 not JSON ("ok"): rejects SyntaxError, no toast
+400 Edge writeError / Core jsonError {"error"}: rejects string "process not found", no toast
+400 Edge writeAdvisoryRefusal {"error","notice"}: rejects string "changeover already running", no toast
+409 Edge writeErrorWithExit {"error","exit"}: rejects string "lane held", no toast
+400 Core configRefusal {"error","errors","ok"}: rejects string "Port must be a number.", no toast
+409 Core kanbanHeld {"drain","error","needs_force"}: rejects string "position holds bins", no toast
+400 JSON {"error":""}: rejects string "{\"error\":\"\"}\n", no toast
+400 JSON with no error key: rejects string "{\"needs_force\":true}\n", no toast
+400 JSON whose error is an object: rejects string "{\"error\":{\"code\":7}}\n", no toast
+400 JSON null: rejects string "null\n", no toast
+400 plain text (http.Error): rejects string "invalid bin type\n", no toast
+400 empty body: rejects string "", no toast
+500 JSON {"error"}: rejects string "database not answering", no toast
+502 HTML from a proxy: rejects string "<html><body>Bad Gateway</body></html>", no toast
+no answer (fetch rejects TypeError "Failed to fetch"): rejects TypeError "Failed to fetch", no toast
+
+## api.postDetailed (the door that does not throw): every answer
+200 JSON object: resolves {"ok":true,"status":200,"data":{"id":7,"name":"PRESS-1"},"error":"","fieldErrors":[],"warnings":[]}, no toast
+200 JSON {"ok":false,"error":"refused"}: resolves {"ok":true,"status":200,"data":{"error":"refused","ok":false},"error":"refused","fieldErrors":[],"warnings":[]}, no toast
+200 empty body: resolves {"ok":true,"status":200,"data":null,"error":"","fieldErrors":[],"warnings":[]}, no toast
+204 no content: resolves {"ok":true,"status":204,"data":null,"error":"","fieldErrors":[],"warnings":[]}, no toast
+200 not JSON ("ok"): resolves {"ok":true,"status":200,"data":null,"error":"","fieldErrors":[],"warnings":[]}, no toast
+400 Edge writeError / Core jsonError {"error"}: resolves {"ok":false,"status":400,"data":{"error":"process not found"},"error":"process not found","fieldErrors":[],"warnings":[]}, no toast
+400 Edge writeAdvisoryRefusal {"error","notice"}: resolves {"ok":false,"status":400,"data":{"error":"changeover already running","notice":true},"error":"changeover already running","fieldErrors":[],"warnings":[]}, no toast
+409 Edge writeErrorWithExit {"error","exit"}: resolves {"ok":false,"status":409,"data":{"error":"lane held","exit":{"kind":"release","url":"/api/x/release","label":"Release"}},"error":"lane held","fieldErrors":[],"warnings":[]}, no toast
+400 Core configRefusal {"error","errors","ok"}: resolves {"ok":false,"status":400,"data":{"error":"Port must be a number.","errors":{"port":"Port must be a number."},"ok":false},"error":"Port must be a number.","fieldErrors":[],"warnings":[]}, no toast
+409 Core kanbanHeld {"drain","error","needs_force"}: resolves {"ok":false,"status":409,"data":{"drain":[],"error":"position holds bins","needs_force":true},"error":"position holds bins","fieldErrors":[],"warnings":[]}, no toast
+400 JSON {"error":""}: resolves {"ok":false,"status":400,"data":{"error":""},"error":"{\"error\":\"\"}\n","fieldErrors":[],"warnings":[]}, no toast
+400 JSON with no error key: resolves {"ok":false,"status":400,"data":{"needs_force":true},"error":"{\"needs_force\":true}\n","fieldErrors":[],"warnings":[]}, no toast
+400 JSON whose error is an object: resolves {"ok":false,"status":400,"data":{"error":{"code":7}},"error":{"code":7},"fieldErrors":[],"warnings":[]}, no toast
+400 JSON null: resolves {"ok":false,"status":400,"data":null,"error":"null\n","fieldErrors":[],"warnings":[]}, no toast
+400 plain text (http.Error): resolves {"ok":false,"status":400,"data":null,"error":"invalid bin type\n","fieldErrors":[],"warnings":[]}, no toast
+400 empty body: resolves {"ok":false,"status":400,"data":null,"error":"HTTP 400","fieldErrors":[],"warnings":[]}, no toast
+500 JSON {"error"}: resolves {"ok":false,"status":500,"data":{"error":"database not answering"},"error":"database not answering","fieldErrors":[],"warnings":[]}, no toast
+502 HTML from a proxy: resolves {"ok":false,"status":502,"data":null,"error":"<html><body>Bad Gateway</body></html>","fieldErrors":[],"warnings":[]}, no toast
+no answer (fetch rejects TypeError "Failed to fetch"): resolves {"ok":false,"status":0,"data":null,"error":"TypeError: Failed to fetch","fieldErrors":[],"warnings":[]}, no toast

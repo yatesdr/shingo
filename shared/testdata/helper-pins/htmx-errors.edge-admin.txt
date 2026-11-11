@@ -1,0 +1,30 @@
+# htmx request errors — Edge admin (shingo-edge/www/static and templates, tests and .min.js left out)
+
+htmx.min.js version: 2.0.4
+htmx default responseHandling (no page overrides it): [{code:"204",swap:false},{code:"[23]..",swap:true},{code:"[45]..",swap:false,error:true}]
+htmx logs an error event's error with console.error: yes
+htmx.config written by: nothing
+<meta name="htmx-config"> in: no template
+hx-on attributes in: nothing
+
+## who listens for an htmx error event
+htmx:responseError: nobody
+htmx:sendError: nobody
+htmx:sseError: nobody
+htmx:timeout: nobody
+htmx:swapError: nobody
+htmx:targetError: nobody
+htmx:onLoadError: nobody
+
+## every htmx: listener on Edge admin
+shingo-edge/www/static/js/pages/changeover.js: htmx:confirm
+shingo-edge/www/static/js/pages/changeover.js: htmx:beforeSwap
+shingo-edge/www/static/js/pages/changeover.js: htmx:afterSwap
+shingo-edge/www/static/js/pages/changeover.js: htmx:afterSettle
+shingo-edge/www/static/js/pages/orders.js: htmx:afterSwap
+shared/utils.js: htmx:afterSwap
+shared/utils.js: htmx:afterSwap
+
+## so, on a partial refresh (hx-get) that answers 4xx/5xx, or never answers
+4xx/5xx: htmx does not swap (responseHandling [45].. swap:false error:true) and fires htmx:responseError; nothing on the page listens, so the panel keeps its old content and the operator is shown nothing.
+no answer: htmx fires htmx:sendError (and htmx:afterRequest); nothing on the page listens, so the same.

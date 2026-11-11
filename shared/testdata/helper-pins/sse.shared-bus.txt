@@ -1,0 +1,149 @@
+# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus
+# showRefreshBanner of shared/utils.js. One page (shared/utils.js alone, as the operator
+# station loads it), steps in order; a "second page" is a fresh one.
+
+onSSE("order-update", A); onSSE("order-update", B); onSSE("connected", C); onSSE("disconnected", D) — before a microtask
+    t=0 streams open before the microtask: 0
+    t=0 open #1 /events?topics=order-update
+    #1 listens for: connected, heartbeat, order-update
+onSSE("order-update", "not a function")
+    t=0 returns a function
+#1 ← connected {"build":"b1","seq":5}
+    t=0 handler C({"build":"b1","seq":5}, <event>)
+#1 ← order-update {"id":1} id 6
+    t=0 handler A({"id":1}, <event>)
+    t=0 handler B({"id":1}, <event>)
+#1 ← order-update "not json"
+    t=0 console.error onSSE parse order-update SyntaxError
+onSSE("order-update", T that throws) then #1 ← order-update {"id":2}, then T unsubscribed
+    t=0 handler A({"id":2}, <event>)
+    t=0 handler B({"id":2}, <event>)
+    t=0 console.error onSSE handler order-update Error
+onSSE("bins", E) after the stream is up
+    t=0 close #1
+    t=0 open #2 /events?topics=bins%2Corder-update
+A unsubscribed (offA())
+    (nothing)
+#2 ← connected {"build":"b1","seq":10}; ← order-update {"id":3}
+    t=0 handler C({"build":"b1","seq":10}, <event>)
+    t=0 handler B({"id":3}, <event>)
+onSSE("stream-gap", G); onSSE("heartbeat", H)
+    (nothing)
+#2 ← heartbeat {"build":"b1","seq":10}
+    t=0 handler H({"build":"b1","seq":10}, <event>)
+#2 ← heartbeat {"build":"b1","seq":12}
+    t=0 handler G(null, null)
+    t=0 handler H({"build":"b1","seq":12}, <event>)
+#2 ← heartbeat {"build":"b1"}  (no seq: Core)
+    t=0 handler H({"build":"b1"}, <event>)
+#2 ← heartbeat {"build":"b2","seq":12}  (a new build)
+    t=0 handler H({"build":"b2","seq":12}, <event>)
+    t=0 refresh banner shown
+    the banner:
+      div id="shingo-refresh-banner" role="status" style="position:fixed;top:0;left:0;right:0;z-index:var(--z-toast);background:#fff3cd;border-bottom:1px solid #ffe69c;color:#664d03;padding:0.6rem 1rem;display:flex;align-items:center;gap:0.75rem;justify-content:center;font-size:0.95rem;box-shadow:0 2px 6px rgba(0,0,0,0.08)"
+        span
+          "A new version is available."
+        button style="padding:0.3rem 0.9rem;background:#0d6efd;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600" listens=click
+          "Refresh"
+        button style="padding:0.3rem 0.7rem;background:transparent;color:#664d03;border:1px solid #c9a85e;border-radius:4px;cursor:pointer" listens=click
+          "Dismiss"
+showRefreshBanner() again while it is shown
+    t=0 banners in the DOM: 1
+click Dismiss
+    t=0 refresh banner gone
+#2 ← connected {"build":"b2"}  (the new build again, after Dismiss)
+    t=0 handler C({"build":"b2"}, <event>)
+    t=0 refresh banner shown
+click Refresh
+    t=0 location.reload()
+
+## reconnect
+#2 error
+    t=0 close #2
+    t=0 handler D(null, null)
+    t=1000 open #3 /events?topics=bins%2Corder-update
+    = #3 opened 1000 ms after #1 closed
+#3 error (no connected since the last error)
+    t=1000 close #3
+    t=1000 handler D(null, null)
+    t=3000 open #4 /events?topics=bins%2Corder-update
+    = #4 opened 2000 ms after #3 closed
+#4 error (no connected since the last error)
+    t=3000 close #4
+    t=3000 handler D(null, null)
+    t=7000 open #5 /events?topics=bins%2Corder-update
+    = #5 opened 4000 ms after #4 closed
+#5 error (no connected since the last error)
+    t=7000 close #5
+    t=7000 handler D(null, null)
+    t=15000 open #6 /events?topics=bins%2Corder-update
+    = #6 opened 8000 ms after #5 closed
+#6 error (no connected since the last error)
+    t=15000 close #6
+    t=15000 handler D(null, null)
+    t=25000 open #7 /events?topics=bins%2Corder-update
+    = #7 opened 10000 ms after #6 closed
+#7 error (no connected since the last error)
+    t=25000 close #7
+    t=25000 handler D(null, null)
+    t=35000 open #8 /events?topics=bins%2Corder-update
+    = #8 opened 10000 ms after #7 closed
+#8 ← connected {"build":"b1"}, then #8 error
+    t=35000 handler C({"build":"b1"}, <event>)
+    t=35000 close #8
+    t=35000 handler D(null, null)
+    t=36000 open #9 /events?topics=bins%2Corder-update
+    = #9 opened 1000 ms after #8 closed
+    #9 url /events?topics=bins%2Corder-update
+
+## watchdog
+setSSEWatchdog(5000) on the open #9, then 6 s with no frame
+    (nothing)
+#9 ← heartbeat {"build":"b1"} (re-arms), then 4.9 s, a frame, 4.9 s
+    t=42000 handler H({"build":"b1"}, <event>)
+    t=46900 handler B({"id":9}, <event>)
+then 0.2 s more (5.1 s since the last frame)
+    t=51900 close #9
+    t=51900 handler D(null, null)
+    t=53900 open #10 /events?topics=bins%2Corder-update
+    = #10 opened 2000 ms after #9 closed
+as #10 opens (its watchdog armed): setSSEWatchdog(0), #10 ← connected {"build":"b1"}, then 60 s with no frame
+    t=53900 handler C({"build":"b1"}, <event>)
+    t=58900 close #10
+    t=58900 handler D(null, null)
+    t=59900 open #11 /events?topics=bins%2Corder-update
+
+## reload on build
+setSSEReloadOnBuild(true); #11 ← connected {"build":"b3"}
+    t=113900 location.reload()
+    t=113900 handler C({"build":"b3"}, <event>)
+#11 ← heartbeat {"build":"b3"}
+    t=113900 location.reload()
+    t=113900 handler H({"build":"b3"}, <event>)
+#11 ← heartbeat {"build":"b1"}
+    t=113900 handler H({"build":"b1"}, <event>)
+
+## close
+#11 error, then closeSSEBus() before the reconnect fires
+    t=113900 close #11
+    t=113900 handler D(null, null)
+    = no new stream within 70000 ms
+onSSE("later", F) after closeSSEBus()
+    (nothing)
+
+## the URL
+a second page: only stream frames subscribed: onSSE("connected", C)
+    t=0 open #1 /events
+a second page: setSSEQuery({station:7, a:"x y"}) then onSSE("b"), onSSE("a")
+    t=0 open #1 /events?topics=a%2Cb&a=x%20y&station=7
+a second page: onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")
+    t=0 open #1 /events?topics=a
+    t=0 close #1
+    t=0 open #2 /events?topics=a%2Cb&station=7
+a second page: onSSE("a"), stream up, then setSSEQuery({station:7}) and the stream errors
+    t=0 open #1 /events?topics=a
+    t=0 close #1
+    t=1000 open #2 /events?topics=a&station=7
+a second page: window beforeunload with the stream up
+    t=0 open #1 /events?topics=a
+    t=0 close #1

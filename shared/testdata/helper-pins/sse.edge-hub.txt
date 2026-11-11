@@ -1,0 +1,89 @@
+# createSSE — edge-hub: createSSE of shingo-edge/www/static/js/shingoedge.js
+# one page, steps in order; "#n" is the n-th EventSource the page opened, "←" a frame
+# the server sends on it. The clock is fake: t= is ms since the page loaded.
+
+handlers given: onOrderUpdate, onCoreNodes, onfoo, onSSEPing, refresh, onNotAFunction
+page loaded (the module imported, no createSSE yet)
+    (nothing)
+createSSE("/events", handlers)
+    t=0 open #1 /events
+    returns {close}; #1 listens for: connected, core-nodes, oo, order-update, s-s-e-ping
+#1 open (readyState OPEN)
+    (nothing)
+#1 ← connected {"build":"b1"}
+    (nothing)
+#1 ← order-update {"id":1}
+    t=0 handler onOrderUpdate({"id":1})
+#1 ← core-nodes {"nodes":[]}
+    t=0 handler onCoreNodes({"nodes":[]})
+#1 ← oo {"x":1}  (the type a handler named "onfoo" maps to)
+    t=0 handler onfoo({"x":1})
+#1 ← order-update "not json"
+    t=0 console.error SSE parse error: SyntaxError
+#1 ← heartbeat {"build":"b1"}
+    (nothing)
+#1 ← heartbeat {"build":"b2"}  (a new build, seen on a heartbeat)
+    (nothing)
+
+## reconnect
+#1 error
+    t=0 close #1
+    t=1000 open #2 /events
+    = #2 opened 1000 ms after #1 closed
+#2 error (no connected since the last error)
+    t=1000 close #2
+    t=3000 open #3 /events
+    = #3 opened 2000 ms after #2 closed
+#3 error (no connected since the last error)
+    t=3000 close #3
+    t=7000 open #4 /events
+    = #4 opened 4000 ms after #3 closed
+#4 error (no connected since the last error)
+    t=7000 close #4
+    t=15000 open #5 /events
+    = #5 opened 8000 ms after #4 closed
+#5 error (no connected since the last error)
+    t=15000 close #5
+    t=25000 open #6 /events
+    = #6 opened 10000 ms after #5 closed
+#6 error (no connected since the last error)
+    t=25000 close #6
+    t=35000 open #7 /events
+    = #7 opened 10000 ms after #6 closed
+#7 ← connected {"build":"b1"}, then #7 error
+    t=35000 close #7
+    t=36000 open #8 /events
+    = #8 opened 1000 ms after #7 closed
+    #8 listens for: connected, core-nodes, oo, order-update, s-s-e-ping
+
+## build change
+#8 ← connected {"build":"b2"}  (a new build, on a connect)
+    t=36000 location.reload()
+#8 ← connected {"build":"b2"} again
+    t=36000 location.reload()
+#8 ← connected {"build":"b1"}  (the first build again)
+    (nothing)
+#8 ← connected {}  (no build)
+    (nothing)
+#8 ← connected "garbage"
+    (nothing)
+
+## close and unload
+#8 error, then client.close() before the reconnect fires
+    t=36000 close #8
+    t=37000 open #9 /events
+    = #9 opened 1000 ms after #8 closed
+client.close() with #9 open
+    t=37000 close #9
+a second page: createSSE("/events?x=1", {}), then window beforeunload
+    t=0 close #1
+a page still loading (readyState "loading"): createSSE("/events", {})
+    (nothing)
+then DOMContentLoaded
+    t=0 open #1 /events
+
+## disconnected / connected signals
+a second page, handlers for "connected" and "disconnected" given as onConnected, onDisconnected:
+#1 ← connected {"build":"b1"}, then #1 error
+    t=0 handler onConnected({"build":"b1"})
+    t=0 close #1
