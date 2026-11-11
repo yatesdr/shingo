@@ -13,7 +13,7 @@ import (
 )
 
 var updateProcessSetupPageGolden = flag.Bool("update-process-setup-page-golden", false,
-	"rewrite testdata/process-setup/*.txt from the current Processes page")
+	"rewrite testdata/process-setup-page/*.txt from the current Processes page")
 
 // TestProcessSetupPagePins characterises what the Processes page
 // (processes-desktop.js) does on top of the composer model, at the tree
@@ -61,7 +61,10 @@ func TestProcessSetupPagePins(t *testing.T) {
 		t.Fatal("the pins produced no golden; the harness has drifted")
 	}
 
-	dir := filepath.Join("testdata", "process-setup")
+	// ITS OWN DIRECTORY, because the stale check below owns every file in it:
+	// the composer-model grid's golden sat beside these in process-setup/ and
+	// was reported as a golden no pin writes.
+	dir := filepath.Join("testdata", "process-setup-page")
 	names := make([]string, 0, len(got))
 	for n := range got {
 		names = append(names, n)

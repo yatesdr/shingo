@@ -1,7 +1,7 @@
 // pins.js — the Processes page's process-setup characterisation (U0-page).
 //
 // Run by www/processes_desktop_setup_pins_test.go, which compares what this
-// prints against www/testdata/process-setup/*. It prints ONE JSON object,
+// prints against www/testdata/process-setup-page/*. It prints ONE JSON object,
 // golden file name -> text, and nothing else on stdout.
 //
 // WHAT THIS PINS IS WHAT THE PAGE DOES ON TOP OF THE MODEL: which options a
