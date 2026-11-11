@@ -20,7 +20,7 @@ func memberKinds() CoreNodeKinds {
 		"MR-SLOT": {Name: "MR-SLOT"},
 		"MR-NODE": {Name: "MR-NODE"},
 		"MR-STG":  {Name: "MR-STG"},
-	}, map[string][]string{"MR-GRP": {"MR-SLOT"}})
+	}, map[string][]string{"MR-GRP": {"MR-SLOT"}}, true)
 }
 
 // TestLegRefusal_WhereCorePicksAMemberIsRefused: every claim leg, handed a
@@ -85,10 +85,42 @@ func TestRefusedPresetLegs_ARecipeNamingAMemberIsRefused(t *testing.T) {
 // member is not known to be one, and no name is unknown.
 func TestLegRefusal_NoNodeListRefusesNothing(t *testing.T) {
 	t.Parallel()
-	empty := CoreNodeKindsOf(nil, nil)
+	empty := CoreNodeKindsOf(nil, nil, true)
 	for _, name := range []string{"MR-SLOT", "MR-GRP.MR-SLOT", "MR-LANE-S1"} {
 		if got := empty.LegRefusal(RoutingRoleDestination, name); got != "" {
 			t.Errorf("no list heard, %q refused: %q", name, got)
+		}
+	}
+}
+
+// TestLegRefusal_AnUnknownNameIsRefusedOnlyFromAPlantWideList: a station-scoped
+// list holds the station's own nodes and leaves out names it may still route
+// to, so where Core picks a group outside it saves; from Core's plant-wide list
+// the same name is refused. A member is refused from either, and a staging
+// spot takes an outside name from either.
+func TestLegRefusal_AnUnknownNameIsRefusedOnlyFromAPlantWideList(t *testing.T) {
+	t.Parallel()
+	list := map[string]protocol.NodeInfo{
+		"MR-GRP":  {Name: "MR-GRP", NodeType: protocol.NodeClassNGRP},
+		"MR-SLOT": {Name: "MR-SLOT"},
+	}
+	groups := map[string][]string{"MR-GRP": {"MR-SLOT"}}
+	for _, c := range []struct {
+		plantWide                     bool
+		outside, member, outsideStage bool // refused?
+	}{
+		{plantWide: false, outside: false, member: true, outsideStage: false},
+		{plantWide: true, outside: true, member: true, outsideStage: false},
+	} {
+		kinds := CoreNodeKindsOf(list, groups, c.plantWide)
+		if got := kinds.LegRefusal(RoutingRoleDestination, "MR-OUTSIDE-GRP") != ""; got != c.outside {
+			t.Errorf("plant-wide %v: an outside group as a destination refused %v, want %v", c.plantWide, got, c.outside)
+		}
+		if got := kinds.LegRefusal(RoutingRoleSource, "MR-SLOT") != ""; got != c.member {
+			t.Errorf("plant-wide %v: a member as a source refused %v, want %v", c.plantWide, got, c.member)
+		}
+		if got := kinds.LegRefusal(RoutingRoleStaging, "MR-OUTSIDE-STG") != ""; got != c.outsideStage {
+			t.Errorf("plant-wide %v: an outside staging spot refused %v, want %v", c.plantWide, got, c.outsideStage)
 		}
 	}
 }

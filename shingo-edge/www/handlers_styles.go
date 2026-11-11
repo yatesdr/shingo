@@ -356,7 +356,7 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 // lanes, kanbans, group members and names), for a store write that refuses a
 // leg. Empty before the first node list, which refuses nothing.
 func (h *Handlers) coreNodeKinds() domain.CoreNodeKinds {
-	return domain.CoreNodeKindsOf(h.engine.CoreNodes(), h.engine.StationService().GroupMembers())
+	return h.engine.CoreNodeKinds()
 }
 
 // styleWriteStatus is 400 for a clone refused because a copied

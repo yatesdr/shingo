@@ -1099,9 +1099,16 @@ type NodeListResponse struct {
 	// counter: two Cores, or one Core restarted, answer the same scene with the
 	// same revision.
 	SceneRevision string `json:"scene_revision,omitempty"`
-	// Digest is the FeedNodes digest of Nodes, Loaders, PayloadBinTypes and Family
-	// as this reply carries them (NodesDigest), on every path that builds the
-	// reply. An Edge holding that digest already applies none of the four.
+	// PlantWide says Nodes is Core's plant-wide list: the station has no nodes of
+	// its own, so Core sent every root and every physical child of a node group.
+	// False for a station-scoped list (the station's own nodes) and from an older
+	// Core. The Edge refuses a name its list does not hold, in a role where Core
+	// picks, only from a plant-wide list: a station-scoped one leaves out names the
+	// station may still route to.
+	PlantWide bool `json:"plant_wide,omitempty"`
+	// Digest is the FeedNodes digest of Nodes, Loaders, PayloadBinTypes, Family
+	// and PlantWide as this reply carries them (NodesDigest), on every path that builds the
+	// reply. An Edge holding that digest already applies none of them.
 	// Absent from an older Core, whose replies apply as they always did.
 	Digest string `json:"digest,omitempty"`
 }

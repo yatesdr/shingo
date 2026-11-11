@@ -66,7 +66,7 @@ func TestSaveFlow_ALaneOnEachLeg(t *testing.T) {
 			eng := testEngine(t, db)
 			enableComposer(t, db, processID)
 			cells := cellsOf(t, db, toStyleID)
-			eng.SetCoreNodes(engCoreListFor(cells, engLaneCore[:2]...))
+			eng.SetCoreNodes(engCoreListFor(cells, engLaneCore[:2]...), true)
 
 			fp, err := eng.FlowFingerprint(processID, toStyleID)
 			testutil.MustNoErr(t, err, "fingerprint")
@@ -148,7 +148,7 @@ func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
 			claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(t, err, "seed a stored lane claim")
 			eng := testEngine(t, db)
-			eng.SetCoreNodes(engLaneCore)
+			eng.SetCoreNodes(engLaneCore, true)
 
 			err = eng.UpdateCellReorder(CellReorderInput{ClaimID: claimID, ReorderPoint: 25, Source: "manual"})
 			c, rerr := db.GetStyleNodeClaim(claimID)
@@ -205,7 +205,7 @@ func TestSaveFlow_AMemberWhereCorePicks(t *testing.T) {
 			cells := cellsOf(t, db, toStyleID)
 			// Core's list holds every node the cells name, and a group with its member.
 			eng.SetCoreNodes(engCoreListFor(cells,
-				protocol.NodeInfo{Name: "CW-GRP", NodeType: protocol.NodeClassNGRP}, protocol.NodeInfo{Name: "CW-GRP.CW-SLOT"}))
+				protocol.NodeInfo{Name: "CW-GRP", NodeType: protocol.NodeClassNGRP}, protocol.NodeInfo{Name: "CW-GRP.CW-SLOT"}), true)
 
 			fp, err := eng.FlowFingerprint(processID, toStyleID)
 			testutil.MustNoErr(t, err, "fingerprint")
@@ -297,7 +297,7 @@ func TestRefusedSetups_ListsWhatTheRuleRefuses(t *testing.T) {
 		t.Fatalf("with no node list heard the report lists %q, want nothing", got)
 	}
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "RS-GRP", NodeType: protocol.NodeClassNGRP},
-		{Name: "RS-GRP.RS-SLOT"}, {Name: "RS-PRESS"}})
+		{Name: "RS-GRP.RS-SLOT"}, {Name: "RS-PRESS"}}, true)
 	got := eng.refusedSetups()
 	member := protocol.MsgMemberIsCoresToPick + `: "RS-SLOT" is in "RS-GRP"`
 	want := []string{
@@ -307,5 +307,44 @@ func TestRefusedSetups_ListsWhatTheRuleRefuses(t *testing.T) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the report lists\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// TestApplyNodeList_TheListsScopeDecidesAnOutsideName: the scope rides Core's
+// node list (protocol.NodeListResponse.PlantWide) to the claim writer. From a
+// station-scoped list a claim whose outbound names a group outside the list
+// saves; from the plant-wide list it is refused, and a member is refused from
+// either.
+func TestApplyNodeList_TheListsScopeDecidesAnOutsideName(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		plantWide bool
+		outbound  string
+		refused   bool
+	}{
+		{false, "SC-OUTSIDE-GRP", false},
+		{false, "SC-SLOT", true},
+		{true, "SC-OUTSIDE-GRP", true},
+		{true, "SC-SLOT", true},
+	} {
+		db := testEngineDB(t)
+		pid, err := db.CreateProcess("SC-PROC", "", "", "", false)
+		testutil.MustNoErr(t, err, "create process")
+		sid, err := db.CreateStyle("SC-STYLE", "", pid)
+		testutil.MustNoErr(t, err, "create style")
+		eng := testEngine(t, db)
+		eng.ApplyNodeList(&protocol.NodeListResponse{PlantWide: c.plantWide, Nodes: []protocol.NodeInfo{
+			{Name: "SC-PRESS"}, {Name: "SC-STG"}, {Name: "SC-GRP", NodeType: protocol.NodeClassNGRP},
+			{Name: "SC-GRP.SC-SLOT"},
+		}})
+		_, err = db.UpsertStyleNodeClaim(eng.CoreNodeKinds(), processes.NodeClaimInput{
+			StyleID: sid, CoreNodeName: "SC-PRESS", Role: protocol.ClaimRoleProduce,
+			SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-SC",
+			InboundSource: "SC-GRP", OutboundDestination: c.outbound,
+			InboundStaging: "SC-STG", OutboundStaging: "SC-STG",
+		})
+		if got := errors.Is(err, domain.ErrRefusedLeg); got != c.refused || (err != nil && !got) {
+			t.Errorf("plant-wide %v, outbound %s: err %v, want refused %v", c.plantWide, c.outbound, err, c.refused)
+		}
 	}
 }

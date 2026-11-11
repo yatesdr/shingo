@@ -204,7 +204,7 @@ func TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 	seedRuntimeUOP(t, db, nodeID)
 
 	steps := []protocol.ComplexOrderStep{
@@ -250,7 +250,7 @@ func TestRequestProduceSwap_DoubleTapWhileR1TravelsIsRefused(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS", "INDEX-B"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 	seedRuntimeUOP(t, db, nodeID)
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)

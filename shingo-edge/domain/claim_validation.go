@@ -88,8 +88,10 @@ type ClaimNodeContext struct {
 // member is Core's job, by the group's store and retrieve rules
 // (protocol.MsgMemberIsCoresToPick). The members are the "Group.Child" names
 // of Core's list, which the engine keeps as its group map. A slot inside a
-// lane is never in the list, so in those roles a name the list does not hold
-// is refused too (Known). A staging spot names the exact node.
+// lane is never in the list, so in those roles a name a PLANT-WIDE list does
+// not hold is refused too (Known, PlantWide); a station-scoped list leaves out
+// names the station may still route to, so it refuses none on that account. A
+// staging spot names the exact node.
 //
 // EMPTY REFUSES NOTHING. No node list heard yet leaves every set empty, and an
 // older Core never sends the kanban flag, so its groups read as unmarked.
@@ -106,13 +108,17 @@ type CoreNodeKinds struct {
 	// Known is every name Core's list holds, as the engine keys it. Nil means
 	// no list heard: a name absent from it refuses nothing then.
 	Known map[string]bool
+	// PlantWide is whether the list is Core's plant-wide one
+	// (protocol.NodeListResponse.PlantWide). Only then is a name absent from
+	// Known refused where Core picks.
+	PlantWide bool
 }
 
-// CoreNodeKindsOf reduces Core's node list, as the engine holds it, and its
-// group map (group → bare member names, Engine.CoreNodeGroups) to the sets.
-// One pass over maps already in memory, at save time only.
-func CoreNodeKindsOf(known map[string]protocol.NodeInfo, groups map[string][]string) CoreNodeKinds {
-	var k CoreNodeKinds
+// CoreNodeKindsOf reduces Core's node list, as the engine holds it, its group
+// map (group → bare member names, Engine.CoreNodeGroups) and its scope to the
+// sets. One pass over maps already in memory, at save time only.
+func CoreNodeKindsOf(known map[string]protocol.NodeInfo, groups map[string][]string, plantWide bool) CoreNodeKinds {
+	k := CoreNodeKinds{PlantWide: plantWide}
 	set := func(m *map[string]bool, name string) {
 		if *m == nil {
 			*m = map[string]bool{}
@@ -186,8 +192,9 @@ func (k CoreNodeKinds) Empty() bool {
 // by that spot's name, while a lane has no bin of its own to answer with.
 //
 // A source and a destination are roles where Core picks: there a member of a
-// node group, and a name Core's list does not hold, are refused too. A staging
-// spot names where a robot waits, the exact node, and a member is one.
+// node group is refused too, and so is a name Core's plant-wide list does not
+// hold (a station-scoped list refuses no name for its absence). A staging spot
+// names where a robot waits, the exact node, and a member is one.
 func (k CoreNodeKinds) LegRefusal(role, name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -209,7 +216,7 @@ func (k CoreNodeKinds) LegRefusal(role, name string) string {
 	if g := k.GroupOf(name); g != "" {
 		return fmt.Sprintf("%s: %q is in %q", protocol.MsgMemberIsCoresToPick, name, g)
 	}
-	if len(k.Known) > 0 && !kindsHas(k.Known, name) {
+	if k.PlantWide && len(k.Known) > 0 && !kindsHas(k.Known, name) {
 		return fmt.Sprintf("%s: %q", protocol.MsgNotInCoresNodeList, name)
 	}
 	return ""

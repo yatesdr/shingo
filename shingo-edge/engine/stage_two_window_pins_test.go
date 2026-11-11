@@ -80,7 +80,7 @@ func newStageTwoRig(t *testing.T, pair testdb.StageTwoPair) *stageTwoRig {
 	eng.stationService.SetLoaderResolver(stationLoaderResolver{eng})
 	eng.stationService.SetCoreNodeGroupResolver(eng.CoreNodeGroups)
 	eng.stationService.SetCarrierCatalog(func() []protocol.PayloadBinTypeInfo { return s2Catalog })
-	eng.SetCoreNodes(pair.CoreNodes(map[string][]string{s2Out: {"S2-OUT-M1", "S2-OUT-M2"}}))
+	eng.SetCoreNodes(pair.CoreNodes(map[string][]string{s2Out: {"S2-OUT-M1", "S2-OUT-M2"}}), false)
 
 	procID, err := db.CreateProcess("S2-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")

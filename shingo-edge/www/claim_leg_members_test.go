@@ -38,6 +38,7 @@ func withMembers(h *Handlers) {
 	core[memberSlot] = protocol.NodeInfo{Name: memberSlot}
 	h.engine.(*stubEngine).core = core
 	h.engine.(*stubEngine).groups = map[string][]string{"LL-GRP": {memberSlot}}
+	h.engine.(*stubEngine).plantWide = true
 }
 
 // withNodeOn is the clean claim with name on one leg.
@@ -261,5 +262,43 @@ func TestCoreNodeRows_AMemberCarriesItsGroup(t *testing.T) {
 	}
 	if g, ok := groupOf["LL-GRP"]; !ok || g != nil {
 		t.Errorf("the group's own row carries group %v, want none", g)
+	}
+}
+
+// TestContainmentSetting_TheListsScopeDecidesAnOutsideName: from a
+// station-scoped list (the station's own nodes) a containment group outside the
+// list saves; from Core's plant-wide list the same name is refused. A member of
+// a group is refused from either.
+func TestContainmentSetting_TheListsScopeDecidesAnOutsideName(t *testing.T) {
+	t.Parallel()
+	for i, c := range []struct {
+		plantWide bool
+		dest      string
+		status    int
+	}{
+		{false, "LL-OUTSIDE-GRP", http.StatusOK},
+		{false, memberSlot, http.StatusBadRequest},
+		{true, "LL-OUTSIDE-GRP", http.StatusBadRequest},
+	} {
+		t.Run(fmt.Sprintf("plant-wide %v %s", c.plantWide, c.dest), func(t *testing.T) {
+			t.Parallel()
+			h, router := newAdminRouter(t)
+			db := dbOf(h)
+			withMembers(h)
+			h.engine.(*stubEngine).plantWide = c.plantWide
+			cookie := authCookie(t, h)
+			pid := seedProcess(t, db, fmt.Sprintf("SC%02d-Line", i))
+			sid := seedStyle(t, db, fmt.Sprintf("SC%02d-Src", i), pid)
+			_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
+			testutil.MustNoErr(t, err, "seed a clean claim")
+			resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
+				map[string]any{"enabled": true, "destination": c.dest}, cookie)
+			if resp.StatusCode != c.status {
+				t.Fatalf("containment %q: status %d, want %d (%+v)", c.dest, resp.StatusCode, c.status, decodeBody(t, resp))
+			}
+			if stored := storedOn(t, db, sid, "containment_destination", c.dest); stored != (c.status == http.StatusOK) {
+				t.Errorf("containment %q stored %v after status %d", c.dest, stored, c.status)
+			}
+		})
 	}
 }

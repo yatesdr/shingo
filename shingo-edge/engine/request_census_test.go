@@ -373,7 +373,7 @@ func TestRequestCensus_ConsumeHeadCoreDoesNotKnowReadsOccupied(t *testing.T) {
 	var calls atomic.Int32
 	bridgeCore(t, eng, censusStub(t, &calls).URL) // every node reads empty
 	holdPlaces(t, eng, occupiedAt())
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}}, false)
 
 	_, err := eng.RequestNodeMaterial(nodeID, 1)
 	testutil.MustNoErr(t, err, "material request")

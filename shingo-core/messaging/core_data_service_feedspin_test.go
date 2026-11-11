@@ -374,11 +374,11 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 			t.Errorf("%s: scene_revision = %q, want the current %q on every reply", tc.name, r.SceneRevision, current)
 		}
 		// "digest" present and equal to the FeedNodes digest of
-		// {Nodes, Loaders, PayloadBinTypes, Family} (protocol.NodesDigest, the
+		// {Nodes, Loaders, PayloadBinTypes, Family, PlantWide} (protocol.NodesDigest, the
 		// function the reply path and the feed path both use), identical
 		// across these three replies because only
 		// the held scene revision differs.
-		wantDigest, err := protocol.NodesDigest(r.Nodes, r.Loaders, r.PayloadBinTypes, r.Family)
+		wantDigest, err := protocol.NodesDigest(r.Nodes, r.Loaders, r.PayloadBinTypes, r.Family, r.PlantWide)
 		testutil.MustNoErr(t, err, "digest")
 		if r.Digest == "" || r.Digest != wantDigest {
 			t.Errorf("%s: digest = %q, want %q", tc.name, r.Digest, wantDigest)

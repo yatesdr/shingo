@@ -159,7 +159,7 @@ func TestProducePartials_AHomeMayNotTakePartialsToUnload(t *testing.T) {
 		"STAGE2":      {Name: "STAGE2", NodeType: protocol.NodeClassNGRP, AcceptsPartials: true},
 		"STAGE2.WIN1": {Name: "STAGE2.WIN1", AcceptsPartials: true},
 		"PP-HOME":     {Name: "PP-HOME", NodeType: protocol.NodeClassNGRP},
-	}, nil)
+	}, nil, false)
 	for _, c := range []struct {
 		home   string
 		refuse bool

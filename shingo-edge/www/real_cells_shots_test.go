@@ -549,7 +549,7 @@ func seedRealCell(t *testing.T, c realCell, opts seedOpts, mount func(mux *http.
 	eng.SetPayloadBinTypes(nil)
 	eng.Start()
 	t.Cleanup(eng.Stop)
-	eng.SetCoreNodes(coreNodesOf(c, positions))
+	eng.SetCoreNodes(coreNodesOf(c, positions), false)
 	if points, edges := sceneOf(c, positions); len(points) > 0 {
 		eng.SetSceneGeometry("real-"+c.plant, points, edges)
 	}

@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 )
 
 // --- Core Nodes ---
@@ -36,7 +35,7 @@ func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.CoreNodes()
 	stations := h.engine.StationService()
 	groups := stations.GroupMembers()
-	kinds := domain.CoreNodeKindsOf(nodes, groups)
+	kinds := h.engine.CoreNodeKinds()
 	infos := make([]coreNodeRow, 0, len(nodes))
 	for _, n := range nodes {
 		infos = append(infos, coreNodeRow{NodeInfo: n, Members: groups[n.Name], Group: kinds.GroupOf(n.Name),

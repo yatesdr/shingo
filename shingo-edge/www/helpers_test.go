@@ -62,6 +62,7 @@ type stubEngine struct {
 	cfgPath       string
 	core          map[string]protocol.NodeInfo
 	groups        map[string][]string    // group membership the stub's StationService is wired with
+	plantWide     bool                   // core is Core's plant-wide list (NodeListResponse.PlantWide)
 	loaders       service.LoaderResolver // nil: unwired, so no node is a shared loader window
 	orderMgr      *orders.Manager
 	// plcMgr is what PLCManager returns: nil unless a test puts a manager
@@ -166,11 +167,14 @@ func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
 func (s *stubEngine) Reconciliation() *engine.ReconciliationService {
 	return engine.NewReconciliationService(s.db)
 }
-func (s *stubEngine) CoreSync() *engine.CoreSyncService              { return nil }
-func (s *stubEngine) ApplyWarLinkConfig()                            {}
-func (s *stubEngine) ReconnectKafka() error                          { return nil }
-func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error      { return nil }
-func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo        { return s.core }
+func (s *stubEngine) CoreSync() *engine.CoreSyncService         { return nil }
+func (s *stubEngine) ApplyWarLinkConfig()                       {}
+func (s *stubEngine) ReconnectKafka() error                     { return nil }
+func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error { return nil }
+func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo   { return s.core }
+func (s *stubEngine) CoreNodeKinds() domain.CoreNodeKinds {
+	return domain.CoreNodeKindsOf(s.core, s.groups, s.plantWide)
+}
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo { return nil }
 func (s *stubEngine) ScenePointNames() map[string]bool               { return nil }
 func (s *stubEngine) SceneAdjacency() map[string][]string            { return nil }

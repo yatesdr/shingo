@@ -133,7 +133,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 	}
 	families := binTypeFamilies(binTypes)
 
-	digest, err := protocol.NodesDigest(infos, loaderInfos, payloadBinTypes, families)
+	digest, err := protocol.NodesDigest(infos, loaderInfos, payloadBinTypes, families, !stationScoped)
 	if err != nil {
 		return nil, fmt.Errorf("digest node list: %w", err)
 	}
@@ -142,6 +142,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		Loaders:         loaderInfos,
 		PayloadBinTypes: payloadBinTypes,
 		Family:          families,
+		PlantWide:       !stationScoped,
 		Digest:          digest,
 	}, nil
 }

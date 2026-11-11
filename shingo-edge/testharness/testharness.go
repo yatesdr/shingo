@@ -114,7 +114,7 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	// that need them can RegisterSubject on the router directly.
 	subjectRouter := router.NewSubject()
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		eng.SetCoreNodes(resp.Nodes)
+		eng.SetCoreNodes(resp.Nodes, resp.PlantWide)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
 		eng.HandleBinPickedUpMessage(*bp)

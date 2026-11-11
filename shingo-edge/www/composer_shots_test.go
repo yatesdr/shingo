@@ -129,7 +129,7 @@ func TestComposerShots(t *testing.T) {
 		}
 		nodes = append(nodes, protocol.NodeInfo{Name: name, NodeType: typ})
 	}
-	eng.SetCoreNodes(nodes)
+	eng.SetCoreNodes(nodes, false)
 	var pbt []protocol.PayloadBinTypeInfo
 	for code, types := range fx.PayloadBinTypeCodes() {
 		for _, bt := range types {

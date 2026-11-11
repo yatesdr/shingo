@@ -29,7 +29,7 @@ import (
 // other: it applies and its digest is held.
 func (e *Engine) ApplyNodeList(resp *protocol.NodeListResponse) {
 	if resp.Digest == "" || resp.Digest != e.heldDigest(protocol.FeedNodes) {
-		e.SetCoreNodes(resp.Nodes)
+		e.SetCoreNodes(resp.Nodes, resp.PlantWide)
 		e.reportRefusedSetups()
 		loadersErr := e.SetCoreLoaders(resp.Loaders)
 		e.setBinTypeFamilies(resp.Family)

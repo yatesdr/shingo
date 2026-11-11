@@ -46,14 +46,14 @@ func TestPresets_ARecipeNamingAMemberWhereCorePicksIsRefused(t *testing.T) {
 	}
 
 	svc.SetCoreNodeKindsResolver(func() domain.CoreNodeKinds {
-		return domain.CoreNodeKindsOf(list, map[string][]string{"PM-GRP": {dest}})
+		return domain.CoreNodeKindsOf(list, map[string][]string{"PM-GRP": {dest}}, true)
 	})
 	_, err = svc.CreateFromCandidate(seeded.ProcessID, "Member", key, "test")
 	if !errors.Is(err, domain.ErrRefusedLeg) {
 		t.Fatalf("a recipe sending a cell to %q, a member of a group: err %v, want the leg refusal", dest, err)
 	}
 
-	svc.SetCoreNodeKindsResolver(func() domain.CoreNodeKinds { return domain.CoreNodeKindsOf(list, nil) })
+	svc.SetCoreNodeKindsResolver(func() domain.CoreNodeKinds { return domain.CoreNodeKindsOf(list, nil, true) })
 	_, err = svc.CreateFromCandidate(seeded.ProcessID, "In no group", key, "test")
 	testutil.MustNoErr(t, err, "the same recipe with "+dest+" in no group")
 }

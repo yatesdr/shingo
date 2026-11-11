@@ -74,6 +74,9 @@ func TestServiceAccessWidth(t *testing.T) {
 		"ChangeoverService",
 		"ConfigPath",
 		"CoreNodes",
+		// Added 2026-11-11 (the member rule): every leg refusal reads this one
+		// value, the list's scope included.
+		"CoreNodeKinds",
 		"CoreSync",
 		"CounterService",
 		"OrderManager",
@@ -206,6 +209,9 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"UpdateStationCounter",
 		"ConfigPath",
 		"CoreNodes",
+		// Added 2026-11-11 (the member rule): every leg refusal reads this one
+		// value, the list's scope included.
+		"CoreNodeKinds",
 		"CoreSync",
 		"CounterService",
 		"CreateRetrieveForAPI",

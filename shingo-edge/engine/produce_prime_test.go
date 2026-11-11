@@ -379,7 +379,7 @@ func TestRequestProduceSwap_PrimeThenSwapOnce(t *testing.T) {
 	eng := testEngine(t, db)
 	// Core reports the head occupied and INDEX-B vacant — the incident's shape.
 	holdPlaces(t, eng, occupiedAt("PRESS"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "first RequestProduceSwap")
@@ -420,7 +420,7 @@ func TestRequestProduceSwap_ColdPressPrimesInOneTap(t *testing.T) {
 
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "the cold press's one tap")
@@ -446,7 +446,7 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
 	// A non-empty node set that does NOT contain INDEX-B: that is evidence.
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}}, false)
 	// Parts on the press, so the cold-press guard cannot be what stops the
 	// prime — the unknown-node read has to be.
 	seedRuntimeUOP(t, db, nodeID)

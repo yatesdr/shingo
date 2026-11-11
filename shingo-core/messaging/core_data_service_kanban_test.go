@@ -69,6 +69,40 @@ func TestNodeListResponse_MarksKanbans(t *testing.T) {
 	}
 }
 
+// TestNodeListResponse_SaysWhetherItIsPlantWide: a station with nodes of its
+// own gets them, and the reply does not say plant-wide; a station with none
+// gets the plant-wide list, and the reply says so. The Edge refuses a name its
+// list does not hold, where Core picks, only from a plant-wide list.
+func TestNodeListResponse_SaysWhetherItIsPlantWide(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	own := &nodes.Node{Name: "PW-OWN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(own), "create the station's node")
+	testutil.MustNoErr(t, db.AssignNodeToStation(own.ID, "edge.pw"), "assign it")
+	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: "PW-OTHER", Enabled: true}), "create another node")
+
+	for _, c := range []struct {
+		station   string
+		plantWide bool
+	}{{"edge.pw", false}, {"edge.unscoped", true}} {
+		resp := &captureResponder{}
+		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+		svc.HandleNodeListRequest(&protocol.Envelope{
+			Src: protocol.Address{Role: protocol.RoleEdge, Station: c.station},
+		}, &protocol.NodeListRequest{})
+		if len(resp.replies) != 1 {
+			t.Fatalf("%s: %d replies, want 1", c.station, len(resp.replies))
+		}
+		var got protocol.NodeListResponse
+		raw, err := json.Marshal(resp.replies[0].payload)
+		testutil.MustNoErr(t, err, "marshal reply")
+		testutil.MustNoErr(t, json.Unmarshal(raw, &got), "unmarshal")
+		if got.PlantWide != c.plantWide {
+			t.Errorf("%s: plant_wide = %v, want %v (nodes %v)", c.station, got.PlantWide, c.plantWide, nodeNames(got.Nodes))
+		}
+	}
+}
+
 // TestNodeListResponse_CarriesEachTypesFloor: the list says each type's floor once,
 // by type code and orientation-blind, as the walk's floor rule compares them; a
 // type with no size has no entry. The digest covers it, so a floor edit reaches an

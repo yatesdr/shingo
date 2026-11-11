@@ -51,6 +51,10 @@ type ServiceAccess interface {
 	// state read with no engine-side side effects — admin pages,
 	// orders, and manual-order forms all need it.
 	CoreNodes() map[string]protocol.NodeInfo
+	// CoreNodeKinds is Core's node list reduced to what a leg's refusal reads
+	// (its lanes, kanbans, group members, names and scope): every door that
+	// refuses a leg asks this one value.
+	CoreNodeKinds() domain.CoreNodeKinds
 	// PayloadBinTypes returns the cached payload→dunnage mapping delivered
 	// by Core on each NodeListResponse. Used by the operator-station view
 	// handler to populate the dunnage picker without a per-node query.
