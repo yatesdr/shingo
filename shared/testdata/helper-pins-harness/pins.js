@@ -981,15 +981,36 @@ function walkFiles(dir, pred) {
     return out.sort();
 }
 
+// reachedShared is the shared/*.js modules the given files name by URL,
+// followed through the shared modules they name, in file-name order.
+function reachedShared(from) {
+    const dir = path.join(REPO, 'shared');
+    const all = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).sort();
+    const named = (src) => all.filter((f) => src.indexOf('/static/shared/' + f) >= 0);
+    const reached = new Set();
+    let next = [];
+    from.forEach((f) => next.push(...named(fs.readFileSync(f, 'utf8'))));
+    while (next.length) {
+        const f = next.pop();
+        if (reached.has(f)) continue;
+        reached.add(f);
+        next.push(...named(fs.readFileSync(path.join(dir, f), 'utf8')));
+    }
+    return all.filter((f) => reached.has(f)).map((f) => path.join(dir, f));
+}
+
 function htmxErrorPins() {
     const www = path.join(REPO, 'shingo-edge', 'www');
     const rel = (p) => path.relative(REPO, p).split(path.sep).join('/');
     // shared/*.js too: the Edge hub installs the htmx:afterSwap listeners its
-    // shared modules define.
-    const files = walkFiles(path.join(www, 'static'), (p) => p.endsWith('.js') && !p.endsWith('.min.js'))
-        .concat(walkFiles(path.join(www, 'templates'), (p) => p.endsWith('.html')))
-        .concat(fs.readdirSync(path.join(REPO, 'shared')).filter((f) => f.endsWith('.js')).sort()
-            .map((f) => path.join(REPO, 'shared', f)));
+    // shared modules define. Only the shared modules Edge admin reaches: a
+    // file that an Edge script or template names (/static/shared/<file>), or
+    // that such a shared module names in turn. A shared module no Edge page
+    // loads (shared/http.js's htmx hook, before wave C installs it) handles
+    // nothing on Edge admin, whatever its text says.
+    const edge = walkFiles(path.join(www, 'static'), (p) => p.endsWith('.js') && !p.endsWith('.min.js'))
+        .concat(walkFiles(path.join(www, 'templates'), (p) => p.endsWith('.html')));
+    const files = edge.concat(reachedShared(edge));
     const listens = [];
     const ERR = ['htmx:responseError', 'htmx:sendError', 'htmx:sseError', 'htmx:timeout', 'htmx:swapError', 'htmx:targetError', 'htmx:onLoadError'];
     const errHits = {};
