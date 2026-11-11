@@ -44,7 +44,8 @@
 // Every class name in the scene therefore covers both shapes, and only the
 // geometry says which one a given lane is.
 
-import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { escapeHtml } from '/static/shared/dom.js';
+import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 // The scene-drawing substrate — projection, orientation, cubic arithmetic,
 // lane identity — lives in shared/scene-geom.js so a second scene page, on
 // either surface, draws the same network without inheriting this file's

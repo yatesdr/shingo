@@ -4,7 +4,7 @@ Verified against: 51489c78
 
 One implementation. Every tab bar in Core and the Edge is `.tabs` / `.tab`,
 with `.tab-panel` siblings, defined once in `shared/components.css`; no page
-sets a tab's size. The handler is `switchTab` in `shared/utils.js`, bound as a
+sets a tab's size. The handler is `switchTab` in `shared/dom.js`, bound as a
 delegated action: it marks active the tab whose `data-tab` is the key, and shows
 the sibling panel whose id is `tab-<key>`.
 

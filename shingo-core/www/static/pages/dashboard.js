@@ -15,7 +15,8 @@
 // Adding a new dashboard kind: branch on `kind` in init() and render into
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
-import { escapeHtml, formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { escapeHtml } from '/static/shared/dom.js';
+import { formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 import { routeStripHTML } from '/static/components/route-strip.js';
 
 (function () {

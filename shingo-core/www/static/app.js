@@ -18,7 +18,8 @@
 //   escapeHtml(s)     — last resort for legacy string concatenation.
 //                       Prefer h`` for new code.
 
-import { delegateActions, escapeHtml, formatTime, h, installBackdropClose, installTableSort, onSSE, timeAgo } from '/static/shared/utils.js';
+import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
+import { formatTime, installBackdropClose, installTableSort, onSSE, timeAgo } from '/static/shared/utils.js';
 installBackdropClose();
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep

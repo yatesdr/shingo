@@ -24,7 +24,7 @@ export function formatBytes(bytes) {
 
 // backupRow is one listed backup as a settings row: when it was made, its size
 // and key under it, and Restore on restart (or "pending restart" for the one
-// already staged). el is shared/utils.js's element builder.
+// already staged). el is shared/dom.js's element builder.
 export function backupRow(item, el, fmt) {
     const when = fmt(item.created_at || item.last_modified || '') || item.key;
     const action = item.restore_pending

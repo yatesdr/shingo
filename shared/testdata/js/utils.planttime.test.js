@@ -19,6 +19,14 @@ const vm = require('vm');
 // the code it reads stays at the module root.
 const SRC_DIR = path.join(__dirname, '..', '..');
 
+// sharedSource is the shared modules this test runs, as one script in import
+// order: each file's import lines dropped (a file before it declares those
+// names); the caller drops `export`.
+function sharedSource(files) {
+    return files.map((f) => fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
+        .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gm, '')).join('\n');
+}
+
 let passed = 0;
 let failed = 0;
 function assert(cond, label) {
@@ -27,7 +35,7 @@ function assert(cond, label) {
 }
 
 function loadUtils(windowObj) {
-    const src = fs.readFileSync(path.join(SRC_DIR, 'utils.js'), 'utf8');
+    const src = sharedSource(['dom.js', 'utils.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

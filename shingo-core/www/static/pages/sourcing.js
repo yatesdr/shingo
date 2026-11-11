@@ -1,4 +1,5 @@
-import { api, convertTimestamps, formatTime, h, onSSE, serverNow } from '/static/shared/utils.js';
+import { h } from '/static/shared/dom.js';
+import { api, convertTimestamps, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
 
 // Sourcing page — direction B (two-pane): a process rail on the left, that
 // process's changeover detail on the right.

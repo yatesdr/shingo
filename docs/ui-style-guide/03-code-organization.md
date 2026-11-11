@@ -16,7 +16,8 @@ What it holds, by kind:
 - **UI assets**, at the top level and embedded by `static.go`
   (`//go:embed *.css *.js *.svg`): `tokens.css` (the design tokens),
   `status-classes.css` (one badge class per protocol status), `components.css`
-  (the component rules both apps share), `utils.js` (the JS primitives, see
+  (the component rules both apps share), the JS primitives one job per file
+  (`dom.js` the HTML escape and DOM helpers, `utils.js` the rest; see
   [JavaScript primitives](17-javascript-primitives.md)), `esc.js` (the HTML
   escape for string-built markup), `scene-geom.js` (the map projection) and
   `icons.svg` (the icon sprite).

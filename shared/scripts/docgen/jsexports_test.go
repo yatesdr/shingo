@@ -48,13 +48,18 @@ func TestJSExports_ListsEveryExport(t *testing.T) {
 }
 
 func TestJSExports_TheRealModule(t *testing.T) {
-	got, err := jsexportsTable(repoRoot, "shared/utils.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"escapeHtml", "h", "el", "api", "createSSE", "debounce"} {
-		if !strings.Contains(got, "| `"+name+"` |") {
-			t.Errorf("shared/utils.js export %s is not listed", name)
+	for file, names := range map[string][]string{
+		"shared/dom.js":   {"escapeHtml", "h", "el", "debounce"},
+		"shared/utils.js": {"api", "createSSE"},
+	} {
+		got, err := jsexportsTable(repoRoot, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			if !strings.Contains(got, "| `"+name+"` |") {
+				t.Errorf("%s export %s is not listed", file, name)
+			}
 		}
 	}
 }

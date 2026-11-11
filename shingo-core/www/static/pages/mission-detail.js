@@ -1,4 +1,5 @@
-import { debounce, escapeHtml, formatDuration, formatTime, installLiveDurations, onSSE, serverNow } from '/static/shared/utils.js';
+import { debounce, escapeHtml } from '/static/shared/dom.js';
+import { formatDuration, formatTime, installLiveDurations, onSSE, serverNow } from '/static/shared/utils.js';
 import { formatClockSeconds } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';
 

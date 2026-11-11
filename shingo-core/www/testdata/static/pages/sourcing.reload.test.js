@@ -29,7 +29,7 @@ function check(name, cond, detail) {
     }
 }
 
-// htmlTag mirrors shared/utils.js's `h`: auto-escaping tagged template with an
+// htmlTag mirrors shared/dom.js's `h`: auto-escaping tagged template with an
 // {__html:true,value} opt-out. Reimplemented rather than imported because the
 // harness runs the module in a vm with no ES resolver — the same reason onSSE is
 // injected. Kept behaviourally identical on the two things the panel relies on:

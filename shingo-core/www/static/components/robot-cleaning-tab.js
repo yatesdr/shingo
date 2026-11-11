@@ -12,7 +12,8 @@
 // /api/map/points without the vendor property blob). Every point is offered,
 // not just LocationMarks: the knife could sit anywhere, and the server refuses
 // what is not a scene point or is a lane slot.
-import { apiResult, collectList, debounce, escapeHtml, formatTime, settingsPage } from '/static/shared/utils.js';
+import { debounce, escapeHtml } from '/static/shared/dom.js';
+import { apiResult, collectList, formatTime, settingsPage } from '/static/shared/utils.js';
 
 const root = () => document.getElementById('cleaning-setup');
 const pointsBox = () => document.getElementById('cleaning-points');

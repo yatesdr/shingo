@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -139,4 +142,311 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 		}
 	}
 	return len(wl), "", "", false
+}
+
+// ── the shared modules' census: one definition, an importer, one URL ─────────
+//
+// utils.js was split into one-job files (brief v2 S2). Three rules keep the
+// split from growing back, and they read the same sources the browser does:
+// shared/*.js and every page module and template of Core and Edge.
+//
+//   - TestSharedHelpersDefinedOnce: a name a shared module exports is defined
+//     nowhere else, in any tree, except the copies sharedHelperCopies lists.
+//   - TestSharedExportsHaveImporters: every export of a shared module is
+//     imported by some page, hub or other shared module, except the ones
+//     sharedExportsNoImporter lists.
+//   - TestSharedModulesHaveOneURL: a shared module is imported by exactly one
+//     spelling, /static/shared/<file>, and no shared module re-exports
+//     another's names. A module reached by two URLs is two instances, so a page
+//     would run two clocks or two buses.
+//
+// Both lists are ratchets: an entry that no longer matches fails, so a copy
+// deleted in wave C (the hubs, the classic scripts' escapers) takes its entry
+// with it.
+
+// sharedHelperCopies are the definitions of a shared name outside its shared
+// module that exist today, as "path name". Each is someone else's to remove.
+var sharedHelperCopies = map[string]string{
+	// The Core hub's own copies (pinned in testdata/helper-pins/hubs.txt as
+	// "own"); wave C swaps them for the shared ones.
+	"shingo-core/www/static/app.js el":        "Core hub copy",
+	"shingo-core/www/static/app.js debounce":  "Core hub copy",
+	"shingo-core/www/static/app.js showModal": "Core hub copy",
+	"shingo-core/www/static/app.js hideModal": "Core hub copy",
+	"shingo-core/www/static/app.js toast":     "Core hub copy",
+	"shingo-core/www/static/app.js api":       "Core hub copy (a function, not utils.js's object)",
+	// The Edge hub's own copies; wave C swaps them.
+	"shingo-edge/www/static/js/shingoedge.js createSSE": "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js showModal": "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js hideModal": "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js confirm":   "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js prompt":    "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js toast":     "Edge hub copy",
+	"shingo-edge/www/static/js/shingoedge.js api":       "Edge hub copy",
+	// The station's own builder: it sets properties where dom.js's el sets
+	// attributes (operator-util.js's comment), and the station's touch layer is
+	// not extracted (brief v2 S2).
+	"shingo-edge/www/static/operator-station/operator-util.js el": "station's own el",
+	// Page-local helpers that share a name and not a signature.
+	"shingo-core/www/static/pages/heartbeat.js el":          "page-local el(tag, cls, text)",
+	"shingo-core/www/static/pages/bins.js switchTab":        "page-local switchTab(name)",
+	"shingo-core/www/static/pages/test-orders.js switchTab": "page-local switchTab(name)",
+	"shingo-core/www/static/pages/robots.js switchTab":      "wraps dom.js's (imported as showTab) to load a panel on first view, style guide §22",
+	// Private escapers: bins.js's calls escapeHtml; the two classic scripts'
+	// go in wave C ("classic scripts stop carrying private escapers").
+	"shingo-core/www/static/pages/bins.js esc":            "alias of escapeHtml",
+	"shingo-edge/www/static/js/pages/catid-health.js esc": "classic script's private escaper",
+	"shingo-edge/www/static/js/pages/station-card.js esc": "classic script's private escaper",
+}
+
+// sharedExportsNoImporter are the exports no page imports, as "file name".
+var sharedExportsNoImporter = map[string]string{
+	// Kept in utils.js for wave C, which replaces them (layer, bus): no page
+	// imports the shared copies today.
+	"utils.js confirm":   "wave C: layer",
+	"utils.js prompt":    "wave C: layer",
+	"utils.js createSSE": "wave C: the bus is the one client",
+	// The bus's banner, called from inside utils.js only.
+	"utils.js showRefreshBanner": "the bus and createSSE call it in this file",
+	// The bus's teardown and the clock's single repaint: exported for the
+	// node tests (testdata/js) and for a page that needs one.
+	"utils.js closeSSEBus":         "teardown, read by utils.dashboard.test.js",
+	"utils.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
+}
+
+var (
+	sharedExportDeclRe = regexp.MustCompile(`(?m)^export[ \t]+(?:async[ \t]+)?(?:function[ \t]*\*?|const|let|var|class)[ \t]*([A-Za-z_$][\w$]*)`)
+	sharedExportListRe = regexp.MustCompile(`(?m)^export[ \t]*\{([^}]*)\}[ \t]*(from\b)?`)
+	// A definition: a function declaration at any depth; a top-level const,
+	// let or var whose value is a function or an object; a nested one whose
+	// value is a function.
+	sharedDefFuncRe = regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?(?:async[ \t]+)?function[ \t]*\*?[ \t]*([A-Za-z_$][\w$]*)[ \t]*\(`)
+	sharedDefTopRe  = regexp.MustCompile(`(?m)^(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[ \t]*=[ \t]*(?:async\b|function\b|\(|\{|[A-Za-z_$][\w$]*[ \t]*=>)`)
+	sharedDefNestRe = regexp.MustCompile(`(?m)^[ \t]+(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[ \t]*=[ \t]*(?:async[ \t]*)?(?:function\b|\([^)\n]*\)[ \t]*=>|[A-Za-z_$][\w$]*[ \t]*=>)`)
+	// What a module takes: named imports and re-exports, then every
+	// specifier at all (side-effect and dynamic imports too) for the URL rule.
+	sharedNamedImportRe = regexp.MustCompile(`\b(?:import|export)[ \t]*\{([^}]*)\}\s*from[ \t]*['"]([^'"]+)['"]`)
+	sharedAnySpecRe     = regexp.MustCompile(`(?:\bfrom[ \t]*|\bimport[ \t]*\(?[ \t]*)['"]([^'"]+)['"]`)
+	sharedLineCommentRe = regexp.MustCompile(`(?m)(^|[^:'"\\])//.*$`)
+	sharedTmplCommentRe = regexp.MustCompile(`(?s)\{\{-?\s*/\*.*?\*/\s*-?\}\}`)
+)
+
+// sharedSource is one browser source: its repo path, the URL it is served at
+// ("" for a template, whose inline modules use absolute specifiers), and its
+// code with comments dropped (a comment naming a helper is not a copy of it).
+type sharedSource struct {
+	path, url, code string
+}
+
+// sharedCensusSources reads shared/*.js and the served Core and Edge trees
+// (static and templates; vendored and minified files left out).
+func sharedCensusSources(t *testing.T) []sharedSource {
+	t.Helper()
+	var out []sharedSource
+	add := func(repoPath, url string, raw []byte) {
+		code := sharedLineCommentRe.ReplaceAllString(string(raw), "$1")
+		code = sharedTmplCommentRe.ReplaceAllString(code, "")
+		out = append(out, sharedSource{path: repoPath, url: url, code: code})
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read shared/: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".js") {
+			continue
+		}
+		raw, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		add("shared/"+e.Name(), "/static/shared/"+e.Name(), raw)
+	}
+	for _, tree := range []struct{ dir, url string }{
+		{"shingo-core/www/static", "/static/"},
+		{"shingo-core/www/templates", ""},
+		{"shingo-edge/www/static", "/static/"},
+		{"shingo-edge/www/templates", ""},
+	} {
+		root := filepath.Join("..", filepath.FromSlash(tree.dir))
+		err := fs.WalkDir(os.DirFS(root), ".", func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == "vendor" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(p, ".min.js") || !(strings.HasSuffix(p, ".js") || strings.HasSuffix(p, ".html")) {
+				return nil
+			}
+			raw, err := fs.ReadFile(os.DirFS(root), p)
+			if err != nil {
+				return err
+			}
+			url := ""
+			if tree.url != "" {
+				url = tree.url + p
+			}
+			add(tree.dir+"/"+p, url, raw)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", tree.dir, err)
+		}
+	}
+	if len(out) < 100 {
+		t.Fatalf("read only %d sources; the walk is broken, not the trees", len(out))
+	}
+	return out
+}
+
+// sharedExports maps each shared module's file name to the names it exports.
+func sharedExports(srcs []sharedSource) map[string][]string {
+	out := map[string][]string{}
+	for _, s := range srcs {
+		if !strings.HasPrefix(s.path, "shared/") {
+			continue
+		}
+		file := strings.TrimPrefix(s.path, "shared/")
+		for _, m := range sharedExportDeclRe.FindAllStringSubmatch(s.code, -1) {
+			out[file] = append(out[file], m[1])
+		}
+		for _, m := range sharedExportListRe.FindAllStringSubmatch(s.code, -1) {
+			if m[2] != "" {
+				continue // a re-export; TestSharedModulesHaveOneURL refuses it
+			}
+			for _, n := range strings.Split(m[1], ",") {
+				if f := strings.Fields(n); len(f) > 0 {
+					out[file] = append(out[file], f[len(f)-1])
+				}
+			}
+		}
+	}
+	return out
+}
+
+// sharedResolve is the URL an import specifier names from a module served at
+// fromURL, query dropped; "" when it cannot be told (a relative specifier in a
+// template).
+func sharedResolve(fromURL, spec string) string {
+	spec = strings.SplitN(spec, "?", 2)[0]
+	if strings.HasPrefix(spec, "/") {
+		return path.Clean(spec)
+	}
+	if fromURL == "" {
+		return ""
+	}
+	return path.Join(path.Dir(fromURL), spec)
+}
+
+func TestSharedHelpersDefinedOnce(t *testing.T) {
+	t.Parallel()
+	srcs := sharedCensusSources(t)
+	home := map[string]string{} // name -> the shared file that exports it
+	for file, names := range sharedExports(srcs) {
+		for _, n := range names {
+			if other, dup := home[n]; dup {
+				t.Errorf("%s is exported by both shared/%s and shared/%s: one helper, one file", n, other, file)
+			}
+			home[n] = file
+		}
+	}
+	seen := map[string]bool{}
+	for _, s := range srcs {
+		for _, re := range []*regexp.Regexp{sharedDefFuncRe, sharedDefTopRe, sharedDefNestRe} {
+			for _, m := range re.FindAllStringSubmatch(s.code, -1) {
+				file, ok := home[m[1]]
+				if !ok || s.path == "shared/"+file {
+					continue
+				}
+				key := s.path + " " + m[1]
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				if _, allowed := sharedHelperCopies[key]; !allowed {
+					t.Errorf("%s defines %s, which shared/%s exports: import it from /static/shared/%s", s.path, m[1], file, file)
+				}
+			}
+		}
+	}
+	for key, why := range sharedHelperCopies {
+		if !seen[key] {
+			t.Errorf("sharedHelperCopies lists %q (%s), which is no longer there: delete the entry", key, why)
+		}
+	}
+}
+
+func TestSharedExportsHaveImporters(t *testing.T) {
+	t.Parallel()
+	srcs := sharedCensusSources(t)
+	exports := sharedExports(srcs)
+	imported := map[string]bool{} // "file name"
+	for _, s := range srcs {
+		for _, m := range sharedNamedImportRe.FindAllStringSubmatch(s.code, -1) {
+			u := sharedResolve(s.url, m[2])
+			if !strings.HasPrefix(u, "/static/shared/") || u == s.url {
+				continue
+			}
+			file := strings.TrimPrefix(u, "/static/shared/")
+			for _, n := range strings.Split(m[1], ",") {
+				if f := strings.Fields(n); len(f) > 0 {
+					imported[file+" "+f[0]] = true
+				}
+			}
+		}
+	}
+	exported := map[string]bool{}
+	for file, names := range exports {
+		for _, n := range names {
+			key := file + " " + n
+			exported[key] = true
+			_, allowed := sharedExportsNoImporter[key]
+			switch {
+			case imported[key] && allowed:
+				t.Errorf("sharedExportsNoImporter lists %q, which is imported now: delete the entry", key)
+			case !imported[key] && !allowed:
+				t.Errorf("shared/%s exports %s and nothing imports it: drop the export, or import it where it is used", file, n)
+			}
+		}
+	}
+	for key := range sharedExportsNoImporter {
+		if !exported[key] {
+			t.Errorf("sharedExportsNoImporter lists %q, which no shared module exports there: delete the entry", key)
+		}
+	}
+	if len(imported) < 30 {
+		t.Fatalf("found only %d imported shared names; the import walk is broken, not the pages", len(imported))
+	}
+}
+
+func TestSharedModulesHaveOneURL(t *testing.T) {
+	t.Parallel()
+	srcs := sharedCensusSources(t)
+	exports := sharedExports(srcs)
+	for _, s := range srcs {
+		for _, m := range sharedAnySpecRe.FindAllStringSubmatch(s.code, -1) {
+			u := sharedResolve(s.url, m[1])
+			if !strings.HasPrefix(u, "/static/shared/") {
+				continue
+			}
+			if want := u; m[1] != want {
+				t.Errorf("%s imports %q: spell it %q, as every other importer does (two URLs are two module instances)", s.path, m[1], want)
+			}
+			if _, ok := exports[strings.TrimPrefix(u, "/static/shared/")]; !ok {
+				t.Errorf("%s imports %s, which is not a shared module", s.path, u)
+			}
+		}
+		if !strings.HasPrefix(s.path, "shared/") {
+			continue
+		}
+		for _, m := range sharedExportListRe.FindAllStringSubmatch(s.code, -1) {
+			if m[2] != "" {
+				t.Errorf("%s re-exports {%s}: a page imports a helper from the file that defines it", s.path, strings.TrimSpace(m[1]))
+			}
+		}
+	}
 }

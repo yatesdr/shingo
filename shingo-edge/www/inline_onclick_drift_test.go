@@ -12,7 +12,7 @@ import (
 // handlers" convention from the style guide (§ Event handling).
 // Templates must bind events via data-action / data-action-<event>
 // attributes that the page script wires to delegated listeners
-// (see shared/utils.js delegateActions).
+// (see shared/dom.js delegateActions).
 //
 // Covers click, change, input, blur, keydown, submit, focus,
 // keyup, mousedown, mouseup. If a new event type sneaks in, add

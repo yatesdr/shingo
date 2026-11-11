@@ -32,7 +32,7 @@ function eq(name, got, want) {
     check(name, got === want, 'got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
 }
 
-// escapeHtml mirrors shared/utils.js's (the five-character map). Injected in
+// escapeHtml mirrors shared/dom.js's (the five-character map). Injected in
 // place of the ES import: the harness runs the module in a vm with no ES
 // resolver, the same reason the other page tests inject their imports.
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };

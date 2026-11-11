@@ -10,7 +10,7 @@
 // WHAT IS REAL. The page markup (sliced from <main> to the page's module
 // tag), each page module byte for byte less its import/export lines, and the
 // helpers they import: shingoedge.js's api, handleResponse, showModal and
-// hideModal; shared/utils.js's escapeHtml; ask-act.js's postAct; and
+// hideModal; shared/dom.js's escapeHtml; ask-act.js's postAct; and
 // production-refresh.js. Each is read off its own file.
 //
 // WHAT IS STUBBED, AND WHY EACH IS SAFE FOR THESE PINS.
@@ -72,10 +72,10 @@ const unModule = src => src
     .replace(/^export\s*\{[^}]*\}(\s*from\s*['"][^'"]+['"])?;?/gm, '');
 
 const EDGE = read(path.join(JS, 'shingoedge.js'));
-const UTILS = read(path.join(SHARED, 'utils.js'));
+const SHARED_DOM = read(path.join(SHARED, 'dom.js'));
 const HELPERS = [
-    block(UTILS, /const HTML_ESCAPES = /, 'HTML_ESCAPES').replace(/^const /, 'var '),
-    block(UTILS, /export function escapeHtml\(/, 'escapeHtml'),
+    block(SHARED_DOM, /const HTML_ESCAPES = /, 'HTML_ESCAPES').replace(/^const /, 'var '),
+    block(SHARED_DOM, /export function escapeHtml\(/, 'escapeHtml'),
     block(EDGE, /export const api = /, 'api').replace(/^const /, 'var '),
     block(EDGE, /function handleResponse\(/, 'handleResponse'),
     block(EDGE, /export function showModal\(/, 'showModal'),

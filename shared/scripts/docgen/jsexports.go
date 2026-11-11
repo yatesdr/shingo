@@ -1,10 +1,11 @@
 package main
 
-// jsexports.go — the export list in
-// docs/ui-style-guide/17-javascript-primitives.md: every top-level `export` in
-// shared/utils.js, its kind, and the first sentence of the `//` comment block
-// written directly above it (one declaration line between the two is allowed:
-// a helper constant the function reads, like escapeHtml's table).
+// jsexports.go — the export lists in
+// docs/ui-style-guide/17-javascript-primitives.md, one table per shared module
+// in jsexportsFiles: every top-level `export` in the file, its kind, and the
+// first sentence of the `//` comment block written directly above it (one
+// declaration line between the two is allowed: a helper constant the function
+// reads, like escapeHtml's table).
 
 import (
 	"fmt"
@@ -14,13 +15,19 @@ import (
 	"strings"
 )
 
+// jsexportsFiles are the shared modules utils.js was split into (one job
+// each), and what is left of it; each feeds the block named after it.
+var jsexportsFiles = []string{"shared/dom.js", "shared/utils.js"}
+
 func init() {
-	register(Generator{Name: "shared/utils.js", Emit: func(root string, args []string) (string, error) {
-		if len(args) != 0 {
-			return "", fmt.Errorf("takes no arguments, got %q", args)
-		}
-		return jsexportsTable(root, "shared/utils.js")
-	}})
+	for _, file := range jsexportsFiles {
+		register(Generator{Name: file, Emit: func(root string, args []string) (string, error) {
+			if len(args) != 0 {
+				return "", fmt.Errorf("takes no arguments, got %q", args)
+			}
+			return jsexportsTable(root, file)
+		}})
+	}
 }
 
 var (

@@ -29,6 +29,7 @@ const plantPath = path.join(SRC_DIR, 'plantclock.js');
 
 function load(win) {
     const usrc = fs.readFileSync(sharedPath, 'utf8')
+        .replace(/^import[^;]+;\s*/mg, '')
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');
     const window = Object.assign({ addEventListener: () => {} }, win);

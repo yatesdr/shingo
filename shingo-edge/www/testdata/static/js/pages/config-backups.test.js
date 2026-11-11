@@ -6,7 +6,7 @@
 // the handler got the key wrapped in quotes with a stray bracket and posted a
 // key matching no backup. The key now rides in data-key.
 //
-// Loads the real shared/utils.js (el, delegateActions) and config-backups.js
+// Loads the real shared/dom.js (el, delegateActions) and config-backups.js
 // into one VM with a small DOM stub; nothing else.
 
 'use strict';
@@ -86,7 +86,7 @@ const ctx = vm.createContext({
     EventSource: function () {},
     location: { reload: () => {} },
 });
-vm.runInContext(load(path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared', 'utils.js'), ['el', 'delegateActions']), ctx);
+vm.runInContext(load(path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared', 'dom.js'), ['el', 'delegateActions']), ctx);
 vm.runInContext(load(path.join(SRC_DIR, 'config-backups.js'), ['backupRow', 'makeStageRestore', 'backupWords', 'formatBytes', 'stationBody', 'stationErrors']), ctx);
 
 const tick = () => new Promise((r) => setTimeout(r, 0));

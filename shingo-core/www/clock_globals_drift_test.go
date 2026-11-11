@@ -150,7 +150,7 @@ func TestNoPageModuleDefinesADurationFormatter(t *testing.T) {
 }
 
 // TestEscapeHtmlDefinedOnce: the HTML escape is defined in one file across
-// shared/ and Core's static tree — shared/utils.js, the copy that escapes
+// shared/ and Core's static tree — shared/dom.js, the copy that escapes
 // quotes (pin: shared/testdata/js/utils.escape.test.js). Core had app.js's copy and five
 // page-local ones (dashboard, dashboard-node-report, dashboard-map, missions'
 // escapeText/escapeAttr), all but one leaving `"` and `'` alone, so the h template could
@@ -158,7 +158,8 @@ func TestNoPageModuleDefinesADurationFormatter(t *testing.T) {
 // another name is caught by its shape: `&` replaced by hand, or a text node
 // read back through innerHTML. Edge's own copies (shingoedge.js,
 // operator-util.js) and shared/esc.js are outside this tree's say and listed
-// in the round-2 report, not here.
+// in the round-2 report, not here; one name defined once across all three
+// trees, by name only, is shared's TestSharedHelpersDefinedOnce.
 func TestEscapeHtmlDefinedOnce(t *testing.T) {
 	def := regexp.MustCompile(`function\s+escapeHtml\s*\(|\bescapeHtml\s*=\s*(?:function|\()`)
 	shape := regexp.MustCompile(`replace\(/&/g|textContent\s*=[^;]*;\s*return\s+\w+\.innerHTML|createTextNode\([^)]*\)\);\s*return\s+\w+\.innerHTML`)
@@ -190,8 +191,8 @@ func TestEscapeHtmlDefinedOnce(t *testing.T) {
 		}
 	}
 	sort.Strings(defs)
-	if strings.Join(defs, ",") != "shared/utils.js" {
-		t.Errorf("escapeHtml defined in %v, want only shared/utils.js (import it from there or from /static/app.js)", defs)
+	if strings.Join(defs, ",") != "shared/dom.js" {
+		t.Errorf("escapeHtml defined in %v, want only shared/dom.js (import it from there or from /static/app.js)", defs)
 	}
 	sort.Strings(shapes)
 	for _, p := range shapes {

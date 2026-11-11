@@ -7,7 +7,7 @@
 // a row is computed here instead, from the same facts the handler uses.
 //
 // No DOM: bins.row.test.js runs these under plain Node.
-import { escapeHtml } from '/static/shared/utils.js';
+import { escapeHtml } from '/static/shared/dom.js';
 
 var TRANSIT_NODE = '_TRANSIT';
 var CARRIER_PREFIX = '_ROBOT:';

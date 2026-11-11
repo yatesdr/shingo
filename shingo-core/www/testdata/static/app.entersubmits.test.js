@@ -5,7 +5,7 @@
 // target must be found in the map, not on window.
 //
 // Runs under plain node through its Go wrapper (app_entersubmits_wrapper_test.go).
-// The real delegateActions (shared/utils.js) and the real enterSubmits (app.js,
+// The real delegateActions (shared/dom.js) and the real enterSubmits (app.js,
 // cut out of the file by name) are evaluated against a minimal DOM stub.
 
 'use strict';
@@ -54,7 +54,7 @@ function fire(root, type, target, extra) {
     return prevented;
 }
 
-const utilsSrc = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', 'shared', 'utils.js'), 'utf8')
+const utilsSrc = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', 'shared', 'dom.js'), 'utf8')
     .replace(/export\s+function\s+/g, 'function ')
     .replace(/export\s+const\s+/g, 'const ');
 const appSrc = fs.readFileSync(path.join(SRC_DIR, 'app.js'), 'utf8');

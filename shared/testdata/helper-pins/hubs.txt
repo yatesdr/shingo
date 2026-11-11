@@ -1,33 +1,34 @@
 # hubs — for each helper name, what each surface's module exports under it:
 #   own     the module defines it (its own copy)
-#   shared  the module re-exports shared/utils.js's
+#   shared  the module re-exports the one in shared/
 #   -       not exported
+# and, under shared, the shared/ file that defines it.
 
 name                  core-hub  edge-hub  shared
-escapeHtml            shared    shared    own
-h                     shared    -         own
-el                    own       -         own
-debounce              own       -         own
-delegateActions       shared    shared    own
-installBackdropClose  -         -         own
-showModal             own       own       own
-hideModal             own       own       own
-confirm               -         own       own
-prompt                -         own       own
+escapeHtml            shared    shared    dom.js
+h                     shared    -         dom.js
+el                    own       -         dom.js
+debounce              own       -         dom.js
+delegateActions       shared    shared    dom.js
+installBackdropClose  -         -         utils.js
+showModal             own       own       utils.js
+hideModal             own       own       utils.js
+confirm               -         own       utils.js
+prompt                -         own       utils.js
 uiConfirm             own       -         -
 uiConfirmWithInput    own       -         -
 uiPrompt              own       -         -
-toast                 own       own       own
-api                   own       own       own
+toast                 own       own       utils.js
+api                   own       own       utils.js
 apiGet                own       -         -
 apiPost               own       -         -
 apiPut                own       -         -
 apiDelete             own       -         -
-apiResult             -         -         own
-createSSE             -         own       own
-onSSE                 -         -         own
-showRefreshBanner     -         -         own
+apiResult             -         -         utils.js
+createSSE             -         own       utils.js
+onSSE                 -         -         utils.js
+showRefreshBanner     -         -         utils.js
 
 edge-hub window.ShingoEdge: {escapeHtml, createSSE, showModal, hideModal, confirm, prompt, populateForm, getFormData, removeRow, replaceRowCells, api, toast}
 edge-hub window.ShingoEdge entries that are the module's exports: 12 of 12
-loading the hub (and shared/utils.js) sets on window: core-hub nothing; edge-hub ShingoEdge
+loading the hub (and the shared/ modules it imports) sets on window: core-hub nothing; edge-hub ShingoEdge

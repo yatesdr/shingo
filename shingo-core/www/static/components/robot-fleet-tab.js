@@ -8,7 +8,8 @@
 // days before it (GET /api/robots/hours, summed on the server in the plant's
 // zone). Numbers only and right-aligned; a span with no record is a dash,
 // never 0, because zero is a measurement and absence is not.
-import { escapeHtml, formatTime } from '/static/shared/utils.js';
+import { escapeHtml } from '/static/shared/dom.js';
+import { formatTime } from '/static/shared/utils.js';
 
 const DASH = '—';
 

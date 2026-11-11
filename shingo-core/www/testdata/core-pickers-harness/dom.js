@@ -7,7 +7,7 @@
 // fetch is the harness's and a refusal is unwrapped exactly as the page sees it:
 //   - api, apiGet, apiPost from static/app.js (a non-2xx throws the server's
 //     `error` string, or the raw text when there is none);
-//   - escapeHtml and h from shared/utils.js.
+//   - escapeHtml and h from shared/dom.js.
 //
 // The DOM is what the pages touch and no more: elements by id (made on first
 // ask, as if the template had them), innerHTML kept as the string the page
@@ -39,7 +39,7 @@ function fnSource(src, name) {
     throw new Error('unclosed function ' + name);
 }
 
-const sharedSrc = fs.readFileSync(path.join(REPO, 'shared', 'utils.js'), 'utf8');
+const sharedSrc = fs.readFileSync(path.join(REPO, 'shared', 'dom.js'), 'utf8');
 const appSrc = readWWW('static/app.js');
 const HELPERS = [
     sharedSrc.match(/^const HTML_ESCAPES = .*$/m)[0],

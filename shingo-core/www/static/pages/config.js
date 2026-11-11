@@ -6,9 +6,9 @@
 // Test connection (POST /api/config/test-database), Send a test (the two
 // /config/test-* doors, with the draft's mail settings), Change password
 // (POST /config/password).
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import {
-    apiResult, collectList, delegateActions, durationFromText, durationToText,
-    escapeHtml, hideModal, settingsPage, showModal,
+    apiResult, collectList, durationFromText, durationToText, hideModal, settingsPage, showModal,
 } from '/static/shared/utils.js';
 
 const root = document.getElementById('config-page');

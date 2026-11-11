@@ -9,12 +9,12 @@ import (
 )
 
 // TestSharedFilesEmbedded asserts the foundational embed contract:
-// tokens.css, status-classes.css, and utils.js are all reachable
-// through Files. If embed.FS isn't picking up an asset, every consumer
+// tokens.css, status-classes.css, utils.js and the one-job modules split
+// out of it are all reachable through Files. If embed.FS isn't picking up an asset, every consumer
 // silently 404s — catching it here is much better than catching it on
 // the first plant.
 func TestSharedFilesEmbedded(t *testing.T) {
-	required := []string{"tokens.css", "status-classes.css", "utils.js"}
+	required := []string{"tokens.css", "status-classes.css", "utils.js", "dom.js"}
 	for _, name := range required {
 		f, err := Files.Open(name)
 		if err != nil {
@@ -33,40 +33,46 @@ func TestSharedFilesEmbedded(t *testing.T) {
 	}
 }
 
-// TestUtilsJSHasExports is a smoke check that utils.js advertises the
-// helpers the style guide promises. Doesn't run the JS — just asserts
-// the export lines exist. A missing export is a regression that
-// consumers will hit at module-load time with a non-obvious error.
+// TestUtilsJSHasExports is a smoke check that utils.js and the one-job
+// modules split out of it advertise the helpers the style guide promises,
+// each in the file a page imports it from. Doesn't run the JS — just asserts
+// the export lines exist. A missing export is a regression that consumers
+// will hit at module-load time with a non-obvious error.
 func TestUtilsJSHasExports(t *testing.T) {
-	body, err := fs.ReadFile(Files, "utils.js")
-	if err != nil {
-		t.Fatalf("read utils.js: %v", err)
-	}
-	src := string(body)
-	exports := []string{
-		"export function escapeHtml",
-		"export function h",
-		"export function el",
-		"export const api",
-		"export function timeAgo",
-		"export function formatTime",
-		"export function formatClock",
-		"export function formatDuration",
-		"export function convertTimestamps",
-		"export function createSSE",
-		"export function showModal",
-		"export function hideModal",
-		"export function confirm",
-		"export function prompt",
-		"export function toast",
-		"export function delegateActions",
-		"export function installBackdropClose",
-		"export function installHtmxTimestampConversion",
-		"export function debounce",
-	}
-	for _, e := range exports {
-		if !strings.Contains(src, e) {
-			t.Errorf("utils.js missing %q", e)
+	for file, exports := range map[string][]string{
+		"dom.js": {
+			"export function escapeHtml",
+			"export function h",
+			"export function el",
+			"export function delegateActions",
+			"export function debounce",
+		},
+		"utils.js": {
+			"export const api",
+			"export function timeAgo",
+			"export function formatTime",
+			"export function formatClock",
+			"export function formatDuration",
+			"export function convertTimestamps",
+			"export function createSSE",
+			"export function showModal",
+			"export function hideModal",
+			"export function confirm",
+			"export function prompt",
+			"export function toast",
+			"export function installBackdropClose",
+			"export function installHtmxTimestampConversion",
+		},
+	} {
+		body, err := fs.ReadFile(Files, file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		src := string(body)
+		for _, e := range exports {
+			if !strings.Contains(src, e) {
+				t.Errorf("%s missing %q", file, e)
+			}
 		}
 	}
 }

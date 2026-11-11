@@ -5,7 +5,8 @@
 // store (Since/Until + station/robot + state) drives the data sections.
 
 import { apiGet, el, escapeHtml, timeAgo, toast } from '/static/app.js';
-import { createStore, formatDuration, formatTime, installLiveDurations, onSSE, debounce } from '/static/shared/utils.js';
+import { debounce } from '/static/shared/dom.js';
+import { createStore, formatDuration, formatTime, installLiveDurations, onSSE } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 // BarList is no longer imported here: U3 replaced both breakdown panels with

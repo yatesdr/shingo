@@ -27,8 +27,8 @@ function assert(cond, label) {
     else { failed++; console.error('FAIL: ' + label); }
 }
 
-// The body of `function name(...) {...}` in utils.js, braces matched.
-const SRC = fs.readFileSync(path.join(SRC_DIR, 'utils.js'), 'utf8');
+// The body of `function name(...) {...}` in dom.js, braces matched.
+const SRC = fs.readFileSync(path.join(SRC_DIR, 'dom.js'), 'utf8');
 function extract(name) {
     const at = SRC.search(new RegExp('function ' + name + '\\s*\\('));
     if (at < 0) return null;
@@ -40,7 +40,7 @@ function extract(name) {
     return null;
 }
 const escTable = SRC.match(/const HTML_ESCAPES = [^\n]*\n/);
-assert(escTable, 'utils.js defines HTML_ESCAPES');
+assert(escTable, 'dom.js defines HTML_ESCAPES');
 
 // No document in the sandbox: the helper must not need one.
 const ctx = vm.createContext({ String });

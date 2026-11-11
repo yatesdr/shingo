@@ -4,16 +4,33 @@ Verified against: 51489c78
 
 ### Use these helpers
 
-Don't reimplement. The shared module at `shared/utils.js` exports these, and
-pages import them from `/static/shared/utils.js`:
+Don't reimplement. The shared modules export these, one job per file, and a
+page imports each helper from the file that defines it, at
+`/static/shared/<file>`. No file re-exports another's helpers, so no page
+reaches one module by two URLs (two URLs would be two instances: two clocks,
+two buses).
 
-<!-- generated: shared/utils.js -->
+#### `dom.js`: the HTML escape and the DOM helpers
+
+<!-- generated: shared/dom.js -->
 
 | Export | Kind | What it does |
 |---|---|---|
 | `escapeHtml` | function | Last-resort escape for legacy innerHTML concatenation. |
 | `h` | function | Tagged-template HTML builder. |
 | `el` | function | DOM element builder. |
+| `delegateActions` | function | delegateActions wires event listeners on `root` that dispatch to entries in `handlerMap` based on the event target's nearest `[data-action]` (or `[data-action-<event>]`) ancestor. |
+| `switchTab` | function | switchTab is the one tab handler (style guide §22). |
+| `debounce` | function | Debounce — delays calling fn until ms after the last invocation. |
+
+<!-- /generated -->
+
+#### `utils.js`: HTTP, modals, confirm / prompt / toast, the SSE factory
+
+<!-- generated: shared/utils.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
 | `api` | const | — |
 | `apiResult` | const | apiResult is api's non-throwing twin: it always resolves to { ok, status, body }, so a 400 carrying errors{field: msg} reaches the page whole. |
 | `syncServerClock` | function | syncServerClock re-pins the origin. |
@@ -35,11 +52,8 @@ pages import them from `/static/shared/utils.js`:
 | `confirm` | function | Promise-based async confirm. |
 | `prompt` | function | Promise-based async prompt. |
 | `toast` | function | Auto-dismissing toast notification. |
-| `delegateActions` | function | delegateActions wires event listeners on `root` that dispatch to entries in `handlerMap` based on the event target's nearest `[data-action]` (or `[data-action-<event>]`) ancestor. |
-| `switchTab` | function | switchTab is the one tab handler (style guide §22). |
 | `installBackdropClose` | function | installBackdropClose registers a single document-level click listener that closes any .modal-overlay element marked `data-backdrop-close` when the click target IS the overlay (not an inner .modal child). |
 | `installHtmxTimestampConversion` | function | installHtmxTimestampConversion wires a document.body listener for `htmx:afterSwap` that re-runs convertTimestamps() against the swapped-in subtree (event.detail.target). |
-| `debounce` | function | Debounce — delays calling fn until ms after the last invocation. |
 | `installTableSort` | function | installTableSort(root) wires click-to-sort onto any &lt;table data-sortable&gt; under `root` (default: document). |
 | `reconcileList` | function | reconcileList — keyed create-or-update-or-remove for SSE-driven lists. |
 | `createStore` | function | createStore — minimal observable backing the global filter bar. |
@@ -65,7 +79,7 @@ tests).
 script tags carry `type="module"`: an explicit import is a dependency a reader
 and a linter can see, where a `window.X` global is not. Edge admin page scripts
 import from `/static/js/shingoedge.js`, which re-exports `escapeHtml` and
-`delegateActions` from `utils.js` but carries its own `api`, `createSSE`,
+`delegateActions` from `dom.js` but carries its own `api`, `createSSE`,
 `showModal` / `hideModal`, `confirm` / `prompt` and `toast`. The classic scripts left
 are the ones that must run before any module: the theme pre-paint in each
 layout's head, the clock globals partial, vendored bundles, and the glyph file

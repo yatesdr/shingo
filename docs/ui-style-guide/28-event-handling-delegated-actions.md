@@ -41,7 +41,7 @@ per-page `delegateActions` call.**
 Add a new event type by extending the `eventRe` in both
 `inline_onclick_drift_test.go` files (`shingo-core/www`, `shingo-edge/www`) and adding the
 `data-action-<event>` mapping to `delegateActions` in
-`shared/utils.js`.
+`shared/dom.js`.
 
 ### Convention
 

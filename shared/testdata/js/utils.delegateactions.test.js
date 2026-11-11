@@ -1,5 +1,5 @@
-// Unit tests for delegateActions + installHtmxTimestampConversion in
-// /static/shared/utils.js. Run under plain Node via the Go test
+// Unit tests for delegateActions (/static/shared/dom.js) +
+// installHtmxTimestampConversion (/static/shared/utils.js). Run under plain Node via the Go test
 // wrapper utils_js_test.go. Exit 0 on pass, 1 on any assertion
 // failure.
 
@@ -13,6 +13,14 @@ const vm = require('vm');
 // module's embed, so no binary carries it (TestSharedFiles_HoldNoTestJS);
 // the code it reads stays at the module root.
 const SRC_DIR = path.join(__dirname, '..', '..');
+
+// sharedSource is the shared modules this test runs, as one script in import
+// order: each file's import lines dropped (a file before it declares those
+// names); the caller drops `export`.
+function sharedSource(files) {
+    return files.map((f) => fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
+        .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gm, '')).join('\n');
+}
 
 // Minimal DOM stub — just enough to exercise the helper's behavior.
 function makeNode(opts) {
@@ -56,7 +64,7 @@ function assert(cond, label) {
 }
 
 function loadUtils() {
-    const src = fs.readFileSync(path.join(SRC_DIR, 'utils.js'), 'utf8');
+    const src = sharedSource(['dom.js']);
     // Strip the `export` keyword so the file evaluates as plain script
     // inside the VM context. `export function NAME` becomes
     // `function NAME`, `export const NAME` becomes `const NAME`.
@@ -80,7 +88,7 @@ function loadUtils() {
 // document stub whose body remembers listeners and whose readyState
 // is 'complete' so the install path attaches synchronously.
 function loadUtilsForHtmx() {
-    const src = fs.readFileSync(path.join(SRC_DIR, 'utils.js'), 'utf8');
+    const src = sharedSource(['dom.js', 'utils.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

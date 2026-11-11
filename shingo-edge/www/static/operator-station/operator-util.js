@@ -7,7 +7,7 @@ import { serverNow } from '/static/shared/utils.js';
 export const stationID = parseInt(document.body.dataset.stationId, 10);
 
 // el(tag, props, children) — DOM builder aligned with the shared
-// signature in /static/shared/utils.js. Two-arg callers
+// signature in /static/shared/dom.js. Two-arg callers
 // (`el('div', { className, textContent })`) keep working because
 // Object.assign covers className/textContent/title/type/value directly;
 // className, dataset, style, and on* handler keys get the shared-form

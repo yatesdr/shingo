@@ -17,7 +17,7 @@
 // plus htmx-sse.js (the htmx SSE extension Edge's changeover and orders pages
 // connect through) and a census of htmx request-error handling on Edge admin.
 //
-// A hub loads as a page loads it: the hub module and shared/utils.js in one
+// A hub loads as a page loads it: the hub module and the shared modules in one
 // realm (world.js), so a hub's import-time side effects (installBackdropClose,
 // app.js's bus subscription) are part of what its helpers do. The shared
 // surface is shared/utils.js loaded alone, as the operator station loads it;
@@ -30,36 +30,36 @@
 // BUGS PINNED AS IS (golden: case label — source):
 //   modal.edge-hub.txt "m1 has data-backdrop-close, show, press and click the
 //     overlay": the modal closes but body overflow stays "hidden" (the scroll
-//     lock is never released) — shingoedge.js:129 locks, shared/utils.js:942
+//     lock is never released) — shingoedge.js:129 locks, shared/utils.js:705
 //     (installBackdropClose) only strips .active.
 //   modal.shared.txt "show m1 {closeOnBackdrop:true}, press in the card,
 //     release on the overlay": closes on a drag that began in the card, the
-//     case installBackdropClose guards — shared/utils.js:650.
+//     case installBackdropClose guards — shared/utils.js:565.
 //   modal.shared.txt "show m2, show m1 (m1 first in the document), Escape":
 //     closes m2, the last open overlay in document order, not the last opened
-//     — shared/utils.js:641.
+//     — shared/utils.js:556.
 //   dialog.shared.txt "confirm: the page opened and hid a modal with this
 //     surface's showModal first, then Escape on body": Escape strips .active
 //     from the dialog's overlay, which stays in the DOM, and the promise never
-//     resolves — shared/utils.js:641 (the document Escape) over confirm's
+//     resolves — shared/utils.js:556 (the document Escape) over confirm's
 //     "modal-overlay active" class.
 //   dialog.shared.txt "prompt: over an open modal (this surface's showModal),
 //     Escape in the input": resolves null AND closes the modal underneath (the
-//     input's Escape, then the document's) — shared/utils.js:702 then :641.
+//     input's Escape, then the document's) — shared/utils.js:617 then :556.
 //   sse.edge-hub.txt / sse.shared-createSSE.txt "#n error, then client.close()
 //     before the reconnect fires": a stream opens after close() — the pending
-//     timer is not cancelled — shingoedge.js:97, shared/utils.js:543.
+//     timer is not cancelled — shingoedge.js:97, shared/utils.js:458.
 //   sse.edge-hub.txt handler names: "onfoo" listens for "oo", "onSSEPing" for
 //     "s-s-e-ping" — shingoedge.js:82.
 //   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
 //     0 does not disarm a watchdog already armed; the stream is dropped once
-//     more — shared/utils.js:1279, :1282.
+//     more — shared/utils.js:1033, :1036.
 //   api.core-hub.txt / api.edge-hub.txt "204 no content", "200 empty body":
-//     a 2xx with no body rejects (SyntaxError) — app.js:253, shingoedge.js:349.
+//     a 2xx with no body rejects (SyntaxError) — app.js:254, shingoedge.js:349.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
-//     app.js:249.
+//     app.js:250.
 //   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
-//     lives 3200 ms, not 5000 — shared/utils.js:753.
+//     lives 3200 ms, not 5000 — shared/utils.js:668.
 
 'use strict';
 
@@ -969,10 +969,12 @@ function walkFiles(dir, pred) {
 function htmxErrorPins() {
     const www = path.join(REPO, 'shingo-edge', 'www');
     const rel = (p) => path.relative(REPO, p).split(path.sep).join('/');
-    // shared/utils.js too: the Edge hub installs its htmx:afterSwap listeners.
+    // shared/*.js too: the Edge hub installs the htmx:afterSwap listeners its
+    // shared modules define.
     const files = walkFiles(path.join(www, 'static'), (p) => p.endsWith('.js') && !p.endsWith('.min.js'))
         .concat(walkFiles(path.join(www, 'templates'), (p) => p.endsWith('.html')))
-        .concat([path.join(REPO, 'shared', 'utils.js')]);
+        .concat(fs.readdirSync(path.join(REPO, 'shared')).filter((f) => f.endsWith('.js')).sort()
+            .map((f) => path.join(REPO, 'shared', f)));
     const listens = [];
     const ERR = ['htmx:responseError', 'htmx:sendError', 'htmx:sseError', 'htmx:timeout', 'htmx:swapError', 'htmx:targetError', 'htmx:onLoadError'];
     const errHits = {};
@@ -1036,30 +1038,49 @@ function hubCensus() {
     const out = [
         '# hubs — for each helper name, what each surface\'s module exports under it:',
         '#   own     the module defines it (its own copy)',
-        '#   shared  the module re-exports shared/utils.js\'s',
+        '#   shared  the module re-exports the one in shared/',
         '#   -       not exported',
+        '# and, under shared, the shared/ file that defines it.',
         '',
         'name'.padEnd(22) + 'core-hub  edge-hub  shared',
     ];
+    const added = (w, before) => Object.keys(w).filter((k) => before.indexOf(k) < 0).join(', ') || 'nothing';
     const core = makeRealm({ surface: 'core' });
     const coreWindowBefore = Object.keys(core.window);
     const cm = core.load('/static/app.js');
-    const cs = core.load('/static/shared/utils.js');
+    core.load('/static/shared/utils.js');
+    const coreAdded = added(core.window, coreWindowBefore);
     const edge = makeRealm({ surface: 'edge' });
     const edgeWindowBefore = Object.keys(edge.window);
     const em = edge.load('/static/js/shingoedge.js');
-    const es = edge.load('/static/shared/utils.js');
-    const kind = (mod, sh, n) => (!(n in mod) ? '-' : (n in sh && mod[n] === sh[n]) ? 'shared' : 'own');
+    edge.load('/static/shared/utils.js');
+    const edgeAdded = added(edge.window, edgeWindowBefore);
+    // A hub's export is "shared" when it is the very value the defining shared
+    // module exports in the same realm (one module instance per URL).
+    const home = sharedHome();
+    const kind = (r, mod, n) => (!(n in mod) ? '-'
+        : (home[n] && mod[n] === r.load('/static/shared/' + home[n])[n]) ? 'shared' : 'own');
     for (const n of names) {
-        out.push(n.padEnd(22) + kind(cm, cs, n).padEnd(10) + kind(em, es, n).padEnd(10) + (n in cs ? 'own' : '-'));
+        out.push(n.padEnd(22) + kind(core, cm, n).padEnd(10) + kind(edge, em, n).padEnd(10) + (home[n] || '-'));
     }
     out.push('');
     out.push('edge-hub window.ShingoEdge: {' + Object.keys(edge.window.ShingoEdge || {}).join(', ') + '}');
     out.push('edge-hub window.ShingoEdge entries that are the module\'s exports: '
         + Object.keys(edge.window.ShingoEdge || {}).filter((k) => edge.window.ShingoEdge[k] === em[k]).length + ' of ' + Object.keys(edge.window.ShingoEdge || {}).length);
-    const added = (w, before) => Object.keys(w).filter((k) => before.indexOf(k) < 0).join(', ') || 'nothing';
-    out.push('loading the hub (and shared/utils.js) sets on window: core-hub ' + added(core.window, coreWindowBefore)
-        + '; edge-hub ' + added(edge.window, edgeWindowBefore));
+    out.push('loading the hub (and the shared/ modules it imports) sets on window: core-hub ' + coreAdded
+        + '; edge-hub ' + edgeAdded);
+    return out;
+}
+
+// sharedHome maps each name a shared/*.js module exports to that file, read
+// off the export lines (shared/helper_pins_test.go holds that no two files
+// export one name).
+function sharedHome() {
+    const out = {};
+    fs.readdirSync(path.join(REPO, 'shared')).filter((f) => f.endsWith('.js')).sort().forEach((f) => {
+        const src = fs.readFileSync(path.join(REPO, 'shared', f), 'utf8');
+        for (const m of src.matchAll(/^export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s*([\w$]+)/gm)) out[m[1]] = f;
+    });
     return out;
 }
 

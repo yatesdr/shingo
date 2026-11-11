@@ -12,7 +12,8 @@
 // it last did (overview.js, "as of").
 
 import { apiGet, h } from '/static/app.js';
-import { onSSE, debounce, formatDuration } from '/static/shared/utils.js';
+import { debounce } from '/static/shared/dom.js';
+import { onSSE, formatDuration } from '/static/shared/utils.js';
 import { windowFor } from '/static/components/plantclock.js';
 import { KpiTile, updateKpiTile } from '/static/components/KpiTile.js';
 import { RUN_TIME_TITLE } from '/static/components/DrillModal.js';

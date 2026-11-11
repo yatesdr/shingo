@@ -19,8 +19,8 @@
 //   - templates/diagnostics.html calls window.ShingoEdge.toast
 // Migrate it to module imports and the window-bridge can go.
 
+import { escapeHtml } from '/static/shared/dom.js';
 import {
-    escapeHtml,
     installBackdropClose,
     installHtmxLiveDurations,
     installHtmxTimestampConversion,
@@ -395,7 +395,7 @@ export function navigateToProcessOrOrders(el) {
 // pick up the canonical shared implementation. Keeping the re-export
 // here means existing `import { delegateActions } from
 // '/static/js/shingoedge.js'` sites don't need to change paths.
-export { delegateActions } from '/static/shared/utils.js';
+export { delegateActions } from '/static/shared/dom.js';
 
 // --- window.ShingoEdge for non-module consumers ---
 // One remaining non-module consumer still reaches for these as bare

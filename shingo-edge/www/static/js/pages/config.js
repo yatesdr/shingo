@@ -13,8 +13,9 @@
 // configured and someone opens it (E6).
 
 import { api, delegateActions, prompt, showModal, hideModal } from '/static/js/shingoedge.js';
+import { el } from '/static/shared/dom.js';
 import {
-    settingsPage, apiResult, durationFromText, collectList, el, formatClock, formatTime, toast,
+    settingsPage, apiResult, durationFromText, collectList, formatClock, formatTime, toast,
 } from '/static/shared/utils.js';
 import { backupRow, backupWords, makeStageRestore, stationBody, stationErrors } from '/static/js/pages/config-backups.js';
 

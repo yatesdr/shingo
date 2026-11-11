@@ -94,7 +94,7 @@ function load(opts) {
     const posts = [];
     const toasts = [];
     const confirms = [];
-    // The page builds markup with app.js's h`` (shared/utils.js's); this is the
+    // The page builds markup with app.js's h`` (shared/dom.js's); this is the
     // same helper with the same escape, quotes included.
     const esc = function (v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
     const h = function (strings) {

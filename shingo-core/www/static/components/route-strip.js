@@ -8,7 +8,7 @@
 // state is a class, and the robot on its way is the separator before the stop
 // it heads to (route_view.heading), classed route-heading.
 
-import { escapeHtml } from '/static/shared/utils.js';
+import { escapeHtml } from '/static/shared/dom.js';
 
 // routeStateLabel is a state in words, for the strip's title and the
 // timeline; a stop still to come says nothing. Go's routeStateWords

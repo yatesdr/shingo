@@ -38,7 +38,10 @@ function check(name, cond, detail) {
 // Enough DOM for the page's render calls, a fetch that serves one canned
 // mission payload, and the server clock pinned to `now`. Returns every element
 // the page wrote to.
-const UTILS = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'utils.js'), 'utf8')
+const UTILS = ['dom.js', 'utils.js']
+    .map((f) => fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', f), 'utf8'))
+    .join('\n')
+    .replace(/^import[^;]+;\s*/gm, '')
     .replace(/^export /gm, '');
 // plantclock.js imports serverNow from utils.js and keeps its own formatter
 // cache, so it runs in a context of its own with serverNow handed in.
