@@ -84,6 +84,9 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 		{"a node belonging to nobody", func(c *NodeClaimInput) {
 			c.ChangeoverEvacNodes = Ptr([]string{"middle-ish"})
 		}, "changeover_evac_nodes"},
+		{"a tool change with no inbound staging", func(c *NodeClaimInput) {
+			c.ChangeoverEvacNodes = Ptr([]string{"PRESS"})
+		}, "inbound_staging"},
 
 		{"press-index without back position", func(c *NodeClaimInput) { c.PairedCoreNode = "" }, "paired_core_node"},
 		{"press-index without outbound", func(c *NodeClaimInput) { c.OutboundDestination = "" }, "outbound_destination"},
@@ -185,6 +188,7 @@ func TestValidateNodeClaim_MarkedNodesMustBeThisClaimsNodes(t *testing.T) {
 	} {
 		c := validClaim()
 		c.SecondPairedCoreNode = "INDEX-C"
+		c.InboundStaging = "IN-STAGE" // a claim with marks names where the new carrier waits
 		c.ChangeoverEvacNodes = &marked
 		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
 			t.Errorf("nodes %v are all this claim's own; findings = %+v", marked, got)
@@ -362,6 +366,7 @@ func TestValidateNodeClaim_OutboundStagingCarryoverNeedsAStagingNode(t *testing.
 	c.PairedCoreNode = "INDEX-B"
 	c.ChangeoverEvacNodes = &marked
 	c.ChangeoverCarryoverDisposition = &disp
+	c.InboundStaging = "IN-STAGE"
 	c.OutboundStaging = ""
 	findings := ValidateNodeClaim(c, ClaimNodeContext{})
 	if !HasErrors(findings) {

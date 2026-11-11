@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"shingo/protocol"
@@ -110,21 +109,6 @@ type toolingChangeover struct {
 
 func (t toolingChangeover) active() bool { return len(t.presses) > 0 }
 
-// pressIndexPositions is every core node a press-index claim occupies, front to
-// back. Empty for a claim that is not press-index.
-//
-// THE GATE IS THE FUNCTION. Claim.Positions answers the geometry for any claim;
-// this narrows it to a press, and both callers depend on that narrowing — one
-// ranges over the result, the other tests it for emptiness to mean "not a press
-// with positions". Asking Positions directly at those sites would widen them to
-// every single-node cell on the line.
-func pressIndexPositions(c *processes.NodeClaim) []string {
-	if !c.IsPressIndex() {
-		return nil
-	}
-	return c.Positions()
-}
-
 // planToolingChangeover reads the ORIGINAL claim lists — not the diffs — and
 // answers two questions: which positions have their clearance redirected by an
 // override, and which positions hold their incoming material at staging.
@@ -206,43 +190,68 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 		return toolingChangeover{}
 	}
 
-	// The staging set: every position of every incoming claim that names a
-	// staging node, whatever its mode (ToolChangePositions). The arm gate has
-	// already refused a marked cell whose incoming claims name none, so an
-	// empty set here means the incoming style has no claim on the cell at all —
-	// a cell being emptied, with nothing to hold.
+	t.stageAt = toolChangeHolds(t.presses, fromClaims, toClaims)
+	return t
+}
+
+// toolChangeStaging is where a marked cell's incoming carrier waits for
+// Tooling done: the incoming claim's inbound staging on the cell's node, else
+// the marked claim's own, which the save requires of a claim with marks.
+func toolChangeStaging(p toolingPress) string {
+	if p.to != nil && p.to.InboundStaging != "" {
+		return p.to.InboundStaging
+	}
+	return p.from.InboundStaging
+}
+
+// toolChangeHolds is the tool change's holds: the positions whose incoming
+// carrier waits at staging until the operator's Tooling done, mapped to that
+// staging. presses get their staging set (toolChangeStaging).
+//
+//   - Every marked position: it is cleared at START and filled after Tooling
+//     done.
+//   - Every position the incoming style ADDS to the process, a node no
+//     outgoing claim stands on (the disjoint shape: a press that moved). It is
+//     filled during the tool change with no Ready press to gate it, so it
+//     waits at its incoming claim's staging when that claim names one.
+//
+// An unmarked position an outgoing claim stands on is NOT held: it gets its
+// ordinary changeover and its ordinary Ready press.
+func toolChangeHolds(presses []toolingPress, fromClaims, toClaims []processes.NodeClaim) map[string]string {
+	holds := map[string]string{}
+	for i := range presses {
+		presses[i].staging = toolChangeStaging(presses[i])
+		if presses[i].staging == "" {
+			continue
+		}
+		for _, position := range presses[i].positions {
+			holds[position] = presses[i].staging
+		}
+	}
+	occupied := outgoingPositions(fromClaims)
 	for i := range toClaims {
 		tc := &toClaims[i]
 		if tc.InboundStaging == "" {
 			continue
 		}
 		for _, position := range tc.ToolChangePositions() {
-			if t.stageAt == nil {
-				t.stageAt = make(map[string]string)
+			if !occupied[position] {
+				holds[position] = tc.InboundStaging
 			}
-			t.stageAt[position] = tc.InboundStaging
 		}
 	}
-	// Each marked press remembers a staging node for the positions it expands. Its
-	// own node first; otherwise any the changeover declared, taken in sorted
-	// order so a multi-press cell plans the same way twice.
-	fallback := ""
-	if len(t.stageAt) > 0 {
-		keys := make([]string, 0, len(t.stageAt))
-		for k := range t.stageAt {
-			keys = append(keys, k)
+	return holds
+}
+
+// outgoingPositions is every position an outgoing claim stands on.
+func outgoingPositions(fromClaims []processes.NodeClaim) map[string]bool {
+	out := map[string]bool{}
+	for i := range fromClaims {
+		for _, position := range fromClaims[i].ToolChangePositions() {
+			out[position] = true
 		}
-		sort.Strings(keys)
-		fallback = t.stageAt[keys[0]]
 	}
-	for i := range t.presses {
-		if s := t.stageAt[t.presses[i].from.CoreNodeName]; s != "" {
-			t.presses[i].staging = s
-			continue
-		}
-		t.presses[i].staging = fallback
-	}
-	return t
+	return out
 }
 
 // resolveToolingNodes makes sure every marked position is a node this plan can
@@ -405,50 +414,47 @@ func appendToolingClearanceTasks(processID int64, t toolingChangeover, nodeTasks
 	return nodeTasks
 }
 
-// refuseToolingChangeoverWithoutStaging is the arm-time gate: a press marked
-// for tooling evacuation stages its incoming bins, so the incoming style has to
-// say where.
-//
-// CHANGEOVER-SCOPED, not diff-scoped. The old gate walked diffs and required
-// FromClaim AND ToClaim on the same one, so it could only see a press whose
-// node appears in BOTH styles — and said nothing at all about the shape where
-// the incoming style runs on different nodes, which is exactly the shape whose
-// material would otherwise be delivered into a cell mid tool-change.
+// refuseToolingChangeoverWithoutStaging is START's backstop for the save's rule
+// that a claim with marks names inbound staging: a tool change holds the
+// incoming carriers there (toolChangeHolds), so every hold has to say where.
+// Scoped by the marks, never by the mode: a changeover with no marks is none of
+// its business, and in one with marks it names the marked cells whose refill
+// has no staging (the incoming claim on the node names none, and nor does the
+// marked claim, a row saved before the rule) and every incoming claim that adds
+// a node to the process with none.
 //
 // Named fields, named cells. "changeover requires inbound staging" sends an
 // engineer to the wrong page on a line with six presses.
 func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.NodeClaim) error {
-	var marked []string
-	for i := range fromClaims {
-		if len(domain.MarkedEvacNodes(&fromClaims[i])) > 0 {
-			marked = append(marked, fromClaims[i].CoreNodeName)
+	t := planToolingChangeover(fromClaims, toClaims)
+	if !t.active() {
+		return nil
+	}
+	var marked, missing []string
+	for _, p := range t.presses {
+		marked = append(marked, p.from.CoreNodeName)
+		if p.expandsPositions() && p.staging == "" {
+			missing = append(missing, p.from.CoreNodeName)
 		}
 	}
-	if len(marked) == 0 {
-		return nil // not a tooling changeover; none of this pass's business
-	}
-
-	var incoming, missing []string
+	occupied := outgoingPositions(fromClaims)
 	for i := range toClaims {
 		tc := &toClaims[i]
-		if len(pressIndexPositions(tc)) == 0 {
+		if tc.InboundStaging != "" {
 			continue
 		}
-		incoming = append(incoming, tc.CoreNodeName)
-		if tc.InboundStaging == "" {
-			missing = append(missing, tc.CoreNodeName)
+		for _, position := range tc.ToolChangePositions() {
+			if !occupied[position] {
+				missing = append(missing, tc.CoreNodeName)
+				break
+			}
 		}
-	}
-	// No incoming press at all: the cell is being emptied and there is nothing
-	// to stage. Refusing here would block a legitimate teardown.
-	if len(incoming) == 0 {
-		return nil
 	}
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf("cannot start changeover: %s marks press positions for tooling evacuation, "+
-		"which stages the incoming bins — set inbound staging on the incoming style's claim for %s",
+	return fmt.Errorf("cannot start changeover: %s marks positions for a tool change, which holds the incoming "+
+		"carriers at inbound staging until Tooling done — set inbound staging on the claim for %s",
 		strings.Join(marked, ", "), strings.Join(missing, ", "))
 }
 

@@ -200,16 +200,15 @@ func TestToolingBeatsRelabel(t *testing.T) {
 			"the outbound side unless an override says so.", got)
 	}
 
-	// THE POINT OF THE SHAPE: bin type does not disqualify the position from the
-	// HOLD. That is what "marked beats relabel" means now that clearance is
-	// normal routing — the bin-type fan-out relabels the diff, and the hold
-	// survives it.
+	// An UNMARKED position of the marked press is not part of the tool change:
+	// it gets its ordinary changeover, released by its own Ready press, and its
+	// carrier is not held for Tooling done. The engineer marks what must be clear.
 	unmarked := actionFor(t, plan, "PRESS_B")
 	ugot := allSteps(unmarked)
-	if !strings.Contains(ugot, "wait@IN-STAGE") {
-		t.Errorf("unmarked position PRESS_B delivers into a press mid tool-change.\n"+
+	if strings.Contains(ugot, "wait@IN-STAGE") || !strings.Contains(ugot, "wait@PRESS_B") {
+		t.Errorf("unmarked position PRESS_B is not its ordinary changeover.\n"+
 			"steps = %s\n"+
-			"EVERY inbound leg to the press holds — the press is down, marked position or not.", ugot)
+			"It opens with its own Ready wait and holds nothing for Tooling done.", ugot)
 	}
 
 	// And with no override, the OUTBOUND half of a marked position is
@@ -490,6 +489,26 @@ func TestRefuseToolingChangeoverWithoutStaging(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "inbound staging") {
 		t.Errorf("refusal must name the missing field; got %q", err)
+	}
+}
+
+// The backstop is scoped by the marks, not by the mode: a marked single-robot
+// cell whose claims name no inbound staging (a row saved before the save's
+// rule) is refused at START; the marked claim's own staging is enough when the
+// incoming claim names none.
+func TestRefuseToolingChangeoverWithoutStaging_EveryMarkedMode(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{CoreNodeName: "CELL", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-A",
+		ChangeoverEvacNodes: []string{"CELL"}}
+	to := from
+	to.PayloadCode, to.ChangeoverEvacNodes = "PART-B", nil
+	err := refuseToolingChangeoverWithoutStaging([]processes.NodeClaim{from}, []processes.NodeClaim{to})
+	if err == nil || !strings.Contains(err.Error(), "CELL") || !strings.Contains(err.Error(), "inbound staging") {
+		t.Fatalf("a marked single-robot cell with no staging: %v, want a refusal naming CELL and inbound staging", err)
+	}
+	from.InboundStaging = "CELL-STAGE"
+	if err := refuseToolingChangeoverWithoutStaging([]processes.NodeClaim{from}, []processes.NodeClaim{to}); err != nil {
+		t.Errorf("the marked claim names its staging: refused %v", err)
 	}
 }
 

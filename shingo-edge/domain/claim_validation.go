@@ -568,6 +568,14 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 						"%q is marked for changeover clearance but is not one of this claim's nodes", node))
 				}
 			}
+			// A tool change holds the incoming carrier at inbound staging until
+			// the operator's Tooling done, so a claim with marks names where.
+			// START refuses the same changeover (refuseToolingChangeoverWithoutStaging)
+			// for a row saved before this rule.
+			if in.InboundStaging == "" {
+				add("inbound_staging",
+					"A tool change holds the new carrier at inbound staging. Set inbound staging on this claim.")
+			}
 		}
 	}
 

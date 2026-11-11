@@ -174,15 +174,18 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		}
 	})
 
-	t.Run("pressIndexPositions (changeover_tooling.go): a press's whole geometry, or none", func(t *testing.T) {
+	t.Run("ToolChangePositions (domain): a press's whole geometry, every other mode its own node", func(t *testing.T) {
 		t.Parallel()
-		if got := pressIndexPositions(press3); !slices.Equal(got, []string{"LINE", "B", "C"}) {
+		if got := press3.ToolChangePositions(); !slices.Equal(got, []string{"LINE", "B", "C"}) {
 			t.Errorf("press3: %v", got)
 		}
-		for _, c := range []*processes.NodeClaim{stale, seq, nil} {
-			if got := pressIndexPositions(c); got != nil {
-				t.Errorf("%+v: %v, want nil", c, got)
+		for _, c := range []*processes.NodeClaim{stale, seq} {
+			if got := c.ToolChangePositions(); !slices.Equal(got, []string{c.CoreNodeName}) {
+				t.Errorf("%+v: %v, want its own node", c, got)
 			}
+		}
+		if got := (*processes.NodeClaim)(nil).ToolChangePositions(); got != nil {
+			t.Errorf("nil: %v, want nil", got)
 		}
 	})
 }
