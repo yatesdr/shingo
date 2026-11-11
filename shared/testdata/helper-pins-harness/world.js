@@ -3,7 +3,7 @@
 // A REALM is one browser tab: its own document, window, location, fake clock,
 // fetch and EventSource, and its own module instances. The hub modules
 // (shingo-core/www/static/app.js, shingo-edge/www/static/js/shingoedge.js) and
-// shared/utils.js load UNMODIFIED through a small ES-module loader: each file
+// the shared/ modules load UNMODIFIED through a small ES-module loader: each file
 // becomes a function whose imports are bound from the realm's module cache and
 // whose exports are returned, so a hub's own definition of a name and the
 // shared one it imports stay two things, as they are in the browser. When a

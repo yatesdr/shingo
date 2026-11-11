@@ -105,9 +105,10 @@ two buses).
 
 <!-- /generated -->
 
-`shared/esc.js` exports `esc`, the same escape with no imports and no DOM, for
-code that must not pull in all of `utils.js` (the station's renderers, the node
-tests).
+`shared/esc.js` exports `esc`, an escape with no imports and no DOM, for the
+station's renderers and the node tests. It leaves `'` alone where `escapeHtml`
+escapes it, so the two are not one helper; `dom.js`'s header says why they stay
+in two files.
 
 ### Module shape
 

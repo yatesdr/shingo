@@ -269,9 +269,9 @@ func humanizeUnknown(v string) string {
 // THE LADDER MOVED TO protocol.FormatDuration and this is a delegation, not a
 // second implementation. The fault sentence is rendered in protocol (it crosses
 // to the Edge), it prints durations, and two Go ladders for the same concept
-// would drift the way the JS pair already has (shared/utils.js:160 vs
-// mission-detail.js:7). Output is byte-identical; the ladder's reasoning and its
-// days tier are documented at the new home.
+// would drift the way the JS pair did (shared/clock.js formatDuration vs the
+// copy mission-detail.js carried). Output is byte-identical; the ladder's
+// reasoning and its days tier are documented at the new home.
 func FormatDuration(d time.Duration) string { return protocol.FormatDuration(d) }
 
 // FormatCount renders a count in full with a thousands separator.

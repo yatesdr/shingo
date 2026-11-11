@@ -39,7 +39,8 @@ var updateHelperPinsGolden = flag.Bool("update-helper-pins-golden", false,
 //   - hubs.txt: which copy each hub exports under each helper name.
 //
 // The surfaces are core-hub (shingo-core/www/static/app.js), edge-hub
-// (shingo-edge/www/static/js/shingoedge.js) and shared (utils.js here). The
+// (shingo-edge/www/static/js/shingoedge.js) and shared (utils.js here; the
+// bus pins load bus.js). The
 // harness and its DOM, clock, fetch and EventSource stubs are in
 // testdata/helper-pins-harness (pins.js says what each golden covers; world.js
 // how a page is built). Every source file loads under node unmodified.
@@ -146,8 +147,8 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 
 // ── the shared modules' census: one definition, an importer, one URL ─────────
 //
-// utils.js was split into one-job files (brief v2 S2). Three rules keep the
-// split from growing back, and they read the same sources the browser does:
+// utils.js was split into one-job files. Three rules keep the split from
+// growing back, and they read the same sources the browser does:
 // shared/*.js and every page module and template of Core and Edge.
 //
 //   - TestSharedHelpersDefinedOnce: a name a shared module exports is defined
@@ -160,22 +161,22 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 //     another's names. A module reached by two URLs is two instances, so a page
 //     would run two clocks or two buses.
 //
-// Both lists are ratchets: an entry that no longer matches fails, so a copy
-// deleted in wave C (the hubs, the classic scripts' escapers) takes its entry
-// with it.
+// Both lists are ratchets: an entry that no longer matches fails, so the
+// change that deletes a copy (a hub's, a classic script's escaper) deletes its
+// entry with it.
 
 // sharedHelperCopies are the definitions of a shared name outside its shared
 // module that exist today, as "path name". Each is someone else's to remove.
 var sharedHelperCopies = map[string]string{
 	// The Core hub's own copies (pinned in testdata/helper-pins/hubs.txt as
-	// "own"); wave C swaps them for the shared ones.
+	// "own"), exported to Core's pages under the shared names.
 	"shingo-core/www/static/app.js el":        "Core hub copy",
 	"shingo-core/www/static/app.js debounce":  "Core hub copy",
 	"shingo-core/www/static/app.js showModal": "Core hub copy",
 	"shingo-core/www/static/app.js hideModal": "Core hub copy",
 	"shingo-core/www/static/app.js toast":     "Core hub copy",
 	"shingo-core/www/static/app.js api":       "Core hub copy (a function, not utils.js's object)",
-	// The Edge hub's own copies; wave C swaps them.
+	// The Edge hub's own copies, likewise.
 	"shingo-edge/www/static/js/shingoedge.js createSSE": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js showModal": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js hideModal": "Edge hub copy",
@@ -192,8 +193,8 @@ var sharedHelperCopies = map[string]string{
 	"shingo-core/www/static/pages/bins.js switchTab":        "page-local switchTab(name)",
 	"shingo-core/www/static/pages/test-orders.js switchTab": "page-local switchTab(name)",
 	"shingo-core/www/static/pages/robots.js switchTab":      "wraps dom.js's (imported as showTab) to load a panel on first view, style guide §22",
-	// Private escapers: bins.js's calls escapeHtml; the two classic scripts'
-	// go in wave C ("classic scripts stop carrying private escapers").
+	// Private escapers: bins.js's calls escapeHtml; the two classic scripts
+	// cannot import a module, so each carries its own.
 	"shingo-core/www/static/pages/bins.js esc":            "alias of escapeHtml",
 	"shingo-edge/www/static/js/pages/catid-health.js esc": "classic script's private escaper",
 	"shingo-edge/www/static/js/pages/station-card.js esc": "classic script's private escaper",
@@ -201,11 +202,11 @@ var sharedHelperCopies = map[string]string{
 
 // sharedExportsNoImporter are the exports no page imports, as "file name".
 var sharedExportsNoImporter = map[string]string{
-	// Kept in utils.js for wave C, which replaces them (layer, bus): no page
-	// imports the shared copies today.
-	"utils.js confirm":   "wave C: layer",
-	"utils.js prompt":    "wave C: layer",
-	"utils.js createSSE": "wave C: the bus is the one client",
+	// No page imports the shared copies: Edge's pages take the Edge hub's,
+	// and Core's pages use uiConfirm / uiPrompt and the bus.
+	"utils.js confirm":   "pages take the Edge hub's copy",
+	"utils.js prompt":    "pages take the Edge hub's copy",
+	"utils.js createSSE": "pages take the Edge hub's copy or the bus",
 	// The bus's teardown and the clock's single repaint: exported for the
 	// node tests (testdata/js) and for a page that needs one.
 	"bus.js closeSSEBus":           "teardown, read by utils.dashboard.test.js",
