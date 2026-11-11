@@ -22,6 +22,11 @@
 //     whether the sheet is open and its OK pressable, and whether the page
 //     let a rejection go unhandled.
 //
+//   sheet-stack.txt: the page's sheet stack — openSheet, runSheet's one run
+//     per press, what closeSheet clears, the Escape rule innermost first, the
+//     discard question, the Advanced sheet — and the facts about scroll lock
+//     and focus.
+//
 // THE PLANT IS U0's (fixture.json); the routes an act needs that the base
 // plant does not answer (a health strip, a station counter) are added per act
 // here, synthetic like the rest.
@@ -705,6 +710,298 @@ async function pinRefusals() {
     ]);
 }
 
+// ── the sheet stack ──────────────────────────────────────────────────────
+//
+// The overlay layer the rework shares out: what opening, running, closing and
+// Escape do today, one act per block. Every block starts on a fresh page.
+function stackFacts(page) {
+    const S = page.S;
+    return 'scrim ' + (page.sheetOpen() ? 'active' : 'inactive') + ', markup ' + (page.scrim.innerHTML ? 'drawn' : 'empty') +
+        ', body overflow ' + JSON.stringify(page.doc.body.style.overflow || '') +
+        ', S.sheet ' + (S.sheet ? (S.sheet.running ? 'running' : 'set') : 'null') +
+        ', S.adv ' + (S.adv ? 'set' : 'null') + ', S.escapeHold ' + (S.escapeHold ? 'set' : 'null');
+}
+function popFacts(page) {
+    return ['pd-pop', 'pd-stpop', 'pd-advpop'].map(id => {
+        const p = page.byId(id);
+        return id + ' ' + (!p ? 'absent' : p.hidden ? 'hidden' : 'open');
+    }).join(', ');
+}
+function modalShape(page) {
+    const html = page.scrim.innerHTML;
+    const m = /<div class="pd-modal([^"]*)"([^>]*)>/.exec(html);
+    const lines = [];
+    lines.push('modal: class "pd-modal' + (m ? m[1] : '') + '"' + (m ? m[2].replace(/\s+/g, ' ') : ' (none)'));
+    lines.push('header: ' + JSON.stringify(sheetTitle(page)) + ', sub ' + JSON.stringify(T.text((/<div class="mh">[\s\S]*?<p>([\s\S]*?)<\/p>/.exec(html) || ['', ''])[1])));
+    lines.push('fields: ' + ([...html.matchAll(/data-f="([^"]*)"/g)].map(x => x[1]).join(', ') || 'none'));
+    const foot = (/<div class="mf">([\s\S]*?)<\/div>/.exec(html) || ['', ''])[1];
+    lines.push('footer: ' + [...foot.matchAll(/<(span|button) class="([^"]*)"([^>]*)>([\s\S]*?)<\/\1>/g)]
+        .map(x => x[1] === 'span' ? 'status(' + x[2] + ')' : x[2] + ' [' + ((/data-act="([^"]*)"/.exec(x[3]) || [])[1] || '') + '] ' +
+            JSON.stringify(T.text(x[4])) + (/\bdisabled\b/.test(x[3]) ? ' disabled' : '')).join(' · '));
+    lines.push('inner popover: ' + (/id="pd-advpop"[^>]*\bhidden\b/.test(html) ? '#pd-advpop, hidden' : /id="pd-advpop"/.test(html) ? '#pd-advpop' : 'none'));
+    return lines;
+}
+async function pinSheetStack() {
+    // Every page a block opens, for the facts at the foot.
+    const pages = [];
+    const open = async o => { const p = await T.openPage(o); pages.push(p); return p; };
+    T.setCurrent('sheet-stack.txt');
+    const L = ['# The sheet stack (openSheet / runSheet / closeSheet / onEscape / askBeforeDiscard / Advanced),',
+        '# one act per block, each on a fresh page. "facts" is the scrim, body scroll lock and the page\'s',
+        '# sheet state; "focus" is every element the page called focus() on during the act.'];
+    const block = (title, rows) => { L.push('', '## ' + title); for (const r of rows) L.push(r); };
+    const focusSince = (page, n) => {
+        const f = page.focused.slice(n);
+        return 'focus: ' + (f.length ? f.map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className : '')).join(', ') : 'none');
+    };
+    const openRename = async page => {
+        page.click('root', { act: 'style-menu', style: '2' });
+        page.click('root', drawn(page, 'pd-pop', 'style-rename'));
+        await page.settle();
+    };
+
+    {   // openSheet
+        const page = await open({ extra: STYLE_ROUTES });
+        const rows = ['before: ' + stackFacts(page)];
+        const f0 = page.focused.length;
+        await openRename(page);
+        rows.push('after Style B ⋯ › Rename: ' + stackFacts(page), ...modalShape(page), focusSince(page, f0),
+            'active element: ' + (page.doc.activeElement ? 'set' : 'none'), popFacts(page));
+        const f1 = page.focused.length;
+        page.click('scrim', { act: 'sheet-cancel' });
+        await page.settle();
+        rows.push('after Cancel: ' + stackFacts(page), focusSince(page, f1) + ' (none returned to the ⋯ that opened it)');
+        block('openSheet: the style menu\'s Rename sheet, then Cancel', rows);
+    }
+    {   // a click on the backdrop itself
+        const page = await open({ extra: STYLE_ROUTES });
+        await openRename(page);
+        page.click('scrim', {});
+        await page.settle();
+        block('a click on the scrim outside the modal (pd-scrim carries no data-backdrop-close)', ['after: ' + stackFacts(page)]);
+    }
+    {   // one run per press
+        const page = await open({ extra: STYLE_ROUTES });
+        await openRename(page);
+        page.type('name', 'Style B2');
+        const from = page.mark();
+        page.click('scrim', { act: 'sheet-ok' });
+        const between = 'between the presses: ' + stackFacts(page) + ', OK ' + (okButton(page).disabled ? 'disabled' : 'enabled');
+        page.click('scrim', { act: 'sheet-ok' });
+        await page.settle();
+        block('runSheet: OK pressed twice before the first write answers', [between,
+            'requests: ' + page.since(from).filter(c => c.method !== 'GET').map(lineOf).join(' · '), 'after: ' + stackFacts(page)]);
+    }
+    {   // a refused run re-enables OK and runs again on the next press
+        let refuse = true;
+        const page = await open({ extra: STYLE_ROUTES, answer: (m, u) => (m === 'PUT' && refuse ? { status: 400, body: { error: MSG } } : undefined) });
+        await openRename(page);
+        page.type('name', 'Style B2');
+        let from = page.mark();
+        await pressOK(page);
+        const first = 'first press: ' + page.since(from).map(lineOf).join(' · ') + ' → ' + sheetLine(page);
+        refuse = false;
+        from = page.mark();
+        await pressOK(page);
+        block('runSheet: a refused run, then OK again', [first,
+            'second press: ' + page.since(from).filter(c => c.method !== 'GET').map(lineOf).join(' · ') + ' → ' + sheetLine(page)]);
+    }
+    {   // closeSheet clears
+        const page = await open({ hash: '#tab=settings' });
+        page.click('root', rootButton(page, 'pos-add'));
+        await page.settle();
+        T.npk(page, 'scrim', 'addpos', 'NEW_1');
+        const S = page.S;
+        const keys = () => Object.keys(S.pickers).sort().join(', ');
+        const rows = ['open Add positions, NEW_1 ticked: ' + stackFacts(page) + '; S.addPos ' + (S.addPos ? 'set' : 'null') + '; pickers ' + keys()];
+        page.click('scrim', { act: 'sheet-cancel' });
+        await page.settle();
+        rows.push('after Cancel: ' + stackFacts(page) + '; S.addPos ' + (S.addPos ? 'set' : 'null') + '; pickers ' + keys() +
+            ' (Settings\' own pickers stay: their boxes are in #pd-root)');
+        block('closeSheet: what it clears (Add positions on Settings)', rows);
+    }
+    {
+        const page = await open({ hash: '#tab=presets' });
+        page.click('root', { act: 'preset-apply', preset: '7' });
+        await page.settle();
+        page.click('scrim', { act: 'papply-tick', style: '2' });
+        await page.settle();
+        const S = page.S;
+        const rows = ['apply modal, Style B ticked: ' + stackFacts(page) + '; S.papply ' + (S.papply ? 'rows ' + Object.keys(S.papply.rows).join(',') : 'null')];
+        page.click('scrim', { act: 'sheet-cancel' });
+        await page.settle();
+        rows.push('after Cancel: ' + stackFacts(page) + '; S.papply ' + (S.papply ? 'set' : 'null'));
+        page.click('root', { act: 'preset-apply', preset: '7' });
+        await page.settle();
+        rows.push('reopened: ' + (Object.keys(S.papply.rows).length ? 'rows ticked ' + Object.keys(S.papply.rows).join(',') : 'nothing ticked'));
+        block('closeSheet: the apply modal\'s ticks go with it', rows);
+    }
+    {
+        const page = await open();
+        page.click('root', { act: 'new-style' });
+        const chooser = page.byId('pd-newrecipe');
+        chooser.value = '7';
+        page.fire(chooser, 'change');
+        await page.settle();
+        const S = page.S;
+        const rows = ['New style, Recipe One picked: ' + stackFacts(page) + '; S.newStyle ' + (S.newStyle ? 'set' : 'null')];
+        page.click('scrim', { act: 'sheet-cancel' });
+        await page.settle();
+        rows.push('after Cancel: ' + stackFacts(page) + '; S.newStyle ' + (S.newStyle ? 'set' : 'null'));
+        block('closeSheet: New style\'s spots go with it', rows);
+    }
+    // ── Escape, innermost first ──
+    const esc = async (page, rows, what) => {
+        page.key('Escape');
+        await page.settle();
+        rows.push('Escape → ' + (what ? what(page) + '; ' : '') + stackFacts(page) + '; ' + popFacts(page));
+    };
+    {
+        const page = await open();
+        const rows = [];
+        page.click('root', { act: 'style-menu', style: '2' });
+        rows.push('style menu open: ' + popFacts(page));
+        await esc(page, rows);
+        block('Escape: the page popover (#pd-pop) with no sheet', rows);
+    }
+    {
+        const page = await open({ hash: '#tab=settings' });
+        const rows = [];
+        page.click('root', { act: 'st-group' });
+        rows.push('Settings group list open: ' + popFacts(page));
+        await esc(page, rows);
+        block('Escape: Settings\' group list (#pd-stpop)', rows);
+    }
+    {
+        const page = await open();
+        const rows = [];
+        page.click('root', { act: 'add-process' });
+        await page.settle();
+        page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
+        rows.push('Add process with its group list open: ' + stackFacts(page) + '; ' + popFacts(page));
+        await esc(page, rows);
+        await esc(page, rows);
+        block('Escape: a popover in a sheet (#pd-advpop), then the sheet (nothing typed)', rows);
+    }
+    const advNode = () => 'POS_A1';
+    {
+        const page = await open();
+        const rows = [];
+        page.click('root', { act: 'advanced', node: advNode() });
+        rows.push('Advanced open on POS_A1: ' + stackFacts(page), ...modalShape(page).filter(l => /^(modal|header|footer)/.test(l)));
+        const pick = page.scrim.querySelectorAll('[data-advkind="pick"]')[0];
+        if (pick) {
+            page.click('scrim', Object.assign({}, pick.dataset), { cls: [] });
+            rows.push('its first picker (' + pick.dataset.adv + ') clicked: ' + popFacts(page));
+            await esc(page, rows);
+        }
+        await esc(page, rows);
+        block('Escape: Advanced\'s own picker, then Advanced (nothing typed)', rows);
+    }
+    {
+        const page = await open();
+        const rows = [];
+        page.click('root', { act: 'advanced', node: advNode() });
+        const num = page.scrim.querySelectorAll('[data-advkind="number"]')[0];
+        if (!num) throw new Error('Advanced on POS_A1 draws no number field');
+        const key = num.dataset.adv;
+        num.value = '7';
+        page.fire(num, 'input');
+        rows.push('typed 7 into ' + key + ': S.adv.a.' + key + '=' + page.S.adv.a[key]);
+        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
+        page.key('Escape');
+        await page.settle();
+        rows.push('Escape again, with the question up: sheet ' + JSON.stringify(sheetTitle(page)) + ' (only its buttons answer)');
+        page.click('scrim', { act: 'sheet-cancel' });
+        await page.settle();
+        const back = page.scrim.querySelectorAll('[data-advkind="number"]').find(e => e.dataset.adv === key);
+        rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', ' + key + ' field reads ' + JSON.stringify(back ? back.value : '(gone)') +
+            ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
+        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
+        page.click('scrim', { act: 'escape-discard' });
+        await page.settle();
+        rows.push('Discard → ' + stackFacts(page));
+        block('askBeforeDiscard on Advanced: a typed number, Escape, Keep editing, Escape, Discard', rows);
+    }
+    {
+        const page = await open({ extra: STYLE_ROUTES });
+        const rows = [];
+        await openRename(page);
+        page.type('name', 'Style B typed');
+        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
+        rows.push(...modalShape(page).filter(l => /^(header|footer)/.test(l)));
+        page.click('scrim', { act: 'sheet-cancel' });
+        await page.settle();
+        rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', name reads ' + JSON.stringify(page.pd('sheetValue')('name')) + '; ' + stackFacts(page));
+        const from = page.mark();
+        await pressOK(page);
+        rows.push('then OK (the held sheet\'s own run): ' + page.since(from).filter(c => c.method !== 'GET' && !isPreview(c))
+            .map(c => lineOf(c) + ' ' + JSON.stringify(c.body)).join(' · '));
+        block('askBeforeDiscard on a sheet: a typed name, Escape, Keep editing, OK', rows);
+    }
+    {
+        const page = await open({ extra: STYLE_ROUTES });
+        const rows = [];
+        await openRename(page);
+        page.type('name', 'Style B typed');
+        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
+        const from = page.mark();
+        page.click('scrim', { act: 'escape-discard' });
+        await page.settle();
+        rows.push('Discard → ' + stackFacts(page) + '; requests ' + (page.since(from).length || 'none'));
+        block('askBeforeDiscard on a sheet: a typed name, Escape, Discard', rows);
+    }
+    {
+        const page = await open();
+        const rows = [];
+        await T.DRIVE.recipeGroupsOpen.drive(page);
+        page.click('root', { act: 'gfocus', g: '0' });
+        rows.push('recipe group 0 pinned: S.shapeDraft.focus ' + JSON.stringify(page.S.shapeDraft.focus));
+        await esc(page, rows, p => 'S.shapeDraft.focus ' + JSON.stringify(p.S.shapeDraft.focus));
+        block('Escape with no layer: a pinned recipe group lets go', rows);
+    }
+    {
+        const page = await open();
+        const rows = [];
+        page.click('root', { row: 'POS_A3' });
+        rows.push('row POS_A3 clicked: S.selected ' + JSON.stringify(page.S.selected));
+        await esc(page, rows, p => 'S.selected ' + JSON.stringify(p.S.selected));
+        await esc(page, rows, p => 'S.selected ' + JSON.stringify(p.S.selected));
+        block('Escape with no layer: the selected position lets go (then nothing)', rows);
+    }
+    // A BUG, PINNED AS IS: Apply on a sheet nothing was changed in writes an
+    // all-defaults advanced block onto the cell (setAdvanced with the sheet's
+    // whole draft, processes-desktop.js:4169), so the flow reads dirty and the
+    // next Save sends the block.
+    {
+        const page = await open();
+        const rows = [];
+        page.click('root', { act: 'advanced', node: advNode() });
+        rows.push('open: ' + stackFacts(page));
+        page.click('scrim', { act: 'adv-cancel' });
+        await page.settle();
+        rows.push('Cancel: ' + stackFacts(page));
+        page.click('root', { act: 'advanced', node: advNode() });
+        const from = page.mark();
+        page.click('scrim', { act: 'adv-apply' });
+        await page.settle();
+        rows.push('reopened, Apply with nothing changed: ' + stackFacts(page) + '; dirty=' + page.pd('dirty')() + '; requests ' +
+            (page.since(from).map(lineOf).join(' · ') || 'none'));
+        block('the Advanced sheet: open, Cancel, open, Apply', rows);
+    }
+    // THE FACTS, MEASURED over every page the blocks above opened: the lock
+    // is showModal/hideModal's (shingoedge.js:129, :139), and focus is every
+    // focus() call the page made in them.
+    const focusCalls = pages.reduce((n, p) => n + p.focused.length, 0);
+    L.push('', '## facts',
+        'body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (showModal / hideModal; every block above)',
+        'focus() calls the page made across every block above: ' + focusCalls +
+            (focusCalls ? '' : ' — nothing moves focus into a sheet, and nothing returns it on close'),
+        'Escape: one document keydown listener (boot, processes-desktop.js:138); the window listeners boot adds: ' +
+            ['error', 'unhandledrejection', 'resize', 'focus'].filter(t => T.lastPage.hasWindowListener(t)).join(', '));
+    T.out['sheet-stack.txt'] = L.join('\n') + '\n';
+}
+
 // ── the fetch( site table (`node pins.js --sites`) ───────────────────────
 function sitesTable(seen) {
     const src = fs.readFileSync(PAGE, 'utf8').split('\n');
@@ -747,6 +1044,8 @@ async function run(t) {
     T = t;
     await pinRequests();
     await pinRefusals();
+    T.lastPage = await T.openPage();
+    await pinSheetStack();
 }
 
 module.exports = { run, sitesTable };

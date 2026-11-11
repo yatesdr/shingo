@@ -36,7 +36,9 @@ var updateProcessSetupPageGolden = flag.Bool("update-process-setup-page-golden",
 //   - refusals-*.txt: every write of every act, refused one at a time — the
 //     handler's own 4xx shape, a 500 with no body, no answer at all, and a
 //     lapsed session's login page — with what the page then sent, showed,
-//     left open and left unhandled.
+//     left open and left unhandled;
+//   - sheet-stack.txt: openSheet, runSheet, closeSheet, the Escape rule,
+//     the discard question and the Advanced sheet, with scroll lock and focus.
 //
 // The harness and the synthetic plant are in testdata/process-setup-harness
 // (pins.js and p0-page.js say what each pin covers and how each act is
