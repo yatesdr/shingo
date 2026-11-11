@@ -1,0 +1,52 @@
+# toast — component: toast of shared/layer.js, notice.js, http.js
+# a fresh page per case; nothing in the page markup holds a toast container.
+
+toast("Saved", "success"): returns, and the DOM it writes: returns the toast element (same node)
+    div class="notice-stack" role="status" aria-live="polite"
+      div class="notice-toast notice-toast--success"
+        span class="notice-text"
+          "Saved"
+level (none): the toast node:
+    div class="notice-toast notice-toast--info"
+      span class="notice-text"
+        "Msg"
+level "info": the toast node:
+    div class="notice-toast notice-toast--info"
+      span class="notice-text"
+        "Msg"
+level "success": the toast node:
+    div class="notice-toast notice-toast--success"
+      span class="notice-text"
+        "Msg"
+level "warning": the toast node:
+    div class="notice-toast notice-toast--warning"
+      span class="notice-text"
+        "Msg"
+level "error": the toast node:
+    div class="notice-toast notice-toast--error" role="alert"
+      span class="notice-text"
+        "Msg"
+level "bogus": the toast node:
+    div class="notice-toast notice-toast--info"
+      span class="notice-text"
+        "Msg"
+lifetime, level (none): removed at 3200 ms
+lifetime, level "success": removed at 3200 ms
+lifetime, level "warning": removed at 3200 ms
+lifetime, level "error": removed at 5000 ms
+lifetime, level "bogus": removed at 3200 ms
+lifetime, "error", {sticky:false}: removed at 5000 ms
+{sticky:true}, "error": the node, after 60 s, then a click on it: still there after 60 s; a click removes it
+    div class="notice-toast notice-toast--error is-sticky" role="alert" title="Click to dismiss" listens=click
+      span class="notice-text"
+        "Msg"
+three toasts: the container's children, in order: "one" notice-toast notice-toast--info | "two" notice-toast notice-toast--error | "three" notice-toast notice-toast--success (1 child(ren) of body)
+twelve toasts at once: how many are in the DOM: 12 toasts, first "n0"
+message with markup <img src=x onerror=alert(1)> & "q": the toast's children:
+    div class="notice-toast notice-toast--error" role="alert"
+      span class="notice-text"
+        "<img src=x onerror=alert(1)> & \"q\""
+toast(null): ""
+toast(42): "42"
+toast(an Error("boom")): "boom"
+toast({error:"x"}): "x"
