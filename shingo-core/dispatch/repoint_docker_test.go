@@ -358,3 +358,31 @@ func TestRepoint_APlanningRepointReachesTheCreate(t *testing.T) {
 		}
 	})
 }
+
+// TestByContents_ACarrierBroughtBackToItsPositionHasNotLeft: a tool change's
+// carry-over round trip lifts the cell's carrier at START, sets it down at
+// staging, and brings it back after Tooling done. With no wait before the lift
+// its drop is chosen at the reserve, and the carrier's set-down for good is
+// its own position: an unfinished carrier whose claim names a partial home
+// still comes back, or nothing refills the position.
+func TestByContents_ACarrierBroughtBackToItsPositionHasNotLeft(t *testing.T) {
+	t.Parallel()
+	c := newRPCell(t, "RPF", protocol.ClaimRoleProduce, "RPF-OUT", "RPF-PH")
+	prNode(t, c.db, "RPF-PH")
+	stage := prNode(t, c.db, "RPF-STAGE")
+	c.carrier(40)
+	prSubmitLeg(c.d, "rpf-round-trip", "", c.part, c.line.Name, prPick(c.line.Name), prDrop(stage.Name),
+		prWait(stage.Name), prPick(stage.Name), prDrop(c.line.Name))
+	o := prReloadUUID(t, c.db, "rpf-round-trip")
+	steps, ok := decodeSteps(o.StepsJSON)
+	if !ok {
+		t.Fatalf("steps: %s", o.StepsJSON)
+	}
+	if _, _, st := c.d.reserveComplexSources(o, steps); st.done {
+		t.Fatalf("the reserve stopped: %v", st.err)
+	}
+	got, _ := decodeSteps(prReload(t, c.db, o.ID).StepsJSON)
+	if f := lastDropIndex(got); f < 0 || got[f].Node != c.line.Name {
+		t.Errorf("stored plan %q, want the carrier back on %s", shape(got), c.line.Name)
+	}
+}

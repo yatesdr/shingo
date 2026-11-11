@@ -120,16 +120,20 @@ func liftOff(steps []resolvedStep, node string, from, to int) int {
 }
 
 // dropByContents is the one by-contents choice, every door's: where carrier b,
-// lifted off liftNode and planned to current, goes by what it holds. The
-// partial arm first (partialHome: an unfinished carrier to its claim's partial
-// home), then the keeper arm (kanbanSlot: an empty off a line position
-// to a kanban short of it). "" keeps the planned drop, and nothing
-// stalls for want of either. why is the reason, for the door's log. count is
-// the carrier's final count: the bin's at a release, the operator's at a move
-// that declares one.
+// lifted off liftNode and planned to current, goes by what it holds.
+//
+//   - A carrier set down at the node it was lifted from has not left (a
+//     carry-over round trip, out to staging and back): its drop is its own.
+//   - The partial arm first (partialHome: an unfinished carrier to its claim's
+//     partial home), then the keeper arm (kanbanSlot: an empty off a line
+//     position to a kanban that takes it).
+//
+// "" keeps the planned drop, and nothing stalls for want of either. why is the
+// reason, for the door's log. count is the carrier's final count: the bin's at
+// a release, the operator's at a move that declares one.
 func dropByContents(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, count int,
 	liftNode, current string, stated binresolver.BinTypeStatement) (target, why string) {
-	if b == nil {
+	if b == nil || current == liftNode {
 		return "", ""
 	}
 	if t := partialHome(db, pure, order, b, count, liftNode, current, stated); t != "" {
