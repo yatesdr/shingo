@@ -1,0 +1,81 @@
+## Style B ⋯ › Rename: Style B2
+  1  GET /api/core-nodes
+  2  PUT /api/styles/2
+       {
+         "name": "Style B2",
+         "description": "",
+         "process_id": 1,
+         "expected_catid": ""
+       }
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Style A ⋯ › Expected CATID: CAT-A2
+  1  GET /api/core-nodes
+  2  PUT /api/styles/1
+       {
+         "name": "Style A",
+         "description": "",
+         "process_id": 1,
+         "expected_catid": "CAT-A2"
+       }
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Style A ⋯ › Clone, the name as it opens
+  1  GET /api/core-nodes
+  2  POST /api/styles/1/clone
+       {
+         "name": "Style A copy"
+       }
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Style B ⋯ › Mark as running (no changeover open)
+  1  GET /api/core-nodes
+  2  PUT /api/processes/1/active-style
+       {
+         "style_id": 2
+       }
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Style B ⋯ › Mark as running with a changeover to Style B open (the sheet reads the gate first)
+  1  GET /api/processes/1/changeover/gate-status
+  2  GET /api/core-nodes
+  3  PUT /api/processes/1/active-style
+       {
+         "style_id": 2
+       }
+  4  GET /api/processes
+  5  GET /api/processes/1/composer
+  6  GET /api/processes/1/styles
+  7  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Style B ⋯ › Delete
+  1  GET /api/core-nodes
+  2  DELETE /api/styles/2
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed

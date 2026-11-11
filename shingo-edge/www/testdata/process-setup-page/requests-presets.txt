@@ -1,0 +1,78 @@
+## Recipes › Recipe One ⋯ › Rename: Recipe Uno
+  1  GET /api/core-nodes
+  2  PATCH /api/processes/1/presets/7
+       {
+         "name": "Recipe Uno"
+       }
+  3  GET /api/processes/1/presets
+-- sheet closed
+
+## Recipes › Recipe One ⋯ › Archive
+  1  GET /api/core-nodes
+  2  POST /api/processes/1/presets/7/archive
+  3  GET /api/processes/1/presets
+-- sheet closed
+
+## Recipes › Apply to parts…: tick Style B (its preview), each "which part?" answered with its first part
+  1  POST /api/processes/1/flow/preview
+       {
+         "to_style_id": 2,
+         "cells": [
+           {
+             "core_node_name": "POS_A1",
+             "role": "consume",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "PART-1",
+             "paired_core_node": "POS_B1",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A3",
+             "role": "consume",
+             "swap_mode": "two_robot",
+             "payload_code": "PART-3",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_1",
+             "outbound_destination": "DST_1"
+           }
+         ]
+       }
+-- sheet open
+-- apply OK "Save to 1 part" enabled
+
+## …then Save to 1 part
+  1  POST /api/processes/1/flow/save
+       {
+         "to_style_id": 2,
+         "cells": [
+           {
+             "core_node_name": "POS_A1",
+             "role": "consume",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "PART-1",
+             "paired_core_node": "POS_B1",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A3",
+             "role": "consume",
+             "swap_mode": "two_robot",
+             "payload_code": "PART-3",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_1",
+             "outbound_destination": "DST_1"
+           }
+         ],
+         "fingerprint": "fp-2",
+         "station_id": 11,
+         "source_preset_id": 7,
+         "source_preset_version": 1
+       }
+  2  GET /api/processes/1/presets
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  GET /api/processes/1/presets
+-- sheet closed

@@ -1,0 +1,173 @@
+# Settings with one station counter on Press A (Station 1, id 51), every position countable.
+## Settings › + Add station counter: Station 2 on S2.Count
+  1  POST /api/processes/1/station-counters
+       {
+         "label": "Station 2",
+         "tag_name": "S2.Count",
+         "tag_name_2": ""
+       }
+  2  GET /api/processes/1/station-counters
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/counting-slots
+  5  GET /api/processes/1/catid-health
+  6  GET /api/process-nodes/201/countable
+  7  GET /api/process-nodes/202/countable
+  8  GET /api/process-nodes/203/countable
+  9  GET /api/process-nodes/204/countable
+ 10  GET /api/process-nodes/205/countable
+ 11  GET /api/process-nodes/206/countable
+ 12  GET /api/process-nodes/207/countable
+ 13  GET /api/process-nodes/208/countable
+ 14  GET /api/process-nodes/209/countable
+ 15  GET /api/process-nodes/210/countable
+ 16  GET /api/process-nodes/211/countable
+ 17  GET /api/process-nodes/212/countable
+ 18  GET /api/process-nodes/213/countable
+ 19  GET /api/process-nodes/214/countable
+ 20  GET /api/process-nodes/215/countable
+ 21  GET /api/process-nodes/216/countable
+-- sheet closed
+
+## Settings › Station 1 › Edit: Station 1b
+  1  PUT /api/station-counters/51
+       {
+         "label": "Station 1b",
+         "tag_name": "S1.Count",
+         "tag_name_2": ""
+       }
+  2  GET /api/processes/1/station-counters
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/counting-slots
+  5  GET /api/processes/1/catid-health
+  6  GET /api/process-nodes/201/countable
+  7  GET /api/process-nodes/202/countable
+  8  GET /api/process-nodes/203/countable
+  9  GET /api/process-nodes/204/countable
+ 10  GET /api/process-nodes/205/countable
+ 11  GET /api/process-nodes/206/countable
+ 12  GET /api/process-nodes/207/countable
+ 13  GET /api/process-nodes/208/countable
+ 14  GET /api/process-nodes/209/countable
+ 15  GET /api/process-nodes/210/countable
+ 16  GET /api/process-nodes/211/countable
+ 17  GET /api/process-nodes/212/countable
+ 18  GET /api/process-nodes/213/countable
+ 19  GET /api/process-nodes/214/countable
+ 20  GET /api/process-nodes/215/countable
+ 21  GET /api/process-nodes/216/countable
+-- sheet closed
+
+## Settings › POS_A1 › Counted at: Station 1 (the select's change)
+  1  PUT /api/process-nodes/201/counted-at
+       {
+         "line_counter_id": 51
+       }
+  2  GET /api/processes/1/station-counters
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/counting-slots
+  5  GET /api/processes/1/catid-health
+  6  GET /api/process-nodes/201/countable
+  7  GET /api/process-nodes/202/countable
+  8  GET /api/process-nodes/203/countable
+  9  GET /api/process-nodes/204/countable
+ 10  GET /api/process-nodes/205/countable
+ 11  GET /api/process-nodes/206/countable
+ 12  GET /api/process-nodes/207/countable
+ 13  GET /api/process-nodes/208/countable
+ 14  GET /api/process-nodes/209/countable
+ 15  GET /api/process-nodes/210/countable
+ 16  GET /api/process-nodes/211/countable
+ 17  GET /api/process-nodes/212/countable
+ 18  GET /api/process-nodes/213/countable
+ 19  GET /api/process-nodes/214/countable
+ 20  GET /api/process-nodes/215/countable
+ 21  GET /api/process-nodes/216/countable
+-- sheet closed
+
+## Settings › POS_A2 › Counted at: New station counter… (Station 3 on S3.Count, then the bind)
+  1  POST /api/processes/1/station-counters
+       {
+         "label": "Station 3",
+         "tag_name": "S3.Count",
+         "tag_name_2": ""
+       }
+  2  PUT /api/process-nodes/202/counted-at
+       {
+         "line_counter_id": 52
+       }
+  3  GET /api/processes/1/station-counters
+  4  GET /api/process-nodes
+  5  GET /api/processes/1/counting-slots
+  6  GET /api/processes/1/catid-health
+  7  GET /api/process-nodes/201/countable
+  8  GET /api/process-nodes/202/countable
+  9  GET /api/process-nodes/203/countable
+ 10  GET /api/process-nodes/204/countable
+ 11  GET /api/process-nodes/205/countable
+ 12  GET /api/process-nodes/206/countable
+ 13  GET /api/process-nodes/207/countable
+ 14  GET /api/process-nodes/208/countable
+ 15  GET /api/process-nodes/209/countable
+ 16  GET /api/process-nodes/210/countable
+ 17  GET /api/process-nodes/211/countable
+ 18  GET /api/process-nodes/212/countable
+ 19  GET /api/process-nodes/213/countable
+ 20  GET /api/process-nodes/214/countable
+ 21  GET /api/process-nodes/215/countable
+ 22  GET /api/process-nodes/216/countable
+-- sheet closed
+
+## Settings › Station 1 › Change positions…: POS_A1 and POS_A2 ticked, the rest unticked, Save positions
+  1  PUT /api/process-nodes/201/counted-at
+       {
+         "line_counter_id": 51
+       }
+  2  PUT /api/process-nodes/202/counted-at
+       {
+         "line_counter_id": 51
+       }
+  3  GET /api/processes/1/station-counters
+  4  GET /api/process-nodes
+  5  GET /api/processes/1/counting-slots
+  6  GET /api/processes/1/catid-health
+  7  GET /api/process-nodes/201/countable
+  8  GET /api/process-nodes/202/countable
+  9  GET /api/process-nodes/203/countable
+ 10  GET /api/process-nodes/204/countable
+ 11  GET /api/process-nodes/205/countable
+ 12  GET /api/process-nodes/206/countable
+ 13  GET /api/process-nodes/207/countable
+ 14  GET /api/process-nodes/208/countable
+ 15  GET /api/process-nodes/209/countable
+ 16  GET /api/process-nodes/210/countable
+ 17  GET /api/process-nodes/211/countable
+ 18  GET /api/process-nodes/212/countable
+ 19  GET /api/process-nodes/213/countable
+ 20  GET /api/process-nodes/214/countable
+ 21  GET /api/process-nodes/215/countable
+ 22  GET /api/process-nodes/216/countable
+-- sheet closed
+
+## Settings › Station 1 › Remove
+  1  DELETE /api/station-counters/51
+  2  GET /api/processes/1/station-counters
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/counting-slots
+  5  GET /api/processes/1/catid-health
+  6  GET /api/process-nodes/201/countable
+  7  GET /api/process-nodes/202/countable
+  8  GET /api/process-nodes/203/countable
+  9  GET /api/process-nodes/204/countable
+ 10  GET /api/process-nodes/205/countable
+ 11  GET /api/process-nodes/206/countable
+ 12  GET /api/process-nodes/207/countable
+ 13  GET /api/process-nodes/208/countable
+ 14  GET /api/process-nodes/209/countable
+ 15  GET /api/process-nodes/210/countable
+ 16  GET /api/process-nodes/211/countable
+ 17  GET /api/process-nodes/212/countable
+ 18  GET /api/process-nodes/213/countable
+ 19  GET /api/process-nodes/214/countable
+ 20  GET /api/process-nodes/215/countable
+ 21  GET /api/process-nodes/216/countable
+-- sheet closed

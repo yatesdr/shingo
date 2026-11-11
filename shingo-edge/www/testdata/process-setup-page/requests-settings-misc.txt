@@ -1,0 +1,20 @@
+## Settings › Sync from Core
+  1  POST /api/payload-catalog/sync
+-- sheet closed
+
+## Settings › Delete process: the name typed, then Delete Press A
+  1  DELETE /api/processes/1
+  2  GET /api/processes
+  3  GET /api/catid-health
+-- sheet closed
+
+## the list › Add group: Welders 2
+  1  GET /api/core-nodes
+  2  POST /api/process-groups
+       {
+         "name": "Welders 2",
+         "description": ""
+       }
+  3  GET /api/process-groups
+  4  GET /api/catid-health
+-- sheet closed

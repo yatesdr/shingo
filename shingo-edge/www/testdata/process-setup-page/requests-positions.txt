@@ -1,0 +1,74 @@
+## Settings › Add positions: NEW_1 onto Screen A (the first screen)
+  1  GET /api/process-nodes
+  2  GET /api/operator-stations/11/claimed-nodes
+  3  PUT /api/operator-stations/11/claimed-nodes
+       {
+         "nodes": [
+           "POS_A1",
+           "POS_A2",
+           "POS_A3",
+           "POS_A4",
+           "POS_A5",
+           "POS_A6",
+           "POS_A7",
+           "POS_A8",
+           "POS_A9",
+           "POS_A10",
+           "POS_A11",
+           "NEW_1"
+         ]
+       }
+  4  GET /api/operator-stations/11/claimed-nodes
+  5  GET /api/processes/1/composer
+  6  GET /api/process-nodes
+-- sheet closed
+
+## Settings › POS_A11 › Remove (the impact is read before the sheet opens)
+  1  GET /api/operator-stations/11/claimed-nodes
+  2  POST /api/operator-stations/11/claimed-nodes/impact
+       {
+         "nodes": [
+           "POS_A1",
+           "POS_A2",
+           "POS_A3",
+           "POS_A4",
+           "POS_A5",
+           "POS_A6",
+           "POS_A7",
+           "POS_A8",
+           "POS_A9",
+           "POS_A10"
+         ]
+       }
+  3  GET /api/operator-stations/11/claimed-nodes
+  4  PUT /api/operator-stations/11/claimed-nodes
+       {
+         "nodes": [
+           "POS_A1",
+           "POS_A2",
+           "POS_A3",
+           "POS_A4",
+           "POS_A5",
+           "POS_A6",
+           "POS_A7",
+           "POS_A8",
+           "POS_A9",
+           "POS_A10"
+         ]
+       }
+  5  GET /api/operator-stations/11/claimed-nodes
+  6  GET /api/processes/1/composer
+  7  GET /api/process-nodes
+-- sheet closed
+
+## Operator screens › Loader windows › Make a screen on Press A (LDR_1)
+  1  POST /api/loader-boards
+       {
+         "loader_key": "LDR_1",
+         "process_id": 1
+       }
+  2  GET /api/operator-stations
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+-- sheet closed

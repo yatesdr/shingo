@@ -1,8 +1,12 @@
-// pins.js — the Processes page's process-setup characterisation (U0-page).
+// pins.js — the Processes page's process-setup characterisation (U0-page),
+// and the P0 pins beside it (p0-page.js: the acts U0 left out), which run on
+// this file's drivers and plant.
 //
 // Run by www/processes_desktop_setup_pins_test.go, which compares what this
 // prints against www/testdata/process-setup-page/*. It prints ONE JSON object,
-// golden file name -> text, and nothing else on stdout.
+// golden file name -> text, and nothing else on stdout. `node pins.js --sites`
+// prints instead the table of every fetch( site in the page and the goldens
+// that reach it (no golden: its line numbers move with every edit).
 //
 // WHAT THIS PINS IS WHAT THE PAGE DOES ON TOP OF THE MODEL: which options a
 // picker offers, what the positions table says in each cell, which Advanced
@@ -33,7 +37,10 @@ const out = {};
 
 // ── the fixture's server ─────────────────────────────────────────────────────
 const EMPTY_COMPOSER = { styles: null, routing: [], cell: { positions: [], groups: {} } };
-function server() {
+// extra(method, url, body), when given, is asked first: an act the base plant
+// cannot reach (a health strip, a station counter, a loader gap) answers the
+// routes it needs there, and every other route answers as it always has.
+function server(extra) {
     let previews = 0;
     const id = (u, re) => { const m = re.exec(u); return m ? m[1] : null; };
     // A preview of the RUNNING style is validated and fingerprinted and never
@@ -47,6 +54,8 @@ function server() {
     };
     return (method, url, body) => {
         const u = url.split('?')[0];
+        const own = extra && extra(method, url, body);
+        if (own) return own;
         const pid = id(u, /^\/api\/processes\/(\d+)\//);
         const routes = [
             ['GET', /^\/api\/processes\/\d+\/composer$/, () => (pid === '1' ? FX.composer : EMPTY_COMPOSER)],
@@ -94,9 +103,15 @@ function server() {
 }
 
 
+// o.page / o.search / o.extra replace the fixture's page data, the query and
+// add routes; o.answer(method, url, body), when given, may answer any call
+// first (the refusal pins' one refused write).
 function openPage(o) {
     o = o || {};
-    return H.open({ page: FX.page, search: '?process=1', hash: o.hash || '', serve: server() });
+    const base = server(o.extra);
+    const serve = o.answer ? (m, u, b) => o.answer(m, u, b) || base(m, u, b) : base;
+    return H.open({ page: o.page || FX.page, search: o.search === undefined ? '?process=1' : o.search,
+        hash: o.hash || '', serve: serve });
 }
 
 // The rows the positions table draws, in its order: a position that is on
@@ -296,9 +311,17 @@ async function pinAdvanced() {
 // named everywhere else, so a change to it is one diff in one file and not
 // the same diff in nine.
 let bootPreview = null;
+// WHICH fetch( SITE EACH GOLDEN REACHES: every call a golden lists, with the
+// page line it was sent from and the golden it is in. Not a golden itself (a
+// line number moves with every edit to the page); `node pins.js --sites`
+// prints it as the table the P0 report carries.
+const SEEN = [];
+let CURRENT = '';
+function seen(c) { SEEN.push({ site: c.site, stack: c.stack, golden: CURRENT, method: c.method, url: c.url }); }
 function fmtCalls(calls) {
     const lines = [];
     calls.forEach((c, i) => {
+        seen(c);
         lines.push(String(i + 1).padStart(3) + '  ' + c.method + ' ' + c.url);
         if (c.body === undefined) return;
         const raw = JSON.stringify(c.body);
@@ -334,7 +357,191 @@ function typeSetting(page, sel, match, value) {
     page.fire(el, 'input');
 }
 
+// ── the acts' drivers ────────────────────────────────────────────────────────
+//
+// ONE DRIVER, TWO PINS. Each act below is a driver: what is done before the
+// act's own requests are counted (setup) and the act itself (drive), against a
+// page opened on `hash`. The request goldens run a driver once against the
+// fixture's answers; the refusal goldens (p0-page.js) run the same driver
+// again with one of its writes refused, so a refusal pin always drives
+// exactly the act its request pin does.
+
+// A pick is a click on the chip and a click on the option's row. The chip is
+// clicked as a chip: a dim placeholder first redraws itself into one
+// (redrawPositionsTable's outerHTML write), which this DOM does not follow,
+// and the options it then opens are the same.
+function pickChip(page, n, kind, value) {
+    page.click('root', { act: 'pick', node: n, kind: kind });
+    const i = page.pd('optionsFor')(n, kind).findIndex(o => o.value === value);
+    if (i < 0) throw new Error(n + ' ' + kind + ' offers no ' + value);
+    pickRow(page, 'pd-pop', 'data-opt', i);
+}
+// The Part chip opens the part popover; its rows answer through the
+// popover's own onclick (onPartPopClick).
+async function openPartPop(page) {
+    page.click('root', { act: 'pick', node: 'POS_A1', kind: 'part' });
+    await page.settle();
+}
+function partPopRow(page, how, code) {
+    const pop = page.byId('pd-pop');
+    const row = page.rows('pd-partlist', 'data-pp').find(r => r.dataset.pp === how && r.dataset.code === code);
+    if (!row) throw new Error('the part popover has no ' + how + ' ' + code + ': ' + (page.byId('pd-partlist') || {}).innerHTML);
+    pop.onclick({ target: row, stopPropagation() {} });
+}
+// The choreography + New recipe's + Add a position takes: the first the
+// model would not block a one-position recipe on.
+function freeMode(page) {
+    const M = page.pd('M')();
+    const mode = Object.keys(M.modeLabels()).find(m =>
+        M.bar(M.reduce(page.S.model, { type: 'addPosition', node: 'POS_A11', mode: m })).tone !== 'blocked');
+    if (!mode) throw new Error('every choreography blocks a one-position recipe on POS_A11');
+    return mode;
+}
+
+const DRIVE = {
+    flowEdit: { drive: async page => {
+        pickChip(page, 'POS_A5', 'source', 'SRC_1');
+        pickChip(page, 'POS_A1', 'via:0', 'LM_1');
+        await page.settle();
+    } },
+    flowSave: {
+        setup: page => DRIVE.flowEdit.drive(page),
+        drive: async page => { page.click('root', { act: 'save' }); await page.settle(); },
+    },
+    styleCreate: { drive: async page => {
+        page.click('root', { act: 'new-style' });
+        page.type('name', 'Style C');
+        page.type('catid', 'CAT-C');
+        await sheetOK(page);
+    } },
+    mint: { drive: async page => {
+        page.click('root', { act: 'new-style' });
+        const chooser = page.byId('pd-newrecipe');
+        if (!chooser) throw new Error('New style draws no recipe chooser');
+        chooser.value = '7';
+        page.fire(chooser, 'change');
+        await page.settle();
+        page.type('slot0', 'PART-1');
+        page.type('slot1', 'PART-3');
+        page.type('catid', 'CAT-M');
+        await sheetOK(page);
+    } },
+    addProcess: { drive: async page => {
+        page.click('root', { act: 'add-process' });
+        await page.settle();
+        page.type('name', 'Press N');
+        page.type('description', 'a new press');
+        page.type('screen', 'Screen N');
+        page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
+        pickRow(page, 'pd-advpop', 'data-grpopt', 3);
+        for (const n of ['NEW_1', 'NEW_2']) npk(page, 'scrim', 'positions', n);
+        npk(page, 'scrim', 'rs_source', 'SRC_2');
+        npk(page, 'scrim', 'rs_source', 'GRP_A');
+        npk(page, 'scrim', 'rs_staging', 'STG_9');
+        npk(page, 'scrim', 'rs_destination', 'DST_9');
+        npk(page, 'scrim', 'parts', 'PART-12');
+        npk(page, 'scrim', 'parts', 'PART-1');
+        await sheetOK(page);
+    } },
+    settingsSave: { hash: '#tab=settings', drive: async page => {
+        const S = page.S;
+        const st = (key, value) => typeSetting(page, '[data-st]', el => el.dataset.st === key && el.tagName === 'INPUT', value);
+        st('name', 'Press A2');
+        st('description', 'renamed');
+        st('counter_plc_name', 'PLC_B');
+        st('counter_tag_name', 'CountB');
+        page.click('root', { act: 'st-toggle', st: 'counter_enabled' });
+        page.click('root', { act: 'st-arm', arm: 'prompt' });
+        page.click('root', { act: 'st-toggle', st: 'flow_composer_enabled' });
+        page.click('root', { act: 'st-group' });
+        pickRow(page, 'pd-stpop', 'data-grpopt', 4);
+        page.click('root', { act: 'st-toggle', st: 'quality_hold_enabled' });
+        page.click('root', { act: 'st-holddest' });
+        await page.settle();
+        pickRow(page, 'pd-stpop', 'data-holdopt', 'DST_2');
+        // Two curtains switched on, each with both pointers and a release
+        // value (one TRUE, one FALSE); every other node's draft is left as it
+        // was, so only these two are sent.
+        const nodes = S.curtainNodes;
+        for (const [n, tag, val] of [[nodes[0], 'CurtainA1', 'true'], [nodes[2], 'CurtainA3', 'false']]) {
+            page.click('root', { act: 'cu-toggle', node: String(n.id) });
+            const cu = f => typeSetting(page, 'input[data-cn]', el => el.dataset.cn === String(n.id) && el.dataset.cf === f,
+                f === 'plc' ? 'PLC_A' : tag);
+            cu('plc');
+            cu('tag');
+            page.click('root', { act: 'cu-val', node: String(n.id), val: val });
+        }
+        page.click('root', { act: 'st-save' });
+        await page.settle();
+    } },
+    screenEdit: { drive: async page => {
+        page.click('root', { act: 'screen-edit', station: '11' });
+        await page.settle();
+        page.type('note', 'front HMI, moved');
+        npk(page, 'scrim', 'positions', 'POS_A11');   // take one off
+        npk(page, 'scrim', 'positions', 'NEW_3');     // and add one
+        await sheetOK(page);
+    } },
+    screenAdd: { drive: async page => {
+        page.click('root', { act: 'screen-add' });
+        await page.settle();
+        page.type('name', 'Screen C');
+        page.type('note', 'spare');
+        npk(page, 'scrim', 'positions', 'NEW_1');
+        await sheetOK(page);
+    } },
+    partPopAdd: { setup: openPartPop, drive: async page => { partPopRow(page, 'add', 'PART-12'); await page.settle(); } },
+    partPopDrop: { setup: openPartPop, drive: async page => { partPopRow(page, 'drop', 'PART-11'); await page.settle(); } },
+    partSettingsAdd: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-13'); await page.settle(); } },
+    partSettingsDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-11', 'drop'); await page.settle(); } },
+    routingAddNew: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_source', 'SRC_2', 'add'); await page.settle(); } },
+    routingAdopt: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_destination', 'DST_9', 'add'); await page.settle(); } },
+    routingDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_staging', 'STG_3', 'drop'); await page.settle(); } },
+    routingToggleOff: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_staging', 'STG_1', 'add'); await page.settle(); } },
+    routingAllOn: { hash: '#tab=settings', drive: async page => {
+        page.click('root', { act: 'rs-all-on', role: 'staging' });
+        await page.settle();
+    } },
+    recipeFromStyle: { drive: async page => {
+        page.click('root', { act: 'save-preset' });
+        page.type('name', 'From A');
+        await sheetOK(page);
+    } },
+    // + New recipe; + Add a position asks the choreography first (the draft
+    // has none), then the position.
+    recipeDraft: { drive: async page => {
+        page.click('root', { act: 'new-recipe' });
+        await page.settle();
+        const mode = freeMode(page);
+        page.click('root', { act: 'add-position' });
+        pickRow(page, 'pd-pop', 'data-freemode', mode);
+        pickRow(page, 'pd-pop', 'data-freepos', 'POS_A11');
+        await page.settle();
+    } },
+    recipeCells: {
+        setup: page => DRIVE.recipeDraft.drive(page),
+        drive: async page => {
+            page.click('root', { act: 'shape-save' });
+            page.type('name', 'Fresh');
+            await sheetOK(page);
+        },
+    },
+    recipeGroupsOpen: { drive: async page => {
+        page.click('root', { act: 'recipe-open', preset: '7' });
+        page.click('root', { act: 'groups-setup' });
+        await page.settle();
+    } },
+    recipeGrouped: {
+        setup: page => DRIVE.recipeGroupsOpen.drive(page),
+        drive: async page => {
+            page.click('root', { act: 'shape-save' });
+            await sheetOK(page);
+        },
+    },
+};
+
 async function actOpenProcess() {
+    CURRENT = 'requests-open-process.txt';
     const page = await openPage();
     out['requests-open-process.txt'] = actLines('boot on ?process=1: the composer read, each screen\'s claimed nodes, ' +
         'then the first preview', page, 0).join('\n') + '\n';
@@ -344,114 +551,54 @@ async function actOpenProcess() {
 }
 
 async function actFlow() {
+    CURRENT = 'requests-flow.txt';
     const page = await openPage();
     const pd = page.pd, S = page.S;
-    // A pick is a click on the chip and a click on the option's row. The
-    // chip is clicked as a chip: a dim placeholder first redraws itself into
-    // one (redrawPositionsTable's outerHTML write), which this DOM does not
-    // follow, and the options it then opens are the same.
-    const pick = (n, kind, value) => {
-        page.click('root', { act: 'pick', node: n, kind: kind });
-        const i = pd('optionsFor')(n, kind).findIndex(o => o.value === value);
-        if (i < 0) throw new Error(n + ' ' + kind + ' offers no ' + value);
-        pickRow(page, 'pd-pop', 'data-opt', i);
-    };
     let from = page.mark();
-    pick('POS_A5', 'source', 'SRC_1');
-    pick('POS_A1', 'via:0', 'LM_1');
-    await page.settle();
+    await DRIVE.flowEdit.drive(page);
     const lines = actLines('flow preview: two picker edits (POS_A5 source → SRC_1, POS_A1 key route + LM_1), ' +
         'debounced into one preview', page, from);
     lines.push('-- bar ' + pd('M')().bar(S.model).tone + ', dirty=' + pd('dirty')());
     from = page.mark();
-    page.click('root', { act: 'save' });
-    await page.settle();
+    await DRIVE.flowSave.drive(page);
     lines.push('', ...actLines('Save style: flow/save on the last preview\'s fingerprint, then the re-open it does', page, from));
     out['requests-flow.txt'] = lines.join('\n') + '\n';
 }
 
 async function actStyleCreate() {
+    CURRENT = 'requests-style-create.txt';
     const page = await openPage();
     const from = page.mark();
-    page.click('root', { act: 'new-style' });
-    page.type('name', 'Style C');
-    page.type('catid', 'CAT-C');
-    await sheetOK(page);
+    await DRIVE.styleCreate.drive(page);
     out['requests-style-create.txt'] = actLines('+ New style with no recipe: a typed name and CATID', page, from).join('\n') + '\n';
 }
 
 async function actMint() {
+    CURRENT = 'requests-flow-mint.txt';
     const page = await openPage();
     const from = page.mark();
-    page.click('root', { act: 'new-style' });
-    const chooser = page.byId('pd-newrecipe');
-    if (!chooser) throw new Error('New style draws no recipe chooser');
-    chooser.value = '7';
-    page.fire(chooser, 'change');
-    await page.settle();
-    page.type('slot0', 'PART-1');
-    page.type('slot1', 'PART-3');
-    page.type('catid', 'CAT-M');
-    await sheetOK(page);
+    await DRIVE.mint.drive(page);
     out['requests-flow-mint.txt'] = actLines('+ New style, Recipe One (id 7) picked in the chooser: a part per slot and a ' +
         'CATID; no spot moved', page, from).join('\n') + '\n';
 }
 
 async function actAddProcess() {
+    CURRENT = 'requests-add-process.txt';
     const page = await openPage();
     const from = page.mark();
-    page.click('root', { act: 'add-process' });
-    await page.settle();
-    page.type('name', 'Press N');
-    page.type('description', 'a new press');
-    page.type('screen', 'Screen N');
-    page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
-    pickRow(page, 'pd-advpop', 'data-grpopt', 3);
-    for (const n of ['NEW_1', 'NEW_2']) npk(page, 'scrim', 'positions', n);
-    npk(page, 'scrim', 'rs_source', 'SRC_2');
-    npk(page, 'scrim', 'rs_source', 'GRP_A');
-    npk(page, 'scrim', 'rs_staging', 'STG_9');
-    npk(page, 'scrim', 'rs_destination', 'DST_9');
-    npk(page, 'scrim', 'parts', 'PART-12');
-    npk(page, 'scrim', 'parts', 'PART-1');
-    await sheetOK(page);
+    await DRIVE.addProcess.drive(page);
     out['requests-add-process.txt'] = actLines('Add process: name, description, group Presses, screen Screen N on ' +
         'NEW_1 + NEW_2, sources SRC_2 then GRP_A, staging STG_9, destination DST_9, parts PART-12 then PART-1', page, from)
         .join('\n') + '\n';
 }
 
 async function actSettings() {
-    const page = await openPage({ hash: '#tab=settings' });
+    CURRENT = 'requests-settings-save.txt';
+    const page = await openPage({ hash: DRIVE.settingsSave.hash });
     const S = page.S;
     const from = page.mark();
-    const st = (key, value) => typeSetting(page, '[data-st]', el => el.dataset.st === key && el.tagName === 'INPUT', value);
-    st('name', 'Press A2');
-    st('description', 'renamed');
-    st('counter_plc_name', 'PLC_B');
-    st('counter_tag_name', 'CountB');
-    page.click('root', { act: 'st-toggle', st: 'counter_enabled' });
-    page.click('root', { act: 'st-arm', arm: 'prompt' });
-    page.click('root', { act: 'st-toggle', st: 'flow_composer_enabled' });
-    page.click('root', { act: 'st-group' });
-    pickRow(page, 'pd-stpop', 'data-grpopt', 4);
-    page.click('root', { act: 'st-toggle', st: 'quality_hold_enabled' });
-    page.click('root', { act: 'st-holddest' });
-    await page.settle();
-    pickRow(page, 'pd-stpop', 'data-holdopt', 'DST_2');
-    // Two curtains switched on, each with both pointers and a release value
-    // (one TRUE, one FALSE); every other node's draft is left as it was, so
-    // only these two are sent.
     const nodes = S.curtainNodes;
-    for (const [n, tag, val] of [[nodes[0], 'CurtainA1', 'true'], [nodes[2], 'CurtainA3', 'false']]) {
-        page.click('root', { act: 'cu-toggle', node: String(n.id) });
-        const cu = f => typeSetting(page, 'input[data-cn]', el => el.dataset.cn === String(n.id) && el.dataset.cf === f,
-            f === 'plc' ? 'PLC_A' : tag);
-        cu('plc');
-        cu('tag');
-        page.click('root', { act: 'cu-val', node: String(n.id), val: val });
-    }
-    page.click('root', { act: 'st-save' });
-    await page.settle();
+    await DRIVE.settingsSave.drive(page);
     const lines = actLines('Save settings: name, description, counter PLC and tag typed, counter off, auto-arm Prompt, ' +
         'the HMI gate off, group Welders, the quality hold on to DST_2, curtains on ' + nodes[0].name + ' and ' +
         nodes[2].name, page, from);
@@ -460,152 +607,117 @@ async function actSettings() {
 }
 
 async function actScreenSheet() {
+    CURRENT = 'requests-screen-sheet.txt';
     const lines = [];
     {
         const page = await openPage();
         const from = page.mark();
-        page.click('root', { act: 'screen-edit', station: '11' });
-        await page.settle();
-        page.type('note', 'front HMI, moved');
-        npk(page, 'scrim', 'positions', 'POS_A11');   // take one off
-        npk(page, 'scrim', 'positions', 'NEW_3');     // and add one
-        await sheetOK(page);
+        await DRIVE.screenEdit.drive(page);
         lines.push(...actLines('Edit Screen A: the note, POS_A11 off and NEW_3 on; the removal is asked about first',
             page, from), '');
     }
     {
         const page = await openPage();
         const from = page.mark();
-        page.click('root', { act: 'screen-add' });
-        await page.settle();
-        page.type('name', 'Screen C');
-        page.type('note', 'spare');
-        npk(page, 'scrim', 'positions', 'NEW_1');
-        await sheetOK(page);
+        await DRIVE.screenAdd.drive(page);
         lines.push(...actLines('Add operator screen: Screen C claiming NEW_1', page, from));
     }
     out['requests-screen-sheet.txt'] = lines.join('\n') + '\n';
 }
 
 async function actPartSet() {
+    CURRENT = 'requests-part-set.txt';
     const lines = [];
     {
         const page = await openPage();
-        // The Part chip opens the part popover; its rows answer through the
-        // popover's own onclick (onPartPopClick).
-        const openPop = async () => {
-            page.click('root', { act: 'pick', node: 'POS_A1', kind: 'part' });
-            await page.settle();
-        };
-        const pp = (how, code) => {
-            const pop = page.byId('pd-pop');
-            const row = page.rows('pd-partlist', 'data-pp').find(r => r.dataset.pp === how && r.dataset.code === code);
-            if (!row) throw new Error('the part popover has no ' + how + ' ' + code + ': ' + (page.byId('pd-partlist') || {}).innerHTML);
-            pop.onclick({ target: row, stopPropagation() {} });
-        };
-        await openPop();
+        await openPartPop(page);
         let from = page.mark();
-        pp('add', 'PART-12');
-        await page.settle();
+        await DRIVE.partPopAdd.drive(page);
         lines.push(...actLines('Part popover on POS_A1: + PART-12 from Core\'s catalog (joins the part set and lands ' +
             'on POS_A1)', page, from), '');
-        await openPop();
+        await openPartPop(page);
         from = page.mark();
-        pp('drop', 'PART-11');
-        await page.settle();
+        await DRIVE.partPopDrop.drive(page);
         lines.push(...actLines('Part popover: × PART-11 (on no position, in no other flow)', page, from), '');
     }
     {
         const page = await openPage({ hash: '#tab=settings' });
         let from = page.mark();
-        npk(page, 'root', 'parts', 'PART-13');
-        await page.settle();
+        await DRIVE.partSettingsAdd.drive(page);
         lines.push(...actLines('Settings › Parts this process runs: + PART-13', page, from), '');
         from = page.mark();
-        npk(page, 'root', 'parts', 'PART-11', 'drop');
-        await page.settle();
+        await DRIVE.partSettingsDrop.drive(page);
         lines.push(...actLines('Settings › Parts this process runs: × PART-11', page, from));
     }
     out['requests-part-set.txt'] = lines.join('\n') + '\n';
 }
 
 async function actRouting() {
+    CURRENT = 'requests-routing-set.txt';
     const lines = [];
     const acts = [
-        ['add SRC_2 to Sources (a name with no row: POST at the end of its role)', 'source', 'SRC_2', 'add'],
-        ['add DST_9 to Destinations (a switched-off row: PATCH adopts it)', 'destination', 'DST_9', 'add'],
-        ['× STG_3 out of Staging (DELETE, and the warning it answers)', 'staging', 'STG_3', 'drop'],
-        ['click STG_1, already in Staging (the picker takes it out)', 'staging', 'STG_1', 'add'],
+        ['add SRC_2 to Sources (a name with no row: POST at the end of its role)', DRIVE.routingAddNew],
+        ['add DST_9 to Destinations (a switched-off row: PATCH adopts it)', DRIVE.routingAdopt],
+        ['× STG_3 out of Staging (DELETE, and the warning it answers)', DRIVE.routingDrop],
+        ['click STG_1, already in Staging (the picker takes it out)', DRIVE.routingToggleOff],
     ];
-    for (const [title, role, name, how] of acts) {
-        const page = await openPage({ hash: '#tab=settings' });
+    for (const [title, d] of acts) {
+        const page = await openPage({ hash: d.hash });
         const from = page.mark();
-        npk(page, 'root', 'rs_' + role, name, how);
-        await page.settle();
+        await d.drive(page);
         const ls = actLines('Settings › Routing set: ' + title, page, from);
         ls.push('-- routing warning ' + JSON.stringify(page.S.routingWarning) + ', error ' + JSON.stringify(page.S.routingError));
         lines.push(...ls, '');
     }
     {
-        const page = await openPage({ hash: '#tab=settings' });
+        const page = await openPage({ hash: DRIVE.routingAllOn.hash });
         const from = page.mark();
-        page.click('root', { act: 'rs-all-on', role: 'staging' });
-        await page.settle();
+        await DRIVE.routingAllOn.drive(page);
         lines.push(...actLines('Settings › Routing set: Turn all 1 on (Staging)', page, from));
     }
     out['requests-routing-set.txt'] = lines.join('\n') + '\n';
 }
 
 async function actRecipe() {
+    CURRENT = 'requests-recipe-create.txt';
     const lines = [];
     {
         const page = await openPage();
         const from = page.mark();
-        page.click('root', { act: 'save-preset' });
-        page.type('name', 'From A');
-        await sheetOK(page);
+        await DRIVE.recipeFromStyle.drive(page);
         lines.push(...actLines('Save as recipe… on the saved Style A (from_style_id)', page, from), '');
     }
     {
-        // + New recipe; + Add a position asks the choreography first (the
-        // draft has none), then the position; Save recipe… (the cells form).
-        // The choreography is the first the model would not block on.
+        // + New recipe, + Add a position, then Save recipe… (the cells form).
         const page = await openPage();
-        const pd = page.pd, S = page.S, M = pd('M')();
+        const S = page.S, M = page.pd('M')();
         let from = page.mark();
-        page.click('root', { act: 'new-recipe' });
-        await page.settle();
-        const mode = Object.keys(M.modeLabels()).find(m =>
-            M.bar(M.reduce(S.model, { type: 'addPosition', node: 'POS_A11', mode: m })).tone !== 'blocked');
-        if (!mode) throw new Error('every choreography blocks a one-position recipe on POS_A11');
-        page.click('root', { act: 'add-position' });
-        pickRow(page, 'pd-pop', 'data-freemode', mode);
-        pickRow(page, 'pd-pop', 'data-freepos', 'POS_A11');
-        await page.settle();
-        lines.push(...actLines('+ New recipe, then + Add a position: ' + mode + ' on POS_A11', page, from));
+        await DRIVE.recipeDraft.drive(page);
+        lines.push(...actLines('+ New recipe, then + Add a position: ' + freeModeUsed(page) +
+            ' on POS_A11', page, from));
         lines.push('-- bar ' + M.bar(S.model).tone, '');
         from = page.mark();
-        page.click('root', { act: 'shape-save' });
-        page.type('name', 'Fresh');
-        await sheetOK(page);
+        await DRIVE.recipeCells.drive(page);
         lines.push(...actLines('Save recipe… on that draft (cells, no groups)', page, from), '');
     }
     {
         const page = await openPage();
         const S = page.S;
         let from = page.mark();
-        page.click('root', { act: 'recipe-open', preset: '7' });
-        page.click('root', { act: 'groups-setup' });
-        await page.settle();
+        await DRIVE.recipeGroupsOpen.drive(page);
         lines.push(...actLines('Recipe One opened from the rail, then Set up groups', page, from));
         lines.push('-- groups ' + JSON.stringify((S.shapeDraft.groups || []).map(g => g.name + ' of ' + g.of)), '');
         from = page.mark();
-        page.click('root', { act: 'shape-save' });
-        await sheetOK(page);
+        await DRIVE.recipeGrouped.drive(page);
         lines.push(...actLines('Save recipe… with groups (saveGroupedRecipe), the name as it opens', page, from));
     }
     out['requests-recipe-create.txt'] = lines.join('\n') + '\n';
 }
+
+// The mode recipeDraft put on POS_A11, read back off the draft.
+function freeModeUsed(page) { return (page.S.model.cells.POS_A11 || {}).mode; }
+
+const P0 = require('./p0-page.js');
 
 (async () => {
     await actOpenProcess();
@@ -621,6 +733,14 @@ async function actRecipe() {
     await actPartSet();
     await actRouting();
     await actRecipe();
+    await P0.run({
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
+        bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
+    });
+    if (process.argv.includes('--sites')) {
+        process.stdout.write(P0.sitesTable(SEEN));
+        return;
+    }
     process.stdout.write(JSON.stringify(out));
 })().catch(e => {
     process.stderr.write('process-setup pins: ' + ((e && e.stack) || e) + '\n');

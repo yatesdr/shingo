@@ -1,0 +1,33 @@
+# Reads only: what each act asks the Edge for. Each on a fresh page on Press A's Styles tab
+# unless it says otherwise.
+## the settings tab clicked
+  1  GET /api/processes/1/routing-nodes
+  2  GET /api/process-nodes
+  3  GET /api/payload-catalog
+  4  GET /api/processes/1/payloads
+  5  GET /api/processes/1/station-counters
+  6  GET /api/processes/1/counting-slots
+  7  GET /api/processes/1/catid-health
+  8  GET /api/core-nodes
+-- sheet closed
+
+## the screens tab clicked
+-- sheet closed
+
+## the presets tab clicked
+  1  GET /api/processes/1/presets
+-- sheet closed
+
+## window focus on the Styles tab (refreshRail)
+  1  GET /api/processes/1/composer
+-- sheet closed
+
+## the Part chip on POS_A1 (the part popover opens)
+  1  GET /api/payload-catalog
+  2  GET /api/processes/1/payloads
+-- sheet closed
+
+## Settings: POS_A1's curtain switched on and its PLC box focused, then the counter's tag box focused
+  1  GET /api/plcs
+  2  GET /api/plcs/all-tags/PLC_A
+-- sheet closed

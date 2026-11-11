@@ -29,11 +29,15 @@ var updateProcessSetupPageGolden = flag.Bool("update-process-setup-page-golden",
 //     strict_pack off and on, and the row's "N set" badge beside the sheet's
 //     own count;
 //   - requests-*.txt: the requests each setup act sends, in order — method,
-//     url and body — driven through the page's own click handlers.
+//     url and body — driven through the page's own click handlers: U0's ten
+//     acts, then the rest of the page's writes and reads (the health strip,
+//     the style menu, station counters, positions, Recipes, the tab reads),
+//     so that every fetch( site in the page is reached by one of them.
 //
 // The harness and the synthetic plant are in testdata/process-setup-harness
-// (pins.js says what each pin covers and how each act is driven). The page
-// runs under node, unmodified: nothing here or there changes a source file.
+// (pins.js and p0-page.js say what each pin covers and how each act is
+// driven). The page runs under node, unmodified: nothing here or there
+// changes a source file.
 //
 // Regenerate with
 //
