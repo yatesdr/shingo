@@ -1,0 +1,37 @@
+# slot 2 (CATID 1002) rising with the counted slot
+summary row: {"process_id":1,"name":"CELL","worst":"amber","count":3,"headline":"Part identity unreadable"}
+items body:
+{
+  "items": [
+    {
+      "kind": "identity",
+      "severity": "amber",
+      "headline": "Part identity unreadable",
+      "detail": "no good read of MES_Cell.CATID_01 yet",
+      "data": {
+        "tag": "plc.MES_Cell.CATID_01"
+      }
+    },
+    {
+      "kind": "style_no_catids",
+      "severity": "amber",
+      "headline": "The running style RUN has no CATIDs",
+      "detail": "the catalog cannot supply this one; confirm one from a changeover",
+      "data": {
+        "style_id": 1
+      }
+    },
+    {
+      "kind": "counter_slot_lockstep",
+      "severity": "info",
+      "headline": "Prod_Counter_02 (CATID 1002) rises with Prod_Counter_01: a second counter of the same stroke",
+      "detail": "counted once, on Prod_Counter_01",
+      "data": {
+        "catid": "1002",
+        "counted_tag": "MES_Cell.Prod_Counter_01",
+        "slot": 2,
+        "tag": "MES_Cell.Prod_Counter_02"
+      }
+    }
+  ]
+}

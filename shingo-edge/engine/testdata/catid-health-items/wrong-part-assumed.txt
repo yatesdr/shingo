@@ -1,0 +1,40 @@
+# the same with STYLE-B unpinned: 1002 taken as its part (decision 56), amber, the pin asked for
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":2,"headline":"The PLC is on 1002, taken as STYLE-B — STYLE-B's CATID is not pinned; pin it."}
+items body:
+{
+  "items": [
+    {
+      "kind": "wrong_part",
+      "severity": "amber",
+      "headline": "The PLC is on 1002, taken as STYLE-B — STYLE-B's CATID is not pinned; pin it.",
+      "detail": "since <time>, 0 parts counted as STYLE-B",
+      "since": "<time>",
+      "data": {
+        "catid": "1002",
+        "counting_as": "STYLE-B",
+        "parts": 0
+      },
+      "action": {
+        "kind": "start_changeover",
+        "to_style_id": 2,
+        "to_style_name": "STYLE-B"
+      }
+    },
+    {
+      "kind": "held",
+      "severity": "info",
+      "headline": "2 held on CATID 1002",
+      "detail": "node 2's share of PART-B1, 2 strokes over <age> (off-plan)",
+      "since": "<time>",
+      "data": {
+        "catid": "1002",
+        "hold_id": 1,
+        "payload_code": "PART-B1",
+        "process_node_id": 2,
+        "qty": 2,
+        "reason": "off-plan",
+        "strokes": 2
+      }
+    }
+  ]
+}

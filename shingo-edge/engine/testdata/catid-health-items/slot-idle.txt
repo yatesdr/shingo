@@ -1,0 +1,38 @@
+# the counted MES slot flat while slot 2 (CATID 1002) rises
+summary row: {"process_id":1,"name":"CELL","worst":"red","count":3,"headline":"The PLC counts on Prod_Counter_02 (CATID 1002); this process counts Prod_Counter_01, which has not moved"}
+items body:
+{
+  "items": [
+    {
+      "kind": "counter_slot_idle",
+      "severity": "red",
+      "headline": "The PLC counts on Prod_Counter_02 (CATID 1002); this process counts Prod_Counter_01, which has not moved",
+      "detail": "count Prod_Counter_02: the part identity follows to CATID_02; strokes before the click are not in the record",
+      "since": "<time>",
+      "data": {
+        "catid": "1002",
+        "counted_tag": "MES_Cell.Prod_Counter_01",
+        "slot": 2,
+        "tag": "MES_Cell.Prod_Counter_02"
+      }
+    },
+    {
+      "kind": "identity",
+      "severity": "amber",
+      "headline": "Part identity unreadable",
+      "detail": "no good read of MES_Cell.CATID_01 yet",
+      "data": {
+        "tag": "plc.MES_Cell.CATID_01"
+      }
+    },
+    {
+      "kind": "style_no_catids",
+      "severity": "amber",
+      "headline": "The running style RUN has no CATIDs",
+      "detail": "the catalog cannot supply this one; confirm one from a changeover",
+      "data": {
+        "style_id": 1
+      }
+    }
+  ]
+}

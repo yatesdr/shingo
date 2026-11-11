@@ -1,0 +1,26 @@
+# STYLE-B (unpinned) runs and the PLC is on 1002: taken as its part, the pin asked for
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":2,"headline":"The PLC is on 1002, taken as STYLE-B — STYLE-B's CATID is not pinned; pin it."}
+items body:
+{
+  "items": [
+    {
+      "kind": "assumed_catid",
+      "severity": "amber",
+      "headline": "The PLC is on 1002, taken as STYLE-B — STYLE-B's CATID is not pinned; pin it.",
+      "detail": "the process runs two styles and only the other is pinned; pin 1002 on STYLE-B to confirm it",
+      "data": {
+        "catid": "1002",
+        "style_id": 2
+      }
+    },
+    {
+      "kind": "style_no_catids",
+      "severity": "amber",
+      "headline": "The running style STYLE-B has no CATIDs",
+      "detail": "the catalog cannot supply this one; confirm one from a changeover",
+      "data": {
+        "style_id": 2
+      }
+    }
+  ]
+}

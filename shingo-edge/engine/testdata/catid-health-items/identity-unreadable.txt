@@ -1,0 +1,17 @@
+# the identity's last good read a minute old
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"headline":"Part identity unreadable"}
+items body:
+{
+  "items": [
+    {
+      "kind": "identity",
+      "severity": "amber",
+      "headline": "Part identity unreadable",
+      "detail": "no good read of MES_Cell.CATID_01 yet",
+      "since": "<time>",
+      "data": {
+        "tag": "plc.MES_Cell.CATID_01"
+      }
+    }
+  ]
+}
