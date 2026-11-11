@@ -22,6 +22,11 @@ Deploy: Edge v47. Core first: it reads the press on plain orders before any Edge
 - A plain empty for a press is served by a strict kanban that supports that press
 - A press's plain move of a contained part to finished goods goes to containment
 - An order with no steps draws its pickup and its drop, never the press as a stop between
+- A tool change can mark positions on any line mode; unmarked positions swap as usual
+- A claim with marks names inbound staging: the new carrier waits there for Tooling done
+- A tool change clears its marked positions at START and indexes nothing onto the press
+- Clearing at START locks the departing count and waits at a live light curtain
+- A light curtain's release no longer releases Tooling done by itself
 - Evacuate on changeover is gone; a claim that had it on with no marks is logged (Edge v47)
 - Which robot brings a press's next carrier is stored as Robot 1 or Robot 2 (Edge v47)
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
