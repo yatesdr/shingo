@@ -300,8 +300,10 @@ func containedAt(db *store.DB, lineNode, payloadCode string) (bool, error) {
 // placeByContentsAtRelease re-points, in the order's stored plan, the drop of
 // the carrier the segment released at waitIndex lifts off the order's line to
 // where it goes by what it holds (dropByContents), moving the order's slot
-// hold with it. It reports whether the plan changed; the caller re-reads the
-// plan and splits its segment again.
+// hold with it. The plan is spliced and the robot stands at the released wait,
+// so the rest of the route is planned again from there (repoint): the waits
+// spliced for the old drop do not survive it. It reports whether the plan
+// changed; the caller re-reads the plan and splits its segment again.
 func (d *Dispatcher) placeByContentsAtRelease(order *orders.Order, steps []resolvedStep, waitIndex int) bool {
 	line := order.ProcessNode
 	if line == "" {
@@ -325,7 +327,72 @@ func (d *Dispatcher) placeByContentsAtRelease(order *orders.Order, steps []resol
 	if target == "" || target == steps[f].Node {
 		return false
 	}
-	return d.repointDrop(order, steps, f, b, target, why)
+	return d.repointAtRelease(order, steps, from, f, b, target, why)
+}
+
+// repointAtRelease moves step f's drop to target at a release: the slot hold
+// first (refused, nothing moves), then the plan and the rest of the route
+// (repoint, from the released wait), then the old drop's hold goes. A route
+// the splice refuses keeps the planned drop and gives the new hold back. why
+// is the caller's reason (dropByContents), said in the log.
+func (d *Dispatcher) repointAtRelease(order *orders.Order, steps []resolvedStep, from, f int, b *bins.Bin, target, why string) bool {
+	was := steps[f].Node
+	tn, err := d.db.GetNodeByDotName(target)
+	if err != nil || tn == nil {
+		return false
+	}
+	if err := d.db.ReserveSlot(tn.ID, order.ID); err != nil {
+		log.Printf("dispatch: slot %s is held — order %d keeps its drop at %s: %v", target, order.ID, was, err)
+		return false
+	}
+	if err := d.db.ConfirmSlotClaim(tn.ID, order.ID, nil); err != nil {
+		d.giveBackSlot(tn, order.ID)
+		log.Printf("dispatch: slot %s refused the claim — order %d keeps its drop at %s: %v", target, order.ID, was, err)
+		return false
+	}
+	inside, err := d.laneAt(steps, from)
+	if err == nil {
+		_, err = d.repoint(order, steps, stepMove{at: f, action: protocol.ActionDropoff, node: target},
+			&spliceFrom{at: from, inside: inside})
+	}
+	if err != nil {
+		d.giveBackSlot(tn, order.ID)
+		log.Printf("dispatch: order %d keeps its drop at %s (bin %d %s %s): %v", order.ID, was, b.ID, why, target, err)
+		return false
+	}
+	if fn, err := d.db.GetNodeByDotName(was); err == nil && fn != nil {
+		if err := d.db.ReleaseSlotClaim(fn.ID, order.ID); err != nil {
+			log.Printf("dispatch: release order %d's hold on %s after the re-point: %v", order.ID, was, err)
+		}
+	}
+	log.Printf("dispatch: order %d: bin %d %s %s instead of %s", order.ID, b.ID, why, target, was)
+	return true
+}
+
+// giveBackSlot drops the hold a refused re-point took on n: the claim, and
+// the reservation with it (ReleaseSlotClaim takes both).
+func (d *Dispatcher) giveBackSlot(n *nodes.Node, orderID int64) {
+	if err := d.db.ReleaseSlotClaim(n.ID, orderID); err != nil {
+		log.Printf("dispatch: slot %s: give back order %d's hold after a refused re-point: %v", n.Name, orderID, err)
+	}
+}
+
+// laneAt is the gated lane the robot is in when it reaches step from: the
+// lane of the wait it stands at in front of it (steps[from-1]), 0 for a wait
+// at a node in no lane (a line, a staging spot) or at none.
+func (d *Dispatcher) laneAt(steps []resolvedStep, from int) (int64, error) {
+	if from <= 0 || from > len(steps) {
+		return 0, nil
+	}
+	w := steps[from-1]
+	if w.Action == protocol.ActionWait && w.WaitKind == WaitKindLane {
+		return w.WaitLane, nil
+	}
+	lane, err := d.laneOfStep(w.Node)
+	if err != nil || lane == nil {
+		return 0, err
+	}
+	return lane.ID, nil
 }
 
 // placeByContentsAtReserve is the door for a lift with no wait ahead of it (the
@@ -435,51 +502,6 @@ func (d *Dispatcher) binStandingAt(node string) *bins.Bin {
 		return nil
 	}
 	return bs[0]
-}
-
-// repointDrop moves step f's drop to target: the slot hold first (refused,
-// nothing moves), then the plan, the delivery node when f is the plan's last
-// drop, and the carrier's junction row. why is the caller's reason
-// (dropByContents), said in the log.
-func (d *Dispatcher) repointDrop(order *orders.Order, steps []resolvedStep, f int, b *bins.Bin, target, why string) bool {
-	from := steps[f].Node
-	tn, err := d.db.GetNodeByDotName(target)
-	if err != nil || tn == nil {
-		return false
-	}
-	if err := d.db.ReserveSlot(tn.ID, order.ID); err != nil {
-		log.Printf("dispatch: slot %s is held — order %d keeps its drop at %s: %v", target, order.ID, from, err)
-		return false
-	}
-	if err := d.db.ConfirmSlotClaim(tn.ID, order.ID, nil); err != nil {
-		if rErr := d.db.ReleaseSlotReservation(tn.ID, order.ID); rErr != nil {
-			log.Printf("dispatch: slot %s: release after a refused claim: %v", target, rErr)
-		}
-		log.Printf("dispatch: slot %s refused the claim — order %d keeps its drop at %s: %v", target, order.ID, from, err)
-		return false
-	}
-	if fn, err := d.db.GetNodeByDotName(from); err == nil && fn != nil {
-		if err := d.db.ReleaseSlotClaim(fn.ID, order.ID); err != nil {
-			log.Printf("dispatch: release order %d's hold on %s after the re-point: %v", order.ID, from, err)
-		}
-	}
-	last := true
-	for i := f + 1; i < len(steps); i++ {
-		if steps[i].Action == protocol.ActionDropoff {
-			last = false
-			break
-		}
-	}
-	if last {
-		if err := applyDeliveryNodeAtStep(d.db, order, target, f); err != nil {
-			log.Printf("dispatch: re-point order %d → %s: %v", order.ID, target, err)
-			return false
-		}
-	} else {
-		applyPlanNode(d.db, order, target, f, protocol.ActionDropoff)
-	}
-	log.Printf("dispatch: order %d: bin %d %s %s instead of %s", order.ID, b.ID, why, target, from)
-	return true
 }
 
 // placeByContentsMove is the plain move's door, after the pick: a move off a

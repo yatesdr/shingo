@@ -191,12 +191,17 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	}
 
 	// The count is final now: the carrier this segment lifts off the line goes
-	// where it goes by what it holds (place_by_contents.go): an unfinished one
-	// to its claim's partial home, an empty to a kanban short of it.
-	// A re-point rewrites the stored plan, so the segment is split again from it.
+	// where it goes by what it holds (place_by_contents.go). A re-point plans
+	// the rest of the route again (repoint), so the segment is split again from
+	// the stored plan, and asked again what it must hold: a wait the re-point
+	// took away can bring a stamped drop, or a turn, into this segment.
 	if d.placeByContentsAtRelease(order, steps, order.WaitIndex) {
 		if again, ok := decodeSteps(order.StepsJSON); ok {
 			steps = again
+			if holds, turn := d.vacateHoldsAtRelease(order, steps), d.turnHoldAtRelease(order, steps); len(holds) > 0 || turn {
+				d.markHeld(env, order, steps, holds, turn)
+				return
+			}
 			segment, moreWaits, blockOffset = splitSegment(steps, order.WaitIndex)
 		}
 	}
