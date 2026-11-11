@@ -133,6 +133,21 @@ func TestRobot3_RobotTwosLiftOrdersTheBackItsCarrierOnce(t *testing.T) {
 	}
 }
 
+// TestRobot3_APairCancelledBeforeTheLiftOrdersNothing: Robot 3's one trigger is
+// Robot 2's lift of the back, so a pair cancelled before it (an operator's
+// cancel, or a changeover's START cancelling the cell's legs not yet lifting)
+// orders the back no carrier. The back is primed by the next REQUEST.
+func TestRobot3_APairCancelledBeforeTheLiftOrdersNothing(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID, r1, r2 := robot3Pair(t, protocol.RefillByOwnRobot)
+	for _, leg := range []*orders.Order{r1, r2} {
+		testutil.MustNoErr(t, eng.orderMgr.AbortOrder(leg.ID), "cancel the pair before the lift")
+	}
+	if got := followOnsTo(t, db, nodeID, "INDEX-B"); len(got) != 0 {
+		t.Errorf("a pair cancelled before Robot 2's lift: %d orders to the back, want none", len(got))
+	}
+}
+
 // TestRobot3_TheStepsDecideNotTheSetting: an edit between the dispatch and the
 // lift neither doubles the back nor starves it. A pair built for Robot 3 still
 // orders its one carrier after the press is set back to Robot 1; a pair built
