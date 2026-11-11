@@ -1,0 +1,226 @@
+## flow preview: two picker edits (POS_A5 source → SRC_1, POS_A1 key route + LM_1), debounced into one preview
+  1  POST /api/processes/1/flow/preview
+       {
+         "to_style_id": 1,
+         "cells": [
+           {
+             "core_node_name": "POS_A1",
+             "role": "consume",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "PART-1",
+             "paired_core_node": "POS_B1",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1",
+             "key_route": [
+               "LM_1"
+             ]
+           },
+           {
+             "core_node_name": "POS_A2",
+             "role": "produce",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "PART-2",
+             "paired_core_node": "POS_B2",
+             "second_paired_core_node": "POS_B3",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A3",
+             "role": "consume",
+             "swap_mode": "two_robot",
+             "payload_code": "PART-3",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_1",
+             "outbound_destination": "DST_1",
+             "key_route": [
+               "LM_2",
+               "LM_3"
+             ]
+           },
+           {
+             "core_node_name": "POS_A4",
+             "role": "produce",
+             "swap_mode": "two_robot",
+             "payload_code": "PART-4",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_2",
+             "outbound_destination": "DST_2"
+           },
+           {
+             "core_node_name": "POS_A5",
+             "role": "consume",
+             "swap_mode": "single_robot",
+             "payload_code": "PART-5",
+             "inbound_source": "SRC_1",
+             "inbound_staging": "STG_1",
+             "outbound_staging": "STG_2",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A6",
+             "role": "produce",
+             "swap_mode": "single_robot",
+             "payload_code": "PART-6",
+             "inbound_source": "SRC_1",
+             "inbound_staging": "STG_2",
+             "outbound_staging": "STG_3",
+             "outbound_destination": "ULD_1"
+           },
+           {
+             "core_node_name": "POS_A7",
+             "role": "consume",
+             "swap_mode": "sequential",
+             "payload_code": "PART-7",
+             "paired_core_node": "POS_A8",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A8",
+             "role": "consume",
+             "swap_mode": "sequential",
+             "payload_code": "PART-8",
+             "paired_core_node": "POS_A7",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A9",
+             "role": "produce",
+             "swap_mode": "sequential",
+             "payload_code": "PART-9",
+             "paired_core_node": "POS_A10",
+             "inbound_source": "SRC_1",
+             "outbound_destination": "DST_2"
+           },
+           {
+             "core_node_name": "POS_A10",
+             "role": "produce",
+             "swap_mode": "sequential",
+             "payload_code": "PART-10",
+             "paired_core_node": "POS_A9",
+             "inbound_source": "SRC_1",
+             "outbound_destination": "DST_2"
+           }
+         ],
+         "taken_off": []
+       }
+-- sheet closed
+-- bar ok, dirty=true
+
+## Save style: flow/save on the last preview's fingerprint, then the re-open it does
+  1  POST /api/processes/1/flow/save
+       {
+         "to_style_id": 1,
+         "cells": [
+           {
+             "core_node_name": "POS_A1",
+             "role": "consume",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "PART-1",
+             "paired_core_node": "POS_B1",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1",
+             "key_route": [
+               "LM_1"
+             ]
+           },
+           {
+             "core_node_name": "POS_A2",
+             "role": "produce",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "PART-2",
+             "paired_core_node": "POS_B2",
+             "second_paired_core_node": "POS_B3",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A3",
+             "role": "consume",
+             "swap_mode": "two_robot",
+             "payload_code": "PART-3",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_1",
+             "outbound_destination": "DST_1",
+             "key_route": [
+               "LM_2",
+               "LM_3"
+             ]
+           },
+           {
+             "core_node_name": "POS_A4",
+             "role": "produce",
+             "swap_mode": "two_robot",
+             "payload_code": "PART-4",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_2",
+             "outbound_destination": "DST_2"
+           },
+           {
+             "core_node_name": "POS_A5",
+             "role": "consume",
+             "swap_mode": "single_robot",
+             "payload_code": "PART-5",
+             "inbound_source": "SRC_1",
+             "inbound_staging": "STG_1",
+             "outbound_staging": "STG_2",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A6",
+             "role": "produce",
+             "swap_mode": "single_robot",
+             "payload_code": "PART-6",
+             "inbound_source": "SRC_1",
+             "inbound_staging": "STG_2",
+             "outbound_staging": "STG_3",
+             "outbound_destination": "ULD_1"
+           },
+           {
+             "core_node_name": "POS_A7",
+             "role": "consume",
+             "swap_mode": "sequential",
+             "payload_code": "PART-7",
+             "paired_core_node": "POS_A8",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A8",
+             "role": "consume",
+             "swap_mode": "sequential",
+             "payload_code": "PART-8",
+             "paired_core_node": "POS_A7",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A9",
+             "role": "produce",
+             "swap_mode": "sequential",
+             "payload_code": "PART-9",
+             "paired_core_node": "POS_A10",
+             "inbound_source": "SRC_1",
+             "outbound_destination": "DST_2"
+           },
+           {
+             "core_node_name": "POS_A10",
+             "role": "produce",
+             "swap_mode": "sequential",
+             "payload_code": "PART-10",
+             "paired_core_node": "POS_A9",
+             "inbound_source": "SRC_1",
+             "outbound_destination": "DST_2"
+           }
+         ],
+         "fingerprint": "fp-2",
+         "station_id": 11
+       }
+  2  GET /api/processes/1/composer
+  3  GET /api/operator-stations/11/claimed-nodes
+  4  GET /api/operator-stations/12/claimed-nodes
+  5  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed

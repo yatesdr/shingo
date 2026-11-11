@@ -1,0 +1,48 @@
+## Settings › Routing set: add SRC_2 to Sources (a name with no row: POST at the end of its role)
+  1  POST /api/processes/1/routing-nodes
+       {
+         "core_node_name": "SRC_2",
+         "role": "source",
+         "label": "SRC_2",
+         "enabled": true,
+         "sequence": 3
+       }
+  2  GET /api/processes/1/routing-nodes
+-- sheet closed
+-- routing warning "", error ""
+
+## Settings › Routing set: add DST_9 to Destinations (a switched-off row: PATCH adopts it)
+  1  PATCH /api/processes/1/routing-nodes/109
+       {
+         "enabled": true
+       }
+  2  GET /api/processes/1/routing-nodes
+-- sheet closed
+-- routing warning "", error ""
+
+## Settings › Routing set: × STG_3 out of Staging (DELETE, and the warning it answers)
+  1  DELETE /api/processes/1/routing-nodes/105
+  2  GET /api/processes/1/routing-nodes
+-- sheet closed
+-- routing warning "STG_3 is still named by Style A.", error ""
+
+## Settings › Routing set: click STG_1, already in Staging (the picker takes it out)
+  1  DELETE /api/processes/1/routing-nodes/103
+  2  GET /api/processes/1/routing-nodes
+-- sheet closed
+-- routing warning "STG_1 is still named by Style A.", error ""
+
+## Settings › Routing set: Turn all 1 on (Staging)
+  1  PATCH /api/processes/1/routing-nodes/106
+       {
+         "enabled": true
+       }
+  2  GET /api/processes/1/routing-nodes
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  GET /api/process-nodes
+  7  GET /api/processes/1/station-counters
+  8  GET /api/processes/1/counting-slots
+  9  GET /api/processes/1/catid-health
+-- sheet closed

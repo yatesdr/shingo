@@ -1,0 +1,440 @@
+# optionsFor(node, kind) for every table row of Style A, in table order.
+# The last line of a kind is the sentence openPicker draws when no option carries a value.
+POS_A1  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A1","to":"POS_A11"}
+POS_A1  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A1","to":"POS_B4"}
+POS_A1  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A1","to":"ULD_1"}
+POS_A1  role  #0  value="consume"  label="consume"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A1","role":"consume"}
+POS_A1  role  #1  value="produce"  label="produce"  on=no  icon=absent  action={"type":"setRole","node":"POS_A1","role":"produce"}
+POS_A1  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=yes  icon=present  action={"type":"setMode","node":"POS_A1","mode":"two_robot_press_index"}
+POS_A1  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A1","mode":"two_robot"}
+POS_A1  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A1","mode":"single_robot"}
+POS_A1  mode  #3  value="sequential"  label="Sequential A/B"  on=no  icon=present  action={"type":"setMode","node":"POS_A1","mode":"sequential"}
+POS_A1  col:partner:paired  #0  note="required for 2‑Robot Index"
+POS_A1  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=yes  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_B1"}
+POS_A1  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_B2"}
+POS_A1  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_B3"}
+POS_A1  col:partner:paired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_B4"}
+POS_A1  col:partner:paired  #5  value="POS_A2"  label="POS_A2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A2"}
+POS_A1  col:partner:paired  #6  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A3"}
+POS_A1  col:partner:paired  #7  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A4"}
+POS_A1  col:partner:paired  #8  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A5"}
+POS_A1  col:partner:paired  #9  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A6"}
+POS_A1  col:partner:paired  #10  value="POS_A7"  label="POS_A7"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A7"}
+POS_A1  col:partner:paired  #11  value="POS_A8"  label="POS_A8"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A8"}
+POS_A1  col:partner:paired  #12  value="POS_A9"  label="POS_A9"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A9"}
+POS_A1  col:partner:paired  #13  value="POS_A10"  label="POS_A10"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A10"}
+POS_A1  col:partner:paired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"POS_A11"}
+POS_A1  col:partner:paired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A1","partner":"ULD_1"}
+POS_A1  col:partner:secondPaired  #0  value=""  label="none"  on=yes  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":""}
+POS_A1  col:partner:secondPaired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_B1"}
+POS_A1  col:partner:secondPaired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_B2"}
+POS_A1  col:partner:secondPaired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_B3"}
+POS_A1  col:partner:secondPaired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_B4"}
+POS_A1  col:partner:secondPaired  #5  value="POS_A2"  label="POS_A2"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A2"}
+POS_A1  col:partner:secondPaired  #6  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A3"}
+POS_A1  col:partner:secondPaired  #7  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A4"}
+POS_A1  col:partner:secondPaired  #8  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A5"}
+POS_A1  col:partner:secondPaired  #9  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A6"}
+POS_A1  col:partner:secondPaired  #10  value="POS_A7"  label="POS_A7"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A7"}
+POS_A1  col:partner:secondPaired  #11  value="POS_A8"  label="POS_A8"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A8"}
+POS_A1  col:partner:secondPaired  #12  value="POS_A9"  label="POS_A9"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A9"}
+POS_A1  col:partner:secondPaired  #13  value="POS_A10"  label="POS_A10"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A10"}
+POS_A1  col:partner:secondPaired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"POS_A11"}
+POS_A1  col:partner:secondPaired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A1","partner":"ULD_1"}
+POS_A1  col:staging:staging  #0  value=""  label="none"  on=yes  icon=absent  action={"type":"setStaging","node":"POS_A1","staging":""}
+POS_A1  col:staging:staging  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setStaging","node":"POS_A1","staging":"STG_1"}
+POS_A1  col:staging:staging  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A5, POS_A6"  action={"type":"setStaging","node":"POS_A1","staging":"STG_2"}
+POS_A1  col:staging:staging  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setStaging","node":"POS_A1","staging":"STG_3"}
+POS_A1  col:staging:staging  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A1","staging":"POS_B1"}
+POS_A1  col:staging:staging  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A1","staging":"POS_B2"}
+POS_A1  col:staging:staging  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A1","staging":"POS_B3"}
+POS_A1  col:staging:staging  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A1","staging":"POS_B4"}
+POS_A1  col:staging:parkOld  #0  value=""  label="none"  on=yes  icon=absent  action={"type":"setParkOld","node":"POS_A1","staging":""}
+POS_A1  col:staging:parkOld  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setParkOld","node":"POS_A1","staging":"STG_1"}
+POS_A1  col:staging:parkOld  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A5, POS_A6"  action={"type":"setParkOld","node":"POS_A1","staging":"STG_2"}
+POS_A1  col:staging:parkOld  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setParkOld","node":"POS_A1","staging":"STG_3"}
+POS_A1  col:staging:parkOld  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A1","staging":"POS_B1"}
+POS_A1  col:staging:parkOld  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A1","staging":"POS_B2"}
+POS_A1  col:staging:parkOld  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A1","staging":"POS_B3"}
+POS_A1  col:staging:parkOld  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A1","staging":"POS_B4"}
+POS_A1  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A1","source":"GRP_A"}
+POS_A1  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A1","source":"SRC_1"}
+POS_A1  dest  #0  value="DST_1"  label="DST_1"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A1","dest":"DST_1"}
+POS_A1  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A1","dest":"DST_2"}
+POS_A1  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A1","dest":"ULD_1"}
+POS_A1  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A1","via":[]}
+POS_A1  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A1","via":["LM_1"]}
+POS_A1  via:0  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A1","via":["LM_2"]}
+POS_A1  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A1","via":["LM_3"]}
+POS_A1  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A1","via":["LM_4"]}
+POS_A2  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A2","to":"POS_A11"}
+POS_A2  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A2","to":"POS_B4"}
+POS_A2  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A2","to":"ULD_1"}
+POS_A2  role  #0  value="consume"  label="consume"  on=no  icon=absent  action={"type":"setRole","node":"POS_A2","role":"consume"}
+POS_A2  role  #1  value="produce"  label="produce"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A2","role":"produce"}
+POS_A2  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=yes  icon=present  action={"type":"setMode","node":"POS_A2","mode":"two_robot_press_index"}
+POS_A2  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A2","mode":"two_robot"}
+POS_A2  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A2","mode":"single_robot"}
+POS_A2  mode  #3  value="sequential"  label="Sequential A/B"  on=no  icon=present  action={"type":"setMode","node":"POS_A2","mode":"sequential"}
+POS_A2  col:partner:paired  #0  note="required for 2‑Robot Index"
+POS_A2  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_B1"}
+POS_A2  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=yes  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_B2"}
+POS_A2  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_B3"}
+POS_A2  col:partner:paired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_B4"}
+POS_A2  col:partner:paired  #5  value="POS_A1"  label="POS_A1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A1"}
+POS_A2  col:partner:paired  #6  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A3"}
+POS_A2  col:partner:paired  #7  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A4"}
+POS_A2  col:partner:paired  #8  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A5"}
+POS_A2  col:partner:paired  #9  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A6"}
+POS_A2  col:partner:paired  #10  value="POS_A7"  label="POS_A7"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A7"}
+POS_A2  col:partner:paired  #11  value="POS_A8"  label="POS_A8"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A8"}
+POS_A2  col:partner:paired  #12  value="POS_A9"  label="POS_A9"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A9"}
+POS_A2  col:partner:paired  #13  value="POS_A10"  label="POS_A10"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A10"}
+POS_A2  col:partner:paired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"POS_A11"}
+POS_A2  col:partner:paired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A2","partner":"ULD_1"}
+POS_A2  col:partner:secondPaired  #0  value=""  label="none"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":""}
+POS_A2  col:partner:secondPaired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_B1"}
+POS_A2  col:partner:secondPaired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_B2"}
+POS_A2  col:partner:secondPaired  #3  value="POS_B3"  label="POS_B3"  on=yes  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_B3"}
+POS_A2  col:partner:secondPaired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_B4"}
+POS_A2  col:partner:secondPaired  #5  value="POS_A1"  label="POS_A1"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A1"}
+POS_A2  col:partner:secondPaired  #6  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A3"}
+POS_A2  col:partner:secondPaired  #7  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A4"}
+POS_A2  col:partner:secondPaired  #8  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A5"}
+POS_A2  col:partner:secondPaired  #9  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A6"}
+POS_A2  col:partner:secondPaired  #10  value="POS_A7"  label="POS_A7"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A7"}
+POS_A2  col:partner:secondPaired  #11  value="POS_A8"  label="POS_A8"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A8"}
+POS_A2  col:partner:secondPaired  #12  value="POS_A9"  label="POS_A9"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A9"}
+POS_A2  col:partner:secondPaired  #13  value="POS_A10"  label="POS_A10"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A10"}
+POS_A2  col:partner:secondPaired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"POS_A11"}
+POS_A2  col:partner:secondPaired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setSecondPartner","node":"POS_A2","partner":"ULD_1"}
+POS_A2  col:staging:staging  #0  value=""  label="none"  on=yes  icon=absent  action={"type":"setStaging","node":"POS_A2","staging":""}
+POS_A2  col:staging:staging  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setStaging","node":"POS_A2","staging":"STG_1"}
+POS_A2  col:staging:staging  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A5, POS_A6"  action={"type":"setStaging","node":"POS_A2","staging":"STG_2"}
+POS_A2  col:staging:staging  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setStaging","node":"POS_A2","staging":"STG_3"}
+POS_A2  col:staging:staging  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A2","staging":"POS_B1"}
+POS_A2  col:staging:staging  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A2","staging":"POS_B2"}
+POS_A2  col:staging:staging  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A2","staging":"POS_B3"}
+POS_A2  col:staging:staging  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A2","staging":"POS_B4"}
+POS_A2  col:staging:parkOld  #0  value=""  label="none"  on=yes  icon=absent  action={"type":"setParkOld","node":"POS_A2","staging":""}
+POS_A2  col:staging:parkOld  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setParkOld","node":"POS_A2","staging":"STG_1"}
+POS_A2  col:staging:parkOld  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A5, POS_A6"  action={"type":"setParkOld","node":"POS_A2","staging":"STG_2"}
+POS_A2  col:staging:parkOld  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setParkOld","node":"POS_A2","staging":"STG_3"}
+POS_A2  col:staging:parkOld  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A2","staging":"POS_B1"}
+POS_A2  col:staging:parkOld  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A2","staging":"POS_B2"}
+POS_A2  col:staging:parkOld  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A2","staging":"POS_B3"}
+POS_A2  col:staging:parkOld  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A2","staging":"POS_B4"}
+POS_A2  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A2","source":"GRP_A"}
+POS_A2  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A2","source":"SRC_1"}
+POS_A2  dest  #0  value="DST_1"  label="DST_1"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A2","dest":"DST_1"}
+POS_A2  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A2","dest":"DST_2"}
+POS_A2  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A2","dest":"ULD_1"}
+POS_A2  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A2","via":[]}
+POS_A2  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A2","via":["LM_1"]}
+POS_A2  via:0  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A2","via":["LM_2"]}
+POS_A2  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A2","via":["LM_3"]}
+POS_A2  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A2","via":["LM_4"]}
+POS_A3  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A3","to":"POS_A11"}
+POS_A3  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A3","to":"POS_B4"}
+POS_A3  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A3","to":"ULD_1"}
+POS_A3  role  #0  value="consume"  label="consume"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A3","role":"consume"}
+POS_A3  role  #1  value="produce"  label="produce"  on=no  icon=absent  action={"type":"setRole","node":"POS_A3","role":"produce"}
+POS_A3  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A3","mode":"two_robot_press_index"}
+POS_A3  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=yes  icon=present  action={"type":"setMode","node":"POS_A3","mode":"two_robot"}
+POS_A3  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A3","mode":"single_robot"}
+POS_A3  mode  #3  value="sequential"  label="Sequential A/B"  on=no  icon=present  action={"type":"setMode","node":"POS_A3","mode":"sequential"}
+POS_A3  col:partner:paired  (no options)
+POS_A3  col:partner:paired  empty-sentence="Nothing to choose here yet."
+POS_A3  col:partner:secondPaired  (no options)
+POS_A3  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A3  col:staging:staging  #0  note="required for 2‑Robot Swap"
+POS_A3  col:staging:staging  #1  value="STG_1"  label="STG_1"  on=yes  icon=absent  use="POS_A5"  action={"type":"setStaging","node":"POS_A3","staging":"STG_1"}
+POS_A3  col:staging:staging  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A5, POS_A6"  action={"type":"setStaging","node":"POS_A3","staging":"STG_2"}
+POS_A3  col:staging:staging  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setStaging","node":"POS_A3","staging":"STG_3"}
+POS_A3  col:staging:staging  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A3","staging":"POS_B1"}
+POS_A3  col:staging:staging  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A3","staging":"POS_B2"}
+POS_A3  col:staging:staging  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A3","staging":"POS_B3"}
+POS_A3  col:staging:staging  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A3","staging":"POS_B4"}
+POS_A3  col:staging:parkOld  (no options)
+POS_A3  col:staging:parkOld  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A3  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A3","source":"GRP_A"}
+POS_A3  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A3","source":"SRC_1"}
+POS_A3  dest  #0  value="DST_1"  label="DST_1"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A3","dest":"DST_1"}
+POS_A3  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A3","dest":"DST_2"}
+POS_A3  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A3","dest":"ULD_1"}
+POS_A3  via:0  #0  value=""  label="remove this point"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_3"]}
+POS_A3  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_1","LM_3"]}
+POS_A3  via:0  #2  value="LM_2"  label="LM_2"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_2","LM_3"]}
+POS_A3  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_3","LM_3"]}
+POS_A3  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_4","LM_3"]}
+POS_A3  via:1  #0  value=""  label="remove this point"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_2"]}
+POS_A3  via:1  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_2","LM_1"]}
+POS_A3  via:1  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_2","LM_2"]}
+POS_A3  via:1  #3  value="LM_3"  label="LM_3"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_2","LM_3"]}
+POS_A3  via:1  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A3","via":["LM_2","LM_4"]}
+POS_A4  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A4","to":"POS_A11"}
+POS_A4  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A4","to":"POS_B4"}
+POS_A4  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A4","to":"ULD_1"}
+POS_A4  role  #0  value="consume"  label="consume"  on=no  icon=absent  action={"type":"setRole","node":"POS_A4","role":"consume"}
+POS_A4  role  #1  value="produce"  label="produce"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A4","role":"produce"}
+POS_A4  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A4","mode":"two_robot_press_index"}
+POS_A4  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=yes  icon=present  action={"type":"setMode","node":"POS_A4","mode":"two_robot"}
+POS_A4  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A4","mode":"single_robot"}
+POS_A4  mode  #3  value="sequential"  label="Sequential A/B"  on=no  icon=present  action={"type":"setMode","node":"POS_A4","mode":"sequential"}
+POS_A4  col:partner:paired  (no options)
+POS_A4  col:partner:paired  empty-sentence="Nothing to choose here yet."
+POS_A4  col:partner:secondPaired  (no options)
+POS_A4  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A4  col:staging:staging  #0  note="required for 2‑Robot Swap"
+POS_A4  col:staging:staging  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setStaging","node":"POS_A4","staging":"STG_1"}
+POS_A4  col:staging:staging  #2  value="STG_2"  label="STG_2"  on=yes  icon=absent  use="POS_A5, POS_A6"  action={"type":"setStaging","node":"POS_A4","staging":"STG_2"}
+POS_A4  col:staging:staging  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setStaging","node":"POS_A4","staging":"STG_3"}
+POS_A4  col:staging:staging  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A4","staging":"POS_B1"}
+POS_A4  col:staging:staging  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A4","staging":"POS_B2"}
+POS_A4  col:staging:staging  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A4","staging":"POS_B3"}
+POS_A4  col:staging:staging  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A4","staging":"POS_B4"}
+POS_A4  col:staging:parkOld  (no options)
+POS_A4  col:staging:parkOld  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A4  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A4","source":"GRP_A"}
+POS_A4  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A4","source":"SRC_1"}
+POS_A4  dest  #0  value="DST_1"  label="DST_1"  on=no  icon=absent  action={"type":"setDest","node":"POS_A4","dest":"DST_1"}
+POS_A4  dest  #1  value="DST_2"  label="DST_2"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A4","dest":"DST_2"}
+POS_A4  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A4","dest":"ULD_1"}
+POS_A4  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A4","via":[]}
+POS_A4  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A4","via":["LM_1"]}
+POS_A4  via:0  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A4","via":["LM_2"]}
+POS_A4  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A4","via":["LM_3"]}
+POS_A4  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A4","via":["LM_4"]}
+POS_A5  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A5","to":"POS_A11"}
+POS_A5  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A5","to":"POS_B4"}
+POS_A5  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A5","to":"ULD_1"}
+POS_A5  role  #0  value="consume"  label="consume"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A5","role":"consume"}
+POS_A5  role  #1  value="produce"  label="produce"  on=no  icon=absent  action={"type":"setRole","node":"POS_A5","role":"produce"}
+POS_A5  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A5","mode":"two_robot_press_index"}
+POS_A5  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A5","mode":"two_robot"}
+POS_A5  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=yes  icon=present  action={"type":"setMode","node":"POS_A5","mode":"single_robot"}
+POS_A5  mode  #3  value="sequential"  label="Sequential A/B"  on=no  icon=present  action={"type":"setMode","node":"POS_A5","mode":"sequential"}
+POS_A5  col:partner:paired  (no options)
+POS_A5  col:partner:paired  empty-sentence="Nothing to choose here yet."
+POS_A5  col:partner:secondPaired  (no options)
+POS_A5  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A5  col:staging:staging  #0  note="required for 1‑Robot Swap"
+POS_A5  col:staging:staging  #1  value="STG_1"  label="STG_1"  on=yes  icon=absent  use="POS_A3"  action={"type":"setStaging","node":"POS_A5","staging":"STG_1"}
+POS_A5  col:staging:staging  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A6"  action={"type":"setStaging","node":"POS_A5","staging":"STG_2"}
+POS_A5  col:staging:staging  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setStaging","node":"POS_A5","staging":"STG_3"}
+POS_A5  col:staging:staging  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A5","staging":"POS_B1"}
+POS_A5  col:staging:staging  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A5","staging":"POS_B2"}
+POS_A5  col:staging:staging  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A5","staging":"POS_B3"}
+POS_A5  col:staging:staging  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A5","staging":"POS_B4"}
+POS_A5  col:staging:parkOld  #0  note="required for 1‑Robot Swap"
+POS_A5  col:staging:parkOld  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3"  action={"type":"setParkOld","node":"POS_A5","staging":"STG_1"}
+POS_A5  col:staging:parkOld  #2  value="STG_2"  label="STG_2"  on=yes  icon=absent  use="POS_A4, POS_A6"  action={"type":"setParkOld","node":"POS_A5","staging":"STG_2"}
+POS_A5  col:staging:parkOld  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  use="POS_A6"  action={"type":"setParkOld","node":"POS_A5","staging":"STG_3"}
+POS_A5  col:staging:parkOld  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A5","staging":"POS_B1"}
+POS_A5  col:staging:parkOld  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A5","staging":"POS_B2"}
+POS_A5  col:staging:parkOld  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A5","staging":"POS_B3"}
+POS_A5  col:staging:parkOld  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A5","staging":"POS_B4"}
+POS_A5  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A5","source":"GRP_A"}
+POS_A5  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A5","source":"SRC_1"}
+POS_A5  dest  #0  value="DST_1"  label="DST_1"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A5","dest":"DST_1"}
+POS_A5  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A5","dest":"DST_2"}
+POS_A5  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A5","dest":"ULD_1"}
+POS_A5  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A5","via":[]}
+POS_A5  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A5","via":["LM_1"]}
+POS_A5  via:0  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A5","via":["LM_2"]}
+POS_A5  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A5","via":["LM_3"]}
+POS_A5  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A5","via":["LM_4"]}
+POS_A6  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A6","to":"POS_A11"}
+POS_A6  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A6","to":"POS_B4"}
+POS_A6  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A6","to":"ULD_1"}
+POS_A6  role  #0  value="consume"  label="consume"  on=no  icon=absent  action={"type":"setRole","node":"POS_A6","role":"consume"}
+POS_A6  role  #1  value="produce"  label="produce"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A6","role":"produce"}
+POS_A6  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A6","mode":"two_robot_press_index"}
+POS_A6  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A6","mode":"two_robot"}
+POS_A6  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=yes  icon=present  action={"type":"setMode","node":"POS_A6","mode":"single_robot"}
+POS_A6  mode  #3  value="sequential"  label="Sequential A/B"  on=no  icon=present  action={"type":"setMode","node":"POS_A6","mode":"sequential"}
+POS_A6  col:partner:paired  (no options)
+POS_A6  col:partner:paired  empty-sentence="Nothing to choose here yet."
+POS_A6  col:partner:secondPaired  (no options)
+POS_A6  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A6  col:staging:staging  #0  note="required for 1‑Robot Swap"
+POS_A6  col:staging:staging  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setStaging","node":"POS_A6","staging":"STG_1"}
+POS_A6  col:staging:staging  #2  value="STG_2"  label="STG_2"  on=yes  icon=absent  use="POS_A4, POS_A5"  action={"type":"setStaging","node":"POS_A6","staging":"STG_2"}
+POS_A6  col:staging:staging  #3  value="STG_3"  label="STG_3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A6","staging":"STG_3"}
+POS_A6  col:staging:staging  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A6","staging":"POS_B1"}
+POS_A6  col:staging:staging  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A6","staging":"POS_B2"}
+POS_A6  col:staging:staging  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A6","staging":"POS_B3"}
+POS_A6  col:staging:staging  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setStaging","node":"POS_A6","staging":"POS_B4"}
+POS_A6  col:staging:parkOld  #0  note="required for 1‑Robot Swap"
+POS_A6  col:staging:parkOld  #1  value="STG_1"  label="STG_1"  on=no  icon=absent  use="POS_A3, POS_A5"  action={"type":"setParkOld","node":"POS_A6","staging":"STG_1"}
+POS_A6  col:staging:parkOld  #2  value="STG_2"  label="STG_2"  on=no  icon=absent  use="POS_A4, POS_A5"  action={"type":"setParkOld","node":"POS_A6","staging":"STG_2"}
+POS_A6  col:staging:parkOld  #3  value="STG_3"  label="STG_3"  on=yes  icon=absent  action={"type":"setParkOld","node":"POS_A6","staging":"STG_3"}
+POS_A6  col:staging:parkOld  #4  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A6","staging":"POS_B1"}
+POS_A6  col:staging:parkOld  #5  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A6","staging":"POS_B2"}
+POS_A6  col:staging:parkOld  #6  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A6","staging":"POS_B3"}
+POS_A6  col:staging:parkOld  #7  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setParkOld","node":"POS_A6","staging":"POS_B4"}
+POS_A6  source  #0  value="GRP_A"  label="GRP_A"  on=no  icon=absent  action={"type":"setSource","node":"POS_A6","source":"GRP_A"}
+POS_A6  source  #1  value="SRC_1"  label="SRC_1"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A6","source":"SRC_1"}
+POS_A6  dest  #0  value="DST_1"  label="DST_1"  on=no  icon=absent  action={"type":"setDest","node":"POS_A6","dest":"DST_1"}
+POS_A6  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A6","dest":"DST_2"}
+POS_A6  dest  #2  value="ULD_1"  label="ULD_1"  on=yes  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A6","dest":"ULD_1"}
+POS_A6  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A6","via":[]}
+POS_A6  via:0  empty-sentence="Nothing to choose here yet."
+POS_A7  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A7","to":"POS_A11"}
+POS_A7  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A7","to":"POS_B4"}
+POS_A7  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A7","to":"ULD_1"}
+POS_A7  role  #0  value="consume"  label="consume"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A7","role":"consume"}
+POS_A7  role  #1  value="produce"  label="produce"  on=no  icon=absent  action={"type":"setRole","node":"POS_A7","role":"produce"}
+POS_A7  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A7","mode":"two_robot_press_index"}
+POS_A7  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A7","mode":"two_robot"}
+POS_A7  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A7","mode":"single_robot"}
+POS_A7  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A7","mode":"sequential"}
+POS_A7  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A7  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B1"}
+POS_A7  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B2"}
+POS_A7  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B3"}
+POS_A7  col:partner:paired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B4"}
+POS_A7  col:partner:paired  #5  value="POS_A1"  label="POS_A1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A1"}
+POS_A7  col:partner:paired  #6  value="POS_A2"  label="POS_A2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A2"}
+POS_A7  col:partner:paired  #7  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A3"}
+POS_A7  col:partner:paired  #8  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A4"}
+POS_A7  col:partner:paired  #9  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A5"}
+POS_A7  col:partner:paired  #10  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A6"}
+POS_A7  col:partner:paired  #11  value="POS_A8"  label="POS_A8"  on=yes  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A8"}
+POS_A7  col:partner:paired  #12  value="POS_A9"  label="POS_A9"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A9"}
+POS_A7  col:partner:paired  #13  value="POS_A10"  label="POS_A10"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A10"}
+POS_A7  col:partner:paired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_A11"}
+POS_A7  col:partner:paired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"ULD_1"}
+POS_A7  col:partner:secondPaired  (no options)
+POS_A7  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A7  col:staging:staging  (no options)
+POS_A7  col:staging:staging  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A7  col:staging:parkOld  (no options)
+POS_A7  col:staging:parkOld  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A7  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A7","source":"GRP_A"}
+POS_A7  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A7","source":"SRC_1"}
+POS_A7  dest  #0  value="DST_1"  label="DST_1"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A7","dest":"DST_1"}
+POS_A7  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A7","dest":"DST_2"}
+POS_A7  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A7","dest":"ULD_1"}
+POS_A7  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A7","via":[]}
+POS_A7  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A7","via":["LM_1"]}
+POS_A7  via:0  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A7","via":["LM_2"]}
+POS_A7  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A7","via":["LM_3"]}
+POS_A7  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A7","via":["LM_4"]}
+POS_A8  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A8","to":"POS_A11"}
+POS_A8  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A8","to":"POS_B4"}
+POS_A8  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A8","to":"ULD_1"}
+POS_A8  role  #0  value="consume"  label="consume"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A8","role":"consume"}
+POS_A8  role  #1  value="produce"  label="produce"  on=no  icon=absent  action={"type":"setRole","node":"POS_A8","role":"produce"}
+POS_A8  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A8","mode":"two_robot_press_index"}
+POS_A8  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A8","mode":"two_robot"}
+POS_A8  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A8","mode":"single_robot"}
+POS_A8  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A8","mode":"sequential"}
+POS_A8  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A8  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B1"}
+POS_A8  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B2"}
+POS_A8  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B3"}
+POS_A8  col:partner:paired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B4"}
+POS_A8  col:partner:paired  #5  value="POS_A1"  label="POS_A1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A1"}
+POS_A8  col:partner:paired  #6  value="POS_A2"  label="POS_A2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A2"}
+POS_A8  col:partner:paired  #7  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A3"}
+POS_A8  col:partner:paired  #8  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A4"}
+POS_A8  col:partner:paired  #9  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A5"}
+POS_A8  col:partner:paired  #10  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A6"}
+POS_A8  col:partner:paired  #11  value="POS_A7"  label="POS_A7"  on=yes  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A7"}
+POS_A8  col:partner:paired  #12  value="POS_A9"  label="POS_A9"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A9"}
+POS_A8  col:partner:paired  #13  value="POS_A10"  label="POS_A10"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A10"}
+POS_A8  col:partner:paired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_A11"}
+POS_A8  col:partner:paired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"ULD_1"}
+POS_A8  col:partner:secondPaired  (no options)
+POS_A8  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A8  col:staging:staging  (no options)
+POS_A8  col:staging:staging  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A8  col:staging:parkOld  (no options)
+POS_A8  col:staging:parkOld  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A8  source  #0  value="GRP_A"  label="GRP_A"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A8","source":"GRP_A"}
+POS_A8  source  #1  value="SRC_1"  label="SRC_1"  on=no  icon=absent  action={"type":"setSource","node":"POS_A8","source":"SRC_1"}
+POS_A8  dest  #0  value="DST_1"  label="DST_1"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A8","dest":"DST_1"}
+POS_A8  dest  #1  value="DST_2"  label="DST_2"  on=no  icon=absent  action={"type":"setDest","node":"POS_A8","dest":"DST_2"}
+POS_A8  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A8","dest":"ULD_1"}
+POS_A8  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A8","via":[]}
+POS_A8  via:0  #1  value="LM_1"  label="LM_1"  on=no  icon=absent  action={"type":"setVia","node":"POS_A8","via":["LM_1"]}
+POS_A8  via:0  #2  value="LM_2"  label="LM_2"  on=no  icon=absent  action={"type":"setVia","node":"POS_A8","via":["LM_2"]}
+POS_A8  via:0  #3  value="LM_3"  label="LM_3"  on=no  icon=absent  action={"type":"setVia","node":"POS_A8","via":["LM_3"]}
+POS_A8  via:0  #4  value="LM_4"  label="LM_4"  on=no  icon=absent  action={"type":"setVia","node":"POS_A8","via":["LM_4"]}
+POS_A9  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A9","to":"POS_A11"}
+POS_A9  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A9","to":"POS_B4"}
+POS_A9  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A9","to":"ULD_1"}
+POS_A9  role  #0  value="consume"  label="consume"  on=no  icon=absent  action={"type":"setRole","node":"POS_A9","role":"consume"}
+POS_A9  role  #1  value="produce"  label="produce"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A9","role":"produce"}
+POS_A9  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A9","mode":"two_robot_press_index"}
+POS_A9  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A9","mode":"two_robot"}
+POS_A9  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A9","mode":"single_robot"}
+POS_A9  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A9","mode":"sequential"}
+POS_A9  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A9  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B1"}
+POS_A9  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B2"}
+POS_A9  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B3"}
+POS_A9  col:partner:paired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B4"}
+POS_A9  col:partner:paired  #5  value="POS_A1"  label="POS_A1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A1"}
+POS_A9  col:partner:paired  #6  value="POS_A2"  label="POS_A2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A2"}
+POS_A9  col:partner:paired  #7  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A3"}
+POS_A9  col:partner:paired  #8  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A4"}
+POS_A9  col:partner:paired  #9  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A5"}
+POS_A9  col:partner:paired  #10  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A6"}
+POS_A9  col:partner:paired  #11  value="POS_A7"  label="POS_A7"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A7"}
+POS_A9  col:partner:paired  #12  value="POS_A8"  label="POS_A8"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A8"}
+POS_A9  col:partner:paired  #13  value="POS_A10"  label="POS_A10"  on=yes  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A10"}
+POS_A9  col:partner:paired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_A11"}
+POS_A9  col:partner:paired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"ULD_1"}
+POS_A9  col:partner:secondPaired  (no options)
+POS_A9  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A9  col:staging:staging  (no options)
+POS_A9  col:staging:staging  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A9  col:staging:parkOld  (no options)
+POS_A9  col:staging:parkOld  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A9  source  #0  value="GRP_A"  label="GRP_A"  on=no  icon=absent  action={"type":"setSource","node":"POS_A9","source":"GRP_A"}
+POS_A9  source  #1  value="SRC_1"  label="SRC_1"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A9","source":"SRC_1"}
+POS_A9  dest  #0  value="DST_1"  label="DST_1"  on=no  icon=absent  action={"type":"setDest","node":"POS_A9","dest":"DST_1"}
+POS_A9  dest  #1  value="DST_2"  label="DST_2"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A9","dest":"DST_2"}
+POS_A9  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A9","dest":"ULD_1"}
+POS_A9  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A9","via":[]}
+POS_A9  via:0  empty-sentence="Nothing to choose here yet."
+POS_A10  position  #0  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A10","to":"POS_A11"}
+POS_A10  position  #1  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A10","to":"POS_B4"}
+POS_A10  position  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"movePosition","from":"POS_A10","to":"ULD_1"}
+POS_A10  role  #0  value="consume"  label="consume"  on=no  icon=absent  action={"type":"setRole","node":"POS_A10","role":"consume"}
+POS_A10  role  #1  value="produce"  label="produce"  on=yes  icon=absent  action={"type":"setRole","node":"POS_A10","role":"produce"}
+POS_A10  mode  #0  value="two_robot_press_index"  label="2‑Robot Index"  on=no  icon=present  action={"type":"setMode","node":"POS_A10","mode":"two_robot_press_index"}
+POS_A10  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A10","mode":"two_robot"}
+POS_A10  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A10","mode":"single_robot"}
+POS_A10  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A10","mode":"sequential"}
+POS_A10  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A10  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B1"}
+POS_A10  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B2"}
+POS_A10  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B3"}
+POS_A10  col:partner:paired  #4  value="POS_B4"  label="POS_B4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B4"}
+POS_A10  col:partner:paired  #5  value="POS_A1"  label="POS_A1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A1"}
+POS_A10  col:partner:paired  #6  value="POS_A2"  label="POS_A2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A2"}
+POS_A10  col:partner:paired  #7  value="POS_A3"  label="POS_A3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A3"}
+POS_A10  col:partner:paired  #8  value="POS_A4"  label="POS_A4"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A4"}
+POS_A10  col:partner:paired  #9  value="POS_A5"  label="POS_A5"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A5"}
+POS_A10  col:partner:paired  #10  value="POS_A6"  label="POS_A6"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A6"}
+POS_A10  col:partner:paired  #11  value="POS_A7"  label="POS_A7"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A7"}
+POS_A10  col:partner:paired  #12  value="POS_A8"  label="POS_A8"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A8"}
+POS_A10  col:partner:paired  #13  value="POS_A9"  label="POS_A9"  on=yes  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A9"}
+POS_A10  col:partner:paired  #14  value="POS_A11"  label="POS_A11"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_A11"}
+POS_A10  col:partner:paired  #15  value="ULD_1"  label="ULD_1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"ULD_1"}
+POS_A10  col:partner:secondPaired  (no options)
+POS_A10  col:partner:secondPaired  empty-sentence="Nothing to choose here yet."
+POS_A10  col:staging:staging  (no options)
+POS_A10  col:staging:staging  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A10  col:staging:parkOld  (no options)
+POS_A10  col:staging:parkOld  empty-sentence="1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+POS_A10  source  #0  value="GRP_A"  label="GRP_A"  on=no  icon=absent  action={"type":"setSource","node":"POS_A10","source":"GRP_A"}
+POS_A10  source  #1  value="SRC_1"  label="SRC_1"  on=yes  icon=absent  action={"type":"setSource","node":"POS_A10","source":"SRC_1"}
+POS_A10  dest  #0  value="DST_1"  label="DST_1"  on=no  icon=absent  action={"type":"setDest","node":"POS_A10","dest":"DST_1"}
+POS_A10  dest  #1  value="DST_2"  label="DST_2"  on=yes  icon=absent  action={"type":"setDest","node":"POS_A10","dest":"DST_2"}
+POS_A10  dest  #2  value="ULD_1"  label="ULD_1"  on=no  icon=absent  where="a position of Unloader A"  action={"type":"setDest","node":"POS_A10","dest":"ULD_1"}
+POS_A10  via:0  #0  value=""  label="shortest way"  on=yes  icon=absent  action={"type":"setVia","node":"POS_A10","via":[]}
+POS_A10  via:0  empty-sentence="Nothing to choose here yet."

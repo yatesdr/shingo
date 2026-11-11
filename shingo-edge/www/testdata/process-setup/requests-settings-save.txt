@@ -1,0 +1,41 @@
+## Save settings: name, description, counter PLC and tag typed, counter off, auto-arm Prompt, the HMI gate off, group Welders, the quality hold on to DST_2, curtains on POS_A1 and POS_A3
+  1  PUT /api/processes/1
+       {
+         "name": "Press A2",
+         "description": "renamed",
+         "counter_plc_name": "PLC_B",
+         "counter_tag_name": "CountB",
+         "counter_enabled": false,
+         "identity_tag_name": "",
+         "identity_none": false,
+         "changeover_auto_arm": "prompt",
+         "group_id": 4
+       }
+  2  PATCH /api/processes/1
+       {
+         "flow_composer_enabled": false
+       }
+  3  POST /api/processes/1/containment-setting
+       {
+         "enabled": true,
+         "destination": "DST_2"
+       }
+  4  POST /api/process-nodes/201/curtain-setting
+       {
+         "enabled": true,
+         "plc_name": "PLC_A",
+         "tag_name": "CurtainA1",
+         "safe_value": true
+       }
+  5  POST /api/process-nodes/203/curtain-setting
+       {
+         "enabled": true,
+         "plc_name": "PLC_A",
+         "tag_name": "CurtainA3",
+         "safe_value": false
+       }
+  6  GET /api/process-nodes
+  7  GET /api/processes/1/station-counters
+  8  GET /api/processes
+-- sheet closed
+-- settings error "", notice "Saved."

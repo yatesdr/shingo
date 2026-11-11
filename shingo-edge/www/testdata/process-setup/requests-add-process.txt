@@ -1,0 +1,65 @@
+## Add process: name, description, group Presses, screen Screen N on NEW_1 + NEW_2, sources SRC_2 then GRP_A, staging STG_9, destination DST_9, parts PART-12 then PART-1
+  1  GET /api/core-nodes
+  2  GET /api/payload-catalog
+  3  GET /api/process-nodes
+  4  POST /api/processes
+       {
+         "name": "Press N",
+         "description": "a new press",
+         "counter_plc_name": "",
+         "counter_tag_name": "",
+         "counter_enabled": false,
+         "changeover_auto_arm": "auto",
+         "group_id": 3
+       }
+  5  POST /api/operator-stations
+       {
+         "process_id": 5,
+         "code": "",
+         "name": "Screen N",
+         "note": "",
+         "area_label": "",
+         "sequence": 0,
+         "controller_node_id": "",
+         "enabled": true
+       }
+  6  PUT /api/operator-stations/31/claimed-nodes
+       {
+         "nodes": [
+           "NEW_1",
+           "NEW_2"
+         ]
+       }
+  7  PUT /api/processes/5/routing-nodes
+       {
+         "nodes": [
+           {
+             "core_node_name": "SRC_2",
+             "role": "source"
+           },
+           {
+             "core_node_name": "GRP_A",
+             "role": "source"
+           },
+           {
+             "core_node_name": "STG_9",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "DST_9",
+             "role": "destination"
+           }
+         ]
+       }
+  8  PUT /api/processes/5/payloads
+       {
+         "payloads": [
+           "PART-12",
+           "PART-1"
+         ]
+       }
+  9  GET /api/processes
+ 10  GET /api/operator-stations
+ 11  GET /api/operator-stations/31/claimed-nodes
+ 12  GET /api/processes/5/composer
+-- sheet closed

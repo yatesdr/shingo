@@ -1,0 +1,15 @@
+## + New style with no recipe: a typed name and CATID
+  1  GET /api/core-nodes
+  2  POST /api/styles
+       {
+         "name": "Style C",
+         "description": "",
+         "process_id": 1,
+         "expected_catid": "CAT-C"
+       }
+  3  GET /api/processes
+  4  GET /api/processes/1/composer
+  5  GET /api/processes/1/styles
+  6  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed

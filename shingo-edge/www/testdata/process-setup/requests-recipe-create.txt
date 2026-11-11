@@ -1,0 +1,98 @@
+## Save as recipe… on the saved Style A (from_style_id)
+  1  GET /api/core-nodes
+  2  POST /api/processes/1/presets
+       {
+         "name": "From A",
+         "from_style_id": 1
+       }
+  3  GET /api/processes/1/presets
+-- sheet closed
+
+## + New recipe, then + Add a position: two_robot_press_index on POS_A11
+  1  GET /api/processes/1/composer
+-- sheet closed
+-- bar ok
+
+## Save recipe… on that draft (cells, no groups)
+  1  GET /api/core-nodes
+  2  POST /api/processes/1/presets
+       {
+         "name": "Fresh",
+         "cells": [
+           {
+             "core_node_name": "POS_A11",
+             "role": "consume",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "",
+             "paired_core_node": "POS_B1",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           }
+         ]
+       }
+  3  GET /api/processes/1/composer
+  4  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Recipe One opened from the rail, then Set up groups
+-- sheet closed
+-- groups ["2‑Robot Index of POS_A1","2‑Robot Swap of POS_A3"]
+
+## Save recipe… with groups (saveGroupedRecipe), the name as it opens
+  1  GET /api/core-nodes
+  2  POST /api/processes/1/presets
+       {
+         "name": "Recipe One",
+         "cells": [
+           {
+             "core_node_name": "POS_A1",
+             "role": "consume",
+             "swap_mode": "two_robot_press_index",
+             "payload_code": "",
+             "paired_core_node": "POS_B1",
+             "inbound_source": "GRP_A",
+             "outbound_destination": "DST_1"
+           },
+           {
+             "core_node_name": "POS_A3",
+             "role": "consume",
+             "swap_mode": "two_robot",
+             "payload_code": "",
+             "inbound_source": "GRP_A",
+             "inbound_staging": "STG_1",
+             "outbound_destination": "DST_1"
+           }
+         ],
+         "groups": [
+           {
+             "of": "POS_A1",
+             "name": "2‑Robot Index",
+             "spots": [
+               {
+                 "core_node_name": "POS_A1",
+                 "paired_core_node": [
+                   "POS_B1"
+                 ]
+               }
+             ]
+           },
+           {
+             "of": "POS_A3",
+             "name": "2‑Robot Swap",
+             "spots": [
+               {
+                 "core_node_name": "POS_A3",
+                 "inbound_staging": [
+                   "STG_1"
+                 ]
+               }
+             ]
+           }
+         ]
+       }
+  3  GET /api/processes/1/composer
+  4  GET /api/processes/1/composer
+  5  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed

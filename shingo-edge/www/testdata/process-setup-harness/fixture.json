@@ -1,0 +1,1765 @@
+{
+  "page": {
+    "activeProcessId": 1,
+    "processes": [
+      {
+        "id": 1,
+        "name": "Press A",
+        "description": "synthetic press",
+        "group_id": 3,
+        "active_style_id": 1,
+        "flow_composer_enabled": true,
+        "counter_plc_name": "PLC_A",
+        "counter_tag_name": "CountA",
+        "counter_enabled": true,
+        "identity_tag_name": "",
+        "identity_none": false,
+        "changeover_auto_arm": "auto",
+        "quality_hold_enabled": false,
+        "quality_hold_destination": ""
+      },
+      {
+        "id": 2,
+        "name": "Press B",
+        "description": "",
+        "group_id": 3,
+        "active_style_id": 3,
+        "flow_composer_enabled": false,
+        "counter_plc_name": "",
+        "counter_tag_name": "",
+        "counter_enabled": false,
+        "identity_tag_name": "",
+        "identity_none": false,
+        "changeover_auto_arm": "prompt",
+        "quality_hold_enabled": false,
+        "quality_hold_destination": ""
+      }
+    ],
+    "processGroups": [
+      {
+        "id": 3,
+        "name": "Presses"
+      },
+      {
+        "id": 4,
+        "name": "Welders"
+      }
+    ],
+    "styles": [
+      {
+        "id": 1,
+        "process_id": 1,
+        "name": "Style A",
+        "description": "",
+        "expected_catid": "CAT-A"
+      },
+      {
+        "id": 2,
+        "process_id": 1,
+        "name": "Style B",
+        "description": "",
+        "expected_catid": ""
+      },
+      {
+        "id": 3,
+        "process_id": 2,
+        "name": "Style P",
+        "description": "",
+        "expected_catid": ""
+      }
+    ],
+    "stations": [
+      {
+        "id": 11,
+        "process_id": 1,
+        "name": "Screen A",
+        "code": "scr-a",
+        "note": "front HMI",
+        "area_label": "Bay 1",
+        "sequence": 1,
+        "controller_node_id": "",
+        "enabled": true
+      },
+      {
+        "id": 12,
+        "process_id": 1,
+        "name": "Unloader A",
+        "code": "uld-a",
+        "note": "",
+        "area_label": "Bay 1",
+        "sequence": 2,
+        "controller_node_id": "",
+        "enabled": true
+      },
+      {
+        "id": 21,
+        "process_id": 2,
+        "name": "Screen B",
+        "code": "scr-b",
+        "note": "",
+        "area_label": "Bay 1",
+        "sequence": 1,
+        "controller_node_id": "",
+        "enabled": true
+      }
+    ],
+    "stationNodes": {
+      "11": [
+        "POS_A1",
+        "POS_A2",
+        "POS_A3",
+        "POS_A4",
+        "POS_A5",
+        "POS_A6",
+        "POS_A7",
+        "POS_A8",
+        "POS_A9",
+        "POS_A10",
+        "POS_A11"
+      ],
+      "12": [
+        "ULD_1"
+      ]
+    },
+    "loaderGaps": []
+  },
+  "composer": {
+    "styles": [
+      {
+        "id": 1,
+        "name": "Style A",
+        "catid": "CAT-A",
+        "claim_count": 10,
+        "claim_modes": [
+          "two_robot_press_index",
+          "two_robot",
+          "single_robot",
+          "sequential"
+        ],
+        "last_run": "11-10",
+        "claims": [
+          {
+            "core_node_name": "POS_A1",
+            "role": "consume",
+            "swap_mode": "two_robot_press_index",
+            "payload_code": "PART-1",
+            "paired_core_node": "POS_B1",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A2",
+            "role": "produce",
+            "swap_mode": "two_robot_press_index",
+            "payload_code": "PART-2",
+            "paired_core_node": "POS_B2",
+            "second_paired_core_node": "POS_B3",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A3",
+            "role": "consume",
+            "swap_mode": "two_robot",
+            "payload_code": "PART-3",
+            "inbound_staging": "STG_1",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "key_route": [
+              "LM_2",
+              "LM_3"
+            ]
+          },
+          {
+            "core_node_name": "POS_A4",
+            "role": "produce",
+            "swap_mode": "two_robot",
+            "payload_code": "PART-4",
+            "inbound_staging": "STG_2",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_2"
+          },
+          {
+            "core_node_name": "POS_A5",
+            "role": "consume",
+            "swap_mode": "single_robot",
+            "payload_code": "PART-5",
+            "inbound_staging": "STG_1",
+            "outbound_staging": "STG_2",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A6",
+            "role": "produce",
+            "swap_mode": "single_robot",
+            "payload_code": "PART-6",
+            "inbound_staging": "STG_2",
+            "outbound_staging": "STG_3",
+            "inbound_source": "SRC_1",
+            "outbound_destination": "ULD_1"
+          },
+          {
+            "core_node_name": "POS_A7",
+            "role": "consume",
+            "swap_mode": "sequential",
+            "payload_code": "PART-7",
+            "paired_core_node": "POS_A8",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A8",
+            "role": "consume",
+            "swap_mode": "sequential",
+            "payload_code": "PART-8",
+            "paired_core_node": "POS_A7",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A9",
+            "role": "produce",
+            "swap_mode": "sequential",
+            "payload_code": "PART-9",
+            "paired_core_node": "POS_A10",
+            "inbound_source": "SRC_1",
+            "outbound_destination": "DST_2"
+          },
+          {
+            "core_node_name": "POS_A10",
+            "role": "produce",
+            "swap_mode": "sequential",
+            "payload_code": "PART-10",
+            "paired_core_node": "POS_A9",
+            "inbound_source": "SRC_1",
+            "outbound_destination": "DST_2"
+          }
+        ],
+        "advanced": {}
+      },
+      {
+        "id": 2,
+        "name": "Style B",
+        "claim_count": 10,
+        "claim_modes": [
+          "two_robot_press_index",
+          "two_robot",
+          "single_robot",
+          "sequential"
+        ],
+        "claims": [
+          {
+            "core_node_name": "POS_A1",
+            "role": "consume",
+            "swap_mode": "two_robot_press_index",
+            "payload_code": "PART-1",
+            "paired_core_node": "POS_B1",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A2",
+            "role": "produce",
+            "swap_mode": "two_robot_press_index",
+            "payload_code": "PART-2",
+            "paired_core_node": "POS_B2",
+            "second_paired_core_node": "POS_B3",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A3",
+            "role": "consume",
+            "swap_mode": "two_robot",
+            "payload_code": "PART-3",
+            "inbound_staging": "STG_1",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "key_route": [
+              "LM_2",
+              "LM_3"
+            ],
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A4",
+            "role": "produce",
+            "swap_mode": "two_robot",
+            "payload_code": "PART-4",
+            "inbound_staging": "STG_2",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_2",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A5",
+            "role": "consume",
+            "swap_mode": "single_robot",
+            "payload_code": "PART-5",
+            "inbound_staging": "STG_1",
+            "outbound_staging": "STG_2",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A6",
+            "role": "produce",
+            "swap_mode": "single_robot",
+            "payload_code": "PART-6",
+            "inbound_staging": "STG_2",
+            "outbound_staging": "STG_3",
+            "inbound_source": "SRC_1",
+            "outbound_destination": "ULD_1",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A7",
+            "role": "consume",
+            "swap_mode": "sequential",
+            "payload_code": "PART-7",
+            "paired_core_node": "POS_A8",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A8",
+            "role": "consume",
+            "swap_mode": "sequential",
+            "payload_code": "PART-8",
+            "paired_core_node": "POS_A7",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A9",
+            "role": "produce",
+            "swap_mode": "sequential",
+            "payload_code": "PART-9",
+            "paired_core_node": "POS_A10",
+            "inbound_source": "SRC_1",
+            "outbound_destination": "DST_2",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          },
+          {
+            "core_node_name": "POS_A10",
+            "role": "produce",
+            "swap_mode": "sequential",
+            "payload_code": "PART-10",
+            "paired_core_node": "POS_A9",
+            "inbound_source": "SRC_1",
+            "outbound_destination": "DST_2",
+            "changeover_evac_nodes": [
+              "POS_A11"
+            ],
+            "changeover_evac_destination": "DST_2",
+            "partial_destination": "DST_1"
+          }
+        ],
+        "advanced": {
+          "POS_A1": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A2": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A3": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A4": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A5": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A6": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A7": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A8": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A9": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          },
+          "POS_A10": {
+            "allowed_payload_codes": [
+              "PART-1",
+              "PART-11"
+            ],
+            "reorder_point": 12,
+            "reorder_point_source": "manual",
+            "auto_reorder": true,
+            "lineside_soft_threshold": 40,
+            "auto_request_payload": "PART-11",
+            "auto_push": true,
+            "keep_staged_node": "STG_3",
+            "evacuate_on_changeover": true,
+            "changeover_carryover_disposition": "keep_lineside",
+            "index_robot_supplies": true,
+            "auto_confirm": true,
+            "sequence": 3,
+            "curtain_required": true,
+            "strict_pack": true,
+            "pack_tolerance_pct": 5
+          }
+        }
+      }
+    ],
+    "routing": [
+      {
+        "core_node_name": "GRP_A",
+        "role": "source",
+        "sequence": 1
+      },
+      {
+        "core_node_name": "SRC_1",
+        "role": "source",
+        "sequence": 2
+      },
+      {
+        "core_node_name": "STG_1",
+        "role": "staging",
+        "sequence": 1
+      },
+      {
+        "core_node_name": "STG_2",
+        "role": "staging",
+        "sequence": 2
+      },
+      {
+        "core_node_name": "STG_3",
+        "role": "staging",
+        "sequence": 3
+      },
+      {
+        "core_node_name": "DST_1",
+        "role": "destination",
+        "sequence": 1
+      },
+      {
+        "core_node_name": "DST_2",
+        "role": "destination",
+        "sequence": 2
+      }
+    ],
+    "routing_off": {
+      "staging": [
+        "STG_9"
+      ],
+      "destination": [
+        "DST_9"
+      ]
+    },
+    "presets": [
+      {
+        "id": "7",
+        "name": "Recipe One",
+        "mode": "two_robot_press_index",
+        "where": "from Style A",
+        "cells": {
+          "POS_A1": {
+            "core_node_name": "POS_A1",
+            "role": "consume",
+            "swap_mode": "two_robot_press_index",
+            "payload_code": "",
+            "paired_core_node": "POS_B1",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          },
+          "POS_A3": {
+            "core_node_name": "POS_A3",
+            "role": "consume",
+            "swap_mode": "two_robot",
+            "payload_code": "",
+            "inbound_staging": "STG_1",
+            "inbound_source": "GRP_A",
+            "outbound_destination": "DST_1"
+          }
+        },
+        "slots": [
+          {
+            "nodes": [
+              "POS_A1",
+              "POS_B1"
+            ],
+            "role": "consume"
+          },
+          {
+            "nodes": [
+              "POS_A3"
+            ],
+            "role": "consume"
+          }
+        ],
+        "spots": [
+          {
+            "node": "POS_A1",
+            "job": "spot",
+            "targets": []
+          },
+          {
+            "node": "POS_B1",
+            "job": "on_deck",
+            "of": "POS_A1",
+            "targets": []
+          },
+          {
+            "node": "POS_A3",
+            "job": "spot",
+            "targets": []
+          }
+        ]
+      }
+    ],
+    "palette": [
+      "PART-1",
+      "PART-10",
+      "PART-11",
+      "PART-2",
+      "PART-3",
+      "PART-4",
+      "PART-5",
+      "PART-6",
+      "PART-7",
+      "PART-8",
+      "PART-9"
+    ],
+    "cell": {
+      "positions": [
+        {
+          "core_node_name": "POS_A1",
+          "sequence": 1,
+          "x": 2,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A2",
+          "sequence": 2,
+          "x": 5,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A3",
+          "sequence": 3,
+          "x": 8,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A4",
+          "sequence": 4,
+          "x": 11,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A5",
+          "sequence": 5,
+          "x": 14,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A6",
+          "sequence": 6,
+          "x": 17,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A7",
+          "sequence": 7,
+          "x": 20,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A8",
+          "sequence": 8,
+          "x": 23,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A9",
+          "sequence": 9,
+          "x": 26,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A10",
+          "sequence": 10,
+          "x": 29,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_A11",
+          "sequence": 11,
+          "x": 32,
+          "y": 12,
+          "kind": "front",
+          "station_id": 11
+        },
+        {
+          "core_node_name": "POS_B1",
+          "sequence": 12,
+          "x": 2,
+          "y": 16,
+          "kind": "back"
+        },
+        {
+          "core_node_name": "POS_B2",
+          "sequence": 13,
+          "x": 5,
+          "y": 16,
+          "kind": "back"
+        },
+        {
+          "core_node_name": "POS_B3",
+          "sequence": 14,
+          "x": 8,
+          "y": 16,
+          "kind": "back"
+        },
+        {
+          "core_node_name": "POS_B4",
+          "sequence": 15,
+          "x": 11,
+          "y": 16,
+          "kind": "back"
+        },
+        {
+          "core_node_name": "ULD_1",
+          "sequence": 16,
+          "x": 40,
+          "y": 12,
+          "kind": "front",
+          "station_id": 12
+        }
+      ],
+      "geometry": true,
+      "groups": {
+        "GRP_A": [
+          "SRC_A1",
+          "SRC_A2"
+        ]
+      }
+    },
+    "map": {
+      "revision": "map-r1",
+      "points": {
+        "SRC_A1": {
+          "class": "point",
+          "x": 0,
+          "y": 0
+        },
+        "SRC_A2": {
+          "class": "point",
+          "x": 2,
+          "y": 0
+        },
+        "SRC_1": {
+          "class": "point",
+          "x": 4,
+          "y": 0
+        },
+        "LM_1": {
+          "class": "point",
+          "x": 0,
+          "y": 4
+        },
+        "LM_2": {
+          "class": "point",
+          "x": 8,
+          "y": 4
+        },
+        "LM_3": {
+          "class": "point",
+          "x": 16,
+          "y": 4
+        },
+        "LM_4": {
+          "class": "point",
+          "x": 24,
+          "y": 4
+        },
+        "LM_5": {
+          "class": "point",
+          "x": 32,
+          "y": 4
+        },
+        "STG_1": {
+          "class": "point",
+          "x": 8,
+          "y": 8
+        },
+        "STG_2": {
+          "class": "point",
+          "x": 16,
+          "y": 8
+        },
+        "STG_3": {
+          "class": "point",
+          "x": 24,
+          "y": 8
+        },
+        "STG_9": {
+          "class": "point",
+          "x": 32,
+          "y": 8
+        },
+        "DST_1": {
+          "class": "point",
+          "x": 36,
+          "y": 0
+        },
+        "DST_2": {
+          "class": "point",
+          "x": 38,
+          "y": 0
+        },
+        "DST_9": {
+          "class": "point",
+          "x": 40,
+          "y": 0
+        },
+        "POS_A1": {
+          "class": "point",
+          "x": 2,
+          "y": 12
+        },
+        "POS_A2": {
+          "class": "point",
+          "x": 5,
+          "y": 12
+        },
+        "POS_A3": {
+          "class": "point",
+          "x": 8,
+          "y": 12
+        },
+        "POS_A4": {
+          "class": "point",
+          "x": 11,
+          "y": 12
+        },
+        "POS_A5": {
+          "class": "point",
+          "x": 14,
+          "y": 12
+        },
+        "POS_A6": {
+          "class": "point",
+          "x": 17,
+          "y": 12
+        },
+        "POS_A7": {
+          "class": "point",
+          "x": 20,
+          "y": 12
+        },
+        "POS_A8": {
+          "class": "point",
+          "x": 23,
+          "y": 12
+        },
+        "POS_A9": {
+          "class": "point",
+          "x": 26,
+          "y": 12
+        },
+        "POS_A10": {
+          "class": "point",
+          "x": 29,
+          "y": 12
+        },
+        "POS_A11": {
+          "class": "point",
+          "x": 32,
+          "y": 12
+        },
+        "POS_B1": {
+          "class": "point",
+          "x": 2,
+          "y": 16
+        },
+        "POS_B2": {
+          "class": "point",
+          "x": 5,
+          "y": 16
+        },
+        "POS_B3": {
+          "class": "point",
+          "x": 8,
+          "y": 16
+        },
+        "POS_B4": {
+          "class": "point",
+          "x": 11,
+          "y": 16
+        },
+        "ULD_1": {
+          "class": "point",
+          "x": 40,
+          "y": 12
+        }
+      },
+      "edges": [
+        {
+          "from": "SRC_A1",
+          "to": "LM_1",
+          "len": 4
+        },
+        {
+          "from": "SRC_A2",
+          "to": "LM_1",
+          "len": 4
+        },
+        {
+          "from": "SRC_1",
+          "to": "LM_1",
+          "len": 5
+        },
+        {
+          "from": "LM_1",
+          "to": "LM_2",
+          "len": 8
+        },
+        {
+          "from": "LM_2",
+          "to": "LM_3",
+          "len": 8
+        },
+        {
+          "from": "LM_3",
+          "to": "LM_4",
+          "len": 8
+        },
+        {
+          "from": "LM_4",
+          "to": "LM_5",
+          "len": 8
+        },
+        {
+          "from": "LM_5",
+          "to": "STG_1",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "STG_2",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "STG_3",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "STG_9",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "DST_1",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "DST_2",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "DST_9",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A1",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A2",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A3",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A4",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A5",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A6",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A7",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A8",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A9",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A10",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_A11",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_B1",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_B2",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_B3",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "POS_B4",
+          "len": 6
+        },
+        {
+          "from": "LM_5",
+          "to": "ULD_1",
+          "len": 6
+        }
+      ]
+    }
+  },
+  "server": {
+    "processNodes": [
+      {
+        "id": 201,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A1",
+        "name": "POS_A1",
+        "sequence": 1,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 202,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A2",
+        "name": "POS_A2",
+        "sequence": 2,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 203,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A3",
+        "name": "POS_A3",
+        "sequence": 3,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 204,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A4",
+        "name": "POS_A4",
+        "sequence": 4,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 205,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A5",
+        "name": "POS_A5",
+        "sequence": 5,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 206,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A6",
+        "name": "POS_A6",
+        "sequence": 6,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 207,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A7",
+        "name": "POS_A7",
+        "sequence": 7,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 208,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A8",
+        "name": "POS_A8",
+        "sequence": 8,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 209,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A9",
+        "name": "POS_A9",
+        "sequence": 9,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 210,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A10",
+        "name": "POS_A10",
+        "sequence": 10,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 211,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 11,
+        "station_name": "Screen A",
+        "core_node_name": "POS_A11",
+        "name": "POS_A11",
+        "sequence": 11,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 212,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": null,
+        "station_name": "",
+        "core_node_name": "POS_B1",
+        "name": "POS_B1",
+        "sequence": 12,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 213,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": null,
+        "station_name": "",
+        "core_node_name": "POS_B2",
+        "name": "POS_B2",
+        "sequence": 13,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 214,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": null,
+        "station_name": "",
+        "core_node_name": "POS_B3",
+        "name": "POS_B3",
+        "sequence": 14,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 215,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": null,
+        "station_name": "",
+        "core_node_name": "POS_B4",
+        "name": "POS_B4",
+        "sequence": 15,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 216,
+        "process_id": 1,
+        "process_name": "Press A",
+        "operator_station_id": 12,
+        "station_name": "Unloader A",
+        "core_node_name": "ULD_1",
+        "name": "ULD_1",
+        "sequence": 16,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      },
+      {
+        "id": 301,
+        "process_id": 2,
+        "process_name": "Press B",
+        "operator_station_id": 21,
+        "station_name": "Screen B",
+        "core_node_name": "OTH_1",
+        "name": "OTH_1",
+        "sequence": 1,
+        "enabled": true,
+        "curtain_enabled": false,
+        "curtain_plc_name": "",
+        "curtain_tag_name": "",
+        "curtain_safe_value": null
+      }
+    ],
+    "coreNodes": [
+      {
+        "name": "GRP_A",
+        "node_type": "NGRP",
+        "members": [
+          "SRC_A1",
+          "SRC_A2"
+        ]
+      },
+      {
+        "name": "LANE_1",
+        "node_type": "LANE"
+      },
+      {
+        "name": "NEW_1",
+        "node_type": "storage"
+      },
+      {
+        "name": "NEW_2",
+        "node_type": "storage"
+      },
+      {
+        "name": "NEW_3",
+        "node_type": "storage"
+      },
+      {
+        "name": "OTH_1",
+        "node_type": "storage"
+      },
+      {
+        "name": "SRC_1",
+        "node_type": "storage"
+      },
+      {
+        "name": "SRC_2",
+        "node_type": "storage"
+      },
+      {
+        "name": "SRC_A1",
+        "node_type": "storage"
+      },
+      {
+        "name": "SRC_A2",
+        "node_type": "storage"
+      },
+      {
+        "name": "STG_1",
+        "node_type": "storage"
+      },
+      {
+        "name": "STG_2",
+        "node_type": "storage"
+      },
+      {
+        "name": "STG_3",
+        "node_type": "storage"
+      },
+      {
+        "name": "STG_9",
+        "node_type": "storage"
+      },
+      {
+        "name": "DST_1",
+        "node_type": "storage"
+      },
+      {
+        "name": "DST_2",
+        "node_type": "storage"
+      },
+      {
+        "name": "DST_9",
+        "node_type": "storage"
+      },
+      {
+        "name": "SHR_1",
+        "node_type": "storage",
+        "shared_loader": true
+      },
+      {
+        "name": "POS_A1",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A2",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A3",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A4",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A5",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A6",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A7",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A8",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A9",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A10",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_A11",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_B1",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_B2",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_B3",
+        "node_type": "storage"
+      },
+      {
+        "name": "POS_B4",
+        "node_type": "storage"
+      },
+      {
+        "name": "ULD_1",
+        "node_type": "storage"
+      }
+    ],
+    "routingNodes": [
+      {
+        "id": 101,
+        "core_node_name": "GRP_A",
+        "role": "source",
+        "sequence": 1,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "GRP_A"
+      },
+      {
+        "id": 102,
+        "core_node_name": "SRC_1",
+        "role": "source",
+        "sequence": 2,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "SRC_1"
+      },
+      {
+        "id": 103,
+        "core_node_name": "STG_1",
+        "role": "staging",
+        "sequence": 1,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "STG_1"
+      },
+      {
+        "id": 104,
+        "core_node_name": "STG_2",
+        "role": "staging",
+        "sequence": 2,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "STG_2"
+      },
+      {
+        "id": 105,
+        "core_node_name": "STG_3",
+        "role": "staging",
+        "sequence": 3,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "STG_3"
+      },
+      {
+        "id": 106,
+        "core_node_name": "STG_9",
+        "role": "staging",
+        "sequence": 4,
+        "enabled": false,
+        "origin": "backfill",
+        "style_count": 2,
+        "label": "STG_9"
+      },
+      {
+        "id": 107,
+        "core_node_name": "DST_1",
+        "role": "destination",
+        "sequence": 1,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "DST_1"
+      },
+      {
+        "id": 108,
+        "core_node_name": "DST_2",
+        "role": "destination",
+        "sequence": 2,
+        "enabled": true,
+        "origin": "engineer",
+        "label": "DST_2"
+      },
+      {
+        "id": 109,
+        "core_node_name": "DST_9",
+        "role": "destination",
+        "sequence": 3,
+        "enabled": false,
+        "origin": "engineer",
+        "label": "DST_9"
+      }
+    ],
+    "partSet": [
+      "PART-1",
+      "PART-10",
+      "PART-11",
+      "PART-2",
+      "PART-3",
+      "PART-4",
+      "PART-5",
+      "PART-6",
+      "PART-7",
+      "PART-8",
+      "PART-9"
+    ],
+    "payloadCatalog": [
+      {
+        "code": "PART-1",
+        "name": "Synthetic PART-1"
+      },
+      {
+        "code": "PART-2",
+        "name": "Synthetic PART-2"
+      },
+      {
+        "code": "PART-3",
+        "name": "Synthetic PART-3"
+      },
+      {
+        "code": "PART-4",
+        "name": "Synthetic PART-4"
+      },
+      {
+        "code": "PART-5",
+        "name": "Synthetic PART-5"
+      },
+      {
+        "code": "PART-6",
+        "name": "Synthetic PART-6"
+      },
+      {
+        "code": "PART-7",
+        "name": "Synthetic PART-7"
+      },
+      {
+        "code": "PART-8",
+        "name": "Synthetic PART-8"
+      },
+      {
+        "code": "PART-9",
+        "name": "Synthetic PART-9"
+      },
+      {
+        "code": "PART-10",
+        "name": "Synthetic PART-10"
+      },
+      {
+        "code": "PART-11",
+        "name": "Synthetic PART-11"
+      },
+      {
+        "code": "PART-12",
+        "name": "Synthetic PART-12"
+      },
+      {
+        "code": "PART-13",
+        "name": "Synthetic PART-13"
+      }
+    ],
+    "presetsView": {
+      "presets": [
+        {
+          "id": 7,
+          "name": "Recipe One",
+          "version": 1,
+          "shape": [
+            {
+              "core_node_name": "POS_A1",
+              "role": "consume",
+              "swap_mode": "two_robot_press_index",
+              "payload_code": "",
+              "paired_core_node": "POS_B1",
+              "inbound_source": "GRP_A",
+              "outbound_destination": "DST_1"
+            },
+            {
+              "core_node_name": "POS_A3",
+              "role": "consume",
+              "swap_mode": "two_robot",
+              "payload_code": "",
+              "inbound_staging": "STG_1",
+              "inbound_source": "GRP_A",
+              "outbound_destination": "DST_1"
+            }
+          ],
+          "members": []
+        }
+      ],
+      "candidates": []
+    }
+  }
+}
