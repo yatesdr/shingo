@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.3.0 — 2026-11-11
+
 Deploy: no migration.
 
 - A node can turn the robot's jack table before the lift, or before the set-down: its angle is set in degrees on the node page, and Core lifts (or sets down) only when the table reads it
