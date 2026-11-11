@@ -1,0 +1,170 @@
+# Core Orders, manual order modal (census #53-#57; C4 buildNodeOptionsHTML, C5 mo-payload,
+# C6 stagedSourceChanged). static/pages/orders.js run as served; the plant is the fixture.
+# Option lines are "value" | label, under their <optgroup>.
+
+== open the modal (the three reads answer)
+  GET /api/nodes
+  GET /api/payloads/templates
+  GET /api/bins/available
+  modal: show manual-order-modal
+mo-source, the node list (C4):
+  "" | — select —
+  [Other]
+    "_ROBOT:AMR-01" | _ROBOT:AMR-01  · group
+    "_TRANSIT" | _TRANSIT  · group
+    "GRP-A" | GRP-A  · group
+    "SPOT-9" | SPOT-9
+    "VIRT-1" | VIRT-1  · group
+  [ZONE-2]
+    "GRP-B" | GRP-B  · group
+    "GRP-B-N1" |   ↳ GRP-B-N1
+    "GRP-B-N2" |   ↳ GRP-B-N2
+    "LINE-1" | LINE-1
+mo-delivery: the same list
+mo-staged-source: the same list
+mo-staged-staging: the same list
+mo-staged-delivery: the same list
+mo-moverobot-dest: the same list
+Pinned as is: census #6, GRP-A (a group of lanes) is under Other; its lane and slots and
+GRP-OFF-N1 (member of a disabled group) are not offered at all; _TRANSIT, _ROBOT:AMR-01 and
+VIRT-1 are offered as "group"; the disabled OLD-SLOT and GRP-OFF are left out.
+mo-payload (C5, /api/payloads/templates in its order, whole catalog):
+  "" | — none —
+  "PART-B" | PART-B — Part B
+  "PART-A" | PART-A — Part A
+  "PART-C" | PART-C — Part C
+mo-bin (Retrieve specific, /api/bins/available):
+  "" | — select bin —
+  [ZONE-1]
+    "BIN-1" | BIN-1 @ GRP-A-L1-S1 (PART-A)
+  [ZONE-2]
+    "BIN-2" | BIN-2 @ GRP-B-N1 (PART-B)
+    "BIN-3" | BIN-3 @ LINE-1
+    "BIN-4" | BIN-4 @ GRP-B-N2 (PART-C)
+    "BIN-5" | BIN-5 @ GRP-B-N2 (PART-C)
+staged payload after the load: read-out: "Select a source node."
+
+== close and open again
+  (no request)
+  modal: hide manual-order-modal
+  modal: show manual-order-modal
+
+== staged payload (C6) per source picked
+  "GRP-A" -> picker: "" — any —, "PART-A" PART-A
+  "GRP-B" -> picker: "" — any —, "PART-B" PART-B, "PART-C" PART-C
+  "GRP-B-N1" -> read-out: "BIN-2 — PART-B"
+  "GRP-B-N2" -> read-out: "2 bins at GRP-B-N2 — which one is picked is decided at dispatch."
+  "LINE-1" -> read-out: "BIN-3 — empty"
+  "SPOT-9" -> read-out: "No bin at SPOT-9."
+  "_TRANSIT" -> read-out: "Nothing is parked in _TRANSIT right now."
+  "VIRT-1" -> read-out: "Nothing is parked in VIRT-1 right now."
+  "NOT-A-NODE" -> read-out: "Read from the bin at the source when the order is submitted."
+  "" -> read-out: "Select a source node."
+  (no request)
+
+== the body each pick sends (an answer of 200)
+-- transport move GRP-B-N1 -> LINE-1 (payload set, not sent)
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  timers: 1200 ms
+  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- transport retrieve PART-A x3 to LINE-1 (source not sent)
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"retrieve","delivery_node":"LINE-1","payload_code":"PART-A","quantity":3}
+  timers: 1200 ms
+  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- transport retrieve_empty to the group GRP-B, no payload
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"retrieve_empty","delivery_node":"GRP-B","payload_code":""}
+  timers: 1200 ms
+  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- transport retrieve_specific BIN-1 to _TRANSIT (offered, so sendable)
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"retrieve_specific","bin_label":"BIN-1","delivery_node":"_TRANSIT"}
+  timers: 1200 ms
+  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- transport move with no source
+  (no request)
+  mo-status "Source node is required" color var(--danger); submit button enabled
+-- staged from the group GRP-B, payload PART-C picked
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"staged","source_node":"GRP-B","staging_node":"SPOT-9","delivery_node":"LINE-1","payload_code":"PART-C"}
+  timers: 1200 ms
+  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- staged from the node LINE-1 (no payload sent)
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"staged","source_node":"LINE-1","staging_node":"SPOT-9","delivery_node":"GRP-B-N1"}
+  timers: 1200 ms
+  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- staged with no staging node
+  (no request)
+  mo-status "Staging node is required" color var(--danger); submit button enabled
+-- move robot to VIRT-1
+  POST /api/robots/move {"delivery_node":"VIRT-1","priority":0}
+  mo-status "Robot sent to LINE-1" color var(--success); submit button enabled
+-- move robot, nothing picked
+  (no request)
+  mo-status "Destination node is required" color var(--danger); submit button enabled
+
+== refusals: staged from LINE-1 (the handler's own 400 shape)
+-- orders.spot.400: 400 "{\"error\":\"source node is required for staged orders\"}"
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"staged","source_node":"LINE-1","staging_node":"SPOT-9","delivery_node":"GRP-B-N1"}
+  console.error submitManualOrder source node is required for staged orders
+  mo-status "source node is required for staged orders" color var(--danger); submit button enabled
+
+== refusals: transport move GRP-B-N1 -> LINE-1
+-- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  console.error submitManualOrder refused: the service's sentence
+  mo-status "refused: the service's sentence" color var(--danger); submit button enabled
+-- auth.401: 401 "{\"error\":\"unauthorized\"}"
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  console.error submitManualOrder unauthorized
+  mo-status "unauthorized" color var(--danger); submit button enabled
+-- json.500: 500 "{\"error\":\"failed: the store's error\"}"
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  console.error submitManualOrder failed: the store's error
+  mo-status "failed: the store's error" color var(--danger); submit button enabled
+-- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  console.error submitManualOrder <html><body>502 Bad Gateway</body></html>
+  mo-status "<html><body>502 Bad Gateway</body></html>" color var(--danger); submit button enabled
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  console.error submitManualOrder TypeError: Failed to fetch
+  mo-status "Network error" color var(--danger); submit button enabled
+
+== refusals: move robot to VIRT-1
+-- robots.move.400: 400 "{\"error\":\"destination node is required\"}"
+  POST /api/robots/move {"delivery_node":"VIRT-1","priority":0}
+  console.error moveRobot destination node is required
+  mo-status "destination node is required" color var(--danger); submit button enabled
+-- json.500: 500 "{\"error\":\"failed: the store's error\"}"
+  POST /api/robots/move {"delivery_node":"VIRT-1","priority":0}
+  console.error moveRobot failed: the store's error
+  mo-status "failed: the store's error" color var(--danger); submit button enabled
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/robots/move {"delivery_node":"VIRT-1","priority":0}
+  console.error moveRobot TypeError: Failed to fetch
+  mo-status "Network error" color var(--danger); submit button enabled
+
+== census #7 (pinned as is): the first /api/nodes read fails
+-- open
+  GET /api/nodes
+  GET /api/payloads/templates
+  GET /api/bins/available
+  console.error loadManualOrderBinDropdown TypeError: Failed to fetch
+  console.error loadManualOrderDropdowns nodes failed: the store's error
+  console.error loadManualOrderDropdowns payloads <html><body>502 Bad Gateway</body></html>
+  modal: show manual-order-modal
+  mo-source: Loading...
+  mo-delivery: Loading...
+  mo-staged-source: Loading...
+  mo-staged-staging: Loading...
+  mo-staged-delivery: Loading...
+  mo-moverobot-dest: Loading...
+  mo-payload: — none —
+  mo-bin: Loading...
+  staged payload: read-out: "Select a source node."
+-- second open: no request (the read is never asked again; _moNodesLoaded was set before it)
+  (no request)
+  modal: hide manual-order-modal
+  modal: show manual-order-modal
+  mo-source: Loading...
+-- submit a move from the Loading... selects
+  (no request)
+  mo-status "Source node is required" color var(--danger); submit button enabled

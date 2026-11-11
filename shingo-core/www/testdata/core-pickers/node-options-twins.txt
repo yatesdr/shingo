@@ -1,0 +1,48 @@
+# The two node-option builders over one plant (census C4 <-> C7, the twins by their own comments).
+# Go: buildNodePickerOptions (handlers_test_orders.go, the Test orders page): no headings, roots by zone then name.
+# JS: buildNodeOptionsHTML (static/pages/orders.js, the Orders page's manual order): <optgroup> per zone.
+# A line is: value | label as drawn. Bugs pinned as is are named under the lists.
+
+Go (value is .Name; the Direct tab posts .ID instead)
+Go  SPOT-9         | SPOT-9
+Go  VIRT-1         | VIRT-1  · group
+Go  _ROBOT:AMR-01  | _ROBOT:AMR-01  · group
+Go  _TRANSIT       | _TRANSIT  · group
+Go  GRP-A          | GRP-A  · group
+Go  GRP-A-L1       |   ↳ GRP-A-L1  · lane
+Go  GRP-A-L1-S1    |     ↳ GRP-A-L1-S1
+Go  GRP-A-L1-S2    |     ↳ GRP-A-L1-S2
+Go  GRP-B          | GRP-B  · group
+Go  GRP-B-N1       |   ↳ GRP-B-N1
+Go  GRP-B-N2       |   ↳ GRP-B-N2
+Go  GRP-OFF-N1     | GRP-OFF-N1
+Go  LINE-1         | LINE-1
+
+JS (value is the node name)
+JS  (placeholder) "— select —"
+JS  [Other] _ROBOT:AMR-01  · group
+JS  [Other] _TRANSIT  · group
+JS  [Other] GRP-A  · group
+JS  [Other] SPOT-9
+JS  [Other] VIRT-1  · group
+JS  [ZONE-2] GRP-B  · group
+JS  [ZONE-2]   ↳ GRP-B-N1
+JS  [ZONE-2]   ↳ GRP-B-N2
+JS  [ZONE-2] LINE-1
+
+Offered by Go, not by JS:
+  GRP-A-L1
+  GRP-A-L1-S1
+  GRP-A-L1-S2
+  GRP-OFF-N1
+Offered by JS, not by Go:
+  (none)
+Offered by neither: OLD-SLOT, GRP-OFF
+
+Pinned as is:
+  census #6: JS zoneOf looks one level down, so GRP-A (children are lanes, no zone) files under Other.
+  JS stops at one level and buckets by zone first: a lane's slots (depth 2) and the member of a
+  disabled group (its parent is in byId but never drawn) are not offered at all.
+  Name order differs: Go sorts bytes (_ROBOT, _TRANSIT after the letters), JS localeCompare (before).
+  Both: _TRANSIT, the robot deck and VIRT-1 are offered, badged "group" (nodeTypeLabel: synthetic = group).
+  Both: labels use .Name; LINE-1's display name is not shown.

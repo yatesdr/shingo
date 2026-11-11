@@ -1,0 +1,39 @@
+# Core Nodes, supermarket drag (census #70, C15; kept as layout editing, so the bodies only).
+# static/pages/nodes-supermarket.js onDrop / onDropGrid -> reparentNode / reorderLane, as served.
+# Node identity travels as tile ids; success reloads the page.
+
+-- drop SPOT-9 into lane GRP-A-L1, before its first slot
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
+  location.reload() x1
+-- drop SPOT-9 into lane GRP-A-L1, after its last slot
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":3}
+  location.reload() x1
+-- drop SPOT-9 into GRP-B (the group's direct section)
+  POST /api/nodes/reparent {"node_id":9,"parent_id":5,"position":0}
+  location.reload() x1
+-- drop GRP-A-L1-S2 within its own lane, to the front
+  POST /api/nodegroup/reorder-lane {"lane_id":2,"ordered_ids":[4,3]}
+  location.reload() x1
+-- drop the GRP-B header onto lane GRP-A-L1
+  (no request)
+-- drop GRP-A-L1-S1 on the grid (out of its lane)
+  POST /api/nodes/reparent {"node_id":3,"parent_id":null,"position":0}
+  location.reload() x1
+
+== refusals: SPOT-9 into lane GRP-A-L1
+-- nodes.reparent.409: 409 "{\"error\":\"cannot reparent: 1 active order(s) reference group \\\"GRP-A\\\" as source\",\"order_ids\":[41]}"
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
+  toast error: Reparent error: cannot reparent: 1 active order(s) reference group "GRP-A" as source
+-- nodes.reparent.400: 400 "{\"error\":\"node_id is required\"}"
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
+  toast error: Reparent error: node_id is required
+-- json.500: 500 "{\"error\":\"failed: the store's error\"}"
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
+  toast error: Reparent error: failed: the store's error
+-- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
+  toast error: Reparent error: <html><body>502 Bad Gateway</body></html>
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
+  toast error: Reparent error: TypeError: Failed to fetch
+  The 409's order_ids are dropped: api() throws the error string only.

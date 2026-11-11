@@ -1,0 +1,265 @@
+# Core Nodes, stations (census #65-#69): tap-to-assign C11, drag-drop C12, the per-spot part
+# picker C13, the shared-window part checklist C14. static/pages/loaders.js run as served over
+# the page's tiles (every node but _TRANSIT; group and lane tiles absorbed into group cards).
+# Stations: UNL-A (shared windows; window GRP-A-L1-S1; fulls from GRP-B; part PART-B),
+# LDR-B (one spot per part; GRP-B-N2 holds PART-C; empties from GRP-A).
+
+== page load (init)
+  GET /api/bin-types
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+
+== refresh() re-reads /api/nodes, /api/payloads and /api/loader/list; called 15 times, from:
+  submitLoader, saveWindowCap, addLoaderQuota, setLoaderQuota, removeLoaderQuota, saveStationSetting, deleteStation, appendWindow, appendWindow, assignPlace, onBoxDrop, setMemberPayload, removeMember, savePayloads, init
+
+== armed: UNL-A Windows; the grid as decorated (assignReason via decorateGrid)
+  bar: "Adding a window — tap a node. Greyed nodes can’t go here."
+    tile  GRP-A          (absorbed) dim "a group can’t be a window"
+    tile  GRP-A-L1       (absorbed) dim "a group can’t be a window"
+    tile  GRP-A-L1-S1               current "already a window"
+    tile  GRP-A-L1-S2               lit "tap to add"
+    tile  GRP-B          (absorbed) dim "a group can’t be a window"
+    tile  GRP-B-N1                  lit "tap to add"
+    tile  GRP-B-N2                  dim "window of LDR-B"
+    tile  LINE-1                    lit "tap to add"
+    tile  SPOT-9                    lit "tap to add"
+    tile  _ROBOT:AMR-01             dim "a group can’t be a window"
+    tile  OLD-SLOT                  lit "tap to add"
+    tile  VIRT-1                    dim "a group can’t be a window"
+    tile  GRP-OFF        (absorbed) dim "a group can’t be a window"
+    tile  GRP-OFF-N1                lit "tap to add"
+    group GRP-A                     dim "a group can’t be a window"
+    group GRP-B                     dim "a group can’t be a window"
+    group GRP-OFF                   dim "a group can’t be a window"
+
+== armed: UNL-A "Fulls come from"; the grid as decorated (assignReason via decorateGrid)
+  bar: "Fulls come from — tap a group or node. Greyed ones can’t go here."
+    tile  GRP-A          (absorbed) lit "tap to use"
+    tile  GRP-A-L1       (absorbed) dim "a lane"
+    tile  GRP-A-L1-S1               dim "window of UNL-A"
+    tile  GRP-A-L1-S2               lit "tap to use"
+    tile  GRP-B          (absorbed) current "already here"
+    tile  GRP-B-N1                  lit "tap to use"
+    tile  GRP-B-N2                  lit "tap to use"
+    tile  LINE-1                    lit "tap to use"
+    tile  SPOT-9                    lit "tap to use"
+    tile  _ROBOT:AMR-01             lit "tap to use"
+    tile  OLD-SLOT                  lit "tap to use"
+    tile  VIRT-1                    lit "tap to use"
+    tile  GRP-OFF        (absorbed) lit "tap to use"
+    tile  GRP-OFF-N1                lit "tap to use"
+    group GRP-A                     lit "tap to use"
+    group GRP-B                     current "already here"
+    group GRP-OFF                   lit "tap to use"
+
+== armed: UNL-A "Empties go to"; the grid as decorated (assignReason via decorateGrid)
+  bar: "Empties go to — tap a group or node. Greyed ones can’t go here."
+    tile  GRP-A          (absorbed) lit "tap to use"
+    tile  GRP-A-L1       (absorbed) dim "a lane"
+    tile  GRP-A-L1-S1               dim "window of UNL-A"
+    tile  GRP-A-L1-S2               lit "tap to use"
+    tile  GRP-B          (absorbed) lit "tap to use"
+    tile  GRP-B-N1                  lit "tap to use"
+    tile  GRP-B-N2                  lit "tap to use"
+    tile  LINE-1                    lit "tap to use"
+    tile  SPOT-9                    lit "tap to use"
+    tile  _ROBOT:AMR-01             lit "tap to use"
+    tile  OLD-SLOT                  lit "tap to use"
+    tile  VIRT-1                    lit "tap to use"
+    tile  GRP-OFF        (absorbed) lit "tap to use"
+    tile  GRP-OFF-N1                lit "tap to use"
+    group GRP-A                     lit "tap to use"
+    group GRP-B                     lit "tap to use"
+    group GRP-OFF                   lit "tap to use"
+
+== armed: LDR-B Windows (one spot per part); the grid as decorated (assignReason via decorateGrid)
+  bar: "Adding a window — tap a node. Greyed nodes can’t go here."
+    tile  GRP-A          (absorbed) dim "a group can’t be a window"
+    tile  GRP-A-L1       (absorbed) dim "a group can’t be a window"
+    tile  GRP-A-L1-S1               dim "window of UNL-A"
+    tile  GRP-A-L1-S2               lit "tap to add"
+    tile  GRP-B          (absorbed) dim "a group can’t be a window"
+    tile  GRP-B-N1                  lit "tap to add"
+    tile  GRP-B-N2                  current "already a window"
+    tile  LINE-1                    lit "tap to add"
+    tile  SPOT-9                    lit "tap to add"
+    tile  _ROBOT:AMR-01             dim "a group can’t be a window"
+    tile  OLD-SLOT                  lit "tap to add"
+    tile  VIRT-1                    dim "a group can’t be a window"
+    tile  GRP-OFF        (absorbed) dim "a group can’t be a window"
+    tile  GRP-OFF-N1                lit "tap to add"
+    group GRP-A                     dim "a group can’t be a window"
+    group GRP-B                     dim "a group can’t be a window"
+    group GRP-OFF                   dim "a group can’t be a window"
+  Pinned as is: a place slot lights the robot deck, VIRT-1, the disabled OLD-SLOT and the
+  disabled group GRP-OFF; a Windows slot lights OLD-SLOT. Only lanes and own windows are dimmed.
+
+== armed UNL-A "Empties go to", Find "grp-b": what the filter hides
+  GRP-B, GRP-B-N1, GRP-B-N2, GRP-B (header) stay; the rest are filtered
+  (no request)
+
+== tap to assign: the requests, in order (each write is followed by the re-read)
+-- UNL-A "Empties go to", tap the GRP-A header (one update, then refresh)
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  armed after: null
+-- UNL-A Windows, tap LINE-1 (set-home, reorder with it last, then refresh)
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
+  POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,8]}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  armed after: {"loaderID":20,"slot":"windows"}
+-- UNL-A Windows, tap _ROBOT:AMR-01 (dimmed: a tap does nothing)
+  (no request)
+-- UNL-A "Fulls come from", tap GRP-B (already here: dimmed as current)
+  (no request)
+
+== drag and drop (C12)
+-- drop the SPOT-9 tile on UNL-A's box, after GRP-A-L1-S1
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
+  POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,9]}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+-- drop the SPOT-9 tile on UNL-A's box, before GRP-A-L1-S1
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
+  POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[9,3]}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+-- drop the GRP-B header on UNL-A's box
+  (no request)
+  toast warning: a group can’t be a window
+-- drop the SPOT-9 tile on "Empties go to"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"SPOT-9"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+-- drop the GRP-A-L1 (lane) tile on "Empties go to"
+  (no request)
+  toast warning: GRP-A-L1: a lane
+-- drop the GRP-A-L1-S1 tile (its own window) on "Empties go to"
+  (no request)
+  toast warning: GRP-A-L1-S1: window of UNL-A
+-- drop the GRP-B header on "Fulls come from" (already there)
+  (no request)
+-- drop a drag carrying _TRANSIT's id (no tile carries it; /api/nodes lists it) on "Empties go to"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"_TRANSIT"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+
+== C13: LDR-B's per-spot part picker (payloadSelect at rest, fillPayloadSelect on open)
+  at rest, PART-C picked: <select class="loader-pc-sel has-payload" draggable="false"><option value="">+ payload</option><option value="PART-C" selected>PART-C</option></select>
+  at rest, none picked:   <select class="loader-pc-sel" draggable="false"><option value="">+ payload</option></select>
+  opened (the whole catalog, /api/payloads order), value kept "PART-C":
+    "" | + payload
+    "PART-B" | PART-B
+    "PART-A" | PART-A
+    "PART-C" | PART-C
+-- pick PART-A on GRP-B-N2
+  POST /api/loader/set-home {"loader_id":21,"position_node_id":7,"payload_code":"PART-A","home_kind":"home","uop_threshold":0}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+
+== C14: UNL-A's parts (payloadChipsHtml): chips, then the whole-catalog checklist
+  chips: PART-B
+    [x] PART-B
+    [ ] PART-A
+    [ ] PART-C
+-- tick PART-A, untick PART-B, Save parts
+  POST /api/loader/set-payload {"loader_id":20,"payload_code":"PART-A","uop_threshold":0}
+  POST /api/loader/remove-payload {"loader_id":20,"payload_code":"PART-B"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+
+== refusals: UNL-A "Empties go to", tap GRP-A (assignPlace re-reads after a refusal too)
+-- loader.update.400: 400 "{\"error\":\"id and name are required\"}"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: id and name are required
+-- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: refused: the service's sentence
+-- auth.401: 401 "{\"error\":\"unauthorized\"}"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: unauthorized
+-- json.500: 500 "{\"error\":\"failed: the store's error\"}"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: failed: the store's error
+-- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: <html><body>502 Bad Gateway</body></html>
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: TypeError: Failed to fetch
+
+== refusals: UNL-A Windows, tap LINE-1 (appendWindow re-reads in its catch)
+-- set-home loader.set-home.400: 400 "{\"error\":\"loader_id and position_node_id are required\"}"
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: loader_id and position_node_id are required
+-- set-home fetch rejects (TypeError: Failed to fetch)
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: TypeError: Failed to fetch
+-- reorder-homes json.500: 500 "{\"error\":\"failed: the store's error\"}" (the window was added)
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
+  POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,8]}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  toast error: failed: the store's error
+
+== refusals: drop SPOT-9 on UNL-A's box (no re-read after a refusal)
+-- set-home loader.set-home.400: 400 "{\"error\":\"loader_id and position_node_id are required\"}"
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
+  toast error: loader_id and position_node_id are required
+-- set-home fetch rejects (TypeError: Failed to fetch)
+  POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
+  toast error: TypeError: Failed to fetch
+
+== refusals: pick PART-A on GRP-B-N2 (no re-read after a refusal)
+-- set-home json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
+  POST /api/loader/set-home {"loader_id":21,"position_node_id":7,"payload_code":"PART-A","home_kind":"home","uop_threshold":0}
+  toast error: refused: the service's sentence
+
+== refusals: Save parts (both posts are sent at once; one refused)
+-- set-payload loader.set-payload.400: 400 "{\"error\":\"loader_id and payload_code are required\"}"
+  POST /api/loader/set-payload {"loader_id":20,"payload_code":"PART-A","uop_threshold":0}
+  POST /api/loader/remove-payload {"loader_id":20,"payload_code":"PART-B"}
+  toast error: loader_id and payload_code are required
+  Save parts button: "Save parts", enabled
+
+== the first read fails (GET /api/nodes 500)
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
+  boxes: "<div class=\"loader-empty\">Could not load stations — failed: the store&#39;s error</div>"

@@ -1,0 +1,113 @@
+# Core Nodes, node pop-up, kanban section (census #63 Overflow C9, #64 Sources C10).
+# static/pages/nodes-kanban.js run as served. otherGroups() reads the page's tiles (every node
+# but _TRANSIT, as nodes.html draws them): every NGRP tile, the open group left out, by name.
+
+== open GRP-A (stored: overflow GRP-GONE, a group no longer on the page; source GRP-B)
+  GET /api/nodes/kanban?id=1
+  GET /api/nodes/process-options
+  Overflow (C9) value "GRP-GONE":
+    "" | — none —
+    "GRP-B" | GRP-B
+    "GRP-OFF" | GRP-OFF
+    "GRP-GONE" | GRP-GONE (not on this page)
+  Sources (C10), ranked: GRP-B
+  Add a source (one pick, then Add):
+    "14" | GRP-OFF
+  The disabled GRP-OFF is offered in both; lanes, plain nodes and VIRT-1 are not.
+
+== Add GRP-OFF as a source
+  Overflow (C9) value "GRP-GONE":
+    "" | — none —
+    "GRP-B" | GRP-B
+    "GRP-OFF" | GRP-OFF
+    "GRP-GONE" | GRP-GONE (not on this page)
+  Sources (C10), ranked: GRP-B, GRP-OFF
+  Add a source: no select (nothing left to add)
+
+== Save (saveKanban, an answer of 200 to each post): returns true
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5,14]}
+  The stale overflow GRP-GONE is written back as it was shown.
+
+== open GRP-B (no stored overflow, no sources)
+  GET /api/nodes/kanban?id=5
+  GET /api/nodes/process-options
+  Overflow (C9) value "":
+    "" | — none —
+    "GRP-A" | GRP-A
+    "GRP-OFF" | GRP-OFF
+  Sources (C10), ranked: (none) "No sources: the keeper searches the plant."
+  Add a source (one pick, then Add):
+    "1" | GRP-A
+    "14" | GRP-OFF
+
+== the group's read fails
+  GET /api/nodes/kanban?id=1
+  GET /api/nodes/process-options
+  toast error: Could not load the kanban settings for this group.
+  console.error renderKanbanSection failed: the store's error
+  section hidden: true; Save then returns true and posts nothing
+  (no request)
+
+== refusals: Save, the sources post refused (the others answer 200)
+-- kanban.409: 409 "{\"error\":\"GRP-B is already the staging group for loader LDR-B\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): GRP-B is already the staging group for loader LDR-B
+-- kanban.sources.400: 400 "{\"error\":\"group_node_id is required\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): group_node_id is required
+-- json.400: 400 "{\"error\":\"refused: the service's sentence\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): refused: the service's sentence
+-- auth.401: 401 "{\"error\":\"unauthorized\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): unauthorized
+-- json.500: 500 "{\"error\":\"failed: the store's error\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): failed: the store's error
+-- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): <html><body>502 Bad Gateway</body></html>
+-- fetch rejects (TypeError: Failed to fetch): saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  toast error (sticky): TypeError: Failed to fetch
+
+== refusals: Save, the settings post refused (the others answer 200)
+-- kanban.409: 409 "{\"error\":\"GRP-B is already the staging group for loader LDR-B\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  toast error (sticky): GRP-B is already the staging group for loader LDR-B
+-- kanban.409.needs_force: 409 "{\"drain\":[\"order 41 to LINE-1\"],\"error\":\"2 carriers are standing in GRP-A\",\"needs_force\":true}", answered yes: saveKanban returns true
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE","force":true}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  confirm: "2 carriers are standing in GRP-A\n\nAlso already on their way: order 41 to LINE-1\n\nSave anyway?"
+-- kanban.409.needs_force: 409 "{\"drain\":[\"order 41 to LINE-1\"],\"error\":\"2 carriers are standing in GRP-A\",\"needs_force\":true}", answered no: saveKanban returns true
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
+  POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
+  confirm: "2 carriers are standing in GRP-A\n\nAlso already on their way: order 41 to LINE-1\n\nSave anyway?"
+-- kanban.settings.400: 400 "{\"error\":\"group_node_id is required\"}": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  toast error (sticky): group_node_id is required
+-- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>": saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  toast error (sticky): <html><body>502 Bad Gateway</body></html>
+-- fetch rejects (TypeError: Failed to fetch): saveKanban returns false
+  POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
+  toast error (sticky): TypeError: Failed to fetch

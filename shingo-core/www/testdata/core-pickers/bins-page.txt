@@ -1,0 +1,102 @@
+# Core Bins, bin pop-up (census #51 Move C2, #52 Load C3) and Create bin's label check.
+# static/pages/bins.js run as served over PAGE_NODES / PAGE_PAYLOADS = the fixture.
+# (The Create bin Node select itself is server-rendered: bins-template.txt.)
+
+== Move destination (C2): renderActions, bin at GRP-A-L1-S1
+  "" | -- Select --
+  "1" | GRP-A
+  "2" | GRP-A-L1
+  "4" | GRP-A-L1-S2
+  "5" | GRP-B
+  "6" | GRP-B-N1
+  "7" | GRP-B-N2
+  "8" | LINE-1
+  "9" | SPOT-9
+  "12" | OLD-SLOT
+  "13" | VIRT-1
+  "14" | GRP-OFF
+  "15" | GRP-OFF-N1
+  dropped: the bin's own node, _TRANSIT, _ROBOT:*; kept: groups, lanes, the disabled OLD-SLOT
+  and GRP-OFF, VIRT-1. No headings, no badges, value = id, label = name (not display name).
+  an unassigned bin: 13 destinations, GRP-A-L1-S1 included
+
+== Load payload (C3): renderContents, per bin type (PAGE_PAYLOAD_BIN_TYPES filters)
+  bin type 1: "", "PART-A", "PART-C"
+  bin type 2: "", "PART-B", "PART-A"
+  bin type 3: "", "PART-A"
+  held (load_refusal set): select disabled, sentence shown: true, Load button disabled
+  (no request)
+
+== the body each pick sends (an answer of 200)
+-- Move to LINE-1
+  POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+-- Move, nothing picked
+  (no request)
+  toast info: Select a destination
+-- Move to where it is
+  (no request)
+  toast info: Bin is already at this location
+-- Request Move to GRP-B-N1 (the detail re-reads never answer here)
+  POST /api/bins/request-move {"bin_id":50,"destination_node_id":6}
+  GET /api/bins/detail?id=50&history=0
+  GET /api/bins/detail?id=50&history=0
+  toast info: Move #41 to GRP-B-N1 requested (queued): the lane is busy
+-- Load PART-A, count blank
+  POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A"}}
+-- Load PART-A, count 0
+  POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A","uop_override":0}}
+-- Load, nothing picked
+  (no request)
+  toast info: Select a payload
+
+== refusals: Move to LINE-1
+-- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
+  POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+  toast error: Error: refused: the service's sentence
+-- auth.401: 401 "{\"error\":\"unauthorized\"}"
+  POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+  toast error: Error: unauthorized
+-- json.500: 500 "{\"error\":\"failed: the store's error\"}"
+  POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+  toast error: Error: failed: the store's error
+-- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
+  POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+  toast error: Error: <html><body>502 Bad Gateway</body></html>
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+  toast error: Error: TypeError: Failed to fetch
+
+== refusals: Request Move to GRP-B-N1
+-- json.409: 409 "{\"error\":\"refused: the service's sentence\"}"
+  POST /api/bins/request-move {"bin_id":50,"destination_node_id":6}
+  toast error: Error: refused: the service's sentence
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/bins/request-move {"bin_id":50,"destination_node_id":6}
+  toast error: Error: TypeError: Failed to fetch
+
+== refusals: Load PART-A
+-- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
+  POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A"}}
+  toast error: Error: refused: the service's sentence
+-- fetch rejects (TypeError: Failed to fetch)
+  POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A"}}
+  toast error: Error: TypeError: Failed to fetch
+
+== Create bin: confirmBinCreate, the label checked against PAGE_NODES (every node)
+-- label "LINE-1" x1: checked as ["LINE-1"]; default prevented 1, form.submit() x0
+  (no request)
+  toast error: Label LINE-1 is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+-- label "OLD-SLOT" x1: checked as ["OLD-SLOT0001"]; default prevented 1, form.submit() x1
+  (no request)
+-- label "_TRANSIT" x1: checked as ["_TRANSIT0001"]; default prevented 1, form.submit() x1
+  (no request)
+-- label "GRP-A" x1: checked as ["GRP-A0001"]; default prevented 1, form.submit() x1
+  (no request)
+-- label "CART-7" x1: checked as ["CART-7"]; default prevented 1, form.submit() x1
+  (no request)
+-- label "CART-" x3: checked as ["CART-0001","CART-0002","CART-0003"]; default prevented 1, form.submit() x1
+  (no request)
+  confirm: "Create 3 carriers labeled CART-0001 … CART-0003?"
+Pinned as is: batchLabelsPreview appends 0001 to a single label with no trailing number, where the
+server's batchLabels (service/bin_service.go) keeps it as typed; so a single carrier named exactly
+like OLD-SLOT, _TRANSIT or GRP-A passes the node-name check, and the preview names a label never made.

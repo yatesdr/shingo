@@ -1,0 +1,30 @@
+# Core RDS explorer, block builder (census #71, C16; kept: the vendor console takes a raw RDS
+# location string, typed). static/pages/rds-explorer.js bbAddBlock -> bbGenerate -> sendRequest.
+
+-- Add a block with no location
+  (no request)
+  toast info: Location is required
+-- two blocks added: the rows drawn (bb-blocks)
+  <span class="bb-detail">b1 &ndash; Load @ GRP-A-L1-S1</span>
+  <span class="bb-detail">b9 &ndash; JackLoad @ LM<b>7</b></span>
+  Pinned as is: the block id and the location go into the row unescaped (rds-explorer.js bbRenderBlocks).
+-- Generate JSON (req-body):
+  {
+    "id": "T-1",
+    "complete": true,
+    "priority": 0,
+    "blocks": [
+      {
+        "blockId": "b1",
+        "location": "GRP-A-L1-S1",
+        "binTask": "Load"
+      },
+      {
+        "blockId": "b9",
+        "location": "LM<b>7</b>",
+        "operation": "JackLoad"
+      }
+    ]
+  }
+-- Send
+  POST /api/fleet/proxy {"method":"POST","path":"/setOrder","body":"{\n  \"id\": \"T-1\",\n  \"complete\": true,\n  \"priority\": 0,\n  \"blocks\": [\n    {\n      \"blockId\": \"b1\",\n      \"location\": \"GRP-A-L1-S1\",\n      \"binTask\": \"Load\"\n    },\n    {\n      \"blockId\": \"b9\",\n      \"location\": \"LM<b>7</b>\",\n      \"operation\": \"JackLoad\"\n    }\n  ]\n}"}

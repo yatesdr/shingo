@@ -1,0 +1,71 @@
+# What the handlers behind the Core pickers write when they refuse.
+# Read from the handlers (zero Handlers, before any store read) or the writers
+# they call; the harness feeds these to the pages' fetch.
+
+auth.401  (requireAuth, an expired session)
+  401 application/json
+  "{\"error\":\"unauthorized\"}\n"
+bins.create.400  (handleBinCreate, a bad bin type)
+  400 text/plain; charset=utf-8
+  "invalid bin type\n"
+json.400  (jsonError 400 (loaderWriteStatus, binMoveStatus, a bin action's refusal))
+  400 application/json
+  "{\"error\":\"refused: the service's sentence\"}\n"
+json.409  (jsonError 409 (binMoveStatus conflict))
+  409 application/json
+  "{\"error\":\"refused: the service's sentence\"}\n"
+json.500  (jsonError 500 (any handler's store error))
+  500 application/json
+  "{\"error\":\"failed: the store's error\"}\n"
+json.invalid.400  (parseJSON, any handler)
+  400 application/json
+  "{\"error\":\"invalid request\"}\n"
+kanban.409  (kanbanRefused (a rule refusal))
+  409 application/json
+  "{\"error\":\"GRP-B is already the staging group for loader LDR-B\"}\n"
+kanban.409.needs_force  (kanbanHeld (the holds-bins guard))
+  409 application/json
+  "{\"drain\":[\"order 41 to LINE-1\"],\"error\":\"2 carriers are standing in GRP-A\",\"needs_force\":true}\n"
+kanban.settings.400  (apiKanbanSettingsSet, no group)
+  400 application/json
+  "{\"error\":\"group_node_id is required\"}\n"
+kanban.sources.400  (apiKanbanSourcesSet, no group)
+  400 application/json
+  "{\"error\":\"group_node_id is required\"}\n"
+loader.set-home.400  (apiSetLoaderHome, a missing id)
+  400 application/json
+  "{\"error\":\"loader_id and position_node_id are required\"}\n"
+loader.set-payload.400  (apiSetLoaderPayload, a missing id)
+  400 application/json
+  "{\"error\":\"loader_id and payload_code are required\"}\n"
+loader.update.400  (apiUpdateLoader, a missing id)
+  400 application/json
+  "{\"error\":\"id and name are required\"}\n"
+nodes.reparent.400  (apiReparentNode, no node_id)
+  400 application/json
+  "{\"error\":\"node_id is required\"}\n"
+nodes.reparent.409  (apiReparentNode's inline 409 (built here in its shape))
+  409 application/json
+  "{\"error\":\"cannot reparent: 1 active order(s) reference group \\\"GRP-A\\\" as source\",\"order_ids\":[41]}\n"
+orders.spot.400  (apiManualOrderSubmit, staged with no source)
+  400 application/json
+  "{\"error\":\"source node is required for staged orders\"}\n"
+proxy.502  (a proxy in front of Core (not a Core shape))
+  502 text/html
+  "<html><body>502 Bad Gateway</body></html>"
+robots.move.400  (apiRobotMoveTo, no destination)
+  400 application/json
+  "{\"error\":\"destination node is required\"}\n"
+test-orders.complex.400  (apiKafkaComplexOrderSubmit, no location)
+  400 application/json
+  "{\"error\":\"location is required\"}\n"
+test-orders.submit.400  (apiTestOrderSubmit, no payload)
+  400 application/json
+  "{\"error\":\"payload_code is required\"}\n"
+
+handleBinCreate's other refusals, by httpStatusForCreate (the service's sentence decides):
+  "node 99 not found"                                -> 400
+  "cannot create multiple bins at a physical node"   -> 409
+  "node LINE-1 already has a bin"                    -> 409
+  "label BIN-1 already exist"                        -> 409
+  "disk full"                                        -> 500
