@@ -610,12 +610,10 @@ func (e *Engine) commitMaterial(p release.MaterialPlan, ml *materialLoad, qty in
 	if p.Verdict == release.Refuse {
 		return nil, p.Refusal
 	}
-	nodeID, node, runtime := ml.nodeID, ml.node, ml.runtime
-	// THE FOURTH DOOR's destination: whatever carrier stands on the cell, read
-	// off the RESIDENT claim (the defect 1b17b0f9 fixed at the swap builders).
-	// Applied after the gates, deliberately: an unconfigured requested claim
-	// still refuses. The override redirects a release; it does not authorise one.
-	claim := withResidentEvacDest(ml.claim, e.residentEvacDest(runtime, ml.claim))
+	nodeID, node, runtime, claim := ml.nodeID, ml.node, ml.runtime, ml.claim
+	// The move is aimed at the claim's outbound and carries the carrier's own
+	// part: Core holds the bin and sends a carrier of another part to its own
+	// claim's outbound (dispatch's by-contents choice).
 	// The operator's count (the Material page's prompt) supersedes the cache.
 	var remainingUOP *int
 	if overrideRemainingUOP != nil {

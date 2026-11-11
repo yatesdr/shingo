@@ -214,7 +214,7 @@ func (e *Engine) nodeStateAt(processID int64) func(coreNode string) NodeState {
 		if node := findNodeByCoreName(nodes, coreNode); node != nil {
 			if rt, err := e.db.GetProcessNodeRuntime(node.ID); err == nil && rt != nil {
 				st = NodeState{Part: string(rt.LinesidePayloadCode), PartKnown: rt.LinesidePayloadKnown,
-					Drain: drainOf(rt, wired), runtime: rt}
+					Drain: drainOf(rt, wired)}
 				switch {
 				case rt.ActiveBinID != nil:
 					st.Seat = SeatBin

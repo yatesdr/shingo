@@ -123,21 +123,21 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	occupancy := e.occupancyKnownNodesOnly(cell.occupancy, node.Name)
 	deck := Deck{Rows: cell.deck, Coming: coming}
 
-	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
-	// requested style's. Blank override = today's behaviour.
-	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
+	// The outgoing carrier is aimed at this claim's outbound, whatever stands
+	// on the cell: Core holds the bin and sends a carrier of another part to its
+	// own claim's outbound (dispatch's by-contents choice).
 	atSpot, err := e.readSpotAtRequest(node, claim, cell.spot)
 	if err != nil {
 		return nil, err
 	}
-	planClaim, takeSpare := requestClaim(claim, swapClaim, atSpot)
+	planClaim, takeSpare := requestClaim(claim, atSpot)
 
 	plan, err := BuildProducePlan(node, runtime, planClaim, occupancy, deck)
 	if err != nil {
 		return nil, err
 	}
 	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
-		takeSpare, planClaim = true, swapClaim
+		takeSpare, planClaim = true, claim
 		if plan, err = BuildProducePlan(node, runtime, planClaim, occupancy, deck); err != nil {
 			return nil, err
 		}

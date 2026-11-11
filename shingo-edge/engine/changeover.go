@@ -547,9 +547,6 @@ type NodeState struct {
 	Part      string
 	PartKnown bool
 	Drain     DrainState
-	// runtime is the row the rest was read from, for the old carrier's aim
-	// (residentEvacDest), which asks of the same row.
-	runtime *processes.RuntimeState
 }
 
 // ApplyNodeState plans each changing node from what stands on it. Two rules,

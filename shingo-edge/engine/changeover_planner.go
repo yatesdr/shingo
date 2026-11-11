@@ -233,9 +233,9 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 // an old tote through carriesFromPayload below — and it is the order's part for
 // the containment divert and the audit (evac_payload_mismatch fires when the
 // resident differs). Where the old carrier GOES is not this tag's job: the
-// FROM claim's OutboundDestination is aimed at the resident carrier's home
-// upstream (aimEvacsAtResidentHome). Mirrors the SituationDrop path, which
-// passes FromClaim.PayloadCode the same way.
+// FROM claim's OutboundDestination is its aim, and Core sends a carrier of
+// another part to its own claim's outbound at the lift. Mirrors the
+// SituationDrop path, which passes FromClaim.PayloadCode the same way.
 func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode string, d ChangeoverDispatch) {
 	if d.Roles != nil {
 		// Role-declared two-leg swap: the builder told us which leg clears the

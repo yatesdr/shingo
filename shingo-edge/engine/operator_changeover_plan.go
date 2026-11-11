@@ -264,17 +264,13 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //     front's. Then the sequential reuse shortcut, which skips a parked
 //     side's Swap and so must see an empty parked side already made Add.
 //
-//  5. The old carrier's destination. Each Swap and Drop is aimed where the
-//     carrier actually standing on its node belongs (residentEvacDest), the
-//     same call REQUEST, produce and the Material release make, so a node
-//     holding a foreign part sends it home rather than to the outgoing
-//     style's destination. LAST, after the press positions, so each one is
-//     aimed by its own node's carrier, never its front's. Not Evacuate: the
-//     tooling choreography owns where a cleared carrier waits.
+// Every Swap and Drop is aimed at its outgoing claim's outbound. A node
+// holding a part of a third style sends it where its own claim does: Core holds
+// the bin and makes that choice (dispatch's by-contents choice), at the lift.
 //
 // Add new diff post-processors to this function so the ordering
 // invariants stay in one place. Any new processor needs to declare
-// where it sits in the pipeline relative to the existing five.
+// where it sits in the pipeline relative to the existing four.
 //
 // TOOLING IS NOT IN THIS LIST, and that is its declaration: it is not a
 // diff post-processor at all. It runs LAST, over the FINISHED PLAN, and
@@ -299,31 +295,7 @@ func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []Chan
 	// brought one (Add) rather than skipped as a reusable empty; a sequential
 	// diff is not a press-index diff, so the press positions cannot see it.
 	diffs = ApplySequentialReuseShortcut(diffs, binTypes, e.activePullForDiffs(processID))
-	e.aimEvacsAtResidentHome(diffs, state)
 	return diffs, nil
-}
-
-// aimEvacsAtResidentHome is step 5: each Swap and Drop's outgoing carrier goes
-// where the carrier on its node belongs. residentEvacDest answers "" when the
-// carrier is the outgoing style's own or cannot be read, and the claim's
-// destination then stands, exactly as on REQUEST.
-func (e *Engine) aimEvacsAtResidentHome(diffs []ChangeoverNodeDiff, state func(coreNode string) NodeState) {
-	for i := range diffs {
-		d := &diffs[i]
-		if d.FromClaim == nil || (d.Situation != SituationSwap && d.Situation != SituationDrop) {
-			continue
-		}
-		// A drop at a marked position is the tool change's, like Evacuate
-		// itself: an override destination, if the cell names one, decides.
-		if d.Situation == SituationDrop && domain.MarksNode(d.FromClaim, d.CoreNodeName) {
-			continue
-		}
-		rt := state(d.CoreNodeName).runtime
-		if rt == nil {
-			continue
-		}
-		d.FromClaim = withResidentEvacDest(d.FromClaim, e.residentEvacDest(rt, d.FromClaim))
-	}
 }
 
 // refusePressIndexWhenCoreUnavailable returns an operator-readable error

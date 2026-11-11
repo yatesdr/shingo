@@ -373,56 +373,6 @@ func GetClaim(db *sql.DB, id int64) (*NodeClaim, error) {
 	return &c, nil
 }
 
-// ClaimForLinesidePayload returns the claim at a node whose payload matches the
-// carrier standing there — the answer to "where does THIS bin belong", asked
-// without reference to which style the process is currently on.
-//
-// EXACTLY ONE MATCH, or nothing. A node several styles claim for the same
-// payload does not have one home for it, and guessing between them would put a
-// carrier somewhere plausible and wrong. Blank payload returns nothing: an
-// empty carrier's destination is not a payload question.
-//
-// LIVE CLAIMS ONLY. A retired row is a claim the flow no longer has, and a
-// composer save retires rows routinely — every replace_all that drops a
-// position does. Without the predicate a retired claim could be the "exactly
-// one match" that answers where a bin belongs, and the evacuation resolver
-// would send a carrier to a position the current flow does not use. Worse, a
-// live claim and its own retired predecessor at the same node would count as
-// two matches and the resolver would answer nothing at all.
-//
-// OF LIVE STYLES, like the list reads above. Deleting a process soft-deletes its
-// styles and keeps their claims for a restore (processes.Delete), so a deleted
-// process's claim at this node was still a candidate: it could be the one match
-// and aim a carrier at a dead process's destination, or make a second match and
-// silence the answer (SPR: a deleted process's claim at SLN_001).
-func ClaimForLinesidePayload(db *sql.DB, coreNodeName, payloadCode string) (*NodeClaim, error) {
-	if coreNodeName == "" || payloadCode == "" {
-		return nil, nil
-	}
-	rows, err := db.Query(`SELECT `+claimSelect+`
-		FROM style_node_claims WHERE core_node_name=? AND payload_code=?
-		AND style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL) AND`+liveClaims, coreNodeName, payloadCode)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var found []NodeClaim
-	for rows.Next() {
-		c, serr := scanNodeClaim(rows)
-		if serr != nil {
-			return nil, serr
-		}
-		found = append(found, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(found) != 1 {
-		return nil, nil
-	}
-	return &found[0], nil
-}
-
 // GetClaimByNode returns a claim by its (style_id, core_node_name) pair.
 func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, error) {
 	c, err := scanNodeClaim(db.QueryRow(`SELECT `+claimSelect+`

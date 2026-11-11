@@ -255,7 +255,7 @@ func TestKeepStagedNode_TheChangeoverLegTakesTheSpareAsRequestDoes(t *testing.T)
 							to.InboundStaging = everyModeSpot
 						}
 
-						planClaim, takes := requestClaim(to, to, spotAtRequest{read: read})
+						planClaim, takes := requestClaim(to, spotAtRequest{read: read})
 						d, err := BuildSwapDispatch(node, planClaim)
 						if err != nil {
 							t.Fatalf("%s: request: %v", what, err)

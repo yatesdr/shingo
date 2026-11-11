@@ -495,9 +495,10 @@ destination blanks again at dispatch.
 - **Outbound staging**: old material parks here after removal (the single-robot
   shuffle's second hand).
 - **Outbound destination**: where outgoing bins are sent (e.g. empty bin
-  storage, wash area, or shipping). Overridden at dispatch by the *resident*
-  claim's value when the cell holds a style other than the one being requested
-  (`residentEvacDest`, `shingo-edge/engine/swap_evac_dest.go`).
+  storage, wash area, or shipping). Every leg is aimed at its claim's value; a
+  carrier of another part is sent to its own claim's outbound by Core, which
+  holds the bin, when it is lifted (`otherPartHome`,
+  `shingo-core/dispatch/place_by_contents.go`).
 
 ---
 

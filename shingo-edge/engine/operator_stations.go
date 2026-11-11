@@ -243,13 +243,14 @@ func (e *Engine) requestNodeFromClaim(g *guardReads, node *processes.Node, runti
 	deck := Deck{Rows: cell.deck, Coming: coming}
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
-	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
-	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
+	// being requested; it is aimed at this claim's outbound, and Core sends a
+	// carrier of another part to its own claim's outbound (dispatch's
+	// by-contents choice).
 	atSpot, err := e.readSpotAtRequest(node, claim, cell.spot)
 	if err != nil {
 		return nil, err
 	}
-	planClaim, takeSpare := requestClaim(claim, swapClaim, atSpot)
+	planClaim, takeSpare := requestClaim(claim, atSpot)
 
 	plan, err := BuildConsumePlan(node, runtime, planClaim, quantity, occupancy, deck, autoConfirm)
 	if err != nil {
@@ -257,7 +258,7 @@ func (e *Engine) requestNodeFromClaim(g *guardReads, node *processes.Node, runti
 	}
 	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
 		takeSpare = true
-		if plan, err = BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, deck, autoConfirm); err != nil {
+		if plan, err = BuildConsumePlan(node, runtime, claim, quantity, occupancy, deck, autoConfirm); err != nil {
 			return nil, err
 		}
 	}

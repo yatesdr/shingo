@@ -51,8 +51,8 @@ import (
 // a KNOWN EMPTY carrier and an unreadable node both arrive at the readers as
 // "", and each reader guessed the same way -- fall back to the claim, which is
 // the requested identity and the exact read this doorway exists to end. With
-// it, binAtNode and residentEvacDest ask "was this established" instead of
-// "is the string blank".
+// it, binAtNode and the changeover planner's node state ask "was this
+// established" instead of "is the string blank".
 func (e *Engine) recordLinesideCarrier(nodeID int64, nodeName string, carrier domain.LinesideCarrier, src domain.CarrierSource) {
 	payload, known := carrier.Recorded()
 	if err := e.db.SetProcessNodeRuntimeLinesidePayload(nodeID, string(payload), known, string(src)); err != nil {

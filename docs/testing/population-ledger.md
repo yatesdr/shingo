@@ -1077,6 +1077,102 @@ No assertion read any of the twelve.
 - code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
 - assertion map: with no override no outbound edit is queued; the staging hold is planned → nothing for the first (there is no edit to queue); the hold, `TestToolingAcrossDisjointNodes` and `TestToolChange_TheTable`
 - mutation: none to run: the decorator's override map is deleted, so the test no longer compiles
+
+### DEAD — `TestWithResidentEvacDest`
+- test: `TestWithResidentEvacDest` · pkg `shingoedge/engine` · run `-run '^TestWithResidentEvacDest$'` · `shingo-edge/engine/swap_evac_dest_test.go:16` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: the copy that overrode one field of a claim → nothing: no claim is copied with another destination
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_ForeignResident_RoutesToResidentHome`
+- test: `TestResidentEvacDest_ForeignResident_RoutesToResidentHome` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_ForeignResident_RoutesToResidentHome$'` · `shingo-edge/engine/swap_evac_dest_test.go:119` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: a foreign carrier on the cell goes to its own home → `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands); the swap's evac leg is aimed at the requested claim's outbound → `TestRequest_AForeignCarrierIsAimedAtTheRequestedClaimsOutbound`
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_SameStyleResident_NoOverride`
+- test: `TestResidentEvacDest_SameStyleResident_NoOverride` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_SameStyleResident_NoOverride$'` · `shingo-edge/engine/swap_evac_dest_test.go:167` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: the requested style's carrier keeps the claim's outbound → `TestReleaseNodeWithClaim_SameStyleResidentIsUnchanged`; Core leaves a carrier of the drop's own part alone, `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands)
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_UnknownsFailOpen`
+- test: `TestResidentEvacDest_UnknownsFailOpen` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_UnknownsFailOpen$'` · `shingo-edge/engine/swap_evac_dest_test.go:194` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: an unread carrier keeps the claim's outbound → every leg keeps it now; Core asks only of a carrier whose part it holds (otherPartHome)
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestReleaseNodeWithClaim_RoutesTheResidentCarrierHome`
+- test: `TestReleaseNodeWithClaim_RoutesTheResidentCarrierHome` · pkg `shingoedge/engine` · run `-run '^TestReleaseNodeWithClaim_RoutesTheResidentCarrierHome$'` · `shingo-edge/engine/swap_evac_dest_fourth_door_test.go:20` @ `0ef21ca1` · tags `none`
+- code: STALE (the Material page's release is aimed at the claim's outbound and carries the carrier's own part; Core sends it home)
+- assertion map: the release of a foreign carrier goes to its own home → `TestReleaseNodeWithClaim_AimsAtTheClaimsOutbound` (the move is to the claim's outbound, carrying the carrier's part) and `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands)
+- mutation: the old assertion against the new code, by reading: the same fixture now answers the claim's outbound (the new test), not the resident's home; not run, the old body no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_PrefersTheCarriersOwnPayload`
+- test: `TestResidentEvacDest_PrefersTheCarriersOwnPayload` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_PrefersTheCarriersOwnPayload$'` · `shingo-edge/engine/lineside_payload_test.go:22` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: the carrier's own part, from Core, decides its home → `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands), which reads the bin itself
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_MatchingPayloadIsNoOverride`
+- test: `TestResidentEvacDest_MatchingPayloadIsNoOverride` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_MatchingPayloadIsNoOverride$'` · `shingo-edge/engine/lineside_payload_test.go:55` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: a carrier of the requested part keeps the claim's outbound → `TestReleaseNodeWithClaim_SameStyleResidentIsUnchanged`
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_NoRecordedPayloadFallsThrough`
+- test: `TestResidentEvacDest_NoRecordedPayloadFallsThrough` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_NoRecordedPayloadFallsThrough$'` · `shingo-edge/engine/lineside_payload_test.go:76` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: nothing recorded keeps the claim's outbound → every leg keeps it now
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_AmbiguousPayloadDeclines`
+- test: `TestResidentEvacDest_AmbiguousPayloadDeclines` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_AmbiguousPayloadDeclines$'` · `shingo-edge/engine/lineside_payload_test.go:94` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: two claims for the part at the node: no override → Core's otherPartHome keeps the drop and warns when the claims for the part disagree
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome`
+- test: `TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome` · pkg `shingoedge/engine` · run `-run '^TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome$'` · `shingo-edge/engine/changeover_already_done_test.go:115` @ `0ef21ca1` · tags `none`
+- code: STALE (a changeover's Swap and Drop are aimed at the outgoing claim's outbound; Core sends a carrier of a third part to its own claim's)
+- assertion map: the old carrier of a third style goes to its own home → `TestChangeoverPlan_AimsTheOldCarrierAtTheOutgoingClaimsOutbound` (aimed at the outgoing claim's outbound) and `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands)
+- mutation: the old assertion against the new code, by reading: the same fixture now answers the claim's outbound (the new test), not the resident's home; not run, the old body no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle`
+- test: `TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle` · pkg `shingoedge/store` · run `-run '^TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle$'` · `shingo-edge/store/deleted_process_claims_test.go:57` @ `0ef21ca1` · tags `none`
+- code: DEAD (ClaimForLinesidePayload is deleted with the resident aim, its one reader)
+- assertion map: a deleted style's claim answers no lookup → Core's mirror is published from live claims of live styles (messaging/plant_claims_publisher.go reportFor); a deleted process's claims are retired, `TestDeleteProcess_RetiresItsClaims`
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row

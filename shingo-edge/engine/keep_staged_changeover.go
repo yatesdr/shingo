@@ -171,7 +171,7 @@ func legDiffs(diffs []ChangeoverNodeDiff, reads map[string]spotRead) []Changeove
 		if spot == "" || d.Situation == SituationAdd {
 			continue
 		}
-		d.ToClaim, _ = requestClaim(d.ToClaim, d.ToClaim, spotAtRequest{read: reads[spot]})
+		d.ToClaim, _ = requestClaim(d.ToClaim, spotAtRequest{read: reads[spot]})
 	}
 	return out
 }

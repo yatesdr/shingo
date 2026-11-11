@@ -358,14 +358,14 @@ func (e *Engine) readSpotAtRequest(node *processes.Node, claim *processes.NodeCl
 // the spot either way; the keeper refills it when it reads it bare (decideSpot).
 // takesComingSpare then asks whether that market swap should wait for a spare
 // already on its way instead.
-func requestClaim(claim, swapClaim *processes.NodeClaim, s spotAtRequest) (*processes.NodeClaim, bool) {
+func requestClaim(claim *processes.NodeClaim, s spotAtRequest) (*processes.NodeClaim, bool) {
 	if spotNode(claim) == "" {
-		return swapClaim, false
+		return claim, false
 	}
 	if s.takesSpare(claim) {
-		return swapClaim, true
+		return claim, true
 	}
-	return withoutSpot(swapClaim), false
+	return withoutSpot(claim), false
 }
 
 // rearmKeepStaged is a REQUEST re-arming its line's keeper: pressing REQUEST is
