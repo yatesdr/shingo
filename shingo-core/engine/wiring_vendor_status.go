@@ -263,7 +263,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// AND A NODE THAT TURNS THE TABLE TURNS IT THE MOMENT THE ROBOT IS THERE:
 		// one send, never a wait. Nothing at a node with no angle
 		// (dispatch/table_turn_hold.go).
-		e.dispatcher.RedriveTableTurns(order.ID)
+		if e.dispatcher.MayOweATableTurn(order) {
+			e.dispatcher.RedriveTableTurns(order.ID)
+		}
 		if !order.StationUnaware {
 			if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
 				OrderUUID:   order.EdgeUUID,

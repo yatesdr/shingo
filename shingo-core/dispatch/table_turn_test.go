@@ -1,6 +1,9 @@
 package dispatch
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -141,5 +144,68 @@ func TestSpliceStepShift_CountsATurnWaitAsInserted(t *testing.T) {
 	shift := spliceStepShift([]resolvedStep{ttPick("A"), ttDrop("B"), voWait("X", WaitKindTurn), ttPick("X"), ttDrop("C")})
 	if len(shift) != 2 || shift[2] != 3 || shift[3] != 4 {
 		t.Errorf("shift = %v, want {2:3 3:4}", shift)
+	}
+}
+
+// TestTurnRule_EverySwapLegUntouchedByAnAngleElsewhere is the plan's proof
+// that a swap does not change: every complex leg every Edge builder sends, for
+// every role and mode (the Edge's frozen swap wire, swap_wire_golden.json),
+// comes through the turn rule byte for byte while another node carries an
+// angle, and no wait of it owes a turn.
+func TestTurnRule_EverySwapLegUntouchedByAnAngleElsewhere(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join(repoRootFor(t), "shingo-edge", "engine", "testdata", "swap_wire_golden.json"))
+	if err != nil {
+		t.Fatalf("read the Edge's swap wire golden: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse the swap wire golden: %v", err)
+	}
+	var legs [][]protocol.ComplexOrderStep
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if steps, ok := x["Steps"].([]any); ok && len(steps) > 0 {
+				b, err := json.Marshal(steps)
+				if err != nil {
+					t.Fatalf("re-marshal a leg: %v", err)
+				}
+				var leg []protocol.ComplexOrderStep
+				if err := json.Unmarshal(b, &leg); err != nil {
+					t.Fatalf("a leg is not complex steps: %v", err)
+				}
+				legs = append(legs, leg)
+			}
+			for _, w := range x {
+				walk(w)
+			}
+		case []any:
+			for _, w := range x {
+				walk(w)
+			}
+		}
+	}
+	walk(doc)
+	if len(legs) < 20 {
+		t.Fatalf("found %d legs in the swap wire golden — the walk no longer matches its shape, so this passes vacuously", len(legs))
+	}
+	d := ruleDispatcher(map[string]turnNode{"ELSEWHERE": {rad: 1.57, side: TableTurnSideLift}})
+	for i, leg := range legs {
+		steps := make([]resolvedStep, len(leg))
+		for k, s := range leg {
+			steps[k] = resolvedStep{Action: s.Action, Node: s.Node, WaitKind: s.WaitKind}
+		}
+		before := shape(steps)
+		out, err := d.spliceTurnWaits(steps)
+		if err != nil || shape(out) != before {
+			t.Errorf("leg %d: %s became %s (%v), want it untouched", i, before, shape(out), err)
+		}
+		for w := 0; w < len(steps); w++ {
+			if _, _, owes := d.turnApplies(steps, w); owes {
+				t.Errorf("leg %d: wait %d owes a turn at a node with no angle", i, w)
+			}
+		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
@@ -514,5 +515,57 @@ func TestTableTurn_AppendDoorRefusesOffAngle(t *testing.T) {
 	seg2, more2, off2 := splitSegment(steps2, 0)
 	if err := r.d.appendSegmentAndAdvance(o2, seg2, more2, off2, "probe on angle"); err != nil {
 		t.Errorf("an on-angle lift was refused: %v", err)
+	}
+}
+
+// TestTableTurn_NoAngleCostsNoStatement is rule 2 counted: with another node
+// carrying an angle, a swap at a node with none costs its staged hook and the
+// robot poll's hook no statement, and its release costs exactly what the same
+// release costs on a dispatcher that knows nothing of turns.
+func TestTableTurn_NoAngleCostsNoStatement(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	testdb.SetupStandardData(t, db)
+	cdb, counter, err := store.OpenCounting(cfg)
+	testutil.MustNoErr(t, err, "open the counting handle")
+	t.Cleanup(func() { cdb.Close() })
+	backend := testdb.NewTrackingBackend()
+	plainD, _ := newTestDispatcher(t, cdb, backend)
+	turnD, _ := newTestDispatcher(t, cdb, backend)
+	tbl := &fakeTable{st: fleet.RobotStatus{VehicleID: ttVehicle, Connected: true, TaskStatus: 4, JackState: 3}}
+	elsewhere := prNode(t, db, "TTC-ELSEWHERE")
+	testutil.MustNoErr(t, db.SetNodeProperty(elsewhere.ID, PropTableTurnRad, "1.57"), "angle elsewhere")
+	turnD.SetTableTurner(backend, tbl.read)
+
+	leg := func(prefix string) *orders.Order {
+		line, out := prNode(t, db, prefix+"-LINE"), prNode(t, db, prefix+"-OUT")
+		return vsStagedLeg(t, db, prefix+"-evac", "", out.Name, StatusStaged, []resolvedStep{
+			voWait(line.Name, WaitKindStation), vsPick(line.Name), voDrop(out.Name, nil)})
+	}
+	release := func(d *Dispatcher, o *orders.Order) int64 {
+		counter.Reset()
+		d.HandleOrderRelease(d.syntheticEnvelope("line-1"), &protocol.OrderRelease{OrderUUID: o.EdgeUUID})
+		return counter.Count()
+	}
+	control, turned := leg("TTC1"), leg("TTC2")
+
+	counter.Reset()
+	if turnD.MayOweATableTurn(turned) {
+		t.Error("a swap at a node with no angle may owe a turn")
+	}
+	if turnD.TableTurnPending() {
+		turnD.RedriveTableTurns(0)
+	}
+	if n := counter.Count(); n != 0 {
+		t.Errorf("the staged hook and the robot poll's hook took %d statements at a node with no angle, want 0: %s",
+			n, testutil.StatementBreakdown(counter.Statements()))
+	}
+	want, got := release(plainD, control), release(turnD, turned)
+	if got != want {
+		t.Errorf("the release took %d statements with an angle elsewhere, %d with none: a node with no angle must cost nothing",
+			got, want)
+	}
+	if tbl.readCount() != 0 || len(backend.TurnCalls()) != 0 {
+		t.Errorf("%d robot reads and %d turns, want none", tbl.readCount(), len(backend.TurnCalls()))
 	}
 }

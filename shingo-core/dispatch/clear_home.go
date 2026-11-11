@@ -184,7 +184,9 @@ func (d *Dispatcher) dispatchUnsealed(order *orders.Order, steps []resolvedStep,
 	d.dbg("order %d dispatched as %s (%s, %s, unsealed to its first wait)", order.ID, req.OrderID, sourceNode.Name, what)
 	d.emitter.EmitOrderDispatched(order.ID, req.OrderID, order.SourceNode, order.DeliveryNode)
 	d.redriveVacateOrder(order, 0)
-	d.RedriveTableTurns(order.ID)
+	if d.MayOweATableTurn(order) {
+		d.RedriveTableTurns(order.ID)
+	}
 	return req.OrderID, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -274,6 +275,33 @@ func (d *Dispatcher) RedriveTableTurns(orderID int64) []int64 {
 	}
 	d.turnPending.Store(pending)
 	return released
+}
+
+// MayOweATableTurn reports, from an order in hand and with no statement,
+// whether it can owe a table turn: its plan carries a turn wait or a turn's
+// held mark, or names a node that turns the table. The staged hook asks it
+// before RedriveTableTurns, so a robot parking at a node with no angle costs no
+// query even while another node has one (the plan's rule 2).
+func (d *Dispatcher) MayOweATableTurn(o *orders.Order) bool {
+	if o == nil {
+		return false
+	}
+	if strings.Contains(o.StepsJSON, `"wait_kind":"turn"`) || strings.Contains(o.StepsJSON, `"turn_held_at":`) {
+		return true
+	}
+	if !d.hasTurnNodes() {
+		return false
+	}
+	steps, ok := decodeSteps(o.StepsJSON)
+	if !ok {
+		return false
+	}
+	for _, s := range steps {
+		if _, ok := d.turnAt(s.Node); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // TableTurnPending reports whether an order may be waiting on a table turn, so
