@@ -119,8 +119,9 @@ func resolveSpecifier(from, s string) string {
 // `import(` in a comment, a string or a template literal is not. It is not a
 // parser: a '/' starts a regular expression unless the token before it ends
 // an expression, which is the rule every JS highlighter uses and is wrong
-// only on code the trees do not contain (the real-tree pins in both www
-// packages compare it with a line reader on every served file).
+// only on code the trees do not contain
+// (TestRealTrees_ImportScanAgreesWithALineReader compares it with a line
+// reader on every module both binaries serve).
 func scanImports(src []byte) []string {
 	lx := &jsLexer{src: src}
 	var specs []string
