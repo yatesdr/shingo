@@ -1,0 +1,65 @@
+# manual-message (Kafka Direct): the message forms, their node pickers, and what Send sends
+
+#mm-type: "edge.register" "edge.heartbeat" "node.list_request" "order.request" "order.cancel" "order.receipt" "order.redirect" (at load "edge.register")
+
+## order.request: #mm-fields markup
+  <div class="form-group"><label>Order UUID</label><input type="text" id="mm-f-order_uuid" class="form-input" value="00000000-0000-4000-8000-0000000000aa" data-action-input="updatePreview"></div>
+  <div class="form-group"><label>Order Type</label><select id="mm-f-order_type" class="form-input" data-action-change="updatePreview"><option value="retrieve" selected>retrieve</option><option value="move">move</option></select></div>
+  <div class="form-group"><label>Payload Description</label><input type="text" id="mm-f-payload_desc" class="form-input" value="" data-action-input="updatePreview"></div>
+  <div class="form-group"><label>Quantity</label><input type="number" id="mm-f-quantity" class="form-input" value="1" data-action-input="updatePreview"></div>
+  <div class="form-group"><label>Delivery Node</label><select id="mm-f-delivery_node" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option><option value="DOCK-1">DOCK-1</option><option value="GRP-A">GRP-A</option><option value="GRP-B">GRP-B</option><option value="GRP-B.SLOT-A1">GRP-B.SLOT-A1</option><option value="LANE-1">LANE-1</option><option value="NODE <b>&"'">NODE <b>&"'</option><option value="PRESS-1">PRESS-1</option><option value="SLOT-A1">SLOT-A1</option><option value="SLOT-A2">SLOT-A2</option><option value="_ROBOT:AMR-01">_ROBOT:AMR-01</option><option value="_TRANSIT">_TRANSIT</option></select></div>
+  <div class="form-group"><label>Source Node</label><select id="mm-f-source_node" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option><option value="DOCK-1">DOCK-1</option><option value="GRP-A">GRP-A</option><option value="GRP-B">GRP-B</option><option value="GRP-B.SLOT-A1">GRP-B.SLOT-A1</option><option value="LANE-1">LANE-1</option><option value="NODE <b>&"'">NODE <b>&"'</option><option value="PRESS-1">PRESS-1</option><option value="SLOT-A1">SLOT-A1</option><option value="SLOT-A2">SLOT-A2</option><option value="_ROBOT:AMR-01">_ROBOT:AMR-01</option><option value="_TRANSIT">_TRANSIT</option></select></div>
+  <div class="form-group"><label>Retrieve Empty</label><input type="checkbox" id="mm-f-retrieve_empty"  data-action-change="updatePreview"></div>
+
+## order.redirect: #mm-fields markup
+  <div class="form-group"><label>Order UUID</label><select id="mm-f-order_uuid" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option><option value="ab<b>&"'-0001">ab<b>&"'... (retrieve, pending)</option></select></div>
+  <div class="form-group"><label>New Delivery Node</label><select id="mm-f-new_delivery_node" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option><option value="DOCK-1">DOCK-1</option><option value="GRP-A">GRP-A</option><option value="GRP-B">GRP-B</option><option value="GRP-B.SLOT-A1">GRP-B.SLOT-A1</option><option value="LANE-1">LANE-1</option><option value="NODE <b>&"'">NODE <b>&"'</option><option value="PRESS-1">PRESS-1</option><option value="SLOT-A1">SLOT-A1</option><option value="SLOT-A2">SLOT-A2</option><option value="_ROBOT:AMR-01">_ROBOT:AMR-01</option><option value="_TRANSIT">_TRANSIT</option></select></div>
+
+## order.cancel: #mm-fields markup
+  <div class="form-group"><label>Order UUID</label><select id="mm-f-order_uuid" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option><option value="ab<b>&"'-0001">ab<b>&"'... (retrieve, pending)</option></select></div>
+  <div class="form-group"><label>Reason</label><input type="text" id="mm-f-reason" class="form-input" value="" data-action-input="updatePreview"></div>
+
+
+## order.request: delivery SLOT-A1, source GRP-A, description "PART-A", qty 2, retrieve empty
+preview:
+  {
+    "type": "order.request",
+    "src": {
+      "role": "edge",
+      "station": ""
+    },
+    "dst": {
+      "role": "core"
+    },
+    "payload": {
+      "order_uuid": "00000000-0000-4000-8000-0000000000aa",
+      "order_type": "retrieve",
+      "payload_desc": "PART-A",
+      "quantity": 2,
+      "delivery_node": "SLOT-A1",
+      "source_node": "GRP-A",
+      "retrieve_empty": true
+    }
+  }
+POST /api/manual-message {"type":"order.request","payload":{"order_uuid":"00000000-0000-4000-8000-0000000000aa","order_type":"retrieve","payload_desc":"PART-A","quantity":2,"delivery_node":"SLOT-A1","source_node":"GRP-A","retrieve_empty":true}}
+answer: 200 {"msg_id":"0f0e0d0c-0000-4000-8000-000000000001","status":"ok","timestamp":"2026-11-11T12:00:00Z"}
+shows: toast success: "Message sent"
+status: "Sent (id: 0f0e0d0c...)" color="var(--color-success, green)"
+
+## order.request refused (apiSendManualMessage: 400)
+POST /api/manual-message {"type":"order.request","payload":{"order_uuid":"00000000-0000-4000-8000-0000000000aa","order_type":"retrieve","payload_desc":"PART-A","quantity":2,"delivery_node":"SLOT-A1","source_node":"GRP-A","retrieve_empty":true}}
+answer: 400 {"error":"invalid payload: json: cannot unmarshal string into Go struct field OrderRequest.quantity of type int64"}
+shows: toast error: "Error: invalid payload: json: cannot unmarshal string into Go struct field OrderRequest.quantity of type int64"
+status: "Failed: invalid payload: json: cannot unmarshal string into Go struct field OrderRequest.quantity of type int64" color="var(--color-danger, red)"
+
+## order.request, send failed (500)
+POST /api/manual-message {"type":"order.request","payload":{"order_uuid":"00000000-0000-4000-8000-0000000000aa","order_type":"retrieve","payload_desc":"PART-A","quantity":2,"delivery_node":"SLOT-A1","source_node":"GRP-A","retrieve_empty":true}}
+answer: 500 {"error":"send failed: kafka: client has run out of available brokers"}
+shows: toast error: "Error: send failed: kafka: client has run out of available brokers"
+status: "Failed: send failed: kafka: client has run out of available brokers" color="var(--color-danger, red)"
+
+## order.request, fetch rejects
+POST /api/manual-message {"type":"order.request","payload":{"order_uuid":"00000000-0000-4000-8000-0000000000aa","order_type":"retrieve","payload_desc":"PART-A","quantity":2,"delivery_node":"SLOT-A1","source_node":"GRP-A","retrieve_empty":true}}
+answer: fetch rejects (TypeError: Failed to fetch)
+shows: toast error: "Error: TypeError: Failed to fetch"
+status: "Failed: TypeError: Failed to fetch" color="var(--color-danger, red)"

@@ -1,0 +1,102 @@
+# manual-order: what Create Order sends for each pick, and each answer
+
+## move: DOCK-1 to SLOT-A1, qty 2
+picks: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="SLOT-A1" mo-staging=""
+POST /api/orders/move {"process_node_id":null,"quantity":2,"delivery_node":"SLOT-A1","source_node":"DOCK-1"}
+answer: 200 {"id":41,"uuid":"u-41"}
+shows: toast success: "Order created"
+form after: mo-type="move" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+
+## move with nothing picked: sent as is (the page checks nothing)
+picks: mo-type="move" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+POST /api/orders/move {"process_node_id":null,"quantity":1,"delivery_node":"","source_node":""}
+answer: 200 {"id":41,"uuid":"u-41"}
+shows: toast success: "Order created"
+form after: mo-type="move" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+
+## move refused (apiCreateMoveOrder: an engine refusal is a 500)
+picks: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="SLOT-A1" mo-staging=""
+POST /api/orders/move {"process_node_id":null,"quantity":2,"delivery_node":"SLOT-A1","source_node":"DOCK-1"}
+answer: 500 {"error":"create move order: database is locked"}
+shows: toast error: "Error: create move order: database is locked"
+form after: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="SLOT-A1" mo-staging=""
+
+## retrieve: process node "Slot one" (Delivery autofilled from it), staging GRP-A
+picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
+answer: 200 {"id":41,"uuid":"u-41"}
+shows: toast success: "Order created"
+form after: mo-type="retrieve" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+
+## retrieve: a node group picked as Delivery, no process node
+picks: mo-type="retrieve" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="GRP-A" mo-staging=""
+POST /api/orders/retrieve {"process_node_id":null,"quantity":1,"delivery_node":"GRP-A","source_node":""}
+answer: 200 {"id":41,"uuid":"u-41"}
+shows: toast success: "Order created"
+form after: mo-type="retrieve" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+
+## retrieve refused: Core made none at the loader (409)
+picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
+answer: 409 {"error":"node SLOT-A1: no empty ordered — SLOT-A1: window-reserved"}
+shows: toast error: "Error: node SLOT-A1: no empty ordered — SLOT-A1: window-reserved"
+form after: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+
+## retrieve pending: 202, then Create again inside the hold
+picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
+answer: 202 {"notice":"sent — waiting for Core","pending":true,"status":"pending"}
+shows: toast info: "sent — waiting for Core"
+form after: mo-type="retrieve" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+again (same act, inside ASK_HOLD_MS): (no request)
+shows: toast info: "sent — waiting for Core"
+past the hold: POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":""}
+shows: toast success: "Order created"
+
+## retrieve 500 (writeError)
+picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
+answer: 500 {"error":"create retrieve: database is locked"}
+shows: toast error: "Error: create retrieve: database is locked"
+form after: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+
+## retrieve 500 from a panic (Recoverer: empty body)
+picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
+answer: 500 (empty body)
+shows: toast error: "Error: "
+form after: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+
+## retrieve, fetch rejects
+picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
+answer: fetch rejects (TypeError: Failed to fetch)
+shows: toast error: "Error: TypeError: Failed to fetch"
+form after: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
+
+## complex: staging LANE-1, Core Node PRESS-1
+picks: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"
+POST /api/orders/complex {"process_node_id":null,"quantity":1,"steps":[{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"LANE-1"},{"action":"wait"},{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"PRESS-1"}]}
+answer: 200 {"id":41,"uuid":"u-41"}
+shows: toast success: "Complex order created"
+form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
+
+## complex with no staging: refused on the page
+picks: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging=""
+(no request)
+shows: toast error: "Staging and production nodes are required"
+form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging=""
+
+## complex refused (400)
+picks: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"
+POST /api/orders/complex {"process_node_id":null,"quantity":1,"steps":[{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"LANE-1"},{"action":"wait"},{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"PRESS-1"}]}
+answer: 400 {"error":"steps are required"}
+shows: toast error: "Error: steps are required"
+form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"
+
+## complex, fetch rejects
+picks: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"
+POST /api/orders/complex {"process_node_id":null,"quantity":1,"steps":[{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"LANE-1"},{"action":"wait"},{"action":"pickup","node":"LANE-1"},{"action":"dropoff","node":"PRESS-1"}]}
+answer: fetch rejects (TypeError: Failed to fetch)
+shows: toast error: "Error: TypeError: Failed to fetch"
+form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging="LANE-1"

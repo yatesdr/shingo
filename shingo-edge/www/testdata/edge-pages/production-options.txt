@@ -1,0 +1,108 @@
+# production: the manual-order form's node pickers at load (type Move)
+
+#mo-type (Type) selectedIndex=0
+  * value="move" label="Move"
+    value="retrieve" label="Retrieve"
+    value="complex" label="Complex (Dwell)"
+
+#mo-node (Process Node) [hidden] selectedIndex=0
+  * value="" label="-- Select --"
+    value="1" label="Press one" coreNode="PRESS-1"
+    value="2" label="Slot one" coreNode="SLOT-A1"
+    value="3" label="Local spot" coreNode="LOCAL-9"
+
+#mo-pickup (Source Node) selectedIndex=0
+  * value="" label="-- Select --"
+    value="DOCK-1" label="DOCK-1" source="core"
+    value="GRP-A" label="GRP-A  · group" source="core"
+    value="GRP-B" label="GRP-B  · group" source="core"
+    value="GRP-B.SLOT-A1" label="\u00a0\u00a0↳ GRP-B.SLOT-A1" source="core"
+    value="LANE-1" label="LANE-1  · lane" source="core"
+    value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
+    value="PRESS-1" label="PRESS-1 — Press one" source="core"
+    value="SLOT-A1" label="SLOT-A1 — Slot one" source="core"
+    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
+    value="_TRANSIT" label="_TRANSIT" source="core"
+    value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
+
+#mo-delivery (Delivery Node) selectedIndex=0
+  * value="" label="-- Select --"
+    value="DOCK-1" label="DOCK-1" source="core"
+    value="GRP-A" label="GRP-A  · group" source="core"
+    value="GRP-B" label="GRP-B  · group" source="core"
+    value="GRP-B.SLOT-A1" label="\u00a0\u00a0↳ GRP-B.SLOT-A1" source="core"
+    value="LANE-1" label="LANE-1  · lane" source="core"
+    value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
+    value="PRESS-1" label="PRESS-1 — Press one" source="core"
+    value="SLOT-A1" label="SLOT-A1 — Slot one" source="core"
+    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
+    value="_TRANSIT" label="_TRANSIT" source="core"
+    value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
+
+#mo-staging (Staging Node) [hidden] selectedIndex=0
+  * value="" label="-- Select --"
+    value="DOCK-1" label="DOCK-1" source="core"
+    value="GRP-A" label="GRP-A  · group" source="core"
+    value="GRP-B" label="GRP-B  · group" source="core"
+    value="GRP-B.SLOT-A1" label="\u00a0\u00a0↳ GRP-B.SLOT-A1" source="core"
+    value="LANE-1" label="LANE-1  · lane" source="core"
+    value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
+    value="PRESS-1" label="PRESS-1 — Press one" source="core"
+    value="SLOT-A1" label="SLOT-A1 — Slot one" source="core"
+    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
+    value="_TRANSIT" label="_TRANSIT" source="core"
+    value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
+
+type retrieve: mo-node(Process Node) mo-pickup(Source Node)[hidden] mo-delivery(Delivery Node) mo-staging(Staging Node)
+type complex: mo-node(Process Node) mo-pickup(Source Node)[hidden] mo-delivery(Core Node) mo-staging(Staging Node)
+
+# after an SSE core-nodes frame for the same plant (Delivery had GRP-B.SLOT-A1 picked)
+
+#mo-pickup (Source Node) selectedIndex=0
+  * value="" label="-- Select --"
+    value="DOCK-1" label="DOCK-1" source="core"
+    value="GRP-A" label="GRP-A" source="core"
+    value="GRP-B" label="GRP-B" source="core"
+    value="GRP-B.SLOT-A1" label="GRP-B.SLOT-A1" source="core"
+    value="LANE-1" label="LANE-1" source="core"
+    value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
+    value="PRESS-1" label="PRESS-1" source="core"
+    value="SLOT-A1" label="SLOT-A1" source="core"
+    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
+    value="_TRANSIT" label="_TRANSIT" source="core"
+    value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
+
+#mo-delivery (Delivery Node) selectedIndex=4
+    value="" label="-- Select --"
+    value="DOCK-1" label="DOCK-1" source="core"
+    value="GRP-A" label="GRP-A" source="core"
+    value="GRP-B" label="GRP-B" source="core"
+  * value="GRP-B.SLOT-A1" label="GRP-B.SLOT-A1" source="core"
+    value="LANE-1" label="LANE-1" source="core"
+    value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
+    value="PRESS-1" label="PRESS-1" source="core"
+    value="SLOT-A1" label="SLOT-A1" source="core"
+    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
+    value="_TRANSIT" label="_TRANSIT" source="core"
+    value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
+
+# after a second frame without GRP-B.SLOT-A1 (the picked node)
+
+#mo-delivery (Delivery Node) selectedIndex=-1
+    value="" label="-- Select --"
+    value="DOCK-1" label="DOCK-1" source="core"
+    value="GRP-A" label="GRP-A" source="core"
+    value="GRP-B" label="GRP-B" source="core"
+    value="LANE-1" label="LANE-1" source="core"
+    value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
+    value="PRESS-1" label="PRESS-1" source="core"
+    value="SLOT-A1" label="SLOT-A1" source="core"
+    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
+    value="_TRANSIT" label="_TRANSIT" source="core"
+    value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
