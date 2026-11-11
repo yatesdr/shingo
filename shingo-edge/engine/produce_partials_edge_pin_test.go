@@ -166,7 +166,7 @@ func TestProducePartials_AHomeMayNotTakePartialsToUnload(t *testing.T) {
 	}{{"STAGE2", true}, {"STAGE2.WIN1", true}, {"PP-HOME", false}, {"", false}} {
 		in := domain.NodeClaimInput{CoreNodeName: "PP-LINE", Role: protocol.ClaimRoleProduce, PartialDestination: c.home}
 		refused := false
-		for _, f := range kinds.LaneLegs(in) {
+		for _, f := range kinds.RefusedLegs(in) {
 			if f.Field == "partial_destination" {
 				refused = true
 			}

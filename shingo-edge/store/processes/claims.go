@@ -487,7 +487,7 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 //
 // kinds is Core's lane set as the engine holds it, and it is not optional: a
 // leg that names a lane is refused here, whichever door the write came
-// through (domain.CoreNodeKinds.RefuseLaneLegs). A caller with no node list
+// through (domain.CoreNodeKinds.RefuseLegs). A caller with no node list
 // passes the zero value, which refuses nothing, and says so by passing it.
 func UpsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64, error) {
 	id, _, err := upsertClaim(db, kinds, in)
@@ -597,7 +597,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// No leg names a lane. Asked of the input, before any statement: a claim
 	// that already names one is refused on its next write of any kind, until
 	// the leg is fixed.
-	if err := kinds.RefuseLaneLegs(in); err != nil {
+	if err := kinds.RefuseLegs(in); err != nil {
 		return 0, nil, err
 	}
 	// RefillBy (which robot brings the next carrier) describes the CELL'S HARDWARE — which robot can reach

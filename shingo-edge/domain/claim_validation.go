@@ -164,7 +164,7 @@ type ClaimLeg struct {
 }
 
 // ClaimLegs lists the seven legs of a claim, in a fixed order. Every writer of
-// a claim row asks about these seven through LaneLegs, so an eighth leg added
+// a claim row asks about these seven through RefusedLegs, so an eighth leg added
 // to the claim is added here or it is not checked anywhere. The keep-staged
 // node is a leg: a robot sets a spare down there and lifts it from there, so
 // it is offered as a staging node, and a lane is no more one than any other.
@@ -180,10 +180,10 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 	}
 }
 
-// LaneLegs is every leg of the claim that names a lane, each with its
+// RefusedLegs is every leg of the claim that names a lane, each with its
 // sentence, in ClaimLegs order. The claim editor shows one per field; the
-// store refuses on the first (RefuseLaneLegs). Empty kinds find nothing.
-func (k CoreNodeKinds) LaneLegs(in NodeClaimInput) []FieldError {
+// store refuses on the first (RefuseLegs). Empty kinds find nothing.
+func (k CoreNodeKinds) RefusedLegs(in NodeClaimInput) []FieldError {
 	if len(k.Lanes) == 0 && len(k.AcceptsPartials) == 0 {
 		return nil
 	}
@@ -204,49 +204,49 @@ func (k CoreNodeKinds) LaneLegs(in NodeClaimInput) []FieldError {
 	return out
 }
 
-// ErrLaneLeg matches every LaneLegError, so a door can answer 400 rather than
+// ErrRefusedLeg matches every LegError, so a door can answer 400 rather than
 // 500 without knowing which leg it was.
-var ErrLaneLeg = errors.New("a leg names a lane")
+var ErrRefusedLeg = errors.New("a leg names a lane")
 
-// LaneLegError is a claim or routing write refused because it names a lane.
+// LegError is a claim or routing write refused because it names a lane.
 // Field is the claim's wire field, or "" for a routing row, whose role is
 // already in the sentence.
-type LaneLegError struct {
+type LegError struct {
 	Field, Message string
 }
 
-func (e *LaneLegError) Error() string {
+func (e *LegError) Error() string {
 	if e.Field == "" {
 		return e.Message
 	}
 	return e.Field + ": " + e.Message
 }
 
-// Is makes errors.Is(err, ErrLaneLeg) true for every LaneLegError.
-func (e *LaneLegError) Is(target error) bool { return target == ErrLaneLeg }
+// Is makes errors.Is(err, ErrRefusedLeg) true for every LegError.
+func (e *LegError) Is(target error) bool { return target == ErrRefusedLeg }
 
-// RefuseLaneLegs is the store's form of LaneLegs: the first leg naming a lane
-// as a *LaneLegError, or nil.
-func (k CoreNodeKinds) RefuseLaneLegs(in NodeClaimInput) error {
-	if legs := k.LaneLegs(in); len(legs) > 0 {
-		return &LaneLegError{Field: legs[0].Field, Message: legs[0].Message}
+// RefuseLegs is the store's form of RefusedLegs: the first leg naming a lane
+// as a *LegError, or nil.
+func (k CoreNodeKinds) RefuseLegs(in NodeClaimInput) error {
+	if legs := k.RefusedLegs(in); len(legs) > 0 {
+		return &LegError{Field: legs[0].Field, Message: legs[0].Message}
 	}
 	return nil
 }
 
-// RefuseLaneRow is the routing set's form: a row naming a lane in any role.
-func (k CoreNodeKinds) RefuseLaneRow(role, name string) error {
+// RefuseRoutingRow is the routing set's form: a row naming a lane in any role.
+func (k CoreNodeKinds) RefuseRoutingRow(role, name string) error {
 	if msg := k.LegRefusal(role, name); msg != "" {
-		return &LaneLegError{Message: msg}
+		return &LegError{Message: msg}
 	}
 	return nil
 }
 
-// validateLegKinds refuses a lane on any of the claim's legs (LaneLegs, the
+// validateLegKinds refuses a lane on any of the claim's legs (RefusedLegs, the
 // same answer the store gives), and a kanban as a consume claim's
 // source. A field already refused for another reason is not refused twice.
 func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[string]bool, add func(field, msg string)) {
-	for _, f := range kinds.LaneLegs(in) {
+	for _, f := range kinds.RefusedLegs(in) {
 		if !reported[f.Field] {
 			add(f.Field, f.Message)
 		}

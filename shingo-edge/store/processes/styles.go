@@ -306,7 +306,7 @@ const notLoaderClaim = ` swap_mode != '` + string(protocol.SwapModeManualSwap) +
 // source and caller. Returns the new style id. Used by CloneStyle.
 //
 // A copied claim that names a lane on any leg refuses the clone, naming the
-// source style, the claim's node and the leg (refuseStoredLaneLegs). The
+// source style, the claim's node and the leg (refuseStoredLegs). The
 // source is fixed first; nothing is cleared on the way through.
 func cloneStyleTx(tx *sql.Tx, kinds domain.CoreNodeKinds, src *Style, name, description, source, calledBy string) (int64, error) {
 	res, err := tx.Exec(
@@ -332,7 +332,7 @@ func cloneStyleTx(tx *sql.Tx, kinds domain.CoreNodeKinds, src *Style, name, desc
 	if err != nil {
 		return 0, err
 	}
-	if err := refuseStoredLaneLegs(tx, kinds, newID, fmt.Sprintf("style %q", src.Name)); err != nil {
+	if err := refuseStoredLegs(tx, kinds, newID, fmt.Sprintf("style %q", src.Name)); err != nil {
 		return 0, err
 	}
 	return newID, nil
@@ -372,7 +372,7 @@ func CloneStyle(db *sql.DB, kinds domain.CoreNodeKinds, srcID int64, name, descr
 }
 
 // copiedClaim is the slice of a freshly copied claim row the clone's lane
-// refusal reads (readCopiedClaims, refuseCopiedLaneLegs). The copy-to override
+// refusal reads (readCopiedClaims, refuseCopiedLegs). The copy-to override
 // layer that also rewrote it went in pick-a-part U6.
 type copiedClaim struct {
 	node                               string
@@ -398,10 +398,10 @@ func (c *copiedClaim) legs() NodeClaimInput {
 	}
 }
 
-// refuseStoredLaneLegs reads one style's live claims as this transaction has
+// refuseStoredLegs reads one style's live claims as this transaction has
 // written them and refuses the first leg that names a lane. One SELECT, and
 // none when no lane is known (empty kinds refuse nothing).
-func refuseStoredLaneLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, from string) error {
+func refuseStoredLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, from string) error {
 	if len(kinds.Lanes) == 0 {
 		return nil
 	}
@@ -409,19 +409,19 @@ func refuseStoredLaneLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64,
 	if err != nil {
 		return fmt.Errorf("read copied claims for the lane check: %w", err)
 	}
-	return refuseCopiedLaneLegs(kinds, rows, from)
+	return refuseCopiedLegs(kinds, rows, from)
 }
 
-// refuseCopiedLaneLegs refuses the first copied claim, by node name, with a
+// refuseCopiedLegs refuses the first copied claim, by node name, with a
 // leg naming a lane: "<from>, claim at <node>: <leg>: <sentence>".
-func refuseCopiedLaneLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedClaim, from string) error {
+func refuseCopiedLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedClaim, from string) error {
 	nodes := make([]string, 0, len(rows))
 	for node := range rows {
 		nodes = append(nodes, node)
 	}
 	slices.Sort(nodes)
 	for _, node := range nodes {
-		if err := kinds.RefuseLaneLegs(rows[node].legs()); err != nil {
+		if err := kinds.RefuseLegs(rows[node].legs()); err != nil {
 			return fmt.Errorf("%s, claim at %s: %w", from, node, err)
 		}
 	}

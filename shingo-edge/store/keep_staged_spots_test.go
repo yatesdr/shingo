@@ -153,7 +153,7 @@ func TestKeepStagedSpot_ALaneIsRefused(t *testing.T) {
 	in := spotClaim(sid, "LINE-L", "STG-L", false)
 	in.KeepStagedNode = domain.Ptr("KS-LANE")
 	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{Lanes: map[string]bool{"KS-LANE": true}}, in)
-	if !errors.Is(err, domain.ErrLaneLeg) || !strings.Contains(err.Error(), "keep_staged_node") {
+	if !errors.Is(err, domain.ErrRefusedLeg) || !strings.Contains(err.Error(), "keep_staged_node") {
 		t.Fatalf("err = %v, want the lane refusal on keep_staged_node", err)
 	}
 }

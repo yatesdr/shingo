@@ -3546,7 +3546,7 @@ function routingPickersReady() {
             onDrop: name => setRoutingNode(g[0], name, false),
             exclude: n => (isPositionRow(n)
                 ? 'a position of this process — available to every flow on it already'
-                : B().laneExclusion(S.coreNodes, n)),
+                : B().legExclusion(S.coreNodes, n)),
             // WHERE A NAME CAME FROM, AT THE MOMENT OF PICKING. A row the
             // backfill found says so and how many live styles route through
             // it, which is the whole of Q5's evidence line in the one place it
@@ -6712,7 +6712,7 @@ function openAddProcess() {
             // so the three do not exclude each other.
             exclude: n => (positions().indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
-                : B().laneExclusion(S.coreNodes, n)),
+                : B().legExclusion(S.coreNodes, n)),
             onChange: redrawSheetMap,
         });
     }

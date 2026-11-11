@@ -362,7 +362,7 @@ func (h *Handlers) coreNodeKinds() domain.CoreNodeKinds {
 // styleWriteStatus is 400 for a clone refused because a copied
 // claim names a lane, and 500 for anything else.
 func styleWriteStatus(err error) int {
-	if errors.Is(err, domain.ErrLaneLeg) {
+	if errors.Is(err, domain.ErrRefusedLeg) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError

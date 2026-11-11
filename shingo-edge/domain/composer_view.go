@@ -279,12 +279,12 @@ type ComposerRoutingNode struct {
 	Sequence     int    `json:"sequence"`
 }
 
-// DropLaneLegs takes out every routing row that names a lane, in any role, so
+// DropRefusedRows takes out every routing row that names a lane, in any role, so
 // the composer offers no lane chip on a leg the claim save would refuse. A row
 // can be there from before the routing-set save refused one, or derived from a
 // claim stored before. With no node list heard yet nothing is known to be a
 // lane and every row stays.
-func (d *ComposerData) DropLaneLegs(kinds CoreNodeKinds) {
+func (d *ComposerData) DropRefusedRows(kinds CoreNodeKinds) {
 	if d == nil || len(kinds.Lanes) == 0 {
 		return
 	}

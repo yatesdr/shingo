@@ -173,7 +173,7 @@ type legCensusRow struct {
 
 // claimWriterCensus is every claim-leg writer reachable from the admin API and
 // the store, per leg. Every one refuses a lane on every leg: the store's claim
-// write and the clone's copy ask domain.CoreNodeKinds.LaneLegs.
+// write and the clone's copy ask domain.CoreNodeKinds.RefusedLegs.
 var claimWriterCensus = []legCensusRow{
 	{"containment stamp", "containment_destination", legRefused},
 	// The stamp echoes every other leg of the claim it writes. A claim that

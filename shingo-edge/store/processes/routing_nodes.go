@@ -154,7 +154,7 @@ func isLivePosition(db *sql.DB, processID int64, name string) (bool, error) {
 // only writer that says otherwise, and it does not come through here.
 //
 // kinds is Core's lane set, and a row naming a lane is refused in every role
-// (domain.CoreNodeKinds.RefuseLaneRow): the composer offers these rows on a
+// (domain.CoreNodeKinds.RefuseRoutingRow): the composer offers these rows on a
 // claim's legs, and no leg may name a lane.
 func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInput) (int64, error) {
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
@@ -164,7 +164,7 @@ func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInp
 	if !domain.IsRoutingRole(in.Role) {
 		return 0, fmt.Errorf("%w: %q", ErrInvalidRoutingRole, in.Role)
 	}
-	if err := kinds.RefuseLaneRow(in.Role, in.CoreNodeName); err != nil {
+	if err := kinds.RefuseRoutingRow(in.Role, in.CoreNodeName); err != nil {
 		return 0, err
 	}
 	if in.Origin == "" {
@@ -229,7 +229,7 @@ func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id
 		case err != nil:
 			return err
 		}
-		if err := kinds.RefuseLaneRow(role, name); err != nil {
+		if err := kinds.RefuseRoutingRow(role, name); err != nil {
 			return err
 		}
 	}

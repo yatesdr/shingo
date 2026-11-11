@@ -53,21 +53,21 @@ test('isLane: a group, a lane slot, a plain node and nothing are not', () => {
     assert.strictEqual(B.isLane(null), false);
 });
 
-test('laneExclusion: a lane name is refused, with a reason', () => {
-    const why = B.laneExclusion(CORE, 'SUP-L1');
+test('legExclusion: a lane name is refused, with a reason', () => {
+    const why = B.legExclusion(CORE, 'SUP-L1');
     assert.ok(why, 'a lane must carry a reason');
     assert.match(why, /lane/);
 });
 
-test('laneExclusion: a group, a slot, a plain node and an unknown name are offered', () => {
+test('legExclusion: a group, a slot, a plain node and an unknown name are offered', () => {
     for (const name of ['SUP', 'SUP-L1-S1', 'STG-1', 'NOT-IN-CORE']) {
-        assert.strictEqual(B.laneExclusion(CORE, name), '', name);
+        assert.strictEqual(B.legExclusion(CORE, name), '', name);
     }
 });
 
-test('laneExclusion: no node list yet refuses nothing', () => {
-    assert.strictEqual(B.laneExclusion(null, 'SUP-L1'), '');
-    assert.strictEqual(B.laneExclusion(undefined, 'SUP-L1'), '');
+test('legExclusion: no node list yet refuses nothing', () => {
+    assert.strictEqual(B.legExclusion(null, 'SUP-L1'), '');
+    assert.strictEqual(B.legExclusion(undefined, 'SUP-L1'), '');
 });
 
 // The text of each routing picker declaration, to the close of its options
@@ -92,8 +92,8 @@ test('the two routing pickers each refuse a lane', () => {
     assert.strictEqual(sites.length, 2,
         'expected the Settings and Add-process routing pickers; found ' + sites.length);
     sites.forEach((s, i) => {
-        assert.ok(/exclude:[\s\S]*B\(\)\.laneExclusion\(S\.coreNodes, n\)/.test(s),
-            'routing picker #' + (i + 1) + ' does not ask laneExclusion:\n' + s);
+        assert.ok(/exclude:[\s\S]*B\(\)\.legExclusion\(S\.coreNodes, n\)/.test(s),
+            'routing picker #' + (i + 1) + ' does not ask legExclusion:\n' + s);
     });
 });
 

@@ -383,10 +383,10 @@ function isLane(node) {
     return !!node && node.node_type === 'LANE';
 }
 
-// laneExclusion is a picker's `exclude` answer for a name: the reason when
+// legExclusion is a picker's `exclude` answer for a name: the reason when
 // Core's list says it is a lane, else ''. A name not in the list is not
 // refused here; the save answers for it.
-function laneExclusion(coreNodes, name) {
+function legExclusion(coreNodes, name) {
     return isLane((coreNodes || []).find(n => n.name === name)) ? LANE_ON_A_LEG : '';
 }
 
@@ -487,7 +487,7 @@ function saveOutcome(status, body) {
         routingSet, processPayloads,
         flowPresetCreate, flowPresetApplySave,
         applyOrder, applyOutcome, saveOutcome,
-        isLane, laneExclusion,
+        isLane, legExclusion,
     };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
