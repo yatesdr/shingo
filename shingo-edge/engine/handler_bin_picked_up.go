@@ -47,11 +47,10 @@ import (
 // not here.
 //
 // location is the Core node name where the pickup occurred (BinPickedUp.Location
-// on the wire envelope). Used to gate the runtime-mutation branches below:
-// the supply leg of a two_robot swap has one pickup at a remote source
-// (supermarket) and one dropoff at our slot; the order ID matches but no
-// slot pickup event ever fires. Without the gate, the supermarket
-// pickup's BinPickedUp would clear active state at our slot.
+// on the wire envelope). It decides which seat the carrier left: the seat at
+// that place that holds the lifted carrier (leaveSeatsAtLift), whichever
+// order lifted it. A supply leg's pickup at a remote source (the supermarket)
+// names a place and a carrier no seat of ours holds, so it leaves nothing.
 func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location string) {
 	e.HandleBinPickedUpMessage(protocol.BinPickedUp{OrderUUID: orderUUID, BinID: binID, Location: location})
 }
@@ -61,7 +60,7 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 // read (DECISIONS D11). A message without an Epoch (a Core that predates it)
 // is handled as before.
 func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
-	orderUUID, binID, location := bp.OrderUUID, bp.BinID, bp.Location
+	orderUUID, location := bp.OrderUUID, bp.Location
 	order, err := e.db.GetOrderByUUID(orderUUID)
 	if err != nil || order == nil {
 		// Unknown order — Edge may have GC'd a terminal order, or the
@@ -72,17 +71,13 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 	// A lift anywhere is a held placer's wake (G7), before every filter below.
 	e.onPickupForIntents(order)
 
-	// === Departure stamp — ABOVE the location gate, and the only thing above it ===
+	// === The order's own work: it reads the order and the claim ===
 	//
-	// Everything below the gate is OUR SLOT's work. The departure stamp is not
-	// slot work: single_robot departs at OutboundStaging, and a 3-position
-	// press's cell pickups can be at the middle or back index position. Gating
-	// it on location == CoreNodeName would stamp exactly the legs that do not
-	// need it and skip the ones that do.
-	//
-	// It reads the order and the claim and writes one column on the order row.
-	// It touches no runtime slot, so it cannot interact with anything below,
-	// and the gate's own early returns stay exactly where they are.
+	// None of these is seat work. The departure stamp is not: single_robot
+	// departs at OutboundStaging, and a 3-position press's cell pickups can be
+	// at the middle or back index position, so matching it to one node would
+	// stamp exactly the legs that do not need it and skip the ones that do. It
+	// writes one column on the order row and touches no runtime slot.
 	e.stampDepartureIfLeftCell(order, location)
 	// And the auto_push unloader's re-pull, for the same reason it sits here: it
 	// reads the order and the window's claim and touches no runtime slot.
@@ -90,158 +85,173 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 	// And the keep-staged keeper, when the lift was at the line's spot: the
 	// refill behind the spare is ordered now, not at the swap's end.
 	e.keepSpotOnPickup(order, location)
+	// And a changeover evac's drop task, when the evac lifted at its own node.
+	e.advanceEvacDropOnPickup(order, location)
 
-	// === Location gate (inverted; fails closed) ===
-	//
-	// LOAD-BEARING: this gate compares Core's ev.Location (from
-	// wiring_block_completed.go:74, un-normalized RDS vendor string)
-	// to Edge's ProcessNode.CoreNodeName (which IS trimmed on write
-	// at store/processes/processes.go:219,259 via strings.TrimSpace).
-	//
-	// Trim policy at compare time:
-	//   - TrimSpace(location)          — LOAD-BEARING. Core's RDS path
-	//                                    doesn't normalize; admin save
-	//                                    with stray whitespace on the
-	//                                    vendor side would otherwise
-	//                                    silently dead-code this gate.
-	//   - TrimSpace(node.CoreNodeName) — defense-in-depth. Today Edge
-	//                                    always trims on write; trim
-	//                                    again here guards against any
-	//                                    future write path that skips
-	//                                    the canonical trim.
-	//
-	// Trim only — NOT case-fold. A case mismatch is a real config
-	// error and the loud byte-mismatch is a useful failure, not
-	// noise to mask.
-	//
-	// Failure modes treated as "couldn't verify, do nothing":
-	//   - order.ProcessNodeID == nil  — threshold-replenishment orders. F' Phase 2
-	//     doesn't apply (no process node = no changeover task) and the
-	//     downstream flush+clear shouldn't fire either. Fall through
-	//     the gate by skipping the whole side-effecting block.
-	//   - GetProcessNode error or nil — DB error or missing node. Treat
-	//     as "not our slot" rather than fall open (the pre-1.1 bug
-	//     class).
-	//   - Empty location string       — Core didn't populate. Treat as
-	//     "not our slot."
-	//
-	// If either side ever adds case-folding, prefix-stripping, or any
-	// other transform, this gate can flip to "always reject" and the
-	// flush + clear become silent dead code. Do not weaken or remove
-	// this without replacing the proof end-to-end on the wire path.
+	// === The seat's work: the carrier leaves the seat it was lifted from ===
+	e.leaveSeatsAtLift(order, bp)
+}
+
+// pickupLocationIs reports whether a pickup's location names the node coreNodeName.
+// An empty location names nothing: a pickup Core could not place is not
+// matched to any node (the gate fails closed, as it always has).
+//
+// LOAD-BEARING TRIM POLICY. Core's ev.Location (wiring_block_completed.go) is
+// the un-normalized RDS vendor string; Edge's ProcessNode.CoreNodeName is
+// trimmed on write (store/processes/processes.go CreateNode, UpdateNode).
+//   - TrimSpace(location)     — LOAD-BEARING. Stray whitespace on the vendor
+//     side would otherwise silently dead-code every match.
+//   - TrimSpace(coreNodeName) — defense-in-depth, against a future write path
+//     that skips the canonical trim.
+//
+// Trim only — NOT case-fold. A case mismatch is a real config error and the
+// loud byte-mismatch is a useful failure, not noise to mask. If either side
+// ever adds case-folding, prefix-stripping or any other transform, this match
+// can flip to "never" and the pickup's seat work becomes silent dead code. Do
+// not weaken it without replacing the proof end-to-end on the wire path.
+func pickupLocationIs(location, coreNodeName string) bool {
+	here := strings.TrimSpace(location)
+	return here != "" && here == strings.TrimSpace(coreNodeName)
+}
+
+// advanceEvacDropOnPickup advances a changeover evac's drop task when the evac
+// lifts its carrier at its own node. Drop tasks with the evacuate marker stay
+// non-terminal until the line is physically clear — the operator opted in to
+// "wait for this node to be evacuated before cutover." The pickup is that
+// moment; the carrier's onward trip to the supermarket is a logistics move and
+// doesn't gate cutover. Advancing the task to line_cleared (terminal for drop,
+// per IsNodeTaskStateTerminal) unblocks the cutover guard and the rollups now
+// rather than at the order's completion. Non-evac drops were stamped terminal
+// at plan time, so the terminal guard makes this a no-op for them. (The evac's
+// supply is no longer released here: the lift is a wake for the supply's own
+// intent — onPickupForIntents — S5.)
+//
+// Keyed on the ORDER, unlike the seat's work: the task belongs to this evac,
+// and the lift that clears the line is the one at the evac's own node.
+func (e *Engine) advanceEvacDropOnPickup(order *domain.Order, location string) {
 	if order.ProcessNodeID == nil {
-		// A threshold-replenishment order — no slot to verify, nothing to flush /
-		// clear via this handler. Logging would be noise.
 		return
 	}
-	node, nerr := e.db.GetProcessNode(*order.ProcessNodeID)
-	if nerr != nil || node == nil {
-		e.logFn("bin_picked_up: order=%s — couldn't resolve process node id=%v (nerr=%v); skipping for safety",
-			orderUUID, order.ProcessNodeID, nerr)
+	task, err := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID)
+	if err != nil || task == nil || task.Situation != "drop" ||
+		domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
 		return
 	}
-	if location == "" {
-		e.logFn("bin_picked_up: order=%s node=%s — empty Location from Core; skipping for safety (Springfield-class regression path)",
-			orderUUID, node.CoreNodeName)
+	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
+	if err != nil || node == nil {
+		e.logFn("bin_picked_up: order=%s — couldn't resolve process node id=%v (err=%v); drop task %d not advanced",
+			order.UUID, *order.ProcessNodeID, err, task.ID)
 		return
 	}
-	if strings.TrimSpace(location) != strings.TrimSpace(node.CoreNodeName) {
-		e.logFn("bin_picked_up: order=%s pickup at location=%q vs CoreNodeName=%q (display name=%s) — ignoring, not our slot",
-			orderUUID, location, node.CoreNodeName, node.Name)
+	if !pickupLocationIs(location, node.CoreNodeName) {
 		return
 	}
+	if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
+		e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
+	}
+	e.pokeCutover(node.ProcessID)
+}
 
-	// A changeover evac's pickup at our slot advances its drop task. (Its
-	// supply is no longer released here: the lift is a wake for the supply's
-	// own intent — onPickupForIntents, above — S5.)
-	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil {
-		// Drop tasks with the evacuate marker stay non-terminal until the
-		// line is physically clear — the operator opted in to "wait for
-		// this node to be evacuated before cutover." Pickup is that
-		// moment; the bin's onward trip to the supermarket is just a
-		// logistics move and doesn't gate cutover. Advance the task to
-		// line_cleared (terminal for drop, per IsNodeTaskStateTerminal)
-		// so the cutover guard and downstream rollups unblock immediately
-		// rather than waiting for order completion at the destination.
-		// Non-evac drops were stamped terminal at plan time, so the
-		// !terminal guard makes this a no-op for them.
-		if task.Situation == "drop" && !domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
-			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
-				e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
-			}
-			e.pokeCutover(node.ProcessID)
+// leaveSeatsAtLift is the pickup's seat work: the carrier Core lifted leaves
+// every seat at the place of the lift that holds it (leaveSeatAtLift).
+//
+// ── THE SEAT IS FOUND BY PLACE AND CARRIER, AS THE LANDING FINDS IT ───────
+//
+// The landing binds by place: a carrier is bound at the node it came to rest
+// on, whichever order brought it there (HandleBinLanded). The pickup used to
+// find its seat by ORDER instead — the order's own process node, and only when
+// the lift was there — so a carrier that landed at a stop on its way was bound
+// at the stop and never let go: the pickup there was "not our slot". The seat
+// went on naming a carrier that had left, and the changeover planner, which
+// reads the seat (nodeStateAt), planned a pickup of it. Hopkinsville
+// 2026-11-11: a swap's empties waited at PLN_02 and PLN_05, the press's back
+// positions, on their way to PLN_03 and PLN_06; both stayed recorded at both
+// places, and the changeover to the next style sent Core two orders to lift
+// carriers from PLN_02 and PLN_05 that Core knew were not there.
+//
+// ── WHAT THE OLD ORDER-AND-PLACE GATE PROTECTED STILL HOLDS ────────────────
+//
+// That gate (Springfield ALN_001, 2026-05-18) stopped a supply leg's pickup at
+// the supermarket from clearing our slot, where the old carrier still stood.
+// Place and identity together keep that: a seat is written only when it holds
+// the one carrier lifted, at the one place it was lifted from. A seat holding
+// another carrier is never written, and nor is the same carrier recorded at
+// another place — that record is ended by the lift at THAT place, which Core
+// announces in the lift's own transaction (BinService.Lift), not guessed at
+// here. A threshold-replenishment order (no process node) is no longer skipped:
+// what a seat holds is a fact about the place, not about whose order lifted it.
+//
+// Pi cost: one read for the seats holding the carrier (normally none or one,
+// on a table of a few dozen rows), then, per seat at the place, the runtime
+// read, flush and leave the old path made for the order's node. A lift at a
+// place no seat holds it costs the one read; it used to cost the node read.
+func (e *Engine) leaveSeatsAtLift(order *domain.Order, bp protocol.BinPickedUp) {
+	if e.inventoryDelta == nil {
+		// Nothing wired to flush or leave through (test contexts).
+		return
+	}
+	if strings.TrimSpace(bp.Location) == "" {
+		e.logFn("bin_picked_up: order=%s bin=%d — empty Location from Core; no seat left (fails closed: "+
+			"Springfield-class regression path)", order.UUID, bp.BinID)
+		return
+	}
+	seats, err := e.db.ProcessNodesHoldingBin(bp.BinID)
+	if err != nil {
+		e.logFn("bin_picked_up: order=%s — seats holding bin %d unreadable, none left: %v", order.UUID, bp.BinID, err)
+		return
+	}
+	for i := range seats {
+		if pickupLocationIs(bp.Location, seats[i].CoreNodeName) {
+			e.leaveSeatAtLift(&seats[i], order, bp)
 		}
 	}
+}
 
-	if e.inventoryDelta == nil {
-		// Nothing to flush; reporter not wired (test contexts).
+// leaveSeatAtLift lets one seat's carrier go at the lift, gated on BIN
+// IDENTITY under countMu: the seat is re-read under the lock, and a seat that
+// let the carrier go between the read and the lock is left alone. Identity,
+// not the order, because an order-gated clear missed departed carriers twice:
+// a two-robot swap's EVAC carries the old bin out but is usually the staged,
+// not the active, order; and a changeover abort (cancelProcessChangeover)
+// nulls the active-order ref before the evac's pickup lands. Springfield
+// 2026-06-02: ALN_003's bin 18 left mid-swap, active_bin_id stayed 18, and
+// consume ticks drained it while it sat in the supermarket.
+//
+// Under countMu from the read to the leave, so no tick lands between taking
+// the after-lift windows out and the seat letting the carrier go (lock order
+// countMu, then the flush lock, as everywhere):
+//
+//  1. takeTicksAfterLift takes out the windows counted after the lift (Lane H
+//     R4, D11) — it needs the generation the seat holds, so it reads first;
+//  2. the flush ships what was charged to the carrier while it was bound,
+//     before the pointer moves;
+//  3. the leave (carrierLeftAtPickup, carrier_left.go): pointer, count and
+//     identity go together, with the lift's generation stamped and a produce
+//     seat's after-lift ticks held for its next carrier, in one statement.
+//
+// ActiveOrderID IS DELIBERATELY LEFT ALONE. It is the cell-busy pointer the
+// admission guards read, and no tick, delta or UOP path has read it since the
+// bin-as-truth flip moved attribution to ActiveBinID (binAtNode,
+// wiring_counter_delta.go). Clearing it at the press pickup declared the cell
+// free five steps early (single_robot's 4→8 window); orderWorksTheCell
+// (leg_departure.go) frees the cell honestly, at terminal or departure.
+func (e *Engine) leaveSeatAtLift(node *processes.Node, order *domain.Order, bp protocol.BinPickedUp) {
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	rt, err := e.db.GetProcessNodeRuntime(node.ID)
+	if err != nil || rt == nil || rt.ActiveBinID == nil || *rt.ActiveBinID != bp.BinID {
 		return
 	}
-
-	// The runtime row is read BEFORE the flush now (it was read just after):
-	// the late-lift move below needs the generation the seat holds. Same one
-	// read. Under countMu from here to the leave, so no tick lands between
-	// taking the after-lift windows out and the seat letting the carrier go
-	// (lock order countMu, then the flush lock, as everywhere).
-	e.countMu.Lock()
-	runtime, rterr := e.db.GetProcessNodeRuntime(*order.ProcessNodeID)
-	bound := rterr == nil && runtime != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID
-	hold, holdPart := 0, ""
-	if bound {
-		hold, holdPart = e.takeTicksAfterLift(node, runtime, bp)
-	}
-
-	// Flush the released-bin's accumulator: any deltas recorded
-	// between RELEASE PARTIAL and BinPickedUp must ship before the
-	// active claim advances or the runtime clears, otherwise
-	// post-flush ticks attribute against a bin that's no longer at
-	// the slot. A window that started after the lift was taken out above
-	// and is not sent.
-	if err := e.inventoryDelta.OnBinPickedUp(order.ProcessNodeID); err != nil {
+	hold, holdPart := e.takeTicksAfterLift(node, rt, bp)
+	if err := e.inventoryDelta.OnBinPickedUp(&node.ID); err != nil {
 		e.logFn("bin_picked_up: flush failed: %v", err)
 	}
-
-	// Clear the active-BIN pointer whenever the bin that just physically left
-	// the slot is the one bound as active — gated on BIN IDENTITY, not on the
-	// order. Two ways an order-gated clear missed a departed bin, both of which
-	// let PLC consume ticks keep charging a bin that was gone:
-	//   1. Two-robot swap: the EVAC leg carries the old bin out, but the evac
-	//      is usually the staged (not active) order.
-	//   2. Changeover abort (cancelProcessChangeover) nulls the active-order
-	//      ref *before* the evac's pickup event lands, permanently disarming
-	//      the clear.
-	// Springfield 2026-06-02: ALN_003 RH→LH changeover aborted mid-swap; bin 18
-	// (RH) departed but active_bin_id stayed = 18, so consume ticks drained bin
-	// 18 while it sat in the supermarket. Tracking the pointer by physical bin
-	// identity makes it follow reality through aborts.
-	//
-	// ActiveOrderID IS DELIBERATELY LEFT ALONE. This handler used to null it
-	// here "so the next tick attribution lands cleanly" — a job it lost at the
-	// bin-as-truth flip, where binAtNode (wiring_counter_delta.go) moved to
-	// ActiveBinID and no tick, delta or UOP path has read ActiveOrderID since.
-	// What it still is is the cell-busy pointer the admission guards read, and
-	// clearing it at the press pickup declared the cell free five steps early
-	// (single_robot's 4→8 window). orderWorksTheCell (leg_departure.go) frees
-	// the cell honestly instead: the pointer stays set until the leg is
-	// terminal or departed.
-	if rterr != nil || runtime == nil {
-		e.countMu.Unlock()
+	if err := e.carrierLeftAtPickup(node.ID, node.CoreNodeName, bp.Epoch, hold, holdPart); err != nil {
+		e.logFn("bin_picked_up: bin %d leaving %s: %v", bp.BinID, node.CoreNodeName, err)
 		return
 	}
-	if bound {
-		// The carrier left: pointer, count and identity go together
-		// (carrier_left.go), with the lift's generation stamped and a
-		// produce seat's ticks after the lift held for its next bin, in the
-		// same statement (Lane H, D11); a consume seat's are logged
-		// (takeTicksAfterLift).
-		if err := e.carrierLeftAtPickup(*order.ProcessNodeID, location, bp.Epoch, hold, holdPart); err != nil {
-			e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
-		}
-	}
-	e.countMu.Unlock()
-
-	e.logFn("bin_picked_up: flushed deltas + cleared active bin for order=%s bin=%d (status=%s)",
-		orderUUID, binID, order.Status)
+	e.logFn("bin_picked_up: bin %d left %s — flushed and cleared (order=%s status=%s)",
+		bp.BinID, node.CoreNodeName, order.UUID, order.Status)
 }
 
 // takeTicksAfterLift is the Edge half of the late-lift rule (Lane H R4,

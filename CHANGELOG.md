@@ -16,6 +16,11 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
+- A robot's lift clears the spot it lifted from whichever order it belongs to, and only for the cart it lifted
+
 ## v0.3.1 — 2026-11-11
 
 Deploy: no migration.

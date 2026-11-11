@@ -33,6 +33,12 @@ func (db *DB) GetProcessNodeByCoreNodeName(coreNodeName string) (*processes.Node
 	return processes.GetNodeByCoreNodeName(db.DB, coreNodeName)
 }
 
+// ProcessNodesHoldingBin returns the process_node rows whose seat holds binID
+// as its active bin. See processes.NodesHoldingBin.
+func (db *DB) ProcessNodesHoldingBin(binID int64) ([]processes.Node, error) {
+	return processes.NodesHoldingBin(db.DB, binID)
+}
+
 // CreateProcessNode inserts a process_node row, generating the code
 // and sequence number when not supplied.
 func (db *DB) CreateProcessNode(in processes.NodeInput) (int64, error) {

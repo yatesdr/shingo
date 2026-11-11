@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
+	"shingoedge/store/processes"
 )
 
 // TestBinPickedUp_FlushesAccumulator pins Item 11's flush trigger:
@@ -22,7 +23,6 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  50,
 	})
-	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
 
 	const binID int64 = 11001
 	const orderUUID = "uuid-bpu-flush"
@@ -34,6 +34,9 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	// The released bin is the one bound at the slot: the flush is for what was
+	// charged to it, and the pickup finds the seat by the carrier it lifted.
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50), "seed the released bin")
 
 	eng := testEngine(t, db)
 	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
@@ -77,7 +80,7 @@ func TestBinPickedUp_HandlesMissingOrder(t *testing.T) {
 
 	// No order seeded — handler must early-return cleanly. Location
 	// is irrelevant here (the order-lookup early-return fires before
-	// the location gate); empty string is fine.
+	// the place match); empty string is fine.
 	eng.HandleBinPickedUp("uuid-nonexistent", 99999, "")
 
 	// No flush should fire for an unknown order — there's nothing to
@@ -393,7 +396,7 @@ func TestRegression_BinPickedUpAtRemoteLocationIsIgnored(t *testing.T) {
 }
 
 // TestRegression_BinPickedUpEmptyLocationFailsClosed pins the
-// inverted location gate. Pre-inversion the gate failed OPEN on
+// place match's fail-closed rule (pickupLocationIs). Pre-inversion the gate failed OPEN on
 // empty Location — re-introducing the Springfield bug any time
 // Core's wiring_block_completed.go failed to populate ev.Location.
 // Post-inversion empty Location is treated as "couldn't verify,
@@ -493,5 +496,139 @@ func TestRegression_BinPickedUpWhitespaceLocationMatches(t *testing.T) {
 	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != orderID {
 		t.Errorf("ActiveOrderID = %v, want %d — the pickup must not clear the cell-busy pointer",
 			rt.ActiveOrderID, orderID)
+	}
+}
+
+// stopOnTheWay seeds the Hopkinsville 2026-11-11 shape: one process with a line
+// seat (PLN_03's part, HK-LINE) and the press's back position (PLN_02's part,
+// HK-BACK), which a swap's supply leg for the line stops at on its way. The line
+// seat holds the old carrier (bin 1, seedConsumeNode's default) and the back
+// position holds the leg's empty (bin 8), as the landing there left it.
+func stopOnTheWay(t *testing.T) (eng *Engine, processID, lineID, backID int64) {
+	t.Helper()
+	db := testEngineDB(t)
+	processID, lineID, _, _ = seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "HK-LINE", PayloadCode: "PART-HK", UOPCapacity: 100, InitialUOP: 50,
+	})
+	backID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "HK-BACK", Code: "HKB", Name: "HK Back", Sequence: 2, Enabled: true,
+	})
+	testutil.MustNoErr(t, err, "the back position")
+	eng = testEngine(t, db)
+	return eng, processID, lineID, backID
+}
+
+// TestBinPickedUp_LeavesTheSeatWhereTheCarrierWasLifted pins how the pickup
+// finds its seat: by the place of the lift and the carrier lifted, as the
+// landing does, never by the order's own node. Each row lifts at a place and
+// names a carrier; the seats that must let go are named, and every other seat
+// must keep what it holds.
+func TestBinPickedUp_LeavesTheSeatWhereTheCarrierWasLifted(t *testing.T) {
+	t.Parallel()
+	const lineBin, backBin int64 = 1, 8
+	for _, row := range []struct {
+		name      string
+		noNode    bool // the lifting order names no process node (threshold replenishment)
+		at        string
+		bin       int64
+		wantLine  int64 // 0 = the seat let go
+		wantBack  int64
+		rationale string
+	}{
+		{name: "a stop on the way: the leg's order is the line's", at: "HK-BACK", bin: backBin,
+			wantLine: lineBin, wantBack: 0,
+			rationale: "the carrier left the back position; the order ending at the line does not make it the line's lift"},
+		{name: "an order with no process node", noNode: true, at: "HK-BACK", bin: backBin,
+			wantLine: lineBin, wantBack: 0,
+			rationale: "what a seat holds is a fact about the place, not about whose order lifted it"},
+		{name: "another carrier at the same place", at: "HK-BACK", bin: 999,
+			wantLine: lineBin, wantBack: backBin,
+			rationale: "a seat lets go only of the carrier lifted from it"},
+		{name: "the seat's carrier, lifted at another place", at: "HK-LINE-NODE", bin: backBin,
+			wantLine: lineBin, wantBack: backBin,
+			rationale: "the line holds another carrier, and the back position is not where the lift was: " +
+				"a record at another place is ended by the lift there, not guessed at here"},
+		{name: "a lift at a place with no seat", at: "MARKET", bin: backBin,
+			wantLine: lineBin, wantBack: backBin,
+			rationale: "the supermarket pickup a supply leg starts with touches no seat (Springfield 2026-05-18)"},
+		{name: "an empty location", at: "", bin: backBin,
+			wantLine: lineBin, wantBack: backBin,
+			rationale: "a pickup Core could not place matches no seat (fails closed)"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, lineID, backID := stopOnTheWay(t)
+			db := eng.db
+			b := backBin
+			_, err := db.EnsureProcessNodeRuntime(backID)
+			testutil.MustNoErr(t, err, "the back position's runtime")
+			testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(backID, &b), "the empty waiting at the back position")
+
+			nodeID := &lineID
+			if row.noNode {
+				nodeID = nil
+			}
+			const uuid = "uuid-stop-on-the-way"
+			_, err = db.CreateOrder(uuid, orders.TypeRetrieve, nodeID, true, 1, "HK-LINE-NODE", "", "",
+				protocol.Height{}, false, "PART-HK", "", "")
+			testutil.MustNoErr(t, err, "the supply leg")
+
+			eng.HandleBinPickedUp(uuid, row.bin, row.at)
+
+			for _, seat := range []struct {
+				name string
+				id   int64
+				want int64
+			}{{"line", lineID, row.wantLine}, {"back position", backID, row.wantBack}} {
+				rt := runtimeOf(t, eng, seat.id)
+				switch {
+				case seat.want == 0 && rt.ActiveBinID != nil:
+					t.Errorf("%s still holds bin %d after the lift, want it let go: %s", seat.name, *rt.ActiveBinID, row.rationale)
+				case seat.want != 0 && (rt.ActiveBinID == nil || *rt.ActiveBinID != seat.want):
+					t.Errorf("%s holds %v after the lift, want bin %d: %s", seat.name, rt.ActiveBinID, seat.want, row.rationale)
+				}
+			}
+		})
+	}
+}
+
+// TestRegression_ASwapsStopAtTheBackPositionLeavesItEmpty replays Hopkinsville
+// 2026-11-11 through the real landing and pickup doors. A swap's empty for the
+// line (PLN_03) landed at the press's back position (PLN_02) to wait, was lifted
+// there 15 s later and landed at the line. The landing bound it at the back
+// position; the pickup there was ignored as "not our slot", because the order's
+// node was the line. The back position went on naming a carrier that had left,
+// and the changeover to the next style, reading the seat (nodeStateAt), planned
+// a pickup of it there: two orders Core refused for the life of the changeover
+// ("no bins at node"). After the lift the back position must read EMPTY to the
+// planner, which then plans a plain delivery (pressHasVacantPosition).
+func TestRegression_ASwapsStopAtTheBackPositionLeavesItEmpty(t *testing.T) {
+	t.Parallel()
+	eng, processID, lineID, backID := stopOnTheWay(t)
+	db := eng.db
+	const empty int64 = 8
+	const uuid = "uuid-hk-swap-supply"
+	_, err := db.CreateOrder(uuid, orders.TypeRetrieve, &lineID, true, 1, "HK-LINE-NODE", "", "",
+		protocol.Height{}, false, "PART-HK", "", "")
+	testutil.MustNoErr(t, err, "the swap's supply leg")
+	// The line's old carrier has gone with the evac before the empty comes on.
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(lineID, nil), "the evac lifted the old carrier")
+
+	eng.HandleBinLanded(protocol.BinLanded{BinID: empty, CoreNodeName: "HK-BACK", Epoch: 1, OrderUUID: uuid, PlacedSeq: 100})
+	if rt := runtimeOf(t, eng, backID); rt.ActiveBinID == nil || *rt.ActiveBinID != empty {
+		t.Fatalf("the landing at the back position bound %v, want bin %d — the replay needs the stop recorded", rt.ActiveBinID, empty)
+	}
+	eng.HandleBinPickedUpMessage(protocol.BinPickedUp{OrderUUID: uuid, BinID: empty, Location: "HK-BACK", Epoch: 2})
+	eng.HandleBinLanded(protocol.BinLanded{BinID: empty, CoreNodeName: "HK-LINE-NODE", Epoch: 2, OrderUUID: uuid, PlacedSeq: 101})
+
+	if rt := runtimeOf(t, eng, backID); rt.ActiveBinID != nil {
+		t.Errorf("the back position still names bin %d after the carrier was lifted there and landed at the line", *rt.ActiveBinID)
+	}
+	if rt := runtimeOf(t, eng, lineID); rt.ActiveBinID == nil || *rt.ActiveBinID != empty {
+		t.Errorf("the line holds %v, want bin %d — the carrier landed there", rt.ActiveBinID, empty)
+	}
+	if seat := eng.nodeStateAt(processID)("HK-BACK").Seat; seat != SeatEmpty {
+		t.Errorf("the planner reads the back position as %v, want SeatEmpty — an occupied read is what planned "+
+			"the pickup of a carrier that was not there", seat)
 	}
 }

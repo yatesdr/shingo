@@ -134,7 +134,8 @@ func orderWorksTheCell(o *domain.Order) bool {
 // own plan — and completes the departure if the leg's placement is already on
 // the books. When it is not, settleCellPlacement finishes it later.
 //
-// Called from HandleBinPickedUp ABOVE the location gate: a departure is not slot
+// Called from HandleBinPickedUp with the order's own work, not the seat's
+// (leaveSeatsAtLift, matched to the place of the lift): a departure is not slot
 // work — single_robot departs at OutboundStaging, and a 3-position press's cell
 // pickups can be at either index position.
 //

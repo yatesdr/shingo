@@ -547,9 +547,9 @@ func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
 	}
 
 	// Location matches the seeded node's CoreNodeName ("P3-NODE") so
-	// the inverted location gate passes and we actually exercise the
+	// the evac lifts at its own node and we actually exercise the
 	// terminal-skip inside F' Phase 2 rather than short-circuiting
-	// on the gate.
+	// on the place match (pickupLocationIs).
 	eng.HandleBinPickedUp(evacOrder.UUID, 1, "P3-NODE")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)

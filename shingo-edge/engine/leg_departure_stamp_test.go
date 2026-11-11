@@ -13,7 +13,8 @@ import (
 	"shingoedge/store/processes"
 )
 
-// The stamp site: HandleBinPickedUp, above the location gate.
+// The stamp site: HandleBinPickedUp, with the order's own work, outside the
+// seat's work (leaveSeatsAtLift), which is matched to the place of the lift.
 //
 // swap_leg_standard_test.go walks the builders' shapes against the predicates.
 // These drive the REAL handler with the REAL builders' step lists, so they
@@ -318,35 +319,36 @@ func TestBinPickedUp_NeverStampsALegThatEndsAtTheCell(t *testing.T) {
 	}
 }
 
-// TestBinPickedUp_StampIsAboveTheLocationGate pins the placement. The gate
-// returns early unless location == the process node's CoreNodeName, and
-// single_robot's proof step is OUT-STAGING — a node the gate rejects. A stamp
-// written below the gate would therefore never fire for the one mode whose
-// latent hole this batch closes.
+// TestBinPickedUp_StampIsAboveTheLocationGate pins the placement. The seat's
+// work is matched to the place of the lift (leaveSeatsAtLift), and
+// single_robot's proof step is OUT-STAGING — a place no seat of the cell is. A
+// stamp written inside the seat's work would therefore never fire for the one
+// mode whose latent hole this batch closes.
 func TestBinPickedUp_StampIsAboveTheLocationGate(t *testing.T) {
 	t.Parallel()
 	f := newStampFixture(t, protocol.SwapModeSingleRobot, "", false, false)
 	// The step-7 record first: this case is about WHERE the stamp sits relative
-	// to the location gate, and a leg held back by the unrecorded-placement arm
+	// to the seat's work, and a leg held back by the unrecorded-placement arm
 	// would never reach the question.
 	f.recordPlacement(t)
 
-	f.pickUpAt(t, "OUT-STAGING")
+	// The lift names the press's own carrier, at OUT-STAGING: the strongest
+	// form of the off-seat pickup, since the carrier matches and only the place
+	// does not.
+	f.eng.HandleBinPickedUp(f.order.UUID, placedBinID, "OUT-STAGING")
 
 	if o := f.departedAt(t); !o.Departed {
-		t.Fatal("no departure stamped for a pickup at OUT-STAGING — the stamp is below the location gate, " +
-			"which only admits the process node")
+		t.Fatal("no departure stamped for a pickup at OUT-STAGING — the stamp is inside the seat's work, " +
+			"which only matches the place the carrier was lifted from")
 	}
-	// And the gate itself still ran and still refused: the handler must have
-	// logged its "not our slot" line for this same event.
-	var refused bool
-	for _, l := range *f.logs {
-		if strings.Contains(l, "not our slot") {
-			refused = true
-		}
-	}
-	if !refused {
-		t.Error("the location gate did not run for this event — the stamp must be inserted ABOVE it, not instead of it")
+	// And the seat's work still matched by place: the press seat keeps its
+	// carrier, because the lift was not there. (This used to read the old
+	// gate's "not our slot" log line; the gate became the place match.)
+	rt, err := f.db.GetProcessNodeRuntime(f.nodeID)
+	testutil.MustNoErr(t, err, "runtime after the pickup")
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != placedBinID {
+		t.Errorf("press seat holds %v after a lift at OUT-STAGING, want bin %d — a lift at another place "+
+			"must leave the seat alone even when it names the seat's carrier", rt.ActiveBinID, placedBinID)
 	}
 }
 

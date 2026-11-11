@@ -77,9 +77,8 @@ func (m *Mutator) Stop() { m.acc.stop() }
 func (m *Mutator) Flush() { m.acc.flush() }
 
 // OnBinPickedUp flushes pending deltas at the bin-pickup boundary.
-// Today's caller is HandleBinPickedUp at handler_bin_picked_up.go:108,
-// called before the runtime row's order pointer + active_bin_id are
-// cleared. The flush MUST happen before the slot pointers clear so
+// Today's caller is the pickup's leaveSeatAtLift (handler_bin_picked_up.go),
+// called before the seat's active_bin_id is cleared. The flush MUST happen before the slot pointers clear so
 // any in-flight ticks still attribute to the bin that was physically
 // at the slot (the one that just got picked up). After the flush
 // returns, the engine's race-guarded ClearActiveBin call clears the

@@ -507,6 +507,28 @@ func GetNodeByCoreNodeName(db *sql.DB, coreNodeName string) (*Node, error) {
 	return firstRetired, nil
 }
 
+// NodesHoldingBin returns every process_nodes row whose seat names binID as
+// its active bin, lowest id first. The pickup asks it: a carrier lifted at a
+// place leaves every seat there that holds it (Engine.leaveSeatsAtLift), and
+// the place is matched by the caller, where the pickup's location rules live.
+//
+// RETIRED ROWS ARE INCLUDED. The landing binds a retired row when no live row
+// carries the name (GetNodeByCoreNodeName's fallback), so the lift that ends
+// that carrier's stay has to be able to find it there too. The match is on the
+// carrier's identity, so a retired row that holds some other bin is not read.
+//
+// Normally zero or one row; more than one is a carrier recorded at two places.
+func NodesHoldingBin(db *sql.DB, binID int64) ([]Node, error) {
+	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+`
+		JOIN process_node_runtime_states rs ON rs.process_node_id = n.id
+		WHERE rs.active_bin_id = ? ORDER BY n.id`, binID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodes(rows)
+}
+
 // CreateNode inserts a process_node row, generating the code and
 // sequence number when not supplied.
 func CreateNode(db *sql.DB, in NodeInput) (int64, error) {
