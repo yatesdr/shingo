@@ -47,16 +47,21 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 
 	// Where each population's re-driver is wired. Two files, because the lane
 	// populations and the acquiring set are wired separately and deliberately.
-	wiringFor := map[string]string{
-		"Dispatcher.EvaluateGroupReleases":   "wiring_lane_gate.go",
-		"Dispatcher.RedriveHeldCompoundLegs": "wiring_lane_gate.go",
-		"Dispatcher.RedriveVacateOnLift":     "wiring_lane_gate.go",
-		"fulfillment.Scanner.RunOnce":        "wiring.go",
-		"Dispatcher.AdvanceCompoundOrder":    "wiring.go",
+	// The table turn's is not an eventbus subscription at all: it is called
+	// from the staged arm of the vendor status handler and from the robot poll,
+	// behind its hash test. Each of its events must appear in one of its files,
+	// and every one of its files must call it.
+	wiringFor := map[string][]string{
+		"Dispatcher.EvaluateGroupReleases":   {"wiring_lane_gate.go"},
+		"Dispatcher.RedriveHeldCompoundLegs": {"wiring_lane_gate.go"},
+		"Dispatcher.RedriveVacateOnLift":     {"wiring_lane_gate.go"},
+		"fulfillment.Scanner.RunOnce":        {"wiring.go"},
+		"Dispatcher.AdvanceCompoundOrder":    {"wiring.go"},
+		"Dispatcher.RedriveTableTurns":       {"wiring_vendor_status.go", "engine_background.go"},
 	}
 
 	sources := map[string]string{}
-	for _, f := range []string{"wiring_lane_gate.go", "wiring.go"} {
+	for _, f := range []string{"wiring_lane_gate.go", "wiring.go", "wiring_vendor_status.go", "engine_background.go"} {
 		b, err := os.ReadFile(filepath.Join("..", "engine", f))
 		if err != nil {
 			// The test runs with the package dir as cwd; fall back to a bare read.
@@ -79,7 +84,7 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 		if pop.Owner == string(dispatch.OwnerStation) {
 			continue
 		}
-		file, ok := wiringFor[pop.Redriver]
+		files, ok := wiringFor[pop.Redriver]
 		if !ok {
 			t.Errorf("population %q names re-driver %q, and this test does not know which wiring "+
 				"file registers it. Either the re-driver moved or a new population was added "+
@@ -87,27 +92,31 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 				pop.Population, pop.Redriver)
 			continue
 		}
-		src := sources[file]
 
-		// The re-driver must actually be called from the wiring.
+		// The re-driver must actually be called from the wiring, in every file
+		// named for it.
 		call := shortName(pop.Redriver) + "("
-		if !strings.Contains(src, call) {
-			t.Errorf("population %q declares re-driver %q, but %s never calls it — the events below "+
-				"are subscribed to something else, or to nothing",
-				pop.Population, pop.Redriver, file)
-			continue
+		calledIn := ""
+		for _, file := range files {
+			if !strings.Contains(sources[file], call) {
+				t.Errorf("population %q declares re-driver %q, but %s never calls it — the events below "+
+					"are subscribed to something else, or to nothing",
+					pop.Population, pop.Redriver, file)
+				continue
+			}
+			calledIn += sources[file]
 		}
 
 		for _, ev := range pop.Events {
 			// A subscription registers the event type as the trailing argument of
 			// SubscribeTyped / SubscribeTypes. Requiring the identifier to appear in
-			// the file that also calls the re-driver is the structural claim.
-			if !strings.Contains(src, ev) {
-				t.Errorf("population %q declares %s as a releaser, but %s does not mention it. "+
+			// a file that also calls the re-driver is the structural claim.
+			if !strings.Contains(calledIn, ev) {
+				t.Errorf("population %q declares %s as a releaser, but %v does not mention it. "+
 					"Either the subscription was removed — in which case a quiesced set of waits "+
 					"under this population now depends entirely on the floor — or the table is "+
 					"claiming coverage it does not have",
-					pop.Population, ev, file)
+					pop.Population, ev, files)
 			}
 		}
 	}

@@ -187,6 +187,17 @@ type QueueParams struct {
 	// VacateLifterGone marks a vacate hold whose lifter has ended without
 	// lifting the bin (CauseVacateLifterGone): nothing scheduled will move it.
 	VacateLifterGone bool
+	// TableNode names the node whose jack-table turn holds the order
+	// (CauseTableTurning, CauseTableTurnBlocked, CauseTableTurnFailed);
+	// TableWantDeg is the angle it turns to, degrees. TableReadsDeg is the angle
+	// the table read when Core gave up (CauseTableTurnFailed), nil when it could
+	// not be read. TableBlocked is why it cannot turn now
+	// (CauseTableTurnBlocked), "" otherwise.
+	TableNode     string
+	TableWantDeg  float64
+	TableReadsDeg *float64
+	TableBlocked  string
+	TableFailed   bool
 	// FleetReason is the fleet's own refusal, already rendered
 	// (fleet.FormatVendorError — "RDS error 60009: …"), when the fleet ANSWERED
 	// with one (QueueFleetUnavailable). Empty means it did not answer, which is
@@ -327,6 +338,20 @@ func materialSentence(p QueueParams) string {
 	return s
 }
 
+// tableSentence is a lift (or set-down) held for the robot's jack table.
+func tableSentence(p QueueParams) string {
+	switch {
+	case p.TableFailed && p.TableReadsDeg != nil:
+		return fmt.Sprintf("The table at %s did not reach %.0f°, reads %.0f° — Core stopped turning it",
+			p.TableNode, p.TableWantDeg, *p.TableReadsDeg)
+	case p.TableFailed:
+		return fmt.Sprintf("The table at %s did not reach %.0f° — Core stopped turning it", p.TableNode, p.TableWantDeg)
+	case p.TableBlocked != "":
+		return fmt.Sprintf("Cannot turn the table at %s: %s", p.TableNode, p.TableBlocked)
+	}
+	return fmt.Sprintf("Turning the table at %s to %.0f°", p.TableNode, p.TableWantDeg)
+}
+
 // slotSentence names the destination and, when known, WHY it is unavailable.
 // The bin count and the inbound count are both computed at the capacity gate;
 // carrying them here is what makes "go clear it" and "wait, one is coming"
@@ -338,6 +363,11 @@ func slotSentence(p QueueParams) string {
 	// what is actually true.
 	if p.FleetReason != "" {
 		return fleetSentence(p)
+	}
+	// A TABLE TURN names the node, because the table turning there is the
+	// whole wait.
+	if p.TableNode != "" {
+		return tableSentence(p)
 	}
 	// A VACATE HOLD names the bin, because that bin leaving is the whole wait.
 	if p.VacateBin != "" {

@@ -381,6 +381,22 @@ const (
 	// hold instead). State-keyed: the bin still stands on the node and the order
 	// that was to lift it is terminal.
 	CauseVacateLifterGone QueueCause = "vacate-lifter-gone"
+	// CauseTableTurning — the robot stands at a node that turns its jack table
+	// before the lift (or the set-down), and Core is turning it: the station's
+	// release is held, or the wait is a turn wait Core inserted. Core appends
+	// the lift when the table reads the node's angle
+	// (dispatch/table_turn_hold.go). "Turning the table at <node>".
+	CauseTableTurning QueueCause = "table-turning"
+	// CauseTableTurnBlocked — the table cannot be turned now: the robot is
+	// e-stopped, someone else holds its control, or its jack is not as the turn
+	// needs it (down for a lift, up and loaded for a set-down). Core sends
+	// nothing and re-asks on the robot's next status change.
+	CauseTableTurnBlocked QueueCause = "table-turn-blocked"
+	// CauseTableTurnFailed — three turns were sent and the table never read the
+	// angle. Core stops sending and raises an alarm naming the node. State-keyed:
+	// the order is still held, and a person ends it (the hard release, a cancel,
+	// or clearing the node's angle).
+	CauseTableTurnFailed QueueCause = "table-turn-failed"
 	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
 	// itself then failed: the re-bind found no slot, the segment could not be
 	// built, the append errored below the retry threshold. The order stays a

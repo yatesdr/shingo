@@ -169,8 +169,19 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// and Core holds the segment, appending it when the bin lifts
 	// (vacate_hold.go). It used to be refused (arms Z and Y) and pressed again.
 	// Every other release reads at most one sibling row here, and goes.
-	if holds := d.vacateHoldsAtRelease(order, steps); len(holds) > 0 {
-		d.holdRelease(env, order, p, steps, holds)
+	//
+	// ── A LIFT AT A NODE THAT TURNS THE TABLE: THE SAME TAKE ──────────────
+	//
+	// The segment opens with the lift at a turn node, and the robot's table
+	// does not read the node's angle (or the robot is still driving to the
+	// wait, or cannot be read): the release is taken the same way, marked on
+	// the wait, and the table turn appends the lift when the table reads the
+	// angle (table_turn_hold.go). A release is never refused for the turn. A
+	// node with no angle answers from memory: no read.
+	holds := d.vacateHoldsAtRelease(order, steps)
+	turn := d.turnHoldAtRelease(order, steps)
+	if len(holds) > 0 || turn {
+		d.holdRelease(env, order, p, steps, holds, turn)
 		return
 	}
 
@@ -530,6 +541,12 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 		}
 		log.Printf("HARD RELEASE: order %d bypasses a vacate hold (%s)", orderID, physical)
 	}
+	// So is the table turn: a dead turntable is what this hatch is for. The
+	// angle read and the angle wanted go in the audit line.
+	if node, t, applies := d.turnApplies(steps, order.WaitIndex); applies && d.turnStillOwed(order, steps) {
+		physical += fmt.Sprintf("; TABLE TURN BYPASSED at %s: %s", node, d.describeTable(order, t))
+		log.Printf("HARD RELEASE: order %d bypasses a table turn (%s)", orderID, physical)
+	}
 
 	d.db.AppendAudit("order", orderID, "hard_release", "",
 		fmt.Sprintf("HARD RELEASE by %s: advanced past a %s-owned wait at wait_index %d. Core's "+
@@ -541,7 +558,7 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 		orderID, owner, actor, physical)
 
 	d.patchRedirectSegments(segment, order, moreWaits)
-	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "hard release"); err != nil {
+	if err := d.appendSegment(order, segment, moreWaits, blockOffset, "hard release", true); err != nil {
 		return err
 	}
 	// The append may leave the order at a lane's wait: that lane's event (F1).
@@ -636,6 +653,17 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 			}
 		}
 	}
+	// THE TABLE MOVED OFF ITS ANGLE between the release's read and the append
+	// door's: the count is already written, so the release is held with the
+	// turn's mark alone and the table turn appends it. Never refused.
+	if errors.Is(err, ErrTurnNotDone) {
+		if fresh, rErr := d.db.GetOrder(order.ID); rErr == nil && fresh != nil {
+			if steps, ok := decodeSteps(fresh.StepsJSON); ok {
+				d.markHeld(env, fresh, steps, nil, true)
+				return
+			}
+		}
+	}
 	if err == nil {
 		// A STATION RELEASE ONTO A LANE WAIT IS THAT LANE'S EVENT (F1): order
 		// 233's shape, which the floor used to free a minute later under "(none)".
@@ -709,7 +737,27 @@ var errTailAppendedElsewhere = errors.New("its tail was appended by another pass
 //
 // Segments are not load-sequence expanded (nil): F4c is scoped to the simple
 // transport path's initial pickup, and an appended segment never carries one.
+//
+// ── AND IT REFUSES A LIFT THE TABLE TURN HAS NOT TURNED FOR ──────────────
+//
+// The first thing it asks, before the claim: a segment that opens with the
+// lift (or the set-down) at a node that turns the table goes only when the
+// robot's table reads the node's angle (turnBackstop, ErrTurnNotDone). Every
+// releaser checks first, so a refusal here is a defect, logged as one. The
+// Core hard release is the one caller that passes it (appendSegment's bypass).
 func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int, what string) error {
+	return d.appendSegment(order, segment, moreWaits, blockOffset, what, false)
+}
+
+// appendSegment is appendSegmentAndAdvance with the table turn's door made
+// explicit: turnBypass is the hard release's audited override, and nothing
+// else passes true.
+func (d *Dispatcher) appendSegment(order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int, what string, turnBypass bool) error {
+	if !turnBypass {
+		if err := d.turnBackstop(order, what); err != nil {
+			return err
+		}
+	}
 	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset, nil)
 	complete := !moreWaits
 

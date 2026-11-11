@@ -131,3 +131,23 @@ func FaultClearedAlert(orderID int64, edgeUUID, stationID, robotID, timeFaulted 
 	b.WriteString("\n\n\n")
 	return b.String()
 }
+
+// TableTurnFailedAlert is a robot's jack table that never reached a node's turn
+// angle: Core stopped sending the turn and holds the order.
+func TableTurnFailedAlert(orderID int64, node, detail string) string {
+	var b strings.Builder
+	b.WriteString("SHINGO TABLE TURN FAILED\n")
+	b.WriteString("========================\n\n")
+	b.WriteString(fmt.Sprintf("Order ID:        %d\n", orderID))
+	b.WriteString(fmt.Sprintf("Node:            %s\n", node))
+	b.WriteString(fmt.Sprintf("Time:            %s\n", time.Now().Format(time.RFC1123)))
+	b.WriteString("\n")
+	b.WriteString(detail)
+	b.WriteString("\n")
+	return b.String()
+}
+
+// TableTurnFailedSubject names the node.
+func TableTurnFailedSubject(node string) string {
+	return fmt.Sprintf("Shingo Table Turn Failed - %s", node)
+}

@@ -95,8 +95,11 @@ func (d *Dispatcher) liftDependencies(p *orders.Order, seg []resolvedStep) []lif
 		deps = append(deps, liftDep{
 			lifter: lifter,
 			node:   s.Node,
+			// A lifter whose lift waits on its table turn is not released with
+			// this one: the supply would drive onto a line whose cart has not
+			// left. It goes after the lift, when the node no longer holds a bin.
 			coRelease: lifter.Status == StatusStaged && segmentLifts(lifterSeg, s.Node) &&
-				picksUpBefore(seg, i),
+				picksUpBefore(seg, i) && !d.turnStillOwed(lifter, lifterSteps),
 		})
 	}
 	return deps

@@ -169,6 +169,14 @@ func (d *Dispatcher) turnAt(node string) (turnNode, bool) {
 	return t, ok
 }
 
+// hasTurnNodes reports whether any node carries a turn: the one check a node
+// with no angle pays.
+func (d *Dispatcher) hasTurnNodes() bool {
+	d.turnMu.Lock()
+	defer d.turnMu.Unlock()
+	return len(d.turnNodes) > 0
+}
+
 // tableTurner is the wired turner, nil when the fleet has none.
 func (d *Dispatcher) tableTurner() (fleet.TableTurner, RobotStatusReader) {
 	d.turnMu.Lock()

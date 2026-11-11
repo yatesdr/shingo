@@ -6,6 +6,7 @@ import (
 	"log"
 	"shingocore/dispatch/plan"
 	"sync"
+	"sync/atomic"
 
 	"shingo/protocol"
 	"shingo/protocol/lockcheck"
@@ -113,11 +114,17 @@ type Dispatcher struct {
 	// The table turn (table_turn.go): the fleet's turner and the robot status
 	// reader, wired by the engine (SetTableTurner), nil on a fleet that cannot
 	// turn a table; the turn nodes, cached so a node with no angle costs no
-	// query. Behind turnMu, a leaf.
+	// query; the turns sent per wait, in memory (a restart forgets them, which
+	// costs at most three more absolute sends); and the alarm a failed turn
+	// raises. Behind turnMu, a leaf. turnPending says a turn may be waiting, so
+	// the robot poll's hook returns at once when none is (table_turn_hold.go).
 	turnMu      lockcheck.Mutex[lockorder.TableTurns]
 	turner      fleet.TableTurner
 	robotStatus RobotStatusReader
 	turnNodes   map[string]turnNode
+	turnSent    map[turnKey]*turnSends
+	turnAlarm   func(orderID int64, node, detail string)
+	turnPending atomic.Bool
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
@@ -136,6 +143,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 
 		laneGates:       newLaneGateSerializer(),
 		gateAppendFails: make(map[int64]int),
+		turnSent:        make(map[turnKey]*turnSends),
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	// A closure rather than the planner itself, because the planner is built a

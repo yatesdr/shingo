@@ -112,6 +112,12 @@ const (
 	// no robot is sent until the home's carrier is lifted). Core observes the
 	// fact (the lift), so it re-drives it and floors it (vacate_hold.go).
 	PopVacateHeld WaitPopulation = "vacate-held"
+	// PopTurnHeld is an order parked at a wait the table turn releases
+	// (table_turn_hold.go): a turn wait Core inserted in front of a lift or a
+	// set-down, or a station wait whose release Core took before the robot's
+	// jack table was turned. Core observes the fact (the table angle on the
+	// robot poll), so it re-drives it and floors it.
+	PopTurnHeld WaitPopulation = "turn-held"
 	// PopNone is the honest answer for a declared cause nothing produces. It is
 	// not a population; it is the absence of one, named so the totality test can
 	// tell "no orders wait under this" from "nobody wrote the row".
@@ -235,6 +241,20 @@ var waitPopulations = []populationReleaser{
 			"EventOrderFailed", "EventOrderSkipped",
 		},
 		floor: "Dispatcher.SweepLaneWaiters (60s)",
+	},
+	{
+		// The robot's arrival at the wait is the first event: the staged hook
+		// sends the turn (wiring_vendor_status.go, on StatusStaged). A robot
+		// status change re-asks the held set, behind the poll's unchanged-hash
+		// short-circuit and only while a turn is pending
+		// (engine_background.go, after EventRobotsUpdated's hash test). The
+		// floor re-reads the population from the plans, which a restart cannot
+		// take away. An order's end needs no event: the population drops it.
+		population: PopTurnHeld,
+		owner:      OwnerCore,
+		redriver:   "Dispatcher.RedriveTableTurns",
+		events:     []string{"StatusStaged", "EventRobotsUpdated"},
+		floor:      "Dispatcher.SweepLaneWaiters (60s)",
 	},
 	{
 		// THE FOURTH POPULATION, AND THE ONE THAT MUST NOT BE FLOORED.
@@ -759,6 +779,25 @@ var causeReleasers = []causeReleaser{
 		what: "the stamped bin is lifted off the node — the lifter's pickup block (EventBinEnteredTransit), " +
 			"read back from bins.last_lift_at — or the lifter ends moot (skipped, the death rule's moot), " +
 			"or the Core hard release",
+	},
+	{
+		cause:       CauseTableTurning,
+		populations: []WaitPopulation{PopTurnHeld},
+		what: "the robot's table reads the node's angle (the robot poll, after Core's turn) and Core appends " +
+			"the lift, or the node's angle is cleared (the turn is moot and Core appends), or the Core hard release",
+	},
+	{
+		cause:       CauseTableTurnBlocked,
+		populations: []WaitPopulation{PopTurnHeld},
+		what: "the robot's next status change shows it free to turn — e-stop released, control back with the " +
+			"fleet manager, the jack as the turn needs it — and Core sends the turn; or the Core hard release",
+	},
+	{
+		cause:       CauseTableTurnFailed,
+		populations: []WaitPopulation{PopTurnHeld},
+		what: "a person: the Core hard release, a cancel, or clearing the node's angle (which appends). Core " +
+			"stopped sending after three turns and raised an alarm naming the node; it still appends if the " +
+			"table comes to read the angle",
 	},
 	{
 		cause:       CauseVacateLifterGone,

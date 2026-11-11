@@ -122,6 +122,9 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 	// PopVacateHeld's floor rides this tick too (vacate_hold.go). It is not a
 	// lane wait and not in the accounting below; it records its own releases.
 	d.sweepVacateWaiters()
+	// So does PopTurnHeld's (table_turn_hold.go), and it is the table turn's
+	// restart hook: the population is read from the plans.
+	d.sweepTurnWaiters()
 
 	before, err := d.laneWaiters()
 	if err != nil {

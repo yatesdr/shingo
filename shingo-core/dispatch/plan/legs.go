@@ -1,6 +1,10 @@
 package plan
 
-import "shingo/protocol"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // legs.go — the leg shapes: the step a plan's legs are made of, and the shape of
 // a single-bin transport.
@@ -80,6 +84,17 @@ type Step struct {
 	// everywhere (dispatch.groupOfLane at the readers): WaitGroup when set, otherwise the parent
 	// of WaitLane.
 	WaitGroup int64 `json:"wait_group,omitempty"`
+	// TurnHeldAt is set on a STATION wait when the station released it before
+	// the robot's jack table was turned at the node (dispatch/table_turn.go):
+	// Core took the release and holds the lift until the table reads the
+	// node's angle. From then the wait is Core's (dispatch.coreOwnsWait),
+	// reported as WaitKindTurn, and the wait keeps its own kind: the Edge
+	// numbers station waits, and a changed kind would re-number its plan and
+	// re-send a release.
+	//
+	// NOT "held_at": the vacate hold's population query matches that string
+	// (orders.VacateWaitCandidates), and a turn-held order is not a vacate hold.
+	TurnHeldAt *time.Time `json:"turn_held_at,omitempty"`
 
 	// Vacate is set on a DROPOFF the vacated-slot rule admitted: a drop that
 	// would otherwise have waited, onto a node whose only bin a committed lift

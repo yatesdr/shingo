@@ -2410,6 +2410,25 @@ func VacateWaitCandidates(db *sql.DB, binID, orderID int64) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// TurnWaitCandidates is the table turn's population (dispatch/table_turn.go):
+// every live fleet order, staged or driving, whose plan carries a turn wait
+// Core inserted or a station wait whose release Core took before the table was
+// turned. Not "orders at a turn node": an order held at a node whose angle has
+// since been cleared is still in it, and its re-driver appends it. One
+// statement, the floor's and the robot poll's.
+func TurnWaitCandidates(db *sql.DB) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders
+		WHERE vendor_order_id <> '' AND status IN ($1, $2)
+		  AND (steps_json LIKE '%%"wait_kind":"turn"%%' OR steps_json LIKE '%%"turn_held_at":%%')
+		ORDER BY id`, SelectCols),
+		string(protocol.StatusStaged), string(protocol.StatusInTransit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
 // CarrierComingTo reports whether a live order other than the asker and its
 // partner leaves a carrier at node: protocol.OrderPlacesBinAt over the live
 // rows, read in one statement. It reads the non-terminal rows (the status term

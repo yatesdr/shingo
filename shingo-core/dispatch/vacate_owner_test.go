@@ -22,6 +22,14 @@ func voDrop(node string, st *vacateStamp) resolvedStep {
 	return resolvedStep{Action: protocol.ActionDropoff, Node: node, Vacate: st}
 }
 
+// voTurnHeld is a station wait whose release Core took for the table turn.
+func voTurnHeld(node string) resolvedStep {
+	at := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
+	w := voWait(node, WaitKindStation)
+	w.TurnHeldAt = &at
+	return w
+}
+
 func voHeld(node string) *vacateStamp {
 	at := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
 	return &vacateStamp{Node: node, Bin: 7, Partner: 9, HeldAt: &at}
@@ -59,6 +67,8 @@ func TestCoreOwnsWait(t *testing.T) {
 		{"the second wait, its next drop held",
 			[]resolvedStep{voWait("LINE", WaitKindStation), pick, voDrop("STAGE", nil), voWait("", WaitKindStation), voDrop("B1", voHeld("B1"))}, 1, true},
 		{"no wait at that index", []resolvedStep{voWait("G", WaitKindLane)}, 1, false},
+		{"a turn wait Core inserted", []resolvedStep{voWait("LINE", WaitKindTurn), pick, voDrop("B1", nil)}, 0, true},
+		{"a station wait held for the table", []resolvedStep{voTurnHeld("LINE"), pick, voDrop("B1", nil)}, 0, true},
 	} {
 		if got := coreOwnsWait(c.steps, c.at); got != c.want {
 			t.Errorf("%s: coreOwnsWait = %v, want %v", c.name, got, c.want)
@@ -129,14 +139,16 @@ func TestWidenStopsAtAStationOrVacateWait(t *testing.T) {
 func TestOnlyCoreOwnsWaitReadsTheHeldStamp(t *testing.T) {
 	t.Parallel()
 	allowed := map[string]bool{
-		"complex.go":     true, // coreOwnsWait / heldVacateAfter
-		"vacate_hold.go": true, // writes HeldAt at the tap, and releases what it held
+		"complex.go":     true, // coreOwnsWait / heldVacateAfter / turnHeldOrTurnWait
+		"vacate_hold.go": true, // writes HeldAt and TurnHeldAt at the tap (markHeld), and releases what it held
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	read := regexp.MustCompile(`\.HeldAt\b`)
+	// The table turn's held mark on a wait (plan.Step.TurnHeldAt) is the same
+	// kind of fact and has the same readers.
+	read := regexp.MustCompile(`\.(Turn)?HeldAt\b`)
 	checked := 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
@@ -148,11 +160,49 @@ func TestOnlyCoreOwnsWaitReadsTheHeldStamp(t *testing.T) {
 		}
 		checked++
 		if read.Match(b) && !allowed[f] {
-			t.Errorf("%s reads plan.Vacate.HeldAt. Who owns a wait is coreOwnsWait's answer (complex.go); "+
-				"ask it rather than reading the held stamp", f)
+			t.Errorf("%s reads a held mark (plan.Vacate.HeldAt or plan.Step.TurnHeldAt). Who owns a wait is "+
+				"coreOwnsWait's answer (complex.go); ask it rather than reading the mark", f)
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no production files read — the test is vacuous")
+	}
+}
+
+// TestTurnApplies is the table turn's predicate over a given set of turn
+// nodes: a station or turn wait at the node, and the segment after it opening
+// with the lift there (or the set-down, on a set-down node). Nothing else.
+func TestTurnApplies(t *testing.T) {
+	t.Parallel()
+	nodes := map[string]turnNode{
+		"LINE": {rad: 1.57, side: TableTurnSideLift},
+		"DROP": {rad: -1.57, side: TableTurnSideSetDown},
+	}
+	at := func(n string) (turnNode, bool) { tn, ok := nodes[n]; return tn, ok }
+	pick := func(n string) resolvedStep { return resolvedStep{Action: protocol.ActionPickup, Node: n} }
+	drop := func(n string) resolvedStep { return resolvedStep{Action: protocol.ActionDropoff, Node: n} }
+	for _, c := range []struct {
+		name  string
+		steps []resolvedStep
+		at    int
+		want  bool
+	}{
+		{"a swap's station wait before its lift", []resolvedStep{voWait("LINE", WaitKindStation), pick("LINE"), drop("B1")}, 0, true},
+		{"a turn wait before the lift", []resolvedStep{voWait("LINE", WaitKindTurn), pick("LINE"), drop("B1")}, 0, true},
+		{"an untagged wait (drain window)", []resolvedStep{voWait("LINE", ""), pick("LINE"), drop("B1")}, 0, true},
+		{"a node with no angle", []resolvedStep{voWait("OTHER", WaitKindStation), pick("OTHER"), drop("B1")}, 0, false},
+		{"a wait elsewhere before the lift", []resolvedStep{voWait("STAGE", WaitKindStation), pick("LINE"), drop("B1")}, 0, false},
+		{"a lane wait", []resolvedStep{voWait("LINE", WaitKindLane), pick("LINE"), drop("B1")}, 0, false},
+		{"a vacate wait", []resolvedStep{pick("SRC"), voWait("LINE", WaitKindVacate), pick("LINE")}, 0, false},
+		{"a drop, at a lift node", []resolvedStep{voWait("LINE", WaitKindStation), drop("LINE")}, 0, false},
+		{"a set-down node's drop", []resolvedStep{pick("SRC"), voWait("DROP", WaitKindTurn), drop("DROP")}, 0, true},
+		{"a set-down node's lift", []resolvedStep{voWait("DROP", WaitKindStation), pick("DROP"), drop("B1")}, 0, false},
+		{"the lift is not the segment's first step", []resolvedStep{voWait("LINE", WaitKindStation), drop("B2"), pick("LINE")}, 0, false},
+		{"past the last wait", []resolvedStep{voWait("LINE", WaitKindStation), pick("LINE")}, 1, false},
+		{"the second wait", []resolvedStep{voWait("STAGE", WaitKindStation), pick("SRC"), voWait("LINE", WaitKindTurn), pick("LINE")}, 1, true},
+	} {
+		if _, _, got := turnAppliesWith(c.steps, c.at, at); got != c.want {
+			t.Errorf("%s: turnApplies = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

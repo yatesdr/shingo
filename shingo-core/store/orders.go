@@ -1945,6 +1945,11 @@ func (db *DB) VacateLiftCandidates(binID, orderID int64) ([]*orders.Order, error
 	return orders.VacateWaitCandidates(db.DB, binID, orderID)
 }
 
+// TurnWaitCandidates: see orders.TurnWaitCandidates.
+func (db *DB) TurnWaitCandidates() ([]*orders.Order, error) {
+	return orders.TurnWaitCandidates(db.DB)
+}
+
 // LiveClearForHome: see orders.LiveClearForHome.
 func (db *DB) LiveClearForHome(homeName string) (bool, error) {
 	return orders.LiveClearForHome(db.DB, homeName)

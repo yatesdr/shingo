@@ -41,6 +41,31 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "Waiting for BIN-0042 to leave LX-B1 — the order that was to lift it has ended",
 		},
 		{
+			// A TABLE TURN names the node whose table is turning, and the angle.
+			name:   "lift held for the table turn",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{TableNode: "SMN_008", TableWantDeg: 90},
+			want:   "Turning the table at SMN_008 to 90°",
+		},
+		{
+			name:   "table turn that cannot be sent",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{TableNode: "SMN_008", TableWantDeg: 90, TableBlocked: "AMR-05 is e-stopped"},
+			want:   "Cannot turn the table at SMN_008: AMR-05 is e-stopped",
+		},
+		{
+			name:   "table turn that failed, angle read",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{TableNode: "SMN_008", TableWantDeg: 90, TableFailed: true, TableReadsDeg: func() *float64 { v := 3.0; return &v }()},
+			want:   "The table at SMN_008 did not reach 90°, reads 3° — Core stopped turning it",
+		},
+		{
+			name:   "table turn that failed, angle unread",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{TableNode: "SMN_008", TableWantDeg: 90, TableFailed: true},
+			want:   "The table at SMN_008 did not reach 90° — Core stopped turning it",
+		},
+		{
 			name:   "material full payload",
 			code:   protocol.QueueWaitingForMaterial,
 			params: QueueParams{Payload: "SYN-PART02B.06", Kind: "full"},

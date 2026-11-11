@@ -15,6 +15,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/fulfillment"
 	"shingocore/material"
+	"shingocore/notify"
 	"shingocore/store"
 )
 
@@ -488,7 +489,20 @@ func (e *Engine) newDispatcher(emitter dispatch.Emitter, resolver *dispatch.Defa
 	if t, ok := e.fleet.(fleet.TableTurner); ok {
 		d.SetTableTurner(t, e.polledRobotStatus)
 	}
+	d.SetTableTurnAlarm(e.tableTurnAlarm)
 	return d
+}
+
+// tableTurnAlarm is what a table that never turned raises beyond its row and
+// its audit line: a log line, and the plant's notification email when one is
+// configured.
+func (e *Engine) tableTurnAlarm(orderID int64, node, detail string) {
+	e.logFn("engine: TABLE TURN FAILED at %s (order %d): %s", node, orderID, detail)
+	if e.notifier == nil || !e.notifier.Enabled() {
+		return
+	}
+	subject, body := notify.TableTurnFailedSubject(node), notify.TableTurnFailedAlert(orderID, node, detail)
+	go func() { _ = e.notifier.Send(subject, body) }()
 }
 
 // polledRobotFresh is how old the latest robot poll may be for the table turn

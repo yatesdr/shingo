@@ -52,8 +52,13 @@ func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
 //     station released this wait while the bin that drop needs gone still
 //     stood on the node, so the station's part is done and the rest is Core's.
 //
-// So: a Core kind, or the next drop carries a held vacate stamp. An untagged
-// wait is the station's (protocol.IsStationWaitKind's drain window). An
+// A THIRD QUESTION, the table turn's (table_turn.go): the station released this
+// wait before the robot's jack table was turned at the node, so Core took the
+// release and holds the lift (TurnHeldAt on the wait step). The station's part
+// is done here too.
+//
+// So: a Core kind, the next drop carries a held vacate stamp, or the wait
+// carries the turn's held mark. An untagged wait is the station's (protocol.IsStationWaitKind's drain window). An
 // unrecognised kind is Core's, as it is on the Edge (protocol.IsCoreWaitKind):
 // assertEveryWaitDeclaresAnOwner refuses one before it is persisted, so none
 // should reach here, and one that did is held for Core's hard release rather
@@ -68,7 +73,19 @@ func coreOwnsWait(steps []resolvedStep, waitIndex int) bool {
 	if protocol.IsCoreWaitKind(w.WaitKind) {
 		return true
 	}
+	if w.TurnHeldAt != nil {
+		return true
+	}
 	return heldVacateAfter(steps, waitIndex) != nil
+}
+
+// turnHeldOrTurnWait reports whether the wait at waitIndex is the table turn's
+// to release: a turn wait Core inserted, or a station wait whose release Core
+// took before the table was turned. It is how the turn's re-driver asks, so
+// the held mark has one reader here, beside coreOwnsWait.
+func turnHeldOrTurnWait(steps []resolvedStep, waitIndex int) bool {
+	w, ok := waitAt(steps, waitIndex)
+	return ok && (w.WaitKind == WaitKindTurn || w.TurnHeldAt != nil)
 }
 
 // heldVacateAfter is the held vacate stamp on the first drop after wait
@@ -90,12 +107,17 @@ func heldVacateAfter(steps []resolvedStep, waitIndex int) *plan.Vacate {
 }
 
 // coreWaitKind is the kind Core reports for a wait coreOwnsWait answered true
-// for: the stored kind when it is a Core kind (lane, vacate, or one this build
-// does not know, reported as written), and vacate for a station wait Core
-// holds on a vacate stamp.
+// for: the stored kind when it is a Core kind (lane, vacate, turn, or one this
+// build does not know, reported as written), turn for a station wait Core holds
+// for the table, and vacate for a station wait Core holds on a vacate stamp.
+// Held for both, it is turn: the Edge reads either as Core's, and the row's
+// cause says which is outstanding.
 func coreWaitKind(w resolvedStep) string {
 	if protocol.IsCoreWaitKind(w.WaitKind) {
 		return w.WaitKind
+	}
+	if w.TurnHeldAt != nil {
+		return WaitKindTurn
 	}
 	return WaitKindVacate
 }

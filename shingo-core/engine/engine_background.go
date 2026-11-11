@@ -94,6 +94,17 @@ func (e *Engine) robotRefreshLoop() {
 			// population, so a missed edge is bounded by that interval, not lost.
 			e.sweepCarriedBins()
 
+			// A table turn re-asks its held orders on a robot status change:
+			// the table angle and task state are in the hashed status, so a turn
+			// settling moves the hash. Behind the short-circuit for the same
+			// reason as sweepCarriedBins, and behind an in-memory flag as well,
+			// because on a running plant the fleet hash moves on almost every
+			// tick: with no turn pending this asks nothing at all
+			// (dispatch/table_turn_hold.go).
+			if e.dispatcher != nil && e.dispatcher.TableTurnPending() {
+				e.dispatcher.RedriveTableTurns(0)
+			}
+
 			e.Events.Emit(Event{
 				Type:    EventRobotsUpdated,
 				Payload: RobotsUpdatedEvent{Robots: robots},

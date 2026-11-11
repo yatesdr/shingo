@@ -206,11 +206,11 @@ func (d *Dispatcher) siblingHolds(order *orders.Order, steps, seg, stored []reso
 
 // holdRelease takes a station release Core cannot append yet: the manifest
 // sync (the station's count is declared now, whatever the robot does next),
-// the held stamps on the plan, the cause on the row, and the kind the station
-// is told. Then it asks once more, so a lift that landed between the read and
-// the write is not left to the floor.
+// then the marks (markHeld). It is TAKEN ONCE with every mark that applies: a
+// leg owed both a vacate hold and a table turn is held for both and goes only
+// when both are satisfied.
 func (d *Dispatcher) holdRelease(env *protocol.Envelope, order *orders.Order, p *protocol.OrderRelease,
-	steps []resolvedStep, holds []heldDrop) {
+	steps []resolvedStep, holds []heldDrop, turn bool) {
 	if err := d.syncManifestForRelease(env, order, p); err != nil {
 		return
 	}
@@ -218,12 +218,22 @@ func (d *Dispatcher) holdRelease(env *protocol.Envelope, order *orders.Order, p 
 	// the segment lifts off the line goes where it goes by what it holds
 	// (place_by_contents.go), and the held segment appends from the re-pointed
 	// plan. The re-point moves a drop off the line, never the held drop onto it,
-	// so the holds' step indexes stand.
+	// so the holds' step indexes stand, and so does the wait's.
 	if d.placeByContentsAtRelease(order, steps, order.WaitIndex) {
 		if again, ok := decodeSteps(order.StepsJSON); ok {
 			steps = again
 		}
 	}
+	d.markHeld(env, order, steps, holds, turn)
+}
+
+// markHeld is the half of a take after the count: the held stamps on the
+// plan's drops and the turn's mark on its wait, the cause on the row, and the
+// kind the station is told. Then it asks once more, so a lift (or a turn) that
+// landed between the read and the write is not left to the floor. It writes no
+// count, so the append door's turn refusal, which comes after the count was
+// written, holds through it too (dispatchFleetRelease).
+func (d *Dispatcher) markHeld(env *protocol.Envelope, order *orders.Order, steps []resolvedStep, holds []heldDrop, turn bool) {
 	now := clock.Now().UTC()
 	for _, h := range holds {
 		st := h.st
@@ -233,29 +243,50 @@ func (d *Dispatcher) holdRelease(env *protocol.Envelope, order *orders.Order, p 
 		}
 		steps[h.idx].Vacate = &st
 	}
+	waitIdx := segmentStart(steps, order.WaitIndex) - 1
+	if turn && waitIdx >= 0 {
+		steps[waitIdx].TurnHeldAt = &now
+	}
 	j, err := json.Marshal(steps)
 	if err != nil {
-		log.Printf("dispatch: vacate hold: order %d: marshal: %v", order.ID, err)
-		d.sendError(env, p.OrderUUID, "invalid_state", "Core could not record the hold on this order")
+		log.Printf("dispatch: release hold: order %d: marshal: %v", order.ID, err)
+		d.sendError(env, order.EdgeUUID, "invalid_state", "Core could not record the hold on this order")
 		return
 	}
 	if err := d.db.UpdateOrderStepsJSON(order.ID, string(j)); err != nil {
-		log.Printf("dispatch: vacate hold: order %d: %v", order.ID, err)
-		d.sendError(env, p.OrderUUID, "invalid_state", "Core could not record the hold on this order")
+		log.Printf("dispatch: release hold: order %d: %v", order.ID, err)
+		d.sendError(env, order.EdgeUUID, "invalid_state", "Core could not record the hold on this order")
 		return
 	}
 	order.StepsJSON = string(j)
-	first := holds[0].st
-	label := d.binLabel(first.Bin)
-	log.Printf("dispatch: release held (vacate): order %d drops on %s, which %s must leave first (partner order %d)",
-		order.ID, first.Node, label, first.Partner)
-	d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseVacateWaitingLift,
-		QueueParams{Destination: first.Node, VacateBin: label})
-	if d.redriveVacateOrder(order, 0) {
+	if len(holds) > 0 {
+		first := holds[0].st
+		label := d.binLabel(first.Bin)
+		log.Printf("dispatch: release held (vacate): order %d drops on %s, which %s must leave first (partner order %d)",
+			order.ID, first.Node, label, first.Partner)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseVacateWaitingLift,
+			QueueParams{Destination: first.Node, VacateBin: label})
+		if turn {
+			d.markTurnPending()
+		}
+		if d.redriveVacateOrder(order, 0) {
+			return
+		}
+		d.replies.SendStaged(env, order.EdgeUUID,
+			fmt.Sprintf("held by Core until %s leaves %s", label, first.Node), nil, WaitKindVacate)
+		return
+	}
+	node, t, _ := d.turnApplies(steps, order.WaitIndex)
+	log.Printf("dispatch: release held (turn): order %d lifts at %s, whose table is not yet turned to %.0f°",
+		order.ID, node, degrees(t.rad))
+	d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseTableTurning,
+		QueueParams{TableNode: node, TableWantDeg: degrees(t.rad)})
+	d.markTurnPending()
+	if appended, _ := d.redriveTurnOrder(order); appended {
 		return
 	}
 	d.replies.SendStaged(env, order.EdgeUUID,
-		fmt.Sprintf("held by Core until %s leaves %s", label, first.Node), nil, WaitKindVacate)
+		fmt.Sprintf("held by Core until the table at %s is turned", node), nil, WaitKindTurn)
 }
 
 // binLabel names a bin for a sentence: its label, else "bin <id>".
@@ -425,6 +456,13 @@ func (d *Dispatcher) redriveVacateOrder(o *orders.Order, binID int64) bool {
 		log.Printf("dispatch: vacate: order %d released on the moot end of order %d, which was to lift the bin", o.ID, moot)
 		d.db.AppendAudit("order", o.ID, "vacate_released_moot", "",
 			fmt.Sprintf("held release appended: order %d, which was to lift the bin, ended skipped (moot)", moot), "system")
+	}
+	// THE OTHER HALF OF "MAY THIS SEGMENT GO": a lift at a node that turns the
+	// table goes when the table reads the angle, whichever hold is met first.
+	// The table turn's re-driver appends it then (table_turn_hold.go).
+	if d.turnStillOwed(o, steps) {
+		d.markTurnPending()
+		return false
 	}
 	segment, moreWaits, blockOffset := splitSegment(steps, o.WaitIndex)
 	if segment == nil {
