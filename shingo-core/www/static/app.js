@@ -24,6 +24,7 @@ import { installTableSort } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
 import { showRefreshBanner } from '/static/shared/utils.js';
 import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 // escapeHtml and h are the shared ones (one helper per job); pages keep
 // importing them from here.
@@ -83,32 +84,10 @@ export function el(tag, props, children) {
 // Core's pages say uiConfirm / uiPrompt / uiConfirmWithInput.
 export { showModal, hideModal, uiConfirm, uiPrompt, uiConfirmWithInput };
 
-export function toast(message, level, opts) {
-  level = level || 'info';
-  opts = opts || {};
-  var container = document.getElementById('toast-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'toast-container';
-    container.style.cssText = 'position:fixed;top:1rem;right:1rem;display:flex;flex-direction:column;gap:0.5rem;z-index:var(--z-toast);pointer-events:none';
-    document.body.appendChild(container);
-  }
-  var t = document.createElement('div');
-  t.className = 'toast toast-' + level;
-  t.textContent = message;
-  var stripe = { success: 'var(--success)', error: 'var(--danger)', warning: 'var(--warning)', info: 'var(--info)' }[level] || 'var(--info)';
-  t.style.cssText = 'padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid ' + stripe + ';box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem';
-  container.appendChild(t);
-  if (!opts.sticky) {
-    var dur = (level === 'error') ? 5000 : 3200;
-    setTimeout(function() { t.remove(); }, dur);
-  } else {
-    t.style.cursor = 'pointer';
-    t.title = 'Click to dismiss';
-    t.addEventListener('click', function() { t.remove(); });
-  }
-  return t;
-}
+// toast is the one notice's (shared/notice.js, style guide §11): an error
+// lives 5 s, the rest 3.2 s, {sticky:true} until clicked, and the same words
+// at the same level are said once.
+export { toast };
 
 // Generic JSON request. Throws the server error string (or parsed object's
 // `error` field) on non-2xx responses; returns parsed JSON on success.

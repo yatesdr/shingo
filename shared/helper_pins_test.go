@@ -175,7 +175,6 @@ var sharedHelperCopies = map[string]string{
 	// "own"), exported to Core's pages under the shared names.
 	"shingo-core/www/static/app.js el":       "Core hub copy",
 	"shingo-core/www/static/app.js debounce": "Core hub copy",
-	"shingo-core/www/static/app.js toast":    "Core hub copy",
 	"shingo-core/www/static/app.js api":      "Core hub copy (a function, not utils.js's object)",
 	// The Edge hub's own copies, likewise.
 	"shingo-edge/www/static/js/shingoedge.js createSSE": "Edge hub copy",
