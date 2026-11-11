@@ -139,16 +139,6 @@ func orderClick(leg string, d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error { return h.eng.ReleaseOrderWithLineside(h.leg(leg), d) }
 }
 
-// sweepClickAs is the changeover's release of every node, its button naming
-// the decision it makes.
-func sweepClickAs(purpose release.Purpose, d ReleaseDisposition) func(h *relHarness) error {
-	return func(h *relHarness) error {
-		res, err := h.eng.ReleaseChangeoverWaitFor(h.processID, 0, purpose, d)
-		h.extra = append(h.extra, fmt.Sprintf("sweep released=%d pending=%d deferred=%d flip=%v", res.Released, res.Pending, res.Deferred, res.NeedsFlip))
-		return err
-	}
-}
-
 func sweepClick(d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		res, err := h.eng.ReleaseChangeoverWait(h.processID, d)

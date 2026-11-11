@@ -20,15 +20,6 @@ func countWaits(steps []protocol.ComplexOrderStep) int {
 	return n
 }
 
-// stepActions returns the action sequence (e.g. ["pickup","dropoff","wait"]).
-func stepActions(steps []protocol.ComplexOrderStep) []string {
-	out := make([]string, len(steps))
-	for i, s := range steps {
-		out[i] = s.Action
-	}
-	return out
-}
-
 // ---------------------------------------------------------------------------
 // BuildSwapChangeoverSteps — single_robot: ONE 9-step order
 // ---------------------------------------------------------------------------

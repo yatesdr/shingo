@@ -45,7 +45,10 @@ func TestV47MovesTheRefillSettingAndDropsTheSwitch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", what, err)
 		}
-		id, _ := res.LastInsertId()
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("%s: last insert id: %v", what, err)
+		}
 		return id
 	}
 

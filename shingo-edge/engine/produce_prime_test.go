@@ -341,12 +341,11 @@ func TestApplyProducePlan_ChainOnly(t *testing.T) {
 	if po.SourceNode != "MARKET-EMPTIES" {
 		t.Errorf("prime SourceNode = %q, want MARKET-EMPTIES", po.SourceNode)
 	}
-	// cfg.Web.AutoConfirm is true in testEngine and the seeded claim's own flag
-	// is false, so this arm only shows the merge is at least as permissive as
-	// the config. TestApplyProducePlan_PrimeAutoConfirmIsMerged below is what
-	// stops a hard-coded true passing: with BOTH inputs false it must be false.
+	// A prime is confirmed by its placement whatever the claim and the plant
+	// say (carrierToPosition); TestApplyProducePlan_APrimeIsConfirmedByItsPlacement
+	// holds that across every pair of the two settings.
 	if !po.AutoConfirm {
-		t.Errorf("prime AutoConfirm = false; want the merged claim||config signal")
+		t.Errorf("prime AutoConfirm = false; a prime is confirmed by its placement")
 	}
 	// order.origin_id on Edge is what CORE stamped back, so a freshly created
 	// row is correctly blank. The origin we pass travels on the OrderRequest
