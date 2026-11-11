@@ -498,26 +498,35 @@ func sizeFromTransit(plant *plantspec.Plant, rate map[string]float64, transit st
 // fleet that moves it — both fall straight out of the same rate model.
 
 // fleetMovesPerSwap returns the floor-spanning loaded crossings in one swap cycle
-// and the peak concurrent robots the cycle needs, per swap mode. A "crossing" is a
+// and the peak concurrent robots the cycle needs, for a claim: its swap mode and,
+// on an index press, who brings the back its next carrier. A "crossing" is a
 // material-carrying leg that traverses the floor (≈ one transit); short staging
 // hops, the back↔front index hop, and empty repositioning are NOT counted — they're
 // small and fall into the util headroom. Crossing counts track the long legs of the
 // step builders in engine/material_orders.go.
-func fleetMovesPerSwap(mode string) (crossings float64, robots int) {
-	switch protocol.SwapMode(mode) {
+func fleetMovesPerSwap(c plantspec.Claim) (crossings float64, robots int) {
+	switch protocol.SwapMode(c.SwapMode) {
 	// SwapModeSimple is the runtime result-tag / node-empty downgrade descriptor
 	// (or a legacy row), not an operator-configurable mode — but a downgraded
 	// cycle still costs its single delivery crossing, so it is costed here.
 	case protocol.SwapModeSimple:
 		return 1, 1 // one floor crossing (old out / new in folded)
 	case protocol.SwapModeSequential:
-		return 2, 1 // removal (node→market) + backfill (source→node), one robot, serialized
+		// removal (node→market) + backfill (source→node). The backfill is made
+		// when the removal starts moving, so two robots are out at once.
+		return 2, 2
 	case protocol.SwapModeSingleRobot:
 		return 2, 1 // fetch in (source→…→node) + ship out (node→…→market); staging hops are short
 	case protocol.SwapModeTwoRobot:
 		return 2, 2 // supply robot crosses in, removal robot crosses out — one long leg each
 	case protocol.SwapModeTwoRobotPressIndex:
-		return 2, 2 // output→market + source→back; the back→front index hop is short
+		// output→market + source→back; the back→front index hop is short. With
+		// Robot 3 the source→back crossing is a third robot's, made at Robot 2's
+		// lift, so three are out at once.
+		if c.RefillBy == protocol.RefillByOwnRobot {
+			return 2, 3
+		}
+		return 2, 2
 	case protocol.SwapModeManualSwap:
 		return 1, 1 // one loaded crossing per push (loader→market) / pull (line→market)
 	default:
@@ -580,7 +589,7 @@ func runFleet(plant *plantspec.Plant, rate map[string]float64, transit string, u
 			continue
 		}
 		swaps := tp / float64(cap)
-		moves, robots := fleetMovesPerSwap(c.SwapMode)
+		moves, robots := fleetMovesPerSwap(c)
 		load := swaps * moves * tmin // erlangs: avg robots busy on this node's loaded legs
 		offered += load
 		peak += float64(robots)
