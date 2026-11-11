@@ -158,6 +158,14 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "PRESS-BUFFER-A already holds the empties it is set to keep — waiting for one to leave",
 		},
 		{
+			// A CONTAINMENT DESTINATION INSIDE A GROUP names the group to set:
+			// the claim is what to fix, not the floor.
+			name:   "a containment destination inside a group names the group",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{Destination: "HOLD-L1-S2", MemberOf: "HOLD-AREA", Payload: "SYN-PART01"},
+			want:   "Contained SYN-PART01 is held: its claim's containment names HOLD-L1-S2, a spot inside HOLD-AREA — set it to HOLD-AREA",
+		},
+		{
 			name:   "material partial set is called out",
 			code:   protocol.QueueWaitingForMaterial,
 			params: QueueParams{Payload: "SYN-PART02B.06", Partial: true},

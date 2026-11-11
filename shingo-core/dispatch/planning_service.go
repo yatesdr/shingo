@@ -362,6 +362,21 @@ type transportDecision struct {
 	groupErr error
 }
 
+// containedDrop is the plain move's containment divert (containmentDivert):
+// the containment node the gate then asks about, else gateNode as it was. A
+// containment destination inside a group parks the move (d.blocked).
+func (s *PlanningService) containedDrop(d *transportDecision, order *orders.Order, gateNode string) string {
+	c, memberOf := containmentDivert(s.db, order, gateNode, s.dbg)
+	switch {
+	case memberOf != nil:
+		d.blocked, d.capacity = true, containmentMemberBlock(order, c, memberOf)
+	case c != nil:
+		d.contained = c
+		return c.Name
+	}
+	return gateNode
+}
+
 // Plan is the pick as the builder writes it (orders.plan): a bin when the
 // finder found one with the destination clear, else nothing; and, when the
 // decision moved the drop (a cart's by-contents drop, a group's chosen child),
@@ -479,8 +494,8 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	// rule the multi-step leg follows (containmentDivert): the press's claim is
 	// the route, and the gate asks about the containment node.
 	if isMove {
-		if c := containmentDivert(s.db, order, gateNode, s.dbg); c != nil {
-			d.contained, gateNode = c, c.Name
+		if gateNode = s.containedDrop(&d, order, gateNode); d.blocked {
+			return d
 		}
 	}
 	if d.blocked, d.capacity = CheckDropoffCapacity(s.db, gateNode, order.ID); d.blocked {

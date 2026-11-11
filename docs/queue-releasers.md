@@ -157,6 +157,7 @@ floor's record prints), and the finding's first sentence where the row has one.
 | `CauseHoldingForOutside` | `holding-for-outside` | `acquiring` | the carrier coming to the position lands, or the move naming the carrier there lifts it |  |
 | `CauseComplexSlotReserve` | `complex-slot-reserve` | `acquiring` | the remaining destination slots free |  |
 | `CauseContainmentCapacity` | `containment-capacity` | `acquiring` | a bin leaves the containment node — an earlier containment move completes, or a verified bin's release walks one out |  |
+| `CauseContainmentMember` | `containment-member` | `acquiring` | the claim's containment destination is corrected to the group or a node in no group, or containment is lifted |  |
 | `CauseDropoffCapacity` | `dropoff-capacity` | `acquiring` | the storage dropoff frees, or its committed inbound traffic lands — a pre-split row, so which of the two it was waiting for is not recoverable from the cause alone |  |
 | `CauseSwapHold` | `swap-hold` | `acquiring` | the partner's order reaches Core — its intake's acquire asks this pair's leader and the two legs go together — or a partner digging its own bin out finishes and resumes through pending. If Core refuses the partner at intake instead, nothing can arrive and the wait ends in failure: this leg fails carrying the partner's reason, at the refusal or on its own first pass after it |  |
 | `CauseFinderNodeEmpty` | `finder-node-empty` | `acquiring` | material of the wanted shape arrives at the named source node |  |

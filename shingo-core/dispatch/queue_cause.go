@@ -577,6 +577,15 @@ const (
 	// position at the containment node.
 	CauseContainmentCapacity QueueCause = "containment-capacity"
 
+	// CauseContainmentMember — quality containment wants this order diverted,
+	// and the claim's containment destination is a member of a node group (a
+	// lane slot, or another child of a group). The group picks the spot, so a
+	// carrier sent to the member may land at another one, outside the arrival
+	// hold. The order parks: it is not sent to the member, and a contained part
+	// does not go on to FG. Releaser: the claim naming the group or a node in no
+	// group, or containment being lifted.
+	CauseContainmentMember QueueCause = "containment-member"
+
 	// ── The finder's tiers (source_finder.go) ─────────────────────────────
 	//
 	// FOUND BY THE OBSERVED-VS-DECLARED CHECK, ON THE RIG, NOT BY THE GREP.

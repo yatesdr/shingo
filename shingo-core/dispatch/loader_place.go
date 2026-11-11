@@ -591,11 +591,17 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 	if f < 0 {
 		return nil
 	}
-	destNode := containmentDivert(d.db, order, authoredDrop(steps[f]), d.dbg)
+	destNode, memberOf := containmentDivert(d.db, order, authoredDrop(steps[f]), d.dbg)
 	if destNode == nil {
 		return nil
 	}
 	containment, payload := destNode.Name, order.PayloadCode
+	if memberOf != nil {
+		b := containmentMemberBlock(order, destNode, memberOf)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, b.Cause, b.Params)
+		return &dispatchStep{done: true, err: fmt.Errorf("containment destination %s is a member of group %s",
+			containment, memberOf.Name)}
+	}
 	// A GROUP is the expected shape for a containment area with several spots:
 	// the re-pointed dropoff names the group, and the pass stops, so the next
 	// pass's group re-resolve (prepareComplexSteps) spreads bins across its free
@@ -680,31 +686,39 @@ func authoredDrop(s resolvedStep) string {
 // resolve keep the drop and say so (fail-open on read; misconfiguration is
 // visible, not guessed). An order that names no process node has no claim to
 // read the route from and keeps its drop. It writes nothing.
-func containmentDivert(db *store.DB, order *orders.Order, final string, dbg func(string, ...any)) *nodes.Node {
+//
+// A DESTINATION INSIDE A GROUP PARKS. memberOf is the group when the
+// containment destination is a member of one (a lane slot, or another child of
+// a group): the group picks the spot, so a carrier sent to the member can land
+// at another one, and the arrival hold, which matches the destination's own
+// subtree (store.StampContainmentArrival), misses it. The caller parks the
+// order: it is not sent to the member, and the contained part does not go on to
+// FG. A failed read of the group diverts as before (fail-open on read).
+func containmentDivert(db *store.DB, order *orders.Order, final string, dbg func(string, ...any)) (dest, memberOf *nodes.Node) {
 	payload := order.PayloadCode
 	if payload == "" || order.ProcessNode == "" {
-		return nil
+		return nil, nil
 	}
 	contained, err := db.PayloadContainmentActive(payload)
 	if err != nil {
 		log.Printf("dispatch: containment read for %s failed — order %d continues (fail-open on read): %v",
 			payload, order.ID, err)
-		return nil
+		return nil, nil
 	}
 	if !contained {
-		return nil
+		return nil, nil
 	}
 	outbound, containment, ambiguous, err := db.ContainmentRouteForNode(order.ProcessNode)
 	if err != nil {
 		log.Printf("dispatch: containment route read for node %s failed — order %d continues: %v",
 			order.ProcessNode, order.ID, err)
-		return nil
+		return nil, nil
 	}
 	if ambiguous {
 		log.Printf("WARN: containment route for node %s is ambiguous (claims disagree on the destination) — "+
 			"order %d continues to its authored destination. Fix the claims: one node, one containment route.",
 			order.ProcessNode, order.ID)
-		return nil
+		return nil, nil
 	}
 	if containment == "" {
 		// The flag is on but this node's claim declares no route: visible, not
@@ -713,7 +727,7 @@ func containmentDivert(db *store.DB, order *orders.Order, final string, dbg func
 		// edited away (or the claim's payload binding changed) mid-containment.
 		log.Printf("WARN: payload %s is contained but node %s's claim declares no containment destination — "+
 			"order %d continues to its authored destination", payload, order.ProcessNode, order.ID)
-		return nil
+		return nil, nil
 	}
 	// Scope check: this leg must be the claim's own FG flow. Anything else
 	// (swap return, evac, refill) passes through — see placeForContainment.
@@ -722,15 +736,36 @@ func containmentDivert(db *store.DB, order *orders.Order, final string, dbg func
 			dbg("containment: order %d's final dropoff %q is not the claim's outbound %q — not an FG leg, no divert",
 				order.ID, final, outbound)
 		}
-		return nil
+		return nil, nil
 	}
 	destNode, err := db.GetNodeByDotName(containment)
 	if err != nil || destNode == nil {
 		log.Printf("WARN: containment destination %q for node %s does not resolve to a node — "+
 			"order %d continues to its authored destination", containment, order.ProcessNode, order.ID)
-		return nil
+		return nil, nil
 	}
-	return destNode
+	group, err := db.GroupOf(destNode.ID)
+	if err != nil {
+		log.Printf("dispatch: group read for containment destination %s failed — order %d diverts to it "+
+			"(fail-open on read): %v", destNode.Name, order.ID, err)
+		return destNode, nil
+	}
+	if group != nil && order.QueueCause != string(CauseContainmentMember) {
+		claims, _ := db.ContainmentClaimsAt(order.ProcessNode, containment)
+		log.Printf("WARN: order %d (%s) parked — contained %s's containment destination %s is a member of group %s "+
+			"(claim %s at %s): it is not sent there and does not go on to FG. Set the claim's containment "+
+			"destination to %s or to a node in no group.",
+			order.ID, order.EdgeUUID, payload, destNode.Name, group.Name, strings.Join(claims, ", "),
+			order.ProcessNode, group.Name)
+	}
+	return destNode, group
+}
+
+// containmentMemberBlock is the park for a containment destination inside a
+// group (containmentDivert's memberOf).
+func containmentMemberBlock(order *orders.Order, dest, group *nodes.Node) CapacityBlock {
+	return CapacityBlock{Cause: CauseContainmentMember,
+		Params: QueueParams{Destination: dest.Name, MemberOf: group.Name, Payload: order.PayloadCode}}
 }
 
 // orderDeliversTo reports whether any dropoff step in this order targets node. Used

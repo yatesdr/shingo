@@ -1016,6 +1016,15 @@ var causeReleasers = []causeReleaser{
 		what: "a bin leaves the containment node — an earlier containment move completes, or a verified bin's release walks one out",
 	},
 	{
+		cause:       CauseContainmentMember,
+		populations: []WaitPopulation{PopAcquiring},
+		// The claim's containment destination is a member of a group. Only a
+		// person ends this wait: the claim corrected to name the group or a node
+		// in no group (the mirror's next sync), or containment lifted. A timer
+		// or a fallback to FG would be a quality escape.
+		what: "the claim's containment destination is corrected to the group or a node in no group, or containment is lifted",
+	},
+	{
 		cause:       CauseDropoffCapacity,
 		populations: []WaitPopulation{PopAcquiring},
 		// LEGACY VALUE, NO LIVE WRITER. The two complex arms that wrote it now

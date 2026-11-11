@@ -367,3 +367,76 @@ func TestPartialHome_ContainmentGoesFirst(t *testing.T) {
 		t.Errorf("not contained: the partial goes to %q, want its home %s", got, home.Name)
 	}
 }
+
+// TestContainmentDivert_AMemberOfAGroupParks pins the order-1208 shape: a
+// claim's containment destination names a slot inside a lane (or another child
+// of a group). The group picks the spot, so a carrier sent to the member can
+// land at another slot of the lane, outside the arrival hold, and walk on
+// unheld. The divert parks instead, on the multi-step leg and the plain move:
+// nothing is sent to the member and the contained part does not go on to FG.
+// Correcting the claim to the group lets the order go, to the group.
+func TestContainmentDivert_AMemberOfAGroupParks(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []string{"lane slot", "group child"} {
+		t.Run(shape, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			prod, fgn, _ := containmentFixture(t, db)
+			testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-QC", UOPCapacity: 4}), "the part")
+			grp := *testdb.MarkedGroup(t, db, "QC-AREA")
+			parent := grp
+			var err error
+			if shape == "lane slot" {
+				parent, err = db.AddLane(grp, "QC-AREA-L1")
+				testutil.MustNoErr(t, err, "its lane")
+			}
+			depth := 1
+			member := &nodes.Node{Name: "QC-AREA-S1", Enabled: true, ParentID: &parent, Depth: &depth}
+			testutil.MustNoErr(t, db.CreateNode(member), "the member")
+			_, err = db.DB.Exec(`UPDATE style_claims SET containment_destination = 'QC-AREA-S1' WHERE core_node_name = 'PROD-QC'`)
+			testutil.MustNoErr(t, err, "the claim names the member")
+			d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+			// The multi-step leg: parked, the plan's drop untouched.
+			steps := containmentSteps(fgn.Name, "PROD-QC")
+			o := containmentOrder(t, db, "qc-member-leg", fgn.Name, "PROD-QC", nil)
+			st := d.placeForContainment(o, steps)
+			if st == nil || !st.done {
+				t.Fatalf("a member destination did not park the leg: %+v", st)
+			}
+			if steps[3].Node != fgn.Name {
+				t.Errorf("the plan's drop moved to %q while parked, want it untouched", steps[3].Node)
+			}
+			got := prReload(t, db, o.ID)
+			if got.QueueCause != string(CauseContainmentMember) || got.DeliveryNode != fgn.Name {
+				t.Errorf("the leg parks on %q delivering to %q, want %s and its drop untouched",
+					got.QueueCause, got.DeliveryNode, CauseContainmentMember)
+			}
+
+			// The plain move: queued on the same cause, never sent.
+			bin := makeLoaderBin(t, db, "PART-QC", prod.ID, "qc-member-bin", 4, time.Now().UTC())
+			d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "qc-member-move", OrderType: OrderTypeMove,
+				PayloadCode: "PART-QC", SourceNode: prod.Name, DeliveryNode: fgn.Name, ProcessNode: prod.Name,
+				BinID: bin.ID, Quantity: 1})
+			mv := testdb.RequireOrder(t, db, "qc-member-move")
+			if mv.Status != protocol.StatusQueued || mv.QueueCause != string(CauseContainmentMember) {
+				t.Fatalf("the move is %s on %q (%s), want queued on %s",
+					mv.Status, mv.QueueCause, mv.ErrorDetail, CauseContainmentMember)
+			}
+			if mv.DeliveryNode == member.Name {
+				t.Errorf("the move was sent to the member %s", member.Name)
+			}
+
+			// The claim corrected to the group: the leg is diverted to it.
+			_, err = db.DB.Exec(`UPDATE style_claims SET containment_destination = 'QC-AREA' WHERE core_node_name = 'PROD-QC'`)
+			testutil.MustNoErr(t, err, "the claim names the group")
+			steps = containmentSteps(fgn.Name, "PROD-QC")
+			if st := d.placeForContainment(got, steps); st == nil || st.err != nil {
+				t.Fatalf("with the group named the leg did not re-point to it: %+v", st)
+			}
+			if steps[3].Node != "QC-AREA" {
+				t.Errorf("with the group named the press's carrier goes to %q, want QC-AREA", steps[3].Node)
+			}
+		})
+	}
+}

@@ -367,6 +367,27 @@ func (db *DB) ContainmentRouteForNode(coreNodeName string) (outbound, containmen
 	return outbound, containment, false, rows.Err()
 }
 
+// ContainmentClaimsAt names, as "process / style", each claim at coreNodeName
+// whose containment destination is containment: the claims a person corrects
+// when that destination is wrong.
+func (db *DB) ContainmentClaimsAt(coreNodeName, containment string) ([]string, error) {
+	rows, err := db.DB.Query(`SELECT DISTINCT process_id || ' / ' || style_id FROM style_claims
+		WHERE core_node_name = $1 AND containment_destination = $2 ORDER BY 1`, coreNodeName, containment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // CountContainmentRoutedPayloads reports how many claims declaring a
 // containment destination exist for one payload code. The containment
 // toggle's guard: activating containment for a payload whose claims name no
