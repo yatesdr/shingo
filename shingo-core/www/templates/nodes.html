@@ -133,6 +133,9 @@
 
     {{if .Authenticated}}
     <form id="node-form" method="POST" action="/nodes/update" data-action-submit="handleNodeSave">
+      <!-- Says when the node's stored settings did not load; Save is refused
+           then (nodes-detail.js handleNodeSave). Hidden while empty. -->
+      <div id="nf-load-error" class="form-error mb-1" role="alert"></div>
       <input type="hidden" name="id" id="nf-id">
       <input type="hidden" name="node_type_id" id="nf-node-type-id">
       <input type="hidden" name="parent_id" id="nf-parent-id">

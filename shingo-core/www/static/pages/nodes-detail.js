@@ -10,6 +10,26 @@ import { confirmAllowedBinsNarrowing, renderKeeperLevels, renderKanbanSection, s
 
 var isAuth = document.getElementById('page-data').dataset.authenticated === 'true';
 
+// THE POP-UP SAVES ONLY WHAT IT LOADED. The form opens on defaults and the
+// node's stored settings arrive after, so a Save before they arrive, or after
+// they failed to, would write those defaults over the stored ones. It did, from
+// 2026-10-08 to 2026-11-10: the load died on a ReferenceError and every Save on a
+// group wrote FIFO, LKND, ASRS on and resolve-around off.
+//
+// _detailOpen counts the opens; a detail answer carries the count it was asked
+// under, and one asked under an older open is for a node the pop-up no longer
+// shows, so it is dropped. _detailState is the current open's: 'loading' until
+// its answer has filled the whole form, then 'loaded', or 'failed'.
+var _detailOpen = 0;
+var _detailState = 'loading';
+var DETAIL_FAILED = "Could not load this node's saved settings. Nothing will be saved. Close and reopen.";
+var DETAIL_LOADING = "This node's saved settings are still loading. Nothing was saved; press Save again in a moment.";
+
+function showDetailError(text) {
+  var box = document.getElementById('nf-load-error');
+  if (box) box.textContent = text;
+}
+
 // opts.focus 'waiting-spots' opens a group with its waiting spots in view: the
 // problem line a group without any shows in place of "+ Add lane" lands here.
 export function openNodeModal(el, opts) {
@@ -18,6 +38,9 @@ export function openNodeModal(el, opts) {
   var inv = document.getElementById('modal-inventory');
 
   var d = el.dataset;
+  _detailOpen++;
+  _detailState = 'loading';
+  showDetailError('');
   document.getElementById('modal-title').textContent = d.name;
 
   // Parent info
@@ -43,7 +66,7 @@ export function openNodeModal(el, opts) {
   }
   var isDirectChildOfGroup = isLeafChild && parentTypeCode === 'NGRP';
   var isLaneSlot = isLeafChild && parentTypeCode === 'LANE';
-  loadNodeDetail(d.id, d.synthetic === 'true', opts);
+  loadNodeDetail(d.id, d.synthetic === 'true', opts, _detailOpen);
 
   // Hide associations for lane slots (inherit from lane), show for direct children of NGRP
   var assocDiv = document.getElementById('modal-associations');
@@ -114,13 +137,18 @@ export function openNodeModal(el, opts) {
 // are drawn). It was read here without being passed from 2026-10-08, and the
 // ReferenceError stopped the detail before any stored property reached the
 // form: the pop-up showed defaults, and Save wrote them back.
-function loadNodeDetail(nodeID, isSynthetic, opts) {
+//
+// open is the _detailOpen this load was asked under. The form counts as loaded
+// only once the whole answer is in it; anything that throws on the way, as that
+// ReferenceError did, leaves it failed, with the reason on screen.
+function loadNodeDetail(nodeID, isSynthetic, opts, open) {
   var assocDiv = document.getElementById('modal-associations');
 
   if (assocDiv) assocDiv.classList.add('hide');
 
   apiGet('/api/nodes/detail?id=' + nodeID)
     .then(function(data) {
+      if (open !== _detailOpen) return;
       var btMode = data.bin_type_mode || '';
       var stMode = data.station_mode || '';
       var stations = data.stations || [];
@@ -179,8 +207,15 @@ function loadNodeDetail(nodeID, isSynthetic, opts) {
           loadTableTurnProperty(p.key, p.value);
         }
       });
+      rememberAlgorithms();
+      _detailState = 'loaded';
     })
-    .catch(function(err) { console.error('loadNodeDetail', err); });
+    .catch(function(err) {
+      if (open !== _detailOpen) return;
+      console.error('loadNodeDetail', err);
+      _detailState = 'failed';
+      showDetailError(DETAIL_FAILED);
+    });
 }
 
 /* --- Chip Picker --- */
@@ -377,25 +412,55 @@ function onAsrsToggle() {
   if (box && ctrls) ctrls.classList.toggle('hide', !box.checked);
 }
 
-function saveAlgorithmProperties() {
+// A group's four resolver settings, each with the form control that shows it.
+// asrs_enabled 'off' makes the resolver use the default algorithms;
+// resolve_around is the per-group lane-preference arm (default off).
+var ALGORITHM_SETTINGS = [
+  { id: 'nf-asrs-enabled', key: 'asrs_enabled', what: 'the ASRS switch' },
+  { id: 'nf-resolve-around', key: 'resolve_around', what: 'resolve-around' },
+  { id: 'nf-retrieve-algo', key: 'retrieve_algorithm', what: 'the retrieval algorithm' },
+  { id: 'nf-store-algo', key: 'store_algorithm', what: 'the storage algorithm' }
+];
+
+// shownAlgorithm is the value a control shows, as the property stores it.
+function shownAlgorithm(input) {
+  return input.type === 'checkbox' ? (input.checked ? 'on' : 'off') : input.value;
+}
+
+// rememberAlgorithms records what each control shows once the detail has
+// filled it: the stored value, or the default a group with none stored shows.
+// What the control SHOWS, not the stored text, so a stored value the form
+// cannot show is not "changed" into the one it does.
+function rememberAlgorithms() {
+  ALGORITHM_SETTINGS.forEach(function(s) {
+    var input = document.getElementById(s.id);
+    if (input) input.dataset.saved = shownAlgorithm(input);
+  });
+}
+
+// saveAlgorithmProperties writes the settings the person changed, one at a
+// time, and stops the save at the first that fails: the form would reload the
+// page and take the reason with it.
+async function saveAlgorithmProperties() {
   var algoDiv = document.getElementById('ngrp-algorithms');
-  if (!algoDiv || algoDiv.classList.contains('hide')) return;
-  var nodeID = parseInt(document.getElementById('nf-id').value);
-  if (!nodeID) return;
-  // Enable-ASRS flag: 'off' makes the resolver use default algorithms.
-  var asrsBox = document.getElementById('nf-asrs-enabled');
-  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'asrs_enabled', value: (asrsBox && asrsBox.checked) ? 'on' : 'off'})
-    .catch(function(err) { console.error('saveAlgorithmProperties asrs_enabled', err); });
-  // Resolve-around: per-group lane-preference arm (default off).
-  var raBox = document.getElementById('nf-resolve-around');
-  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'resolve_around', value: (raBox && raBox.checked) ? 'on' : 'off'})
-    .catch(function(err) { console.error('saveAlgorithmProperties resolve_around', err); });
-  var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
-  var storeAlgo = document.getElementById('nf-store-algo').value;
-  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})
-    .catch(function(err) { console.error('saveAlgorithmProperties retrieve', err); });
-  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'store_algorithm', value: storeAlgo})
-    .catch(function(err) { console.error('saveAlgorithmProperties store', err); });
+  if (!algoDiv || algoDiv.classList.contains('hide')) return true;
+  var nodeID = parseInt(document.getElementById('nf-id').value, 10);
+  if (!nodeID) return true;
+  for (var i = 0; i < ALGORITHM_SETTINGS.length; i++) {
+    var s = ALGORITHM_SETTINGS[i];
+    var input = document.getElementById(s.id);
+    if (!input) continue;
+    var value = shownAlgorithm(input);
+    if (value === input.dataset.saved) continue; // untouched: no write, no audit row
+    try {
+      await apiPost('/api/nodes/properties/set', {node_id: nodeID, key: s.key, value: value});
+      input.dataset.saved = value;
+    } catch (err) {
+      toast('Could not save ' + s.what + ': ' + err, 'error');
+      return false;
+    }
+  }
+  return true;
 }
 
 async function deleteNode() {
@@ -467,12 +532,19 @@ function loadInventory(nodeID) {
 // that did not happen.
 //
 // form.submit() at the end does not fire a submit event, so this cannot re-enter.
+//
+// NOTHING IS WRITTEN UNTIL THE DETAIL HAS LOADED, the form post included: until
+// then the pickers and the group settings hold defaults, not this node's values.
 async function handleNodeSave(el, evt) {
   if (evt) evt.preventDefault();
+  if (_detailState !== 'loaded') {
+    if (_detailState === 'failed') toast(DETAIL_FAILED, 'error');
+    else toast(DETAIL_LOADING, 'warning');
+    return;
+  }
   var form = document.getElementById('node-form');
 
   serializeChipPickers();
-  saveAlgorithmProperties();
 
   // Clear any force from a PREVIOUS save. The modal's form is one long-lived
   // element, so a hidden input added when the operator confirmed a narrowing
@@ -491,6 +563,8 @@ async function handleNodeSave(el, evt) {
     if (!ok) return;
   }
 
+  // A group's changed settings; a write that fails stops here, the reason shown.
+  if (await saveAlgorithmProperties() === false) return;
   // Refused when the turn cannot work at this spot; the reason is shown.
   if (await saveTableTurn() === false) return;
   // This one can ask the human a question (a mark the map does not know).

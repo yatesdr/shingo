@@ -23,6 +23,7 @@ Deploy: no migration.
 - A move, a Material-page release or a quality hold that lifts at a turning node stops there for the turn, about 8 s, with nobody pressing anything
 - A table that has not turned after three tries holds its order with the reason on the row and emails an alarm naming the node; the hard release still moves it, recorded with the angle
 - The node pop-up shows the node's saved settings again: since 2026-10-08 a group showed default algorithms and no waiting spots, and Save wrote the defaults back
+- The node pop-up's Save writes only the group settings you changed, and saves nothing, saying why, until the node's settings have loaded
 
 ## v0.2.2 — 2026-11-10
 
