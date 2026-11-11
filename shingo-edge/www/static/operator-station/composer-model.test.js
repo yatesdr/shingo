@@ -71,6 +71,21 @@ function loadFlowspec() {
 
 const M = loadModel();
 const FLOWSPEC = loadFlowspec();
+
+// THE GRID MODE: `node composer-model.test.js --grid <out.txt>` writes the
+// process-setup grid (gridLines, near the end of this file) and stops before
+// the fixture-backed pins. The same model and flowspec, loaded the same way;
+// TestComposerModelGrid compares the file to its golden. A file rather than
+// stdout, so the exit cannot cut a piped write short.
+if (process.argv[2] === '--grid') {
+    if (!process.argv[3]) {
+        console.error('usage: node composer-model.test.js --grid <out.txt>  (written for composer_model_characterization_test.go)');
+        process.exit(2);
+    }
+    fs.writeFileSync(process.argv[3], gridLines(M, FLOWSPEC).join('\n') + '\n');
+    process.exit(0);
+}
+
 const FIXTURES_PATH = process.argv[2];
 if (!FIXTURES_PATH) {
     console.error('usage: node composer-model.test.js <fixtures.json>  (written by composer_model_characterization_test.go)');
@@ -2177,6 +2192,161 @@ test('positionChoices offers this station’s free positions and never another s
     const moved = M.reduce(s, { type: 'movePosition', from: 'PLN_01', to: 'ULN_002' });
     assert.deepStrictEqual(M.toCells(moved), M.toCells(s), 'a move onto another station’s node is refused');
 });
+
+// ═══ the process-setup grid (U0, 2026-11-11) ═════════════════════════════════
+//
+// gridLines is what --grid writes: every answer the positions table and the
+// Advanced sheet take from the model, for every mode the model offers (its
+// MODES keys, through modeLabels) under both roles, one line per question.
+// The pins above check the grid's RULES against flowspec at a few points; this
+// records the whole grid at the base tree, so the process-setup rework that
+// follows shows every cell it moves as a line in a golden diff
+// (testdata/process-setup/composer-model-grid.golden.txt).
+//
+// A FUNCTION DECLARATION, SELF-CONTAINED. --grid calls it before the rest of
+// this file has run, so it may read nothing declared with const above or
+// below; the declaration itself is hoisted.
+//
+// Synthetic press: POS_A1 is the position asked about. Three fixtures per
+// column — `blank` (nothing set, two free back positions BK_1/BK_2), `no-back`
+// (nothing set, a press with no back position: hasCandidate's one case) and
+// `set` (every chip's field carries a value). `(off)` is a position not on the
+// flow: no claim, no mode, its role from deriveRole (consume by default,
+// produce when another style claims it so).
+function gridLines(M, FLOWSPEC) {
+    const NODE = 'POS_A1';
+    const ROLES = ['consume', 'produce'];
+    const MODE_KEYS = Object.keys(M.modeLabels());
+    const COLUMNS = ['partner', 'staging'];
+    const BACKS = [
+        { core_node_name: 'POS_A1', kind: 'front', sequence: 1 },
+        { core_node_name: 'BK_1', kind: 'back', sequence: 2 },
+        { core_node_name: 'BK_2', kind: 'back', sequence: 3 },
+    ];
+    const NO_BACK = [
+        { core_node_name: 'POS_A1', kind: 'front', sequence: 1 },
+        { core_node_name: 'POS_A2', kind: 'front', sequence: 2 },
+    ];
+    const SET = { paired_core_node: 'BK_1', second_paired_core_node: 'BK_2',
+        inbound_staging: 'STG_1', outbound_staging: 'STG_2' };
+    // Every Advanced key with a value that is not its INSERT default.
+    const ALL_SET = {
+        allowed_payload_codes: ['PART-X'], reorder_point: 5, reorder_point_source: 'manual',
+        auto_reorder: true, lineside_soft_threshold: 3, auto_request_payload: 'PART-X',
+        auto_push: true, keep_staged_node: 'STG_1', evacuate_on_changeover: true,
+        changeover_carryover_disposition: 'keep_lineside', index_robot_supplies: true,
+        auto_confirm: true, curtain_required: true, strict_pack: true, pack_tolerance_pct: 5,
+        sequence: 2,
+    };
+    // The page asks advancedShows about one key that is not an Advanced
+    // default: advShows' partial_dest (processes-desktop.js:3984).
+    const PAGE_KEYS = ['partial_destination'];
+
+    const state = (positions, claims, processClaims) => M.init({
+        styleId: 1, styleName: 'GRID', positions: positions, routing: [], claims: claims,
+        processClaims: processClaims || [], parts: [], flowspec: FLOWSPEC,
+    });
+    const claim = (mode, role, fields) => Object.assign(
+        { core_node_name: NODE, role: role, swap_mode: mode, payload_code: '' }, fields || {});
+    // The fixtures for one (mode, role); mode null is the (off) position.
+    // A line's (mode, role) is the fixture's claim on its word only, so each
+    // fixture is checked to BE that cell before anything is read off it.
+    const fixtures = (mode, role) => {
+        let fx;
+        if (!mode) {
+            const others = role === 'consume' ? [] : [{ core_node_name: NODE, role: 'produce' }];
+            const off = positions => state(positions, [], others);
+            fx = { blank: off(BACKS), 'no-back': off(NO_BACK), set: off(BACKS) };
+        } else {
+            fx = {
+                blank: state(BACKS, [claim(mode, role)]),
+                'no-back': state(NO_BACK, [claim(mode, role)]),
+                set: state(BACKS, [claim(mode, role, SET)]),
+            };
+        }
+        for (const v of Object.keys(fx)) {
+            const c = fx[v].cells[NODE];
+            if (c.role !== role || c.mode !== mode || c.on !== !!mode) {
+                throw new Error('grid fixture ' + (mode || '(off)') + '/' + role + '/' + v + ' is ' +
+                    JSON.stringify({ role: c.role, mode: c.mode, on: c.on }));
+            }
+        }
+        return fx;
+    };
+
+    const advKeys = Object.keys(M.advancedFor(state(BACKS, []), NODE));
+    for (const k of advKeys) {
+        if (!(k in ALL_SET)) throw new Error('ADVANCED_DEFAULTS has ' + k + ' and the grid\'s ALL_SET does not: give it a set value');
+    }
+    const q = v => JSON.stringify(v);
+    const pad = (s, n) => String(s).padEnd(n);
+    const head = (fn, mode, role) => pad(fn, 14) + pad(mode || '(off)', 22) + pad(role, 8);
+    const word = (mode, role, field) => {
+        const row = mode && FLOWSPEC.steady[role] && FLOWSPEC.steady[role][mode];
+        return row ? (row[field] || '(absent)') : '(no row)';
+    };
+
+    const out = [
+        '# composer-model grid: what the positions table and the Advanced sheet read from',
+        '# composer-model.js, per mode x role. Written by composer-model.test.js --grid.',
+        '# Regenerate: go test ./www -run TestComposerModelGrid -update-process-setup-golden',
+        '# then READ the diff: a regenerated golden pins nothing unless someone read it.',
+        '# Node ' + NODE + '. blank = nothing set, backs BK_1/BK_2 free; no-back = nothing set, no back',
+        '# position; set = paired BK_1, second BK_2, inbound STG_1, outbound STG_2. (off) = not on',
+        '# the flow. advancedShows notes flowspec\'s own word for the key in [ ].',
+        '',
+    ];
+    for (const m of MODE_KEYS) out.push(pad('modeLabels', 14) + pad(m, 22) + '= ' + q(M.modeLabels()[m]));
+
+    const modes = MODE_KEYS.concat([null]);
+    out.push('');
+    for (const mode of modes) {
+        for (const role of ROLES) {
+            const fx = fixtures(mode, role);
+            for (const column of COLUMNS) {
+                for (const variant of ['blank', 'no-back', 'set']) {
+                    const lead = head('rowColumns', mode, role) + pad(column, 8) + pad(variant, 8) + '| ';
+                    const chips = M.rowColumns(fx[variant], NODE, column);
+                    if (!chips.length) out.push(lead + '(none: a dash)');
+                    for (const c of chips) {
+                        out.push(lead + pad(c.key, 13) + 'field=' + pad(c.field, 24) + 'label=' + pad(q(c.label), 26) +
+                            'value=' + pad(q(c.value), 8) + 'required=' + pad(c.required, 6) + 'possible=' + c.possible);
+                    }
+                }
+            }
+        }
+    }
+    out.push('');
+    for (const mode of modes) {
+        for (const role of ROLES) {
+            const s = fixtures(mode, role).blank;
+            for (const field of FLOWSPEC.fields) {
+                out.push(head('fieldRequired', mode, role) + pad(field, 34) + '= ' + M.fieldRequired(s, NODE, field));
+            }
+        }
+    }
+    out.push('');
+    for (const mode of modes) {
+        for (const role of ROLES) {
+            const s = fixtures(mode, role).blank;
+            for (const key of advKeys.concat(PAGE_KEYS)) {
+                out.push(head('advancedShows', mode, role) + pad(key, 34) + '= ' + pad(M.advancedShows(s, NODE, key), 6) +
+                    '[' + word(mode, role, key) + ']' + (PAGE_KEYS.indexOf(key) >= 0 ? ' (page key, not an Advanced default)' : ''));
+            }
+        }
+    }
+    out.push('');
+    for (const mode of modes) {
+        for (const role of ROLES) {
+            const s = fixtures(mode, role).blank;
+            // defaults is the page's own call shape (processes-desktop.js:2277):
+            // no adv, so the model reads advancedFor — the INSERT defaults here.
+            out.push(head('advancedSet', mode, role) + pad('defaults', 9) + '= ' + q(M.advancedSet(s, NODE)));
+            out.push(head('advancedSet', mode, role) + pad('all-set', 9) + '= ' + q(M.advancedSet(s, NODE, ALL_SET)));
+        }
+    }
+    return out;
+}
 
 // ── report ───────────────────────────────────────────────────────────────────
 if (failures) {

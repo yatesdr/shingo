@@ -1,0 +1,574 @@
+# composer-model grid: what the positions table and the Advanced sheet read from
+# composer-model.js, per mode x role. Written by composer-model.test.js --grid.
+# Regenerate: go test ./www -run TestComposerModelGrid -update-process-setup-golden
+# then READ the diff: a regenerated golden pins nothing unless someone read it.
+# Node POS_A1. blank = nothing set, backs BK_1/BK_2 free; no-back = nothing set, no back
+# position; set = paired BK_1, second BK_2, inbound STG_1, outbound STG_2. (off) = not on
+# the flow. advancedShows notes flowspec's own word for the key in [ ].
+
+modeLabels    two_robot_press_index = "2‑Robot Index"
+modeLabels    two_robot             = "2‑Robot Swap"
+modeLabels    single_robot          = "1‑Robot Swap"
+modeLabels    sequential            = "Sequential A/B"
+
+rowColumns    two_robot_press_index consume partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    two_robot_press_index consume partner blank   | secondPaired field=second_paired_core_node label="Second paired core node" value=""      required=false possible=true
+rowColumns    two_robot_press_index consume partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    two_robot_press_index consume partner no-back | secondPaired field=second_paired_core_node label="Second paired core node" value=""      required=false possible=false
+rowColumns    two_robot_press_index consume partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=true  possible=true
+rowColumns    two_robot_press_index consume partner set     | secondPaired field=second_paired_core_node label="Second paired core node" value="BK_2"  required=false possible=true
+rowColumns    two_robot_press_index consume staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
+rowColumns    two_robot_press_index consume staging blank   | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=false possible=true
+rowColumns    two_robot_press_index consume staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
+rowColumns    two_robot_press_index consume staging no-back | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=false possible=true
+rowColumns    two_robot_press_index consume staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=false possible=true
+rowColumns    two_robot_press_index consume staging set     | parkOld      field=outbound_staging        label="Outbound staging"        value="STG_2" required=false possible=true
+rowColumns    two_robot_press_index produce partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    two_robot_press_index produce partner blank   | secondPaired field=second_paired_core_node label="Second paired core node" value=""      required=false possible=true
+rowColumns    two_robot_press_index produce partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    two_robot_press_index produce partner no-back | secondPaired field=second_paired_core_node label="Second paired core node" value=""      required=false possible=false
+rowColumns    two_robot_press_index produce partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=true  possible=true
+rowColumns    two_robot_press_index produce partner set     | secondPaired field=second_paired_core_node label="Second paired core node" value="BK_2"  required=false possible=true
+rowColumns    two_robot_press_index produce staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
+rowColumns    two_robot_press_index produce staging blank   | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=false possible=true
+rowColumns    two_robot_press_index produce staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
+rowColumns    two_robot_press_index produce staging no-back | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=false possible=true
+rowColumns    two_robot_press_index produce staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=false possible=true
+rowColumns    two_robot_press_index produce staging set     | parkOld      field=outbound_staging        label="Outbound staging"        value="STG_2" required=false possible=true
+rowColumns    two_robot             consume partner blank   | (none: a dash)
+rowColumns    two_robot             consume partner no-back | (none: a dash)
+rowColumns    two_robot             consume partner set     | (none: a dash)
+rowColumns    two_robot             consume staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    two_robot             consume staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    two_robot             consume staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=true  possible=true
+rowColumns    two_robot             produce partner blank   | (none: a dash)
+rowColumns    two_robot             produce partner no-back | (none: a dash)
+rowColumns    two_robot             produce partner set     | (none: a dash)
+rowColumns    two_robot             produce staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    two_robot             produce staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    two_robot             produce staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=true  possible=true
+rowColumns    single_robot          consume partner blank   | (none: a dash)
+rowColumns    single_robot          consume partner no-back | (none: a dash)
+rowColumns    single_robot          consume partner set     | (none: a dash)
+rowColumns    single_robot          consume staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    single_robot          consume staging blank   | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=true  possible=true
+rowColumns    single_robot          consume staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    single_robot          consume staging no-back | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=true  possible=true
+rowColumns    single_robot          consume staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=true  possible=true
+rowColumns    single_robot          consume staging set     | parkOld      field=outbound_staging        label="Outbound staging"        value="STG_2" required=true  possible=true
+rowColumns    single_robot          produce partner blank   | (none: a dash)
+rowColumns    single_robot          produce partner no-back | (none: a dash)
+rowColumns    single_robot          produce partner set     | (none: a dash)
+rowColumns    single_robot          produce staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    single_robot          produce staging blank   | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=true  possible=true
+rowColumns    single_robot          produce staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=true  possible=true
+rowColumns    single_robot          produce staging no-back | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=true  possible=true
+rowColumns    single_robot          produce staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=true  possible=true
+rowColumns    single_robot          produce staging set     | parkOld      field=outbound_staging        label="Outbound staging"        value="STG_2" required=true  possible=true
+rowColumns    sequential            consume partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    sequential            consume partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    sequential            consume partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=true  possible=true
+rowColumns    sequential            consume staging blank   | (none: a dash)
+rowColumns    sequential            consume staging no-back | (none: a dash)
+rowColumns    sequential            consume staging set     | (none: a dash)
+rowColumns    sequential            produce partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    sequential            produce partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
+rowColumns    sequential            produce partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=true  possible=true
+rowColumns    sequential            produce staging blank   | (none: a dash)
+rowColumns    sequential            produce staging no-back | (none: a dash)
+rowColumns    sequential            produce staging set     | (none: a dash)
+rowColumns    (off)                 consume partner blank   | (none: a dash)
+rowColumns    (off)                 consume partner no-back | (none: a dash)
+rowColumns    (off)                 consume partner set     | (none: a dash)
+rowColumns    (off)                 consume staging blank   | (none: a dash)
+rowColumns    (off)                 consume staging no-back | (none: a dash)
+rowColumns    (off)                 consume staging set     | (none: a dash)
+rowColumns    (off)                 produce partner blank   | (none: a dash)
+rowColumns    (off)                 produce partner no-back | (none: a dash)
+rowColumns    (off)                 produce partner set     | (none: a dash)
+rowColumns    (off)                 produce staging blank   | (none: a dash)
+rowColumns    (off)                 produce staging no-back | (none: a dash)
+rowColumns    (off)                 produce staging set     | (none: a dash)
+
+fieldRequired two_robot_press_index consume inbound_staging                   = false
+fieldRequired two_robot_press_index consume outbound_staging                  = false
+fieldRequired two_robot_press_index consume paired_core_node                  = true
+fieldRequired two_robot_press_index consume outbound_destination              = true
+fieldRequired two_robot_press_index consume inbound_source                    = false
+fieldRequired two_robot_press_index consume second_paired_core_node           = false
+fieldRequired two_robot_press_index consume payload_code                      = true
+fieldRequired two_robot_press_index consume allowed_payload_codes             = false
+fieldRequired two_robot_press_index consume reorder_point                     = false
+fieldRequired two_robot_press_index consume auto_reorder                      = false
+fieldRequired two_robot_press_index consume lineside_soft_threshold           = false
+fieldRequired two_robot_press_index consume sequence                          = false
+fieldRequired two_robot_press_index consume keep_staged_node                  = false
+fieldRequired two_robot_press_index consume evacuate_on_changeover            = false
+fieldRequired two_robot_press_index consume changeover_evac_nodes             = false
+fieldRequired two_robot_press_index consume changeover_evac_destination       = false
+fieldRequired two_robot_press_index consume changeover_carryover_disposition  = false
+fieldRequired two_robot_press_index consume reuse_compatible_bins             = false
+fieldRequired two_robot_press_index consume index_robot_supplies              = false
+fieldRequired two_robot_press_index consume auto_confirm                      = false
+fieldRequired two_robot_press_index consume auto_request_payload              = false
+fieldRequired two_robot_press_index consume auto_push                         = false
+fieldRequired two_robot_press_index consume key_route                         = false
+fieldRequired two_robot_press_index consume key_task                          = false
+fieldRequired two_robot_press_index consume reorder_point_source              = false
+fieldRequired two_robot_press_index consume partial_destination               = false
+fieldRequired two_robot_press_index consume curtain_required                  = false
+fieldRequired two_robot_press_index consume strict_pack                       = false
+fieldRequired two_robot_press_index consume pack_tolerance_pct                = false
+fieldRequired two_robot_press_index produce inbound_staging                   = false
+fieldRequired two_robot_press_index produce outbound_staging                  = false
+fieldRequired two_robot_press_index produce paired_core_node                  = true
+fieldRequired two_robot_press_index produce outbound_destination              = true
+fieldRequired two_robot_press_index produce inbound_source                    = false
+fieldRequired two_robot_press_index produce second_paired_core_node           = false
+fieldRequired two_robot_press_index produce payload_code                      = true
+fieldRequired two_robot_press_index produce allowed_payload_codes             = false
+fieldRequired two_robot_press_index produce reorder_point                     = false
+fieldRequired two_robot_press_index produce auto_reorder                      = false
+fieldRequired two_robot_press_index produce lineside_soft_threshold           = false
+fieldRequired two_robot_press_index produce sequence                          = false
+fieldRequired two_robot_press_index produce keep_staged_node                  = false
+fieldRequired two_robot_press_index produce evacuate_on_changeover            = false
+fieldRequired two_robot_press_index produce changeover_evac_nodes             = false
+fieldRequired two_robot_press_index produce changeover_evac_destination       = false
+fieldRequired two_robot_press_index produce changeover_carryover_disposition  = false
+fieldRequired two_robot_press_index produce reuse_compatible_bins             = false
+fieldRequired two_robot_press_index produce index_robot_supplies              = false
+fieldRequired two_robot_press_index produce auto_confirm                      = false
+fieldRequired two_robot_press_index produce auto_request_payload              = false
+fieldRequired two_robot_press_index produce auto_push                         = false
+fieldRequired two_robot_press_index produce key_route                         = false
+fieldRequired two_robot_press_index produce key_task                          = false
+fieldRequired two_robot_press_index produce reorder_point_source              = false
+fieldRequired two_robot_press_index produce partial_destination               = false
+fieldRequired two_robot_press_index produce curtain_required                  = false
+fieldRequired two_robot_press_index produce strict_pack                       = false
+fieldRequired two_robot_press_index produce pack_tolerance_pct                = false
+fieldRequired two_robot             consume inbound_staging                   = true
+fieldRequired two_robot             consume outbound_staging                  = false
+fieldRequired two_robot             consume paired_core_node                  = false
+fieldRequired two_robot             consume outbound_destination              = true
+fieldRequired two_robot             consume inbound_source                    = false
+fieldRequired two_robot             consume second_paired_core_node           = false
+fieldRequired two_robot             consume payload_code                      = true
+fieldRequired two_robot             consume allowed_payload_codes             = false
+fieldRequired two_robot             consume reorder_point                     = false
+fieldRequired two_robot             consume auto_reorder                      = false
+fieldRequired two_robot             consume lineside_soft_threshold           = false
+fieldRequired two_robot             consume sequence                          = false
+fieldRequired two_robot             consume keep_staged_node                  = false
+fieldRequired two_robot             consume evacuate_on_changeover            = false
+fieldRequired two_robot             consume changeover_evac_nodes             = false
+fieldRequired two_robot             consume changeover_evac_destination       = false
+fieldRequired two_robot             consume changeover_carryover_disposition  = false
+fieldRequired two_robot             consume reuse_compatible_bins             = false
+fieldRequired two_robot             consume index_robot_supplies              = false
+fieldRequired two_robot             consume auto_confirm                      = false
+fieldRequired two_robot             consume auto_request_payload              = false
+fieldRequired two_robot             consume auto_push                         = false
+fieldRequired two_robot             consume key_route                         = false
+fieldRequired two_robot             consume key_task                          = false
+fieldRequired two_robot             consume reorder_point_source              = false
+fieldRequired two_robot             consume partial_destination               = false
+fieldRequired two_robot             consume curtain_required                  = false
+fieldRequired two_robot             consume strict_pack                       = false
+fieldRequired two_robot             consume pack_tolerance_pct                = false
+fieldRequired two_robot             produce inbound_staging                   = true
+fieldRequired two_robot             produce outbound_staging                  = false
+fieldRequired two_robot             produce paired_core_node                  = false
+fieldRequired two_robot             produce outbound_destination              = true
+fieldRequired two_robot             produce inbound_source                    = false
+fieldRequired two_robot             produce second_paired_core_node           = false
+fieldRequired two_robot             produce payload_code                      = true
+fieldRequired two_robot             produce allowed_payload_codes             = false
+fieldRequired two_robot             produce reorder_point                     = false
+fieldRequired two_robot             produce auto_reorder                      = false
+fieldRequired two_robot             produce lineside_soft_threshold           = false
+fieldRequired two_robot             produce sequence                          = false
+fieldRequired two_robot             produce keep_staged_node                  = false
+fieldRequired two_robot             produce evacuate_on_changeover            = false
+fieldRequired two_robot             produce changeover_evac_nodes             = false
+fieldRequired two_robot             produce changeover_evac_destination       = false
+fieldRequired two_robot             produce changeover_carryover_disposition  = false
+fieldRequired two_robot             produce reuse_compatible_bins             = false
+fieldRequired two_robot             produce index_robot_supplies              = false
+fieldRequired two_robot             produce auto_confirm                      = false
+fieldRequired two_robot             produce auto_request_payload              = false
+fieldRequired two_robot             produce auto_push                         = false
+fieldRequired two_robot             produce key_route                         = false
+fieldRequired two_robot             produce key_task                          = false
+fieldRequired two_robot             produce reorder_point_source              = false
+fieldRequired two_robot             produce partial_destination               = false
+fieldRequired two_robot             produce curtain_required                  = false
+fieldRequired two_robot             produce strict_pack                       = false
+fieldRequired two_robot             produce pack_tolerance_pct                = false
+fieldRequired single_robot          consume inbound_staging                   = true
+fieldRequired single_robot          consume outbound_staging                  = true
+fieldRequired single_robot          consume paired_core_node                  = false
+fieldRequired single_robot          consume outbound_destination              = true
+fieldRequired single_robot          consume inbound_source                    = false
+fieldRequired single_robot          consume second_paired_core_node           = false
+fieldRequired single_robot          consume payload_code                      = true
+fieldRequired single_robot          consume allowed_payload_codes             = false
+fieldRequired single_robot          consume reorder_point                     = false
+fieldRequired single_robot          consume auto_reorder                      = false
+fieldRequired single_robot          consume lineside_soft_threshold           = false
+fieldRequired single_robot          consume sequence                          = false
+fieldRequired single_robot          consume keep_staged_node                  = false
+fieldRequired single_robot          consume evacuate_on_changeover            = false
+fieldRequired single_robot          consume changeover_evac_nodes             = false
+fieldRequired single_robot          consume changeover_evac_destination       = false
+fieldRequired single_robot          consume changeover_carryover_disposition  = false
+fieldRequired single_robot          consume reuse_compatible_bins             = false
+fieldRequired single_robot          consume index_robot_supplies              = false
+fieldRequired single_robot          consume auto_confirm                      = false
+fieldRequired single_robot          consume auto_request_payload              = false
+fieldRequired single_robot          consume auto_push                         = false
+fieldRequired single_robot          consume key_route                         = false
+fieldRequired single_robot          consume key_task                          = false
+fieldRequired single_robot          consume reorder_point_source              = false
+fieldRequired single_robot          consume partial_destination               = false
+fieldRequired single_robot          consume curtain_required                  = false
+fieldRequired single_robot          consume strict_pack                       = false
+fieldRequired single_robot          consume pack_tolerance_pct                = false
+fieldRequired single_robot          produce inbound_staging                   = true
+fieldRequired single_robot          produce outbound_staging                  = true
+fieldRequired single_robot          produce paired_core_node                  = false
+fieldRequired single_robot          produce outbound_destination              = true
+fieldRequired single_robot          produce inbound_source                    = false
+fieldRequired single_robot          produce second_paired_core_node           = false
+fieldRequired single_robot          produce payload_code                      = true
+fieldRequired single_robot          produce allowed_payload_codes             = false
+fieldRequired single_robot          produce reorder_point                     = false
+fieldRequired single_robot          produce auto_reorder                      = false
+fieldRequired single_robot          produce lineside_soft_threshold           = false
+fieldRequired single_robot          produce sequence                          = false
+fieldRequired single_robot          produce keep_staged_node                  = false
+fieldRequired single_robot          produce evacuate_on_changeover            = false
+fieldRequired single_robot          produce changeover_evac_nodes             = false
+fieldRequired single_robot          produce changeover_evac_destination       = false
+fieldRequired single_robot          produce changeover_carryover_disposition  = false
+fieldRequired single_robot          produce reuse_compatible_bins             = false
+fieldRequired single_robot          produce index_robot_supplies              = false
+fieldRequired single_robot          produce auto_confirm                      = false
+fieldRequired single_robot          produce auto_request_payload              = false
+fieldRequired single_robot          produce auto_push                         = false
+fieldRequired single_robot          produce key_route                         = false
+fieldRequired single_robot          produce key_task                          = false
+fieldRequired single_robot          produce reorder_point_source              = false
+fieldRequired single_robot          produce partial_destination               = false
+fieldRequired single_robot          produce curtain_required                  = false
+fieldRequired single_robot          produce strict_pack                       = false
+fieldRequired single_robot          produce pack_tolerance_pct                = false
+fieldRequired sequential            consume inbound_staging                   = false
+fieldRequired sequential            consume outbound_staging                  = false
+fieldRequired sequential            consume paired_core_node                  = true
+fieldRequired sequential            consume outbound_destination              = true
+fieldRequired sequential            consume inbound_source                    = true
+fieldRequired sequential            consume second_paired_core_node           = false
+fieldRequired sequential            consume payload_code                      = true
+fieldRequired sequential            consume allowed_payload_codes             = false
+fieldRequired sequential            consume reorder_point                     = false
+fieldRequired sequential            consume auto_reorder                      = false
+fieldRequired sequential            consume lineside_soft_threshold           = false
+fieldRequired sequential            consume sequence                          = false
+fieldRequired sequential            consume keep_staged_node                  = false
+fieldRequired sequential            consume evacuate_on_changeover            = false
+fieldRequired sequential            consume changeover_evac_nodes             = false
+fieldRequired sequential            consume changeover_evac_destination       = false
+fieldRequired sequential            consume changeover_carryover_disposition  = false
+fieldRequired sequential            consume reuse_compatible_bins             = false
+fieldRequired sequential            consume index_robot_supplies              = false
+fieldRequired sequential            consume auto_confirm                      = false
+fieldRequired sequential            consume auto_request_payload              = false
+fieldRequired sequential            consume auto_push                         = false
+fieldRequired sequential            consume key_route                         = false
+fieldRequired sequential            consume key_task                          = false
+fieldRequired sequential            consume reorder_point_source              = false
+fieldRequired sequential            consume partial_destination               = false
+fieldRequired sequential            consume curtain_required                  = false
+fieldRequired sequential            consume strict_pack                       = false
+fieldRequired sequential            consume pack_tolerance_pct                = false
+fieldRequired sequential            produce inbound_staging                   = false
+fieldRequired sequential            produce outbound_staging                  = false
+fieldRequired sequential            produce paired_core_node                  = true
+fieldRequired sequential            produce outbound_destination              = true
+fieldRequired sequential            produce inbound_source                    = true
+fieldRequired sequential            produce second_paired_core_node           = false
+fieldRequired sequential            produce payload_code                      = true
+fieldRequired sequential            produce allowed_payload_codes             = false
+fieldRequired sequential            produce reorder_point                     = false
+fieldRequired sequential            produce auto_reorder                      = false
+fieldRequired sequential            produce lineside_soft_threshold           = false
+fieldRequired sequential            produce sequence                          = false
+fieldRequired sequential            produce keep_staged_node                  = false
+fieldRequired sequential            produce evacuate_on_changeover            = false
+fieldRequired sequential            produce changeover_evac_nodes             = false
+fieldRequired sequential            produce changeover_evac_destination       = false
+fieldRequired sequential            produce changeover_carryover_disposition  = false
+fieldRequired sequential            produce reuse_compatible_bins             = false
+fieldRequired sequential            produce index_robot_supplies              = false
+fieldRequired sequential            produce auto_confirm                      = false
+fieldRequired sequential            produce auto_request_payload              = false
+fieldRequired sequential            produce auto_push                         = false
+fieldRequired sequential            produce key_route                         = false
+fieldRequired sequential            produce key_task                          = false
+fieldRequired sequential            produce reorder_point_source              = false
+fieldRequired sequential            produce partial_destination               = false
+fieldRequired sequential            produce curtain_required                  = false
+fieldRequired sequential            produce strict_pack                       = false
+fieldRequired sequential            produce pack_tolerance_pct                = false
+fieldRequired (off)                 consume inbound_staging                   = false
+fieldRequired (off)                 consume outbound_staging                  = false
+fieldRequired (off)                 consume paired_core_node                  = false
+fieldRequired (off)                 consume outbound_destination              = false
+fieldRequired (off)                 consume inbound_source                    = false
+fieldRequired (off)                 consume second_paired_core_node           = false
+fieldRequired (off)                 consume payload_code                      = false
+fieldRequired (off)                 consume allowed_payload_codes             = false
+fieldRequired (off)                 consume reorder_point                     = false
+fieldRequired (off)                 consume auto_reorder                      = false
+fieldRequired (off)                 consume lineside_soft_threshold           = false
+fieldRequired (off)                 consume sequence                          = false
+fieldRequired (off)                 consume keep_staged_node                  = false
+fieldRequired (off)                 consume evacuate_on_changeover            = false
+fieldRequired (off)                 consume changeover_evac_nodes             = false
+fieldRequired (off)                 consume changeover_evac_destination       = false
+fieldRequired (off)                 consume changeover_carryover_disposition  = false
+fieldRequired (off)                 consume reuse_compatible_bins             = false
+fieldRequired (off)                 consume index_robot_supplies              = false
+fieldRequired (off)                 consume auto_confirm                      = false
+fieldRequired (off)                 consume auto_request_payload              = false
+fieldRequired (off)                 consume auto_push                         = false
+fieldRequired (off)                 consume key_route                         = false
+fieldRequired (off)                 consume key_task                          = false
+fieldRequired (off)                 consume reorder_point_source              = false
+fieldRequired (off)                 consume partial_destination               = false
+fieldRequired (off)                 consume curtain_required                  = false
+fieldRequired (off)                 consume strict_pack                       = false
+fieldRequired (off)                 consume pack_tolerance_pct                = false
+fieldRequired (off)                 produce inbound_staging                   = false
+fieldRequired (off)                 produce outbound_staging                  = false
+fieldRequired (off)                 produce paired_core_node                  = false
+fieldRequired (off)                 produce outbound_destination              = false
+fieldRequired (off)                 produce inbound_source                    = false
+fieldRequired (off)                 produce second_paired_core_node           = false
+fieldRequired (off)                 produce payload_code                      = false
+fieldRequired (off)                 produce allowed_payload_codes             = false
+fieldRequired (off)                 produce reorder_point                     = false
+fieldRequired (off)                 produce auto_reorder                      = false
+fieldRequired (off)                 produce lineside_soft_threshold           = false
+fieldRequired (off)                 produce sequence                          = false
+fieldRequired (off)                 produce keep_staged_node                  = false
+fieldRequired (off)                 produce evacuate_on_changeover            = false
+fieldRequired (off)                 produce changeover_evac_nodes             = false
+fieldRequired (off)                 produce changeover_evac_destination       = false
+fieldRequired (off)                 produce changeover_carryover_disposition  = false
+fieldRequired (off)                 produce reuse_compatible_bins             = false
+fieldRequired (off)                 produce index_robot_supplies              = false
+fieldRequired (off)                 produce auto_confirm                      = false
+fieldRequired (off)                 produce auto_request_payload              = false
+fieldRequired (off)                 produce auto_push                         = false
+fieldRequired (off)                 produce key_route                         = false
+fieldRequired (off)                 produce key_task                          = false
+fieldRequired (off)                 produce reorder_point_source              = false
+fieldRequired (off)                 produce partial_destination               = false
+fieldRequired (off)                 produce curtain_required                  = false
+fieldRequired (off)                 produce strict_pack                       = false
+fieldRequired (off)                 produce pack_tolerance_pct                = false
+
+advancedShows two_robot_press_index consume allowed_payload_codes             = true  [used]
+advancedShows two_robot_press_index consume reorder_point                     = true  [used]
+advancedShows two_robot_press_index consume reorder_point_source              = true  [unused]
+advancedShows two_robot_press_index consume auto_reorder                      = true  [used]
+advancedShows two_robot_press_index consume lineside_soft_threshold           = true  [used]
+advancedShows two_robot_press_index consume auto_request_payload              = true  [used]
+advancedShows two_robot_press_index consume auto_push                         = false [forbidden]
+advancedShows two_robot_press_index consume keep_staged_node                  = true  [used]
+advancedShows two_robot_press_index consume evacuate_on_changeover            = true  [used]
+advancedShows two_robot_press_index consume changeover_carryover_disposition  = true  [used]
+advancedShows two_robot_press_index consume index_robot_supplies              = true  [used]
+advancedShows two_robot_press_index consume auto_confirm                      = true  [used]
+advancedShows two_robot_press_index consume curtain_required                  = true  [used]
+advancedShows two_robot_press_index consume strict_pack                       = false [forbidden]
+advancedShows two_robot_press_index consume pack_tolerance_pct                = false [forbidden]
+advancedShows two_robot_press_index consume sequence                          = true  [used]
+advancedShows two_robot_press_index consume partial_destination               = false [unused] (page key, not an Advanced default)
+advancedShows two_robot_press_index produce allowed_payload_codes             = true  [used]
+advancedShows two_robot_press_index produce reorder_point                     = true  [used]
+advancedShows two_robot_press_index produce reorder_point_source              = true  [unused]
+advancedShows two_robot_press_index produce auto_reorder                      = true  [used]
+advancedShows two_robot_press_index produce lineside_soft_threshold           = false [unused]
+advancedShows two_robot_press_index produce auto_request_payload              = true  [used]
+advancedShows two_robot_press_index produce auto_push                         = false [forbidden]
+advancedShows two_robot_press_index produce keep_staged_node                  = true  [used]
+advancedShows two_robot_press_index produce evacuate_on_changeover            = true  [used]
+advancedShows two_robot_press_index produce changeover_carryover_disposition  = true  [used]
+advancedShows two_robot_press_index produce index_robot_supplies              = true  [used]
+advancedShows two_robot_press_index produce auto_confirm                      = true  [used]
+advancedShows two_robot_press_index produce curtain_required                  = true  [used]
+advancedShows two_robot_press_index produce strict_pack                       = true  [used]
+advancedShows two_robot_press_index produce pack_tolerance_pct                = true  [used]
+advancedShows two_robot_press_index produce sequence                          = true  [used]
+advancedShows two_robot_press_index produce partial_destination               = true  [used] (page key, not an Advanced default)
+advancedShows two_robot             consume allowed_payload_codes             = true  [used]
+advancedShows two_robot             consume reorder_point                     = true  [used]
+advancedShows two_robot             consume reorder_point_source              = true  [unused]
+advancedShows two_robot             consume auto_reorder                      = true  [used]
+advancedShows two_robot             consume lineside_soft_threshold           = true  [used]
+advancedShows two_robot             consume auto_request_payload              = true  [used]
+advancedShows two_robot             consume auto_push                         = false [forbidden]
+advancedShows two_robot             consume keep_staged_node                  = true  [used]
+advancedShows two_robot             consume evacuate_on_changeover            = true  [used]
+advancedShows two_robot             consume changeover_carryover_disposition  = false [forbidden]
+advancedShows two_robot             consume index_robot_supplies              = false [forbidden]
+advancedShows two_robot             consume auto_confirm                      = true  [used]
+advancedShows two_robot             consume curtain_required                  = true  [used]
+advancedShows two_robot             consume strict_pack                       = false [forbidden]
+advancedShows two_robot             consume pack_tolerance_pct                = false [forbidden]
+advancedShows two_robot             consume sequence                          = true  [used]
+advancedShows two_robot             consume partial_destination               = false [unused] (page key, not an Advanced default)
+advancedShows two_robot             produce allowed_payload_codes             = true  [used]
+advancedShows two_robot             produce reorder_point                     = true  [used]
+advancedShows two_robot             produce reorder_point_source              = true  [unused]
+advancedShows two_robot             produce auto_reorder                      = true  [used]
+advancedShows two_robot             produce lineside_soft_threshold           = false [unused]
+advancedShows two_robot             produce auto_request_payload              = true  [used]
+advancedShows two_robot             produce auto_push                         = false [forbidden]
+advancedShows two_robot             produce keep_staged_node                  = true  [used]
+advancedShows two_robot             produce evacuate_on_changeover            = true  [used]
+advancedShows two_robot             produce changeover_carryover_disposition  = false [forbidden]
+advancedShows two_robot             produce index_robot_supplies              = false [forbidden]
+advancedShows two_robot             produce auto_confirm                      = true  [used]
+advancedShows two_robot             produce curtain_required                  = true  [used]
+advancedShows two_robot             produce strict_pack                       = true  [used]
+advancedShows two_robot             produce pack_tolerance_pct                = true  [used]
+advancedShows two_robot             produce sequence                          = true  [used]
+advancedShows two_robot             produce partial_destination               = true  [used] (page key, not an Advanced default)
+advancedShows single_robot          consume allowed_payload_codes             = true  [used]
+advancedShows single_robot          consume reorder_point                     = true  [used]
+advancedShows single_robot          consume reorder_point_source              = true  [unused]
+advancedShows single_robot          consume auto_reorder                      = true  [used]
+advancedShows single_robot          consume lineside_soft_threshold           = true  [used]
+advancedShows single_robot          consume auto_request_payload              = true  [used]
+advancedShows single_robot          consume auto_push                         = false [forbidden]
+advancedShows single_robot          consume keep_staged_node                  = true  [used]
+advancedShows single_robot          consume evacuate_on_changeover            = true  [used]
+advancedShows single_robot          consume changeover_carryover_disposition  = false [forbidden]
+advancedShows single_robot          consume index_robot_supplies              = false [forbidden]
+advancedShows single_robot          consume auto_confirm                      = true  [used]
+advancedShows single_robot          consume curtain_required                  = true  [used]
+advancedShows single_robot          consume strict_pack                       = false [forbidden]
+advancedShows single_robot          consume pack_tolerance_pct                = false [forbidden]
+advancedShows single_robot          consume sequence                          = true  [used]
+advancedShows single_robot          consume partial_destination               = false [unused] (page key, not an Advanced default)
+advancedShows single_robot          produce allowed_payload_codes             = true  [used]
+advancedShows single_robot          produce reorder_point                     = true  [used]
+advancedShows single_robot          produce reorder_point_source              = true  [unused]
+advancedShows single_robot          produce auto_reorder                      = true  [used]
+advancedShows single_robot          produce lineside_soft_threshold           = false [unused]
+advancedShows single_robot          produce auto_request_payload              = true  [used]
+advancedShows single_robot          produce auto_push                         = false [forbidden]
+advancedShows single_robot          produce keep_staged_node                  = true  [used]
+advancedShows single_robot          produce evacuate_on_changeover            = true  [used]
+advancedShows single_robot          produce changeover_carryover_disposition  = false [forbidden]
+advancedShows single_robot          produce index_robot_supplies              = false [forbidden]
+advancedShows single_robot          produce auto_confirm                      = true  [used]
+advancedShows single_robot          produce curtain_required                  = true  [used]
+advancedShows single_robot          produce strict_pack                       = true  [used]
+advancedShows single_robot          produce pack_tolerance_pct                = true  [used]
+advancedShows single_robot          produce sequence                          = true  [used]
+advancedShows single_robot          produce partial_destination               = true  [used] (page key, not an Advanced default)
+advancedShows sequential            consume allowed_payload_codes             = true  [used]
+advancedShows sequential            consume reorder_point                     = true  [used]
+advancedShows sequential            consume reorder_point_source              = true  [unused]
+advancedShows sequential            consume auto_reorder                      = true  [used]
+advancedShows sequential            consume lineside_soft_threshold           = true  [used]
+advancedShows sequential            consume auto_request_payload              = true  [used]
+advancedShows sequential            consume auto_push                         = false [forbidden]
+advancedShows sequential            consume keep_staged_node                  = true  [used]
+advancedShows sequential            consume evacuate_on_changeover            = true  [used]
+advancedShows sequential            consume changeover_carryover_disposition  = false [forbidden]
+advancedShows sequential            consume index_robot_supplies              = false [forbidden]
+advancedShows sequential            consume auto_confirm                      = true  [used]
+advancedShows sequential            consume curtain_required                  = true  [used]
+advancedShows sequential            consume strict_pack                       = false [forbidden]
+advancedShows sequential            consume pack_tolerance_pct                = false [forbidden]
+advancedShows sequential            consume sequence                          = true  [used]
+advancedShows sequential            consume partial_destination               = false [unused] (page key, not an Advanced default)
+advancedShows sequential            produce allowed_payload_codes             = true  [used]
+advancedShows sequential            produce reorder_point                     = true  [used]
+advancedShows sequential            produce reorder_point_source              = true  [unused]
+advancedShows sequential            produce auto_reorder                      = true  [used]
+advancedShows sequential            produce lineside_soft_threshold           = false [unused]
+advancedShows sequential            produce auto_request_payload              = true  [used]
+advancedShows sequential            produce auto_push                         = false [forbidden]
+advancedShows sequential            produce keep_staged_node                  = true  [used]
+advancedShows sequential            produce evacuate_on_changeover            = true  [used]
+advancedShows sequential            produce changeover_carryover_disposition  = false [forbidden]
+advancedShows sequential            produce index_robot_supplies              = false [forbidden]
+advancedShows sequential            produce auto_confirm                      = true  [used]
+advancedShows sequential            produce curtain_required                  = true  [used]
+advancedShows sequential            produce strict_pack                       = true  [used]
+advancedShows sequential            produce pack_tolerance_pct                = true  [used]
+advancedShows sequential            produce sequence                          = true  [used]
+advancedShows sequential            produce partial_destination               = true  [used] (page key, not an Advanced default)
+advancedShows (off)                 consume allowed_payload_codes             = true  [(no row)]
+advancedShows (off)                 consume reorder_point                     = true  [(no row)]
+advancedShows (off)                 consume reorder_point_source              = true  [(no row)]
+advancedShows (off)                 consume auto_reorder                      = true  [(no row)]
+advancedShows (off)                 consume lineside_soft_threshold           = true  [(no row)]
+advancedShows (off)                 consume auto_request_payload              = true  [(no row)]
+advancedShows (off)                 consume auto_push                         = true  [(no row)]
+advancedShows (off)                 consume keep_staged_node                  = true  [(no row)]
+advancedShows (off)                 consume evacuate_on_changeover            = true  [(no row)]
+advancedShows (off)                 consume changeover_carryover_disposition  = true  [(no row)]
+advancedShows (off)                 consume index_robot_supplies              = true  [(no row)]
+advancedShows (off)                 consume auto_confirm                      = true  [(no row)]
+advancedShows (off)                 consume curtain_required                  = true  [(no row)]
+advancedShows (off)                 consume strict_pack                       = true  [(no row)]
+advancedShows (off)                 consume pack_tolerance_pct                = true  [(no row)]
+advancedShows (off)                 consume sequence                          = true  [(no row)]
+advancedShows (off)                 consume partial_destination               = true  [(no row)] (page key, not an Advanced default)
+advancedShows (off)                 produce allowed_payload_codes             = true  [(no row)]
+advancedShows (off)                 produce reorder_point                     = true  [(no row)]
+advancedShows (off)                 produce reorder_point_source              = true  [(no row)]
+advancedShows (off)                 produce auto_reorder                      = true  [(no row)]
+advancedShows (off)                 produce lineside_soft_threshold           = true  [(no row)]
+advancedShows (off)                 produce auto_request_payload              = true  [(no row)]
+advancedShows (off)                 produce auto_push                         = true  [(no row)]
+advancedShows (off)                 produce keep_staged_node                  = true  [(no row)]
+advancedShows (off)                 produce evacuate_on_changeover            = true  [(no row)]
+advancedShows (off)                 produce changeover_carryover_disposition  = true  [(no row)]
+advancedShows (off)                 produce index_robot_supplies              = true  [(no row)]
+advancedShows (off)                 produce auto_confirm                      = true  [(no row)]
+advancedShows (off)                 produce curtain_required                  = true  [(no row)]
+advancedShows (off)                 produce strict_pack                       = true  [(no row)]
+advancedShows (off)                 produce pack_tolerance_pct                = true  [(no row)]
+advancedShows (off)                 produce sequence                          = true  [(no row)]
+advancedShows (off)                 produce partial_destination               = true  [(no row)] (page key, not an Advanced default)
+
+advancedSet   two_robot_press_index consume defaults = []
+advancedSet   two_robot_press_index consume all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","lineside_soft_threshold","auto_request_payload","keep_staged_node","evacuate_on_changeover","changeover_carryover_disposition","index_robot_supplies","auto_confirm","curtain_required","sequence"]
+advancedSet   two_robot_press_index produce defaults = []
+advancedSet   two_robot_press_index produce all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","auto_request_payload","keep_staged_node","evacuate_on_changeover","changeover_carryover_disposition","index_robot_supplies","auto_confirm","curtain_required","strict_pack","pack_tolerance_pct","sequence"]
+advancedSet   two_robot             consume defaults = []
+advancedSet   two_robot             consume all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","lineside_soft_threshold","auto_request_payload","keep_staged_node","evacuate_on_changeover","auto_confirm","curtain_required","sequence"]
+advancedSet   two_robot             produce defaults = []
+advancedSet   two_robot             produce all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","auto_request_payload","keep_staged_node","evacuate_on_changeover","auto_confirm","curtain_required","strict_pack","pack_tolerance_pct","sequence"]
+advancedSet   single_robot          consume defaults = []
+advancedSet   single_robot          consume all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","lineside_soft_threshold","auto_request_payload","keep_staged_node","evacuate_on_changeover","auto_confirm","curtain_required","sequence"]
+advancedSet   single_robot          produce defaults = []
+advancedSet   single_robot          produce all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","auto_request_payload","keep_staged_node","evacuate_on_changeover","auto_confirm","curtain_required","strict_pack","pack_tolerance_pct","sequence"]
+advancedSet   sequential            consume defaults = []
+advancedSet   sequential            consume all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","lineside_soft_threshold","auto_request_payload","keep_staged_node","evacuate_on_changeover","auto_confirm","curtain_required","sequence"]
+advancedSet   sequential            produce defaults = []
+advancedSet   sequential            produce all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","auto_request_payload","keep_staged_node","evacuate_on_changeover","auto_confirm","curtain_required","strict_pack","pack_tolerance_pct","sequence"]
+advancedSet   (off)                 consume defaults = []
+advancedSet   (off)                 consume all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","lineside_soft_threshold","auto_request_payload","auto_push","keep_staged_node","evacuate_on_changeover","changeover_carryover_disposition","index_robot_supplies","auto_confirm","curtain_required","strict_pack","pack_tolerance_pct","sequence"]
+advancedSet   (off)                 produce defaults = []
+advancedSet   (off)                 produce all-set  = ["allowed_payload_codes","reorder_point","auto_reorder","lineside_soft_threshold","auto_request_payload","auto_push","keep_staged_node","evacuate_on_changeover","changeover_carryover_disposition","index_robot_supplies","auto_confirm","curtain_required","strict_pack","pack_tolerance_pct","sequence"]
