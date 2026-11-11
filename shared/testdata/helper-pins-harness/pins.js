@@ -1109,8 +1109,11 @@ function hubCensus() {
 }
 
 // sharedHome maps each name a shared/*.js module exports to that file, read
-// off the export lines (shared/helper_pins_test.go holds that no two files
-// export one name).
+// off the export lines. shared/helper_pins_test.go holds that no two files
+// export one name, save a copy it lists: utils.js's showModal, hideModal,
+// confirm, prompt and toast beside layer.js's and notice.js's, until wave C.
+// The files are read in name order, so utils.js, the copy the hubs take
+// today, is the one named here.
 function sharedHome() {
     const out = {};
     fs.readdirSync(path.join(REPO, 'shared')).filter((f) => f.endsWith('.js')).sort().forEach((f) => {

@@ -152,7 +152,10 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 // shared/*.js and every page module and template of Core and Edge.
 //
 //   - TestSharedHelpersDefinedOnce: a name a shared module exports is defined
-//     nowhere else, in any tree, except the copies sharedHelperCopies lists.
+//     nowhere else, in any tree, except the copies sharedHelperCopies lists. A
+//     second shared module may export the name only when it is one of those
+//     copies (utils.js's, while the hubs still take it): the other module is
+//     the name's home.
 //   - TestSharedExportsHaveImporters: every export of a shared module is
 //     imported by some page, hub or other shared module, except the ones
 //     sharedExportsNoImporter lists.
@@ -198,6 +201,15 @@ var sharedHelperCopies = map[string]string{
 	"shingo-core/www/static/pages/bins.js esc":            "alias of escapeHtml",
 	"shingo-edge/www/static/js/pages/catid-health.js esc": "classic script's private escaper",
 	"shingo-edge/www/static/js/pages/station-card.js esc": "classic script's private escaper",
+	// The components' names (layer.js, notice.js) still defined where the
+	// pages take them today: utils.js's copies, which the hubs re-export, and
+	// the Processes page's own sheet shell.
+	"shared/utils.js showModal": "adopted in wave C (s2-hubs): the hubs move to layer.js's",
+	"shared/utils.js hideModal": "adopted in wave C (s2-hubs): the hubs move to layer.js's",
+	"shared/utils.js confirm":   "adopted in wave C (s2-hubs): the hubs move to layer.js's",
+	"shared/utils.js prompt":    "adopted in wave C (s2-hubs): the hubs move to layer.js's",
+	"shared/utils.js toast":     "adopted in wave C (s2-hubs): the hubs move to notice.js's",
+	"shingo-edge/www/static/js/pages/processes-desktop.js openSheet": "adopted in wave C (s2-processes): the page moves to layer.js's",
 }
 
 // sharedExportsNoImporter are the exports no page imports, as "file name".
@@ -211,6 +223,23 @@ var sharedExportsNoImporter = map[string]string{
 	// node tests (testdata/js) and for a page that needs one.
 	"bus.js closeSSEBus":           "teardown, read by utils.dashboard.test.js",
 	"clock.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
+	// The shared components, which no page imports until wave C swaps the
+	// hubs and the Processes page onto them.
+	"layer.js showModal":         "adopted in wave C (s2-hubs)",
+	"layer.js hideModal":         "adopted in wave C (s2-hubs)",
+	"layer.js confirm":           "adopted in wave C (s2-hubs)",
+	"layer.js prompt":            "adopted in wave C (s2-hubs)",
+	"layer.js confirmWithInput":  "adopted in wave C (s2-hubs): Core's uiConfirmWithInput",
+	"layer.js openSheet":         "adopted in wave C (s2-processes)",
+	"layer.js closeLayer":        "adopted in wave C (s2-processes)",
+	"layer.js layerDepth":        "adopted in wave C (s2-processes): the page's own Escape",
+	"http.js send":               "adopted in wave C (s2-hubs / s2-processes)",
+	"http.js http":               "adopted in wave C (s2-hubs / s2-processes)",
+	"http.js hookHtmxErrors":     "adopted in wave C (s2-hubs): installed on Edge admin",
+	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",
+	"picker.js createPicker":     "adopted in wave C (s2-processes), its adapters in S3",
+	"notice.js banner":           "adopted in S5 (the new-version and lost-connection banners)",
+	"notice.js clearBanner":      "adopted in S5 (the lost-connection banner)",
 }
 
 var (
@@ -347,10 +376,21 @@ func TestSharedHelpersDefinedOnce(t *testing.T) {
 	home := map[string]string{} // name -> the shared file that exports it
 	for file, names := range sharedExports(srcs) {
 		for _, n := range names {
-			if other, dup := home[n]; dup {
+			other, dup := home[n]
+			if !dup {
+				home[n] = file
+				continue
+			}
+			// Two exporters: one may be a listed copy, and the other is home.
+			_, otherIsCopy := sharedHelperCopies["shared/"+other+" "+n]
+			_, fileIsCopy := sharedHelperCopies["shared/"+file+" "+n]
+			switch {
+			case otherIsCopy && !fileIsCopy:
+				home[n] = file
+			case fileIsCopy && !otherIsCopy:
+			default:
 				t.Errorf("%s is exported by both shared/%s and shared/%s: one helper, one file", n, other, file)
 			}
-			home[n] = file
 		}
 	}
 	seen := map[string]bool{}
