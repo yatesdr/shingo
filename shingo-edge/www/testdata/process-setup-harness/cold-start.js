@@ -443,6 +443,21 @@ async function pinAddProcess() {
     L.push('#    then it opens on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
 }
 
+// Smoke (browser walk 2026-11-11): a style opened on a process whose screen
+// has no position said "Add a position below", and nothing was below it.
+async function bugNothingBelow() {
+    L.push('', '## the empty flow bar names a door that is on the screen');
+    const page = await T.openPage(Object.assign(pressA(c => {
+        c.cell.positions = [];
+        c.styles = c.styles.slice(0, 1).map(st => Object.assign(st, { claims: [], claim_count: 0, claim_modes: [], last_run: '' }));
+    }, NOT_RUN), { hash: '#style=1' }));
+    await page.settle();
+    const bar = T.text(String((page.byId('pd-bar') || {}).innerHTML || ''));
+    const foot = /data-act="add-position"/.test(page.root.innerHTML);
+    check('no position to add: the bar does not send the engineer below (' + JSON.stringify(bar) + ')',
+        foot || !/below/.test(bar), 'no "+ Add a position" is drawn');
+}
+
 async function run(t) {
     T = t;
     T.setCurrent('cold-start.txt');
@@ -454,6 +469,7 @@ async function run(t) {
     await bugDraftLeave();
     await bugDeadEnd();
     await bugDeadEndSlot();
+    await bugNothingBelow();
     await bugHmiNoRecipe();
     await pinStyleFirst();
     await pinSetup();

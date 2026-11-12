@@ -2692,7 +2692,13 @@ function drawBar() {
     // position" / "Tap the position and pick …", which is the HMI's door; on
     // the desktop the picture never edits, and the way in is the table's row
     // or its "+ Add a position".
-    const detail = b.tone === 'empty' ? 'Add a position below' : String(b.detail || '')
+    // "BELOW" ONLY WHEN SOMETHING IS BELOW. The footer's "+ Add a position"
+    // is drawn for a free position; with none (a screen with no position yet,
+    // or no screen) the bar sent the engineer to a control that was not there.
+    const empty = freePositions().length ? 'Add a position below'
+        : stationsOf(S.processID).length ? 'Its screen has no position yet: add them on Settings'
+            : 'Add an operator screen first: a flow uses its screen’s positions';
+    const detail = b.tone === 'empty' ? empty : String(b.detail || '')
         .replace('Tap the position and pick a choreography.', 'Pick its ' + W('swap_mode').toLowerCase() + ' on its row.')
         .replace('Tap the position and pick one.', 'Pick it on its row.');
     const head = '<div class="h' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>';

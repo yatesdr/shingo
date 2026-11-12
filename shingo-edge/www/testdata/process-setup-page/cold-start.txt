@@ -71,6 +71,9 @@ ok   the press is the routing set's one upsert
 ok   the refusal is said in the popover, which stays
 ok   and the row is as it was
 
+## the empty flow bar names a door that is on the screen
+ok   no position to add: the bar does not send the engineer below ("Nothing in the flow yet Its screen has no position yet: add them on Settings No unsaved changes")
+
 ## F36: Settings › HMI setup on a process with no recipe
 #    "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from no recipe yet New recipe Found in your flows · 1 shape run by 2 styles, not named yet Shape Ru"
 ok   the HMI setup row says the process has no recipe
