@@ -13,18 +13,17 @@ import (
 // pin: the page's script runs too much DOM at load to drive under node without
 // a browser, so the triggers are read from the markup and the script.
 //
-// Production holds one /events stream: production.js's createSSE('/events')
-// drives the shift chart and the manual-order node lists, and fires the
-// hx-trigger events on #production-content (htmx.trigger, through
-// productionStreamHandlers in production-refresh.js). production.html opens no
-// stream of its own (no sse-connect, no hx-ext="sse"). Diagnostics opens
-// /events?debug=1; Manual Order keeps /events.
+// Production holds one /events stream, the page's bus (shared/bus.js):
+// production.js subscribes the shift chart and the manual-order node lists,
+// and the hub's refreshOnEvents fires the hx-trigger events on
+// #production-content (htmx.trigger). production.html opens no stream of its
+// own (no sse-connect, no hx-ext="sse"). Diagnostics asks the bus for
+// debug-log (?debug=1); Manual Order subscribes core-nodes.
 //
 // Before "perf(edge): sourcing writes only what changed, status shows the Core
 // link, one stream per page" htmx's sse extension opened a second stream for
-// the content refresh and Diagnostics opened plain /events. That the
-// hx-trigger's sse: names match the forwarded events is
-// TestProductionRefresh_OneStream's.
+// the content refresh and Diagnostics opened plain /events. Every Edge admin
+// page's one stream is TestEdgeAdmin_OneBus's.
 
 func readWWWFile(t *testing.T, parts ...string) string {
 	t.Helper()
@@ -69,11 +68,12 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		t.Errorf("hx-trigger = %q\nwant %q", triggers, wantTriggers)
 	}
 
-	createSSEHandlers := regexp.MustCompile(`\n    (on[A-Z][A-Za-z]*): function`).FindAllStringSubmatch(js, -1)
+	busHandlers := regexp.MustCompile(`(?m)^onSSE\('([a-z-]+)'`).FindAllStringSubmatch(js, -1)
 	var handlers []string
-	for _, h := range createSSEHandlers {
+	for _, h := range busHandlers {
 		handlers = append(handlers, h[1])
 	}
+	hub := readWWWFile(t, "static", "js", "shingoedge.js")
 
 	cases := []struct {
 		name string
@@ -83,17 +83,18 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		// The next two were true.
 		{"production.html sse-connect=\"/events\"", strings.Contains(attrs, `sse-connect="/events"`), false},
 		{"production.html hx-ext=\"sse\"", strings.Contains(attrs, `hx-ext="sse"`), false},
-		{"production.js createSSE('/events'", strings.Count(js, "createSSE('/events'"), 1},
+		// Was createSSE('/events', …), once: the page's one stream is the bus.
+		{"production.js createSSE", strings.Count(js, "createSSE("), 0},
+		{"production.js refreshOnEvents('production-content', onSSE)", strings.Count(js, "refreshOnEvents('production-content', onSSE)"), 1},
 		// The page's own handlers; the order-update / order-failed /
-		// counter-update forwarding is wrapped around them by
-		// productionStreamHandlers (production-refresh.js, tested in
-		// production-refresh.test.js).
-		{"production.js createSSE handlers", strings.Join(handlers, ","), "onCounterUpdate,onCoreNodes"},
-		// Was false.
-		{"production.js calls htmx.trigger", strings.Contains(js, "htmx.trigger("), true},
-		// Was true: Diagnostics opens /events?debug=1.
-		{"diagnostics.js opens /events (no debug)", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "createSSE('/events',"), false},
-		{"manual-order.js opens /events", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "createSSE('/events',"), true},
+		// counter-update refreshes are refreshOnEvents', subscribed first
+		// (TestProductionRefresh_OneStream, shingoedge.refresh.test.js).
+		{"production.js bus handlers", strings.Join(handlers, ","), "counter-update,core-nodes,build-changed"},
+		// production.js called htmx.trigger itself; the hub's verb does now.
+		{"shingoedge.js refreshOnEvents calls htmx.trigger", strings.Contains(hub, "window.htmx.trigger(target, 'sse:' + type, data)"), true},
+		// Was true: Diagnostics opens /events?debug=1, on the bus now.
+		{"diagnostics.js asks the bus for debug-log", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "setSSEQuery({ debug: 1 });"), true},
+		{"manual-order.js subscribes core-nodes", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "onSSE('core-nodes', function(data) {"), true},
 	}
 	for _, c := range cases {
 		if c.got != c.want {

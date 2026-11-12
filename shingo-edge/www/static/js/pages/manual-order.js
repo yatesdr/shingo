@@ -1,4 +1,5 @@
-import { api, createSSE } from '/static/js/shingoedge.js';
+import { api, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { onSSE } from '/static/shared/bus.js';
 import { delegateActions } from '/static/shared/dom.js';
 import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
@@ -176,30 +177,31 @@ async function syncNodes() {
     setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Nodes'; }, 2000);
 }
 
-createSSE('/events', {
-    onCoreNodes: function(data) {
-        var nodes = (data.nodes || []).map(function(n) {
-            if (typeof n === 'string') return n;
-            return n && n.name ? n.name : '';
-        }).filter(Boolean);
-        ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
-            var sel = document.getElementById(selID);
-            var cur = sel.value;
-            Array.from(sel.options).forEach(function(o) {
-                if (o.dataset.source === 'core') o.remove();
-            });
-            var ref = sel.options[1] || null;
-            nodes.sort().forEach(function(n) {
-                var opt = document.createElement('option');
-                opt.value = n;
-                opt.textContent = n;
-                opt.dataset.source = 'core';
-                sel.insertBefore(opt, ref);
-            });
-            sel.value = cur;
+// The page's one stream (shared/bus.js): Core's node list, and the
+// new-build banner.
+onSSE('core-nodes', function(data) {
+    var nodes = (data.nodes || []).map(function(n) {
+        if (typeof n === 'string') return n;
+        return n && n.name ? n.name : '';
+    }).filter(Boolean);
+    ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
+        var sel = document.getElementById(selID);
+        var cur = sel.value;
+        Array.from(sel.options).forEach(function(o) {
+            if (o.dataset.source === 'core') o.remove();
         });
-    }
+        var ref = sel.options[1] || null;
+        nodes.sort().forEach(function(n) {
+            var opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n;
+            opt.dataset.source = 'core';
+            sel.insertBefore(opt, ref);
+        });
+        sel.value = cur;
+    });
 });
+onSSE('build-changed', showNewBuildBanner);
 
 // Apply initial visibility for default order type.
 updateOrderForm();

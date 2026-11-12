@@ -31,11 +31,11 @@ var updateHelperPinsGolden = flag.Bool("update-helper-pins-golden", false,
 //   - api.<surface>.txt: each api's shape, the request every verb sends, and
 //     what every answer (200/204/empty/non-JSON, the servers' refusal bodies,
 //     plain text, 5xx, no answer) resolves or rejects with;
-//   - sse.*.txt: the Edge hub's createSSE, shared createSSE, the onSSE bus,
-//     what Core's app.js does with the bus on import, and htmx-sse.js —
+//   - sse.*.txt: shared createSSE, the onSSE bus, what Core's app.js does
+//     with the bus on import, and Edge admin's pages on the bus —
 //     URL, dispatch, reconnect backoff, watchdog, build change, close;
 //   - htmx-errors.edge-admin.txt: who on Edge admin handles an htmx request
-//     error (nobody, today);
+//     error (the Edge hub's hook), and what the page shows;
 //   - hubs.txt: which copy each hub exports under each helper name.
 //
 // The surfaces are core-hub (shingo-core/www/static/app.js), edge-hub
@@ -172,7 +172,6 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 // module that exist today, as "path name". Each is someone else's to remove.
 var sharedHelperCopies = map[string]string{
 	// The Edge hub's own copies, likewise.
-	"shingo-edge/www/static/js/shingoedge.js createSSE": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js showModal": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js hideModal": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js api":       "the Edge hub's api: http.js's door, its refusal thrown as an Error for the pages that catch one",
@@ -203,7 +202,7 @@ var sharedExportsNoImporter = map[string]string{
 	// and Core's pages use uiConfirm / uiPrompt and the bus.
 	"utils.js confirm":   "pages take the Edge hub's copy",
 	"utils.js prompt":    "pages take the Edge hub's copy",
-	"utils.js createSSE": "pages take the Edge hub's copy or the bus",
+	"utils.js createSSE": "pages take the bus (ruling 4); the copy goes with utils.js's remnants",
 	// Its toast: the Edge Config page took it, and takes notice.js's now.
 	"utils.js toast": "pages take notice.js's (wave C); the copy goes with utils.js's remnants",
 	// utils.js's own banner, still shown by its createSSE; Core's hub shows

@@ -9,15 +9,15 @@
 //   core-hub  shingo-core/www/static/app.js        showModal hideModal uiConfirm
 //             uiConfirmWithInput uiPrompt toast api apiGet/Post/Put/Delete, and
 //             the bus subscription app.js makes on import (onSSE 'system-status')
-//   edge-hub  shingo-edge/www/static/js/shingoedge.js  createSSE showModal
-//             hideModal confirm prompt api (over shared/http.js) toast
-//             window.ShingoEdge
+//   edge-hub  shingo-edge/www/static/js/shingoedge.js  showModal hideModal
+//             confirm prompt (layer.js's) api (over shared/http.js) toast
+//             (notice.js's) window.ShingoEdge
 //   shared    shared/utils.js  api apiResult createSSE showRefreshBanner showModal
 //             hideModal confirm prompt toast installBackdropClose; shared/bus.js
 //             the onSSE bus
 //
-// plus htmx-sse.js (the htmx SSE extension Edge's changeover and orders pages
-// connect through) and a census of htmx request-error handling on Edge admin.
+// plus Edge admin on the bus (the hub's refreshOnEvents and new-build banner,
+// as the pages call them) and htmx request-error handling on Edge admin.
 //
 // A hub loads as a page loads it: the hub module and the shared modules in one
 // realm (world.js), so a hub's import-time side effects (installBackdropClose,
@@ -49,17 +49,20 @@
 //   dialog.shared.txt "prompt: over an open modal (this surface's showModal),
 //     Escape in the input": resolves null AND closes the modal underneath (the
 //     input's Escape, then the document's) — shared/utils.js:324 then :263.
-//   sse.edge-hub.txt / sse.shared-createSSE.txt "#n error, then client.close()
-//     before the reconnect fires": a stream opens after close() — the pending
-//     timer is not cancelled — shingoedge.js:97, shared/utils.js:165.
-//   sse.edge-hub.txt handler names: "onfoo" listens for "oo", "onSSEPing" for
-//     "s-s-e-ping" — shingoedge.js:82.
+//   sse.shared-createSSE.txt "#n error, then client.close() before the
+//     reconnect fires": a stream opens after close() — the pending timer is
+//     not cancelled — shared/utils.js:165.
 //   api.core-hub.txt "204 no content", "200 empty body": a 2xx with no body
 //     rejects (SyntaxError) — app.js:257.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
 //     app.js:253.
 //   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
 //     lives 3200 ms, not 5000 — shared/utils.js:375.
+//
+// GONE WITH THEIR CODE (ruling 4: both createSSE copies go, the bus is the one
+// client): sse.edge-hub.txt's stream reopened after close() and its handler
+// names ("onfoo" listened for "oo"), the Edge hub's createSSE; sse.htmx-sse.txt,
+// htmx-sse.js. Edge admin's one stream is sse.edge-admin.txt.
 //
 // FIXED SINCE (the golden shows the fixed behaviour):
 //   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
@@ -642,8 +645,9 @@ function handlerNote(r, label) {
     };
 }
 
+// createSSEPins pins shared/utils.js's createSSE (no page imports it; the
+// Edge hub's copy went with ruling 4).
 async function createSSEPins(surfaceName) {
-    const isEdge = surfaceName === 'edge-hub';
     const surface = SURFACES.find((s) => s.name === surfaceName);
     const out = [
         '# createSSE — ' + surfaceName + ': createSSE of ' + surface.file,
@@ -654,9 +658,7 @@ async function createSSEPins(surfaceName) {
     const p = page(surface);
     const r = p.r;
     const step = timeline(r, out);
-    const handlers = isEdge
-        ? { onOrderUpdate: handlerNote(r, 'onOrderUpdate'), onCoreNodes: handlerNote(r, 'onCoreNodes'), onfoo: handlerNote(r, 'onfoo'), onSSEPing: handlerNote(r, 'onSSEPing'), refresh: handlerNote(r, 'refresh'), onNotAFunction: 7 }
-        : { 'order-update': handlerNote(r, 'order-update'), 'core-nodes': handlerNote(r, 'core-nodes'), onOrderUpdate: handlerNote(r, 'onOrderUpdate'), notAFunction: 7 };
+    const handlers = { 'order-update': handlerNote(r, 'order-update'), 'core-nodes': handlerNote(r, 'core-nodes'), onOrderUpdate: handlerNote(r, 'onOrderUpdate'), notAFunction: 7 };
     out.push('handlers given: ' + Object.keys(handlers).join(', '));
     let client;
     await step('page loaded (the module imported, no createSSE yet)', async () => {});
@@ -727,13 +729,12 @@ async function createSSEPins(surfaceName) {
     }
     out.push('');
     out.push('## disconnected / connected signals');
-    out.push('a second page, handlers for "connected" and "disconnected" given as ' + (isEdge ? 'onConnected, onDisconnected' : '"connected", "disconnected"') + ':');
+    out.push('a second page, handlers for "connected" and "disconnected" given as "connected", "disconnected":');
     {
         const q = page(surface);
         const qs = [];
         const qstep = timeline(q.r, qs);
-        const hs = isEdge ? { onDisconnected: handlerNote(q.r, 'onDisconnected'), onConnected: handlerNote(q.r, 'onConnected') }
-            : { disconnected: handlerNote(q.r, 'disconnected'), connected: handlerNote(q.r, 'connected') };
+        const hs = { disconnected: handlerNote(q.r, 'disconnected'), connected: handlerNote(q.r, 'connected') };
         q.m.createSSE('/events', hs);
         await qstep('#1 ← connected {"build":"b1"}, then #1 error', async () => { q.r.streams[0].emit('connected', { build: 'b1' }); q.r.streams[0].fail(0); });
         out.push(...qs);
@@ -896,113 +897,128 @@ async function coreHubBusPins() {
     return out;
 }
 
-// ═══ htmx-sse.js ═════════════════════════════════════════════════════════════
+// ═══ Edge admin on the bus ═══════════════════════════════════════════════════
 //
-// htmx itself is not loaded: htmx-sse.js calls htmx.defineExtension and then
-// only the internal API it is handed at init, so a stub of that API drives
-// the shipped extension. The stub's getTriggerSpecs reads only each trigger's
-// name ("sse:order-update throttle:3s" -> "sse:order-update"); htmx's own
-// throttle and from: modifiers are htmx's, not the extension's.
+// What an Edge admin page does with the one bus (shared/bus.js) since both
+// createSSE copies and htmx-sse.js went (ruling 4): the hub loaded as
+// header.html loads it, the partial's element as its template writes it, then
+// the subscriptions the page's module makes, in its order. htmx is a stub
+// that notes each trigger it is asked for.
 
-function htmxRealm() {
+function edgeAdminPage(markup) {
     const r = makeRealm({ surface: 'edge' });
-    const exts = {};
-    const htmx = {
-        defineExtension(name, ext) { exts[name] = ext; },
-        trigger(elt, name) { r.note('htmx.trigger(' + desc(elt, r) + ', ' + JSON.stringify(name) + ')'); },
-    };
-    r.ctx.htmx = htmx;
-    r.runScript('shingo-edge/www/static/js/htmx-sse.js');
-    const api = {
-        getInternalData(elt) { return elt.__htmxInternal || (elt.__htmxInternal = {}); },
-        getAttributeValue(elt, name) { return elt.getAttribute(name) !== null ? elt.getAttribute(name) : elt.getAttribute('data-' + name); },
-        getClosestMatch(elt, pred) { for (let n = elt; n instanceof Element; n = n.parentNode) if (pred(n)) return n; return null; },
-        bodyContains(elt) { return r.doc.body.contains(elt); },
-        triggerEvent(elt, name) { r.note('event ' + name + ' on ' + desc(elt, r)); return true; },
-        triggerErrorEvent(elt, name) { r.note('error event ' + name + ' on ' + desc(elt, r)); },
-        getTriggerSpecs(elt) { return (elt.getAttribute('hx-trigger') || '').split(',').map((s) => ({ trigger: s.trim().split(/\s+/)[0] })); },
-    };
-    exts.sse.init(api);
-    return { r, ext: exts.sse, htmx };
+    r.window.htmx = { trigger(elt, name, data) { r.note('htmx.trigger(' + desc(elt, r) + ', ' + JSON.stringify(name) + ', ' + JSON.stringify(data) + ')'); } };
+    (markup || []).forEach(([id, trig]) => r.doc.body.appendChild(mk(r, 'div', { id, 'hx-trigger': trig })));
+    const hub = r.load('/static/js/shingoedge.js');
+    const bus = r.load('/static/shared/bus.js');
+    return { r, hub, bus };
 }
 
-function templateSSE() {
-    const dir = path.join(REPO, 'shingo-edge', 'www', 'templates');
-    const rows = [];
-    for (const f of fs.readdirSync(dir).sort()) {
-        if (!f.endsWith('.html')) continue;
-        const src = fs.readFileSync(path.join(dir, f), 'utf8');
-        const re = /<[a-z]+\b[^>]*\bsse-connect="([^"]*)"[^>]*>/g;
-        let mm;
-        while ((mm = re.exec(src))) {
-            const tag = mm[0];
-            const id = (/\bid="([^"]*)"/.exec(tag) || [])[1] || '(no id)';
-            const trig = (/\bhx-trigger="([^"]*)"/.exec(tag) || [])[1] || '';
-            const sse = trig.split(',').map((s) => s.trim()).filter((s) => s.indexOf('sse:') === 0);
-            rows.push(f + ' #' + id + ': sse-connect ' + JSON.stringify(mm[1]) + ', hx-ext ' + JSON.stringify((/\bhx-ext="([^"]*)"/.exec(tag) || [])[1] || '') + ', sse triggers: ' + sse.join(' | '));
+// edgeAdminTimeline is timeline() for these pages: the banner it watches is
+// the notice's new-build banner.
+function edgeAdminTimeline(r, out) {
+    const banner = () => r.doc.querySelector('.notice-banner');
+    return async (label, fn) => {
+        r.notes = [];
+        const had = !!banner();
+        const extra = await fn();
+        await r.advance(0);
+        if (!!banner() !== had) r.note(banner() ? 'new-build banner shown' : 'new-build banner gone');
+        out.push(label);
+        (r.notes.length ? r.notes : ['(nothing)']).forEach((n) => out.push('    ' + n));
+        [].concat(extra === undefined ? [] : extra).forEach((x) => out.push('    = ' + x));
+    };
+}
+
+async function edgeAdminBusPins() {
+    const out = [
+        '# SSE — edge-admin: Edge admin pages on the shared bus (shared/bus.js), through the hub\'s',
+        '# refreshOnEvents and showNewBuildBanner (shingo-edge/www/static/js/shingoedge.js).',
+        '# One page per section, the subscriptions as the page module makes them; "#n" is the n-th',
+        '# EventSource the page opened, "←" a frame the server sends on it. t= is the fake clock.',
+        '',
+        '## Orders (orders.js), #orders-content as orders.html writes it',
+    ];
+    {
+        const { r, hub, bus } = edgeAdminPage([['orders-content', 'refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed']]);
+        const step = edgeAdminTimeline(r, out);
+        await step('the page loaded: the hub, no subscription yet', async () => {});
+        await step('refreshOnEvents("orders-content", onSSE); onSSE("build-changed", showNewBuildBanner)', async () => {
+            const n = hub.refreshOnEvents('orders-content', bus.onSSE);
+            bus.onSSE('build-changed', hub.showNewBuildBanner);
+            return 'refreshOnEvents returned ' + n;
+        });
+        const s1 = r.streams[0];
+        out.push('    #1 listens for: ' + s1.types().join(', '));
+        await step('#1 ← connected {"build":"b1","seq":1}', async () => s1.emit('connected', { build: 'b1', seq: 1 }));
+        await step('#1 ← order-update {"id":1} id 2', async () => s1.emit('order-update', { id: 1 }, '2'));
+        await step('#1 ← order-failed {"id":1} id 3', async () => s1.emit('order-failed', { id: 1 }, '3'));
+        await step('#1 ← core-nodes {"nodes":[]} (a type the page did not ask for)', async () => s1.emit('core-nodes', { nodes: [] }));
+        await step('#1 ← heartbeat {"build":"b2","seq":3}  (the Edge restarted behind a held socket)', async () => s1.emit('heartbeat', { build: 'b2', seq: 3 }));
+        const bn = r.doc.querySelector('.notice-banner');
+        if (bn) { out.push('    the banner:'); out.push(dump(bn, '      ')); }
+        await step('click the banner\'s Refresh', async () => { r.doc.querySelector('.notice-banner .notice-action').click(); });
+        await step('click the banner\'s ×', async () => { r.doc.querySelector('.notice-banner .notice-dismiss').click(); });
+        out.push('');
+        out.push('### reconnect: the bus\'s backoff (htmx-sse.js\'s was its own, 500 ms doubling to 64 s)');
+        await step('#1 error', async () => { s1.fail(0); return waitForOpen(r, 70000); });
+        for (let i = 0; i < 5; i++) {
+            const s = r.lastStream();
+            await step('#' + s.n + ' error (no connected since the last error)', async () => { s.fail(0); return waitForOpen(r, 70000); });
+        }
+        {
+            const s = r.lastStream();
+            out.push('    #' + s.n + ' url ' + s.url);
+            await step('#' + s.n + ' ← connected {"build":"b2"}  (the new build, after the ×)', async () => s.emit('connected', { build: 'b2' }));
+            await step('#' + s.n + ' ← connected {"build":"b2"} again, while the banner is up', async () => { s.emit('connected', { build: 'b2' }); r.note('banners: ' + r.doc.querySelectorAll('.notice-banner').length); });
+            await step('#orders-content leaves the page; #' + s.n + ' ← order-update {"id":2}', async () => { r.doc.getElementById('orders-content').remove(); s.emit('order-update', { id: 2 }); });
         }
     }
-    return rows;
-}
 
-async function htmxSSEPins() {
-    const out = [
-        '# htmx-sse — shingo-edge/www/static/js/htmx-sse.js, the htmx SSE extension (classic script)',
-        '# Who connects through it (from the templates):',
-    ];
-    templateSSE().forEach((row) => out.push('#   ' + row));
-    out.push('# One page, steps in order, with #changeover-content as changeover.html writes it.');
     out.push('');
-    const { r, ext } = htmxRealm();
-    const step = timeline(r, out);
-    const elt = mk(r, 'div', {
-        id: 'changeover-content', 'hx-ext': 'sse', 'sse-connect': '/events',
-        'hx-get': '/changeover/partial?process=1',
-        'hx-trigger': 'refreshChangeover from:body, sse:order-update, sse:order-failed, sse:changeover-update',
-    });
-    r.doc.body.appendChild(elt);
-    await step('htmx processes the element (htmx:afterProcessNode)', async () => { ext.onEvent('htmx:afterProcessNode', { target: elt }); });
-    out.push('    #1 listens for: ' + r.streams[0].types().join(', '));
-    const s1 = r.streams[0];
-    await step('#1 open', async () => s1.open());
-    await step('#1 ← order-update {"id":1}', async () => s1.emit('order-update', { id: 1 }));
-    await step('#1 ← connected {"build":"b1"}; ← connected {"build":"b2"}; ← heartbeat {"build":"b3"}', async () => {
-        s1.emit('connected', { build: 'b1' }); s1.emit('connected', { build: 'b2' }); s1.emit('heartbeat', { build: 'b3' });
-    });
-    await step('#1 error, readyState CONNECTING (the browser retries by itself)', async () => { s1.fail(0); return waitForOpen(r, 10000); });
-    out.push('');
-    out.push('## a fatal error (readyState CLOSED) and the retry ladder');
-    for (let i = 0; i < 10; i++) {
-        const s = r.lastStream();
-        await step('#' + s.n + ' error, readyState CLOSED', async () => { s.fail(2); return waitForOpen(r, 200000); });
-    }
-    out.push('    #' + r.lastStream().n + ' listens for: ' + r.lastStream().types().join(', '));
+    out.push('## Production (production.js): the partial\'s triggers first, then the page\'s own handlers');
     {
-        const s = r.lastStream();
-        await step('#' + s.n + ' open, then error, readyState CLOSED', async () => { s.open(); s.fail(2); return waitForOpen(r, 200000); });
+        const { r, hub, bus } = edgeAdminPage([['production-content', 'refreshProduction from:body, refreshMaterial from:body, sse:order-update throttle:5s, sse:order-failed, sse:counter-update throttle:10s']]);
+        const step = edgeAdminTimeline(r, out);
+        await step('refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); onSSE("core-nodes", nodes); onSSE("build-changed", showNewBuildBanner)', async () => {
+            hub.refreshOnEvents('production-content', bus.onSSE);
+            bus.onSSE('counter-update', handlerNote(r, 'chart'));
+            bus.onSSE('core-nodes', handlerNote(r, 'nodes'));
+            bus.onSSE('build-changed', hub.showNewBuildBanner);
+        });
+        const s1 = r.streams[0];
+        out.push('    #1 listens for: ' + s1.types().join(', '));
+        await step('#1 ← counter-update {"process_id":3,"delta":2}', async () => s1.emit('counter-update', { process_id: 3, delta: 2 }));
+        await step('#1 ← core-nodes {"nodes":["LN-1"]}', async () => s1.emit('core-nodes', { nodes: ['LN-1'] }));
     }
+
     out.push('');
-    out.push('## the element leaves the page');
+    out.push('## Diagnostics (diagnostics.js): the debug feed only');
     {
-        const s = r.lastStream();
-        await step('#' + s.n + ' open; the element is removed from the body; #' + s.n + ' ← order-update {"id":2}', async () => { s.open(); elt.remove(); s.emit('order-update', { id: 2 }); });
-        r.doc.body.appendChild(elt);
-        const q = htmxRealm();
-        const qs = [];
-        const qstep = timeline(q.r, qs);
-        const e2 = mk(q.r, 'div', { id: 'orders-content', 'sse-connect': '/events', 'hx-trigger': 'sse:order-update throttle:3s' });
-        q.r.doc.body.appendChild(e2);
-        q.ext.onEvent('htmx:afterProcessNode', { target: e2 });
-        await qstep('a second page: #orders-content connected; removed; its stream errors CLOSED', async () => { e2.remove(); q.r.streams[0].fail(2); return waitForOpen(q.r, 200000); });
-        out.push(...qs);
-        const t = htmxRealm();
-        const ts = [];
-        const tstep = timeline(t.r, ts);
-        const e3 = mk(t.r, 'div', { id: 'orders-content', 'sse-connect': '/events', 'hx-trigger': 'sse:order-update' });
-        t.r.doc.body.appendChild(e3);
-        await tstep('a third page: #orders-content processed', async () => { t.ext.onEvent('htmx:afterProcessNode', { target: e3 }); });
-        await tstep('then htmx:beforeCleanupElement on it (htmx swapping it out)', async () => { t.ext.onEvent('htmx:beforeCleanupElement', { target: e3 }); });
-        out.push(...ts);
+        const { r, hub, bus } = edgeAdminPage([]);
+        const step = edgeAdminTimeline(r, out);
+        await step('setSSEQuery({debug: 1}); onSSE("debug-log", row); onSSE("build-changed", showNewBuildBanner)', async () => {
+            bus.setSSEQuery({ debug: 1 });
+            bus.onSSE('debug-log', handlerNote(r, 'row'));
+            bus.onSSE('build-changed', hub.showNewBuildBanner);
+        });
+    }
+
+    out.push('');
+    out.push('## pages that hold no stream');
+    {
+        const { r } = edgeAdminPage([]);
+        const step = edgeAdminTimeline(r, out);
+        await step('Config, Processes, Replenishment, Kafka Direct: the hub alone, then 60 s', async () => { await r.advance(60000); return 'streams opened: ' + r.streams.length; });
+    }
+    {
+        const { r, hub, bus } = edgeAdminPage([]);
+        const step = edgeAdminTimeline(r, out);
+        await step('Changeover with no process picked (no #changeover-content): changeover.js\'s guarded subscriptions', async () => {
+            if (hub.refreshOnEvents('changeover-content', bus.onSSE)) bus.onSSE('build-changed', hub.showNewBuildBanner);
+            await r.advance(60000);
+            return 'streams opened: ' + r.streams.length;
+        });
     }
     return out;
 }
@@ -1062,7 +1078,7 @@ function htmxErrorPins() {
         while ((mm = re.exec(src))) listens.push(rel(f) + ': ' + mm[1]);
         ERR.forEach((e) => {
             if (src.indexOf("'" + e + "'") >= 0 || src.indexOf('"' + e + '"') >= 0 || src.indexOf('hx-on::' + e.slice(5).replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())) >= 0) {
-                if (!/htmx-sse\.js$/.test(f)) errHits[e].push(rel(f));
+                errHits[e].push(rel(f));
             }
         });
         if (/htmx\.config\.\w+\s*=/.test(src)) configWrites.push(rel(f));
@@ -1226,11 +1242,10 @@ if (require.main === module) (async function main() {
         golden('toast.' + s.name + '.txt', await toastPins(s));
         golden('api.' + s.name + '.txt', await apiPins(s));
     }
-    golden('sse.edge-hub.txt', await createSSEPins('edge-hub'));
     golden('sse.shared-createSSE.txt', await createSSEPins('shared'));
     golden('sse.shared-bus.txt', await busPins());
     golden('sse.core-hub.txt', await coreHubBusPins());
-    golden('sse.htmx-sse.txt', await htmxSSEPins());
+    golden('sse.edge-admin.txt', await edgeAdminBusPins());
     golden('htmx-errors.edge-admin.txt', htmxErrorPins().concat(htmxErrorShown()));
     process.stdout.write(JSON.stringify(goldens));
 })().catch((e) => {

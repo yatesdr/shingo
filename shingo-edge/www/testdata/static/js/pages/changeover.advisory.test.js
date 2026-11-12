@@ -55,6 +55,11 @@ function makeContext() {
         confirm: () => Promise.resolve(true),
         navigateToProcess: () => {},
         delegateActions: () => {},
+        // The page's bus subscriptions (shared/bus.js, through the hub's
+        // refreshOnEvents) are not what this test drives.
+        refreshOnEvents: () => 0,
+        onSSE: () => () => {},
+        showNewBuildBanner: () => {},
         htmx: { trigger: () => {} },
         console, parseInt, parseFloat, JSON, Math,
         Array, Object, String, Number, Boolean, Promise,

@@ -10,8 +10,8 @@
 //
 // Loaded like changeover.refresh.test.js: the module run through
 // vm.runInContext with the import line stripped and its imports supplied as
-// globals. setInterval, createSSE, delegateActions, confirm and layerDepth
-// are captured, so the test drives the SSE handler and the verbs directly.
+// globals. setInterval, onSSE (shared/bus.js), delegateActions, confirm and
+// layerDepth are captured, so the test drives the SSE handler and the verbs directly.
 
 const fs = require('fs');
 const path = require('path');
@@ -71,7 +71,8 @@ function makeContext() {
         layerDepth: () => (state.modalOpen ? 1 : 0),
         toast: () => {},
         delegateActions: (_root, actions) => { state.actions = actions; },
-        createSSE: (url, handlers) => { state.sse.push({ url, handlers }); return { close() {} }; },
+        onSSE: (type, fn) => { state.sse.push({ type, fn }); return () => {}; },
+        showNewBuildBanner: () => {},
         fetch: async () => { state.fetches++; return { ok: true, text: async () => '' }; },
         setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
         clearInterval: () => {},
@@ -82,8 +83,7 @@ function makeContext() {
     const src = SRC.replace(/^import \{[^}]+\} from [^\n]+\n+/gm, '');
     vm.runInContext(src, context);
     const fire = () => {
-        const sub = state.sse[0];
-        if (sub && typeof sub.handlers.onContainment === 'function') sub.handlers.onContainment({ digest: 'd2' });
+        state.sse.filter((s) => s.type === 'containment').forEach((s) => s.fn({ digest: 'd2' }));
     };
     const tick = () => new Promise((r) => setImmediate(r));
     return { state, intervals, fire, tick };
@@ -95,11 +95,14 @@ function makeContext() {
         const t = makeContext();
         // base: 1 interval at 5000 ms (F2: none)
         check('no interval is registered', t.intervals.length === 0, 0, t.intervals.length);
-        // base: no SSE subscription (F2: one on /events with onContainment)
-        check('one SSE subscription on /events', t.state.sse.length === 1 && t.state.sse[0].url === '/events',
-            "1 on '/events'", JSON.stringify(t.state.sse.map((s) => s.url)));
-        check('the subscription handles the containment event',
-            t.state.sse.length === 1 && typeof t.state.sse[0].handlers.onContainment === 'function', true, false);
+        // base: no SSE subscription (F2: one on /events with onContainment;
+        // since the bus, the containment type on the page's one stream, and
+        // the new-build banner beside it)
+        const types = t.state.sse.map((s) => s.type).join(',');
+        check('the page subscribes containment and build-changed on the bus', types === 'containment,build-changed',
+            'containment,build-changed', types);
+        check('the containment subscription is a function',
+            t.state.sse.length > 0 && typeof t.state.sse[0].fn === 'function', true, false);
         // base: the source polled /api/containment/state (F2: it does not)
         check('the source no longer polls /api/containment/state',
             SRC.indexOf("fetch('/api/containment/state')") < 0, true, false);

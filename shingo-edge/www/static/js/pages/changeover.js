@@ -1,4 +1,5 @@
-import { api, navigateToProcess } from '/static/js/shingoedge.js';
+import { api, navigateToProcess, refreshOnEvents, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
@@ -7,8 +8,8 @@ var processID = parseInt(document.getElementById('page-data').dataset.processId 
 
 // Actions that need JSON bodies or confirm dialogs remain as thin JS wrappers.
 // Node action buttons (Stage, Release, Deliver, Switch, Skip, Retry) are pure htmx
-// in node-actions.html. SSE auto-refresh is handled by the htmx SSE extension on
-// the changeover-content div.
+// in node-actions.html. #changeover-content refreshes on its hx-trigger's sse:
+// events, fired from the page's one stream (below).
 
 async function previewProcessChangeover() {
     var toStyleID = parseInt(document.getElementById('co-to-style').value || '0', 10);
@@ -210,6 +211,11 @@ function renderUnresolvedParticipants(nodes) {
 // joins one pending reload, issued once the burst has settled. Order traffic
 // keeps the 2 s spacing its throttle gave it; anything else is not held back
 // by it.
+// The page's one stream (shared/bus.js), and only where the page draws a
+// changeover: with no process picked there is no #changeover-content, and a
+// banner subscription alone would open a stream for nothing.
+if (refreshOnEvents('changeover-content', onSSE)) onSSE('build-changed', showNewBuildBanner);
+
 var SETTLE_MS = 300;
 var ORDER_GAP_MS = 2000;
 var reloadTimer = null;

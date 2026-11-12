@@ -25,10 +25,10 @@ apiPost               own       -         -
 apiPut                own       -         -
 apiDelete             own       -         -
 apiResult             -         -         utils.js
-createSSE             -         own       utils.js
+createSSE             -         -         utils.js
 onSSE                 -         -         bus.js
 showRefreshBanner     -         -         utils.js
 
-edge-hub window.ShingoEdge: {escapeHtml, createSSE, showModal, hideModal, confirm, prompt, populateForm, getFormData, removeRow, replaceRowCells, api, toast}
-edge-hub window.ShingoEdge entries that are the module's exports: 12 of 12
+edge-hub window.ShingoEdge: {escapeHtml, showModal, hideModal, confirm, prompt, populateForm, getFormData, removeRow, replaceRowCells, api, toast}
+edge-hub window.ShingoEdge entries that are the module's exports: 11 of 11
 loading the hub (and the shared/ modules it imports) sets on window: core-hub nothing; edge-hub ShingoEdge

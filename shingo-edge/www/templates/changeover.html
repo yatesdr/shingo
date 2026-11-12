@@ -21,8 +21,6 @@
      order-update reloads 2 s apart (htmx:confirm), so no throttle here. -->
 
 <div class="card" id="changeover-content"
-     hx-ext="sse"
-     sse-connect="/events"
      hx-get="/changeover/partial?process={{.ActiveProcessID}}"
      hx-trigger="refreshChangeover from:body, sse:order-update, sse:order-failed, sse:changeover-update"
      hx-swap="innerHTML">

@@ -25,7 +25,7 @@
 
 import { escapeHtml } from '/static/shared/dom.js';
 import { confirm, prompt } from '/static/shared/layer.js';
-import { toast } from '/static/shared/notice.js';
+import { banner, toast } from '/static/shared/notice.js';
 import {
     installHtmxLiveDurations,
     installHtmxTimestampConversion,
@@ -55,74 +55,58 @@ document.addEventListener('DOMContentLoaded', function() {
 // left quotes alone.
 export { escapeHtml };
 
-// --- SSE Factory ---
-export function createSSE(url, handlers) {
-    var es = null;
-    var reconnectDelay = 1000;
-    // Build id seen on the first 'connected' event after page load.
-    // If a later reconnect reports a different id the edge has been
-    // restarted; force-reload so the tab picks up the new JS bundle
-    // (a long-lived tab would otherwise keep its stale module graph
-    // indefinitely: a new build's assets reach it only on a reload).
-    var seenBuild = null;
+// --- the live bus on an Edge admin page ---
+// A page that holds a stream subscribes on shared/bus.js's one bus, in its
+// own module, beside its own topics. The bus opens its stream on the
+// microtask after a burst of subscriptions; this module runs before the
+// page's, so a subscription made here would open a stream before the page's
+// topics were known (the page's would then reopen it), and open one on a
+// page that holds none. So the two verbs below are called by the page.
 
-    function connect() {
-        es = new EventSource(url);
-
-        es.addEventListener('connected', function(e) {
-            reconnectDelay = 1000;
-            var build = '';
-            try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
-            if (!build) return;
-            if (seenBuild === null) {
-                seenBuild = build;
-            } else if (seenBuild !== build) {
-                location.reload();
-            }
-        });
-
-        // Map camelCase handler names to kebab-case event types
-        // e.g. onInventoryUpdate -> inventory-update
-        for (var key in handlers) {
-            if (key.indexOf('on') === 0 && typeof handlers[key] === 'function') {
-                (function(handlerName, fn) {
-                    var eventType = handlerName.substring(2)
-                        .replace(/([A-Z])/g, '-$1')
-                        .toLowerCase()
-                        .substring(1); // remove leading dash
-                    es.addEventListener(eventType, function(e) {
-                        try {
-                            var data = JSON.parse(e.data);
-                            fn(data);
-                        } catch (err) {
-                            console.error('SSE parse error:', err);
-                        }
-                    });
-                })(key, handlers[key]);
-            }
-        }
-
-        es.onerror = function() {
-            es.close();
-            setTimeout(connect, reconnectDelay);
-            reconnectDelay = Math.min(reconnectDelay * 2, 10000);
-        };
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', connect);
-    } else {
-        connect();
-    }
-
-    // Close on navigation so the browser releases the HTTP/1.1
-    // connection slot immediately; otherwise the next page can sit
-    // waiting on the previous /events socket to time out.
-    window.addEventListener('beforeunload', function() {
-        if (es) es.close();
+// showNewBuildBanner is an Edge admin page's answer to the bus's
+// build-changed (ruling 4: an admin page shows the banner and the person
+// picks the moment; a kiosk reloads). The words and the Refresh are today's
+// refresh banner's; S5 sets the final ones. A page subscribes it beside its
+// topics: onSSE('build-changed', showNewBuildBanner).
+export function showNewBuildBanner() {
+    banner('build', {
+        text: 'A new version is available.',
+        action: { label: 'Refresh', onClick: function() { location.reload(); } },
     });
+}
 
-    return { close: function() { if (es) es.close(); } };
+// refreshOnEvents fires an htmx partial's "sse:<type>" triggers from the
+// page's one bus stream: each sse: name in the element's hx-trigger becomes a
+// subscription, through the page's own onSSE, that calls htmx.trigger(the
+// element, 'sse:<type>', data). The hx-trigger keeps its list, throttles and
+// from: as the template writes them. htmx-sse.js did this from a second
+// stream it opened on the element. The page passes onSSE so that a page with
+// no stream does not load the bus for this module's sake. The element is
+// looked up again on each frame (a page that dropped it does nothing). It
+// returns how many types it subscribed.
+export function refreshOnEvents(id, onSSE) {
+    var el = document.getElementById(id);
+    if (!el) return 0;
+    var types = sseTriggerTypes(el);
+    types.forEach(function(type) {
+        onSSE(type, function(data) {
+            var target = document.getElementById(id);
+            if (target && window.htmx) window.htmx.trigger(target, 'sse:' + type, data);
+        });
+    });
+    return types.length;
+}
+
+// sseTriggerTypes is the event types an element's hx-trigger names as
+// "sse:<type>", in its order: "sse:order-update throttle:3s" is order-update.
+function sseTriggerTypes(el) {
+    return (el.getAttribute('hx-trigger') || '').split(',').map(function(spec) {
+        return spec.trim().split(/\s+/)[0];
+    }).filter(function(name) {
+        return name.indexOf('sse:') === 0 && name.length > 4;
+    }).map(function(name) {
+        return name.slice(4);
+    });
 }
 
 // --- Modal helpers ---
@@ -280,7 +264,6 @@ export { delegateActions } from '/static/shared/dom.js';
 // IIFE-era comment block at the top) can be deleted outright.
 window.ShingoEdge = {
     escapeHtml: escapeHtml,
-    createSSE: createSSE,
     showModal: showModal,
     hideModal: hideModal,
     confirm: confirm,

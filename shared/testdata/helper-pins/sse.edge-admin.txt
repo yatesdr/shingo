@@ -1,0 +1,89 @@
+# SSE — edge-admin: Edge admin pages on the shared bus (shared/bus.js), through the hub's
+# refreshOnEvents and showNewBuildBanner (shingo-edge/www/static/js/shingoedge.js).
+# One page per section, the subscriptions as the page module makes them; "#n" is the n-th
+# EventSource the page opened, "←" a frame the server sends on it. t= is the fake clock.
+
+## Orders (orders.js), #orders-content as orders.html writes it
+the page loaded: the hub, no subscription yet
+    (nothing)
+refreshOnEvents("orders-content", onSSE); onSSE("build-changed", showNewBuildBanner)
+    t=0 open #1 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = refreshOnEvents returned 3
+    #1 listens for: connected, heartbeat, order-completed, order-failed, order-update
+#1 ← connected {"build":"b1","seq":1}
+    (nothing)
+#1 ← order-update {"id":1} id 2
+    t=0 htmx.trigger(#orders-content, "sse:order-update", {"id":1})
+#1 ← order-failed {"id":1} id 3
+    t=0 htmx.trigger(#orders-content, "sse:order-failed", {"id":1})
+#1 ← core-nodes {"nodes":[]} (a type the page did not ask for)
+    (nothing)
+#1 ← heartbeat {"build":"b2","seq":3}  (the Edge restarted behind a held socket)
+    t=0 new-build banner shown
+    the banner:
+      div class="notice-banner notice-banner--info" role="status" data-banner="build"
+        span class="notice-text"
+          "A new version is available."
+        button class="notice-action" type="button" listens=click
+          "Refresh"
+        button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+          "×"
+click the banner's Refresh
+    t=0 location.reload()
+click the banner's ×
+    t=0 new-build banner gone
+
+### reconnect: the bus's backoff (htmx-sse.js's was its own, 500 ms doubling to 64 s)
+#1 error
+    t=0 close #1
+    t=1000 open #2 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = #2 opened 1000 ms after #1 closed
+#2 error (no connected since the last error)
+    t=1000 close #2
+    t=3000 open #3 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = #3 opened 2000 ms after #2 closed
+#3 error (no connected since the last error)
+    t=3000 close #3
+    t=7000 open #4 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = #4 opened 4000 ms after #3 closed
+#4 error (no connected since the last error)
+    t=7000 close #4
+    t=15000 open #5 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = #5 opened 8000 ms after #4 closed
+#5 error (no connected since the last error)
+    t=15000 close #5
+    t=25000 open #6 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = #6 opened 10000 ms after #5 closed
+#6 error (no connected since the last error)
+    t=25000 close #6
+    t=35000 open #7 /events?topics=order-completed%2Corder-failed%2Corder-update
+    = #7 opened 10000 ms after #6 closed
+    #7 url /events?topics=order-completed%2Corder-failed%2Corder-update
+#7 ← connected {"build":"b2"}  (the new build, after the ×)
+    t=35000 new-build banner shown
+#7 ← connected {"build":"b2"} again, while the banner is up
+    t=35000 banners: 1
+#orders-content leaves the page; #7 ← order-update {"id":2}
+    (nothing)
+
+## Production (production.js): the partial's triggers first, then the page's own handlers
+refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); onSSE("core-nodes", nodes); onSSE("build-changed", showNewBuildBanner)
+    t=0 open #1 /events?topics=core-nodes%2Ccounter-update%2Corder-failed%2Corder-update
+    #1 listens for: connected, core-nodes, counter-update, heartbeat, order-failed, order-update
+#1 ← counter-update {"process_id":3,"delta":2}
+    t=0 htmx.trigger(#production-content, "sse:counter-update", {"process_id":3,"delta":2})
+    t=0 handler chart({"process_id":3,"delta":2}, <event>)
+#1 ← core-nodes {"nodes":["LN-1"]}
+    t=0 handler nodes({"nodes":["LN-1"]}, <event>)
+
+## Diagnostics (diagnostics.js): the debug feed only
+setSSEQuery({debug: 1}); onSSE("debug-log", row); onSSE("build-changed", showNewBuildBanner)
+    t=0 open #1 /events?topics=debug-log&debug=1
+
+## pages that hold no stream
+Config, Processes, Replenishment, Kafka Direct: the hub alone, then 60 s
+    (nothing)
+    = streams opened: 0
+Changeover with no process picked (no #changeover-content): changeover.js's guarded subscriptions
+    (nothing)
+    = streams opened: 0

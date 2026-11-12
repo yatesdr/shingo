@@ -1,8 +1,8 @@
-import { api, createSSE, navigateToProcess } from '/static/js/shingoedge.js';
+import { api, navigateToProcess, refreshOnEvents, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
-import { productionStreamHandlers } from '/static/js/pages/production-refresh.js';
 import { postAct } from '/static/js/ask-act.js';
 
 // Production page — operator-facing actions for the per-process node grid.
@@ -522,54 +522,49 @@ async function onShiftProcessChange() {
 
 renderShiftChart();
 
-// refreshProductionContent fires one of #production-content's hx-trigger
-// events (production-refresh.js) on the element, as htmx's sse extension did
-// when the element held its own /events stream. Looked up at fire time, so a
-// page without the element does nothing.
-function refreshProductionContent(trigger, data) {
-    var el = document.getElementById('production-content');
-    if (window.htmx && el) window.htmx.trigger(el, trigger, data);
-}
-
-createSSE('/events', productionStreamHandlers(refreshProductionContent, {
-    onCounterUpdate: function(data) {
-        // When viewing "All Processes" (activeProcessID = 0), accept
-        // counter updates from any process. Otherwise only match the
-        // selected process.
-        if (_chartData.activeProcessID && data.process_id !== _chartData.activeProcessID) return;
-        var today = new Date();
-        var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
-        if (_chartData.todayDate !== todayStr) return;
-        var hour = today.getHours();
-        var delta = data.delta || 0;
-        if (!_chartData.hourlyCounts[hour]) _chartData.hourlyCounts[hour] = 0;
-        _chartData.hourlyCounts[hour] += delta;
-        renderShiftChart();
-    },
-    onCoreNodes: function(data) {
-        var nodes = (data.nodes || []).map(function(n) {
-            if (typeof n === 'string') return n;
-            return n && n.name ? n.name : '';
-        }).filter(Boolean);
-        ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
-            var sel = document.getElementById(selID);
-            if (!sel) return;
-            var cur = sel.value;
-            Array.from(sel.options).forEach(function(o) {
-                if (o.dataset.source === 'core') o.remove();
-            });
-            var ref = sel.options[1] || null;
-            nodes.sort().forEach(function(n) {
-                var opt = document.createElement('option');
-                opt.value = n;
-                opt.textContent = n;
-                opt.dataset.source = 'core';
-                sel.insertBefore(opt, ref);
-            });
-            sel.value = cur;
+// The page's one stream (shared/bus.js). #production-content's hx-trigger
+// sse: events first (refreshOnEvents), so the content refresh fires before
+// the page's own handler for the same frame, as it did; then the shift
+// chart's counter, the manual-order node lists and the new-build banner.
+refreshOnEvents('production-content', onSSE);
+onSSE('counter-update', function(data) {
+    // When viewing "All Processes" (activeProcessID = 0), accept
+    // counter updates from any process. Otherwise only match the
+    // selected process.
+    if (_chartData.activeProcessID && data.process_id !== _chartData.activeProcessID) return;
+    var today = new Date();
+    var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+    if (_chartData.todayDate !== todayStr) return;
+    var hour = today.getHours();
+    var delta = data.delta || 0;
+    if (!_chartData.hourlyCounts[hour]) _chartData.hourlyCounts[hour] = 0;
+    _chartData.hourlyCounts[hour] += delta;
+    renderShiftChart();
+});
+onSSE('core-nodes', function(data) {
+    var nodes = (data.nodes || []).map(function(n) {
+        if (typeof n === 'string') return n;
+        return n && n.name ? n.name : '';
+    }).filter(Boolean);
+    ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
+        var sel = document.getElementById(selID);
+        if (!sel) return;
+        var cur = sel.value;
+        Array.from(sel.options).forEach(function(o) {
+            if (o.dataset.source === 'core') o.remove();
         });
-    }
-}));
+        var ref = sel.options[1] || null;
+        nodes.sort().forEach(function(n) {
+            var opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n;
+            opt.dataset.source = 'core';
+            sel.insertBefore(opt, ref);
+        });
+        sel.value = cur;
+    });
+});
+onSSE('build-changed', showNewBuildBanner);
 
 // ─── Manual order ────────────────────────────────────────
 

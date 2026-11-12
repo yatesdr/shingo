@@ -11,15 +11,16 @@
 // tag), each page module byte for byte less its import/export lines, and the
 // helpers they import: shingoedge.js's api (over shared/http.js, read whole);
 // shared/layer.js's showModal and hideModal (read whole); shared/dom.js's
-// escapeHtml; ask-act.js's postAct; and production-refresh.js. Each is read
-// off its own file.
+// escapeHtml; ask-act.js's postAct; and shingoedge.js's refreshOnEvents. Each
+// is read off its own file.
 //
 // WHAT IS STUBBED, AND WHY EACH IS SAFE FOR THESE PINS.
 //   - The DOM (dom.js): elements parsed from the markup, selects answering
 //     value / selectedIndex as a browser does.
 //   - toast: recorded as [kind, text]; the pins read what the page said.
-//   - createSSE: its handlers are kept, and a pin calls onCoreNodes with the
-//     frame the engine sends (CoreNodesUpdatedEvent).
+//   - onSSE (shared/bus.js): each subscription is kept by type, and a pin
+//     fires core-nodes with the frame the engine sends
+//     (CoreNodesUpdatedEvent). showNewBuildBanner: a no-op.
 //   - delegateActions: its handler map is kept, and a pin calls a handler
 //     with `this` set to the element the click would have been on.
 //   - fetch: every call is recorded (method, url, body) and answered by
@@ -92,9 +93,10 @@ const HELPERS = [
     block(EDGE, /function answered\(/, 'answered'),
     block(EDGE, /export const api = /, 'api').replace(/^const /, 'var '),
     LAYER,
+    block(EDGE, /export function refreshOnEvents\(/, 'refreshOnEvents'),
+    block(EDGE, /function sseTriggerTypes\(/, 'sseTriggerTypes'),
     unModule(read(path.join(JS, 'ask-act.js'))),
 ].join('\n');
-const REFRESH = unModule(read(path.join(JS, 'pages', 'production-refresh.js')));
 
 // pageMarkup is the page's own markup: from <main> to its module tag.
 function pageMarkup(html) {
@@ -118,7 +120,7 @@ function routeOf(method, url) {
 
 function boot(page) {
     const doc = new Document(pageMarkup(IN.pages[page]));
-    const rec = { requests: [], toasts: [], next: [], now: Date.UTC(2026, 10, 11, 12, 0, 0), sse: null, actions: null };
+    const rec = { requests: [], toasts: [], next: [], now: Date.UTC(2026, 10, 11, 12, 0, 0), sse: {}, actions: null };
     const fetch = async (url, opts) => {
         opts = opts || {};
         const method = opts.method || 'GET';
@@ -149,16 +151,19 @@ function boot(page) {
         crypto: { randomUUID: () => '00000000-0000-4000-8000-0000000000aa' },
         setTimeout: () => 0, clearTimeout() {},
         toast: (msg, kind) => { rec.toasts.push([kind || 'info', String(msg)]); },
-        createSSE: (url, handlers) => { rec.sse = handlers; return {}; },
+        onSSE: (type, fn) => { (rec.sse[type] = rec.sse[type] || []).push(fn); return () => {}; },
+        showNewBuildBanner() {},
         delegateActions: (root, map) => { rec.actions = map; },
         prompt: async () => null,
         navigateToProcess() {},
     });
     vm.runInContext(HELPERS, ctx, { filename: 'helpers' });
-    if (page === 'production') vm.runInContext(REFRESH, ctx, { filename: 'production-refresh.js' });
     vm.runInContext(unModule(read(path.join(JS, 'pages', page + '.js'))), ctx, { filename: page + '.js' });
     return { doc, rec, ctx, page };
 }
+// fireSSE is a frame of the type on the page's one stream: every handler the
+// page subscribed for it, in order, as shared/bus.js calls them.
+const fireSSE = (b, type, data) => (b.rec.sse[type] || []).forEach(fn => fn(data, { type }));
 const settle = () => new Promise(r => setImmediate(r)).then(() => new Promise(r => setImmediate(r)));
 
 // ── reading the page ─────────────────────────────────────────────────────────
@@ -240,12 +245,12 @@ function manualOrderOptions(page) {
     const b2 = boot(page);
     pick(b2, 'mo-type', 'move');
     pick(b2, 'mo-delivery', 'GRP-B.SLOT-A1');
-    b2.rec.sse.onCoreNodes(IN.coreNodesEvent);
+    fireSSE(b2, 'core-nodes', IN.coreNodesEvent);
     lines.push('# after an SSE core-nodes frame for the same plant (Delivery had GRP-B.SLOT-A1 picked)', '');
     ['mo-pickup', 'mo-delivery'].forEach(id => lines.push(options(b2, id), ''));
     // A second frame without the picked node: the select is left on no option.
     const fewer = { nodes: IN.coreNodesEvent.nodes.filter(n => n.name !== 'GRP-B.SLOT-A1') };
-    b2.rec.sse.onCoreNodes(fewer);
+    fireSSE(b2, 'core-nodes', fewer);
     lines.push('# after a second frame without GRP-B.SLOT-A1 (the picked node)', '', options(b2, 'mo-delivery'), '');
     out[page + '-options.txt'] = lines.join('\n');
 }
