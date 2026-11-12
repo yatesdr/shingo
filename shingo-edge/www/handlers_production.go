@@ -429,7 +429,11 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	processNodes, _ := h.engine.ProcessService().ListNodes()
-	nodesJSON, coreNodesJSON := h.manualOrderNodes(processNodes)
+	edge := make([]manualEdgeNode, 0, len(processNodes))
+	for _, pn := range processNodes {
+		edge = append(edge, manualEdgeNode{ID: pn.CoreNodeName, Desc: pn.Name})
+	}
+	nodesJSON, coreNodesJSON := h.manualOrderNodes(edge)
 
 	data := map[string]any{
 		"Page":             "production",

@@ -405,11 +405,8 @@ func corePickerRefusalGolden(r map[string]corePickerAnswer) string {
 // ── template-rendered lists ──────────────────────────────────────────────────
 
 var (
-	corePickerSelectRe       = regexp.MustCompile(`(?s)<select([^>]*)>(.*?)</select>`)
-	corePickerOptionRe       = regexp.MustCompile(`(?s)<option([^>]*)>(.*?)</option>`)
-	corePickerAttrRe         = regexp.MustCompile(`([a-z_-]+)="([^"]*)"`)
-	corePickerNameRe         = regexp.MustCompile(`<(?:input|select|textarea)[^>]*\bname="([^"]+)"`)
-	corePickerNumericValueRe = regexp.MustCompile(`^value="[0-9]+"`)
+	corePickerAttrRe = regexp.MustCompile(`([a-z_-]+)="([^"]*)"`)
+	corePickerNameRe = regexp.MustCompile(`<(?:input|select|textarea)[^>]*\bname="([^"]+)"`)
 )
 
 func corePickerAttrs(s string) map[string]string {
@@ -418,29 +415,6 @@ func corePickerAttrs(s string) map[string]string {
 		out[m[1]] = m[2]
 	}
 	return out
-}
-
-// corePickerOptions lists a select's options as `value="v" label="l"`,
-// whitespace collapsed, entities as rendered.
-func corePickerOptions(inner string) []string {
-	var out []string
-	for _, m := range corePickerOptionRe.FindAllStringSubmatch(inner, -1) {
-		a := corePickerAttrs(m[1])
-		label := strings.Join(strings.Fields(m[2]), " ")
-		out = append(out, fmt.Sprintf("value=%q label=%q", a["value"], label))
-	}
-	return out
-}
-
-func corePickerSelect(t *testing.T, page, key, want string) (string, []string) {
-	t.Helper()
-	for _, m := range corePickerSelectRe.FindAllStringSubmatch(page, -1) {
-		if corePickerAttrs(m[1])[key] == want {
-			return m[1], corePickerOptions(m[2])
-		}
-	}
-	t.Fatalf("no <select %s=%q> in the rendered page", key, want)
-	return "", nil
 }
 
 // corePickerBinsTemplate renders bins.html with the plant and reads census

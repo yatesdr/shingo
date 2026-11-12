@@ -3,8 +3,6 @@ package www
 import (
 	"encoding/json"
 	"net/http"
-
-	"shingoedge/store/processes"
 )
 
 func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
@@ -14,7 +12,11 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	for name := range coreNodes {
 		coreNodeNames = append(coreNodeNames, name)
 	}
-	nodesJSON, coreNodesJSON := h.manualOrderNodes(processNodes)
+	edge := make([]manualEdgeNode, 0, len(processNodes))
+	for _, pn := range processNodes {
+		edge = append(edge, manualEdgeNode{ID: pn.CoreNodeName, Desc: pn.Name})
+	}
+	nodesJSON, coreNodesJSON := h.manualOrderNodes(edge)
 
 	data := map[string]any{
 		"Page":          "manual-order",
@@ -36,7 +38,15 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 // (shared/node-picker.js). A member of a group is Core's to pick: the pickup
 // greys it and the delivery offers it only for a complex order (the API
 // refuses one, refusePicked).
-func (h *Handlers) manualOrderNodes(processNodes []processes.Node) (nodesJSON, coreNodesJSON string) {
+// manualEdgeNode is one of this Edge's process nodes as the form reads it.
+// The handler takes it, not the store's node type: www reaches the store only
+// through the service interface (depguard www-no-direct-store).
+type manualEdgeNode struct {
+	ID   string `json:"id"`
+	Desc string `json:"desc"`
+}
+
+func (h *Handlers) manualOrderNodes(edge []manualEdgeNode) (nodesJSON, coreNodesJSON string) {
 	type coreNodeOpt struct {
 		Name     string `json:"name"`
 		NodeType string `json:"node_type,omitempty"`
@@ -48,13 +58,8 @@ func (h *Handlers) manualOrderNodes(processNodes []processes.Node) (nodesJSON, c
 	for name, info := range coreNodes {
 		opts = append(opts, coreNodeOpt{Name: name, NodeType: info.NodeType, Group: kinds.GroupOf(name)})
 	}
-	type edgeNode struct {
-		ID   string `json:"id"`
-		Desc string `json:"desc"`
-	}
-	edge := make([]edgeNode, 0, len(processNodes))
-	for _, pn := range processNodes {
-		edge = append(edge, edgeNode{ID: pn.CoreNodeName, Desc: pn.Name})
+	if edge == nil {
+		edge = []manualEdgeNode{}
 	}
 	n, _ := json.Marshal(edge)
 	c, _ := json.Marshal(opts)
