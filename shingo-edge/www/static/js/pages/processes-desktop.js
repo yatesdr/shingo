@@ -186,7 +186,7 @@ function boot() {
     if (S.processID) openProcess(S.processID);
     else {
         drawList();
-        // #add opens Add process over the list: a one-shot for the shots
+        // #add=1 opens Add process over the list: a one-shot for the shots
         // harness, which cannot press the button (see syncHash).
         if ('add' in hashOpts()) openAddProcess();
     }
@@ -822,7 +822,7 @@ function hashOpts() {
 // history entries, so back and forward stay the browser's, not this page's.
 // The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=,
 // ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=,
-// ;edit= with ;q=, and the list's #add) are
+// ;edit= with ;q=, and the list's #add=1) are
 // consumed once and never re-minted: they exist so the shots harness can
 // reach a state without driving a mouse, and re-writing them would pin every
 // later click to a deep link nobody asked for.
@@ -3916,8 +3916,8 @@ function isPositionRow(name) {
 // tick does, the bucket's names sit under it as removable tokens (the picker's
 // chips), and a row already in another bucket carries that bucket's tag. Each
 // bucket has one colour, the map's (.mp-pos, .mp-rt, .mp-grp): the page's text
-// colour for positions, Robot 1's for inbound, the accent for staging, Robot
-// 2's for outbound.
+// colour for positions, Robot 1's for inbound, the map's orange class colour
+// for staging, Robot 2's for outbound.
 //
 // THE RULES ARE THE BUCKETS', NOT THE LIST'S. A position is a plain node (a
 // group is its members, one box each); a routing role takes a group too. A

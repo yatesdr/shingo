@@ -1242,7 +1242,7 @@ func TestComposerShots(t *testing.T) {
 	desktopDOM("D4 operator screens", d4, `data-act="screen-add"`)
 	// Edit process (Setup's Change…): the process sheet filled in, at its
 	// Positions bucket, at Inbound, filtered to one family, and at the parts.
-	desktopShot("D0-add-process.png", "/processes#add")
+	desktopShot("D0-add-process.png", "/processes#add=1")
 	d5edit := d5 + ";edit="
 	desktopShot("D5-edit-process.png", d5edit+"positions")
 	desktopShot("D5-edit-process-inbound.png", d5edit+"source")

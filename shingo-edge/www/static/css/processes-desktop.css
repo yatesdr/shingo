@@ -734,7 +734,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .mp-rt { stroke: var(--bg); stroke-width: 1.5; fill: var(--sub-5); }
 .mp-rt.source { fill: var(--robot-1); }
 .mp-rt.destination { fill: var(--robot-2); }
-.mp-rt.staging { fill: var(--accent); }
+.mp-rt.staging { fill: var(--map-class-5); }
 /* In both roles, which is the ordinary case for a supermarket buffer: the
    inbound hue with the outbound ring around it, rather than a third colour
    nothing else on the map uses. */
@@ -745,11 +745,11 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    colour, as a plain node's circle does; in two roles, the inbound hue. */
 .mp-grp.source { stroke: var(--robot-1); }
 .mp-grp.destination { stroke: var(--robot-2); }
-.mp-grp.staging { stroke: var(--accent); }
+.mp-grp.staging { stroke: var(--map-class-5); }
 .mp-grp.source.destination { stroke: var(--robot-1); }
 .mp-smn.source { fill: var(--robot-1); }
 .mp-smn.destination { fill: var(--robot-2); }
-.mp-smn.staging { fill: var(--accent); }
+.mp-smn.staging { fill: var(--map-class-5); }
 .mp-smn.source.destination { fill: var(--robot-1); }
 .mp-key { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
 .mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
@@ -1063,11 +1063,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
  * tags on rows already in it, and the map's marks (.mp-rt / .mp-pos): the
  * page's text colour for positions (the map's squares are its neutral marks;
  * --station is a white for dark surfaces only), Robot 1's for inbound, the
- * accent for staging, Robot 2's for outbound. One list instead of four boxes
+ * map's orange class colour for staging (the accent read as Robot 2's indigo and
+ * as the primary button), Robot 2's for outbound. One list instead of four boxes
  * gives it the height the four were sharing (F16): about nine 40 px rows. */
 .pd-set { --bk: var(--text); display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1) 0 var(--sp-2); }
 .pd-set.bk-source, .pd-setb.source, .picker-tag[data-tone="source"], .mp-leg.source { --bk: var(--robot-1); }
-.pd-set.bk-staging, .pd-setb.staging, .picker-tag[data-tone="staging"], .mp-leg.staging { --bk: var(--accent); }
+.pd-set.bk-staging, .pd-setb.staging, .picker-tag[data-tone="staging"], .mp-leg.staging { --bk: var(--map-class-5); }
 .pd-set.bk-destination, .pd-setb.destination, .picker-tag[data-tone="destination"], .mp-leg.destination { --bk: var(--robot-2); }
 .pd-setb.positions, .picker-tag[data-tone="positions"], .mp-leg.positions { --bk: var(--text); }
 .pd-setbar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
