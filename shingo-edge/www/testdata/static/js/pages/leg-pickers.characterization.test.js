@@ -118,12 +118,14 @@ test('the two routing pickers each ask the rule in their role', () => {
     });
 });
 
-test('the Quality Hold destination picker leaves lanes and members out', () => {
+test('the Quality Hold destination picker greys lanes and members', () => {
     const start = PAGE.indexOf('async function openContainmentPicker(');
     assert.ok(start >= 0, 'openContainmentPicker not found');
     const body = PAGE.slice(start, PAGE.indexOf('\n}\n', start));
-    // coreNodeList(): Core's nodes in the pickers' order (census #2).
-    assert.ok(/coreNodeList\(\)\.filter\(n => !B\(\)\.legExclusion\(S\.coreNodes, n\.name, 'destination'\)\)/.test(body),
+    // The node adapter's rows (nodeRows): Core's nodes in the pickers' order
+    // (census #2), the destination rule greying what a leg may not name.
+    assert.ok(/rule: n => B\(\)\.legExclusion\(S\.coreNodes, n\.name, 'destination'\)/.test(body) &&
+        /nodeRows\(nodes, field\)/.test(body),
         'the containment picker offers Core nodes without the destination rule:\n' + body);
 });
 

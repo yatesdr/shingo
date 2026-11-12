@@ -368,6 +368,17 @@ async function sheetOK(page) {
     page.click('scrim', { act: 'sheet-ok' });
     await page.settle();
 }
+// The containment destination is the node adapter's picker, open in
+// #pd-stpop: a node is picked by clicking its row.
+function holdRows(page) {
+    const pop = page.byId('pd-stpop');
+    return pop ? pop.querySelectorAll('.picker-row') : [];
+}
+function holdPick(page, name) {
+    const row = holdRows(page).find(r => r.getAttribute('data-value') === name);
+    if (!row) throw new Error('#pd-stpop draws no row ' + name);
+    row.click();
+}
 // Settings' typed fields: the page binds an input listener to each input it
 // finds by [data-st] or input[data-cn]; typing is a value and that event.
 function typeSetting(page, sel, match, value) {
@@ -482,7 +493,7 @@ const DRIVE = {
         page.click('root', { act: 'st-toggle', st: 'quality_hold_enabled' });
         page.click('root', { act: 'st-holddest' });
         await page.settle();
-        pickRow(page, 'pd-stpop', 'data-holdopt', 'DST_2');
+        holdPick(page, 'DST_2');
         // Two curtains switched on, each with both pointers and a release
         // value (one TRUE, one FALSE); every other node's draft is left as it
         // was, so only these two are sent.
@@ -761,7 +772,7 @@ const P0 = require('./p0-page.js');
         H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
         bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
     });
-    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, text, setCurrent: n => { CURRENT = n; }, SEEN });
+    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
     await require('./cold-start.js').run({
         H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
         setCurrent: n => { CURRENT = n; }, SEEN,

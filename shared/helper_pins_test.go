@@ -197,8 +197,6 @@ var sharedExportsNoImporter = map[string]string{
 	// station import those, and a page's own banner would use these.
 	"notice.js banner":      "the primitive under S5's two, read by testdata/components/notice.test.js",
 	"notice.js clearBanner": "the primitive under S5's two, read by testdata/components/notice.test.js",
-	// The node adapter (S3): the rows alone.
-	"node-picker.js nodeRows": "the rows alone, read by testdata/components/node-picker.test.js",
 }
 
 var (

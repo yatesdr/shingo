@@ -193,7 +193,7 @@ block({
     act: async page => { page.click('root', { act: 'st-holddest' }); await page.settle(); },
     checks: [
         r => {
-            const rows = r.page.rows('pd-stpop', 'data-holdopt').map(b => b.dataset.holdopt);
+            const rows = T.holdRows(r.page).map(b => b.getAttribute('data-value'));
             return ['the list does not open on "-- None --" alone', !(rows.length === 1 && rows[0] === ''), 'rows ' + JSON.stringify(rows)];
         },
         r => ['Settings says the node list was not read', /node list/i.test(r.page.S.settingsError || ''),
@@ -207,9 +207,14 @@ block({
     open: () => ({ hash: '#tab=settings', extra: route([['GET', /^\/api\/core-nodes$/, () => UNSORTED_NODES]]) }),
     act: async page => { page.click('root', { act: 'st-holddest' }); await page.settle(); },
     checks: [r => {
-        const rows = r.page.rows('pd-stpop', 'data-holdopt').map(b => b.dataset.holdopt).filter(Boolean);
-        const want = r.page.pd('coreNodeList')().map(n => n.name).filter(n => rows.indexOf(n) >= 0);
-        return ['the rows follow coreNodeList', JSON.stringify(rows) === JSON.stringify(want), 'rows ' + JSON.stringify(rows) + ', list ' + JSON.stringify(want)];
+        // The pickers' order is the node adapter's (nodeRows): a group first
+        // in its run with its nodes under it, names in code-unit order.
+        const rows = T.holdRows(r.page).map(b => b.getAttribute('data-value')).filter(Boolean);
+        const flat = r.page.pd('nodeRows')(r.page.pd('NODES').rows(), {})
+            .reduce((a, x) => a.concat([x.value], (x.members || []).map(m => m.value)), []);
+        const want = flat.filter(n => rows.indexOf(n) >= 0);
+        return ['the rows follow the node adapter\'s', rows.length > 1 && JSON.stringify(rows) === JSON.stringify(want),
+            'rows ' + JSON.stringify(rows) + ', list ' + JSON.stringify(want)];
     }],
 });
 block({
@@ -217,9 +222,14 @@ block({
     open: () => ({ hash: '#tab=settings', extra: route([['GET', /^\/api\/core-nodes$/, () => UNSORTED_NODES]]) }),
     act: async () => {},
     checks: [r => {
-        const names = r.page.pd('coreNodeList')().map(n => n.name);
-        return ['GRP_Q first, Z_PLAIN and A_PLAIN last', names[0] === 'GRP_Q' && names.slice(-2).sort().join() === 'A_PLAIN,Z_PLAIN',
-            'order ' + JSON.stringify(names)];
+        // The node adapter's rows (nodeRows), every picker's order: groups
+        // first, each with its nodes under it, a plain node after them.
+        const rows = r.page.pd('nodeRows')(r.page.pd('NODES').rows(), {});
+        const tops = rows.map(x => x.value);
+        const under = (rows.find(x => x.value === 'GRP_Q') || {}).members || [];
+        return ['GRP_Q first with A_PLAIN and DST_7 under it, Z_PLAIN last',
+            tops[0] === 'GRP_Q' && tops[tops.length - 1] === 'Z_PLAIN' && under.map(m => m.value).join() === 'A_PLAIN,DST_7',
+            'order ' + JSON.stringify(tops) + ', under GRP_Q ' + JSON.stringify(under.map(m => m.value))];
     }],
 });
 

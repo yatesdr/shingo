@@ -30,7 +30,7 @@ Deploy: Edge v48.
 - A reorder point is the number the engineer set: its source tag (legacy, manual, not set) is gone, and Replenishment's Revert to legacy is Clear
 - Re-applying a reorder point on Replenishment no longer makes an open preview stale
 - Every node and part field outside the Processes page (Orders, Bins, Test orders, a group's kanban, Manual order, Production, Kafka Direct) is one searchable picker: groups first with their nodes under them, `_TRANSIT` never offered, a robot, a disabled node or a part that does not fit shown greyed with why
-- The Processes page's node and part pickers (Settings' routing lists and part set, the positions editor, Add process) are the same picker, on the page's one node list: `_TRANSIT` is never offered, and a routing or part pick shows only once the Edge has taken it
+- The Processes page's node and part pickers (Settings' routing lists, part set and containment destination, the positions editor, Add process) are the same picker, on the page's one node list: `_TRANSIT` is never offered, and a routing or part pick shows only once the Edge has taken it
 - Add and use on a flow's empty source, staging or destination is the same picker: a node the cell cannot take is greyed with why, a name the list lacks can be typed and added, and a refusal is said in the popover
 - A station's slot being filled on the Nodes page dims a robot, a disabled node and a synthetic one, and a failed node list on Orders is read again on the next open
 

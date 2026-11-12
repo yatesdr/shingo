@@ -22,10 +22,10 @@ ok   the list does not open on "-- None --" alone
 ok   Settings says the node list was not read
 
 ## census #2: Containment destination lists Core's nodes in the pickers' order
-ok   the rows follow coreNodeList
+ok   the rows follow the node adapter's
 
 ## census #4: Core's nodes are offered groups first, nodes with no type last
-ok   GRP_Q first, Z_PLAIN and A_PLAIN last
+ok   GRP_Q first with A_PLAIN and DST_7 under it, Z_PLAIN last
 
 ## census #3: a source added in Settings is offered on the Styles tab
 ok   POS_A5's Inbound source offers SRC_2

@@ -46,7 +46,7 @@ import { toast } from '/static/shared/notice.js';
 // THE PICKERS ARE THE SHARED ADAPTERS' (style guide §34): every node and part
 // picker on this page draws from the page's one node list and one part list,
 // each field with its own rule (pickerInit, drawPicker).
-import { nodePicker, nodeSource } from '/static/shared/node-picker.js';
+import { mountPicker, nodePicker, nodeRows, nodeSource } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
 const NO_NOTICE = { notice: false };
 
@@ -6121,21 +6121,6 @@ function loadCoreNodes() {
     return NODES.load();
 }
 
-// Core answers from a map, so the order it sends is that map's iteration order.
-// Grouped by type and alphabetical inside it is the order a list is read in:
-// node groups first and nodes with no type last. Sorted on the type alone, ''
-// came first, so plain nodes led and groups trailed (census #4).
-function coreNodeRank(n) {
-    if ((Array.isArray(n.members) && n.members.length) || n.node_type === 'NGRP') return 0;
-    return n.node_type ? 1 : 2;
-}
-function coreNodeList() {
-    return (S.coreNodes || []).slice().sort((a, b) =>
-        coreNodeRank(a) - coreNodeRank(b) ||
-        String(a.node_type || '').localeCompare(String(b.node_type || '')) ||
-        String(a.name || '').localeCompare(String(b.name || '')));
-}
-
 // pickerInit declares one picker before it is drawn: its rules, which the
 // shared adapter draws and runs (drawPicker).
 //
@@ -7599,13 +7584,13 @@ async function openScreenSheet(stationID) {
 // Its options carry their handler directly rather than a data-act, like every
 // other popover on this page — a second act for "the same list, written
 // somewhere else" is the kind of near-duplicate this page keeps collapsing.
-// openContainmentPicker — the Quality Hold destination picker: the Group
-// picker's mechanics over the CORE NODE list instead of the group list. Every
-// node but a lane is offered (groups labeled, the claim pickers' convention;
-// the stamp writes a claim leg, and no leg names a lane); "-- None --"
-// is the blank that means "no route yet" — the save refuses an enabled toggle
-// with none picked. The core node list loads lazily (the shared read all four
-// pickers use), so this is async where its sibling is not.
+// openContainmentPicker — the Quality Hold destination picker: the node
+// adapter over the page's one node list, in the popover. A lane, or a member
+// where Core picks, is drawn greyed with why (the stamp writes a claim leg,
+// and no leg names one: legExclusion); "-- None --" is the blank that means
+// "no route yet" — the save refuses an enabled toggle with none picked. The
+// node list is the shared read every picker uses, so this is async where its
+// sibling is not.
 async function openContainmentPicker(btn) {
     // loadCoreNodes never rejects: a failed read leaves S.coreNodes null (the
     // door's notice says why), and this opened on "-- None --" alone with
@@ -7619,23 +7604,20 @@ async function openContainmentPicker(btn) {
     const pop = $('pd-stpop');
     if (!pop) return;
     const current = S.settings.quality_hold_destination || '';
-    // In the pickers' order, not Core's map order (census #2).
-    const opts = [{ name: '', label: '-- None --' }].concat(coreNodeList().filter(n => !B().legExclusion(S.coreNodes, n.name, 'destination')).map(n => ({
-        name: n.name,
-        label: n.name + (n.node_type === 'NGRP' ? ' (group)' : ''),
-    })));
-    pop.innerHTML = opts.map(o => '<button data-holdopt="' + esc(o.name) + '" class="' +
-        (current === o.name ? 'on' : '') + '">' + esc(o.label) + '</button>').join('');
+    pop.innerHTML = '';
     showPop(pop, btn);
+    const field = { rule: n => B().legExclusion(S.coreNodes, n.name, 'destination') };
+    mountPicker(pop, NODES, nodes => [{ value: '', label: '-- None --' }].concat(nodeRows(nodes, field)), {
+        open: true, chips: false, selected: current, placeholder: 'find a node by name',
+        onChange: v => {
+            closeLayer(pop);
+            pop.hidden = true;
+            pop.innerHTML = '';
+            S.settings.quality_hold_destination = v;
+            drawSettings();
+        },
+    });
     placePopover(pop, btn);
-    pop.querySelectorAll('[data-holdopt]').forEach(b => b.addEventListener('click', ev => {
-        ev.stopPropagation();
-        closeLayer(pop);
-        pop.hidden = true;
-        pop.innerHTML = '';
-        S.settings.quality_hold_destination = b.dataset.holdopt;
-        drawSettings();
-    }));
 }
 
 function openGroupPicker(btn, onPick) {    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
