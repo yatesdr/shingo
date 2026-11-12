@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.6.2 — 2026-11-12
+
 Deploy: no migration.
 
 - Positions, Inbound, Staging and Outbound are one picker: four buckets over one checklist, each in its own colour
