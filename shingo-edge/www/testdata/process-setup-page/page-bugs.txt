@@ -38,7 +38,7 @@ ok   the page says "the Edge refused it"
 
 ## P0 :5368: a refused Save settings keeps the typed draft
 ok   the page says "the Edge refused it"
-BUG  the typed name and description stay: draft {"name":"Press A","description":"synthetic press"}
+ok   the typed name and description stay
 
 ## P0 :7084: a refused catalog sync says the server's sentence (fixed by the S2 door; kept as a pin)
 ok   the page says "the Edge refused it"

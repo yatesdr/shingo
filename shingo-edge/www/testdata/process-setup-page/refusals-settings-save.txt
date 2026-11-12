@@ -6,45 +6,25 @@
 # writes, in order: PUT /api/processes/1 · PATCH /api/processes/1 · POST /api/processes/1/containment-setting · POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting
 ### PUT /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -53,45 +33,25 @@
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -100,45 +60,25 @@
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -147,45 +87,25 @@
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -194,45 +114,25 @@
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
-    new text: #pd-root small: on: the operator may set a style up
-    new text: #pd-root small: off: finished goods go to their outbound destination
-    new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1

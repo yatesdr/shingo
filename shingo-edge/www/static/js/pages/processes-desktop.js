@@ -5597,7 +5597,10 @@ async function saveSettings() {
     await loadStationCounters();
     await loadStationVerdicts();
     await reloadProcesses();
-    S.settings = settingsDraft();
+    // A REFUSED SAVE KEEPS WHAT WAS TYPED (P0 :5368), as a refused curtain
+    // keeps its draft above: the draft was rebuilt from the stored process, so
+    // the typed name, group and auto-arm were gone with the refusal.
+    if (!stopped()) S.settings = settingsDraft();
     if (!stopped()) S.settingsNotice = 'Saved.';
     drawSettings();
 }
