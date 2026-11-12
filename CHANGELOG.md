@@ -33,6 +33,7 @@ Deploy: Edge v48.
 - The Processes page's node and part pickers (Settings' routing lists, part set and containment destination, the positions editor, Add process) are the same picker, on the page's one node list: `_TRANSIT` is never offered, and a routing or part pick shows only once the Edge has taken it
 - Add and use on a flow's empty source, staging or destination is the same picker: a node the cell cannot take is greyed with why, a name the list lacks can be typed and added, and a refusal is said in the popover
 - A station's slot being filled on the Nodes page dims a robot, a disabled node and a synthetic one, and a failed node list on Orders is read again on the next open
+- A changed recipe draft asks "Discard the changes?" before a tab, the address bar or + New style leaves it, as Back does; a rename from the rail keeps it
 
 ## v0.4.0 — 2026-11-12
 

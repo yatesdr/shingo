@@ -137,6 +137,72 @@ async function bugDraftBack() {
     check('Discard leaves the draft', !page.S.shapeDraft, 'draft kept');
 }
 
+// F4: every other way out of a changed recipe draft asks Back's question:
+// a tab, the address bar's #tab=, the rail's + New style. Keep editing keeps
+// the draft where it was; Discard lands where the click went. A write from the
+// rail's ⋯ (a rename) is not a way out: the draft stays.
+const LEAVES = [
+    ['the Settings tab', page => page.click('root', { tab: 'settings' }),
+        page => page.S.tab === 'settings' && /class="pd-sheet/.test(page.root.innerHTML)],
+    ['the Operator screens tab', page => page.click('root', { tab: 'screens' }), page => page.S.tab === 'screens'],
+    ['#tab=settings typed in the address bar', page => { page.ctx.location.hash = '#tab=settings'; page.fireWindow('hashchange'); },
+        page => page.S.tab === 'settings'],
+    ['the rail\'s + New style', page => page.click('root', { act: 'new-style' }),
+        page => page.sheetOpen() && /New style/.test(page.scrim.querySelector('.layer-head').textContent)],
+];
+async function changedDraft() {
+    const page = await newRecipe();
+    addPosition(page, 'POS_A11', stagingMode(page, 'POS_A11'));
+    await page.settle();
+    return page;
+}
+async function bugDraftLeave() {
+    for (const [how, leave, landed] of LEAVES) {
+        L.push('', '## F4: ' + how + ' out of a recipe draft');
+        {
+            const page = await newRecipe();
+            leave(page);
+            await page.settle();
+            check('an untouched draft leaves without asking, and lands there', !page.dialog() && !page.S.shapeDraft && landed(page),
+                'dialog=' + !!page.dialog() + ' draft=' + !!page.S.shapeDraft + ' tab=' + page.S.tab);
+        }
+        const page = await changedDraft();
+        const states = page.replaceStates.length;
+        leave(page);
+        await page.settle();
+        const d = page.dialog();
+        check('a changed draft asks first, the draft still on screen', !!d && !!page.S.shapeDraft && page.S.tab === 'flows',
+            'dialog=' + (d ? JSON.stringify(d.text) : 'none') + ', draft ' + (page.S.shapeDraft ? 'kept' : 'discarded') +
+            ', tab ' + page.S.tab);
+        if (!d) continue;
+        check('the question is Back\'s', d.text === 'Discard the changes?' && d.buttons.join(' · ') === 'Keep editing · Discard',
+            JSON.stringify(d.text) + ' [' + d.buttons.join(' · ') + ']');
+        d.press('Keep editing');
+        await page.settle();
+        check('Keep editing keeps the draft and its row, on Styles', !!page.S.shapeDraft && !!(page.S.model.cells.POS_A11 || {}).on &&
+            page.S.tab === 'flows' && !page.sheetOpen(), 'draft=' + !!page.S.shapeDraft + ' tab=' + page.S.tab);
+        const url = page.replaceStates[page.replaceStates.length - 1] || '';
+        check('and the address bar says Styles', page.replaceStates.length === states || !/#tab=/.test(url),
+            'url=' + JSON.stringify(url));
+        leave(page);
+        await page.settle();
+        const d2 = page.dialog();
+        if (d2) d2.press('Discard');
+        await page.settle();
+        check('Discard leaves the draft and lands there', !page.S.shapeDraft && landed(page),
+            'draft=' + !!page.S.shapeDraft + ' tab=' + page.S.tab);
+    }
+    L.push('', '## F4: a rename from the rail\'s ⋯ on a changed recipe draft');
+    const page = await changedDraft();
+    page.click('root', { act: 'style-rename', style: '2' });
+    await page.settle();
+    page.type('name', 'Style B2');
+    await T.sheetOK(page);
+    check('the rename lands and the draft stays, its row with it', !page.sheetOpen() && !!page.S.shapeDraft &&
+        !!(page.S.model.cells.POS_A11 || {}).on && page.S.tab === 'flows',
+        'sheet ' + (page.sheetOpen() ? 'open' : 'closed') + ', draft ' + (page.S.shapeDraft ? 'kept' : 'discarded'));
+}
+
 // F3: a required cell with nothing to offer is not a dead end.
 async function bugDeadEnd() {
     L.push('', '## F3: the required inbound staging chip, with no staging row and no back position');
@@ -372,6 +438,7 @@ async function run(t) {
     await bugStagingDefault();
     await bugDraftBar();
     await bugDraftBack();
+    await bugDraftLeave();
     await bugDeadEnd();
     await bugDeadEndSlot();
     await bugHmiNoRecipe();

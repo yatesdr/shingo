@@ -16,9 +16,44 @@ ok   and the bar says "Unsaved changes" now
 ## F4: Back on a recipe draft
 ok   an untouched draft leaves without asking
 ok   a changed draft asks before it is discarded
-#    asked: "Discard this recipe draft?" [Keep editing · Discard]
+#    asked: "Discard the changes?" [Keep editing · Discard]
 ok   Keep editing keeps the draft and its row
 ok   Discard leaves the draft
+
+## F4: the Settings tab out of a recipe draft
+ok   an untouched draft leaves without asking, and lands there
+ok   a changed draft asks first, the draft still on screen
+ok   the question is Back's
+ok   Keep editing keeps the draft and its row, on Styles
+ok   and the address bar says Styles
+ok   Discard leaves the draft and lands there
+
+## F4: the Operator screens tab out of a recipe draft
+ok   an untouched draft leaves without asking, and lands there
+ok   a changed draft asks first, the draft still on screen
+ok   the question is Back's
+ok   Keep editing keeps the draft and its row, on Styles
+ok   and the address bar says Styles
+ok   Discard leaves the draft and lands there
+
+## F4: #tab=settings typed in the address bar out of a recipe draft
+ok   an untouched draft leaves without asking, and lands there
+ok   a changed draft asks first, the draft still on screen
+ok   the question is Back's
+ok   Keep editing keeps the draft and its row, on Styles
+ok   and the address bar says Styles
+ok   Discard leaves the draft and lands there
+
+## F4: the rail's + New style out of a recipe draft
+ok   an untouched draft leaves without asking, and lands there
+ok   a changed draft asks first, the draft still on screen
+ok   the question is Back's
+ok   Keep editing keeps the draft and its row, on Styles
+ok   and the address bar says Styles
+ok   Discard leaves the draft and lands there
+
+## F4: a rename from the rail's ⋯ on a changed recipe draft
+ok   the rename lands and the draft stays, its row with it
 
 ## F3: the required inbound staging chip, with no staging row and no back position
 #    the popover: "Add and use · Staging GRP_A group SRC_A1 SRC_A2 LANE_1 a lane — a flow names its group, or the spot itself, never a lane DST_1 DST_2 DST_9 NEW_1 NEW_2 NEW_3 OTH"

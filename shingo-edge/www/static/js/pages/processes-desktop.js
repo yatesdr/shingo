@@ -6662,7 +6662,10 @@ async function refreshProcess() {
             .concat(Array.isArray(rows) ? rows : []);
     }
     S.settings = settingsDraft();
-    if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
+    // A RECIPE DRAFT STAYS (F4): a write from the rail's ⋯ (a rename, a
+    // clone) is no way out of it, and re-selecting a style dropped it unasked.
+    if (S.tab === 'flows' && S.shapeDraft) drawFlows();
+    else if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
     else if (S.tab === 'setup') drawSetup();
     else if (S.tab === 'screens') drawScreens();
     else await openSettings();
@@ -8005,9 +8008,10 @@ function draftDirty() { return !!S.shapeDraft && !!S.model && draftKey() !== S.s
 // draftHold puts the question before anything that leaves a changed recipe
 // draft (F4), and answers true when it asked. On Discard the act runs again,
 // the draft counted clean, so it leaves; Keep editing leaves it as it was.
+// The question is the layer's own for typed work (style guide §10).
 function draftHold(again) {
     if (!draftDirty()) return false;
-    void layerConfirm('Discard this recipe draft?', { ok: 'Discard', cancel: 'Keep editing' }).then(yes => {
+    void layerConfirm('Discard the changes?', { ok: 'Discard', cancel: 'Keep editing' }).then(yes => {
         if (!yes || !S.shapeDraft) return;
         S.shapeDraft.baseline = draftKey();
         again();
@@ -8036,9 +8040,10 @@ function draftGaps() {
     return out;
 }
 
-// leaveShapeDraft goes back to the Presets tab, with the style that was open
-// before the draft re-selected underneath so Flows is where it was.
-async function leaveShapeDraft() {
+// leaveShapeDraft goes back to where the draft was opened from, with the style
+// that was open before it re-selected underneath so Styles is where it was;
+// given `to`, it lands on that tab instead (a tab out of the draft, F4).
+async function leaveShapeDraft(to) {
     const back = S.shapeDraft ? S.shapeDraft.back : S.styleID;
     const fromTab = S.shapeDraft ? S.shapeDraft.fromTab : '';
     S.shapeDraft = null;
@@ -8046,7 +8051,8 @@ async function leaveShapeDraft() {
     const res = await send('GET', '/api/processes/' + S.processID + '/composer');
     if (res.ok) takeComposer(res.body);
     selectStyle(back);
-    if (fromTab === 'settings') await openSettingsAt('HMI');
+    if (to) showTab(to);
+    else if (fromTab === 'settings') await openSettingsAt('HMI');
     else if (fromTab === 'setup') { S.tab = 'setup'; drawSetup(); syncHash(); }
 }
 
@@ -8638,6 +8644,15 @@ function showTab(t) {
     syncHash();
 }
 
+// tabTo is a tab's click. Out of a recipe draft it is a way out, left the way
+// Back leaves, asking first when the draft has changed (F4); the tab the draft
+// is drawn on is not.
+function tabTo(t) {
+    if (!S.shapeDraft || t === S.tab) { showTab(t); return; }
+    const go = () => void leaveShapeDraft(t);
+    if (!draftHold(go)) go();
+}
+
 // A #tab= (or #style=) EDITED IN THE ADDRESS BAR is a hashchange and no load,
 // and hashOpts is read only at boot, so the page stayed where it was (F21).
 // syncHash's replaceState fires no hashchange, so this runs only for an edit
@@ -8648,12 +8663,16 @@ function onHashChange() {
     const t = hashTab(h.tab);
     if (!t) return;
     if (t === 'flows' && Number(h.style) && Number(h.style) !== S.styleID && composerStyle(Number(h.style))) {
-        S.tab = 'flows';
-        selectStyle(Number(h.style));
-        syncHash();
+        const go = () => { S.tab = 'flows'; selectStyle(Number(h.style)); syncHash(); };
+        // Out of a changed recipe draft it asks, as the rail's row does (F4),
+        // and the address bar says where the page is until it is answered.
+        if (S.shapeDraft) syncHash();
+        if (!draftHold(go)) go();
         return;
     }
-    if (t !== S.tab) showTab(t);
+    if (t === S.tab) return;
+    if (S.shapeDraft) syncHash();
+    tabTo(t);
 }
 
 function onClick(e) {
@@ -8873,7 +8892,14 @@ function onClick(e) {
             case 'rs-all-on': void rsAllOn(btn.dataset.role); return;
             case 'add-process': openAddProcess(); return;
             case 'add-group': openNewGroup(); return;
-            case 'new-style': openNewStyle(); return;
+            // + New style's Create opens the new style, so out of a recipe
+            // draft it leaves the draft first, asking when it changed (F4).
+            case 'new-style': {
+                if (!S.shapeDraft) { openNewStyle(); return; }
+                const go = () => void leaveShapeDraft('flows').then(() => openNewStyle());
+                if (!draftHold(go)) go();
+                return;
+            }
             case 'add-position': addFreePosition(btn); return;
             case 'setup-go': void setupGo(btn.dataset.setup); return;
             default: break;
@@ -8881,7 +8907,7 @@ function onClick(e) {
     }
     const mapEl = e.target.closest && e.target.closest('[data-mapname]');
     if (mapEl && S.tab === 'settings') { flashRoutingRow(mapEl.dataset.mapname); return; }
-    if (tab) { showTab(tab.dataset.tab); return; }
+    if (tab) { tabTo(tab.dataset.tab); return; }
     // A preset row expands its member list; a second click closes it.
     const presetRowEl = e.target.closest && e.target.closest('[data-preset]');
     if (presetRowEl && !btn && S.tab === 'settings') {
