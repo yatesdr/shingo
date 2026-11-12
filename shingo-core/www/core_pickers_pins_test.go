@@ -175,6 +175,18 @@ func corePickerCensusBugs(t *testing.T, got map[string]string) {
 	if strings.Contains(create, `| _TRANSIT`) {
 		t.Errorf("census #11: Create bin offers _TRANSIT")
 	}
+	// otherGroups, fixed: the kanban section's Overflow and Sources show a
+	// disabled group greyed and do not take it (was nodes-kanban.js:170, which
+	// offered GRP-OFF in both).
+	kanban := got["kanban-page.txt"]
+	for _, line := range []string{
+		`"GRP-OFF" | GRP-OFF · group  (off: disabled)`,
+		`pick "14" (GRP-OFF): not taken: offered greyed: disabled`,
+	} {
+		if !strings.Contains(kanban, line) {
+			t.Errorf("otherGroups: the kanban section no longer holds %q", line)
+		}
+	}
 	// assignReason, fixed: an armed place slot dims the robot deck, a
 	// synthetic node that is no group, and a disabled node or group, each with
 	// its reason, and a Windows slot dims a disabled node (was

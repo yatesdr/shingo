@@ -561,24 +561,24 @@ async function openKanban(t, groupID, cfg) {
 }
 
 function kanbanShown(L, t) {
-    const ov = t.doc.getElementById('nf-kanban-overflow');
-    L.push('  Overflow (C9) value ' + JSON.stringify(ov.value) + ':');
-    D.optionLines(ov.innerHTML, '    ').forEach((l) => L.push(l));
+    const ov = t.p.pickers['nf-kanban-overflow'];
+    L.push('  Overflow (C9) value ' + JSON.stringify(ov.value()) + ':');
+    D.rowLines(ov.rows(), '    ').forEach((l) => L.push(l));
     const host = t.doc.getElementById('nf-kanban-sources').innerHTML;
     const chips = (host.match(/<span class="loader-chip">([^<]*)<\/span>/g) || []).map((s) => D.unesc(s.replace(/<[^>]+>/g, '')));
     L.push('  Sources (C10), ranked: ' + (chips.length ? chips.join(', ') : '(none) ' +
         JSON.stringify(D.unesc((/<div class="text-muted"[^>]*>([^<]*)<\/div>/.exec(host) || [])[1] || ''))));
-    const add = D.selectIn(host, 'nf-kanban-add-source');
-    if (!add) { L.push('  Add a source: no select (nothing left to add)'); return; }
+    if (host.indexOf('id="nf-kanban-add-source"') < 0) { L.push('  Add a source: no picker (nothing left to add)'); return; }
     L.push('  Add a source (one pick, then Add):');
-    D.optionLines(add.inner, '    ').forEach((l) => L.push(l));
+    D.rowLines(t.p.pickers['nf-kanban-add-source'].rows(), '    ').forEach((l) => L.push(l));
 }
 
 async function kanbanPins() {
     const L = [
         '# Core Nodes, node pop-up, kanban section (census #63 Overflow C9, #64 Sources C10).',
-        '# static/pages/nodes-kanban.js run as served. otherGroups() reads the page\'s tiles (every node',
-        '# but _TRANSIT, as nodes.html draws them): every NGRP tile, the open group left out, by name.',
+        '# static/pages/nodes-kanban.js run as served. Its one node list is the page\'s tiles (every node',
+        '# but _TRANSIT, as nodes.html draws them), read per open; both fields are the shared node picker',
+        '# over it, universe = NGRP groups, rule: this group, disabled (and, for a source, already listed).',
         '',
     ];
     let t = kanbanPage();
@@ -586,11 +586,12 @@ async function kanbanPins() {
     L.push('== open GRP-A (stored: overflow GRP-GONE, a group no longer on the page; source GRP-B)');
     flush(L, t.net, t.rec);
     kanbanShown(L, t);
-    L.push('  The disabled GRP-OFF is offered in both; lanes, plain nodes and VIRT-1 are not.');
+    L.push('  The disabled GRP-OFF is greyed in both; lanes, plain nodes and VIRT-1 are not drawn.');
 
-    t.doc.getElementById('nf-kanban-add-source').value = '14';
-    t.p.run('addKanbanSource()');
     L.push('', '== Add GRP-OFF as a source');
+    L.push('  pick "14" (GRP-OFF): ' + (t.p.pickers['nf-kanban-add-source'].choose('14') ? 'not taken: ' +
+        t.p.pickers['nf-kanban-add-source'].choose('14') : 'taken'));
+    t.p.run('addKanbanSource()');
     kanbanShown(L, t);
 
     t.net.on('POST', '/api/nodes/kanban/', { json: { status: 'ok', warnings: [] } });

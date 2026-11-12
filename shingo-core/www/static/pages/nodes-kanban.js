@@ -2,6 +2,7 @@ import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm as uiConfirm } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost } from '/static/app.js';
+import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
 
 // Kanban section of the node group settings modal.
 //
@@ -89,6 +90,7 @@ export function renderKanbanSection(isGroupType, nodeID) {
   // nothing: a late failure used to hide the section of the group opened since.
   var mine = blank(Number(nodeID));
   _kanban = mine;
+  kanbanNodes.set(pageNodes());
 
   Promise.all([
     apiGet('/api/nodes/kanban?id=' + nodeID),
@@ -167,22 +169,49 @@ function setAlgoNote(on) {
   if (note) note.classList.toggle('hide', !on);
 }
 
-// otherGroups is the node groups on the page, this one left out, off the tiles:
-// [{id, name}], sorted by name. NGRP is the only group code: Core's v6 migration
+// THE PAGE'S NODES, as nodes.html drew them (every node but _TRANSIT), read
+// off the tiles once per open of the section (the page redraws tiles as it
+// edits them): the one list the section's two group fields draw from, through
+// the shared node adapter. NGRP is the only group code: Core's v6 migration
 // renamed the legacy SMKT / SUP codes to it.
-function otherGroups() {
+var kanbanNodes = nodeSource(function () { return pageNodes(); });
+
+function pageNodes() {
   var seen = {};
   var out = [];
   document.querySelectorAll('.node-tile').forEach(function (t) {
-    if (t.dataset.typeCode !== 'NGRP') return;
     var name = t.dataset.name;
     if (!name || seen[name]) return;
-    if (_kanban && String(t.dataset.id) === String(_kanban.nodeID)) return; // never itself
     seen[name] = true;
-    out.push({ id: Number(t.dataset.id), name: name });
+    out.push({
+      id: Number(t.dataset.id), name: name, node_type_code: t.dataset.typeCode || '',
+      is_synthetic: t.dataset.synthetic === 'true', enabled: t.dataset.enabled !== 'false',
+      parent_id: t.dataset.parentId ? Number(t.dataset.parentId) : null,
+    });
   });
-  out.sort(function (a, b) { return a.name.localeCompare(b.name); });
   return out;
+}
+
+// groupField is what the Overflow and a Source may be: a node group, not this
+// one, not a disabled one; `listed` greys one the field already holds.
+function groupField(value, listed) {
+  return {
+    value: value, sections: false,
+    only: function (n) { return n.type === 'NGRP'; },
+    rule: nodeWhy.any(
+      function (n) { return _kanban && String(n.id) === String(_kanban.nodeID) ? 'this group' : ''; },
+      nodeWhy.disabled,
+      function (n) { return listed && listed(n) ? 'already a source' : ''; }),
+  };
+}
+
+// otherGroups is the node groups on the page, this one left out: [{id,
+// name}], in the adapter's order.
+function otherGroups() {
+  return (kanbanNodes.rows() || []).filter(function (n) {
+    return n.type === 'NGRP' && !(_kanban && String(n.id) === String(_kanban.nodeID));
+  }).map(function (n) { return { id: Number(n.id), name: n.name }; })
+    .sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
 }
 
 function fillStations(current) {
@@ -204,21 +233,14 @@ function fillStations(current) {
   sel.value = current;
 }
 
+// fillOverflow draws the Overflow picker with the stored value. A stored
+// group no longer on the page is kept as it was: its chip names it, and Save
+// writes it back unchanged.
+var overflowPicker = null;
 function fillOverflow(current) {
-  var sel = document.getElementById('nf-kanban-overflow');
-  if (!sel) return;
-  var html = '<option value="">— none —</option>';
-  var seen = {};
-  otherGroups().forEach(function (g) {
-    seen[g.name] = true;
-    html += '<option value="' + escapeHtml(g.name) + '">' + escapeHtml(g.name) + '</option>';
-  });
-  sel.innerHTML = html;
-  if (current && !seen[current]) {
-    sel.insertAdjacentHTML('beforeend',
-      '<option value="' + escapeHtml(current) + '">' + escapeHtml(current) + ' (not on this page)</option>');
-  }
-  sel.value = current;
+  var host = document.getElementById('nf-kanban-overflow');
+  if (!host) return;
+  overflowPicker = nodePicker(host, kanbanNodes, groupField('name'), { selected: current, placeholder: 'No overflow' });
 }
 
 // renderLevels draws the declared level, one row per carrier type with its
@@ -425,25 +447,31 @@ function sourceRowsHtml(sources, groups) {
   var add = '';
   if (rest.length) {
     add = '<div class="loader-mix-add">'
-      + '<select id="nf-kanban-add-source" class="form-input" aria-label="Source group">'
-      + rest.map(function (g) { return '<option value="' + g.id + '">' + escapeHtml(g.name) + '</option>'; }).join('')
-      + '</select>'
+      + '<div id="nf-kanban-add-source" aria-label="Source group"></div>'
       + '<button type="button" class="btn btn-sm" data-action="addKanbanSource">Add</button>'
       + '</div>';
   }
   return (rows || '<div class="text-muted" style="font-size:0.75rem">No sources: the keeper searches the plant.</div>') + add;
 }
 
+// addSourcePicker is the add row's one pick: a group not yet listed.
+var addSourcePicker = null;
 function renderSources() {
   var host = document.getElementById('nf-kanban-sources');
   if (!host || !_kanban) return;
   host.innerHTML = sourceRowsHtml(_kanban.sources, otherGroups());
+  addSourcePicker = null;
+  var add = document.getElementById('nf-kanban-add-source');
+  if (!add || host.innerHTML.indexOf('nf-kanban-add-source') < 0) return;
+  var listed = {};
+  _kanban.sources.forEach(function (x) { listed[x.id] = true; });
+  addSourcePicker = nodePicker(add, kanbanNodes, groupField('id', function (n) { return listed[Number(n.id)]; }),
+    { placeholder: 'Source group' });
 }
 
 export function addKanbanSource() {
   if (!_kanban) return;
-  var sel = document.getElementById('nf-kanban-add-source');
-  var id = Number(sel && sel.value);
+  var id = Number(addSourcePicker && addSourcePicker.value());
   if (!id) return;
   var g = otherGroups().find(function (x) { return x.id === id; });
   if (g) _kanban.sources.push(g);
@@ -613,7 +641,7 @@ export async function saveKanban() {
   var nodeID = _kanban.nodeID;
   var strict = document.getElementById('nf-kanban-strict').checked;
   var station = document.getElementById('nf-kanban-station').value;
-  var overflow = document.getElementById('nf-kanban-overflow').value;
+  var overflow = overflowPicker ? overflowPicker.value() : '';
 
   // Warnings collect across the whole flush and are shown once. Four toasts for
   // one Save is four things to dismiss and one thing to read.
