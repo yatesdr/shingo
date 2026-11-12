@@ -5,20 +5,20 @@
 # and, under shared, the shared/ file that defines it.
 
 name                  core-hub  edge-hub  shared
-escapeHtml            -         shared    dom.js
+escapeHtml            -         -         dom.js
 h                     -         -         dom.js
 el                    -         -         dom.js
 debounce              -         -         dom.js
-delegateActions       -         shared    dom.js
+delegateActions       -         -         dom.js
 installBackdropClose  -         -         utils.js
 showModal             -         own       utils.js
 hideModal             -         own       utils.js
-confirm               -         shared    utils.js
-prompt                -         shared    utils.js
+confirm               -         -         utils.js
+prompt                -         -         utils.js
 uiConfirm             -         -         -
 uiConfirmWithInput    -         -         -
 uiPrompt              -         -         -
-toast                 -         shared    utils.js
+toast                 -         -         utils.js
 api                   -         own       utils.js
 apiGet                own       -         -
 apiPost               own       -         -
@@ -29,6 +29,6 @@ createSSE             -         -         utils.js
 onSSE                 -         -         bus.js
 showRefreshBanner     -         -         utils.js
 
-edge-hub window.ShingoEdge: {escapeHtml, showModal, hideModal, confirm, prompt, populateForm, getFormData, removeRow, replaceRowCells, api, toast}
-edge-hub window.ShingoEdge entries that are the module's exports: 11 of 11
+edge-hub window.ShingoEdge: {toast}
+edge-hub window.ShingoEdge entries that are the module's exports: 0 of 1
 loading the hub (and the shared/ modules it imports) sets on window: core-hub nothing; edge-hub ShingoEdge

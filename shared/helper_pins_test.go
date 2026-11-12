@@ -205,6 +205,9 @@ var sharedExportsNoImporter = map[string]string{
 	"utils.js createSSE": "pages take the bus (ruling 4); the copy goes with utils.js's remnants",
 	// Its toast: the Edge Config page took it, and takes notice.js's now.
 	"utils.js toast": "pages take notice.js's (wave C); the copy goes with utils.js's remnants",
+	// Its backdrop listener: the Edge hub called it last; layer.js reads
+	// data-backdrop-close when it opens an overlay.
+	"utils.js installBackdropClose": "no hub calls it since wave C; goes with utils.js's remnants",
 	// utils.js's own banner, still shown by its createSSE; Core's hub shows
 	// notice.js's banner on the bus's build-changed instead.
 	"utils.js showRefreshBanner": "read by createSSE alone; Core's hub shows notice.js's banner",

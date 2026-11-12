@@ -1,30 +1,26 @@
-// Shingo Edge — shop-floor materials management UI
+// Shingo Edge — the Edge admin hub: what every admin page does on load, and
+// the Edge's own page verbs.
 //
-// ES module. Loaded via <script type="module" src="…">. Per-page
-// scripts in pages/*.js also load as modules so they execute AFTER
-// this file and import the helpers they need as named bindings.
+// ES module, loaded by header.html on every Edge admin page before the page's
+// own module. A page imports each shared helper from the file that defines it
+// (/static/shared/dom.js, layer.js, notice.js, bus.js, …); this module exports
+// only what is the Edge's: api, the two bus verbs, the process selector
+// verbs, and the Processes page's modal pair until it moves.
 //
-// Top-level side effects on Edge admin page load:
-//   1. Install the data-backdrop-close listener (shared helper).
-//   2. Install the htmx:afterSwap → convertTimestamps wiring so
-//      <time data-utc=…> nodes that arrive via partial swap get
-//      localized.
-//   3. Run convertTimestamps once on DOMContentLoaded for the
-//      initial full-page render.
-//   4. Put every failed htmx request on the notice (shared/http.js's
+// On load it:
+//   1. localizes <time data-utc=…> after every htmx swap, and once on
+//      DOMContentLoaded for the first render (clock.js);
+//   2. arms the live elapsed/countdown spans, re-armed after swaps;
+//   3. sorts the tables marked for it (list.js);
+//   4. puts every failed htmx request on the notice (shared/http.js's
 //      hookHtmxErrors): a partial refresh or an hx-post action that is
 //      refused, or never answered, used to keep the old content and say
 //      nothing.
+// It subscribes nothing on the bus and opens no stream (see the bus verbs).
 //
-// The IIFE wrap that used to populate `var ShingoEdge = {}` was
-// dropped in SPRINT 4. Helpers are now top-level `export function` /
-// `export const` declarations; the trailing `window.ShingoEdge = { … }`
-// block exists only for the one remaining non-module consumer:
-//   - templates/diagnostics.html calls window.ShingoEdge.toast
-// Migrate it to module imports and the window-bridge can go.
+// window.ShingoEdge carries toast for the one classic consumer,
+// templates/diagnostics.html's inline script.
 
-import { escapeHtml } from '/static/shared/dom.js';
-import { confirm, prompt } from '/static/shared/layer.js';
 import { banner, toast } from '/static/shared/notice.js';
 import {
     installHtmxLiveDurations,
@@ -33,9 +29,7 @@ import {
     convertTimestamps,
 } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
-import { installBackdropClose } from '/static/shared/utils.js';
 import { hookHtmxErrors, http } from '/static/shared/http.js';
-installBackdropClose();
 // Once per page, on the body every htmx event bubbles to. A module runs after
 // the document is parsed, so the body is there.
 hookHtmxErrors(document.body);
@@ -48,12 +42,6 @@ document.addEventListener('DOMContentLoaded', function() {
     installTableSort();
     installLiveDurations();
 });
-
-// --- HTML escaping ---
-// The shared one: safe between tags and inside a quoted attribute
-// (production.js builds data-part="…" with it). Edge's own DOM-based copy
-// left quotes alone.
-export { escapeHtml };
 
 // --- the live bus on an Edge admin page ---
 // A page that holds a stream subscribes on shared/bus.js's one bus, in its
@@ -109,13 +97,13 @@ function sseTriggerTypes(el) {
     });
 }
 
-// --- Modal helpers ---
-// Toggles .active on .modal-overlay (Core's CSS pattern). Matches the
-// shared helper in /static/shared/utils.js so per-page scripts can
-// call either form interchangeably during the ES module migration.
-//
-// hideModal default: clear inputs. Pass { preserveState: true } from
-// wizard / long edit-flow callers that legitimately need preservation.
+// --- the Processes page's modal pair ---
+// processes-desktop.js still takes these two; every other Edge page takes
+// shared/layer.js's. They go when s2-processes moves that page to layer.js
+// (the Processes page pins, testdata/process-setup-harness/page-harness.js,
+// cut them out of this file until then). Kept as they were: they toggle
+// .active on .modal-overlay; hideModal clears the inputs unless
+// { preserveState: true }.
 export function showModal(id) {
     var m = document.getElementById(id);
     if (m) {
@@ -140,66 +128,6 @@ export function hideModal(id, opts) {
         if (el.type === 'checkbox' || el.type === 'radio') { el.checked = false; continue; }
         if (el.tagName === 'SELECT') { el.selectedIndex = 0; continue; }
         el.value = el.defaultValue || '';
-    }
-}
-
-// --- confirm, prompt, toast: the layer's and the notice's ---
-// The one confirm and prompt (shared/layer.js: Escape, the backdrop and
-// every other close resolve them, focus goes in and comes back) and the one
-// toast (shared/notice.js). Re-exported here until the pages import them
-// from those files.
-export { confirm, prompt, toast };
-
-// --- Form helpers ---
-export function populateForm(formId, data) {
-    var form = document.getElementById(formId);
-    if (!form) return;
-    for (var key in data) {
-        var el = form.querySelector('[name="' + key + '"]');
-        if (!el) continue;
-        if (el.type === 'checkbox') {
-            el.checked = !!data[key];
-        } else {
-            el.value = data[key];
-        }
-    }
-}
-
-export function getFormData(formId) {
-    var form = document.getElementById(formId);
-    if (!form) return {};
-    var data = {};
-    var inputs = form.querySelectorAll('input, select, textarea');
-    for (var i = 0; i < inputs.length; i++) {
-        var el = inputs[i];
-        if (!el.name) continue;
-        if (el.type === 'checkbox') {
-            data[el.name] = el.checked;
-        } else if (el.type === 'number') {
-            data[el.name] = parseFloat(el.value) || 0;
-        } else {
-            data[el.name] = el.value;
-        }
-    }
-    return data;
-}
-
-// --- DOM row helpers ---
-export function removeRow(rowId) {
-    var row = document.getElementById(rowId);
-    if (row) {
-        row.style.opacity = '0';
-        row.style.transition = 'opacity 0.3s';
-        setTimeout(function() { row.remove(); }, 300);
-    }
-}
-
-export function replaceRowCells(rowId, cellData) {
-    var row = document.getElementById(rowId);
-    if (!row) return;
-    for (var key in cellData) {
-        var cell = row.querySelector('[data-col="' + key + '"]');
-        if (cell) cell.innerHTML = cellData[key];
     }
 }
 
@@ -249,29 +177,8 @@ export function navigateToProcessOrOrders(el) {
     window.location = '/orders' + (qs ? '?' + qs : '');
 }
 
-// --- delegateActions: re-exported from shared ---
-// Per-page scripts that import `delegateActions` from this module
-// pick up the canonical shared implementation. Keeping the re-export
-// here means existing `import { delegateActions } from
-// '/static/js/shingoedge.js'` sites don't need to change paths.
-export { delegateActions } from '/static/shared/dom.js';
-
-// --- window.ShingoEdge for non-module consumers ---
-// One remaining non-module consumer still reaches for these as bare
-// globals on the window:
-//   - templates/diagnostics.html: uses window.ShingoEdge.toast
-// When it is migrated to module imports, this block (and the
-// IIFE-era comment block at the top) can be deleted outright.
-window.ShingoEdge = {
-    escapeHtml: escapeHtml,
-    showModal: showModal,
-    hideModal: hideModal,
-    confirm: confirm,
-    prompt: prompt,
-    populateForm: populateForm,
-    getFormData: getFormData,
-    removeRow: removeRow,
-    replaceRowCells: replaceRowCells,
-    api: api,
-    toast: toast,
-};
+// --- window.ShingoEdge for the one classic consumer ---
+// templates/diagnostics.html's inline script calls window.ShingoEdge.toast;
+// it is the notice's toast. When that script moves into diagnostics.js,
+// this line goes.
+window.ShingoEdge = { toast: toast };

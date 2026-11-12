@@ -1,4 +1,4 @@
-# confirm / prompt — edge-hub: confirm / prompt of shingo-edge/www/static/js/shingoedge.js
+# confirm / prompt — edge-hub: confirm / prompt of what an Edge admin page imports (shared/layer.js, shared/notice.js, shingoedge.js's api)
 # a fresh page per case; #opener has focus when the dialog opens. "after 60 s" is the
 # fake clock moved a minute on: a dialog still pending then never resolves by itself.
 

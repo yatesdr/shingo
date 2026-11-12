@@ -1,4 +1,4 @@
-# api — edge-hub: the HTTP helpers of shingo-edge/www/static/js/shingoedge.js
+# api — edge-hub: the HTTP helpers of what an Edge admin page imports (shared/layer.js, shared/notice.js, shingoedge.js's api)
 # a fresh page per call; "resolves"/"rejects" is the promise the page awaits.
 
 shape: api is an object {get, post, put, patch, del}, over shared/http.js with its notice off

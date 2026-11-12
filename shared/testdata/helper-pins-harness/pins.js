@@ -9,9 +9,10 @@
 //   core-hub  shingo-core/www/static/app.js        showModal hideModal uiConfirm
 //             uiConfirmWithInput uiPrompt toast api apiGet/Post/Put/Delete, and
 //             the bus subscription app.js makes on import (onSSE 'system-status')
-//   edge-hub  shingo-edge/www/static/js/shingoedge.js  showModal hideModal
-//             confirm prompt (layer.js's) api (over shared/http.js) toast
-//             (notice.js's) window.ShingoEdge
+//   edge-hub  what an Edge admin page imports since wave C (edge-admin.js):
+//             shared/layer.js's showModal hideModal confirm prompt, notice.js's
+//             toast, and shingoedge.js's api (over shared/http.js), with the
+//             hub loaded for what it does on import; hubs.txt reads the hub
 //   shared    shared/utils.js  api apiResult createSSE showRefreshBanner showModal
 //             hideModal confirm prompt toast installBackdropClose; shared/bus.js
 //             the onSSE bus
@@ -31,10 +32,6 @@
 // fixed here.
 //
 // BUGS PINNED AS IS (golden: case label — source):
-//   modal.edge-hub.txt "m1 has data-backdrop-close, show, press and click the
-//     overlay": the modal closes but body overflow stays "hidden" (the scroll
-//     lock is never released) — shingoedge.js:129 locks, shared/utils.js:412
-//     (installBackdropClose) only strips .active.
 //   modal.shared.txt "show m1 {closeOnBackdrop:true}, press in the card,
 //     release on the overlay": closes on a drag that began in the card, the
 //     case installBackdropClose guards — shared/utils.js:272.
@@ -70,6 +67,9 @@
 //     used to be dropped once more.
 //   api.edge-hub.txt "204 no content", "200 empty body": resolves null (the
 //     hub's api is shared/http.js's door); it rejected with a SyntaxError.
+//   modal.edge-hub.txt "m1 has data-backdrop-close, show, press and click the
+//     overlay": body overflow back to "" (Edge admin pages open their modals
+//     on shared/layer.js's counted lock); it stayed "hidden".
 
 'use strict';
 
@@ -95,11 +95,13 @@ const SURFACES = [
         sel: { dialog: '.layer-scrim', toastBox: '.notice-stack', toast: '.notice-toast' },
     },
     {
-        name: 'edge-hub', root: 'edge', entry: '/static/js/shingoedge.js',
-        file: 'shingo-edge/www/static/js/shingoedge.js',
+        // What an Edge admin page imports (edge-admin.js): the hub's api, and
+        // shared/layer.js's modal, confirm and prompt and notice.js's toast.
+        name: 'edge-hub', root: 'edge', entry: 'shared/testdata/helper-pins-harness/edge-admin.js',
+        sharedEntry: 'shared/testdata/helper-pins-harness/edge-admin.js',
+        file: 'what an Edge admin page imports (shared/layer.js, shared/notice.js, shingoedge.js\'s api)',
         pick: (m) => ({ showModal: m.showModal, hideModal: m.hideModal, confirm: m.confirm, prompt: m.prompt, toast: m.toast }),
         words: { confirm: 'confirm', prompt: 'prompt' },
-        // Its confirm and prompt are shared/layer.js's, its toast notice.js's.
         sel: { dialog: '.layer-scrim', toastBox: '.notice-stack', toast: '.notice-toast' },
     },
     {
