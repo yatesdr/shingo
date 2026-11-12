@@ -9,14 +9,24 @@
   6  GET /api/processes/1/counting-slots
   7  GET /api/processes/1/catid-health
   8  GET /api/plcs
-  9  GET /api/core-nodes
+  9  GET /api/processes/1/presets
+ 10  GET /api/core-nodes
 -- sheet closed
 
 ## the screens tab clicked
 -- sheet closed
 
 ## the presets tab clicked
-  1  GET /api/processes/1/presets
+  1  GET /api/processes/1/routing-nodes
+  2  GET /api/process-nodes
+  3  GET /api/payload-catalog
+  4  GET /api/processes/1/payloads
+  5  GET /api/processes/1/station-counters
+  6  GET /api/processes/1/counting-slots
+  7  GET /api/processes/1/catid-health
+  8  GET /api/plcs
+  9  GET /api/processes/1/presets
+ 10  GET /api/core-nodes
 -- sheet closed
 
 ## window focus on the Styles tab (refreshRail)

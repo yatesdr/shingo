@@ -98,40 +98,40 @@
 ## Apply: Save to 1 part
 # writes, in order: POST /api/processes/1/flow/save
 ### POST /api/processes/1/flow/save  ←  409 {"error"} (writeFlowRefusal)
-    then: GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+    then: GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets
     new text: #pd-scrim div.pd-warn: the Edge refused it
     new text: #pd-scrim span.st: 0 saved, 1 to look at
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
     state: papply.status="0 saved, 1 to look at"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed
+    pressed again: POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/flow/save  ←  409 {"error", stale:true} (a stale fingerprint)
-    then: POST /api/processes/1/flow/preview · POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+    then: POST /api/processes/1/flow/preview · POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets
     new text: #pd-root div.pd-notice: Saved to 1 part.
     sheet: closed
-    state: notice="Saved to 1 part."
+    state: settingsNotice="Saved to 1 part."
     unhandled rejection: none
 ### POST /api/processes/1/flow/save  ←  422 {"error", findings} (validation)
-    then: GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+    then: GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets
     new text: #pd-scrim div.pd-warn: the Edge refused it
     new text: #pd-scrim span.st: 0 saved, 1 to look at
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
     state: papply.status="0 saved, 1 to look at"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed
+    pressed again: POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/flow/save  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+    then: GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets
     new text: #pd-scrim div.pd-warn: Server error (500)
     new text: #pd-scrim span.st: 0 saved, 1 to look at
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
     state: papply.status="0 saved, 1 to look at"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed
+    pressed again: POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/flow/save  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+    then: GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets
     new text: #pd-scrim div.pd-warn: No answer from the server
     new text: #pd-scrim span.st: 0 saved, 1 to look at
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
     state: papply.status="0 saved, 1 to look at"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed
+    pressed again: POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets → sheet: closed

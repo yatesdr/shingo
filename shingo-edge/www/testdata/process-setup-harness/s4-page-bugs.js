@@ -181,7 +181,7 @@ block({
         }
         return { seen: seen };
     },
-    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> screens | #tab=recipes -> presets | #style=2 -> flows style 2',
+    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> screens | #tab=recipes -> settings | #style=2 -> flows style 2',
         r.seen.join(' | ')]],
 });
 

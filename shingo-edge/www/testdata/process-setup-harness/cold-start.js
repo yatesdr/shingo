@@ -180,8 +180,8 @@ async function bugHmiNoRecipe() {
     const page = await T.openPage(o);
     await page.settle();
     const html = page.root.innerHTML.slice(page.root.innerHTML.indexOf('<div class="pd-sheet'));
-    const at = html.indexOf('HMI setup');
-    const hmi = T.text(html.slice(Math.max(0, at), at + 1200));
+    const at = html.indexOf('id="pd-hmirecipes"');
+    const hmi = at < 0 ? '' : T.text(html.slice(at, at + 1600));
     L.push('#    ' + JSON.stringify(hmi.slice(0, 160)));
     check('the HMI setup row says the process has no recipe', /no recipe/i.test(hmi), 'nothing says so');
     check('and offers New recipe there', /data-act="new-recipe"/.test(html), 'no New recipe on Settings');

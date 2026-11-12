@@ -28,7 +28,7 @@ ok   Add and use is one request: the routing set gains it for staging
 ok   and the row uses it
 
 ## F36: Settings › HMI setup on a process with no recipe
-#    "HMI setup off: the operator changes over to a style an engineer made · on: they may set a style up — pick a part and a recipe, and move its spots For a cell bei"
+#    "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from no recipe yet New recipe Found in your flows · 1 shape run by 2 styles, not named yet Shape Ru"
 ok   the HMI setup row says the process has no recipe
 ok   and offers New recipe there
 ok   "Found in your flows" is beside it
@@ -101,13 +101,13 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   #tab=presets;preset=7 → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
   #tab=settings → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
   #tab=setup → tab flows · tabs ["Styles*","Operator screens","Settings"] · hash "?process=1#style=1"
-  Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from 1 recipe New recipe Name Shape Applied to Drift Saved Recipe One v1 mixed 0 parts in step — Apply to parts… ⋯ Parts this process runs the operator’s part "
+  Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from 1 recipe New recipe Name Shape Applied to Drift Saved Recipe One v1 mixed 0 parts in step — Apply to parts… ⋯ Quality hold off: finished goods go to their"
 
 ## the Setup tab's actions, from a new process with positions (each on a fresh page)
-  positions → tab setup, sheet "Add positions" · GET /api/core-nodes, GET /api/process-nodes
-  routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET …/presets, GET /api/core-nodes
+  positions → tab setup, sheet "Positions" · GET /api/core-nodes, GET /api/process-nodes, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes
+  routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET /api/core-nodes
   style → tab setup, sheet "New style" · GET /api/core-nodes
-  counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET …/presets, GET /api/core-nodes
+  counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET /api/core-nodes
   hmi → tab flows (a recipe draft) · GET …/composer
 
 ## Add process
