@@ -16,6 +16,13 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- The robot map no longer draws a blue route line for a robot standing still
+- The robot map says why a robot faulted, in a few words, on its row and in the activity line
+- The robot map's rail is Active and lists staged robots; faulted robots are red
+- Idle and parked robots are grey on the robot map, charging robots yellow, and empty bays are hidden
+
 ## v0.6.2 — 2026-11-12
 
 Deploy: no migration.
