@@ -4760,6 +4760,7 @@ function onAdvClick(e) {
         markAddPositions();
         return;
     }
+    if (act && act.dataset.act === 'add-showmap') { e.stopPropagation(); toggleSheetMap(); return; }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
         openGroupPicker(act, id => {
@@ -7242,16 +7243,42 @@ async function loadProcessPayloads(processID) {
 // destination.
 const SHEET_MAP_ID = 'pd-sheetmap';
 
-// No map, no section: a frame around "nothing here" is a drawing of nothing.
+// No map, no toggle and no frame: a frame around "nothing here" is a drawing
+// of nothing.
+//
+// BEHIND "SHOW ON MAP", AND SO ONE SCREEN AT 900 PX WITH A MAP TOO (U2). Drawn
+// open it was 290 px under the part set, and the sheet scrolled on every Edge
+// with a plant map. The toggle sits on the routing set's heading, which keeps
+// its height; shown, the map is the sheet's full width under the three roles
+// (it was drawn in the 230 px label column). It is drawn only while shown.
+function sheetMapToggle() {
+    if (!mapOf()) return '';
+    return '<button type="button" class="pd-maptoggle" data-act="add-showmap" aria-controls="pd-sheetmapbox" ' +
+        'aria-expanded="false">Show on map</button>';
+}
+
 function sheetMapField() {
     if (!mapOf()) return '';
-    return '<div class="pd-sec"><div class="pd-lbl">Where that is</div></div>' +
-        '<div class="pd-fld pd-fld-wide"><div class="v">' +
-        '<div class="pd-map pd-sheetmap" id="' + SHEET_MAP_ID + '">' + sheetMapSvg() + '</div>' +
+    return '<div class="pd-sheetmapbox" id="pd-sheetmapbox" hidden>' +
+        '<div class="pd-map pd-sheetmap" id="' + SHEET_MAP_ID + '"></div>' +
         '<p class="pd-note">The aisles Core knows, the names you have picked, and the two trips ' +
         'the first of each role implies — a robot in from the first source, and back out to the ' +
-        'first destination. Nothing here is a control; the lists above are.</p>' +
-        '</div></div>';
+        'first destination. Nothing here is a control; the lists above are.</p></div>';
+}
+
+// toggleSheetMap is Show on map's press: the map shown and drawn, or hidden.
+function toggleSheetMap() {
+    if (!S.add) return;
+    S.add.map = !S.add.map;
+    const box = $('pd-sheetmapbox');
+    const btn = sheetEl().querySelector('[data-act="add-showmap"]');
+    if (box) box.hidden = !S.add.map;
+    if (btn) {
+        btn.setAttribute('aria-expanded', S.add.map ? 'true' : 'false');
+        btn.textContent = S.add.map ? 'Hide map' : 'Show on map';
+    }
+    redrawSheetMap();
+    if (S.add.map && box && box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
 }
 
 function sheetMapSvg() {
@@ -7262,16 +7289,17 @@ function sheetMapSvg() {
     return drawMap(900, 340, scope);
 }
 
-// Redrawn on every pick, in place: the sheet's fields are not rebuilt (the
-// pickers hold a caret and a scroll position), so this replaces one element's
-// contents the way redrawPicker does.
+// Redrawn on every pick while shown, in place: the sheet's fields are not
+// rebuilt (the pickers hold a caret and a scroll position), so this replaces
+// one element's contents the way redrawPicker does.
 function redrawSheetMap() {
     const box = document.getElementById(SHEET_MAP_ID);
-    if (box) box.innerHTML = sheetMapSvg();
+    if (box) box.innerHTML = S.add && S.add.map ? sheetMapSvg() : '';
 }
 
 function openAddProcess() {
-    S.add = { groupID: 0 };
+    // map: the read-back shown (Show on map).
+    S.add = { groupID: 0, map: false };
     const positions = () => pickerValue('positions');
     // THE SAME CHECKLIST AS SETTINGS' ADD POSITIONS: one box per node, and a
     // node another process holds is greyed with its name (process 0 is this
@@ -7318,7 +7346,8 @@ function openAddProcess() {
 
     // ONE SCREEN AT 900 PX (F16): the screen's name sits with the process's,
     // the three routing roles share a row, the positions checklist scrolls in
-    // its own box, and the notes Settings carries are not repeated here.
+    // its own box, the notes Settings carries are not repeated here, and the
+    // map read-back waits behind Show on map (U2).
     const body = '<div class="pd-addproc">' +
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
         sheetField('Name', 'what this process is called here', 'name', '') +
@@ -7331,13 +7360,13 @@ function openAddProcess() {
         '<div class="pd-sec"><div class="pd-lbl">Positions</div></div>' +
         pickerField('positions', 'Positions', 'the spots this screen claims') +
 
-        '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
+        '<div class="pd-sec"><div class="pd-lbl">The routing set' + sheetMapToggle() + '</div></div>' +
         '<div class="pd-rs3">' + ROUTING_GROUPS.map(g => '<div><label>' + esc(g[1]) + '</label>' +
             pickerBox(routingPickerKey(g[0])) + '</div>').join('') + '</div>' +
+        sheetMapField() +
 
         '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
-        pickerField(PART_SET_PICKER, 'Parts this process runs', 'the catalog is Core’s') +
-        sheetMapField() + '</div>';
+        pickerField(PART_SET_PICKER, 'Parts this process runs', 'the catalog is Core’s') + '</div>';
 
     pageSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false);

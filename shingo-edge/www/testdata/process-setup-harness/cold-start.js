@@ -415,8 +415,21 @@ async function pinAddProcess() {
         const body = page.scrim.querySelector('.layer-body');
         const html = String(body ? body.innerHTML : '');
         const secs = [...html.matchAll(/<div class="pd-sec"><div class="pd-lbl">([^<]*)</g)].map(m => m[1]);
+        const toggle = page.scrim.querySelector('[data-act="add-showmap"]');
         L.push('  ' + title + ': sections ' + JSON.stringify(secs) + ' · map block ' +
-            (/pd-sheetmap/.test(html) ? 'drawn' : 'not drawn'));
+            (/pd-sheetmap/.test(html) ? 'there' + (/id="pd-sheetmapbox" hidden/.test(html) ? ', hidden' : '') : 'not drawn') +
+            (toggle ? ' · ' + JSON.stringify((/data-act="add-showmap"[^>]*>([^<]*)</.exec(html) || [])[1] || '') +
+                ' on the routing set\'s heading' : ''));
+        if (!toggle) continue;
+        // Show on map draws it (nothing picked: the frame's empty sentence);
+        // a second press hides it again.
+        for (let i = 0; i < 2; i++) {
+            page.click('scrim', { act: 'add-showmap' });
+            await page.settle();
+            L.push('    pressed: ' + JSON.stringify(toggle.textContent) + ' aria-expanded=' + toggle.getAttribute('aria-expanded') +
+                ' · the map ' + JSON.stringify(T.text((page.byId('pd-sheetmap') || {}).innerHTML || '').slice(0, 60)) +
+                ' · S.add.map ' + page.S.add.map);
+        }
     }
     const page = await T.openPage();
     page.click('root', { act: 'add-process' });

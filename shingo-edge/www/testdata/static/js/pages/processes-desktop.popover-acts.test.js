@@ -2776,17 +2776,23 @@ async function mainAsync() {
         return sheet().el.innerHTML + Object.values(hosts).map(h => h.innerHTML).join('');
     };
 
-    await pin('the Add process sheet with no plant map has no "Where that is" section', async () => {
+    await pin('the Add process sheet with no plant map has no Show on map and no map frame', async () => {
         const h = await addProcessSheet(null);
-        for (const frame of ['Where that is', 'pd-sheetmap', 'pd-nomap']) {
+        for (const frame of ['Show on map', 'pd-sheetmap', 'pd-nomap']) {
             if (h.indexOf(frame) >= 0) throw new Error('the no-map Add process sheet still draws ' + frame);
         }
     });
 
-    await pin('the Add process sheet with a plant map draws "Where that is"', async () => {
+    // ONE SCREEN AT 900 PX WITH A MAP (U2): the read-back waits behind Show
+    // on map on the routing set's heading, its frame hidden and undrawn.
+    await pin('the Add process sheet with a plant map offers Show on map, the map hidden until pressed', async () => {
         const h = await addProcessSheet(plantMap());
-        if (h.indexOf('<div class="pd-lbl">Where that is</div>') < 0) throw new Error('the map section is missing');
-        if (h.indexOf('id="pd-sheetmap"') < 0) throw new Error('the sheet map frame is missing');
+        if (h.indexOf('<div class="pd-lbl">The routing set<button type="button" class="pd-maptoggle" data-act="add-showmap"') < 0) {
+            throw new Error('Show on map is not on the routing set heading');
+        }
+        if (h.indexOf('aria-expanded="false">Show on map</button>') < 0) throw new Error('the toggle does not open closed');
+        if (h.indexOf('<div class="pd-sheetmapbox" id="pd-sheetmapbox" hidden>') < 0) throw new Error('the map box is not hidden');
+        if (h.indexOf('<div class="pd-map pd-sheetmap" id="pd-sheetmap"></div>') < 0) throw new Error('the sheet map frame is missing or drawn');
     });
 
     // ── the list, Add process and the rail say what they mean ────────────────

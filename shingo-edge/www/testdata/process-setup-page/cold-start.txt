@@ -155,7 +155,9 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   hmi → tab flows (a recipe draft) · GET …/composer
 
 ## Add process
-  from Press A (this Edge has a map): sections ["The process","Positions","The routing set","The part set","Where that is"] · map block drawn
+  from Press A (this Edge has a map): sections ["The process","Positions","The routing set","The part set"] · map block there, hidden · "Show on map" on the routing set's heading
+    pressed: "Hide map" aria-expanded=true · the map "Pick a position and a supermarket and they are drawn here." · S.add.map true
+    pressed: "Show on map" aria-expanded=false · the map "" · S.add.map false
   from Press A, an Edge with no map: sections ["The process","Positions","The routing set","The part set"] · map block not drawn
 ok   a screen name left blank is the process's name
 #    then it opens on setup · tabs ["Setup*","Styles","Operator screens","Settings"]

@@ -973,8 +973,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* The sheet's map read-back. Narrower than the routing tab's — a sheet is a
  * column, not a page — and it scrolls with the fields above it rather than
  * pinning, because it is something to glance at while picking and not the
- * thing being worked on. */
-.pd-fld-wide { grid-column: 1 / -1; }
+ * thing being worked on. It waits behind Show on map, a pill like the
+ * positions' prefixes on the routing set's heading, so the heading keeps its
+ * height and Add process fits 900 px with a plant map (U2); shown, it is the
+ * body's full width under the three roles. */
+.pd-addproc .pd-maptoggle {
+    margin-left: auto; padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
+    background: none; color: var(--text-muted); font: inherit; font-size: var(--font-xs); font-weight: 400;
+    line-height: inherit; letter-spacing: normal; text-transform: none; cursor: pointer;
+}
+.pd-addproc .pd-maptoggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.pd-sheetmapbox { margin: 0 0 var(--sp-2); }
 .pd-sheetmap { max-width: 100%; }
 .pd-sheetmap svg { width: 100%; height: auto; display: block; }
 
