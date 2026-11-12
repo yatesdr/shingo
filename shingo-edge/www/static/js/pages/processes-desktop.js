@@ -863,8 +863,11 @@ function initModel(st, opts) {
         shape: !!(opts && opts.shape),
         styleId: st.id,
         styleName: st.name,
+        // station_id is what keeps a row's move and pair inside its own
+        // screen (positionChoices; B4: dropping it offered an unloader's
+        // window to every press row).
         positions: (cell.positions || []).map(p => ({
-            core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence,
+            core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence, station_id: p.station_id || 0,
         })),
         routing: S.composer.routing,
         // Same count the station's card reads, so both surfaces say the same
@@ -2786,7 +2789,12 @@ function optionsFor(node, kind) {
             const column = parts[1], key = parts[2];
             const chip = M().rowColumns(S.model, node, column).find(x => x.key === key);
             if (!chip) return [];
-            const others = S.model.positions.map(p => p.core_node_name).filter(n => n !== node);
+            // A PAIR IS THIS SCREEN'S OR NO SCREEN'S (B4): another station's
+            // position (an unloader's window) is never a press row's pair.
+            const stationOf = n => (S.model.positions.find(p => p.core_node_name === n) || {}).station_id || 0;
+            const mine = stationOf(node);
+            const others = S.model.positions.map(p => p.core_node_name)
+                .filter(n => n !== node && (!stationOf(n) || stationOf(n) === mine));
             // A PARTNER IS A POSITION; STAGING IS A ROUTING ROLE. These four
             // keys used to share one list — the back positions plus every
             // other position of this process — and for `paired` and
@@ -2875,7 +2883,9 @@ function optionsFor(node, kind) {
             // because a key route is validated against the vendor MAP and not
             // against that list — so it offered nothing and the desktop's
             // whole key-route authoring was inert.
-            const offered = M().viaWaypoints(S.model, node);
+            // A WAYPOINT IS ON THE ROUTE ONCE (B7): one already on it is not
+            // offered again, except at its own point. via-add filters the same.
+            const offered = M().viaWaypoints(S.model, node).filter(w => w === route[at] || route.indexOf(w) < 0);
             const replace = w => { const next = route.slice(); next[at] = w; return { type: 'setVia', node: node, via: next }; };
             const head = route.length
                 ? [{

@@ -2,9 +2,9 @@
 # "ok" is what must hold; "BUG" is the bug, and what the page did.
 
 ## B4 · another screen's positions are never move or paired targets
-BUG  position offers no position bound to another screen: POS_A1→ULD_1, POS_A2→ULD_1, POS_A3→ULD_1, POS_A4→ULD_1, POS_A5→ULD_1, POS_A6→ULD_1, POS_A7→ULD_1, POS_A8→ULD_1, POS_A9→ULD_1, POS_A10→ULD_1
-BUG  col:partner:paired offers no position bound to another screen: POS_A1→ULD_1, POS_A2→ULD_1, POS_A7→ULD_1, POS_A8→ULD_1, POS_A9→ULD_1, POS_A10→ULD_1
-BUG  col:partner:secondPaired offers no position bound to another screen: POS_A1→ULD_1, POS_A2→ULD_1
+ok   position offers no position bound to another screen
+ok   col:partner:paired offers no position bound to another screen
+ok   col:partner:secondPaired offers no position bound to another screen
 
 ## B5 · Tool change is drawn exactly where flowspec lets the mode carry changeover_evac_nodes
 ok   every row
@@ -17,8 +17,8 @@ ok   Board order is drawn on no line-mode position
 ok   Curtain required is drawn exactly on the curtained position
 
 ## B7 · the key-route picker offers no waypoint already on the route
-BUG  POS_A3 via:0 (LM_2 of LM_2 › LM_3): offers LM_3, already on the route
-BUG  POS_A3 via:1 (LM_3 of LM_2 › LM_3): offers LM_2, already on the route
+ok   POS_A3 via:0 (LM_2 of LM_2 › LM_3)
+ok   POS_A3 via:1 (LM_3 of LM_2 › LM_3)
 
 ## F26 · a swap-mode change keeps what the new mode uses and says what it dropped
 ok   inbound staging STG_1 is kept (2-Robot Swap uses it)
