@@ -172,6 +172,23 @@ const BUGS = [
             return out;
         },
     },
+    {
+        title: 'R2 · a column no row uses is not drawn; a row that does not use a drawn column leaves its cell empty',
+        run: async page => {
+            const S = page.S, M = page.pd('M')();
+            const heads = () => [...(/<thead>([\s\S]*?)<\/thead>/.exec(page.pd('positionsTable')()) || ['', ''])[1]
+                .matchAll(/<th>([\s\S]*?)<\/th>/g)].map(m => m[1]);
+            const paired = M.fieldLabel(S.model, 'paired_core_node');
+            const out = [['every mode on the table: ' + paired + ' is drawn', heads().indexOf(paired) >= 0, heads().join(' · ')]];
+            // Take off every row whose mode pairs (press index, sequential).
+            for (const n of tableRows(S)) {
+                if (M.rowColumns(page.S.model, n, 'partner').length) page.pd('apply')({ type: 'removePosition', node: n });
+            }
+            const left = tableRows(page.S).map(n => n + ' ' + page.S.model.cells[n].mode);
+            out.push(['only ' + left.join(', ') + ' left: ' + paired + ' is not drawn', heads().indexOf(paired) < 0, heads().join(' · ')]);
+            return out;
+        },
+    },
 ];
 
 async function pinTableBugs() {

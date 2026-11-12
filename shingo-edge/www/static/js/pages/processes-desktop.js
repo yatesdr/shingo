@@ -2180,39 +2180,21 @@ function positionsTable() {
     // cell's coordinates and nothing about the frame, so the table computes it
     // here, as it draws, rather than waiting for the picture to.
     S.picRows = pictureRows(cellFromModel(), pictureOpts());
-    const rows = [];
     const used = usedPositions();
-    for (const pos of S.model.positions) {
-        const n = pos.core_node_name;
-        const c = S.model.cells[n];
-        if (!c || !c.on || !c.mode) continue;
-        const advSet = advancedCount(n);
-        rows.push('<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
-            // THE POSITION IS A CONTROL: a picker of where it may move
-            // (composer-model positionChoices, the HMI's rule too) and a delete.
-            // Both are draft edits like every other chip; on the running style
-            // the save refuses one that would leave a bin behind, and says how
-            // to move the bin in Core first.
-            '<td class="pos">' + picker(n, 'position', esc(n), 'pd-posname', n) +
-                '<button class="pd-rmpos" data-act="rmpos" data-node="' + esc(n) + '" title="Take ' + esc(n) +
-                ' off this flow">×</button><small>' + esc(rowWord(n)) + '</small></td>' +
-            '<td>' + roleCell(n, c.role) + '</td>' +
-            '<td>' + picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) + '</td>' +
-            (S.shapeDraft ? '' : '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') + '</td>') +
-            '<td>' + columnCell(n, 'partner') + '</td>' +
-            '<td>' + columnCell(n, 'staging') + '</td>' +
-            '<td>' + fieldCell(n, 'source', 'inbound_source', c.source, '—') + routingGap(n, 'inbound_source', c.source) + '</td>' +
-            '<td>' + viaCell(n) + '</td>' +
-            '<td>' + fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) + '</td>' +
-            (S.shapeDraft ? '' : '<td>' + reorderCell(n) + '</td>') +
-            (S.shapeDraft ? '' : '<td><button class="pd-adv' + (advSet ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
-            gearSVG() + (advSet ? '<b>' + advSet + ' set</b>' : 'defaults') + '</button></td>') + '</tr>');
-    }
+    const drawn = S.model.positions.map(p => p.core_node_name)
+        .filter(n => S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode);
+    // R2: A COLUMN NO ROW USES IS NOT DRAWN, and a row whose mode does not
+    // use a drawn column leaves its cell empty. An empty table keeps them all:
+    // there is no row to judge by.
+    const columns = tableColumns().filter(col => !col.uses || !drawn.length || drawn.some(col.uses));
+    const rows = drawn.map(n => '<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
+        columns.map(col => '<td' + (col.td ? ' class="' + col.td + '"' : '') + '>' +
+            (!col.uses || col.uses(n) ? col.cell(n, S.model.cells[n]) : '') + '</td>').join('') + '</tr>');
     const rowless = rowlessRoles(used);
     const free = freePositions();
     let tail = '';
     if (rowless.length) {
-        tail += '<tr class="paired"><td colspan="' + (S.shapeDraft ? 8 : 11) + '">' + esc(rowless.join(' · ')) +
+        tail += '<tr class="paired"><td colspan="' + columns.length + '">' + esc(rowless.join(' · ')) +
             ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
             ' own</td></tr>';
     }
@@ -2241,18 +2223,7 @@ function positionsTable() {
         '<button class="pd-btn" data-act="add-position">+ Add a position</button>' +
         '<span>' + esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free') + '</span></div>'
         : '';
-    // A SHAPE DRAFT HAS NO PART COLUMN (pick-a-part U2): a recipe never carries
-    // one, so the column would be a control whose every value is refused.
-    // NOR AN ADVANCED ONE (recipe groups): a recipe's save strips every cell's
-    // Advanced (domain.StripFlowPayload), so the per-row gear opened a sheet
-    // whose every field was dropped without a word. A recipe's Advanced is
-    // its groups', on their cards.
-    const partCol = S.shapeDraft ? '' : '<col class="c-part">';
-    const partHead = S.shapeDraft ? '' : '<th>Part</th>';
-    const advCol = S.shapeDraft ? '' : '<col class="c-reorder"><col class="c-adv">';
-    const advHead = S.shapeDraft ? '' : '<th>' + esc(W('auto_reorder')) + '</th><th>Advanced</th>';
-    const cols = '<colgroup><col class="c-pos"><col class="c-role"><col class="c-mode">' + partCol + '<col class="c-partner">' +
-        '<col class="c-staging"><col class="c-src"><col class="c-via"><col class="c-dst">' + advCol + '</colgroup>';
+    const cols = '<colgroup>' + columns.map(col => '<col class="' + col.col + '">').join('') + '</colgroup>';
     // THE LABEL, THE HEADINGS AND THE FOOTER ARE OUTSIDE THE ROWS' BOX.
     // `#pd-postbl` scrolls the rows sideways and is still the box T1 measures
     // the table against — its clientWidth is what a column has to fit inside.
@@ -2282,13 +2253,54 @@ function positionsTable() {
         // word for a node and the other is the name of a sheet. `Part` stays
         // the floor's word for payload_code (owner-accepted). `Staging` is a
         // group of two, and its chips carry the two names.
-        '<table>' + cols + '<thead><tr><th>Position</th><th>Role</th><th>' + esc(W('swap_mode')) + '</th>' + partHead +
-        '<th>' + esc(W('paired_core_node')) + '</th><th>Staging</th>' +
-        '<th>' + esc(W('inbound_source')) + '</th><th>' + esc(W('key_route')) + '</th>' +
-        '<th>' + esc(W('outbound_destination')) + '</th>' + advHead + '</tr></thead></table></div>' +
+        '<table>' + cols + '<thead><tr>' + columns.map(col => '<th>' + esc(col.head) + '</th>').join('') +
+        '</tr></thead></table></div>' +
         '<div class="pd-postbl" id="pd-postbl">' +
         '<table>' + cols + '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
         footer + '</div>';
+}
+
+// tableColumns is the positions table's columns, in order: the <col> class,
+// the heading, the cell, and `uses`, whether a row's mode uses the column
+// (flowspec, through the model), for the columns a mode can go without.
+//
+// A SHAPE DRAFT HAS NO PART COLUMN (pick-a-part U2): a recipe never carries
+// one, so the column would be a control whose every value is refused. NOR
+// AUTO REORDER OR ADVANCED (recipe groups): a recipe's save strips every
+// cell's Advanced (domain.StripFlowPayload), so the per-row gear opened a
+// sheet whose every field was dropped without a word. A recipe's Advanced is
+// its groups', on their cards.
+function tableColumns() {
+    const shows = field => n => M().advancedShows(S.model, n, field);
+    const chips = column => n => M().rowColumns(S.model, n, column).some(c => c.possible);
+    const out = [
+        // THE POSITION IS A CONTROL: a picker of where it may move
+        // (composer-model positionChoices, the HMI's rule too) and a delete.
+        // Both are draft edits like every other chip; on the running style
+        // the save refuses one that would leave a bin behind, and says how
+        // to move the bin in Core first.
+        { col: 'c-pos', td: 'pos', head: 'Position', cell: n => picker(n, 'position', esc(n), 'pd-posname', n) +
+            '<button class="pd-rmpos" data-act="rmpos" data-node="' + esc(n) + '" title="Take ' + esc(n) +
+            ' off this flow">×</button><small>' + esc(rowWord(n)) + '</small>' },
+        { col: 'c-role', head: 'Role', cell: (n, c) => roleCell(n, c.role) },
+        { col: 'c-mode', head: W('swap_mode'), cell: (n, c) => picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) },
+        { col: 'c-part', head: 'Part', draftless: true,
+            cell: (n, c) => picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') },
+        { col: 'c-partner', head: W('paired_core_node'), uses: chips('partner'), cell: n => columnCell(n, 'partner') },
+        { col: 'c-staging', head: 'Staging', uses: chips('staging'), cell: n => columnCell(n, 'staging') },
+        { col: 'c-src', head: W('inbound_source'), uses: shows('inbound_source'),
+            cell: (n, c) => fieldCell(n, 'source', 'inbound_source', c.source, '—') + routingGap(n, 'inbound_source', c.source) },
+        { col: 'c-via', head: W('key_route'), uses: shows('key_route'), cell: n => viaCell(n) },
+        { col: 'c-dst', head: W('outbound_destination'), uses: shows('outbound_destination'),
+            cell: (n, c) => fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) },
+        { col: 'c-reorder', head: W('auto_reorder'), draftless: true, uses: shows('auto_reorder'), cell: n => reorderCell(n) },
+        { col: 'c-adv', head: 'Advanced', draftless: true, cell: n => {
+            const set = advancedCount(n);
+            return '<button class="pd-adv' + (set ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
+                gearSVG() + (set ? '<b>' + set + ' set</b>' : 'defaults') + '</button>';
+        } },
+    ];
+    return S.shapeDraft ? out.filter(col => !col.draftless) : out;
 }
 
 // roleCell is the position's consume/produce control. The role starts derived
@@ -2387,7 +2399,7 @@ function W(field) { return M().fieldLabel(S.model, field); }
 
 function columnCell(node, column) {
     const chips = M().rowColumns(S.model, node, column).filter(c => c.possible);
-    if (!chips.length) return '<span class="pd-dim">—</span>';
+    if (!chips.length) return '';
     const live = chips.some(c => c.required || c.value) ||
         chips.some(c => isOpen(node, 'col:' + column + ':' + c.key));
     if (!live) {

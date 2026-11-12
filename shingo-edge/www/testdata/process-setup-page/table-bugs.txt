@@ -31,3 +31,7 @@ ok   a new produce position reads off
 ok   Set 15 writes reorder_point 15 and auto_reorder on; the cell reads 15
 ok   Off writes auto_reorder off and keeps the point; the cell reads off
 ok   the reorder point's sub-label speaks of the bin, not of what is left in it: "units in the bin when the next one is requested"
+
+## R2 · a column no row uses is not drawn; a row that does not use a drawn column leaves its cell empty
+ok   every mode on the table: Paired core node is drawn
+ok   only POS_A3 two_robot, POS_A4 two_robot, POS_A5 single_robot, POS_A6 single_robot left: Paired core node is not drawn
