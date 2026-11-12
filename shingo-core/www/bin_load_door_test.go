@@ -388,6 +388,11 @@ type doorFix struct {
 	h  *Handlers
 	db *store.DB
 	sd *testdb.StandardData
+	// holder is the order an arm's arrange made hold the carrier, for its
+	// answer. On the world and not in the test: an arm runs twice in parallel
+	// (the door and the ask), and a shared variable was a data race and could
+	// name the other world's order.
+	holder int64
 }
 
 func newDoorFix(t *testing.T) *doorFix {
@@ -541,7 +546,6 @@ func TestBinLoadDoor_Arms(t *testing.T) {
 		}
 	}
 	const foreign = "PART-A may not ride a DEFAULT carrier (allowed: LD-FITS). Nothing was loaded."
-	var holder int64
 	runDoorArms(t, func(h *Handlers) http.HandlerFunc { return h.apiBinLoad }, "/api/telemetry/bin-load", []doorArm{
 		{name: "an undecodable body is refused",
 			arrange: func(*testing.T, *doorFix) (any, []int64) { return "not-json", nil },
@@ -585,11 +589,11 @@ func TestBinLoadDoor_Arms(t *testing.T) {
 				b := onStorage(t, f, "LD-A-HELD")
 				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
-				holder = o.ID
+				f.holder = o.ID
 				return loadBody(f, map[string]any{"uop_count": 30}), []int64{b.ID}
 			},
 			answer: func(t *testing.T, f *doorFix) (int, string) {
-				return refusalAt(t, f, storage(f), http.StatusConflict, heldRefusalSentence(holder))
+				return refusalAt(t, f, storage(f), http.StatusConflict, heldRefusalSentence(f.holder))
 			}},
 		{name: "a carrier the part may not ride is refused",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
