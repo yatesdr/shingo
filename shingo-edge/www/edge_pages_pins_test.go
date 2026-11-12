@@ -134,6 +134,10 @@ func seedEdgePagesPlant(t *testing.T, h *Handlers) {
 	} {
 		stub.core[n.Name] = n
 	}
+	// The groups' members, as the engine resolves them from Core's group list:
+	// a member is Core's to pick inside its group, so the pickup leaves it out
+	// and the delivery offers it only for a complex order.
+	stub.groups = map[string][]string{"GRP-A": {"SLOT-A1", "SLOT-A2"}, "GRP-B": {"GRP-B.SLOT-A1"}}
 
 	pid, err := db.CreateProcess("Line A", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")

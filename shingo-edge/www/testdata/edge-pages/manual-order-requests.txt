@@ -1,8 +1,8 @@
 # manual-order: what Create Order sends for each pick, and each answer
 
-## move: DOCK-1 to SLOT-A1, qty 2
-picks: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="SLOT-A1" mo-staging=""
-POST /api/orders/move {"process_node_id":null,"quantity":2,"delivery_node":"SLOT-A1","source_node":"DOCK-1"}
+## move: DOCK-1 to PRESS-1, qty 2
+picks: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="PRESS-1" mo-staging=""
+POST /api/orders/move {"process_node_id":null,"quantity":2,"delivery_node":"PRESS-1","source_node":"DOCK-1"}
 answer: 200 {"id":41,"uuid":"u-41"}
 shows: toast success: "Order created"
 form after: mo-type="move" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
@@ -15,11 +15,11 @@ shows: toast success: "Order created"
 form after: mo-type="move" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" mo-staging=""
 
 ## move refused (apiCreateMoveOrder: an engine refusal is a 500)
-picks: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="SLOT-A1" mo-staging=""
-POST /api/orders/move {"process_node_id":null,"quantity":2,"delivery_node":"SLOT-A1","source_node":"DOCK-1"}
+picks: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="PRESS-1" mo-staging=""
+POST /api/orders/move {"process_node_id":null,"quantity":2,"delivery_node":"PRESS-1","source_node":"DOCK-1"}
 answer: 500 {"error":"create move order: database is locked"}
 shows: toast error: "Error: create move order: database is locked"
-form after: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="SLOT-A1" mo-staging=""
+form after: mo-type="move" mo-node="" mo-qty="2" mo-pickup="DOCK-1" mo-delivery="PRESS-1" mo-staging=""
 
 ## retrieve: process node "Slot one" (Delivery autofilled from it), staging GRP-A
 picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"

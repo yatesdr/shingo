@@ -16,12 +16,9 @@
     value="DOCK-1" label="DOCK-1" source="core"
     value="GRP-A" label="GRP-A  · group" source="core"
     value="GRP-B" label="GRP-B  · group" source="core"
-    value="GRP-B.SLOT-A1" label="\u00a0\u00a0↳ GRP-B.SLOT-A1" source="core"
     value="LANE-1" label="LANE-1  · lane" source="core"
     value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
     value="PRESS-1" label="PRESS-1 — Press one" source="core"
-    value="SLOT-A1" label="SLOT-A1 — Slot one" source="core"
-    value="SLOT-A2" label="SLOT-A2" source="core"
     value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
     value="_TRANSIT" label="_TRANSIT" source="core"
     value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
@@ -31,12 +28,12 @@
     value="DOCK-1" label="DOCK-1" source="core"
     value="GRP-A" label="GRP-A  · group" source="core"
     value="GRP-B" label="GRP-B  · group" source="core"
-    value="GRP-B.SLOT-A1" label="\u00a0\u00a0↳ GRP-B.SLOT-A1" source="core"
+    value="GRP-B.SLOT-A1" label="\u00a0\u00a0↳ GRP-B.SLOT-A1" memberOf="GRP-B" source="core"
     value="LANE-1" label="LANE-1  · lane" source="core"
     value="NODE <b>&\"'" label="NODE <b>&\"'" source="core"
     value="PRESS-1" label="PRESS-1 — Press one" source="core"
-    value="SLOT-A1" label="SLOT-A1 — Slot one" source="core"
-    value="SLOT-A2" label="SLOT-A2" source="core"
+    value="SLOT-A1" label="SLOT-A1 — Slot one" memberOf="GRP-A" source="core"
+    value="SLOT-A2" label="SLOT-A2" memberOf="GRP-A" source="core"
     value="_ROBOT:AMR-01" label="_ROBOT:AMR-01" source="core"
     value="_TRANSIT" label="_TRANSIT" source="core"
     value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
@@ -59,9 +56,9 @@
 type retrieve: mo-node(Process Node) mo-pickup(Source Node)[hidden] mo-delivery(Delivery Node) mo-staging(Staging Node)
 type complex: mo-node(Process Node) mo-pickup(Source Node)[hidden] mo-delivery(Core Node) mo-staging(Staging Node)
 
-# after an SSE core-nodes frame for the same plant (Delivery had GRP-B.SLOT-A1 picked)
+# after an SSE core-nodes frame for the same plant (type Complex, Core Node had GRP-B.SLOT-A1 picked)
 
-#mo-pickup (Source Node) selectedIndex=0
+#mo-pickup (Source Node) [hidden] selectedIndex=0
   * value="" label="-- Select --"
     value="DOCK-1" label="DOCK-1" source="core"
     value="GRP-A" label="GRP-A" source="core"
@@ -76,7 +73,7 @@ type complex: mo-node(Process Node) mo-pickup(Source Node)[hidden] mo-delivery(C
     value="_TRANSIT" label="_TRANSIT" source="core"
     value="LOCAL-9" label="LOCAL-9 — Local spot (local)" source="local"
 
-#mo-delivery (Delivery Node) selectedIndex=4
+#mo-delivery (Core Node) selectedIndex=4
     value="" label="-- Select --"
     value="DOCK-1" label="DOCK-1" source="core"
     value="GRP-A" label="GRP-A" source="core"
@@ -93,7 +90,7 @@ type complex: mo-node(Process Node) mo-pickup(Source Node)[hidden] mo-delivery(C
 
 # after a second frame without GRP-B.SLOT-A1 (the picked node)
 
-#mo-delivery (Delivery Node) selectedIndex=-1
+#mo-delivery (Core Node) selectedIndex=-1
     value="" label="-- Select --"
     value="DOCK-1" label="DOCK-1" source="core"
     value="GRP-A" label="GRP-A" source="core"

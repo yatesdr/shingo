@@ -243,10 +243,10 @@ function manualOrderOptions(page) {
     // push; the "(local)" options stay where they were. The selection is kept
     // by value.
     const b2 = boot(page);
-    pick(b2, 'mo-type', 'move');
+    pick(b2, 'mo-type', 'complex');
     pick(b2, 'mo-delivery', 'GRP-B.SLOT-A1');
     fireSSE(b2, 'core-nodes', IN.coreNodesEvent);
-    lines.push('# after an SSE core-nodes frame for the same plant (Delivery had GRP-B.SLOT-A1 picked)', '');
+    lines.push('# after an SSE core-nodes frame for the same plant (type Complex, Core Node had GRP-B.SLOT-A1 picked)', '');
     ['mo-pickup', 'mo-delivery'].forEach(id => lines.push(options(b2, id), ''));
     // A second frame without the picked node: the select is left on no option.
     const fewer = { nodes: IN.coreNodesEvent.nodes.filter(n => n.name !== 'GRP-B.SLOT-A1') };
@@ -274,10 +274,10 @@ async function createScenario(page, title, picks, answers, then) {
 
 async function manualOrderRequests(page) {
     const L = ['# ' + page + ': what Create Order sends for each pick, and each answer', ''];
-    const move = [['mo-type', 'move'], ['mo-pickup', 'DOCK-1'], ['mo-delivery', 'SLOT-A1'], ['mo-qty', '2']];
+    const move = [['mo-type', 'move'], ['mo-pickup', 'DOCK-1'], ['mo-delivery', 'PRESS-1'], ['mo-qty', '2']];
     const retrieve = [['mo-type', 'retrieve'], ['mo-node', '2'], ['mo-staging', 'GRP-A']];
     const complex = [['mo-type', 'complex'], ['mo-staging', 'LANE-1'], ['mo-delivery', 'PRESS-1']];
-    L.push(await createScenario(page, 'move: DOCK-1 to SLOT-A1, qty 2', move, [A['order-ok']]));
+    L.push(await createScenario(page, 'move: DOCK-1 to PRESS-1, qty 2', move, [A['order-ok']]));
     L.push(await createScenario(page, 'move with nothing picked: sent as is (the page checks nothing)', [['mo-type', 'move']], [A['order-ok']]));
     L.push(await createScenario(page, 'move refused (apiCreateMoveOrder: an engine refusal is a 500)', move, [A['move-500']]));
     L.push(await createScenario(page, 'retrieve: process node "Slot one" (Delivery autofilled from it), staging GRP-A', retrieve, [A['order-ok']]));
