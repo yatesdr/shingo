@@ -5736,7 +5736,9 @@ function drawSettings() {
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
         (S.partSet === null
             ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
-            : pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s')) +
+            // stField, not the sheets' pickerField: its .pd-fld is the sheet's
+            // 230 px grid, so this one row's box started left of every other.
+            : stField('Parts', 'what this process may run — the catalog is Core’s', pickerBox(PART_SET_PICKER))) +
         '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
 
     // THE RARELY CHANGED THREE ARE ONE ROW EACH (33-settings-pages.md rule 7,

@@ -189,6 +189,16 @@ block({
         return ['the title: ' + JSON.stringify(title), title === 'Press A', 'said ' + JSON.stringify(title)];
     }],
 });
+block({
+    title: 'smoke: Settings\' Parts row is on the settings grid, as every other row is',
+    open: () => ({ hash: '#tab=settings' }),
+    act: async () => {},
+    checks: [r => {
+        const html = String(r.page.root.innerHTML);
+        const row = (/<div class="(pd-s?fld)"><label>Parts<small>/.exec(html) || ['', 'missing'])[1];
+        return ['the Parts row is a .pd-sfld', row === 'pd-sfld', 'drawn as .' + row + ' (the sheets\' 230 px grid)'];
+    }],
+});
 
 // F21 — the address bar's #tab= edited in place (a hashchange, no load).
 block({
