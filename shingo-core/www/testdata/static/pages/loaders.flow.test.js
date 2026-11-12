@@ -156,6 +156,10 @@ function load(opts) {
         uiConfirm(msg) { confirms.push(msg); return Promise.resolve(opts.confirm === undefined ? true : opts.confirm); },
     };
     vm.createContext(ctxObj);
+    // The shared node adapter's reasons (nodeWhy), as served, in its own scope.
+    const np = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'node-picker.js'), 'utf8')
+        .replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
+    ctxObj.nodeWhy = vm.runInContext('(function () {\n' + np + '\nreturn nodeWhy;\n})()', ctxObj);
     const src = fs.readFileSync(path.join(SRC_DIR, 'loaders.js'), 'utf8')
         .replace(/^import[^;]+;\s*/mg, '');   // drop the ES imports; deps injected above
     vm.runInContext(src, ctxObj);

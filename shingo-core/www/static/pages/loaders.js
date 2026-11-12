@@ -2,6 +2,7 @@ import { delegateActions, h } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, layerDepth, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost, setText } from '/static/app.js';
+import { nodeWhy } from '/static/shared/node-picker.js';
 
 // Core-owned bin loaders ("stations"), drawn as boxes on the Nodes page.
 //
@@ -31,7 +32,7 @@ import { apiGet, apiPost, setText } from '/static/app.js';
 
 let nodesByName = {};
 let nodesById = {};
-let nodeInfo = {}; // node id -> {id, name, parentName, synthetic, typeCode}
+let nodeInfo = {}; // node id -> {id, name, parentName, synthetic, typeCode, enabled}
 let payloadCodes = [];
 let payloadOptionsHtml = ''; // the catalogue as <option>s, built once per refresh
 let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types}]
@@ -1170,8 +1171,24 @@ const GROUP_NOT_A_WINDOW = 'a group can’t be a window';
 // words the tile shows either way. Pure: {ok, current?, note}.
 //
 // target: {id, name, group (a group header), synthetic, typeCode, parentName, hasBin}
+// notAPlace is why no slot may take the target at all: a robot deck, a
+// disabled node or group, and (for a place) a synthetic node that is no group
+// or lane. The pieces are the shared node adapter's (shared/node-picker.js),
+// so this grid and the pickers say the same words.
+function notAPlace(target, place) {
+  if (target.name === '_TRANSIT') return 'where a bin is while a robot carries it, not a place';
+  const n = {
+    name: target.name || '', robot: String(target.name || '').indexOf('_ROBOT:') === 0,
+    enabled: target.enabled !== false, synthetic: !!target.synthetic,
+    type: String(target.typeCode || (target.group ? 'NGRP' : '')).toUpperCase(), kids: [], up: '',
+  };
+  return place ? nodeWhy.any(nodeWhy.robot, nodeWhy.disabled, nodeWhy.synthetic)(n) : nodeWhy.any(nodeWhy.robot, nodeWhy.disabled)(n);
+}
+
 function assignReason(a, target, ctx) {
   if (a.slot === 'windows') {
+    const why = notAPlace(target, false);
+    if (why) return { ok: false, note: why };
     if (target.group || target.synthetic) return { ok: false, note: GROUP_NOT_A_WINDOW };
     const owner = ctx.owners[Number(target.id)];
     if (owner && owner.loaderID === Number(a.loaderID)) {
@@ -1185,6 +1202,8 @@ function assignReason(a, target, ctx) {
     return { ok: true, note: 'tap to add' };
   }
   if (target.typeCode === 'LANE') return { ok: false, note: 'a lane' };
+  const why = notAPlace(target, true);
+  if (why) return { ok: false, note: why };
   if (!target.group) {
     const owner = ctx.owners[Number(target.id)];
     if (owner && owner.station === ctx.station) return { ok: false, note: 'window of ' + owner.station };
@@ -1250,6 +1269,7 @@ function tileTarget(tile) {
     typeCode: n.typeCode || tile.dataset.typeCode || '',
     parentName: n.parentName != null ? n.parentName : (tile.dataset.parentName || ''),
     hasBin: tile.dataset.hasPayload === 'true' || tile.dataset.hasEmptyBin === 'true',
+    enabled: n.enabled != null ? n.enabled : tile.dataset.enabled !== 'false',
   };
 }
 
@@ -1257,7 +1277,8 @@ function groupTarget(groupEl) {
   const id = Number(groupEl.dataset.smktId || 0);
   const n = nodeInfo[id] || {};
   const nameEl = groupEl.querySelector('.smkt-name');
-  return { id: id, name: n.name || (nameEl ? nameEl.textContent : ''), group: true, synthetic: true, typeCode: n.typeCode || 'NGRP' };
+  return { id: id, name: n.name || (nameEl ? nameEl.textContent : ''), group: true, synthetic: true, typeCode: n.typeCode || 'NGRP',
+    enabled: n.enabled !== false };
 }
 
 const ASSIGN_CLASSES = ['assign-lit', 'assign-dim', 'assign-current', 'assign-filtered'];
@@ -1400,6 +1421,7 @@ async function refresh() {
       nodeInfo[id] = {
         id: id, name: name, synthetic: !!n.is_synthetic,
         typeCode: n.node_type_code || '', parentName: n.parent_name || '',
+        enabled: n.enabled !== false,
       };
     });
     const ps = (pd && (pd.payloads || pd.data || pd)) || [];
@@ -1608,12 +1630,14 @@ function onPlaceDrop(e) {
   let target;
   if (groupName) {
     const gid = nodesByName[groupName];
-    target = { id: gid, name: groupName, group: true, synthetic: true, typeCode: (nodeInfo[gid] || {}).typeCode || 'NGRP' };
+    target = { id: gid, name: groupName, group: true, synthetic: true, typeCode: (nodeInfo[gid] || {}).typeCode || 'NGRP',
+      enabled: (nodeInfo[gid] || {}).enabled !== false };
   } else {
     const nodeId = parseInt(e.dataTransfer.getData('text/plain'), 10);
     if (!nodeId || !nodesById[nodeId]) return;
     const n = nodeInfo[nodeId] || {};
-    target = { id: nodeId, name: nodesById[nodeId], synthetic: !!n.synthetic, typeCode: n.typeCode || '', parentName: n.parentName || '' };
+    target = { id: nodeId, name: nodesById[nodeId], synthetic: !!n.synthetic, typeCode: n.typeCode || '', parentName: n.parentName || '',
+      enabled: n.enabled !== false };
   }
   const a = { loaderID: lid, slot: slot };
   const ctx = armContext(a);

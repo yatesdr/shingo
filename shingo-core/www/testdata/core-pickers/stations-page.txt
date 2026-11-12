@@ -24,14 +24,14 @@
     tile  GRP-B-N2                  dim "window of LDR-B"
     tile  LINE-1                    lit "tap to add"
     tile  SPOT-9                    lit "tap to add"
-    tile  _ROBOT:AMR-01             dim "a group can’t be a window"
-    tile  OLD-SLOT                  lit "tap to add"
+    tile  _ROBOT:AMR-01             dim "a robot, not a place"
+    tile  OLD-SLOT                  dim "disabled"
     tile  VIRT-1                    dim "a group can’t be a window"
-    tile  GRP-OFF        (absorbed) dim "a group can’t be a window"
+    tile  GRP-OFF        (absorbed) dim "disabled"
     tile  GRP-OFF-N1                lit "tap to add"
     group GRP-A                     dim "a group can’t be a window"
     group GRP-B                     dim "a group can’t be a window"
-    group GRP-OFF                   dim "a group can’t be a window"
+    group GRP-OFF                   dim "disabled"
 
 == armed: UNL-A "Fulls come from"; the grid as decorated (assignReason via decorateGrid)
   bar: "Fulls come from — tap a group or node. Greyed ones can’t go here."
@@ -44,14 +44,14 @@
     tile  GRP-B-N2                  lit "tap to use"
     tile  LINE-1                    lit "tap to use"
     tile  SPOT-9                    lit "tap to use"
-    tile  _ROBOT:AMR-01             lit "tap to use"
-    tile  OLD-SLOT                  lit "tap to use"
-    tile  VIRT-1                    lit "tap to use"
-    tile  GRP-OFF        (absorbed) lit "tap to use"
+    tile  _ROBOT:AMR-01             dim "a robot, not a place"
+    tile  OLD-SLOT                  dim "disabled"
+    tile  VIRT-1                    dim "synthetic, not a place"
+    tile  GRP-OFF        (absorbed) dim "disabled"
     tile  GRP-OFF-N1                lit "tap to use"
     group GRP-A                     lit "tap to use"
     group GRP-B                     current "already here"
-    group GRP-OFF                   lit "tap to use"
+    group GRP-OFF                   dim "disabled"
 
 == armed: UNL-A "Empties go to"; the grid as decorated (assignReason via decorateGrid)
   bar: "Empties go to — tap a group or node. Greyed ones can’t go here."
@@ -64,14 +64,14 @@
     tile  GRP-B-N2                  lit "tap to use"
     tile  LINE-1                    lit "tap to use"
     tile  SPOT-9                    lit "tap to use"
-    tile  _ROBOT:AMR-01             lit "tap to use"
-    tile  OLD-SLOT                  lit "tap to use"
-    tile  VIRT-1                    lit "tap to use"
-    tile  GRP-OFF        (absorbed) lit "tap to use"
+    tile  _ROBOT:AMR-01             dim "a robot, not a place"
+    tile  OLD-SLOT                  dim "disabled"
+    tile  VIRT-1                    dim "synthetic, not a place"
+    tile  GRP-OFF        (absorbed) dim "disabled"
     tile  GRP-OFF-N1                lit "tap to use"
     group GRP-A                     lit "tap to use"
     group GRP-B                     lit "tap to use"
-    group GRP-OFF                   lit "tap to use"
+    group GRP-OFF                   dim "disabled"
 
 == armed: LDR-B Windows (one spot per part); the grid as decorated (assignReason via decorateGrid)
   bar: "Adding a window — tap a node. Greyed nodes can’t go here."
@@ -84,16 +84,16 @@
     tile  GRP-B-N2                  current "already a window"
     tile  LINE-1                    lit "tap to add"
     tile  SPOT-9                    lit "tap to add"
-    tile  _ROBOT:AMR-01             dim "a group can’t be a window"
-    tile  OLD-SLOT                  lit "tap to add"
+    tile  _ROBOT:AMR-01             dim "a robot, not a place"
+    tile  OLD-SLOT                  dim "disabled"
     tile  VIRT-1                    dim "a group can’t be a window"
-    tile  GRP-OFF        (absorbed) dim "a group can’t be a window"
+    tile  GRP-OFF        (absorbed) dim "disabled"
     tile  GRP-OFF-N1                lit "tap to add"
     group GRP-A                     dim "a group can’t be a window"
     group GRP-B                     dim "a group can’t be a window"
-    group GRP-OFF                   dim "a group can’t be a window"
-  Pinned as is: a place slot lights the robot deck, VIRT-1, the disabled OLD-SLOT and the
-  disabled group GRP-OFF; a Windows slot lights OLD-SLOT. Only lanes and own windows are dimmed.
+    group GRP-OFF                   dim "disabled"
+  (a place slot dims the robot deck, VIRT-1, the disabled OLD-SLOT and the
+  disabled group GRP-OFF, each with its reason; a Windows slot dims OLD-SLOT and the robot deck.)
 
 == armed UNL-A "Empties go to", Find "grp-b": what the filter hides
   GRP-B, GRP-B-N1, GRP-B-N2, GRP-B (header) stay; the rest are filtered
@@ -148,10 +148,8 @@
 -- drop the GRP-B header on "Fulls come from" (already there)
   (no request)
 -- drop a drag carrying _TRANSIT's id (no tile carries it; /api/nodes lists it) on "Empties go to"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"_TRANSIT"}
-  GET /api/nodes
-  GET /api/payloads
-  GET /api/loader/list
+  (no request)
+  toast warning: _TRANSIT: where a bin is while a robot carries it, not a place
 
 == C13: LDR-B's per-spot part picker (payloadSelect at rest, fillPayloadSelect on open)
   at rest, PART-C picked: <select class="loader-pc-sel has-payload" draggable="false"><option value="">+ payload</option><option value="PART-C" selected>PART-C</option></select>

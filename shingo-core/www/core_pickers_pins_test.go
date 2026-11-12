@@ -175,6 +175,22 @@ func corePickerCensusBugs(t *testing.T, got map[string]string) {
 	if strings.Contains(create, `| _TRANSIT`) {
 		t.Errorf("census #11: Create bin offers _TRANSIT")
 	}
+	// assignReason, fixed: an armed place slot dims the robot deck, a
+	// synthetic node that is no group, and a disabled node or group, each with
+	// its reason, and a Windows slot dims a disabled node (was
+	// static/pages/loaders.js:1172, which lit all four).
+	stations := got["stations-page.txt"]
+	for _, re := range []string{
+		`(?s)armed: UNL-A "Fulls come from".*?tile  _ROBOT:AMR-01 +dim "a robot, not a place"`,
+		`(?s)armed: UNL-A "Fulls come from".*?tile  OLD-SLOT +dim "disabled"`,
+		`(?s)armed: UNL-A "Fulls come from".*?tile  VIRT-1 +dim "synthetic, not a place"`,
+		`(?s)armed: UNL-A "Fulls come from".*?group GRP-OFF +dim "disabled"`,
+		`(?s)armed: UNL-A Windows;.*?tile  OLD-SLOT +dim "disabled"`,
+	} {
+		if !regexp.MustCompile(re).MatchString(stations) {
+			t.Errorf("assignReason: the stations grid no longer matches %s", re)
+		}
+	}
 	// #6, fixed: a group whose children are lanes sits in its slots' zone with
 	// its lane and the lane's slots under it, and a disabled group's live
 	// member is offered (was orders.js:843 zoneOf one level, :864 one level

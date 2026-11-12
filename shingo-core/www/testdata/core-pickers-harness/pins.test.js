@@ -806,8 +806,8 @@ async function loadersPins() {
         L.push('  bar: ' + JSON.stringify(D.unesc((/<span class="loader-assign-text">([^<]*)<\/span>/.exec(t.doc.getElementById('loader-assign-bar').innerHTML) || [])[1] || '')));
         decorated(L, t);
     }
-    L.push('  Pinned as is: a place slot lights the robot deck, VIRT-1, the disabled OLD-SLOT and the');
-    L.push('  disabled group GRP-OFF; a Windows slot lights OLD-SLOT. Only lanes and own windows are dimmed.');
+    L.push('  (a place slot dims the robot deck, VIRT-1, the disabled OLD-SLOT and the');
+    L.push('  disabled group GRP-OFF, each with its reason; a Windows slot dims OLD-SLOT and the robot deck.)');
     t.p.run('armSlotFor(20, "outbound")');
     const find = D.makeEl('input');
     find.value = 'grp-b';
