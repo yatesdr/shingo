@@ -4,9 +4,10 @@
 // breakdowns, Failure Pareto, and the mission table + CSV. A global filter
 // store (Since/Until + station/robot + state) drives the data sections.
 
-import { apiGet, el, escapeHtml, timeAgo, toast } from '/static/app.js';
-import { debounce } from '/static/shared/dom.js';
-import { formatDuration, formatTime, installLiveDurations } from '/static/shared/clock.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet } from '/static/app.js';
+import { debounce, el, escapeHtml } from '/static/shared/dom.js';
+import { formatDuration, formatTime, installLiveDurations, timeAgo } from '/static/shared/clock.js';
 import { createStore } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';

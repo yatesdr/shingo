@@ -137,7 +137,8 @@ function run(name, globals, lent) {
     const file = path.join(SRC_DIR, name);
     const src = fs.readFileSync(file, 'utf8')
         .replace(/^import \{([^}]*)\} from '([^']*)';$/mg, (_, names) => {
-            names.split(',').map((n) => n.trim()).filter(Boolean).forEach((n) => {
+            // `confirm as uiConfirm` binds uiConfirm: lend by the name the page uses.
+            names.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean).forEach((n) => {
                 globals[n] = lent(n);
             });
             return '';

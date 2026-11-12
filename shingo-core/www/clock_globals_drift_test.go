@@ -192,11 +192,11 @@ func TestEscapeHtmlDefinedOnce(t *testing.T) {
 	}
 	sort.Strings(defs)
 	if strings.Join(defs, ",") != "shared/dom.js" {
-		t.Errorf("escapeHtml defined in %v, want only shared/dom.js (import it from there or from /static/app.js)", defs)
+		t.Errorf("escapeHtml defined in %v, want only shared/dom.js (import it from there)", defs)
 	}
 	sort.Strings(shapes)
 	for _, p := range shapes {
-		t.Errorf("page-local HTML escaper in %s: use escapeHtml or h from /static/app.js", p)
+		t.Errorf("page-local HTML escaper in %s: use escapeHtml or h from /static/shared/dom.js", p)
 	}
 }
 

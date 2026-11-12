@@ -3,7 +3,8 @@
 // sparklines, plus a combined daily loaded/unloaded velocity chart. Data:
 // /api/footprint (plant-wide; ignores the station/robot filters).
 
-import { apiGet, h, setText } from '/static/app.js';
+import { h } from '/static/shared/dom.js';
+import { apiGet, setText } from '/static/app.js';
 import { Sparkline } from '/static/components/Sparkline.js';
 import { makeChart, installChartThemeHook, chartColors, withAlpha } from '/static/components/charts.js';
 import { bucketLabel } from '/static/components/plantclock.js';

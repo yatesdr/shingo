@@ -1,4 +1,7 @@
-import { api, delegateActions, el, escapeHtml, hideModal, removeParentElement, showModal, toast } from '/static/app.js';
+import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { removeParentElement } from '/static/app.js';
 
 /* --- Manifest builder ---
  *

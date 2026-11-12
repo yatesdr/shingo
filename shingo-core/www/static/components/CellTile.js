@@ -13,7 +13,7 @@
 // Click handling is left to the caller (missions wires openCellDrill; the kiosk
 // does too) so the component stays surface-agnostic.
 
-import { el, h } from '/static/app.js';
+import { el, h } from '/static/shared/dom.js';
 
 const STATES = ['running', 'slowed', 'micro-stop', 'stopped', 'no-data'];
 

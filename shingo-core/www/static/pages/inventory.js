@@ -13,7 +13,10 @@
 // uncalibrated: it is reached only from the UoP threshold column's ⓘ, and a
 // value it suggests saves only on Confirm there.
 
-import { apiGet, apiPost, escapeHtml, delegateActions, hideModal, showModal, toast, debounce } from '/static/app.js';
+import { debounce, delegateActions, escapeHtml } from '/static/shared/dom.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet, apiPost } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';

@@ -11,8 +11,8 @@
 // refresh with the page (filter change, the refresh button), which says when
 // it last did (overview.js, "as of").
 
-import { apiGet, h } from '/static/app.js';
-import { debounce } from '/static/shared/dom.js';
+import { apiGet } from '/static/app.js';
+import { debounce, h } from '/static/shared/dom.js';
 import { formatDuration } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { windowFor } from '/static/components/plantclock.js';

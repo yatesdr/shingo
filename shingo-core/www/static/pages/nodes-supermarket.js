@@ -1,4 +1,7 @@
-import { api, apiPost, delegateActions, el, enterSubmits, escapeHtml, hideModal, showModal, toast } from '/static/app.js';
+import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiPost, enterSubmits } from '/static/app.js';
 import { openNodeModal } from '/static/pages/nodes-detail.js';
 
 // Supermarket / node-group hierarchy: NGRP and Lane modals, layout

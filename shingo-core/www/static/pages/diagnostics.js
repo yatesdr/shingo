@@ -1,4 +1,6 @@
-import { api, delegateActions, el, escapeHtml, toast, uiConfirm } from '/static/app.js';
+import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
+import { confirm as uiConfirm } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 import { formatTime } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 // formatTime above is the shared plant-timezone formatter — diagnostics.js

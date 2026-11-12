@@ -1,4 +1,6 @@
-import { api, delegateActions, escapeHtml, h, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
+import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
+import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 import { formatTime } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 

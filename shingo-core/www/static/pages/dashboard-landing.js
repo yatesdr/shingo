@@ -15,7 +15,10 @@
 
 import { installLiveDurations } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
-import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/static/app.js';
+import { el } from '/static/shared/dom.js';
+import { confirm as uiConfirm } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiDelete, apiGet, apiPost, apiPut } from '/static/app.js';
 
 // Known kinds. A kind needs a renderer template + dashboard.js branch to display.
 const KINDS = [

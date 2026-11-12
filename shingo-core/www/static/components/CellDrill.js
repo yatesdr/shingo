@@ -9,7 +9,7 @@
 // leak — the §13 drill concern doesn't apply here. Esc / backdrop / ✕ close
 // plus a 60s idle auto-dismiss, matching DrillModal.
 
-import { el, h } from '/static/app.js';
+import { el, h } from '/static/shared/dom.js';
 import { formatClock, formatDuration, formatTime } from '/static/shared/clock.js';
 
 let _active = null;

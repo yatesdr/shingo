@@ -1,4 +1,7 @@
-import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, openFromQuery, showModal, timeAgoHTML, toast, uiConfirm, uiPrompt } from '/static/app.js';
+import { debounce, delegateActions, el, escapeHtml, h } from '/static/shared/dom.js';
+import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';

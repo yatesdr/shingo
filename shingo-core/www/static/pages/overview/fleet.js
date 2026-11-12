@@ -4,7 +4,8 @@
 // per-robot rows with mission-derived utilization bars. Data:
 // /api/robots/fleet. The typical-day overlay is deferred (Q-008).
 
-import { apiGet, h, setText } from '/static/app.js';
+import { h } from '/static/shared/dom.js';
+import { apiGet, setText } from '/static/app.js';
 import { reconcileList } from '/static/shared/list.js';
 import { makeChart, installChartThemeHook, chartColors, withAlpha, progressSegment } from '/static/components/charts.js';
 import { windowFor, bucketLabel, plantDate, inProgress } from '/static/components/plantclock.js';

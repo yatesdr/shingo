@@ -80,7 +80,7 @@ func pinContains(keys []string, k string) bool {
 	return false
 }
 
-// W1 (Core). test-orders.js imports hideModal and now maps it, so the four
+// W1 (Core). test-orders.js imports hideModal (layer.js's) and maps it, so the four
 // data-action="hideModal:<id>" buttons in test-orders.html (history and
 // receipt modals: × and Close/Cancel) close their modal.
 func TestPinWire_W1_CoreTestOrdersHideModalMapped(t *testing.T) {
@@ -93,8 +93,8 @@ func TestPinWire_W1_CoreTestOrdersHideModalMapped(t *testing.T) {
 	if len(maps[0]) < 10 || !pinContains(maps[0], "cancelCommand") || !pinContains(maps[0], "viewHistory") {
 		t.Fatalf("test-orders.js map parsed as %v; want cancelCommand and viewHistory among its keys", maps[0])
 	}
-	if !regexp.MustCompile(`(?m)^import \{[^}]*\bhideModal\b[^}]*\} from '/static/app.js';`).MatchString(js) {
-		t.Errorf("test-orders.js no longer imports hideModal from app.js")
+	if !regexp.MustCompile(`(?m)^import \{[^}]*\bhideModal\b[^}]*\} from '/static/shared/layer.js';`).MatchString(js) {
+		t.Errorf("test-orders.js no longer imports hideModal from shared/layer.js")
 	}
 	if !pinContains(maps[0], "hideModal") {
 		t.Errorf("W1: hideModal is missing from test-orders.js's delegateActions map; its four buttons do nothing")

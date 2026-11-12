@@ -11,7 +11,7 @@
 // Extracted so both the existing grid and the new fleet rows reconcile
 // through one component instead of duplicating innerHTML strings.
 
-import { el, h } from '/static/app.js';
+import { el, h } from '/static/shared/dom.js';
 
 // ─── /robots grid tile ─────────────────────────────────────────────────────
 export function createRobotTile(r) {

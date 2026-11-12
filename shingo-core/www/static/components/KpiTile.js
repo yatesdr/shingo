@@ -20,7 +20,7 @@
 //   sparkColor / tone ('good'|'bad') optional styling
 //   drill     metric key → makes the tile clickable (data-action="openDrill:<key>")
 
-import { el, h } from '/static/app.js';
+import { el, h } from '/static/shared/dom.js';
 import { Sparkline } from '/static/components/Sparkline.js';
 
 export function KpiTile(spec) {

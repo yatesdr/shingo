@@ -1,4 +1,7 @@
-import { apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
+import { debounce, delegateActions, escapeHtml, h } from '/static/shared/dom.js';
+import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet, apiPost, openFromQuery } from '/static/app.js';
 import { formatDuration, formatTime, installLiveDurations, serverNow } from '/static/shared/clock.js';
 import { formatClockSeconds, plantDate } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';

@@ -1,4 +1,7 @@
-import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '/static/app.js';
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
+import { confirm as uiConfirm } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet, apiPost } from '/static/app.js';
 
 // Kanban section of the node group settings modal.
 //

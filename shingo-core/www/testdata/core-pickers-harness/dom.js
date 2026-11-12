@@ -244,7 +244,8 @@ function loadPage(rel, globals, lend) {
     const file = path.join(WWW, rel);
     let src = fs.readFileSync(file, 'utf8');
     src = src.replace(/^import \{([^}]*)\} from '([^']*)';[ \t]*$/mg, (_, names, from) => {
-        names.split(',').map((n) => n.trim()).filter(Boolean).forEach((n) => {
+        // `confirm as uiConfirm` binds uiConfirm: lend by the name the page uses.
+        names.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean).forEach((n) => {
             if (OWN.has(n)) return;
             const v = lend(n, from);
             if (v === undefined) throw new Error(rel + ' imports ' + n + ' from ' + from + '; the pin lends nothing for it');

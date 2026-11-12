@@ -12,7 +12,9 @@
 // re-issue endpoint on Core by design — replacement hardware takes the EXISTING
 // uid off this page and into the new Pi's shingoedge.yaml.
 
-import { apiPost, toast, uiPrompt } from '/static/app.js';
+import { prompt as uiPrompt } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiPost } from '/static/app.js';
 
 function rowFor(btn) {
   const tr = btn.closest('tr');

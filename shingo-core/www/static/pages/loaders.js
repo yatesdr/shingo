@@ -1,4 +1,7 @@
-import { apiGet, apiPost, delegateActions, h, hideModal, setText, showModal, toast, uiConfirm } from '/static/app.js';
+import { delegateActions, h } from '/static/shared/dom.js';
+import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet, apiPost, setText } from '/static/app.js';
 
 // Core-owned bin loaders ("stations"), drawn as boxes on the Nodes page.
 //

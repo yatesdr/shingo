@@ -4,8 +4,9 @@
 // anomaly left at a cutover and never counts. Read-only: Core never writes a
 // pile. Data: /api/buckets, with updated_at for staleness.
 
-import { apiGet, escapeHtml, timeAgo } from '/static/app.js';
-import { formatTime, serverNow } from '/static/shared/clock.js';
+import { escapeHtml } from '/static/shared/dom.js';
+import { apiGet } from '/static/app.js';
+import { formatTime, serverNow, timeAgo } from '/static/shared/clock.js';
 
 const STALE_WARN_MS = 7 * 24 * 3600 * 1000;
 const STALE_BAD_MS = 30 * 24 * 3600 * 1000;

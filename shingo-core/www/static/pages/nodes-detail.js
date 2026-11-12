@@ -1,4 +1,7 @@
-import { api, apiGet, apiPost, delegateActions, el, escapeHtml, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
+import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
+import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
+import { apiGet, apiPost, openFromQuery } from '/static/app.js';
 import { confirmAllowedBinsNarrowing, kanbanLoading, renderKeeperLevels, renderKanbanSection, saveKanban } from '/static/pages/nodes-kanban.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),

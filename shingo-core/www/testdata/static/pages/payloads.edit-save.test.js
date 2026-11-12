@@ -107,7 +107,7 @@ function okJSON(data) { return { ok: true, status: 200, json: () => Promise.reso
 
 function load(gets) {
     let src = fs.readFileSync(path.join(SRC_DIR, 'payloads.js'), 'utf8');
-    src = src.replace(/^import .*$/m, '');
+    src = src.replace(/^import .*$/mg, '');
     const posts = [];
     const doc = newDocument();
     // The edit form's carrier checkboxes, as the template draws them.

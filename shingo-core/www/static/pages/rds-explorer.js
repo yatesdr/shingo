@@ -1,4 +1,6 @@
-import { api, delegateActions, el, hideModal, showModal, toast } from '/static/app.js';
+import { delegateActions, el } from '/static/shared/dom.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 
 // Template bodies for POST endpoints
 var EP_JOIN_ORDER = JSON.stringify({id:"",externalId:"",fromLoc:"",toLoc:"",priority:0,vehicle:"",group:"",goodsId:""},null,2);

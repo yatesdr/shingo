@@ -1,4 +1,5 @@
-import { delegateActions, uiConfirm } from '/static/app.js';
+import { delegateActions } from '/static/shared/dom.js';
+import { confirm as uiConfirm } from '/static/shared/layer.js';
 // SIDE-EFFECT IMPORT, and the page's declaration that it needs the detail modal.
 // Nothing here calls into that module — what it needs is the module's delegated
 // handlers registered, because the node tiles this file filters carry

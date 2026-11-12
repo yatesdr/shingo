@@ -94,7 +94,7 @@ function load(opts) {
     const posts = [];
     const toasts = [];
     const confirms = [];
-    // The page builds markup with app.js's h`` (shared/dom.js's); this is the
+    // The page builds markup with shared/dom.js's h``; this is the
     // same helper with the same escape, quotes included.
     const esc = function (v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
     const h = function (strings) {
@@ -142,7 +142,7 @@ function load(opts) {
     };
     vm.createContext(ctxObj);
     const src = fs.readFileSync(path.join(SRC_DIR, 'loaders.js'), 'utf8')
-        .replace(/^import[^;]+;\s*/m, '');   // drop the ES import; deps injected above
+        .replace(/^import[^;]+;\s*/mg, '');   // drop the ES imports; deps injected above
     vm.runInContext(src, ctxObj);
     return {
         ctx: ctxObj, els: els, posts: posts, listeners: listeners, toasts: toasts, confirms: confirms,

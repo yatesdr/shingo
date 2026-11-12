@@ -8,12 +8,12 @@
 // to add one. The shared drill modal (components/DrillModal.js) is opened by
 // a delegated data-action="openDrill:<metric>" handler.
 
-import { debounce } from '/static/shared/dom.js';
+import { debounce, delegateActions } from '/static/shared/dom.js';
 import { serverNow } from '/static/shared/clock.js';
 import { createStore } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
 import { formatClockSeconds } from '/static/components/plantclock.js';
-import { apiGet, delegateActions } from '/static/app.js';
+import { apiGet } from '/static/app.js';
 import { openDrillModal } from '/static/components/DrillModal.js';
 import { createHeroSection } from '/static/pages/overview/hero.js';
 import { createTrendsSection } from '/static/pages/overview/trends.js';
