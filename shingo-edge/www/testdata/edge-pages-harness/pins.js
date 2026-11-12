@@ -406,9 +406,9 @@ async function productionPartPickers() {
 // ── Kafka Direct (census 44, bugs 9 and 10) ──────────────────────────────────
 
 // fieldsMarkup is #mm-fields' markup as the page wrote it, one form-group a
-// line. UNESCAPED (census bug 9, pinned as is): renderField concatenates node
-// names, the field values and the order uuid/type/status into innerHTML, so
-// the name `NODE <b>&"'` and the uuid `ab<b>&"'-0001` go in raw.
+// line. ESCAPED (census bug 9, fixed): renderField escapes node names, the
+// field values and the order uuid/type/status, so the name `NODE <b>&"'` and
+// the uuid `ab<b>&"'-0001` show as text.
 function fieldsMarkup(b) {
     return b.doc.getElementById('mm-fields').innerHTML.split('<div class="form-group">').filter(Boolean)
         .map(s => '  <div class="form-group">' + s);

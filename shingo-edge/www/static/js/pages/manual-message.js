@@ -1,5 +1,5 @@
 import { api } from '/static/js/shingoedge.js';
-import { delegateActions } from '/static/shared/dom.js';
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { toast } from '/static/shared/notice.js';
 
 var _pd = document.getElementById('page-data').dataset;
@@ -42,25 +42,28 @@ var _fieldDefs = {
     ]
 };
 
+// renderField writes one field's markup. Every name and value from the plant
+// (node names, the order uuid/type/status, a field's value) is escaped.
 function renderField(f) {
     var val = typeof f.value === 'function' ? f.value() : f.value;
-    var html = '<div class="form-group"><label>' + f.label + '</label>';
+    var esc = escapeHtml;
+    var html = '<div class="form-group"><label>' + esc(f.label) + '</label>';
     if (f.type === 'select') {
         html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview">';
-        f.options.forEach(function(o){ html += '<option value="'+o+'"'+(o===val?' selected':'')+'>'+o+'</option>'; });
+        f.options.forEach(function(o){ html += '<option value="'+esc(o)+'"'+(o===val?' selected':'')+'>'+esc(o)+'</option>'; });
         html += '</select>';
     } else if (f.type === 'nodeselect') {
         html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option>';
-        _coreNodes.sort().forEach(function(n){ html += '<option value="'+n+'">'+n+'</option>'; });
+        _coreNodes.sort().forEach(function(n){ html += '<option value="'+esc(n)+'">'+esc(n)+'</option>'; });
         html += '</select>';
     } else if (f.type === 'orderselect') {
         html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option>';
-        _orders.forEach(function(o){ html += '<option value="'+o.uuid+'">'+o.uuid.substring(0,8)+'... ('+o.type+', '+o.status+')</option>'; });
+        _orders.forEach(function(o){ html += '<option value="'+esc(o.uuid)+'">'+esc(o.uuid.substring(0,8))+'... ('+esc(o.type)+', '+esc(o.status)+')</option>'; });
         html += '</select>';
     } else if (f.type === 'checkbox') {
         html += '<input type="checkbox" id="mm-f-' + f.id + '" '+(val?'checked':'')+' data-action-change="updatePreview">';
     } else {
-        html += '<input type="' + f.type + '" id="mm-f-' + f.id + '" class="form-input" value="' + val + '" data-action-input="updatePreview">';
+        html += '<input type="' + f.type + '" id="mm-f-' + f.id + '" class="form-input" value="' + esc(val) + '" data-action-input="updatePreview">';
     }
     html += '</div>';
     return html;

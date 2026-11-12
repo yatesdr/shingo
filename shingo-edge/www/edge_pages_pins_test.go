@@ -58,8 +58,7 @@ var updateEdgePagesGolden = flag.Bool("update-edge-pages-golden", false,
 //
 // The bugs pinned as they are, each named in its golden: the SSE rebuild's
 // lost tags (manual-order.js and production.js onCoreNodes), Kafka Direct's
-// unescaped innerHTML (manual-message.js renderField) and its order.request
-// with no payload_code field, and the Production "compatible with" picker
+// order.request with no payload_code field, and the Production "compatible with" picker
 // sending its first allowed part by default (production.js
 // openRequestEmptyModal).
 //
