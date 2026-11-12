@@ -922,10 +922,9 @@ func (f press6) mintedClaims(t *testing.T, body map[string]any) map[string]proce
 }
 
 // A group's Advanced is laid over the minted defaults on every cell of its
-// slot: Right Hand's reorder point (its source "manual": an engineer set it),
-// auto-reorder and curtain, kept through the mint's curtain stamp (D10, which
-// ORs the node's own curtain in). Left Hand says nothing and mints as today,
-// with the curtain its node already has.
+// slot: Right Hand's reorder point, auto-reorder and curtain, kept through the
+// mint's curtain stamp (D10, which ORs the node's own curtain in). Left Hand
+// says nothing and mints as today, with the curtain its node already has.
 func TestFlowMint_AGroupsAdvancedIsLaidOnItsCells(t *testing.T) {
 	f := newPressGrouped(t)
 	_, err := f.db.Exec(`UPDATE style_node_claims SET curtain_required = 1 WHERE style_id = ? AND core_node_name = 'PLN_010'`, f.running)
@@ -934,17 +933,16 @@ func TestFlowMint_AGroupsAdvancedIsLaidOnItsCells(t *testing.T) {
 	claims := f.mintedClaims(t, bodies["prefill"])
 	type policy struct {
 		Point   int
-		Source  string
 		Auto    bool
 		Curtain bool
 	}
 	got := map[string]policy{}
 	for n, c := range claims {
-		got[n] = policy{c.ReorderPoint, c.ReorderPointSource, c.AutoReorder, c.CurtainRequired}
+		got[n] = policy{c.ReorderPoint, c.AutoReorder, c.CurtainRequired}
 	}
 	want := map[string]policy{
-		"PLN_010": {0, "unset", false, true},
-		"PLN_012": {1, "manual", true, true},
+		"PLN_010": {0, false, true},
+		"PLN_012": {1, true, true},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("minted policy = %v, want %v", got, want)

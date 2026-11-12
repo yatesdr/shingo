@@ -3989,16 +3989,6 @@ const ADV_COPY = {
     pack_tolerance_pct: ['pack_tolerance_pct', 'a bin released within this percent of its pack (up to 20) is booked full; further short, or with this blank, it ships its real count and the button reads RELEASE SHORT'],
 };
 
-// The reorder point's source stamps that are worth a pill: the word drawn and
-// the sentence behind it. A stamp not listed here draws nothing.
-const REORDER_SOURCE = {
-    manual: ['typed', 'typed in by an engineer, not calculated'],
-    calculated: ['calculated', 'set by the reorder calculator, not typed'],
-    // A MINTED STYLE (pick-a-part U3, R-L): no reorder point has been set by
-    // anybody, and nothing reorders until an engineer sets one here.
-    unset: ['not set', 'not set — a minted style; set its reorder here'],
-};
-
 const CARRYOVER = {
     replace: 'replace',
     keep_lineside: 'keep at the line',
@@ -4048,8 +4038,6 @@ function openGroupAdvanced(i) {
     for (const key of GROUP_ADV_KEYS) {
         if (g.advanced && g.advanced[key] !== undefined && g.advanced[key] !== null) a[key] = g.advanced[key];
     }
-    // The mint stamps a group's reorder point as typed by an engineer.
-    if (a.reorder_point) a.reorder_point_source = 'manual';
     S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], partialDest: '' };
     S.adv.opened = advSnapshot();
     drawAdvanced();
@@ -4123,21 +4111,7 @@ function advField(key) {
             control = chips + '<button class="pd-chip add" data-adv="allowed_payload_codes" data-advkind="pick">+ add</button>';
             break;
         }
-        case 'reorder_point': {
-            // The source is a STAMP on the number, not a field of its own: it
-            // says how the value got there. There is no calculator behind it on
-            // Edge — see the report — so the pill is read-only.
-            //
-            // ONLY A SOURCE THAT SAYS SOMETHING IS DRAWN. "legacy" is the stamp
-            // a number gets when nobody said how it was set — every row from
-            // before the column, and a cleared field — so as a pill it was a
-            // word the engineer could not act on or look up. The stored value
-            // is untouched; only the drawing changed.
-            const src = REORDER_SOURCE[S.adv.a.reorder_point_source];
-            control = advNumber('reorder_point') + (src
-                ? '<span class="pd-src" title="' + esc(src[1]) + '">' + esc(src[0]) + '</span>' : '');
-            break;
-        }
+        case 'reorder_point': control = advNumber('reorder_point'); break;
         case 'lineside_soft_threshold': case 'sequence': case 'pack_tolerance_pct': control = advNumber(key); break;
         case 'curtain_required': control = advToggle(key); break;
         case 'auto_request_payload': {
@@ -4220,8 +4194,6 @@ function bindAdvInputs() {
         el.addEventListener('input', () => {
             const digits = el.value.replace(/[^0-9]/g, '');
             S.adv.a[el.dataset.adv] = digits ? Number(digits) : 0;
-            // A number the engineer types by hand is a manual reorder point.
-            if (el.dataset.adv === 'reorder_point') S.adv.a.reorder_point_source = digits ? 'manual' : 'legacy';
         });
     });
 }

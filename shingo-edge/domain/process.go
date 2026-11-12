@@ -333,13 +333,8 @@ type NodeClaim struct {
 	// threshold — and no bin-count floor survives. The level sweep skips a loader
 	// node before it reads any level, so setting this on a loader claim
 	// does nothing.
-	ReorderPoint int `json:"reorder_point"`
-	// ReorderPointSource records how ReorderPoint was set. 'legacy' = default, never edited (the
-	// silent-inert default); 'manual' = engineer typed a value;
-	// 'calculated' = applied from the unified calculator. Surfaced in
-	// the replenishment UI as a small badge per row.
-	ReorderPointSource string `json:"reorder_point_source"`
-	AutoReorder        bool   `json:"auto_reorder"`
+	ReorderPoint int  `json:"reorder_point"`
+	AutoReorder  bool `json:"auto_reorder"`
 	// BelowReorderSince is the FALLING EDGE of this claim's level: when
 	// remaining UOP first went at-or-below ReorderPoint. Nil means not below.
 	//
@@ -1335,20 +1330,17 @@ type NodeClaimInput struct {
 	// These are columns no single writer owns. updateClaim writes every
 	// column it is given, and a value type cannot say "I have no opinion" —
 	// it says 0, "" or false. So the claims editor, which has controls for
-	// none of these, reset board order to 0, the reorder point's
-	// provenance to "legacy", and both flags to false on EVERY save of an
-	// unrelated field. The auto_reorder case had already been patched by
+	// none of these, reset board order to 0 and both flags to false on
+	// EVERY save of an unrelated field. The auto_reorder case had already been patched by
 	// hand in the UI (read the claim back, echo the value); that is the same
 	// disease treated one field at a time, and it is deleted with this.
 	//
 	// A pointer is the fix at the contract rather than at each caller: nil
 	// means the writer is not speaking about this column. On INSERT they
-	// take their documented defaults (sequence = next free, source =
-	// "legacy", flags off).
-	ReorderPointSource *string `json:"reorder_point_source,omitempty"`
-	AutoReorder        *bool   `json:"auto_reorder,omitempty"`
-	KeepStagedNode     *string `json:"keep_staged_node,omitempty"`
-	Sequence           *int    `json:"sequence,omitempty"`
+	// take their documented defaults (sequence = next free, flags off).
+	AutoReorder    *bool   `json:"auto_reorder,omitempty"`
+	KeepStagedNode *string `json:"keep_staged_node,omitempty"`
+	Sequence       *int    `json:"sequence,omitempty"`
 
 	// ── ATTRIBUTION: SERVER-STAMPED, NEVER DECODED FROM A BODY ─────────
 	// json:"-" on all four: a client cannot set them, whatever it sends. The

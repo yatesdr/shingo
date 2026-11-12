@@ -1115,13 +1115,13 @@ test('a null list on the wire reads as the empty default, not as null', () => {
 
 test('Apply lands on exactly one cell and travels to the wire', () => {
     const s = initStyle(7);
-    const adv = Object.assign(M.advancedFor(s, 'PLN_01'), { reorder_point: 12, reorder_point_source: 'manual' });
+    const adv = Object.assign(M.advancedFor(s, 'PLN_01'), { reorder_point: 12 });
     const after = M.reduce(s, { type: 'setAdvanced', node: 'PLN_01', advanced: adv });
 
     const cells = M.toCells(after);
     const one = cells.find(c => c.core_node_name === 'PLN_01');
     assert.strictEqual(one.advanced.reorder_point, 12);
-    assert.strictEqual(one.advanced.reorder_point_source, 'manual');
+    assert.ok(!('reorder_point_source' in one.advanced), 'the wire carries no reorder-point stamp');
     for (const c of cells) {
         if (c.core_node_name === 'PLN_01') continue;
         assert.ok(!('advanced' in c), c.core_node_name + ' was dragged into another position s Apply');
@@ -1230,12 +1230,9 @@ test('"N set" counts what ClaimHas counts, and nothing flowspec hides', () => {
         M.advancedSet(s, 'PLN_01', Object.assign({}, base, { changeover_carryover_disposition: 'keep_lineside' })),
         ['changeover_carryover_disposition']);
 
-    // reorder_point_source is a stamp on the number, never a value of its own.
+    // A reorder point is set when it is a number other than 0.
     assert.deepStrictEqual(
-        M.advancedSet(s, 'PLN_01', Object.assign({}, base, { reorder_point_source: 'manual' })), []);
-    assert.deepStrictEqual(
-        M.advancedSet(s, 'PLN_01', Object.assign({}, base, { reorder_point: 40, reorder_point_source: 'manual' })),
-        ['reorder_point']);
+        M.advancedSet(s, 'PLN_01', Object.assign({}, base, { reorder_point: 40 })), ['reorder_point']);
 
     // A value in a field this choreography hides does not put a badge on the row.
     assert.deepStrictEqual(
@@ -2235,7 +2232,7 @@ function gridLines(M, FLOWSPEC) {
         inbound_staging: 'STG_1', outbound_staging: 'STG_2' };
     // Every Advanced key with a value that is not its INSERT default.
     const ALL_SET = {
-        allowed_payload_codes: ['PART-X'], reorder_point: 5, reorder_point_source: 'manual',
+        allowed_payload_codes: ['PART-X'], reorder_point: 5,
         auto_reorder: true, lineside_soft_threshold: 3, auto_request_payload: 'PART-X',
         auto_push: true, keep_staged_node: 'STG_1', evacuate_on_changeover: true,
         changeover_carryover_disposition: 'keep_lineside', index_robot_supplies: true,

@@ -19,8 +19,8 @@ import (
 // survives is the store's write: these pin what UpsertStyleNodeClaim does with
 // a body of this shape, which is the store's door, not a page's.
 //
-// The four columns it does NOT carry — sequence, reorder_point_source,
-// keep_staged_node, auto_reorder — are the point. The editor has no control for any
+// The three columns it does NOT carry — sequence, keep_staged_node,
+// auto_reorder — are the point. The editor has no control for any
 // of them, so it must not be able to change them.
 func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 	return processes.NodeClaimInput{
@@ -58,9 +58,9 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 //
 // fetch -> claimEditorBody -> save -> fetch must be the identity on EVERY
 // persisted column. Before the pointer contract it was not: updateClaim wrote
-// all 22 columns unconditionally, so the four the editor does not send were
-// reset on every save of an unrelated field — board order to 0, the reorder
-// point's provenance to "legacy", both flags to false. An engineer changing an
+// all 22 columns unconditionally, so the ones the editor does not send were
+// reset on every save of an unrelated field — board order to 0, both flags to
+// false. An engineer changing an
 // inbound source silently reordered the board.
 //
 // Distinctive non-default values throughout, so a column that gets reset says
@@ -108,11 +108,10 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		// that treated the route as a set would say so.
 		KeyRoute: domain.Ptr([]string{"RT-AISLE-B", "RT-AISLE-A"}),
 		KeyTask:  domain.Ptr("unload"),
-		// The four the editor never sends, seeded to values that are NOT the
+		// The ones the editor never sends, seeded to values that are NOT the
 		// zero value, so a stomp is visible.
-		Sequence:           domain.Ptr(7),
-		ReorderPointSource: domain.Ptr("calculated"),
-		AutoReorder:        domain.Ptr(true),
+		Sequence:    domain.Ptr(7),
+		AutoReorder: domain.Ptr(true),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, seed)
 	testutil.MustNoErr(t, err, "seed claim")
@@ -139,7 +138,6 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"payload_code", before.PayloadCode, after.PayloadCode},
 		{"uop_capacity", before.UOPCapacity, after.UOPCapacity},
 		{"reorder_point", before.ReorderPoint, after.ReorderPoint},
-		{"reorder_point_source", before.ReorderPointSource, after.ReorderPointSource},
 		{"auto_reorder", before.AutoReorder, after.AutoReorder},
 		{"inbound_staging", before.InboundStaging, after.InboundStaging},
 		{"outbound_staging", before.OutboundStaging, after.OutboundStaging},
@@ -191,9 +189,9 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	if after.KeyTask != before.KeyTask {
 		t.Errorf("key_task changed across an editor save: %q -> %q", before.KeyTask, after.KeyTask)
 	}
-	if before.Sequence != 7 || before.ReorderPointSource != "calculated" || !before.AutoReorder || before.KeepStagedNode == "" {
-		t.Fatalf("seed did not take, so this test proves nothing: seq=%d source=%q autoReorder=%v keepStagedNode=%q",
-			before.Sequence, before.ReorderPointSource, before.AutoReorder, before.KeepStagedNode)
+	if before.Sequence != 7 || !before.AutoReorder || before.KeepStagedNode == "" {
+		t.Fatalf("seed did not take, so this test proves nothing: seq=%d autoReorder=%v keepStagedNode=%q",
+			before.Sequence, before.AutoReorder, before.KeepStagedNode)
 	}
 }
 
@@ -205,7 +203,7 @@ func setLegacyKeepStaged(t *testing.T, db *DB, claimID int64) {
 	testutil.MustNoErr(t, err, "set keep_staged_node")
 }
 
-// A writer that DOES speak about the four still changes them. "Absent means
+// A writer that DOES speak about them still changes them. "Absent means
 // untouched" must not become "unchangeable" — the replenishment admin page and
 // the board reorder both depend on being able to write them.
 func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
@@ -231,7 +229,6 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 		OutboundStaging:     "RT2-OUT",
 		OutboundDestination: "RT2-DEST",
 		Sequence:            domain.Ptr(3),
-		ReorderPointSource:  domain.Ptr("calculated"),
 		AutoReorder:         domain.Ptr(true),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, base)
@@ -240,7 +237,6 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 
 	upd := base
 	upd.Sequence = domain.Ptr(9)
-	upd.ReorderPointSource = domain.Ptr("manual")
 	upd.AutoReorder = domain.Ptr(false)
 	upd.KeepStagedNode = domain.Ptr("")
 	upd.RefillBy = domain.Ptr(protocol.RefillByIndexRobot)
@@ -252,9 +248,6 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	testutil.MustNoErr(t, err, "fetch after")
 	if after.Sequence != 9 {
 		t.Errorf("sequence = %d, want 9", after.Sequence)
-	}
-	if after.ReorderPointSource != "manual" {
-		t.Errorf("reorder_point_source = %q, want manual", after.ReorderPointSource)
 	}
 	if after.AutoReorder {
 		t.Error("auto_reorder = true, want false — an explicit false must write")
@@ -362,9 +355,6 @@ func TestUpsertStyleNodeClaim_InsertDefaultsForAbsentOptionals(t *testing.T) {
 	if first.Sequence != 1 || second.Sequence != 2 {
 		t.Errorf("sequences = %d, %d; want 1, 2 — an absent sequence takes the next free board slot",
 			first.Sequence, second.Sequence)
-	}
-	if first.ReorderPointSource != "legacy" {
-		t.Errorf("reorder_point_source = %q, want legacy", first.ReorderPointSource)
 	}
 	if first.AutoReorder || first.KeepStagedNode != "" {
 		t.Errorf("new claim = autoReorder:%v keepStagedNode:%q, want false and blank",

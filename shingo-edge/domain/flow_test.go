@@ -28,8 +28,7 @@ func fullClaim(mode protocol.SwapMode, role protocol.ClaimRole) NodeClaim {
 		InboundSource: "Supermarket Empty Totes", InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
 		OutboundDestination: "Supermarket Area",
 		ChangeoverEvacNodes: []string{"PLN_01", "PLN_02"}, KeyRoute: []string{"LM314", "LM315"},
-		ReorderPointSource: "legacy", ChangeoverCarryoverDisposition: CarryoverReplace,
-		Sequence: 3, Source: ClaimSourceAdmin, CalledBy: "engineer",
+		ChangeoverCarryoverDisposition: CarryoverReplace, Sequence: 3, Source: ClaimSourceAdmin, CalledBy: "engineer",
 	}
 	// A mode that names no paired position stores none (SavedPairs), so the
 	// claim of that mode a save can hold carries none.
@@ -160,8 +159,8 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	if in.ChangeoverEvacNodes == nil || len(*in.ChangeoverEvacNodes) != 0 {
 		t.Errorf("changeover_evac_nodes must be spoken as empty for a cell that marks nothing: %v", in.ChangeoverEvacNodes)
 	}
-	// Silent: the nine the composer never speaks about.
-	if in.ReorderPointSource != nil || in.AutoReorder != nil || in.KeepStagedNode != nil || in.Sequence != nil ||
+	// Silent: the eight the composer never speaks about.
+	if in.AutoReorder != nil || in.KeepStagedNode != nil || in.Sequence != nil ||
 		in.RefillBy != nil || in.ChangeoverCarryoverDisposition != nil || in.KeyTask != nil ||
 		in.SourcePresetID != nil || in.SourcePresetVersion != nil {
 		t.Errorf("a pointer-gated column the composer does not author was spoken: %+v", in)
@@ -188,7 +187,7 @@ func TestFlowExpand_EditsLandAndTheEngineersColumnsSurvive(t *testing.T) {
 	t.Parallel()
 	prior := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
 	prior.KeepStagedNode, prior.RefillBy, prior.KeyTask = "SPOT-1", protocol.RefillByIndexRobot, "load"
-	prior.ReorderPoint, prior.ReorderPointSource, prior.AutoReorder = 60, "manual", true
+	prior.ReorderPoint, prior.AutoReorder = 60, true
 
 	cell := Collapse(prior)
 	cell.PayloadCode, cell.InboundSource = "PART-NEW", "ELSEWHERE"
@@ -203,16 +202,16 @@ func TestFlowExpand_EditsLandAndTheEngineersColumnsSurvive(t *testing.T) {
 	// only one of them puts a value on the input. Expand copies the
 	// unconditional columns from the prior (reorder_point below), and leaves
 	// the pointer-gated ones nil so updateClaim does not name them at all
-	// (keep_staged_node, refill_by, key_task, reorder_point_source,
-	// auto_reorder). MaterializeClaim models both.
+	// (keep_staged_node, refill_by, key_task, auto_reorder). MaterializeClaim
+	// models both.
 	got := MaterializeClaim(in, &prior)
 	if got.KeepStagedNode != "SPOT-1" || !got.IndexRobotFetches() || got.KeyTask != "load" {
 		t.Errorf("a changeover special did not survive the edit: keep_staged_node %q, refill_by %v, key_task %q",
 			got.KeepStagedNode, got.RefillBy, got.KeyTask)
 	}
-	if got.ReorderPoint != 60 || got.ReorderPointSource != "manual" || !got.AutoReorder {
-		t.Errorf("the replenishment policy did not survive the edit: %d / %q / %v",
-			got.ReorderPoint, got.ReorderPointSource, got.AutoReorder)
+	if got.ReorderPoint != 60 || !got.AutoReorder {
+		t.Errorf("the replenishment policy did not survive the edit: %d / %v",
+			got.ReorderPoint, got.AutoReorder)
 	}
 
 	// A cell with no prior has nothing to carry and expands as the cell says.
@@ -248,13 +247,13 @@ func TestFlowInputFromClaim_IsTotal(t *testing.T) {
 	t.Parallel()
 	c := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
 	c.KeepStagedNode, c.AutoReorder, c.RefillBy, c.KeyTask = "SPOT-1", true, protocol.RefillByIndexRobot, "load"
-	c.ReorderPointSource, c.ChangeoverCarryoverDisposition = "manual", CarryoverKeepLineside
+	c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	pid, pv := int64(3), 2
 	c.SourcePresetID, c.SourcePresetVersion = &pid, &pv
 	in := InputFromClaim(c)
 	claimColumnsEqual(t, "InputFromClaim", MaterializeClaim(in, &c), c)
 	if in.KeepStagedNode == nil || in.AutoReorder == nil || in.RefillBy == nil || in.KeyTask == nil ||
-		in.ReorderPointSource == nil || in.ChangeoverCarryoverDisposition == nil || in.Sequence == nil ||
+		in.ChangeoverCarryoverDisposition == nil || in.Sequence == nil ||
 		in.SourcePresetID == nil || in.SourcePresetVersion == nil {
 		t.Errorf("InputFromClaim left a pointer-gated column silent: %+v", in)
 	}

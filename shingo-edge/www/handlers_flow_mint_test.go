@@ -232,10 +232,10 @@ func recipeAndNewPair(t *testing.T, db *store.DB, seeded testdb.SeededPlant) (in
 	return 0, nil
 }
 
-// TestReplenishmentPage_AMintedStyleReadsNotSet (pick-a-part U3, R-L): the
-// stamp a mint leaves is read where an engineer goes to set reorder — the
-// replenishment page names those claims "not set", not "legacy".
-func TestReplenishmentPage_AMintedStyleReadsNotSet(t *testing.T) {
+// TestReplenishmentPage_AMintedStyleReadsOff (pick-a-part U3, R-L): where an
+// engineer goes to set reorder, a minted style's claims read a reorder point of
+// 0 and Auto reorder off, each with Clear, and no stamp beside the number.
+func TestReplenishmentPage_AMintedStyleReadsOff(t *testing.T) {
 	db, seeded := gatedOffPlant(t)
 	h, router := realFlowRouter(t, db)
 	presetID, codes := recipeAndNewPair(t, db, seeded)
@@ -247,6 +247,11 @@ func TestReplenishmentPage_AMintedStyleReadsNotSet(t *testing.T) {
 	}
 	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(seeded.ProcessID)+"/flow/mint", bodies["mint"], nil)
 	assertStatus(t, resp, http.StatusOK)
+	minted, _ := flowBody(t, resp)["style_id"].(float64)
+	claims, err := db.ListStyleNodeClaims(int64(minted))
+	if err != nil || len(claims) == 0 {
+		t.Fatalf("the minted style's claims: %v (%d)", err, len(claims))
+	}
 
 	resp = doRequest(t, router, "GET", "/replenishment", nil, authCookie(t, h))
 	assertStatus(t, resp, http.StatusOK)
@@ -254,7 +259,23 @@ func TestReplenishmentPage_AMintedStyleReadsNotSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read page: %v", err)
 	}
-	if !strings.Contains(string(raw), "a minted style; set its reorder here") {
-		t.Error("the replenishment page does not name the minted style's claims as not set")
+	page := string(raw)
+	for _, c := range claims {
+		at := strings.Index(page, `data-claim-id="`+itoa(c.ID)+`"`)
+		if at < 0 {
+			t.Errorf("no row for minted claim %d", c.ID)
+			continue
+		}
+		row := page[at:]
+		row = row[:strings.Index(row, "</tr>")]
+		if !strings.Contains(row, `value="0"`) || strings.Contains(row, "checked") ||
+			!strings.Contains(row, `data-action="replenishmentClearCell"`) {
+			t.Errorf("minted claim %d's row is not point 0, Auto reorder off, with Clear:\n%s", c.ID, row)
+		}
+	}
+	for _, stamp := range []string{"not set", "legacy", "Revert"} {
+		if strings.Contains(page, stamp) {
+			t.Errorf("the replenishment page still says %q", stamp)
+		}
 	}
 }

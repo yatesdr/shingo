@@ -47,8 +47,6 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return len(c.AllowedPayloadCodes) > 0
 	case flowspec.ReorderPoint:
 		return c.ReorderPoint != 0
-	case flowspec.ReorderPointSource:
-		return c.ReorderPointSource != ""
 	case flowspec.AutoReorder:
 		return c.AutoReorder
 	case flowspec.LinesideSoftThreshold:
@@ -108,8 +106,6 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return len(in.AllowedPayloadCodes) > 0
 	case flowspec.ReorderPoint:
 		return in.ReorderPoint != 0
-	case flowspec.ReorderPointSource:
-		return in.ReorderPointSource != nil && *in.ReorderPointSource != ""
 	case flowspec.AutoReorder:
 		return in.AutoReorder != nil && *in.AutoReorder
 	case flowspec.LinesideSoftThreshold:

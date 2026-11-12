@@ -21,7 +21,7 @@ func fpClaim(id int64, node, payload string) NodeClaim {
 	return NodeClaim{
 		ID: id, StyleID: 7, CoreNodeName: node, Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot,
 		PayloadCode: payload, InboundStaging: "PLN_02", InboundSource: "Supermarket Empty Totes",
-		OutboundDestination: "Supermarket Area", UOPCapacity: 1420, ReorderPointSource: "legacy",
+		OutboundDestination: "Supermarket Area", UOPCapacity: 1420,
 		ChangeoverCarryoverDisposition: CarryoverReplace, Sequence: 1,
 		Source: ClaimSourceAdmin, CalledBy: "engineer",
 	}
@@ -89,7 +89,6 @@ func TestFlowFingerprint_ChangesOnEveryListedColumn(t *testing.T) {
 		"swap_mode":                        func(c *NodeClaim) { c.SwapMode = protocol.SwapModeSingleRobot },
 		"payload_code":                     func(c *NodeClaim) { c.PayloadCode += "X" },
 		"reorder_point":                    func(c *NodeClaim) { c.ReorderPoint++ },
-		"reorder_point_source":             func(c *NodeClaim) { c.ReorderPointSource = "manual" },
 		"auto_reorder":                     func(c *NodeClaim) { c.AutoReorder = true },
 		"inbound_staging":                  func(c *NodeClaim) { c.InboundStaging += "X" },
 		"outbound_staging":                 func(c *NodeClaim) { c.OutboundStaging += "X" },

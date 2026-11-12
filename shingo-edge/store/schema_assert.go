@@ -110,7 +110,6 @@ var requiredColumns = []requiredColumn{
 	{"style_node_claims", "second_paired_core_node"},
 	{"style_node_claims", "reuse_compatible_bins"},
 	{"style_node_claims", "auto_push"},
-	{"style_node_claims", "reorder_point_source"},
 	// Claim attribution (v40): every claim read scans all six.
 	{"style_node_claims", "source"},
 	{"style_node_claims", "called_by"},

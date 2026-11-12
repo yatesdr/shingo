@@ -223,8 +223,8 @@ with the threshold as time at the 14-day median running rate; a value set before
 | `0` or no row | Core never monitors. Nothing fires an L1 for that pair automatically; what feeds the loader depends on its replenishment mode (see the default above — operator-driven loaders get the push; threshold-mode loaders with 0 get nothing, loudly). |
 | `> 0` | Core monitors and creates orders on crossing. C-push owns L1 firing for that pair. |
 
-The cell claim carries its own provenance: `reorder_point_source` (`legacy` / `manual` / `calculated`) on
-`style_node_claims`.
+The cell claim's reorder point is what the engineer set, with no provenance stamp beside it (Edge v48 dropped
+`reorder_point_source`).
 
 ---
 

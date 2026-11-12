@@ -95,8 +95,8 @@ type FlowCell struct {
 // modal shows what the row holds and Apply hands the whole section back, so
 // there is no per-field "untouched" to model inside it. Untouched is the
 // pointer on FlowCell.
-// A ZERO IS THE DEFAULT, AND IS NOT SENT. Thirteen of these fields carry
-// omitempty and three deliberately do not.
+// A ZERO IS THE DEFAULT, AND IS NOT SENT. Every field but two carries
+// omitempty, and those two deliberately do not.
 //
 // The desktop read carries an Advanced block per position per style — 240 of
 // them on the S0 fixture — and every one spelled out all fourteen fields even
@@ -105,11 +105,9 @@ type FlowCell struct {
 // absent or null ("Absent and null both mean the default"), and each of the
 // ten zero values IS its default there.
 //
-// The three that stay: allowed_payload_codes, because the modal is allowed to
-// clear the list and an empty list has to be sayable; reorder_point_source,
-// because Go's zero is "" and the model's default is "legacy" — omitting it
-// would change the pill the modal draws; and the carryover disposition,
-// because blank means replace and a reader should be told which.
+// The two that stay: allowed_payload_codes, because the modal is allowed to
+// clear the list and an empty list has to be sayable; and the carryover
+// disposition, because blank means replace and a reader should be told which.
 //
 // Unmarshalling is untouched — omitempty is a marshalling tag — so a save
 // sending every key still writes every column.
@@ -117,13 +115,11 @@ type FlowAdvanced struct {
 	// AllowedPayloadCodes is which payloads a robot may bring to this
 	// position. Set explicitly here, it beats Expand's degenerate-list guess.
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
-	// ReorderPoint / ReorderPointSource / AutoReorder are the replenishment
-	// policy. The source is what the calculator stamps ("manual",
-	// "calculated", "legacy"); the modal shows it as a pill beside the number.
-	ReorderPoint          int    `json:"reorder_point,omitempty"`
-	ReorderPointSource    string `json:"reorder_point_source"`
-	AutoReorder           bool   `json:"auto_reorder,omitempty"`
-	LinesideSoftThreshold int    `json:"lineside_soft_threshold,omitempty"`
+	// ReorderPoint / AutoReorder are the replenishment policy: the point the
+	// engineer set (0 is off) and whether reaching it asks for a bin.
+	ReorderPoint          int  `json:"reorder_point,omitempty"`
+	AutoReorder           bool `json:"auto_reorder,omitempty"`
+	LinesideSoftThreshold int  `json:"lineside_soft_threshold,omitempty"`
 	// AutoRequestPayload is a PAYLOAD CODE, not a flag: it names which payload
 	// a vacated position asks for. Blank is off.
 	AutoRequestPayload string `json:"auto_request_payload,omitempty"`
@@ -175,7 +171,6 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 	a := &FlowAdvanced{
 		AllowedPayloadCodes:   cloneStrings(c.AllowedPayloadCodes),
 		ReorderPoint:          c.ReorderPoint,
-		ReorderPointSource:    c.ReorderPointSource,
 		AutoReorder:           c.AutoReorder,
 		LinesideSoftThreshold: c.LinesideSoftThreshold,
 		AutoRequestPayload:    c.AutoRequestPayload,
@@ -242,9 +237,9 @@ func Collapse(c NodeClaim) FlowCell {
 // auto_confirm, lineside_soft_threshold,
 // reuse_compatible_bins, auto_push) are copied from the prior claim — or take
 // the INSERT defaults with no prior — because a value type cannot say "no
-// opinion" and the composer has none. Of the eleven pointer-gated columns it
+// opinion" and the composer has none. Of the eight pointer-gated columns it
 // speaks exactly the two the cell carries (changeover_evac_nodes, key_route)
-// and leaves the other nine nil, so an update leaves them alone.
+// and leaves the other six nil, so an update leaves them alone.
 //
 // StyleID comes from the prior; a caller writing a new claim sets it. The
 // prior's degenerate allowed list — exactly its one payload — follows the
@@ -301,7 +296,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 	// standing case and leaves everything above exactly as it was — which is
 	// the whole reason the field is a pointer.
 	//
-	// Six of the sixteen are pointer-gated columns Expand otherwise leaves
+	// Five of them are pointer-gated columns Expand otherwise leaves
 	// nil; speaking them is what makes an update touch them at all. The other
 	// ten are unconditional columns that were being copied from the prior a
 	// moment ago and are now the modal's.
@@ -312,7 +307,6 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.AutoRequestPayload = a.AutoRequestPayload
 		in.AutoPush = a.AutoPush
 		in.AutoConfirm = a.AutoConfirm
-		in.ReorderPointSource = Ptr(a.ReorderPointSource)
 		in.AutoReorder = Ptr(a.AutoReorder)
 		in.KeepStagedNode = Ptr(a.KeepStagedNode)
 		in.RefillBy = Ptr(a.RefillBy.OrDefault())
@@ -366,7 +360,6 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		LinesideSoftThreshold:          c.LinesideSoftThreshold,
 		ReuseCompatibleBins:            c.ReuseCompatibleBins,
 		AutoPush:                       c.AutoPush,
-		ReorderPointSource:             Ptr(c.ReorderPointSource),
 		AutoReorder:                    Ptr(c.AutoReorder),
 		KeepStagedNode:                 Ptr(c.KeepStagedNode),
 		Sequence:                       Ptr(c.Sequence),
@@ -405,7 +398,6 @@ func InputFromClaimUngated(c NodeClaim) NodeClaimInput {
 	in.KeyRoute = nil
 	in.KeyTask = nil
 	in.KeepStagedNode = nil
-	in.ReorderPointSource = nil
 	in.AutoReorder = nil
 	in.Sequence = nil
 	return in
@@ -426,7 +418,6 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	if prior != nil {
 		c = *prior
 	} else {
-		c.ReorderPointSource = "legacy"
 		c.ChangeoverCarryoverDisposition = CarryoverReplace
 		c.RefillBy = protocol.RefillByClearingRobot
 	}
@@ -466,13 +457,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.LinesideSoftThreshold = in.LinesideSoftThreshold
 	c.ReuseCompatibleBins, c.AutoPush, c.StrictPack = in.ReuseCompatibleBins, in.AutoPush, in.StrictPack
 	c.PackTolerancePct = in.PackTolerancePct
-	// The twelve pointer-gated columns: spoken or left alone.
-	if in.ReorderPointSource != nil {
-		c.ReorderPointSource = *in.ReorderPointSource
-		if c.ReorderPointSource == "" {
-			c.ReorderPointSource = "legacy"
-		}
-	}
+	// The pointer-gated columns: spoken or left alone.
 	if in.AutoReorder != nil {
 		c.AutoReorder = *in.AutoReorder
 	}

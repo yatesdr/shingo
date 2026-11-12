@@ -3,7 +3,7 @@
 <div class="flex flex-between mb-2">
   <h1>Replenishment</h1>
   <div class="text-muted" style="font-size:0.9rem;">
-    Cell autoreorder configuration. reorder_point = 0 is silent-inert (the legacy default).
+    Cell autoreorder configuration. A reorder point of 0 never orders.
     Loader UoP thresholds are set on Core (Nodes → loader config).
   </div>
 </div>
@@ -13,7 +13,7 @@
   Per-claim reorder_point on the line side. When this bin's remaining
   UoP drops to or below its reorder point, Edge fires a retrieve from
   supermarket to swap the bin. Requires AutoReorder enabled.
-  reorder_point = 0 is silent-inert (the legacy default).
+  A reorder point of 0 never orders.
 </p>
 
 <div class="card" style="padding:0; margin-bottom:2rem;">
@@ -26,7 +26,6 @@
         <th data-sort>Payload</th>
         <th data-sort style="text-align:right;">Capacity</th>
         <th data-sort style="text-align:right;">Reorder At</th>
-        <th data-sort>Source</th>
         <th data-sort>AutoReorder</th>
         <th style="width:220px;">Edit</th>
       </tr>
@@ -46,18 +45,15 @@
           <input type="number" min="0" value="{{.ReorderPoint}}" class="reorder-point-input" style="width:80px; text-align:right;">
         </td>
         <td>
-          <span class="badge {{if eq .Source "calculated"}}badge-info{{else if eq .Source "manual"}}badge-warn{{else}}badge-muted{{end}}"{{if eq .Source "unset"}} title="not set — a minted style; set its reorder here"{{end}}>{{if eq .Source "unset"}}not set{{else}}{{.Source}}{{end}}</span>
-        </td>
-        <td>
           <input type="checkbox" class="auto-reorder-input" {{if .AutoReorder}}checked{{end}}>
         </td>
         <td>
           <button class="btn btn-sm btn-primary" data-action="replenishmentApplyCell">Apply</button>
-          <button class="btn btn-sm" data-action="replenishmentRevertCell" title="Zero reorder_point, disable autoreorder, mark source=legacy">Revert to legacy</button>
+          <button class="btn btn-sm" data-action="replenishmentClearCell" title="Reorder point 0, Auto reorder off">Clear</button>
         </td>
       </tr>
       {{else}}
-      <tr data-no-sort><td colspan="9" class="text-muted">No claims found on active styles.</td></tr>
+      <tr data-no-sort><td colspan="8" class="text-muted">No claims found on active styles.</td></tr>
       {{end}}
     </tbody>
   </table>

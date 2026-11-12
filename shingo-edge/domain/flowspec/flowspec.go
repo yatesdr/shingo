@@ -123,11 +123,6 @@ const (
 	AutoPush                       Field = "auto_push"
 	KeyRoute                       Field = "key_route"
 	KeyTask                        Field = "key_task"
-	// ReorderPointSource is HOW the reorder point above was arrived at —
-	// "manual", "calculated", "legacy". It is a column FlowAdvanced can write
-	// and the only one that had no row here, so its value domain was enforced
-	// in the browser and nowhere else.
-	ReorderPointSource Field = "reorder_point_source"
 	// PartialDestination is where a produce claim's carrier goes when it leaves
 	// the line unfinished: a node group holds it to be finished later, an
 	// unloader unloads it there. Blank = where a full goes, at its real count.
@@ -191,7 +186,6 @@ var fieldLabels = map[Field]string{
 	AutoPush:                       "Auto push",
 	KeyRoute:                       "Key route",
 	KeyTask:                        "Key task",
-	ReorderPointSource:             "Reorder point source",
 	PartialDestination:             "Partials go to",
 	CurtainRequired:                "Curtain required",
 	StrictPack:                     "Strict pack",
@@ -209,7 +203,7 @@ var fieldOrder = []Field{
 	LinesideSoftThreshold, Sequence, KeepStagedNode,
 	ChangeoverEvacNodes, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoRequestPayload, AutoPush,
-	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
+	KeyRoute, KeyTask, PartialDestination, CurtainRequired,
 	StrictPack, PackTolerancePct,
 }
 
@@ -286,15 +280,6 @@ func steadyBase() map[Field]Need {
 	// modeArmViolation), so the editor must clear it on a mode change rather
 	// than carry a value that will not save.
 	out[KeepStagedNode] = Forbidden
-	// ReorderPointSource is Unused in EVERY mode. It is a STAMP, not a
-	// setting: the calculator writes "calculated" when it sets a point and a
-	// hand edit writes "manual", so it says how the number beside it was
-	// arrived at. A control over it would let an engineer claim a number was
-	// calculated when it was typed.
-	//
-	// Unused rather than Forbidden: stored values are left exactly as they
-	// are, and they are the record of where each press's numbers came from.
-	out[ReorderPointSource] = Unused
 	return out
 }
 

@@ -787,11 +787,6 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     key_route               TEXT NOT NULL DEFAULT '',
     key_task                TEXT NOT NULL DEFAULT '',
     auto_push               INTEGER NOT NULL DEFAULT 0,
-    -- How reorder_point was set (the Edge's auto-reorder, not Core's threshold).
-    -- 'legacy' = default, never edited (silent-inert when 0).
-    -- 'manual' = engineer typed a value.
-    -- 'calculated' = applied from the unified calculator.
-    reorder_point_source    TEXT NOT NULL DEFAULT 'legacy',
     -- below_reorder_since is the FALLING EDGE of this claim's level: the
     -- instant remaining UOP first went at-or-below reorder_point, cleared when
     -- it recovers above reorder_point + margin. NULL means "not below".

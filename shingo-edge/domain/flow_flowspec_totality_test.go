@@ -18,8 +18,9 @@ import (
 // enforced in the browser and nowhere else, and the server accepts whatever
 // arrives.
 //
-// reorder_point_source was exactly that, and it was the LAST one. This is the
-// test that says so, so the next field added to FlowAdvanced cannot repeat it.
+// reorder_point_source was exactly that, and it was the LAST one (it has since
+// gone). This is the test that says so, so the next field added to
+// FlowAdvanced cannot repeat it.
 func TestEveryComposerWritableFieldHasAFlowspecRow(t *testing.T) {
 	t.Parallel()
 

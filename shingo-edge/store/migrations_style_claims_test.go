@@ -96,18 +96,20 @@ func TestRebuildStyleNodeClaims_PreservesRowsAndIDs(t *testing.T) {
 		t.Fatalf("claim count = %d, want 2 — the rebuild lost rows", n)
 	}
 
+	// The old shape carries reorder_point_source, which the rebuild leaves
+	// behind (Edge v48 drops it from a table that kept it); the point and
+	// Auto reorder beside it come through.
 	var (
-		node, swap, payload, source string
-		reorder, auto               int
+		node, swap, payload string
+		reorder, auto       int
 	)
-	if err := db.QueryRow(`SELECT core_node_name, swap_mode, payload_code, reorder_point_source,
-	                              reorder_point, auto_reorder
+	if err := db.QueryRow(`SELECT core_node_name, swap_mode, payload_code, reorder_point, auto_reorder
 	                         FROM style_node_claims WHERE id = 7`).
-		Scan(&node, &swap, &payload, &source, &reorder, &auto); err != nil {
+		Scan(&node, &swap, &payload, &reorder, &auto); err != nil {
 		t.Fatalf("read claim 7: %v", err)
 	}
-	if node != "ALN_003" || swap != "two_robot" || payload != "PANEL-B" || source != "manual" {
-		t.Errorf("claim 7 identity changed: node=%q swap=%q payload=%q source=%q", node, swap, payload, source)
+	if node != "ALN_003" || swap != "two_robot" || payload != "PANEL-B" {
+		t.Errorf("claim 7 identity changed: node=%q swap=%q payload=%q", node, swap, payload)
 	}
 	if reorder != 50 {
 		t.Errorf("reorder_point = %d, want 50", reorder)

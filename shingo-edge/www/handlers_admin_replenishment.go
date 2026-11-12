@@ -27,7 +27,6 @@ type replenishmentClaimRow struct {
 	NodeName     string
 	PayloadCode  string
 	ReorderPoint int
-	Source       string
 	AutoReorder  bool
 	UOPCapacity  int
 }
@@ -49,10 +48,6 @@ func (h *Handlers) handleReplenishment(w http.ResponseWriter, r *http.Request) {
 		for _, s := range styles {
 			claims, _ := h.engine.StyleService().ListClaims(s.ID)
 			for _, c := range claims {
-				source := c.ReorderPointSource
-				if source == "" {
-					source = "legacy"
-				}
 				claimRows = append(claimRows, replenishmentClaimRow{
 					ClaimID:      c.ID,
 					ProcessName:  p.Name,
@@ -61,7 +56,6 @@ func (h *Handlers) handleReplenishment(w http.ResponseWriter, r *http.Request) {
 					NodeName:     c.CoreNodeName,
 					PayloadCode:  c.PayloadCode,
 					ReorderPoint: c.ReorderPoint,
-					Source:       source,
 					AutoReorder:  c.AutoReorder,
 					UOPCapacity:  c.UOPCapacity,
 				})

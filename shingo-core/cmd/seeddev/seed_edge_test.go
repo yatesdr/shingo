@@ -69,7 +69,7 @@ CREATE TABLE style_node_claims (
   second_paired_core_node TEXT NOT NULL DEFAULT '', refill_by TEXT NOT NULL DEFAULT 'clearing_robot',
   sequence INTEGER NOT NULL DEFAULT 0, lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
   reuse_compatible_bins INTEGER NOT NULL DEFAULT 0, auto_push INTEGER NOT NULL DEFAULT 0,
-  reorder_point_source TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
   below_reorder_since TEXT,
   changeover_evac_nodes TEXT NOT NULL DEFAULT '',
   changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',

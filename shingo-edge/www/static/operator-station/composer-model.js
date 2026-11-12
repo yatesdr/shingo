@@ -213,7 +213,6 @@ const CELL_TO_FIELD = {
 const ADVANCED_DEFAULTS = {
     allowed_payload_codes: [],
     reorder_point: 0,
-    reorder_point_source: 'legacy',
     auto_reorder: false,
     lineside_soft_threshold: 0,
     auto_request_payload: '',
@@ -245,9 +244,6 @@ const ADVANCED_DEFAULTS = {
     sequence: 0,
 };
 
-// Which flowspec field decides whether each Advanced control is drawn.
-// reorder_point_source has no flowspec row of its own — it is a stamp on how
-// the number was set, so it follows the number.
 // ── helpers ──────────────────────────────────────────────────────────────────
 const clone = v => JSON.parse(JSON.stringify(v));
 const blankCell = () => ({
@@ -359,18 +355,6 @@ function clearForbidden(state, cell) {
     return cell;
 }
 
-// flowspecFieldFor is the flowspec row's column for one Advanced key.
-//
-// TWELVE OF THIRTEEN ARE THE SAME NAME. This was a thirteen-entry lookup table
-// in which every entry but one mapped a key to itself — a table whose content
-// was "these names are the same", maintained by hand, one line per field, so
-// adding a field meant adding a row that said nothing. The one real mapping is
-// reorder_point_source, which has no flowspec row of its own: it is HOW the
-// reorder point was chosen, so the point's row governs it.
-function flowspecFieldFor(key) {
-    return key === 'reorder_point_source' ? 'reorder_point' : key;
-}
-
 // The same rule over the Advanced block, and only for Forbidden.
 //
 // UNUSED IS NOT CLEARED, deliberately. flowspec draws the line for us:
@@ -383,7 +367,7 @@ function clearForbiddenAdvanced(state, cell, adv) {
     const row = steadyRow(state, cell.role, cell.mode);
     if (!row) return adv;
     for (const key of Object.keys(ADVANCED_DEFAULTS)) {
-        if (row[flowspecFieldFor(key)] !== 'forbidden') continue;
+        if (row[key] !== 'forbidden') continue;
         adv[key] = clone(ADVANCED_DEFAULTS[key]);
     }
     return adv;
@@ -418,7 +402,7 @@ function advancedShows(state, node, key) {
     if (!cell) return false;
     const row = steadyRow(state, cell.role, cell.mode);
     if (!row) return true;
-    const need = row[flowspecFieldFor(key)];
+    const need = row[key];
     return need !== 'forbidden' && need !== 'unused';
 }
 
@@ -445,7 +429,6 @@ function advancedSet(state, node, adv) {
             if (v && v !== 'clearing_robot') out.push(key);
             continue;
         }
-        if (key === 'reorder_point_source') continue;   // a stamp on the number, not a value of its own
         if (Array.isArray(v) ? v.length > 0 : Boolean(v)) out.push(key);
     }
     return out;

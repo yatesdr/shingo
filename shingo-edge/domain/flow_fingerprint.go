@@ -84,7 +84,6 @@ type fingerprintClaim struct {
 	SwapMode            protocol.SwapMode  `json:"swap_mode"`
 	PayloadCode         string             `json:"payload_code"`
 	ReorderPoint        int                `json:"reorder_point"`
-	ReorderPointSource  string             `json:"reorder_point_source"`
 	AutoReorder         bool               `json:"auto_reorder"`
 	InboundStaging      string             `json:"inbound_staging"`
 	OutboundStaging     string             `json:"outbound_staging"`
@@ -164,7 +163,7 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 	for _, c := range claims {
 		out = append(out, fingerprintClaim{
 			ID: c.ID, CoreNodeName: c.CoreNodeName, Role: c.Role, SwapMode: c.SwapMode, PayloadCode: c.PayloadCode,
-			ReorderPoint: c.ReorderPoint, ReorderPointSource: c.ReorderPointSource, AutoReorder: c.AutoReorder,
+			ReorderPoint: c.ReorderPoint, AutoReorder: c.AutoReorder,
 			InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,
 			InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination,
 			ContainmentDestination: c.ContainmentDestination,

@@ -85,7 +85,6 @@ const ROUTING = [
 const ADVANCED_FIELDS = {
     allowed_payload_codes: 'allowed_payload_codes',
     reorder_point: 'reorder_point',
-    reorder_point_source: 'reorder_point',
     auto_reorder: 'auto_reorder',
     lineside_soft_threshold: 'lineside_soft_threshold',
     auto_request_payload: 'auto_request_payload',
@@ -184,7 +183,7 @@ function runAdvancedVisibility() {
 // reuse_compatible_bins and it holds for every one of these.
 function runForbiddenClearing() {
     const filled = {
-        allowed_payload_codes: ['PIA26'], reorder_point: 40, reorder_point_source: 'manual',
+        allowed_payload_codes: ['PIA26'], reorder_point: 40,
         auto_reorder: true, lineside_soft_threshold: 7, auto_request_payload: 'PIA26',
         auto_push: true, keep_staged_node: 'PLN_SPOT',
         changeover_carryover_disposition: 'keep_lineside',

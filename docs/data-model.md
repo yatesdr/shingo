@@ -1978,8 +1978,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 50 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 54 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2648,7 +2648,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `key_route` | `TEXT` | yes | `''` |  | SEER robot-SELECTION hints, carried through to the fleet request. key_route is a JSON array of map points to prefer passing through, IN ORDER; key_task is 'load'/'unload'. Both empty on every claim until one is configured, and empty means the fleet picks freely. A point that does not resolve terminates the robot's waybill on issue, which is why ValidateNodeClaim checks each one against Core's synced node list. |
 | `key_task` | `TEXT` | yes | `''` |  |  |
 | `auto_push` | `INTEGER` | yes | `0` |  |  |
-| `reorder_point_source` | `TEXT` | yes | `'legacy'` |  | How reorder_point was set (the Edge's auto-reorder, not Core's threshold). 'legacy' = default, never edited (silent-inert when 0). 'manual' = engineer typed a value. 'calculated' = applied from the unified calculator. |
 | `below_reorder_since` | `TEXT` |  |  |  | below_reorder_since is the FALLING EDGE of this claim's level: the instant remaining UOP first went at-or-below reorder_point, cleared when it recovers above reorder_point + margin. NULL means "not below".  It is the durable half of the demand episode. The level is evaluated once a period by the demand reconciler's level sweep (sweepCellLevels), and the timestamp is written only ON TRANSITION; this column exists because Edge restarts (systemctl restart shingoedge) more often than anything else in the system, and an in-memory-only edge means a restart mid-episode loses it, the next pass mints a duplicate, and the first never closes.  On the CLAIM rather than the episode because it is a per-claim level observation and the claim is the row the predicate already reads. The episode itself is keyed per PROCESS and lives in demand_origins_open. |
 | `source` | `TEXT` | yes | `'admin'` |  | ── ATTRIBUTION ────────────────────────────────────────────────────── Every claim row says who wrote it and from where, because the HMI flow composer makes the claim table fully open: an operator on the floor writes the same rows an engineer writes on the desktop. All of these are SERVER-STAMPED — the client never sends them.  source is the writer: 'admin' (the desktop claim editor), 'hmi' (the station's flow composer), 'generated' (the retired Generate variants), 'cloned' (CloneStyle). DEFAULT 'admin' is right for every row that already exists: the desktop was the only writer there was. |
 | `called_by` | `TEXT` | yes | `''` |  | called_by is the session user (admin) or the station (hmi); '' on rows that predate attribution and on generated/cloned rows made by a caller with no session. |
@@ -2705,7 +2704,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `key_route` | `TEXT` |  |  |  |
 | `key_task` | `TEXT` |  |  |  |
 | `auto_push` | `INT` |  |  |  |
-| `reorder_point_source` | `TEXT` |  |  |  |
 | `below_reorder_since` | `TEXT` |  |  |  |
 | `source` | `TEXT` |  |  |  |
 | `called_by` | `TEXT` |  |  |  |

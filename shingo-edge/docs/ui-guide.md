@@ -219,9 +219,8 @@ to the active style in step whenever the process is saved or changes over, and P
 **Route:** `/replenishment`
 
 Cell auto-reorder, one row per claim across every style of every process (the active style flagged): process,
-style, node, payload, capacity, **Reorder At**, where that number came from (calculated, manual, legacy, not
-set) and **AutoReorder**. **Apply** saves a row; **Revert to legacy** sets its reorder point to 0, turns
-auto-reorder off and marks it legacy. A reorder point of 0 never orders. How the level sweep decides is in
+style, node, payload, capacity, **Reorder At** and **AutoReorder**. **Apply** saves a row; **Clear** sets its
+reorder point to 0 and turns auto-reorder off. A reorder point of 0 never orders. How the level sweep decides is in
 [uop-threshold-replenishment.md](../../docs/uop-threshold-replenishment.md).
 
 ### Manual Order

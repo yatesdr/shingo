@@ -34,10 +34,10 @@ import (
 //     spots; the rest go to the free slots in picture order, in tap order
 //     (owner ruling R-M). The desktop may name a node per part.
 //   - EXPAND: the recipe's cells with the parts on their slots, the recipe's
-//     role kept, and the minted policy: no auto-reorder, reorder point 0,
-//     source 'unset' (R-H / R-L) — the operator reorders by hand until an
-//     engineer sets it — and over it, on a grouped recipe, each slot's group
-//     Advanced, which is the engineer setting it (SYNTH-round2 row 4).
+//     role kept, and the minted policy: no auto-reorder, reorder point 0
+//     (R-H / R-L) — the operator reorders by hand until an engineer sets
+//     it — and over it, on a grouped recipe, each slot's group Advanced,
+//     which is the engineer setting it (SYNTH-round2 row 4).
 //   - CREATE: the style row and its claims in ONE transaction — SaveFlow's own
 //     body (saveFlowTx) — named per R-D, provenance stamped.
 //
@@ -117,12 +117,6 @@ type mintPlan struct {
 	nodes     []processes.Node
 	routing   []domain.RoutingNode
 }
-
-// MintedReorderSource is the reorder_point_source a minted style's claims
-// carry: no reorder point has been set, by anybody (R-L). The replenishment
-// page and the Advanced pill read it. A group that sets a point mints it as
-// "manual" instead (domain.RecipeAdvanced.LayOver).
-const MintedReorderSource = "unset"
 
 // planMint resolves, moves, places and expands. It writes nothing.
 func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
@@ -318,9 +312,9 @@ func (e *Engine) recipeSlots(processID, presetID int64, parts int, plan *mintPla
 }
 
 // expandRecipe puts each part on its slot's positions and gives every cell the
-// minted policy (R-H / R-L): no auto-reorder, reorder point 0, source 'unset';
-// then, on every cell of a slot whose group has an Advanced, that Advanced over
-// it. A group that says nothing mints as an ungrouped recipe does. It returns
+// minted policy (R-H / R-L): no auto-reorder, reorder point 0; then, on every
+// cell of a slot whose group has an Advanced, that Advanced over it. A group
+// that says nothing mints as an ungrouped recipe does. It returns
 // the cells and the placement (each slot's first position → part).
 func expandRecipe(cells []domain.FlowCell, slots []domain.Slot, codes []string, slotOf []int,
 	groups []*domain.RecipeGroup) ([]domain.FlowCell, map[string]string) {
@@ -343,7 +337,7 @@ func expandRecipe(cells []domain.FlowCell, slots []domain.Slot, codes []string, 
 	out := make([]domain.FlowCell, 0, len(cells))
 	for _, c := range cells {
 		c.PayloadCode = partAt[c.CoreNodeName]
-		c.Advanced = &domain.FlowAdvanced{ReorderPointSource: MintedReorderSource, CarryoverDisposition: domain.CarryoverReplace}
+		c.Advanced = &domain.FlowAdvanced{CarryoverDisposition: domain.CarryoverReplace}
 		if g := policy[c.CoreNodeName]; g != nil {
 			g.LayOver(c.Advanced)
 		}

@@ -94,7 +94,6 @@ func TestUpdateCellReorder_LeavesUnmentionedColumnsAlone(t *testing.T) {
 	testutil.MustNoErr(t, eng.UpdateCellReorder(CellReorderInput{
 		ClaimID:      claimID,
 		ReorderPoint: 25,
-		Source:       "manual",
 		AutoReorder:  true,
 	}), "update cell reorder")
 

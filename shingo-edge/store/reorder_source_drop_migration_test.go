@@ -9,11 +9,13 @@ import (
 	"testing"
 )
 
-// The reorder-point provenance stamp (reorder_point_source: "legacy",
-// "manual", "unset", "calculated", or whatever the replenishment page was
-// sent) leaves both claims tables. Nothing decided on it, so on a database
-// carrying every value it ever held, each row's reorder point, Auto reorder,
-// level and every other column read the same before the upgrade and after.
+// Edge v48 (drop_style_node_claims_reorder_point_source). The reorder-point
+// provenance stamp ("legacy", "manual", "unset", "calculated", or whatever the
+// replenishment page was sent) leaves both claims tables. Nothing decided on
+// it, so on a database carrying every value it ever held, each row's reorder
+// point, Auto reorder, level and every other column read the same before the
+// upgrade and after; the column does not come back at the second boot (the
+// frozen chain's ALTER went with it, as v42's did).
 
 const reorderSourceColumn = "reorder_point_source"
 
@@ -160,7 +162,16 @@ func TestReorderSourceDrop_EveryRowReadsTheSame(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	bootAndDump(t, path)
+	first := bootAndDump(t, path)
+	for _, table := range []string{"style_node_claims", ClaimQuarantineTable} {
+		if probeRaw(t, path, reorderSourceProbe(table)) != 0 {
+			t.Errorf("%s keeps %s after the upgrade", table, reorderSourceColumn)
+		}
+	}
+	if second := bootAndDump(t, path); first != second {
+		t.Fatalf("the schema after boot 2 differs from boot 1 — something re-creates the dropped column.\n%s",
+			firstDumpDiff(first, second))
+	}
 
 	db, err = Open(path)
 	if err != nil {
@@ -182,5 +193,21 @@ func TestReorderSourceDrop_EveryRowReadsTheSame(t *testing.T) {
 	}
 	if len(beforeLive) != len(ids) || len(beforeMirror) != 2 {
 		t.Errorf("seeded %d live and %d mirror rows, want %d and 2", len(beforeLive), len(beforeMirror), len(ids))
+	}
+}
+
+// A fresh database never carries the column, on either claims table, and a
+// second boot changes nothing.
+func TestReorderSourceDrop_FreshNeverHasIt(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fresh.db")
+	first := bootAndDump(t, path)
+	if second := bootAndDump(t, path); first != second {
+		t.Fatalf("fresh DB: boot 2 schema differs from boot 1.\n%s", firstDumpDiff(first, second))
+	}
+	for _, table := range []string{"style_node_claims", ClaimQuarantineTable} {
+		if probeRaw(t, path, reorderSourceProbe(table)) != 0 {
+			t.Errorf("a fresh %s has %s", table, reorderSourceColumn)
+		}
 	}
 }

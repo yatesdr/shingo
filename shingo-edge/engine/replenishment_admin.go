@@ -15,9 +15,9 @@
 // Edge page saved cleanly, displayed, and reached nothing. It was deleted
 // rather than left as a trap.
 //
-// What remains is genuinely Edge-owned: reorder_point / reorder_point_source /
-// auto_reorder on style_node_claims, which handleConsumeTick reads on every PLC
-// tick to fire auto-reorder. That is the cell-side reorder point, a different
+// What remains is genuinely Edge-owned: reorder_point / auto_reorder on
+// style_node_claims, which handleConsumeTick reads on every PLC tick to fire
+// auto-reorder. That is the cell-side reorder point, a different
 // thing from Core's threshold, and it is live.
 package engine
 
@@ -27,12 +27,11 @@ import (
 	"shingoedge/domain"
 )
 
-// CellReorderInput is the write shape for the cell-side reorder_point
-// + reorder_point_source pair.
+// CellReorderInput is the write shape for the cell-side reorder_point +
+// auto_reorder pair.
 type CellReorderInput struct {
 	ClaimID      int64
 	ReorderPoint int
-	Source       string
 	AutoReorder  bool
 	// CalledBy is the desktop session's user. THE HANDLER'S, never the body's,
 	// exactly as flow/save decides it (owner ruling R1): this is the third
@@ -43,8 +42,8 @@ type CellReorderInput struct {
 	CalledBy string
 }
 
-// UpdateCellReorder modifies the reorder_point + source + AutoReorder
-// fields on an existing style_node_claim. Other claim fields stay
+// UpdateCellReorder modifies the reorder_point + AutoReorder fields on an
+// existing style_node_claim. Other claim fields stay
 // untouched — the engineer's edit on the replenishment page should
 // not change InboundSource / OutboundDestination / etc.
 func (e *Engine) UpdateCellReorder(in CellReorderInput) error {
@@ -58,17 +57,12 @@ func (e *Engine) UpdateCellReorder(in CellReorderInput) error {
 	if err != nil || current == nil {
 		return fmt.Errorf("cell reorder: claim %d not found: %w", in.ClaimID, err)
 	}
-	source := in.Source
-	if source == "" {
-		source = "manual"
-	}
 	// The stored claim as a write, with every absent-means-untouched column
-	// left absent: this path edits three columns and has no opinion about the
+	// left absent: this path edits two columns and has no opinion about the
 	// rest. See domain.InputFromClaimUngated for why the echo cannot be a
 	// hand-kept list.
 	upd := domain.InputFromClaimUngated(*current)
 	upd.ReorderPoint = in.ReorderPoint
-	upd.ReorderPointSource = &source
 	upd.AutoReorder = &in.AutoReorder
 	// This IS a claim write from the desktop, so it says so — with the person
 	// who made it, like the other two doors.

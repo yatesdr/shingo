@@ -626,12 +626,8 @@ func (db *DB) migrate() error {
 	// was removed when they stopped walking every unloader.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
 
-	// v25 (2026-05-16, UOP-threshold replenishment Phase 1): source
-	// tracking for reorder_point so the engineer UI can show whether a
-	// value was hand-typed or applied from the unified calculator.
-	// Default 'legacy' = never touched — preserves the silent-inert
-	// behaviour for plants that have not opted in.
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN reorder_point_source TEXT NOT NULL DEFAULT 'legacy'")
+	// (v25's reorder_point_source, the reorder point's provenance stamp, was
+	// dropped by Edge v48, 2026-11-11, and its ALTER removed with it.)
 
 	// v26 (UOP-threshold replenishment fix-up): track which calculator
 	// inputs the engineer overrode on the Calculate that produced the
@@ -2474,6 +2470,35 @@ func edgeMigrations() []migrate.Migration {
 			Version: 47,
 			Name:    "refill_by_and_one_tool_change",
 			Fn:      refillByAndOneToolChange,
+		},
+		{
+			// v48 (2026-11-11): reorder_point_source leaves style_node_claims
+			// and its quarantine mirror. It stamped how a reorder point was
+			// set ("legacy", "manual", "unset", "calculated"); nothing ordered
+			// on it, and its one decision was a false one: a write that
+			// changed only the stamp made an open preview stale. Every row's
+			// reorder point and Auto reorder stay as they are. The frozen-chain
+			// ALTER that re-added it on every boot was removed in the same
+			// change; a rolled-back Edge re-adds it at its default (v42).
+			// Guarded per table, and no Verify, as v42.
+			Version: 48,
+			Name:    "drop_style_node_claims_reorder_point_source",
+			Fn: func(tx *sql.Tx) error {
+				for _, table := range []string{"style_node_claims", ClaimQuarantineTable} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + table + `')
+						WHERE name = 'reorder_point_source'`).Scan(&n); err != nil {
+						return fmt.Errorf("v48 %s: %w", table, err)
+					}
+					if n == 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP COLUMN reorder_point_source`); err != nil {
+						return fmt.Errorf("v48 %s: %w", table, err)
+					}
+				}
+				return nil
+			},
 		},
 	}
 }

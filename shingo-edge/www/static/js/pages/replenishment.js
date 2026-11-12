@@ -5,10 +5,10 @@ import { toast } from '/static/shared/notice.js';
 // replenishment.js — cell-autoreorder admin page.
 //
 // Two inline edit verbs, both PUT /api/replenishment/cell-reorder:
-//   replenishmentApplyCell   — set reorder_point + auto_reorder
-//   replenishmentRevertCell  — zero it and mark source=legacy
+//   replenishmentApplyCell  — set reorder_point + auto_reorder
+//   replenishmentClearCell  — reorder_point 0, auto_reorder off
 //
-// Page reloads after a successful write so the source badge reflects.
+// Page reloads after a successful write so the row reads what was saved.
 //
 // SCOPE NOTE — this file used to carry a loader-threshold half: apply/delete
 // on loader_payload_thresholds, plus a seven-input calculator modal and a
@@ -29,7 +29,6 @@ async function replenishmentApplyCell(btn) {
     body: JSON.stringify({
       claim_id: claimID,
       reorder_point: value,
-      source: 'manual',
       auto_reorder: autoOn,
     }),
   });
@@ -40,12 +39,11 @@ async function replenishmentApplyCell(btn) {
   window.location.reload();
 }
 
-// Revert a single claim to legacy: zero the reorder_point, disable
-// autoreorder, mark source=legacy.
-async function replenishmentRevertCell(btn) {
+// Clear a single claim: reorder_point 0, Auto reorder off.
+async function replenishmentClearCell(btn) {
   const row = btn.closest('tr');
   const claimID = parseInt(row.dataset.claimId, 10);
-  if (!await confirm('Revert this claim to legacy? reorder_point becomes 0 and autoreorder is disabled.')) {
+  if (!await confirm('Clear this reorder point? It becomes 0 and Auto reorder turns off.')) {
     return;
   }
   const r = await fetch('/api/replenishment/cell-reorder', {
@@ -54,7 +52,6 @@ async function replenishmentRevertCell(btn) {
     body: JSON.stringify({
       claim_id: claimID,
       reorder_point: 0,
-      source: 'legacy',
       auto_reorder: false,
     }),
   });
@@ -70,5 +67,5 @@ async function replenishmentRevertCell(btn) {
 // on document.body.
 delegateActions(document.body, {
     replenishmentApplyCell,
-    replenishmentRevertCell
+    replenishmentClearCell
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

@@ -1,7 +1,8 @@
 // handlers_api_replenishment.go — API for the replenishment admin page.
 //
 // PUT /api/replenishment/cell-reorder — update a style_node_claim's
-// reorder_point / source / auto_reorder.
+// reorder_point / auto_reorder. A body from an older page may still carry
+// "source"; it is ignored.
 //
 // That is the whole surface. The loader-threshold half of this file
 // (upsert / delete / calculate / calculate-and-apply / override /
@@ -24,10 +25,9 @@ import (
 )
 
 type apiCellReorderReq struct {
-	ClaimID      int64  `json:"claim_id"`
-	ReorderPoint int    `json:"reorder_point"`
-	Source       string `json:"source"`
-	AutoReorder  bool   `json:"auto_reorder"`
+	ClaimID      int64 `json:"claim_id"`
+	ReorderPoint int   `json:"reorder_point"`
+	AutoReorder  bool  `json:"auto_reorder"`
 }
 
 func (h *Handlers) apiUpdateCellReorder(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +46,6 @@ func (h *Handlers) apiUpdateCellReorder(w http.ResponseWriter, r *http.Request) 
 	if err := h.orchestration.UpdateCellReorder(engine.CellReorderInput{
 		ClaimID:      req.ClaimID,
 		ReorderPoint: req.ReorderPoint,
-		Source:       req.Source,
 		AutoReorder:  req.AutoReorder,
 		CalledBy:     calledBy,
 	}); err != nil {

@@ -2360,20 +2360,19 @@ async function mainAsync() {
     // ── the Advanced sheet and Presets say what they do ─────────────────────
     //
     // The field's name is the flowspec table's; the help under it is this
-    // page's and says part. The reorder point's source pill is drawn only for
-    // a source that tells the engineer something: a number nobody stamped is
-    // just a number. Presets count the parts a preset was applied to, and say
+    // page's and says part. The reorder point is the number the engineer set,
+    // with no stamp beside it. Presets count the parts a preset was applied to, and say
     // so; a shape whose positions run different modes has a mark of its own.
 
-    const advComposer = src => {
+    const advComposer = () => {
         const c = savedComposer();
-        c.styles[0].advanced = { PLN_01: { reorder_point: 5, reorder_point_source: src } };
+        c.styles[0].advanced = { PLN_01: { reorder_point: 5 } };
         return c;
     };
 
     await pin('Advanced names allowed parts in the help, from the table in the label', async () => {
         const { win, scrim } = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer('legacy'),
+            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer(),
         });
         await settle();
         if (!scrim.classList.contains('active')) throw new Error('setup: the advanced sheet did not open');
@@ -2385,28 +2384,15 @@ async function mainAsync() {
         }
     });
 
-    await pin('a reorder point with no stamped source draws no "legacy" tag', async () => {
+    await pin('a reorder point is the number alone, with no source tag', async () => {
         const { scrim } = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer('legacy'),
+            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer(),
         });
         await settle();
         if (scrim.innerHTML.indexOf('data-adv="reorder_point"') < 0) throw new Error('setup: no reorder point row: ' + scrim.innerHTML);
         if (scrim.innerHTML.indexOf('pd-src') >= 0) {
-            throw new Error('an unstamped reorder point still draws a source tag: ' +
+            throw new Error('the reorder point still draws a source tag: ' +
                 (scrim.innerHTML.match(/<span class="pd-src[^>]*>[^<]*<\/span>/) || [''])[0]);
-        }
-    });
-
-    await pin('a typed reorder point says it was typed', async () => {
-        const { scrim } = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer('manual'),
-        });
-        await settle();
-        const want = '<span class="pd-src" title="typed in by an engineer, not calculated">typed</span>';
-        if (scrim.innerHTML.indexOf(want) < 0) {
-            throw new Error('the reorder point source reads ' +
-                JSON.stringify((scrim.innerHTML.match(/<span class="pd-src[^>]*>[^<]*<\/span>/) || [''])[0]) +
-                ', want ' + JSON.stringify(want));
         }
     });
 
@@ -2524,7 +2510,7 @@ async function mainAsync() {
     const openAdv = async () => {
         let live = null;
         const page = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer('manual'),
+            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer(),
             onScrim: sc => { live = liveInputs(sc); }, extraIds: { 'pd-advpop': advpopStub() },
         });
         await settle();

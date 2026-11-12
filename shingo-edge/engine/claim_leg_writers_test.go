@@ -150,7 +150,7 @@ func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
 			eng := testEngine(t, db)
 			eng.SetCoreNodes(engLaneCore, true)
 
-			err = eng.UpdateCellReorder(CellReorderInput{ClaimID: claimID, ReorderPoint: 25, Source: "manual"})
+			err = eng.UpdateCellReorder(CellReorderInput{ClaimID: claimID, ReorderPoint: 25})
 			c, rerr := db.GetStyleNodeClaim(claimID)
 			testutil.MustNoErr(t, rerr, "read claim back")
 			got := ""

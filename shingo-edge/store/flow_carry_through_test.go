@@ -90,7 +90,6 @@ var unspokenColumns = []struct {
 	of     func(processes.NodeClaim) any
 }{
 	{"reorder_point", func(c processes.NodeClaim) any { return c.ReorderPoint }},
-	{"reorder_point_source", func(c processes.NodeClaim) any { return c.ReorderPointSource }},
 	{"auto_reorder", func(c processes.NodeClaim) any { return c.AutoReorder }},
 	{"below_reorder_since", func(c processes.NodeClaim) any { return c.BelowReorderSince }},
 	{"allowed_payload_codes", func(c processes.NodeClaim) any { return c.AllowedPayloadCodes }},

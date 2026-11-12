@@ -404,7 +404,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -425,7 +424,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -446,7 +444,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -467,7 +464,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -488,7 +484,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -509,7 +504,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -530,7 +524,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -551,7 +544,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -572,7 +564,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",
@@ -593,7 +584,6 @@
               "PART-11"
             ],
             "reorder_point": 12,
-            "reorder_point_source": "manual",
             "auto_reorder": true,
             "lineside_soft_threshold": 40,
             "auto_request_payload": "PART-11",

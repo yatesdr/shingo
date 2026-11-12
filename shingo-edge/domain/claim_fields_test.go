@@ -31,8 +31,6 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.AllowedPayloadCodes = []string{v}
 	case flowspec.ReorderPoint:
 		c.ReorderPoint = 7
-	case flowspec.ReorderPointSource:
-		c.ReorderPointSource = v
 	case flowspec.AutoReorder:
 		c.AutoReorder = true
 	case flowspec.LinesideSoftThreshold:
@@ -94,8 +92,6 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.AllowedPayloadCodes = []string{v}
 	case flowspec.ReorderPoint:
 		in.ReorderPoint = 7
-	case flowspec.ReorderPointSource:
-		in.ReorderPointSource = &v
 	case flowspec.AutoReorder:
 		in.AutoReorder = &t
 	case flowspec.LinesideSoftThreshold:

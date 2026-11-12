@@ -62,9 +62,9 @@ type RecipeGroup struct {
 // RecipeAdvanced is a group's Advanced: FlowAdvanced less what a recipe may
 // not say (SYNTH-round2 row 4). The part fields go, because a recipe carries
 // no part (ValidateRecipeGroups refuses them off the raw JSON, since this type
-// cannot hold them); so do the loader board's order and the reorder point's
-// source, which the mint writes. The keys are FlowAdvanced's, so the
-// desktop's Advanced sheet reads and writes one shape in either scope.
+// cannot hold them); so does the loader board's order, which the mint writes.
+// The keys are FlowAdvanced's, so the desktop's Advanced sheet reads and
+// writes one shape in either scope.
 //
 // THE PRESS HARDWARE IS HERE NOW (refill_by, added as index_robot_supplies on
 // 2026-11-05). It was left out as "the cell's, the same for every part" — but a
@@ -210,10 +210,8 @@ func SlotGroups(slots []Slot, groups []RecipeGroup) []*RecipeGroup {
 }
 
 // LayOver writes a group's Advanced onto a minted cell's, whose defaults are
-// already in a: every field the group carries, the carry-over disposition only
-// when it names one, and the reorder point's source "manual" when the group
-// sets a point (an engineer set it; the replenishment page and the sheet's pill
-// read the source). A point of zero leaves the minted source standing.
+// already in a: every field the group carries, and the carry-over disposition
+// only when it names one.
 func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.ReorderPoint, a.AutoReorder = g.ReorderPoint, g.AutoReorder
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
@@ -224,13 +222,7 @@ func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	if g.CarryoverDisposition != "" {
 		a.CarryoverDisposition = g.CarryoverDisposition
 	}
-	if g.ReorderPoint > 0 {
-		a.ReorderPointSource = ReorderPointSourceManual
-	}
 }
-
-// ReorderPointSourceManual is the reorder point's source when a person set it.
-const ReorderPointSourceManual = "manual"
 
 // groupRefusal is a save refused for its groups, in the engineer's words.
 type groupRefusal string

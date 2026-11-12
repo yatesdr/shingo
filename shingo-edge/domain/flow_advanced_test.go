@@ -34,7 +34,7 @@ import (
 func advancedPrior() NodeClaim {
 	c := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
 	c.AllowedPayloadCodes = []string{"SYN-A-P002", "SYN-A-P003"}
-	c.ReorderPoint, c.ReorderPointSource, c.AutoReorder = 60, "manual", true
+	c.ReorderPoint, c.AutoReorder = 60, true
 	c.LinesideSoftThreshold = 7
 	c.AutoRequestPayload = "SYN-A-P002"
 	c.AutoPush = true
@@ -74,7 +74,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 	// And the row that lands still holds the engineer's twelve.
 	row := MaterializeClaim(got, &prior)
 	if !reflect.DeepEqual(row.AllowedPayloadCodes, prior.AllowedPayloadCodes) ||
-		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
+		row.ReorderPoint != 60 || !row.AutoReorder ||
 		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
 		row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
 		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotFetches() || !row.AutoConfirm || !row.StrictPack || row.PackTolerancePct != 5 {
@@ -91,7 +91,6 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	cell.Advanced = &FlowAdvanced{
 		AllowedPayloadCodes:   []string{"SYN-A-P011"},
 		ReorderPoint:          12,
-		ReorderPointSource:    "calculated",
 		AutoReorder:           false,
 		LinesideSoftThreshold: 0,
 		AutoRequestPayload:    "",
@@ -106,8 +105,8 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	if !reflect.DeepEqual(row.AllowedPayloadCodes, []string{"SYN-A-P011"}) {
 		t.Errorf("allowed list = %v, want the modal's", row.AllowedPayloadCodes)
 	}
-	if row.ReorderPoint != 12 || row.ReorderPointSource != "calculated" || row.AutoReorder {
-		t.Errorf("replenishment did not land: %d / %q / %v", row.ReorderPoint, row.ReorderPointSource, row.AutoReorder)
+	if row.ReorderPoint != 12 || row.AutoReorder {
+		t.Errorf("replenishment did not land: %d / %v", row.ReorderPoint, row.AutoReorder)
 	}
 	if row.LinesideSoftThreshold != 0 || row.AutoRequestPayload != "" || row.AutoPush {
 		t.Errorf("a cleared field did not clear: %d / %q / %v", row.LinesideSoftThreshold, row.AutoRequestPayload, row.AutoPush)
@@ -231,11 +230,11 @@ func TestFlowAdvanced_NoPriorTakesTheModalsValues(t *testing.T) {
 	cell := FlowCell{
 		CoreNodeName: "PLN_06", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot,
 		PayloadCode: "P", InboundSource: "SRC", InboundStaging: "PLN_05",
-		Advanced: &FlowAdvanced{ReorderPoint: 40, ReorderPointSource: "manual", AutoReorder: true, AutoConfirm: true},
+		Advanced: &FlowAdvanced{ReorderPoint: 40, AutoReorder: true, AutoConfirm: true},
 	}
 	in := Expand(cell, nil, ClaimSourceAdmin, "engineer")
 	row := MaterializeClaim(in, nil)
-	if row.ReorderPoint != 40 || row.ReorderPointSource != "manual" || !row.AutoReorder || !row.AutoConfirm {
+	if row.ReorderPoint != 40 || !row.AutoReorder || !row.AutoConfirm {
 		t.Errorf("a fresh position did not take the modal's values: %+v", row)
 	}
 	if row.ChangeoverCarryoverDisposition != CarryoverReplace {

@@ -177,8 +177,8 @@ func (f mintCellFixture) checkMinted(t *testing.T, res *MintResult, wantName str
 			t.Errorf("%s carries %q, want %q", node, c.PayloadCode, part)
 			continue
 		}
-		if c.AutoReorder || c.ReorderPoint != 0 || c.ReorderPointSource != MintedReorderSource {
-			t.Errorf("%s: auto_reorder=%v point=%d source=%q, want false/0/%q", node, c.AutoReorder, c.ReorderPoint, c.ReorderPointSource, MintedReorderSource)
+		if c.AutoReorder || c.ReorderPoint != 0 {
+			t.Errorf("%s: auto_reorder=%v point=%d, want false/0", node, c.AutoReorder, c.ReorderPoint)
 		}
 		if c.SourcePresetID == nil || *c.SourcePresetID != f.preset {
 			t.Errorf("%s: provenance %v, want recipe %d", node, c.SourcePresetID, f.preset)

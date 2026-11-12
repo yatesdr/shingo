@@ -31,8 +31,7 @@ func TestInputFromClaimUngated_SpeaksNoGatedColumn(t *testing.T) {
 		InboundSource: "SMN", OutboundDestination: "SMN_DST",
 		ChangeoverEvacNodes:            []string{"PLN_02"},
 		ChangeoverCarryoverDisposition: CarryoverKeepLineside, RefillBy: refillFor(true),
-		KeyRoute: []string{"LM10"}, KeyTask: "load", KeepStagedNode: "SPOT-1",
-		ReorderPointSource: "manual", AutoReorder: true, Sequence: 4,
+		KeyRoute: []string{"LM10"}, KeyTask: "load", KeepStagedNode: "SPOT-1", AutoReorder: true, Sequence: 4,
 	}
 	in := InputFromClaimUngated(c)
 

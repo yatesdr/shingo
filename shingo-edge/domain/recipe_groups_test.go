@@ -178,11 +178,11 @@ func TestRecipeAdvanced_IsFlowAdvancedLessWhatARecipeMayNotSay(t *testing.T) {
 	// refill_by is NOT on this list (2026-11-05): a recipe that
 	// cannot say which robot fetches the empty mints every floor-built style
 	// as Robot 1, whatever the press is.
-	for _, k := range []string{"allowed_payload_codes", "auto_request_payload", "sequence", "reorder_point_source"} {
+	for _, k := range []string{"allowed_payload_codes", "auto_request_payload", "sequence"} {
 		delete(want, k)
 	}
 	if got := keys(RecipeAdvanced{}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RecipeAdvanced keys %v, want FlowAdvanced's less the four %v", got, want)
+		t.Errorf("RecipeAdvanced keys %v, want FlowAdvanced's less the three %v", got, want)
 	}
 
 	var g RecipeAdvanced
@@ -215,8 +215,5 @@ func TestRecipeAdvanced_IsFlowAdvancedLessWhatARecipeMayNotSay(t *testing.T) {
 		if !reflect.DeepEqual(laid[k], v) {
 			t.Errorf("LayOver left %s at %v, want the group's %v", k, laid[k], v)
 		}
-	}
-	if a.ReorderPointSource != ReorderPointSourceManual {
-		t.Errorf("a group's reorder point laid on reads source %q, want %q", a.ReorderPointSource, ReorderPointSourceManual)
 	}
 }

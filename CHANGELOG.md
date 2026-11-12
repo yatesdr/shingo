@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration.
+Deploy: Edge v48.
 
 - Static files are gzipped once at start-up and named by their content: an Edge restart costs a screen a round of "not modified", not the whole page set
 - The station loads the composer only when the flow panel or the composer opens, and fewer shared files at boot
@@ -27,6 +27,8 @@ Deploy: no migration.
 - Edge admin pages share one event stream, asking only for their own events; a failed htmx refresh says so
 - A Core admin page shows the new-version banner on a redeploy; the dashboards and the station still reload
 - Core and Edge pages with live updates, and the station, say "Lost connection" with the time the server last answered, until it is back
+- A reorder point is the number the engineer set: its source tag (legacy, manual, not set) is gone, and Replenishment's Revert to legacy is Clear
+- Re-applying a reorder point on Replenishment no longer makes an open preview stale
 
 ## v0.4.0 — 2026-11-12
 

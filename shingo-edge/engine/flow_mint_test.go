@@ -144,9 +144,9 @@ func TestMintStyle_StampsTheMintedPolicyAndTheCellFacts(t *testing.T) {
 		t.Fatal("the minted style has no claims")
 	}
 	for _, c := range claims {
-		if c.AutoReorder || c.ReorderPoint != 0 || c.ReorderPointSource != MintedReorderSource {
-			t.Errorf("%s: auto_reorder=%v reorder_point=%d source=%q, want false/0/%q",
-				c.CoreNodeName, c.AutoReorder, c.ReorderPoint, c.ReorderPointSource, MintedReorderSource)
+		if c.AutoReorder || c.ReorderPoint != 0 {
+			t.Errorf("%s: auto_reorder=%v reorder_point=%d, want false/0",
+				c.CoreNodeName, c.AutoReorder, c.ReorderPoint)
 		}
 		if c.SourcePresetID == nil || *c.SourcePresetID != f.preset || c.SourcePresetVersion == nil || *c.SourcePresetVersion != p.Version {
 			t.Errorf("%s: provenance %v/%v, want preset %d v%d", c.CoreNodeName, c.SourcePresetID, c.SourcePresetVersion, f.preset, p.Version)
