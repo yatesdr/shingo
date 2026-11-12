@@ -122,7 +122,8 @@ test('the Quality Hold destination picker leaves lanes and members out', () => {
     const start = PAGE.indexOf('async function openContainmentPicker(');
     assert.ok(start >= 0, 'openContainmentPicker not found');
     const body = PAGE.slice(start, PAGE.indexOf('\n}\n', start));
-    assert.ok(/\(S\.coreNodes \|\| \[\]\)\.filter\(n => !B\(\)\.legExclusion\(S\.coreNodes, n\.name, 'destination'\)\)/.test(body),
+    // coreNodeList(): Core's nodes in the pickers' order (census #2).
+    assert.ok(/coreNodeList\(\)\.filter\(n => !B\(\)\.legExclusion\(S\.coreNodes, n\.name, 'destination'\)\)/.test(body),
         'the containment picker offers Core nodes without the destination rule:\n' + body);
 });
 
