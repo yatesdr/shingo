@@ -21,8 +21,11 @@ ok   Keep editing keeps the draft and its row
 ok   Discard leaves the draft
 
 ## F3: the required inbound staging chip, with no staging row and no back position
-#    the popover: "required for 2‑Robot Swap 1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
-BUG  the popover offers places from the plant to add and use: nothing to pick
+#    the popover: "Add and use · Staging GRP_A DST_1 DST_2 DST_9 NEW_1 NEW_2 NEW_3 OTH_1 POS_B1 POS_B2 POS_B3 POS_B4 SHR_1 SRC_1 SRC_2 SRC_A1 SRC_A2 STG_1 STG_2 STG_3 STG_9"
+ok   the popover offers places from the plant to add and use
+#    picked STG_9: POST /api/processes/1/routing-nodes {"core_node_name":"STG_9","role":"staging","label":"STG_9","enabled":true,"sequence":1}
+ok   Add and use is one request: the routing set gains it for staging
+ok   and the row uses it
 
 ## F36: Settings › HMI setup on a process with no recipe
 #    "HMI setup off: the operator changes over to a style an engineer made · on: they may set a style up — pick a part and a recipe, and move its spots For a cell bei"

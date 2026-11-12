@@ -2935,6 +2935,7 @@ function openPicker(btn) {
         apply(opts[Number(b.dataset.opt)].action);
         closePop();
     }));
+    if (note) void offerAddAndUse(pop, node, kind);
 }
 
 // showPop puts a popover up as an entry on the layer, anchored to the control
@@ -7037,6 +7038,64 @@ function addFreeAs(node, mode) {
         acts.push({ type: set[chip.key], node: node, staging: pick });
     }
     apply(acts);
+}
+
+// ── Add and use: no dead ends (F3, owner ruling 2) ───────────────────────────
+//
+// A REQUIRED CELL WITH NOTHING TO OFFER OFFERS THE PLANT. Its picker drew the
+// reason (no row in that role of the routing set) and the fix sat on another
+// tab, so a recipe draft for a 1-Robot Swap with no staging lane could not be
+// finished from where it was being drawn. Under the reason, the picker lists
+// Core's nodes; a pick adds the node to the routing set in that role and uses
+// it, in one request (the routing set's own upsert). The node list is the one
+// the page reads once and every picker reuses.
+const ADD_AND_USE_ROLE = { inbound_source: 'source', outbound_destination: 'destination',
+    inbound_staging: 'staging', outbound_staging: 'staging' };
+const ADD_AND_USE_ACT = { inbound_source: ['setSource', 'source'], outbound_destination: ['setDest', 'dest'],
+    inbound_staging: ['setStaging', 'staging'], outbound_staging: ['setParkOld', 'staging'] };
+
+async function offerAddAndUse(pop, node, kind) {
+    const field = routingFieldOf(kind);
+    const role = ADD_AND_USE_ROLE[field];
+    if (!role || !S.model || !M().fieldRequired(S.model, node, field)) return;
+    await loadCoreNodes();
+    if (!pop.isConnected && pop.isConnected !== undefined) return;
+    if (pop.hidden) return;
+    const inRole = new Set((S.composer.routing || []).filter(r => r.role === role).map(r => r.core_node_name));
+    const names = coreNodeList().map(n => n.name).filter(n => n && n[0] !== '_' && n !== node &&
+        !isPositionRow(n) && !inRole.has(n) && !B().legExclusion(S.coreNodes, n, role));
+    const box = document.createElement('div');
+    box.className = 'pd-adduse';
+    box.innerHTML = '<div class="pd-lbl">Add and use · ' + esc(ROUTING_GROUPS.find(g => g[0] === role)[1]) + '</div>' +
+        (names.length
+            ? names.map(n => '<button data-adduse="' + esc(n) + '">' + esc(n) + '</button>').join('')
+            : '<div class="none">' + esc(S.coreNodes ? 'No node to add.' : 'Core’s node list could not be read.') + '</div>');
+    pop.appendChild(box);
+    pop.querySelectorAll('[data-adduse]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        void addAndUse(pop, node, field, b.dataset.adduse);
+    }));
+}
+
+async function addAndUse(pop, node, field, name) {
+    const role = ADD_AND_USE_ROLE[field];
+    const count = (S.composer.routing || []).filter(r => r.role === role).length;
+    const out = await send('POST', '/api/processes/' + S.processID + '/routing-nodes',
+        B().routingAdd(name, role, count), NO_NOTICE);
+    if (!out.ok) {
+        const line = document.createElement('div');
+        line.className = 'none pd-warn';
+        line.textContent = said(out) || 'Not added.';
+        pop.appendChild(line);
+        return;
+    }
+    // The composer's routing set gains the row, so every picker on the page
+    // offers it now; Settings' copy is read again when it next opens.
+    S.composer.routing = (S.composer.routing || []).concat([{ core_node_name: name, role: role, sequence: count + 1, label: name }]);
+    S.routing = null;
+    closePop();
+    const [act, arg] = ADD_AND_USE_ACT[field];
+    apply({ type: act, node: node, [arg]: name });
 }
 
 // ── Add process, end to end ──────────────────────────────────────────────────
