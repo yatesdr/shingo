@@ -1,7 +1,7 @@
 import { api, navigateToProcess, refreshOnEvents } from '/static/js/shingoedge.js';
 import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
-import { hideModal, prompt, showModal } from '/static/shared/layer.js';
+import { confirm, hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
 
