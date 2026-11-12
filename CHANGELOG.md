@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.6.1 — 2026-11-12
+
 Deploy: no migration.
 
 - Every picker's rows are finger-sized, with a bigger tick box and a scrollbar wide enough to grab
