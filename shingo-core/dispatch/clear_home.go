@@ -204,7 +204,8 @@ func (d *Dispatcher) IssueClearTx(tx *sql.Tx, j ClearJob) (*ClearIssue, error) {
 	parent, _, err := issue(tx, Need{
 		Type: protocol.OrderTypeMove, Station: j.Station, Ref: orders.ClearUUIDPrefix + uuid.New().String(),
 		Quantity: 1, PayloadCode: j.Payload,
-		Desc: fmt.Sprintf("clear %s: %s comes home from %s", j.Home.Name, j.Partial.Label, j.PartialAt.Name),
+		Desc: fmt.Sprintf("pull full from home %s: partial %s comes home from %s in place of %s",
+			j.Home.Name, j.Partial.Label, j.PartialAt.Name, j.Empty.Label),
 		// Housekeeping the station asked for; no place is asking for material.
 		OriginClass: protocol.OriginClassNoDemand,
 		// The station asked for it and is sent its rows (AfterClearIssue).
@@ -215,7 +216,8 @@ func (d *Dispatcher) IssueClearTx(tx *sql.Tx, j ClearJob) (*ClearIssue, error) {
 		return nil, fmt.Errorf("issue the clear's parent: %w", err)
 	}
 	after, err := d.lifecycle.transitionTx(tx, parent, StatusReshuffling, Event{
-		Actor: "system", Reason: fmt.Sprintf("clearing %s: the partial %s comes home", j.Home.Name, j.Partial.Label)})
+		Actor: "system", Reason: fmt.Sprintf("pull full from home %s: partial %s comes home in place of %s",
+			j.Home.Name, j.Partial.Label, j.Empty.Label)})
 	if err != nil {
 		return nil, fmt.Errorf("move the clear's parent to reshuffling: %w", err)
 	}
@@ -228,7 +230,7 @@ func (d *Dispatcher) IssueClearTx(tx *sql.Tx, j ClearJob) (*ClearIssue, error) {
 		return nil, err
 	}
 	need := clearLeg(parent, clearPartialSeq, j.Partial, j.PartialAt.Name, j.Home.Name,
-		fmt.Sprintf("clear %s: partial %s home from %s", j.Home.Name, j.Partial.Label, j.PartialAt.Name))
+		fmt.Sprintf("pull full from home %s: partial %s back home from %s", j.Home.Name, j.Partial.Label, j.PartialAt.Name))
 	need.Steps = string(steps)
 	child, taken, err := issue(tx, need, plan.Plan{})
 	if errors.Is(err, reservations.ErrReservationConflict) || errors.Is(err, reservations.ErrNotTheNamedBin) {
@@ -439,7 +441,8 @@ func (d *Dispatcher) issueClearSpot(f ClearFacts, x *nodes.Node) error {
 		return err
 	}
 	child, taken, err := issue(tx, clearLeg(f.Parent, 1, f.EmptyBin, f.Home.Name, x.Name,
-		fmt.Sprintf("clear %s: empty %s to %s", f.Home.Name, f.EmptyBin.Label, x.Name)), plan.Plan{})
+		fmt.Sprintf("pull full from home %s: emptied %s out to buffer %s, making room for the partial",
+			f.Home.Name, f.EmptyBin.Label, x.Name)), plan.Plan{})
 	if err != nil {
 		return fmt.Errorf("issue the empty's move: %w", err)
 	}
@@ -547,7 +550,8 @@ func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 		return err
 	}
 	need := clearLeg(f.Parent, 1, f.EmptyBin, f.Home.Name, f.PartialAt,
-		fmt.Sprintf("clear %s: empty %s to %s, trading with the partial", f.Home.Name, f.EmptyBin.Label, f.PartialAt))
+		fmt.Sprintf("pull full from home %s: emptied %s to %s, trading places with the partial",
+			f.Home.Name, f.EmptyBin.Label, f.PartialAt))
 	need.Steps, need.Sibling = string(l2Steps), l1.EdgeUUID
 	l1Steps, err := json.Marshal(tradeSteps(f.PartialAt, f.Home.Name, *st))
 	if err != nil {
