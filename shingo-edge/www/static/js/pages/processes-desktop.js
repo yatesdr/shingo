@@ -243,8 +243,11 @@ function drawList() {
             '<td>' + esc(groupName(p.group_id) || '—') + '</td>' +
             '<td class="num">' + stylesOf(p.id).length + '</td>' +
             '<td>' + (p.flow_composer_enabled ? '<span class="pd-tag ok">on</span>' : '<span class="pd-dim">off</span>') + '</td>' +
+            // WIRED BUT SWITCHED OFF IS "off", as the Setup tab and Settings
+            // say it; "not wired" is a counter with no PLC and tag.
             '<td><span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' +
-            esc(counting ? p.counter_plc_name + ' · counting' : 'not wired') + '</span></td>' +
+            esc(counting ? p.counter_plc_name + ' · counting'
+                : p.counter_plc_name && p.counter_tag_name ? 'off · ' + p.counter_plc_name : 'not wired') + '</span></td>' +
             // THE CURTAIN COLUMN: the interlock's state at a glance, the
             // flow-composer column's on/off shape. The interlock is set per
             // node, so the chip counts the curtained nodes and its title names

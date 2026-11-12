@@ -167,6 +167,20 @@ block({
     }],
 });
 
+// Smoke (browser walk 2026-11-11): the list said "not wired" for a counter
+// with its PLC and tag set and switched off, where Setup and Settings say
+// "off".
+block({
+    title: 'smoke: a wired counter switched off reads "off" on the list, not "not wired"',
+    open: () => ({ search: '', page: withPage(p => ({ processes: p.processes.map(x => x.id === 1 ? Object.assign({}, x, { counter_enabled: false }) : x) })) }),
+    act: async () => {},
+    checks: [r => {
+        const row = String(r.page.root.innerHTML).split('<tr').find(x => x.indexOf('<b>Press A</b>') >= 0) || '';
+        const cell = (/<span class="pd-cnt[^"]*"><i><\/i>([^<]*)<\/span>/.exec(row) || ['', ''])[1];
+        return ['Press A\'s counter cell: ' + JSON.stringify(cell), cell === 'off · PLC_A', 'said ' + JSON.stringify(cell)];
+    }],
+});
+
 // F21 — the address bar's #tab= edited in place (a hashchange, no load).
 block({
     title: 'F21: #tab= edited in place switches the tab (FINDINGS F21)',
