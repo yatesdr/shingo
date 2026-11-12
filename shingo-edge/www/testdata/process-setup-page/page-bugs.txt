@@ -44,7 +44,7 @@ ok   the typed name and description stay
 ok   the page says "the Edge refused it"
 
 ## P0 :6467: a mint refused 422 with findings names them
-BUG  the sheet names "POS_A1 needs a source": status "the Edge refused it"
+ok   the sheet names "POS_A1 needs a source"
 
 ## P0 :4169: Apply on an untouched Advanced sheet changes nothing
 BUG  the flow is as it was: cells moved
@@ -56,27 +56,27 @@ BUG  one save, no preview-and-retry: POST /api/processes/1/flow/save · POST /ap
 
 ## ruling 5: Add process, its positions refused, then pressed again
 ok   the refusal is said
-BUG  pressed again, nothing is made twice: pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads
+ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
 ## ruling 5: Counted at → New station counter, its binding refused, then pressed again
 ok   the refusal is said
-BUG  pressed again, nothing is made twice: pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at
+ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
 ## ruling 5: + New style from Recipe One, its CATID refused, then pressed again
 ok   the refusal is said
-BUG  pressed again, nothing is made twice: pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · POST /api/processes/1/flow/preview
+ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
 ## ruling 5 (same chain class): Add operator screen, its positions refused, then pressed again
 ok   the refusal is said
-BUG  pressed again, nothing is made twice: pressed again: POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · POST /api/processes/1/flow/preview
+ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
 ## ruling 5: Add process half made, then Cancel: what was made is read back
 ok   nothing is deleted
-BUG  the process list is read again: after Cancel: nothing
+ok   the process list is read again
 
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
 ok   no refusal block leaves the page silent

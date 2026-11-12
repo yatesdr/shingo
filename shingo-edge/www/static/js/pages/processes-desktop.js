@@ -4970,12 +4970,17 @@ function openStationCounter(id, bindNode) {
         'Save', async () => {
             const body = { label: $('sc-label').value, tag_name: $('sc-tag').value, tag_name_2: $('sc-tag2').value };
             const url = id ? '/api/station-counters/' + id : '/api/processes/' + S.processID + '/station-counters';
-            const out = await send(id ? 'PUT' : 'POST', url, body, NO_NOTICE);
+            // A new counter is made once per sheet: its binding refused is
+            // resumed, not a second counter (ruling 5).
+            const chain = chainMade();
+            const out = chain.counter || await send(id ? 'PUT' : 'POST', url, body, NO_NOTICE);
             if (!out.ok) { sheetStatus(said(out), true); return; }
+            if (!id) chain.counter = out;
             if (!id && bindNode && bodyOf(out).id) {
                 const b = await send('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: bodyOf(out).id }, NO_NOTICE);
-                if (!b.ok) { sheetStatus(said(b), true); return; }
+                if (!b.ok) { chainHalf(afterStationChange); sheetStatus(said(b), true); return; }
             }
+            chainDone();
             // A new counter counts nothing yet: its checklist opens, its
             // countable positions ticked when it is the only one.
             if (!id && !bindNode && bodyOf(out).id) S.scOpen = bodyOf(out).id;
@@ -6173,9 +6178,28 @@ function closeSheet() {
     else sheetGone(null, 'close');
 }
 
+// ── a chain of writes behind one OK (ruling 5) ───────────────────────────────
+//
+// A SHEET WHOSE OK IS SEVERAL WRITES (Add process, Add operator screen, a new
+// station counter bound to its position, New style's mint and CATID) used to
+// run them all again on the next press after a refusal halfway: a second
+// process, screen, counter or mint. The sheet now keeps what its chain made
+// (chainMade) and the next press resumes at the step that failed. That lives
+// only while the sheet is open. Closing it deletes nothing: what was made
+// stays, and the read the chain would have ended with (chainHalf) runs then,
+// so it is on the page. No new endpoint and no new request on the way.
+function chainMade() {
+    if (!S.sheet) return {};
+    return S.sheet.made || (S.sheet.made = {});
+}
+function chainHalf(readBack) { if (S.sheet) S.sheet.half = readBack; }
+function chainDone() { if (S.sheet) S.sheet.half = null; }
+
 function sheetGone(h, why) {
     if (h && S.sheet && S.sheet.handle !== h) return;   // a sheet already replaced
+    const half = S.sheet && S.sheet.half;
     S.sheet = null;
+    if (half) void half();
     if (h && h.el === $('pd-scrim')) h.el.innerHTML = '';
     // A sheet another took the place of leaves its page state to the one
     // that replaced it, as the scrim's overwrite always did.
@@ -6661,6 +6685,14 @@ function markNewStyle() {
     try { document.body.dataset.pdNewStyle = m; } catch (_) { /* nothing to publish on */ }
 }
 
+// withFindings is a mint's refusal with the findings a 422 names
+// (apiMintFlow writes them beside the error); the sheet said the error alone
+// (P0 :6467).
+function withFindings(out) {
+    const found = out.shown ? [] : (bodyOf(out).findings || []).map(f => f && f.message).filter(Boolean);
+    return said(out) + (found.length ? ': ' + found.join('; ') : '');
+}
+
 // mintNewStyle posts the sheet's recipe and parts to flow/mint, then the CATID
 // to the minted style if one was typed, and opens it. Each part names its
 // slot's spot where the Spots step put it (a moved slot's node, D33), and the
@@ -6675,9 +6707,13 @@ async function mintNewStyle(recipe) {
         const head = (p.slots[i].nodes || [])[0] || '';
         picks.push({ code: code, node: moves[head] || head });
     }
-    const made = await send('POST', '/api/processes/' + S.processID + '/flow/mint',
+    // The mint once per sheet: a CATID refused after it is resumed, not minted
+    // again (ruling 5).
+    const chain = chainMade();
+    const made = chain.mint || await send('POST', '/api/processes/' + S.processID + '/flow/mint',
         B().flowMint(recipe, picks, stationIDForSave(), moves), NO_NOTICE);
-    if (!made.ok) { sheetStatus(said(made), true); return; }
+    if (!made.ok) { sheetStatus(withFindings(made), true); return; }
+    chain.mint = made;
     const catid = String(sheetValue('catid') || '').trim();
     if (catid) {
         // A MINT THAT RESOLVED ("Already runs as …") NAMES A STYLE THAT HAS A
@@ -6688,8 +6724,13 @@ async function mintNewStyle(recipe) {
         const st = S.styles.find(s => s.id === id) ||
             { id: id, name: bodyOf(made).style_name, process_id: S.processID };
         const set = await send('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }), NO_NOTICE);
-        if (!set.ok) { sheetStatus('Minted ' + st.name + ', but its CATID did not save' + said(set, ': ') + '.', true); return; }
+        if (!set.ok) {
+            chainHalf(refreshProcess);
+            sheetStatus('Minted ' + st.name + ', but its CATID did not save' + said(set, ': ') + '.', true);
+            return;
+        }
     }
+    chainDone();
     closeSheet();
     S.notice = (bodyOf(made).minted ? 'Minted ' : 'Already runs as ') + bodyOf(made).style_name + '.';
     S.styleID = Number(bodyOf(made).style_id) || S.styleID;
@@ -6990,27 +7031,39 @@ async function submitAddProcess() {
     S.add.refused = false;
 
     sheetStatus('Creating…');
-    const made = await send('POST', '/api/processes',
-        B().processCreate({ name: name, description: sheetValue('description'), group_id: S.add.groupID }), NO_NOTICE);
-    if (!made.ok) { sheetStatus(said(made), true); return; }
-    const processID = Number(bodyOf(made).id);
+    // Each step once per sheet: a press after a refusal resumes at the step
+    // that failed (ruling 5), and Cancel then reads back what was made.
+    const chain = chainMade();
+    if (!chain.processID) {
+        const made = await send('POST', '/api/processes',
+            B().processCreate({ name: name, description: sheetValue('description'), group_id: S.add.groupID }), NO_NOTICE);
+        if (!made.ok) { sheetStatus(said(made), true); return; }
+        chain.processID = Number(bodyOf(made).id);
+        chain.done = ['The process was created'];
+        chainHalf(async () => { await reloadProcesses(); await reloadStations(); if (!S.processID) drawList(); });
+    }
+    const processID = chain.processID;
 
     // What already exists, so a refusal halfway through says so rather than
     // leaving the engineer to find out from the list.
-    const done = ['The process was created'];
+    const done = chain.done;
     const stop = (what, out) => sheetStatus(done.join('; ') + '. ' + what + (out.shown ? ' was not written.' : ' was refused: ' + out.error), true);
 
-    const st = await send('POST', '/api/operator-stations',
-        B().stationWrite(null, processID, false, { name: screen, note: '' }), NO_NOTICE);
-    if (!st.ok) { stop('Its operator screen', st); return; }
-    const stationID = Number(bodyOf(st).id);
-    done.push('its screen added');
+    if (!chain.stationID) {
+        const st = await send('POST', '/api/operator-stations',
+            B().stationWrite(null, processID, false, { name: screen, note: '' }), NO_NOTICE);
+        if (!st.ok) { stop('Its operator screen', st); return; }
+        chain.stationID = Number(bodyOf(st).id);
+        done.push('its screen added');
+    }
+    const stationID = chain.stationID;
 
     const claimed = pickerValue('positions');
-    if (claimed.length) {
+    if (claimed.length && !chain.claimed) {
         const nodes = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
             B().stationNodes(claimed), NO_NOTICE);
         if (!nodes.ok) { stop('Its positions', nodes); return; }
+        chain.claimed = true;
         done.push('its positions claimed');
     }
 
@@ -7030,29 +7083,30 @@ async function submitAddProcess() {
             routingRows.push({ core_node_name: node, role: g[0] });
         }
     }
-    if (routingRows.length) {
+    if (routingRows.length && !chain.routed) {
         const rows = await send('PUT', '/api/processes/' + processID + '/routing-nodes',
             B().routingSet(routingRows), NO_NOTICE);
         if (!rows.ok) { stop('Its routing set', rows); return; }
+        chain.routed = true;
+        done.push('its routing set written');
     }
-    const routed = routingRows.length;
 
     // THE PART SET, the same shape and for the same reason. It goes before the
     // gate for the same reason the routing set does: a cell the composer opens
     // on should have both lists the composer's pickers read.
     const partSet = pickerValue(PART_SET_PICKER);
-    if (partSet.length) {
+    if (partSet.length && !chain.parts) {
         const parts = await send('PUT', '/api/processes/' + processID + '/payloads',
             B().processPayloads(partSet), NO_NOTICE);
         if (!parts.ok) { stop('Its part set', parts); return; }
+        chain.parts = true;
         done.push('its part set written');
     }
 
     // THE GATE STAYS SHUT (brief U0, 2026-10-18). A new process opens to the
     // floor only when an engineer turns it on in Settings; writing the routing
     // set is not that decision.
-    if (routed) done.push('its routing set written');
-
+    chainDone();
     closeSheet();
     await reloadProcesses();
     await reloadStations();
@@ -7144,10 +7198,14 @@ async function openScreenSheet(stationID) {
             const same = want.length === baseline.length &&
                 want.every((n, i) => n === baseline[i]);
             if (!same && !(await positionRemovalsAsked(st.id, baseline, want, warn))) return;
-            const wrote = await send(editing ? 'PUT' : 'POST',
+            // A new screen is made once per sheet: its positions refused are
+            // resumed, not a second screen (ruling 5, the same chain).
+            const chain = chainMade();
+            const wrote = chain.screen || await send(editing ? 'PUT' : 'POST',
                 editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
                 stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }), NO_NOTICE);
             if (!wrote.ok) { sheetStatus(said(wrote), true); return; }
+            if (!editing) chain.screen = wrote;
             const id = editing ? st.id : Number(bodyOf(wrote).id);
             if (!same) {
                 const nodes = await send('PUT', '/api/operator-stations/' + id + '/claimed-nodes',

@@ -134,21 +134,21 @@
     sheet: open "Add operator screen", status "The screen was saved; its positions were refused: the Edge refused it" (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/operator-stations/31/claimed-nodes  ←  500, no body (chi Recoverer)
     then: GET /api/operator-stations
     new text: .layer-scrim span.layer-status.is-bad: The screen was saved; its positions were refused: Server error (500)
     sheet: open "Add operator screen", status "The screen was saved; its positions were refused: Server error (500)" (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/operator-stations/31/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/operator-stations
     new text: .layer-scrim span.layer-status.is-bad: The screen was saved; its positions were refused: No answer from the server
     sheet: open "Add operator screen", status "The screen was saved; its positions were refused: No answer from the server" (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/operator-stations/31/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/operator-stations
     new text: .layer-scrim span.layer-status.is-bad: The screen was saved; its positions were not written.
@@ -158,4 +158,4 @@
     sheet: open "Add operator screen", status "The screen was saved; its positions were not written." (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations → sheet: open "Add operator screen", no status, OK "Add" enabled
+    pressed again: PUT /api/operator-stations/31/claimed-nodes · GET /api/operator-stations → sheet: open "Add operator screen", status "The screen was saved; its positions were not written." (bad), OK "Add" enabled
