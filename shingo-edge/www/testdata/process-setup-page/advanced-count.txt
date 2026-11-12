@@ -14,61 +14,61 @@ POS_A9 sequential/produce  advancedCount=0
 POS_A10 sequential/produce  advancedCount=0
 
 ## Style B
-POS_A1 two_robot_press_index/consume  advancedCount=9  sheet total=9
+POS_A1 two_robot_press_index/consume  advancedCount=7  sheet total=7
     section "Part identity"  1 set
-    section "Replenishment"  5 set
+    section "Replenishment"  3 set
     section "Changeover specials"  2 set
     section "Press hardware"  0 set
     section "Station policy"  1 set
-POS_A2 two_robot_press_index/produce  advancedCount=11  sheet total=11
+POS_A2 two_robot_press_index/produce  advancedCount=9  sheet total=9
     section "Part identity"  1 set
-    section "Replenishment"  4 set
+    section "Replenishment"  2 set
     section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Press hardware"  0 set
     section "Station policy"  1 set
-POS_A3 two_robot/consume  advancedCount=10  sheet total=10
+POS_A3 two_robot/consume  advancedCount=8  sheet total=8
     section "Part identity"  1 set
-    section "Replenishment"  5 set
+    section "Replenishment"  3 set
     section "Changeover specials"  2 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
-POS_A4 two_robot/produce  advancedCount=11  sheet total=11
+POS_A4 two_robot/produce  advancedCount=9  sheet total=9
     section "Part identity"  1 set
-    section "Replenishment"  4 set
+    section "Replenishment"  2 set
     section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Station policy"  1 set
-POS_A5 single_robot/consume  advancedCount=9  sheet total=9
+POS_A5 single_robot/consume  advancedCount=7  sheet total=7
     section "Part identity"  1 set
-    section "Replenishment"  5 set
+    section "Replenishment"  3 set
     section "Changeover specials"  2 set
     section "Station policy"  1 set
-POS_A6 single_robot/produce  advancedCount=11  sheet total=11
+POS_A6 single_robot/produce  advancedCount=9  sheet total=9
     section "Part identity"  1 set
-    section "Replenishment"  4 set
-    section "Changeover specials"  2 set
-    section "Finished goods"  3 set
-    section "Station policy"  1 set
-POS_A7 sequential/consume  advancedCount=9  sheet total=9
-    section "Part identity"  1 set
-    section "Replenishment"  5 set
-    section "Changeover specials"  2 set
-    section "Station policy"  1 set
-POS_A8 sequential/consume  advancedCount=9  sheet total=9
-    section "Part identity"  1 set
-    section "Replenishment"  5 set
-    section "Changeover specials"  2 set
-    section "Station policy"  1 set
-POS_A9 sequential/produce  advancedCount=11  sheet total=11
-    section "Part identity"  1 set
-    section "Replenishment"  4 set
+    section "Replenishment"  2 set
     section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Station policy"  1 set
-POS_A10 sequential/produce  advancedCount=11  sheet total=11
+POS_A7 sequential/consume  advancedCount=7  sheet total=7
     section "Part identity"  1 set
-    section "Replenishment"  4 set
+    section "Replenishment"  3 set
+    section "Changeover specials"  2 set
+    section "Station policy"  1 set
+POS_A8 sequential/consume  advancedCount=7  sheet total=7
+    section "Part identity"  1 set
+    section "Replenishment"  3 set
+    section "Changeover specials"  2 set
+    section "Station policy"  1 set
+POS_A9 sequential/produce  advancedCount=9  sheet total=9
+    section "Part identity"  1 set
+    section "Replenishment"  2 set
+    section "Changeover specials"  2 set
+    section "Finished goods"  3 set
+    section "Station policy"  1 set
+POS_A10 sequential/produce  advancedCount=9  sheet total=9
+    section "Part identity"  1 set
+    section "Replenishment"  2 set
     section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Station policy"  1 set

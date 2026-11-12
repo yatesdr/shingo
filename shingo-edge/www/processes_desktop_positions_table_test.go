@@ -156,8 +156,8 @@ func TestPositionsColumnSharesAddTo100(t *testing.T) {
 	t.Parallel()
 	sum := 0.0
 	ms := regexp.MustCompile(`\.pd-postbl col\.c-[\w-]+ \{ width: ([\d.]+)%; \}`).FindAllStringSubmatch(desktopCSS(t), -1)
-	if len(ms) != 10 {
-		t.Fatalf("want 10 column widths, found %d", len(ms))
+	if len(ms) != 11 {
+		t.Fatalf("want 11 column widths, found %d", len(ms))
 	}
 	for _, m := range ms {
 		v, err := strconv.ParseFloat(m[1], 64)

@@ -24,3 +24,10 @@ BUG  POS_A3 via:1 (LM_3 of LM_2 › LM_3): offers LM_2, already on the route
 ok   inbound staging STG_1 is kept (2-Robot Swap uses it)
 ok   outbound staging STG_2 is dropped (2-Robot Swap forbids it)
 BUG  the page says outbound staging STG_2 was dropped: nothing was said
+
+## U3 · Auto reorder on the row: off on a new position of either role; Set turns it on at the point; Off turns it off
+ok   a new consume position reads off
+ok   a new produce position reads off
+ok   Set 15 writes reorder_point 15 and auto_reorder on; the cell reads 15
+ok   Off writes auto_reorder off and keeps the point; the cell reads off
+ok   the reorder point's sub-label speaks of the bin, not of what is left in it: "units in the bin when the next one is requested"

@@ -137,6 +137,41 @@ const BUGS = [
             ];
         },
     },
+    {
+        title: 'U3 · Auto reorder on the row: off on a new position of either role; Set turns it on at the point; Off turns it off',
+        run: async page => {
+            const S = page.S, M = page.pd('M')();
+            const apply = page.pd('apply'), cell = page.pd('reorderCell');
+            const T2 = h => String(h).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            const mode = Object.keys(M.modeLabels())[0];
+            apply({ type: 'addPosition', node: 'POS_A11', mode: mode });
+            const out = [];
+            for (const role of ['consume', 'produce']) {
+                apply({ type: 'setRole', node: 'POS_A11', role: role });
+                const a = M.advancedFor(page.S.model, 'POS_A11');
+                out.push(['a new ' + role + ' position reads off', T2(cell('POS_A11')) === 'off' && !a.auto_reorder && !a.reorder_point,
+                    'it reads ' + JSON.stringify(T2(cell('POS_A11'))) + ', point ' + a.reorder_point + ', auto ' + a.auto_reorder]);
+            }
+            const press = which => {
+                page.click('root', { act: 'pick', node: 'POS_A11', kind: 'reorder' });
+                if (which === 'set') page.type('rp', '15');
+                const row = page.rows('pd-pop', 'data-rp').find(r => r.dataset.rp === which);
+                if (!row) throw new Error('the reorder popover has no ' + which + ': ' + (page.byId('pd-pop') || {}).innerHTML);
+                page.byId('pd-pop').onclick({ target: row, stopPropagation() {} });
+            };
+            press('set');
+            let a = M.advancedFor(page.S.model, 'POS_A11');
+            out.push(['Set 15 writes reorder_point 15 and auto_reorder on; the cell reads 15', a.reorder_point === 15 && a.auto_reorder &&
+                T2(cell('POS_A11')) === '15', 'point ' + a.reorder_point + ', auto ' + a.auto_reorder + ', cell ' + JSON.stringify(T2(cell('POS_A11')))]);
+            press('off');
+            a = M.advancedFor(page.S.model, 'POS_A11');
+            out.push(['Off writes auto_reorder off and keeps the point; the cell reads off', a.reorder_point === 15 && !a.auto_reorder &&
+                T2(cell('POS_A11')) === 'off', 'point ' + a.reorder_point + ', auto ' + a.auto_reorder + ', cell ' + JSON.stringify(T2(cell('POS_A11')))]);
+            const sub = page.pd('ADV_COPY').reorder_point[1];
+            out.push(['the reorder point\'s sub-label speaks of the bin, not of what is left in it: ' + JSON.stringify(sub), !/left/.test(sub), 'consume-only words']);
+            return out;
+        },
+    },
 ];
 
 async function pinTableBugs() {

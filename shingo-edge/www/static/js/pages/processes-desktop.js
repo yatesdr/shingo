@@ -2204,6 +2204,7 @@ function positionsTable() {
             '<td>' + fieldCell(n, 'source', 'inbound_source', c.source, '—') + routingGap(n, 'inbound_source', c.source) + '</td>' +
             '<td>' + viaCell(n) + '</td>' +
             '<td>' + fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) + '</td>' +
+            (S.shapeDraft ? '' : '<td>' + reorderCell(n) + '</td>') +
             (S.shapeDraft ? '' : '<td><button class="pd-adv' + (advSet ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
             gearSVG() + (advSet ? '<b>' + advSet + ' set</b>' : 'defaults') + '</button></td>') + '</tr>');
     }
@@ -2211,7 +2212,7 @@ function positionsTable() {
     const free = freePositions();
     let tail = '';
     if (rowless.length) {
-        tail += '<tr class="paired"><td colspan="' + (S.shapeDraft ? 8 : 10) + '">' + esc(rowless.join(' · ')) +
+        tail += '<tr class="paired"><td colspan="' + (S.shapeDraft ? 8 : 11) + '">' + esc(rowless.join(' · ')) +
             ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
             ' own</td></tr>';
     }
@@ -2248,8 +2249,8 @@ function positionsTable() {
     // its groups', on their cards.
     const partCol = S.shapeDraft ? '' : '<col class="c-part">';
     const partHead = S.shapeDraft ? '' : '<th>Part</th>';
-    const advCol = S.shapeDraft ? '' : '<col class="c-adv">';
-    const advHead = S.shapeDraft ? '' : '<th>Advanced</th>';
+    const advCol = S.shapeDraft ? '' : '<col class="c-reorder"><col class="c-adv">';
+    const advHead = S.shapeDraft ? '' : '<th>' + esc(W('auto_reorder')) + '</th><th>Advanced</th>';
     const cols = '<colgroup><col class="c-pos"><col class="c-role"><col class="c-mode">' + partCol + '<col class="c-partner">' +
         '<col class="c-staging"><col class="c-src"><col class="c-via"><col class="c-dst">' + advCol + '</colgroup>';
     // THE LABEL, THE HEADINGS AND THE FOOTER ARE OUTSIDE THE ROWS' BOX.
@@ -2443,6 +2444,74 @@ function viaCell(node) {
             '" data-d="1" title="later in the route">›</button>' : '') +
         '</span>').join('<i class="pd-viasep">›</i>') +
         '<button class="pd-chip add" data-act="via-add" data-node="' + esc(node) + '">+ add</button>';
+}
+
+// AUTO REORDER IS ON THE ROW (U3): `off`, or the reorder point the position
+// asks at. It is what an engineer sets on every position before a style runs,
+// so it is not behind the Advanced sheet. A new position starts off, consume
+// and produce alike (owner ruling 8); a mode that does not read it draws an
+// empty cell (R2).
+function reorderCell(node) {
+    if (!M().advancedShows(S.model, node, 'auto_reorder')) return '';
+    const a = M().advancedFor(S.model, node);
+    const title = W('reorder_point') + ' ' + (a.reorder_point || 'not set') + ' · ' + W('auto_reorder') + ' ' + (a.auto_reorder ? 'on' : 'off');
+    if (!a.auto_reorder) return picker(node, 'reorder', 'off', 'dflt', title);
+    return picker(node, 'reorder', esc(String(a.reorder_point || '—')), a.reorder_point ? '' : 'bad', title);
+}
+
+// REORDER_WORDS is the reorder point's sentence: true for both roles, since
+// a consume bin counts down to it and a produce bin counts up to it
+// (protocol.ClaimDemandLevel).
+const REORDER_WORDS = 'units in the bin when the next one is requested';
+
+// openReorderPop is the cell's popover: the point, Set (which turns Auto
+// reorder on at it) and Off. Each is a draft edit, saved with Save flow.
+function openReorderPop(btn, node) {
+    const pop = $('pd-pop');
+    if (!pop || !S.model) return;
+    pop.classList.remove('pd-partpop');
+    S.partPop = null;
+    const a = M().advancedFor(S.model, node);
+    const src = REORDER_SOURCE[a.reorder_point_source];
+    pop.innerHTML = '<div class="pd-rpop">' +
+        '<label class="pd-lbl">' + esc(W('reorder_point')) + '</label>' +
+        '<div class="pd-rprow"><input class="pd-inp" type="text" inputmode="numeric" data-f="rp" value="' +
+            esc(a.reorder_point ? String(a.reorder_point) : '') + '" placeholder="—">' +
+        '<button class="pd-btn primary" data-rp="set">Set</button>' +
+        (src ? '<span class="pd-src" title="' + esc(src[1]) + '">' + esc(src[0]) + '</span>' : '') + '</div>' +
+        '<small>' + esc(REORDER_WORDS) + '</small>' +
+        '<button data-rp="off" class="' + (a.auto_reorder ? '' : 'on') + '">' + esc(W('auto_reorder')) + ' off</button>' +
+        '<div class="none" data-rpnote></div></div>';
+    showPop(pop, btn);
+    placePopover(pop, btn);
+    const input = pop.querySelector('[data-f="rp"]');
+    if (input) input.focus();
+    pop.onclick = e => {
+        const b = e.target.closest && e.target.closest('[data-rp]');
+        if (e.stopPropagation) e.stopPropagation();
+        if (!b) return;
+        if (b.dataset.rp === 'off') { setReorder(node, null, false); return; }
+        const digits = String((pop.querySelector('[data-f="rp"]') || {}).value || '').replace(/[^0-9]/g, '');
+        if (!Number(digits)) {
+            const note = pop.querySelector('[data-rpnote]');
+            if (note) note.textContent = 'Type the point first';
+            return;
+        }
+        setReorder(node, Number(digits), true);
+    };
+}
+
+// setReorder writes the two fields onto the position's Advanced block, as the
+// sheet's Apply does; point null keeps the stored point.
+function setReorder(node, point, on) {
+    const a = M().advancedFor(S.model, node);
+    if (point !== null) {
+        a.reorder_point = point;
+        a.reorder_point_source = 'manual';
+    }
+    a.auto_reorder = on;
+    closePop();
+    apply({ type: 'setAdvanced', node: node, advanced: a });
 }
 
 // The picture's row assignment can change with the frame, so the table is
@@ -2908,6 +2977,7 @@ function openPicker(btn) {
         if (chip) { openPicker(chip); return; }
     }
     if (kind === 'part') { void openPartPop(btn, node); return; }
+    if (kind === 'reorder') { openReorderPop(btn, node); return; }
     const opts = optionsFor(node, kind);
     const pop = $('pd-pop');
     if (!pop) return;
@@ -4153,7 +4223,7 @@ const ADV_SECTIONS = [
 // named here rather than guessed from the key.
 const ADV_COPY = {
     allowed_payload_codes: ['allowed_payload_codes', 'which parts a robot may bring to this position'],
-    reorder_point: ['reorder_point', 'units left when the next bin is requested'],
+    reorder_point: ['reorder_point', REORDER_WORDS],
     auto_reorder: ['auto_reorder', 'request without the operator'],
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
     auto_request_payload: ['auto_request_payload', 'which part a vacated position asks for on its own'],
@@ -4240,6 +4310,9 @@ function advShows(key, ctx) {
         return M().advancedShows(S.model, d.node, 'changeover_evac_nodes');
     }
     if (key === 'partial_dest') return M().advancedShows(S.model, d.node, 'partial_destination');
+    // THE ROW CARRIES AUTO REORDER (reorderCell), so a position's sheet does
+    // not draw it twice; a recipe group's sheet, which has no row, does.
+    if (key === 'reorder_point' || key === 'auto_reorder') return false;
     // F15: BOARD ORDER IS A LOADER BOARD'S, so it is drawn on a loader
     // position only (a manual_swap claim, which a loader board draws); on a
     // press it is a number nothing on the floor reads.

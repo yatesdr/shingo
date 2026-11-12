@@ -392,17 +392,20 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    processes_desktop_positions_table_test.go holds the role column to that. */
 .pd-postbl col.c-pos { width: 7%; }
 .pd-postbl col.c-role { width: 10%; }
-.pd-postbl col.c-mode { width: 12%; }
-.pd-postbl col.c-part { width: 10%; }
+.pd-postbl col.c-mode { width: 11%; }
+.pd-postbl col.c-part { width: 9%; }
 .pd-postbl col.c-partner { width: 10.5%; }
 .pd-postbl col.c-staging { width: 9.5%; }
-.pd-postbl col.c-src { width: 13.25%; }
+.pd-postbl col.c-src { width: 11.75%; }
 .pd-postbl col.c-via { width: 7.5%; }
-.pd-postbl col.c-dst { width: 13.25%; }
-.pd-postbl col.c-adv { width: 7%; }
-/* The ten add to 100. They have to be WRITTEN as ten: leaving Advanced to
-   "whatever is left" left it nothing, because the others already summed to
-   100, and its badge then spilled 75 px past the table's right edge. */
+.pd-postbl col.c-dst { width: 11.75%; }
+.pd-postbl col.c-reorder { width: 6%; }
+.pd-postbl col.c-adv { width: 6%; }
+/* The eleven add to 100. They have to be WRITTEN as eleven: leaving Advanced
+   to "whatever is left" left it nothing, because the others already summed to
+   100, and its badge then spilled 75 px past the table's right edge. A column
+   no row uses is not drawn (R2); the table shares its width out among the
+   rest. */
 
 /* AND A CELL CLIPS. table-layout: fixed sets the table's width; it does not
    stop a nowrap chip from painting outside its cell, which is the other half
@@ -565,6 +568,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-pop button.on { color: var(--accent); }
 .pd-pop .pd-lbl { padding: 8px 10px 4px; display: block; }
 .pd-pop .none { color: var(--text-muted); padding: 8px 10px; font-size: 12px; }
+/* The Auto reorder cell's popover: the point, Set, and Off. */
+.pd-rpop { padding: 4px 0; min-width: 240px; }
+.pd-rpop .pd-rprow { display: flex; align-items: center; gap: 8px; padding: 0 10px; }
+.pd-rpop .pd-rprow .pd-inp { width: 80px; }
+.pd-rpop .pd-rprow .pd-btn { width: auto; padding: 4px 12px; }
+.pd-rpop small { display: block; padding: 4px 10px 6px; color: var(--text-muted); font-size: 11px; }
+.pd-rpop .none:empty { display: none; }
 /* A staging node another position already uses: still a choice, marked in the
    warning ink, because shared staging is a warning and never a refusal. */
 .pd-pop button .use { color: var(--chip-ink-near); font-size: 11px; }

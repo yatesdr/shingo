@@ -67,11 +67,11 @@ Escape → sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overfl
 Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## the discard question on Advanced: a typed number, Escape, Escape, Escape, Keep editing, Escape, Discard
-typed 7 into reorder_point: S.adv.a.reorder_point=7
+typed 7 into lineside_soft_threshold: S.adv.a.lineside_soft_threshold=7
 Escape → sheet "POS_A1 · Advanced"; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 2, body overflow "hidden", S.sheet null, S.adv set, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
-Escape again, with the question up (Keep editing) → sheet "POS_A1 · Advanced", reorder_point field reads "7", S.adv.a.reorder_point=7; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
+Escape again, with the question up (Keep editing) → sheet "POS_A1 · Advanced", lineside_soft_threshold field reads "7", S.adv.a.lineside_soft_threshold=7; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
 Escape → sheet "POS_A1 · Advanced"; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 2, body overflow "hidden", S.sheet null, S.adv set, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
-Keep editing → sheet "POS_A1 · Advanced", S.adv.a.reorder_point=7; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
+Keep editing → sheet "POS_A1 · Advanced", S.adv.a.lineside_soft_threshold=7; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
 Escape → sheet "POS_A1 · Advanced"; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 2, body overflow "hidden", S.sheet null, S.adv set, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
 Discard → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
 
