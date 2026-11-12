@@ -7227,6 +7227,7 @@ async function openScreenSheet(stationID) {
                 if (!nodes.ok) {
                     sheetStatus('The screen was saved; its positions were ' + (nodes.shown ? 'not written.' : 'refused: ' + nodes.error), true);
                     await reloadStations();
+                    chainHalf(refreshProcess);
                     return;
                 }
                 // A REMOVED POSITION WITH AN ACTIVE ORDER IS KEPT, not retired:
@@ -7243,6 +7244,7 @@ async function openScreenSheet(stationID) {
                     return;
                 }
             }
+            chainDone();
             closeSheet();
             await reloadStations();
             await refreshStationNodes(id);
