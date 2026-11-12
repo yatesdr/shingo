@@ -90,7 +90,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The screen was saved; its positions were not written.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Edit Screen A", status "The screen was saved; its positions were not written." (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
@@ -154,7 +154,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The screen was saved; its positions were not written.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add operator screen", status "The screen was saved; its positions were not written." (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none

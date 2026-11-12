@@ -36,7 +36,7 @@
     new text: #pd-root div.pd-refusal: Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: routingError="Nothing below is the set — it is what could not be read."
     unhandled rejection: none
@@ -75,7 +75,7 @@
     new text: #pd-root div.pd-refusal: Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: routingError="Nothing below is the set — it is what could not be read."
     unhandled rejection: none
@@ -120,7 +120,7 @@
     new text: #pd-root div.pd-refusal: Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: routingError="Nothing below is the set — it is what could not be read."
     unhandled rejection: none
@@ -165,7 +165,7 @@
     new text: #pd-root div.pd-refusal: Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: routingError="Nothing below is the set — it is what could not be read."
     unhandled rejection: none
@@ -195,7 +195,7 @@
     new text: #pd-root div.pd-refusal: Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: routingError="Nothing below is the set — it is what could not be read."
     unhandled rejection: none

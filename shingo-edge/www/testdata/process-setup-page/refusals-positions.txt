@@ -138,7 +138,7 @@
     then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 5 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set
     unhandled rejection: none
