@@ -52,7 +52,7 @@ ok   the flow is not dirty
 ok   nothing is sent
 
 ## P0 desktop-bodies.js:431: an apply save refused 409 that is not stale is not retried
-BUG  one save, no preview-and-retry: POST /api/processes/1/flow/save · POST /api/processes/1/flow/preview · POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+ok   one save, no preview-and-retry
 
 ## ruling 5: Add process, its positions refused, then pressed again
 ok   the refusal is said

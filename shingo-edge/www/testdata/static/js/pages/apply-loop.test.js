@@ -89,6 +89,16 @@ test('applyOutcome: the second 409 is a refusal, not another retry', () => {
     assert.strictEqual(o.text, 'the flow changed since it was previewed');
 });
 
+// A 409 IS TWO THINGS, as saveOutcome says: only a stale fingerprint heals on
+// a fresh preview. A rule refusing the save (writeFlowRefusal) answers the
+// same on the retry, so the row is the refusal by name the first time.
+test('applyOutcome: a 409 that is not stale is a refusal, not a retry', () => {
+    const o = B.applyOutcome(409, { error: 'a running position cannot move' }, 1);
+    assert.strictEqual(o.retry, false);
+    assert.strictEqual(o.ok, false);
+    assert.strictEqual(o.text, 'a running position cannot move');
+});
+
 // Every other refusal reads as the SERVER'S sentence. The engine names its
 // refusals — that is what the sentences on flow/save are for — and a row that
 // said "refused (403)" would make the engineer go looking in the console for

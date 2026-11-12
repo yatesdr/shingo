@@ -440,8 +440,12 @@ function applyOrder(styles, runningStyleID) {
 // ONCE, and `attempt` is what makes that true: a second 409 means something is
 // genuinely moving the rows underneath — another session, or a changeover —
 // and retrying into that is a loop rather than a fix.
+//
+// ONLY A STALE 409. A 409 without `stale` is a rule refusing the save
+// (writeFlowRefusal, as saveOutcome reads it); a retry gets the same answer,
+// so it was a second save and a second preview for nothing.
 function applyOutcome(status, body, attempt) {
-    if (status === 409 && (attempt || 1) < 2) {
+    if (status === 409 && body && body.stale && (attempt || 1) < 2) {
         return { retry: true, text: 'the flow changed since you previewed — previewing again' };
     }
     if (status >= 200 && status < 300) {
