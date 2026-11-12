@@ -206,6 +206,25 @@ const BUGS = [
         },
     },
     {
+        title: 'Advanced · a flipped switch is typed work, so Escape and the backdrop ask first',
+        run: async page => {
+            const n = tableRows(page.S)[0];
+            const marked = () => /class="pd-modal" data-dirty/.test(String(page.scrim.innerHTML || ''));
+            page.click('root', { act: 'advanced', node: n });
+            const before = marked();
+            page.click('scrim', { advkind: 'toggle', adv: 'strict_pack' });
+            const after = marked();
+            page.click('scrim', { advkind: 'toggle', adv: 'strict_pack' });
+            const back = marked();
+            page.click('scrim', { act: 'adv-cancel' });
+            return [
+                [n + ': the sheet as it opened is not marked', !before, 'marked before any change'],
+                [n + ': Strict pack flipped marks it data-dirty', after, 'not marked: the backdrop closes it unasked'],
+                [n + ': flipped back, it is not marked', !back, 'still marked'],
+            ];
+        },
+    },
+    {
         title: 'F24 · R3 · the desktop\'s bar never says "Tap the position" or "use a preset"',
         run: async page => {
             const M = page.pd('M')(), apply = page.pd('apply');

@@ -4582,7 +4582,12 @@ function drawAdvanced() {
             'from it takes on ' + g.name + '’s spots. They are saved with the recipe.'
         : S.model.styleName + ' · settings the flow doesn’t draw. They ride along with this position when the flow is ' +
             'saved from either screen.';
-    scrim.innerHTML = '<div class="pd-modal" role="dialog" aria-modal="true" aria-label="' + esc(title) + ' Advanced">' +
+    // A SWITCH OR A PICK HERE IS TYPED WORK. The layer asks before Escape or
+    // the backdrop closes a sheet with typed work, but it sees only form
+    // fields, and this sheet's switches and picks are buttons: the backdrop
+    // dropped a flipped Strict pack unasked. data-dirty is the layer's mark.
+    const dirty = S.adv.opened !== undefined && !advUntouched() ? ' data-dirty' : '';
+    scrim.innerHTML = '<div class="pd-modal"' + dirty + ' role="dialog" aria-modal="true" aria-label="' + esc(title) + ' Advanced">' +
         '<div class="mh"><h2>' + esc(title) + ' · Advanced</h2><p>' + esc(sub) + '</p></div>' +
         '<div class="mb">' + body + '</div>' +
         '<div class="mf"><span class="st">Nothing here changes the flow or the picture.</span>' +

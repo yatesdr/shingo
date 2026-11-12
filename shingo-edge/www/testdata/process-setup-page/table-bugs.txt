@@ -41,6 +41,11 @@ ok   only POS_A3 two_robot, POS_A4 two_robot, POS_A5 single_robot, POS_A6 single
 ok   no card says "on deck for" or "paired with"
 ok   a pair card says "Paired core node"
 
+## Advanced · a flipped switch is typed work, so Escape and the backdrop ask first
+ok   POS_A1: the sheet as it opened is not marked
+ok   POS_A1: Strict pack flipped marks it data-dirty
+ok   POS_A1: flipped back, it is not marked
+
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
 ok   a position with no swap mode: "1 to fix POS_A11 · how does it swap? — Pick its swap mode on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) No unsaved changes"
 ok   a position with no part: "1 to fix POS_A11 · which part runs here? — Pick it on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) Unsaved changes"
