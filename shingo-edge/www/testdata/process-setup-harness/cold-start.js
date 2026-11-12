@@ -148,13 +148,15 @@ async function bugDeadEnd() {
     const pop = page.byId('pd-pop');
     const words = T.text((pop || {}).innerHTML || '');
     L.push('#    the popover: ' + JSON.stringify(words.slice(0, 160)));
-    const use = page.rows('pd-pop', 'data-adduse');
+    // The block is the node adapter's picker: a node it may take is a row
+    // that is not greyed (is-off).
+    const use = pop ? pop.querySelectorAll('.picker-row').filter(r => !r.classList.contains('is-off')) : [];
     check('the popover offers places from the plant to add and use', use.length > 0, 'nothing to pick');
     if (!use.length) return;
     const from = page.mark();
-    const row = use.find(r => r.dataset.adduse === 'STG_9') || use[0];
-    const name = row.dataset.adduse;
-    page.fire(row, 'click');
+    const row = use.find(r => r.getAttribute('data-value') === 'STG_9') || use[0];
+    const name = row.getAttribute('data-value');
+    row.click();
     await page.settle();
     const calls = page.since(from);
     L.push('#    picked ' + name + ': ' + calls.map(c => c.method + ' ' + c.url + (c.body ? ' ' + JSON.stringify(c.body) : '')).join(' · '));
@@ -163,6 +165,43 @@ async function bugDeadEnd() {
         calls[0].body && calls[0].body.role === 'staging' && calls[0].body.core_node_name === name,
         calls.length + ' requests');
     check('and the row uses it', (page.S.model.cells.POS_A11 || {}).staging === name,
+        'staging=' + JSON.stringify((page.S.model.cells.POS_A11 || {}).staging || ''));
+}
+
+// F3's slot: a name the page's node list does not carry is offered to add and
+// use (Core may have sent it since the page read its list); the Edge checks
+// it on the write, and its refusal is said in the popover, which stays.
+async function bugDeadEndSlot() {
+    L.push('', '## F3: Add and use, a name the node list does not carry');
+    const refusal = 'core has no node "STG_NEW"';
+    const o = pressA(NO_STAGING_NO_BACKS);
+    o.answer = (m, u) => (m === 'POST' && /\/routing-nodes$/.test(u) ? { status: 400, body: { error: refusal } } : undefined);
+    const page = await newRecipe(o);
+    addPosition(page, 'POS_A11', stagingMode(page, 'POS_A11'));
+    await page.settle();
+    page.click('root', { act: 'pick', node: 'POS_A11', kind: 'col:staging:staging' });
+    await page.settle();
+    const pop = page.byId('pd-pop');
+    const q = pop ? pop.querySelector('.picker-q') : null;
+    check('the block has a search box', !!q, 'none');
+    if (!q) return;
+    q.value = 'STG_NEW';
+    page.fire(q, 'input');
+    const slot = pop.querySelector('.picker-add');
+    L.push('#    the slot: ' + JSON.stringify(slot ? slot.textContent : ''));
+    check('a name with no row offers to add and use it', !!slot, 'no slot');
+    if (!slot) return;
+    const from = page.mark();
+    slot.click();
+    await page.settle();
+    const calls = page.since(from);
+    L.push('#    pressed: ' + calls.map(c => c.method + ' ' + c.url + (c.body ? ' ' + JSON.stringify(c.body) : '')).join(' · '));
+    check('the press is the routing set\'s one upsert', calls.length === 1 && calls[0].method === 'POST' &&
+        calls[0].body && calls[0].body.core_node_name === 'STG_NEW' && calls[0].body.role === 'staging', calls.length + ' requests');
+    const warn = page.byId('pd-pop') ? page.byId('pd-pop').querySelector('.pd-warn') : null;
+    check('the refusal is said in the popover, which stays', !!warn && !warn.hidden && warn.textContent.indexOf(refusal) >= 0,
+        warn ? JSON.stringify(warn.textContent) : 'no line');
+    check('and the row is as it was', !(page.S.model.cells.POS_A11 || {}).staging,
         'staging=' + JSON.stringify((page.S.model.cells.POS_A11 || {}).staging || ''));
 }
 
@@ -334,6 +373,7 @@ async function run(t) {
     await bugDraftBar();
     await bugDraftBack();
     await bugDeadEnd();
+    await bugDeadEndSlot();
     await bugHmiNoRecipe();
     await pinStyleFirst();
     await pinSetup();

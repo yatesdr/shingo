@@ -3110,7 +3110,7 @@ function openPicker(btn) {
         apply(opts[Number(b.dataset.opt)].action);
         closePop();
     }));
-    if (note) void offerAddAndUse(pop, node, kind);
+    if (note) offerAddAndUse(pop, node, kind);
 }
 
 // showPop puts a popover up as an entry on the layer, anchored to the control
@@ -7113,47 +7113,77 @@ function addFreeAs(node, mode) {
 // finished from where it was being drawn. Under the reason, the picker lists
 // Core's nodes; a pick adds the node to the routing set in that role and uses
 // it, in one request (the routing set's own upsert). The node list is the one
-// the page reads once and every picker reuses.
+// the page reads once and every picker reuses (NODES).
 const ADD_AND_USE_ROLE = { inbound_source: 'source', outbound_destination: 'destination',
     inbound_staging: 'staging', outbound_staging: 'staging' };
 const ADD_AND_USE_ACT = { inbound_source: ['setSource', 'source'], outbound_destination: ['setDest', 'dest'],
     inbound_staging: ['setStaging', 'staging'], outbound_staging: ['setParkOld', 'staging'] };
 
-async function offerAddAndUse(pop, node, kind) {
+let addUsePicker = null;   // the open block's picker (offerAddAndUse)
+
+// offerAddAndUse draws the block: the node adapter over the page's one node
+// list, open in the popover, each node greyed with why this cell cannot take
+// it (a position of this process, a name already in the role, a lane or a
+// member where Core picks). A pick is the write (the shell's write-through):
+// the routing set gains the node, then the row uses it. The shell's Add and
+// use slot takes a name the list does not carry, for a node Core sent after
+// this page read its list; the Edge checks it against Core's list on the
+// write and says why when it refuses.
+function offerAddAndUse(pop, node, kind) {
     const field = routingFieldOf(kind);
     const role = ADD_AND_USE_ROLE[field];
     if (!role || !S.model || !M().fieldRequired(S.model, node, field)) return;
-    await loadCoreNodes();
-    if (!pop.isConnected && pop.isConnected !== undefined) return;
-    if (pop.hidden) return;
+    const words = ROUTING_GROUPS.find(g => g[0] === role)[1];
     const inRole = new Set((S.composer.routing || []).filter(r => r.role === role).map(r => r.core_node_name));
-    const names = coreNodeList().map(n => n.name).filter(n => n && n[0] !== '_' && n !== node &&
-        !isPositionRow(n) && !inRole.has(n) && !B().legExclusion(S.coreNodes, n, role));
     const box = document.createElement('div');
     box.className = 'pd-adduse';
-    box.innerHTML = '<div class="pd-lbl">Add and use · ' + esc(ROUTING_GROUPS.find(g => g[0] === role)[1]) + '</div>' +
-        (names.length
-            ? names.map(n => '<button data-adduse="' + esc(n) + '">' + esc(n) + '</button>').join('')
-            : '<div class="none">' + esc(S.coreNodes ? 'No node to add.' : 'Core’s node list could not be read.') + '</div>');
+    const part = (cls, text) => {
+        const d = document.createElement('div');
+        d.className = cls;
+        if (text) d.appendChild(document.createTextNode(text));
+        return box.appendChild(d);
+    };
+    part('pd-lbl', 'Add and use · ' + words);
+    const host = part('pd-addusepk');
+    const warn = part('none pd-warn');
+    warn.hidden = true;
     pop.appendChild(box);
-    pop.querySelectorAll('[data-adduse]').forEach(b => b.addEventListener('click', e => {
-        e.stopPropagation();
-        void addAndUse(pop, node, field, b.dataset.adduse);
-    }));
+    // THE PICK STAYS IN THE POPOVER. The shell redraws its rows as it takes a
+    // pick, so the row clicked is out of the tree by the time the click
+    // reaches the document, whose closer would take it for a press outside
+    // and close the popover over the write, and over a refusal's reason.
+    box.addEventListener('click', e => e.stopPropagation());
+    const use = name => addAndUse(node, field, name).then(why => {
+        warn.textContent = '';
+        if (why) warn.appendChild(document.createTextNode(why));
+        warn.hidden = !why;
+        return why ? null : name;
+    });
+    // One at a time: the last popover's picker lets go of the node list.
+    if (addUsePicker) addUsePicker.destroy();
+    addUsePicker = nodePicker(host, NODES, {
+        rule: n => (n.name === node ? 'this position'
+            : n.name[0] === '_' ? 'not a place'
+            : isPositionRow(n.name) ? 'a position of this process — available to every flow on it already'
+            : inRole.has(n.name) ? 'already in ' + words
+            : B().legExclusion(S.coreNodes, n.name, role)),
+    }, {
+        open: true, chips: false, placeholder: 'find a node by name',
+        onPick: (next, row) => use(row.value).then(name => (name ? [name] : {})),
+        add: { label: q => 'Add “' + q + '” to ' + words + ' and use it', run: q => use(q) },
+    });
+    loadCoreNodes();
 }
 
-async function addAndUse(pop, node, field, name) {
+// addAndUse adds name to the routing set in the field's role, in one request
+// (the routing set's own upsert), and puts it on the row; it resolves '' when
+// it did, or why it did not.
+async function addAndUse(node, field, name) {
     const role = ADD_AND_USE_ROLE[field];
     const count = (S.composer.routing || []).filter(r => r.role === role).length;
     const out = await send('POST', '/api/processes/' + S.processID + '/routing-nodes',
         B().routingAdd(name, role, count), NO_NOTICE);
-    if (!out.ok) {
-        const line = document.createElement('div');
-        line.className = 'none pd-warn';
-        line.textContent = said(out) || 'Not added.';
-        pop.appendChild(line);
-        return;
-    }
+    if (!out.ok) return said(out) || 'Not added.';
     // The composer's routing set gains the row, so every picker on the page
     // offers it now; Settings' copy is read again when it next opens.
     S.composer.routing = (S.composer.routing || []).concat([{ core_node_name: name, role: role, sequence: count + 1, label: name }]);
@@ -7161,6 +7191,7 @@ async function addAndUse(pop, node, field, name) {
     closePop();
     const [act, arg] = ADD_AND_USE_ACT[field];
     apply({ type: act, node: node, [arg]: name });
+    return '';
 }
 
 // ── Add process, end to end ──────────────────────────────────────────────────

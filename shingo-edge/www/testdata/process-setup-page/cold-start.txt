@@ -21,11 +21,20 @@ ok   Keep editing keeps the draft and its row
 ok   Discard leaves the draft
 
 ## F3: the required inbound staging chip, with no staging row and no back position
-#    the popover: "Add and use · Staging GRP_A DST_1 DST_2 DST_9 NEW_1 NEW_2 NEW_3 OTH_1 POS_B1 POS_B2 POS_B3 POS_B4 SHR_1 SRC_1 SRC_2 SRC_A1 SRC_A2 STG_1 STG_2 STG_3 STG_9"
+#    the popover: "Add and use · Staging GRP_A group SRC_A1 SRC_A2 LANE_1 a lane — a flow names its group, or the spot itself, never a lane DST_1 DST_2 DST_9 NEW_1 NEW_2 NEW_3 OTH"
 ok   the popover offers places from the plant to add and use
 #    picked STG_9: POST /api/processes/1/routing-nodes {"core_node_name":"STG_9","role":"staging","label":"STG_9","enabled":true,"sequence":1}
 ok   Add and use is one request: the routing set gains it for staging
 ok   and the row uses it
+
+## F3: Add and use, a name the node list does not carry
+ok   the block has a search box
+#    the slot: "Add “STG_NEW” to Staging and use it"
+ok   a name with no row offers to add and use it
+#    pressed: POST /api/processes/1/routing-nodes {"core_node_name":"STG_NEW","role":"staging","label":"STG_NEW","enabled":true,"sequence":1}
+ok   the press is the routing set's one upsert
+ok   the refusal is said in the popover, which stays
+ok   and the row is as it was
 
 ## F36: Settings › HMI setup on a process with no recipe
 #    "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from no recipe yet New recipe Found in your flows · 1 shape run by 2 styles, not named yet Shape Ru"
