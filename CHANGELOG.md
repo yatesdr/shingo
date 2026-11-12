@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.5.0 — 2026-11-12
+
 Deploy: Edge v48.
 
 - Static files are gzipped once at start-up and named by their content: an Edge restart costs a screen a round of "not modified", not the whole page set
