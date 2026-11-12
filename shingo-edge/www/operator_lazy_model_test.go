@@ -46,6 +46,20 @@ func TestOperatorLazyModelJS(t *testing.T) {
 // stationEntry is the module operator-display.html boots the station from.
 const stationEntry = "/static/operator-station/operator.js"
 
+// TestStationTemplate_NoComposerModelTag: the station's page puts no
+// composer-model.js tag on a cold load, so the model is requested only by its
+// loader, when the flow panel or the composer needs it (the Node test above
+// boots the modules with no model on window, as this page is).
+func TestStationTemplate_NoComposerModelTag(t *testing.T) {
+	t.Parallel()
+	for _, rel := range scriptsOn(t, "operator-display.html", 2) {
+		if rel == "operator-station/composer-model.js" {
+			t.Errorf("operator-display.html loads %s at boot; composer-boot.js's ensureComposerModel loads it "+
+				"when a screen needs it", rel)
+		}
+	}
+}
+
 // TestStationBoot_SharedFiles: the station's module graph reaches these shared
 // files and no others. Each is small and has a job the station does: the
 // server clock (clock.js), the one event stream (bus.js), the quote-safe
