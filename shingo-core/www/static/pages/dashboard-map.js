@@ -430,6 +430,10 @@ import {
       view = viewTarget;
       updateLiveViewBox();
       updateMinimapDynamic();
+      // Sized for the view the ease began from: redraw at the one it reached
+      // (see ZOOM_SETTLE_MS). adoptViewTarget's hysteresis holds the frame
+      // unless the robots have really moved, so this redraw seldom eases again.
+      scheduleRender();
       return;
     }
     view = lerpView(view, viewTarget, EASE_ALPHA);
@@ -550,6 +554,13 @@ import {
     applyManualView();
   }
 
+  // Marker sizes follow the view and are set by render(), while a wheel zoom
+  // moves only the viewBox. Without a redraw, robots, names and lines grew and
+  // shrank with the zoom and snapped back on the next robot update, seconds
+  // later (HOP, 2026-11-12). Redraw once the wheel rests.
+  var ZOOM_SETTLE_MS = 150;
+  var zoomSettleTimer = 0;
+
   var viewControlsWired = false;
   function wireViewControls() {
     if (viewControlsWired) return;
@@ -563,6 +574,8 @@ import {
       // Scroll up → zoom in (extent shrinks); down → zoom out. Gentle per-notch.
       var factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
       zoomAt(e.clientX, e.clientY, factor);
+      clearTimeout(zoomSettleTimer);
+      zoomSettleTimer = setTimeout(scheduleRender, ZOOM_SETTLE_MS);
     }, { passive: false });
 
     host.addEventListener('mousedown', function (e) {
