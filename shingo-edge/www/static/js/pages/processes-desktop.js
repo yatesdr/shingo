@@ -4021,8 +4021,17 @@ function openAdvanced(node) {
         evacNodes: (c.evacNodes || []).slice(),
         partialDest: c.partialDest || '',
     };
+    S.adv.opened = advSnapshot();
     drawAdvanced();
 }
+
+// advSnapshot is what the sheet says, as text: Apply on a sheet that still
+// says what it opened with changes nothing (advUntouched). `was` is no copy for
+// this, its lists being the sheet's own.
+function advSnapshot() {
+    return JSON.stringify([S.adv.a, S.adv.evacNodes, S.adv.partialDest]);
+}
+function advUntouched() { return !!S.adv && S.adv.opened === advSnapshot(); }
 
 // openGroupAdvanced is the same sheet in GROUP SCOPE (SYNTH-round2 row 4): the
 // fields a recipe's group may say (GROUP_ADV_KEYS, domain.RecipeAdvanced),
@@ -4042,6 +4051,7 @@ function openGroupAdvanced(i) {
     // The mint stamps a group's reorder point as typed by an engineer.
     if (a.reorder_point) a.reorder_point_source = 'manual';
     S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], partialDest: '' };
+    S.adv.opened = advSnapshot();
     drawAdvanced();
 }
 
@@ -4234,6 +4244,10 @@ function advancedGone() {
 // group scope the group's `advanced` takes what the sheet says, as the server
 // stores it, and no cell changes.
 function applyAdvanced() {
+    // UNTOUCHED MEANS UNWRITTEN (P0 :4169). The sheet opens on advancedFor,
+    // every default filled in, and Apply wrote that whole block onto the cell:
+    // the flow went dirty and the next save sent the defaults as set.
+    if (advUntouched()) { closeAdvanced(); return; }
     if (S.adv.group !== undefined) {
         const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[S.adv.group];
         if (g) {

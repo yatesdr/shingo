@@ -47,9 +47,9 @@ ok   the page says "the Edge refused it"
 ok   the sheet names "POS_A1 needs a source"
 
 ## P0 :4169: Apply on an untouched Advanced sheet changes nothing
-BUG  the flow is as it was: cells moved
-BUG  the flow is not dirty: dirty
-BUG  nothing is sent: POST /api/processes/1/flow/preview
+ok   the flow is as it was
+ok   the flow is not dirty
+ok   nothing is sent
 
 ## P0 desktop-bodies.js:431: an apply save refused 409 that is not stale is not retried
 BUG  one save, no preview-and-retry: POST /api/processes/1/flow/save · POST /api/processes/1/flow/preview · POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets

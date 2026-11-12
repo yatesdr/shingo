@@ -97,7 +97,7 @@ Escape → S.selected null; sheet closed, #pd-scrim markup empty, layers 0, body
 ## the Advanced sheet: open, Cancel, open, Apply
 open: sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
 Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
-reopened, Apply with nothing changed: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; dirty=true; requests POST /api/processes/1/flow/preview
+reopened, Apply with nothing changed: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; dirty=false; requests none
 
 ## facts
 body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (the layer's counted lock; every block above)
