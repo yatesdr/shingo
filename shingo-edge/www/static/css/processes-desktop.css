@@ -905,10 +905,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-npk .pre button:hover { color: var(--text); }
 .pd-npk .pre button.on { color: var(--accent); border-color: var(--accent); }
 
-/* Settings · Positions: the screen's name over its rows, and the curtain's
-   label beside its switch so the switch says what it is. */
+/* Settings · Positions: the screen's name over its rows. */
 .pd-settings .pd-posscreen { display: block; margin: 14px 0 2px; }
-.pd-poscu { display: inline-flex; align-items: center; gap: 8px; }
 
 /* Settings · Production counter: the MES slots' lines and the station
    counters' list, rows in the value column (33-settings-pages.md rule 9).

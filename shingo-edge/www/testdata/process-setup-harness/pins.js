@@ -93,6 +93,8 @@ function server(extra) {
             ['GET', /^\/api\/process-nodes$/, () => FX.server.processNodes],
             ['POST', /^\/api\/process-nodes\/\d+\/curtain-setting$/, () => ({ status: 'ok' })],
             ['GET', /^\/api\/core-nodes$/, () => FX.server.coreNodes],
+            // WarLink's PLCs: the counter's PLC pick and the curtains' PLC boxes.
+            ['GET', /^\/api\/plcs$/, () => [{ name: 'PLC_A', connected: true }, { name: 'PLC_B', connected: false }]],
             ['GET', /^\/api\/payload-catalog$/, () => FX.server.payloadCatalog],
             ['POST', /^\/api\/styles$/, () => ({ id: 6 })],
             ['PUT', /^\/api\/styles\/\d+$/, () => ({ status: 'ok' })],
@@ -449,7 +451,11 @@ const DRIVE = {
         const st = (key, value) => typeSetting(page, '[data-st]', el => el.dataset.st === key && el.tagName === 'INPUT', value);
         st('name', 'Press A2');
         st('description', 'renamed');
-        st('counter_plc_name', 'PLC_B');
+        // The counter's PLC is a pick from WarLink's PLCs (F12).
+        const plc = page.root.querySelectorAll('select[data-st]').find(el => el.dataset.st === 'counter_plc_name');
+        if (!plc) throw new Error('Settings draws no PLC pick');
+        plc.value = 'PLC_B';
+        page.fire(plc, 'change');
         st('counter_tag_name', 'CountB');
         page.click('root', { act: 'st-toggle', st: 'counter_enabled' });
         page.click('root', { act: 'st-arm', arm: 'prompt' });

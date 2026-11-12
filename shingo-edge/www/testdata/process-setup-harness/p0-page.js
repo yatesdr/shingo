@@ -413,7 +413,10 @@ const scSheet = (label, tag) => async page => {
     page.byId('sc-tag').value = tag;
     await pressOK(page);
 };
+// Counted at sits behind its position row's Change… (owner ruling 4).
 const countedAt = (node, value) => async page => {
+    page.click('root', { act: 'st-more', more: 'pos-' + node });
+    await page.settle();
     const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === String(node));
     if (!sel) throw new Error('Settings draws no Counted at for ' + node);
     sel.value = value;

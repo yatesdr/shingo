@@ -3704,7 +3704,7 @@ function routingSection() {
         'through, and operators are offered these and never the plant. There is nothing to switch ' +
         'on: a name in the list is set up. A recipe follows the one name in a role; with several, it ' +
         'keeps the one it was saved with. Taking one out warns what it leaves behind. Whether ' +
-        'operators may change flows at all is the HMI switch above.</p>' +
+        'operators may change flows at all is the HMI setup row below.</p>' +
         // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
         // press, and a click on a name flashes that name's chip. It is not an
         // input: a click on a dot could only guess at the role, and the three
@@ -3858,7 +3858,7 @@ async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
     await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots(),
-        loadCatidItems()]);
+        loadCatidItems(), loadPLCs()]);
     await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
@@ -4893,15 +4893,22 @@ async function setCountedAt(nodeID, value) {
 }
 
 // countedAtField is a position's "Counted at": the production counter, one of
-// the process's station counters, or a new one.
+// the process's station counters, or a new one. countedAtName is the one it
+// is counted at, in words, for the position's row.
+function counterName(c) { return window.StationCard ? window.StationCard.nameOf(c) : c.label || c.tag_name; }
+
 function countedAtField(n) {
     const at = n.line_counter_id || 0;
     const opts = '<option value=""' + (at ? '' : ' selected') + '>Production counter</option>' +
         (S.stationCounters || []).map(c => '<option value="' + c.id + '"' + (at === c.id ? ' selected' : '') + '>' +
-            esc(window.StationCard ? window.StationCard.nameOf(c) : c.label || c.tag_name) + '</option>').join('') +
+            esc(counterName(c)) + '</option>').join('') +
         '<option value="new">New station counter…</option>';
-    return '<span class="pd-poscu"><span class="pd-dim">Counted at</span>' +
-        '<select class="pd-inp" data-countedat="' + n.id + '">' + opts + '</select></span>';
+    return '<select class="pd-inp" data-countedat="' + n.id + '">' + opts + '</select>';
+}
+
+function countedAtName(n) {
+    const c = n.line_counter_id ? (S.stationCounters || []).find(x => x.id === n.line_counter_id) : null;
+    return c ? counterName(c) : 'the production counter';
 }
 
 // ── Settings · Positions ─────────────────────────────────────────────────────
@@ -4944,6 +4951,10 @@ function positionsSection() {
 // starts unchosen and must be picked before the node can be saved switched on
 // - the server refuses the same. The switch is a draft, saved by Save settings;
 // Add and Remove write at once, like the routing set below.
+//
+// ONE ROW PER POSITION (owner ruling 4): its light curtain and where it is
+// counted are rarely changed, so the row says both in its sub-label and
+// Change… shows the controls (stMore); Remove stays on the row.
 function positionRow(n) {
     const d = S.curtain[n.id];
     if (!d) return '';
@@ -4951,22 +4962,27 @@ function positionRow(n) {
     const seg = [[true, 'TRUE'], [false, 'FALSE']].map(v =>
         '<button class="' + (d.safe === v[0] ? 'on' : '') + '" data-act="cu-val" data-node="' + n.id +
         '" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
-    const sub = (n.enabled === false ? 'off until its active order finishes · ' : '') +
-        (on ? 'light curtain on: releases here wait for its tag' : 'light curtain off: releases here go as always');
+    const pointer = [d.plc, d.tag].filter(Boolean).join(' · ');
+    const now = (n.enabled === false ? 'off until its active order finishes · ' : '') +
+        (on ? 'light curtain on' + (pointer ? ' (' + pointer + ')' : '') : 'light curtain off') +
+        ' · counted at ' + countedAtName(n);
     const remove = n.operator_station_id
         ? '<button class="pd-dimlink" data-act="pos-remove" data-node="' + esc(n.core_node_name) +
             '" data-station="' + n.operator_station_id + '">Remove</button>'
         : '';
-    return stField(n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''), sub,
-        '<span class="pd-poscu"><span class="pd-dim">Light curtain</span>' +
+    const inner = stField('Light curtain', on ? 'on: releases here wait for its tag' : 'off: releases here go as always',
         '<button class="pd-chk' + (on ? ' on' : '') + '" data-act="cu-toggle" data-node="' + n.id +
-        '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button></span>' + countedAtField(n) + remove) +
+        '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button>') +
         (on
             ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', cuCombo(n.id, 'plc', 'plc')) +
               stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', cuCombo(n.id, 'tag', 'tag')) +
               stField('Release value', 'which reading allows the release - a site fact; choose it from the test, there is no default',
                   '<div class="pd-seg">' + seg + '</div>')
-            : '');
+            : '') +
+        stField('Counted at', 'the counter its strokes count on', countedAtField(n));
+    const dirty = JSON.stringify(d) !== JSON.stringify(curtainDraft()[n.id]);
+    return stMore('pos-' + n.id, n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''),
+        now, inner, dirty, remove);
 }
 
 // The positions one screen holds, read fresh, or null when the read failed.
@@ -5086,12 +5102,57 @@ async function afterPositionsChanged(stationID) {
     for (const id of Object.keys(curtain || {})) if (S.curtain[id]) S.curtain[id] = curtain[id];
 }
 
+// A RARELY CHANGED SETTING IS ONE ROW (33-settings-pages.md rule 7): its
+// current values in the sub-label, and Change… showing its controls under it,
+// in place — Core's Configuration page's pattern. No sheet: the controls stay
+// in the page's one draft and its one Save (rule 10). A row with unsaved
+// changes opens on them until Hide is pressed. extra is more of the value
+// column (a position's Remove). Open rows are this process's only.
+function stMore(key, label, now, inner, dirty, extra) {
+    const was = stMoreOpen()[key];
+    const open = was === undefined ? !!dirty : was;
+    return '<div class="pd-sfld"><label>' + esc(label) + '<small>' + esc(now) + '</small></label><div class="v">' +
+        '<button class="pd-btn" data-act="st-more" data-more="' + esc(key) + '" data-open="' + (open ? '1' : '') +
+        '" aria-expanded="' + (open ? 'true' : 'false') + '">' + (open ? 'Hide' : 'Change…') + '</button>' +
+        (extra || '') + '</div></div>' + (open ? inner : '');
+}
+
+function stMoreOpen() {
+    if (!S.stMore || S.stMore.pid !== S.processID) S.stMore = { pid: S.processID, open: {} };
+    return S.stMore.open;
+}
+
+// THE COUNTER'S PLC IS A PICK (F12) from the PLCs WarLink reports, the read
+// the Configuration page lists them from (/api/plcs, once per page: the
+// curtain's PLC boxes share it), with each one's connection; the Tag
+// typeahead under it keys on the PLC picked. A saved PLC WarLink does not
+// report (renamed, or WarLink down) stays the answer and says so, so drawing
+// the pick never changes what is saved. A read that failed keeps the typed
+// box: a field is not lost to a read.
+function plcPick() {
+    const cur = S.settings.counter_plc_name || '';
+    if (!Array.isArray(S._plcList)) return stText('counter_plc_name');
+    const plcs = S._plcList.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const opt = (v, text) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(text) + '</option>';
+    return '<select class="pd-inp" data-st="counter_plc_name">' + opt('', 'none') +
+        (cur && !plcs.some(p => p.name === cur) ? opt(cur, cur + ' · not reported by WarLink') : '') +
+        plcs.map(p => opt(p.name, p.name + (p.connected ? ' · connected' : ' · not connected'))).join('') + '</select>';
+}
+
+// loadPLCs reads WarLink's PLCs once per page for the PLC pick; a failed read
+// is not cached (null: the typed box, and the next open asks again).
+async function loadPLCs() {
+    if (Array.isArray(S._plcList)) return;
+    const res = await send('GET', '/api/plcs');
+    S._plcList = res.ok && Array.isArray(res.body) ? res.body : null;
+}
+
 function drawSettings() {
     if (!S.settings) S.settings = settingsDraft();
     const p = process() || {};
     const counting = !!(p.counter_plc_name && p.counter_enabled);
     const group = S.groups.find(g => g.id === S.settings.group_id);
-    const styles = stylesOf(S.processID).length;
+    const saved = settingsDraft();
 
     const general = '<div class="pd-sect"><h2>General</h2></div>' +
         stField('Name', '', stText('name')) +
@@ -5110,8 +5171,8 @@ function drawSettings() {
         (card ? card.titleHTML(view)
             : '<span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' + esc(counting ? 'counting' : 'not wired') + '</span>') +
         '</div>' +
-        stField('PLC', '', stText('counter_plc_name')) +
-        stField('Tag', 'type to filter WarLink’s tags; a MES_ struct offers its counter member',
+        stField('PLC', 'the PLCs WarLink reports', plcPick()) +
+        stField('Tag', 'type to filter this PLC’s tags; a MES_ struct offers its counter member',
             stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
         stField('Counting', 'off: this process isn’t counted', stToggle('counter_enabled')) +
         (hasPressIndexClaim() ? '<p class="pd-note">' + esc(PRESS_INDEX_COUNTING) + '</p>' : '') +
@@ -5120,35 +5181,50 @@ function drawSettings() {
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();
 
+    // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
+    // picks from. Write-through, so it is outside the save bar's draft. Sync
+    // catalog is the section's action, not a setting: it asks Core for the
+    // catalog the picker offers.
+    const partsSect = '<div class="pd-sect"><h2>Parts</h2>' +
+        '<span class="pd-dim">the operator’s part list on CHANGEOVER</span><span class="pd-spacer"></span>' +
+        '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
+        (S.partSet === null
+            ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
+            : pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s')) +
+        '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
+
+    // THE RARELY CHANGED THREE ARE ONE ROW EACH (33-settings-pages.md rule 7,
+    // owner ruling 4): Changeover, HMI setup and Quality hold say their current
+    // values in the sub-label, and Change… shows their controls under it.
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
         '" data-act="st-arm" data-arm="' + m[0] + '">' + esc(m[1]) + '</button>').join('');
-    const changeover = '<div class="pd-sect"><h2>Changeover</h2></div>' +
+    const arm = (AUTO_ARM.find(m => m[0] === S.settings.changeover_auto_arm) || AUTO_ARM[0])[1];
+    const changeover = stMore('changeover', 'Changeover', 'on a confirmed part (CATID) change: ' + arm.toLowerCase(),
         stField('On a confirmed part (CATID) change', 'the PLC says a new part is running',
             '<div class="pd-seg">' + seg + '</div>') +
-        '<p class="pd-note">' + esc(AUTO_ARM_NOTE) + '</p>';
+        '<p class="pd-note">' + esc(AUTO_ARM_NOTE) + '</p>',
+        S.settings.changeover_auto_arm !== saved.changeover_auto_arm);
 
     // THE SWITCH LOCKS THE FLOOR'S ONE EDIT (owner ruling R-K, 2026-10-18).
     // Off, the operator picks parts and Shingo runs the engineer's recipe as
     // set up. On, one more screen lets them move a recipe's slot to another
     // position or staging lane — never a mode, a pairing or a role — and the
-    // result is saved as a style with the recipe as its provenance.
-    const hmi = '<div class="pd-sect"><h2>HMI</h2></div>' +
-        stField('HMI setup',
+    // result is saved as a style with the recipe as its provenance. ON WITH NO
+    // RECIPE IS SAID (F36): the operator's SET UP A PART then has nothing to
+    // set a part up from.
+    const hmiOn = !!S.settings.flow_composer_enabled;
+    const recipes = ((S.composer && S.composer.presets) || []).length;
+    const hmi = stMore('hmi', 'HMI setup',
+        (hmiOn ? 'on: the operator may set a style up' : 'off: the operator changes over to a style an engineer made') +
+            (hmiOn && !recipes ? ' · no recipe yet' : ''),
+        stField('Operator sets styles up',
             'off: the operator changes over to a style an engineer made · on: they may set a style up — ' +
             'pick a part and a recipe, and move its spots',
             stToggle('flow_composer_enabled')) +
         '<p class="pd-note">For a cell being set up. The robot moves — mode, pairing, role — stay the ' +
         'recipe’s; the spots an operator moves are checked against your recipes: a press spot, its ' +
-        'on-deck spot and its lanes go only where a recipe here pairs them.</p>';
-
-    // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
-    // picks from. Write-through, so it is outside the save bar's draft.
-    const partsSect = '<div class="pd-sect"><h2>Parts this process runs</h2>' +
-        '<span class="pd-dim">the operator’s part list on CHANGEOVER</span></div>' +
-        (S.partSet === null
-            ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
-            : pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s')) +
-        '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
+        'on-deck spot and its lanes go only where a recipe here pairs them.</p>',
+        hmiOn !== saved.flow_composer_enabled);
 
     // QUALITY HOLD — a per-process opt-in. Off (the default) means every
     // finished-goods delivery goes to its outbound destination as always; on,
@@ -5159,7 +5235,10 @@ function drawSettings() {
     // Core's divert reads those claims;
     // the claim is the one storage, this screen is its batch editor.
     const holdOn = !!S.settings.quality_hold_enabled;
-    const hold = '<div class="pd-sect"><h2>Quality hold</h2></div>' +
+    const dest = S.settings.quality_hold_destination || '';
+    const hold = stMore('hold', 'Quality hold',
+        holdOn ? 'on · ' + (dest ? 'contained bins go to ' + dest : 'no destination picked yet')
+            : 'off: finished goods go to their outbound destination',
         stField('Contain finished goods on a quality alert',
             'off: FG deliveries go to the outbound destination as always · on: a contained payload\'s bins divert to the hold spot instead',
             stToggle('quality_hold_enabled')) +
@@ -5167,17 +5246,10 @@ function drawSettings() {
             ? stField('Containment destination',
                 'where a contained payload\'s bins go — a node or a node group; the hold is inert until this is picked',
                 '<button class="pd-sel" data-act="st-holddest">' +
-                esc(S.settings.quality_hold_destination || '-- None --') + '<i class="car"></i></button>')
-            : '');
-
-    const stylesSect = '<div class="pd-sect"><h2>Styles</h2><span class="pd-dim">' + styles +
-        ' live · every part this process runs</span><span class="pd-spacer"></span>' +
-        // NO GENERATE VARIANTS (pick-a-part U5): a style for a new part is minted
-        // from a recipe — + New style on the Styles tab, or the operator's CHANGEOVER.
-        '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
-        '<p class="pd-note">Styles are managed from the Styles tab — the rail lists the recipes, then the ' +
-        'styles, and + New style puts parts on a recipe. Rename, expected CATID, clone and delete are on the ' +
-        'row’s menu; "Mark as running" is there too, for when the plant changed parts without shingo.</p>';
+                esc(dest || '-- None --') + '<i class="car"></i></button>')
+            : ''),
+        holdOn !== saved.quality_hold_enabled || dest !== saved.quality_hold_destination);
+    const more = '<div class="pd-sect"><h2>More</h2></div>' + changeover + hmi + hold;
 
     const danger = '<div class="pd-sect danger"><h2>Danger</h2></div>' +
         stField('Delete this process', 'its styles, flows, routing set and screens go with it',
@@ -5189,7 +5261,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        healthSection() + general + counter + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
+        healthSection() + general + counter + positions + routingSection() + partsSect + more + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -5199,6 +5271,12 @@ function drawSettings() {
         (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '') +
         '<div class="pd-pop" id="pd-stpop" hidden></div></div>';
 
+    for (const el of root().querySelectorAll('select[data-st]')) {
+        el.addEventListener('change', () => {
+            S.settings[el.dataset.st] = el.value;
+            markSettingsBar();
+        });
+    }
     for (const el of root().querySelectorAll('[data-st]')) {
         if (el.tagName !== 'INPUT') continue;
         el.addEventListener('input', () => {
@@ -8046,6 +8124,10 @@ function onClick(e) {
                 drawSettings();
                 return;
             }
+            case 'st-more':
+                stMoreOpen()[btn.dataset.more] = btn.dataset.open !== '1';
+                drawSettings();
+                return;
             case 'st-group': openGroupPicker(btn); return;
         case 'st-holddest': openContainmentPicker(btn); return;
             case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.settingsError = ''; drawSettings(); return;

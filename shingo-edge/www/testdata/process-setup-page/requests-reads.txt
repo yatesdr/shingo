@@ -8,7 +8,8 @@
   5  GET /api/processes/1/station-counters
   6  GET /api/processes/1/counting-slots
   7  GET /api/processes/1/catid-health
-  8  GET /api/core-nodes
+  8  GET /api/plcs
+  9  GET /api/core-nodes
 -- sheet closed
 
 ## the screens tab clicked
@@ -28,6 +29,5 @@
 -- sheet closed
 
 ## Settings: POS_A1's curtain switched on and its PLC box focused, then the counter's tag box focused
-  1  GET /api/plcs
-  2  GET /api/plcs/all-tags/PLC_A
+  1  GET /api/plcs/all-tags/PLC_A
 -- sheet closed

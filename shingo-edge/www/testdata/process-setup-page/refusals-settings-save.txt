@@ -7,8 +7,9 @@
 ### PUT /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
@@ -17,8 +18,9 @@
 ### PUT /api/processes/1  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
@@ -27,8 +29,9 @@
 ### PUT /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
@@ -38,8 +41,9 @@
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
@@ -50,8 +54,9 @@
 ### PATCH /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
@@ -60,8 +65,9 @@
 ### PATCH /api/processes/1  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
@@ -70,8 +76,9 @@
 ### PATCH /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
@@ -81,8 +88,9 @@
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
@@ -93,8 +101,9 @@
 ### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
@@ -103,8 +112,9 @@
 ### POST /api/processes/1/containment-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
@@ -113,8 +123,9 @@
 ### POST /api/processes/1/containment-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
@@ -124,8 +135,9 @@
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
@@ -136,8 +148,9 @@
 ### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
@@ -146,8 +159,9 @@
 ### POST /api/process-nodes/201/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
@@ -156,8 +170,9 @@
 ### POST /api/process-nodes/201/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
@@ -167,8 +182,9 @@
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
@@ -179,8 +195,9 @@
 ### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
     sheet: closed
@@ -189,8 +206,9 @@
 ### POST /api/process-nodes/203/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
     sheet: closed
@@ -199,8 +217,9 @@
 ### POST /api/process-nodes/203/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
     sheet: closed
@@ -210,8 +229,9 @@
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
     new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: #pd-root button.on: Cut over automatically
-    new text: #pd-root button: Prompt the operator
+    new text: #pd-root small: on a confirmed part (CATID) change: cut over automatically
+    new text: #pd-root small: on: the operator may set a style up
+    new text: #pd-root small: off: finished goods go to their outbound destination
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
