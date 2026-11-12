@@ -124,8 +124,11 @@ const BUGS = [
         run: async page => {
             const S = page.S;
             const before = Object.assign({}, S.model.cells.POS_A5);
+            // POS_A3's mode: the one that keeps inbound staging and forbids
+            // outbound (no mode is spelled here; the fixture says it).
+            const to = S.model.cells.POS_A3.mode;
             const from = page.mark();
-            T.pickChip(page, 'POS_A5', 'mode', 'two_robot');
+            T.pickChip(page, 'POS_A5', 'mode', to);
             await page.settle();
             const c = page.S.model.cells.POS_A5;
             const said = page.noticesSince(from).map(x => x.text || x.message || String(x)).join(' / ');
