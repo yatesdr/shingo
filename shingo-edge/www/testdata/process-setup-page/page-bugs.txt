@@ -2,14 +2,14 @@
 # hold; "BUG" is the bug as the page has it (see s4-page-bugs.js).
 
 ## B1: + New style resolving to Style A, with a CATID, keeps Style A's description (LEAD-NOTES B1)
-BUG  the CATID write sends Style A's description: description ""
+ok   the CATID write sends Style A's description
 
 ## B2: Rename Style B when the page's style list lacks it keeps its description (LEAD-NOTES B2)
-BUG  the rename sends Style B's stored description: body {"name":"Style B2","description":"","process_id":1,"expected_catid":""}
+ok   the rename sends Style B's stored description
 
 ## B2: Rename Style B when its stored row cannot be read writes nothing (LEAD-NOTES B2)
-BUG  no PUT /api/styles/2 is sent: PUT /api/styles/2 {"name":"Style B2","description":"","process_id":1,"expected_catid":""}
-BUG  the sheet stays open and says why: status ""
+ok   no PUT /api/styles/2 is sent
+ok   the sheet stays open and says why
 
 ## F20: Part identity, Override pressed, lights Override (FINDINGS F20)
 BUG  Override is lit and Derive is not: lit: ["derive"]

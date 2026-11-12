@@ -6263,6 +6263,27 @@ function styleBody(st, change) {
     return B().styleWrite(st, S.processID, change);
 }
 
+// writeStyle is the rename's and the CATID's one write. The style it starts
+// from is the page's /styles row: the composer block carries no description,
+// so a style the list lacks (its last read failed while the composer's did
+// not) is read first, and when it still cannot be found nothing is written —
+// a body built from the composer's row, or styleByID's last resort, blanked
+// the description, and the last resort the name (LEAD-NOTES B2).
+async function writeStyle(id, change) {
+    let st = S.styles.find(s => s.id === id);
+    if (!st) {
+        const res = await send('GET', '/api/processes/' + S.processID + '/styles', undefined, NO_NOTICE);
+        if (res.ok && Array.isArray(res.body)) S.styles = S.styles.filter(s => s.process_id !== S.processID).concat(res.body);
+        st = S.styles.find(s => s.id === id);
+        if (!st) {
+            sheetStatus(res.ok ? 'This style is not on the Edge any more. Nothing was written.'
+                : said(res, 'This style could not be read, so nothing was written: '), true);
+            return false;
+        }
+    }
+    return sheetSubmit('PUT', '/api/styles/' + id, styleBody(st, change), refreshProcess);
+}
+
 function styleAction(act, id) {
     const st = styleByID(id);
     const from = S.menuFrom;
@@ -6270,15 +6291,13 @@ function styleAction(act, id) {
     switch (act) {
         case 'rename':
             pageSheet('Rename ' + st.name, '', sheetField('Name', 'what this part is called here', 'name', st.name),
-                'Rename', () => sheetSubmit('PUT', '/api/styles/' + id,
-                    styleBody(st, { name: sheetValue('name') }), refreshProcess), false, from);
+                'Rename', () => writeStyle(id, { name: sheetValue('name') }), false, from);
             return;
         case 'catid':
             pageSheet('Expected CATID · ' + st.name,
                 'what the PLC calls this part. A confirmed change to it is what arms a changeover cutover.',
                 sheetField('Expected CATID', catidBlankHint(id), 'catid', st.expected_catid),
-                'Save', () => sheetSubmit('PUT', '/api/styles/' + id,
-                    styleBody(st, { expected_catid: sheetValue('catid') }), refreshProcess), false, from);
+                'Save', () => writeStyle(id, { expected_catid: sheetValue('catid') }), false, from);
             return;
         case 'clone':
             pageSheet('Clone ' + st.name, 'a new style with the same flow, ready to be renamed.',
@@ -6617,7 +6636,13 @@ async function mintNewStyle(recipe) {
     if (!made.ok) { sheetStatus(said(made), true); return; }
     const catid = String(sheetValue('catid') || '').trim();
     if (catid) {
-        const st = { id: bodyOf(made).style_id, name: bodyOf(made).style_name, process_id: S.processID };
+        // A MINT THAT RESOLVED ("Already runs as …") NAMES A STYLE THAT HAS A
+        // DESCRIPTION, and apiUpdateStyle writes every field it decodes: the
+        // CATID's write starts from that style as the page holds it, or it
+        // blanks the description (LEAD-NOTES B1). A minted one has none yet.
+        const id = Number(bodyOf(made).style_id);
+        const st = S.styles.find(s => s.id === id) ||
+            { id: id, name: bodyOf(made).style_name, process_id: S.processID };
         const set = await send('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }), NO_NOTICE);
         if (!set.ok) { sheetStatus('Minted ' + st.name + ', but its CATID did not save' + said(set, ': ') + '.', true); return; }
     }
