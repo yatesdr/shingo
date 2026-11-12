@@ -184,13 +184,9 @@ var sharedHelperCopies = map[string]string{
 	// not extracted (brief v2 S2).
 	"shingo-edge/www/static/operator-station/operator-util.js el": "station's own el",
 	// Page-local helpers that share a name and not a signature.
-	"shingo-core/www/static/pages/heartbeat.js el":          "page-local el(tag, cls, text)",
-	"shingo-core/www/static/pages/bins.js switchTab":        "page-local switchTab(name)",
-	"shingo-core/www/static/pages/test-orders.js switchTab": "page-local switchTab(name)",
-	"shingo-core/www/static/pages/robots.js switchTab":      "wraps dom.js's (imported as showTab) to load a panel on first view, style guide §22",
-	// Private escapers: bins.js's calls escapeHtml; the two classic scripts
-	// cannot import a module, so each carries its own.
-	"shingo-core/www/static/pages/bins.js esc":            "alias of escapeHtml",
+	"shingo-core/www/static/pages/robots.js switchTab": "wraps dom.js's (imported as showTab) to load a panel on first view, style guide §22",
+	// Private escapers: the two classic scripts cannot import a module, so
+	// each carries its own.
 	"shingo-edge/www/static/js/pages/catid-health.js esc": "classic script's private escaper",
 	"shingo-edge/www/static/js/pages/station-card.js esc": "classic script's private escaper",
 	// The components' names (layer.js, notice.js) still defined where the

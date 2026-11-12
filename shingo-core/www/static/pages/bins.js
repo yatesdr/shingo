@@ -147,7 +147,7 @@ function openBinDetail(id) {
       if (currentBinId !== id) return;
       document.getElementById('bd-journal').innerHTML = '';
       drawBin(resp, null);
-      switchTab('overview');
+      showBinTab('overview');
       showModal('bin-detail-modal');
     })
     .catch(function(e) {
@@ -302,7 +302,11 @@ function restoreTyped(saved) {
   });
 }
 
-function switchTab(name) {
+// showBinTab is the bin pop-up's own tab handler, bound to its
+// data-action="switchTab:<name>" tabs. Not dom.js's switchTab (§22): these
+// panels are #bd-<name>, not .tab-panel siblings of the bar, and the page
+// calls it with no tab element when it opens the pop-up on Overview.
+function showBinTab(name) {
   if (name === 'journal' && !journalFresh) loadJournal();
   var tabs = ['overview', 'contents', 'actions', 'journal'];
   tabs.forEach(function(t) {
@@ -323,29 +327,29 @@ function renderOverview(data) {
   var ord = data.current_order;
   var html = '<div class="bd-fields">';
   if (inTransit && ord && ord.source_node) {
-    html += bdField('Location', esc(ord.source_node) + ' → ' + esc(ord.delivery_node) +
+    html += bdField('Location', escapeHtml(ord.source_node) + ' → ' + escapeHtml(ord.delivery_node) +
       ' <span class="badge badge-in_transit">in transit</span>'); // P21: in_transit is a Signal status — show its cyan pill, not muted text
   } else {
-    html += bdField('Location', b.node_name ? esc(b.node_name) : '<span class="text-muted">unassigned</span>');
+    html += bdField('Location', b.node_name ? escapeHtml(b.node_name) : '<span class="text-muted">unassigned</span>');
   }
-  html += bdField('Status', '<span class="badge badge-' + esc(b.status) + '">' + esc(b.status) + '</span>');
+  html += bdField('Status', '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>');
   var payloadDisplay = b.payload_code
-    ? '<code>' + esc(b.payload_code) + '</code>'
+    ? '<code>' + escapeHtml(b.payload_code) + '</code>'
     : (inTransit && ord && ord.payload_code
-        ? '<code>' + esc(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
+        ? '<code>' + escapeHtml(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
         : '<span class="text-muted">empty</span>');
   html += bdField('Payload', payloadDisplay);
   html += bdField('UoP Remaining', uopText(b) + (b.payload_code ? uopBar(b.uop_remaining, data.template) : ''));
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));
-  html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + esc(b.locked_by) + '</span>' : 'No');
-  html += bdField('Description', b.description ? esc(b.description) : '<span class="text-muted">-</span>');
-  html += bdField('Bin Type', esc(b.bin_type_code));
+  html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + escapeHtml(b.locked_by) + '</span>' : 'No');
+  html += bdField('Description', b.description ? escapeHtml(b.description) : '<span class="text-muted">-</span>');
+  html += bdField('Bin Type', escapeHtml(b.bin_type_code));
   if (b.claimed_by) {
     html += bdField('Claimed By', 'Order #' + b.claimed_by);
   }
   if (b.last_counted_at) {
-    html += bdField('Last Counted', timeAgoHTML(b.last_counted_at) + ' by ' + esc(b.last_counted_by));
+    html += bdField('Last Counted', timeAgoHTML(b.last_counted_at) + ' by ' + escapeHtml(b.last_counted_by));
   }
   html += bdField('Created', timeAgoHTML(b.created_at));
   html += bdField('Updated', timeAgoHTML(b.updated_at));
@@ -354,7 +358,7 @@ function renderOverview(data) {
   if (data.current_order) {
     var o = data.current_order;
     html += '<div class="action-group"><h4>Current Order</h4>';
-    html += '<p>Order #' + o.id + ' &mdash; <span class="badge badge-' + esc(o.status) + '">' + esc(o.status) + '</span></p>';
+    html += '<p>Order #' + o.id + ' &mdash; <span class="badge badge-' + escapeHtml(o.status) + '">' + escapeHtml(o.status) + '</span></p>';
     html += '</div>';
   }
 
@@ -419,13 +423,13 @@ function renderContents(data) {
     var held = data.load_refusal || '';
     var off = held ? ' disabled' : '';
     html += '<div class="action-group"><h4>Load Payload</h4>';
-    if (held) html += '<p class="text-muted mb-1" id="bd-load-held">' + esc(held) + '</p>';
+    if (held) html += '<p class="text-muted mb-1" id="bd-load-held">' + escapeHtml(held) + '</p>';
     html += '<div class="inline-form">';
     html += '<div class="form-group"><label>Payload</label><select id="bd-load-payload" style="width:200px"' + off + '><option value="">-- Select --</option>';
     (PAGE_PAYLOADS || []).forEach(function(p) {
       var allowed = (PAGE_PAYLOAD_BIN_TYPES || {})[p.code];
       if (allowed && allowed.length > 0 && allowed.indexOf(b.bin_type_id) === -1) return;
-      html += '<option value="' + esc(p.code) + '">' + esc(p.code) + '</option>';
+      html += '<option value="' + escapeHtml(p.code) + '">' + escapeHtml(p.code) + '</option>';
     });
     html += '</select></div>';
     html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off + '></div>';
@@ -474,7 +478,7 @@ async function renderActions(data) {
   // Lock/Unlock
   html += '<div class="action-group"><h4>Lock</h4>';
   if (b.locked) {
-    html += '<p class="text-muted mb-1">Locked by <strong>' + esc(b.locked_by) + '</strong></p>';
+    html += '<p class="text-muted mb-1">Locked by <strong>' + escapeHtml(b.locked_by) + '</strong></p>';
     html += '<button class="btn btn-sm" data-action="doBinAction:unlock" >Unlock</button>';
   } else {
     html += '<div class="inline-form">';
@@ -493,7 +497,7 @@ async function renderActions(data) {
     // _TRANSIT and robot decks are not places; a bin reaches them only by a
     // robot lifting it (BinService.MoveByHand refuses them too).
     if (n.name === '_TRANSIT' || n.name.indexOf('_ROBOT:') === 0) return;
-    html += '<option value="' + n.id + '">' + esc(n.name) + '</option>';
+    html += '<option value="' + n.id + '">' + escapeHtml(n.name) + '</option>';
   });
   html += '</select></div>';
   html += '<button class="btn btn-sm" data-action="moveBin">Move</button>';
@@ -511,19 +515,19 @@ async function renderActions(data) {
   // Edit Properties
   html += '<div class="action-group"><h4>Properties</h4>';
   html += '<div class="inline-form">';
-  html += '<div class="form-group"><label>Label</label><input type="text" id="bd-edit-label" value="' + esc(b.label) + '" style="width:150px"></div>';
-  html += '<div class="form-group"><label>Description</label><input type="text" id="bd-edit-desc" value="' + esc(b.description || '') + '" style="width:200px"></div>';
+  html += '<div class="form-group"><label>Label</label><input type="text" id="bd-edit-label" value="' + escapeHtml(b.label) + '" style="width:150px"></div>';
+  html += '<div class="form-group"><label>Description</label><input type="text" id="bd-edit-desc" value="' + escapeHtml(b.description || '') + '" style="width:200px"></div>';
   html += '<div class="form-group"><label>Bin Type</label><select id="bd-edit-bin-type" style="width:160px">';
   (PAGE_BIN_TYPES || []).forEach(function(bt) {
     var sel = (bt.id === b.bin_type_id) ? ' selected' : '';
-    html += '<option value="' + bt.id + '"' + sel + '>' + esc(bt.code) + '</option>';
+    html += '<option value="' + bt.id + '"' + sel + '>' + escapeHtml(bt.code) + '</option>';
   });
   html += '</select></div>';
   // The count of totes standing on the cart, filled or empty: blank is
   // unknown, 0 is tops & bottoms. A change of bin type blanks it on the server.
   var totes = (b.totes_on_cart === undefined || b.totes_on_cart === null) ? '' : String(b.totes_on_cart);
   html += '<div class="form-group"><label title="Totes standing on the cart, filled or empty. Blank is unknown; 0 is tops & bottoms (no totes on the cart). Changing the bin type blanks it.">Totes on cart</label>' +
-    '<input type="number" id="bd-edit-totes" min="0" step="1" placeholder="unknown" value="' + esc(totes) + '" style="width:90px"></div>';
+    '<input type="number" id="bd-edit-totes" min="0" step="1" placeholder="unknown" value="' + escapeHtml(totes) + '" style="width:90px"></div>';
   html += '<button class="btn btn-sm" data-action="updateBinProps">Save</button>';
   html += '</div></div>';
 
@@ -935,15 +939,15 @@ function ccShowBin() {
     })
     .catch(function(e) {
       if (st !== ccState || seq !== st.seq) return;
-      ccPaintCard(bin, 'could not read (' + esc(errText(e)) + ')');
+      ccPaintCard(bin, 'could not read (' + escapeHtml(errText(e)) + ')');
       toast('Could not read ' + bin.label + ': ' + errText(e) + '. Skip it or flag it.', 'error');
     });
 }
 
 function ccPaintCard(bin, expectedHTML) {
   document.getElementById('cc-bin-card').innerHTML =
-    '<div class="cc-label">' + esc(bin.label) + '</div>' +
-    '<div class="text-muted">' + esc(bin.node || 'unassigned') + ' &middot; ' + esc(bin.payload) + '</div>' +
+    '<div class="cc-label">' + escapeHtml(bin.label) + '</div>' +
+    '<div class="text-muted">' + escapeHtml(bin.node || 'unassigned') + ' &middot; ' + escapeHtml(bin.payload) + '</div>' +
     '<div style="margin-top:0.5rem">Expected UoP: <strong>' + expectedHTML + '</strong></div>';
   document.getElementById('cc-actual').max = bin.uopCapacity || '';
   var hint = document.getElementById('cc-capacity-hint');
@@ -1046,7 +1050,7 @@ function ccSummary() {
     ccState.results.forEach(function(r) {
       if (r.result === 'discrepancy') {
         var diff = r.actual - r.expected;
-        html += '<tr><td><code>' + esc(r.label) + '</code></td><td>' + r.expected + '</td><td>' + r.actual + '</td>';
+        html += '<tr><td><code>' + escapeHtml(r.label) + '</code></td><td>' + r.expected + '</td><td>' + r.actual + '</td>';
         html += '<td style="color:' + (diff < 0 ? 'var(--danger)' : 'var(--success)') + '">' + (diff > 0 ? '+' : '') + diff + '</td></tr>';
       }
     });
@@ -1082,7 +1086,6 @@ onSSE('bin-update', function(data) {
 });
 
 // ===== HELPERS =====
-function esc(s) { return escapeHtml(s); }
 
 function bdField(label, value) {
   return '<div class="bd-field"><label>' + label + '</label><span>' + value + '</span></div>';
@@ -1322,7 +1325,7 @@ delegateActions(document.body, {
     previewBinLabels,
     recordCount,
     requestMove,
-    switchTab,
+    switchTab: showBinTab,
     toggleAllBins,
     toggleBinTypesAccordion,
     toggleManifest,

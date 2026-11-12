@@ -14,6 +14,7 @@
 //   • Clock is server-synced (offset from the connected + cell-heartbeat ts) so
 //     "X ago" doesn't drift over a long soak.
 
+import { el } from '/static/shared/dom.js';
 import { formatClock, isSimClock, serverNow, simSpeed, syncServerClock } from '/static/shared/clock.js';
 import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
@@ -72,7 +73,7 @@ function loadCells() {
             // P4.4: a freshly-seeded board has no cells yet — render guidance,
             // not a dead end. (SCOPE_STATIONS may also be empty here, which is
             // fine: an unscoped board shows every cell once any exist.)
-            grid.appendChild(el('div', 'hb-empty', 'No cells reported yet. They appear once an edge registers; the stations on this board are chosen with Edit on the Dashboard page.'));
+            grid.appendChild(el('div', { className: 'hb-empty' }, 'No cells reported yet. They appear once an edge registers; the stations on this board are chosen with Edit on the Dashboard page.'));
             return;
         }
         cellList.forEach((c, i) => {
@@ -89,7 +90,7 @@ function loadCells() {
         const grid = document.getElementById('hb-grid');
         if (!grid || cellTiles.size) return;
         grid.innerHTML = '';
-        grid.appendChild(el('div', 'hb-empty', 'Could not load cells — ' + (e && e.message ? e.message : e)));
+        grid.appendChild(el('div', { className: 'hb-empty' }, 'Could not load cells — ' + (e && e.message ? e.message : e)));
     });
 }
 
@@ -255,14 +256,6 @@ function init() {
     tickClock();
     setInterval(tickClock, 1000);
     startLoop();
-}
-
-// tiny DOM helper (avoids importing app.js's el for one node)
-function el(tag, cls, text) {
-    const n = document.createElement(tag);
-    if (cls) n.className = cls;
-    if (text) n.textContent = text;
-    return n;
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

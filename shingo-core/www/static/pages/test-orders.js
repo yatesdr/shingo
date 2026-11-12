@@ -6,7 +6,10 @@ import { onSSE } from '/static/shared/bus.js';
 
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
 
-function switchTab(name) {
+// showOrderTab is this page's own tab handler, bound to its
+// data-action="switchTab:<name>" tabs. Not dom.js's switchTab (§22): its
+// panels are .to-tab-content, and its tabs carry no data-tab.
+function showOrderTab(name) {
   document.querySelectorAll('.tabs .tab').forEach(function(t) { t.classList.remove('active'); });
   document.querySelectorAll('.to-tab-content').forEach(function(c) { c.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
@@ -554,7 +557,7 @@ delegateActions(document.body, {
     submitDirectOrder,
     submitKafkaComplexOrder,
     submitKafkaOrder,
-    switchTab,
+    switchTab: showOrderTab,
     updateCmdFields,
     updateComplexFields,
     updateKafkaComplexFields,
