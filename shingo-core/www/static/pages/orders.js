@@ -8,6 +8,8 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
 import { routeStripHTML, routeTimelineHTML } from '/static/components/route-strip.js';
 import { reconcileList } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
+import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
+import { partPicker, partSource } from '/static/shared/part-picker.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
 // (detail page with a child-step modal open over it), so the status line is
@@ -787,24 +789,50 @@ function updateFaultedChip(count) {
 setInterval(refreshOrderRows, ORDER_ROWS_BACKSTOP_MS);
 
 // --- Manual order modal ---
-var _moNodesLoaded = false;
 var _moActiveTab = 'transport';
-// Kept from the two fetches below so the staged tab can answer "what is at the
+// Kept from the reads below so the staged tab can answer "what is at the
 // node you just picked?" without a round trip per keystroke. Advisory only —
 // the server reads the bin itself at submit (payloadAtSource in
 // handlers_orders.go), so a stale cache shows a stale sentence, never a wrong
 // order.
 var _moNodes = [];
 var _moBins = [];
+var _moBinsLoaded = false;
+// The codes parked under the staged tab's group source: what its payload
+// picker may offer (stagedSourceChanged).
+var _moParked = [];
+
+// THE PAGE'S ONE NODE LIST AND ONE PART LIST (shared/node-picker.js,
+// part-picker.js), read on the modal's first open and asked again on the next
+// open after a failure. Every node field takes any node but a robot deck and
+// a disabled node, each shown greyed with its reason; a container is badged
+// and its nodes sit under it, at any depth (a group is a valid source for a
+// group-retrieve). _TRANSIT is never offered.
+var moNodes = nodeSource(function() {
+  return apiGet('/api/nodes').then(function(nodes) { _moNodes = nodes || []; return nodes; });
+});
+// The transport tab's retrieve / retrieve_empty payload is the REQUEST — "bring
+// me a bin of X" — so it is a genuine choice and keeps the full catalog. The
+// staged tab's is not, and lists only what is parked under its group source.
+var moParts = partSource(function() { return apiGet('/api/payloads/templates'); });
+var MO_NODE_FIELD = { rule: nodeWhy.any(nodeWhy.robot, nodeWhy.disabled) };
+var MO = {};
+['mo-source', 'mo-delivery', 'mo-staged-source', 'mo-staged-staging', 'mo-staged-delivery', 'mo-moverobot-dest'].forEach(function(id) {
+  MO[id] = nodePicker(document.getElementById(id), moNodes, MO_NODE_FIELD, {
+    placeholder: 'Pick a node',
+    onChange: id === 'mo-staged-source' ? function() { stagedSourceChanged(); } : null,
+  });
+});
+MO['mo-payload'] = partPicker(document.getElementById('mo-payload'), moParts, { none: '— none —' },
+  { placeholder: 'Pick a payload' });
+MO['mo-staged-payload'] = partPicker(document.getElementById('mo-staged-payload'), moParts,
+  { allowed: _moParked, none: '— any —' }, { placeholder: 'Pick a payload' });
 
 function openManualOrderModal() {
   showModal('manual-order-modal');
   document.getElementById('mo-status').textContent = '';
   document.getElementById('manual-order-submit-btn').disabled = false;
-  if (!_moNodesLoaded) {
-    _moNodesLoaded = true;
-    loadManualOrderDropdowns();
-  }
+  loadManualOrderDropdowns();
   manualOrderTransportTypeChanged();
 }
 
@@ -822,93 +850,13 @@ function switchManualOrderTab(name, btn) {
   updateManualOrderQuantityVisibility();
 }
 
-// buildNodeOptionsHTML renders the manual-order node <option>s with the topology
-// made visible: synthetic containers (NGRP "group" / LANE "lane") are badged and
-// their child slots nested beneath them, so a container no longer reads like a
-// targetable slot — operators were dead-ending by picking a synthetic group like
-// "Supermarket Area". Display-only: /api/nodes already carries node_type_code /
-// is_synthetic / parent_id, and every node stays selectable (a group is a valid
-// source for a group-retrieve). Mirrors the edge manual-order picker.
-function buildNodeOptionsHTML(nodes) {
-  var byId = {};
-  nodes.forEach(function(n) { byId[n.id] = n; });
-  function typeLabel(n) {
-    var c = (n.node_type_code || '').toUpperCase();
-    if (c === 'NGRP') return 'group';
-    if (c === 'LANE') return 'lane';
-    return n.is_synthetic ? 'group' : '';
-  }
-  // A container with no zone of its own sits with its first child's zone.
-  function zoneOf(n) {
-    if (n.zone) return n.zone;
-    if (n.is_synthetic) {
-      var kid = nodes.find(function(c) { return c.parent_id === n.id && c.zone; });
-      if (kid) return kid.zone;
-    }
-    return 'Other';
-  }
-  function opt(n, indent) {
-    var t = typeLabel(n);
-    var label = (indent ? '  ↳ ' : '') + n.name + (t ? '  · ' + t : '');
-    return '<option value="' + escapeHtml(n.name) + '">' + escapeHtml(label) + '</option>';
-  }
-  var byZone = {};
-  nodes.forEach(function(n) {
-    if (!n.enabled) return;
-    var z = zoneOf(n);
-    (byZone[z] = byZone[z] || []).push(n);
-  });
-  var byName = function(a, b) { return a.name.localeCompare(b.name); };
-  var html = '<option value="">— select —</option>';
-  Object.keys(byZone).sort().forEach(function(zone) {
-    var roots = [], kids = {};
-    byZone[zone].forEach(function(n) {
-      if (n.parent_id && byId[n.parent_id]) (kids[n.parent_id] = kids[n.parent_id] || []).push(n);
-      else roots.push(n);
-    });
-    roots.sort(byName);
-    html += '<optgroup label="' + escapeHtml(zone) + '">';
-    roots.forEach(function(root) {
-      html += opt(root, false);
-      (kids[root.id] || []).sort(byName).forEach(function(k) { html += opt(k, true); });
-    });
-    html += '</optgroup>';
-  });
-  return html;
-}
-
+// loadManualOrderDropdowns reads what the modal has not read yet: the node
+// list, the catalog, the available bins. A list already read is not read
+// again; one whose read failed is.
 function loadManualOrderDropdowns() {
-  apiGet('/api/nodes')
-    .then(function(nodes) {
-      _moNodes = nodes || [];
-      var html = buildNodeOptionsHTML(nodes);
-      // Transport tab
-      document.getElementById('mo-source').innerHTML = html;
-      document.getElementById('mo-delivery').innerHTML = html;
-      // Staged tab
-      document.getElementById('mo-staged-source').innerHTML = html;
-      document.getElementById('mo-staged-staging').innerHTML = html;
-      document.getElementById('mo-staged-delivery').innerHTML = html;
-      // Move-robot tab
-      document.getElementById('mo-moverobot-dest').innerHTML = html;
-      stagedSourceChanged();
-    })
-    .catch(function(e) { console.error('loadManualOrderDropdowns nodes', e); });
-
-  // The transport tab's retrieve / retrieve_empty payload is the REQUEST — "bring
-  // me a bin of X" — so it is a genuine choice and keeps the full catalog. The
-  // staged tab's is not, and no longer has a list to fish through.
-  apiGet('/api/payloads/templates')
-    .then(function(bps) {
-      var html = '<option value="">— none —</option>';
-      for (var i = 0; i < bps.length; i++) {
-        html += '<option value="' + escapeHtml(bps[i].code) + '">' + escapeHtml(bps[i].code) + ' — ' + escapeHtml(bps[i].description) + '</option>';
-      }
-      document.getElementById('mo-payload').innerHTML = html;
-    })
-    .catch(function(e) { console.error('loadManualOrderDropdowns payloads', e); });
-
-  loadManualOrderBinDropdown();
+  moNodes.load().then(function() { stagedSourceChanged(); });
+  moParts.load();
+  if (!_moBinsLoaded) loadManualOrderBinDropdown();
 }
 
 // stagedSourceChanged answers "what will this order actually be carrying?" from
@@ -922,11 +870,10 @@ function loadManualOrderDropdowns() {
 //     a real choice, so it keeps a picker — listing only what is parked in that
 //     group, not the whole catalog.
 function stagedSourceChanged() {
-  var name = document.getElementById('mo-staged-source').value;
+  var name = MO['mo-staged-source'].value();
   var derived = document.getElementById('mo-staged-payload-derived');
   var groupWrap = document.getElementById('mo-staged-payload-group');
   var readout = document.getElementById('mo-staged-payload-readout');
-  var sel = document.getElementById('mo-staged-payload');
 
   function showReadout(text) {
     derived.classList.remove('hide');
@@ -957,9 +904,10 @@ function stagedSourceChanged() {
     if (!codes.length) { showReadout('Nothing is parked in ' + name + ' right now.'); return; }
     derived.classList.add('hide');
     groupWrap.classList.remove('hide');
-    var html = '<option value="">— any —</option>';
-    codes.sort().forEach(function(c) { html += '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>'; });
-    sel.innerHTML = html;
+    _moParked.length = 0;
+    codes.sort().forEach(function(c) { _moParked.push(c); });
+    MO['mo-staged-payload'].set('');
+    MO['mo-staged-payload'].refresh();
     return;
   }
 
@@ -974,6 +922,7 @@ function stagedSourceChanged() {
 function loadManualOrderBinDropdown() {
   apiGet('/api/bins/available')
     .then(function(bins) {
+      _moBinsLoaded = true;
       _moBins = bins || [];
       stagedSourceChanged();
       if (!bins || !bins.length) {
@@ -1057,13 +1006,13 @@ function submitManualOrder() {
 
     if (t === 'retrieve_specific') {
       body.bin_label = document.getElementById('mo-bin').value;
-      body.delivery_node = document.getElementById('mo-delivery').value;
+      body.delivery_node = MO['mo-delivery'].value();
       if (!body.bin_label) { status.textContent = 'Bin is required'; status.style.color = 'var(--danger)'; return; }
       if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
     } else {
-      if (t !== 'retrieve' && t !== 'retrieve_empty') body.source_node = document.getElementById('mo-source').value;
-      body.delivery_node = document.getElementById('mo-delivery').value;
-      if (t !== 'move') body.payload_code = document.getElementById('mo-payload').value;
+      if (t !== 'retrieve' && t !== 'retrieve_empty') body.source_node = MO['mo-source'].value();
+      body.delivery_node = MO['mo-delivery'].value();
+      if (t !== 'move') body.payload_code = MO['mo-payload'].value();
 
       if (t === 'move' && !body.source_node) {
         status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return;
@@ -1080,15 +1029,15 @@ function submitManualOrder() {
     }
   } else if (tab === 'staged') {
     body.order_type = 'staged';
-    body.source_node = document.getElementById('mo-staged-source').value;
-    body.staging_node = document.getElementById('mo-staged-staging').value;
-    body.delivery_node = document.getElementById('mo-staged-delivery').value;
+    body.source_node = MO['mo-staged-source'].value();
+    body.staging_node = MO['mo-staged-staging'].value();
+    body.delivery_node = MO['mo-staged-delivery'].value();
     // Only sent when the source is a group, where it names WHICH bin to take.
     // For a concrete source the server reads the bin itself, so the page
     // deliberately sends nothing rather than a second opinion.
     var groupPick = document.getElementById('mo-staged-payload-group');
     if (groupPick && !groupPick.classList.contains('hide')) {
-      body.payload_code = document.getElementById('mo-staged-payload').value;
+      body.payload_code = MO['mo-staged-payload'].value();
     }
     if (!body.source_node) { status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.staging_node) { status.textContent = 'Staging node is required'; status.style.color = 'var(--danger)'; return; }
@@ -1097,7 +1046,7 @@ function submitManualOrder() {
     // Not an order. This tab talks to the fleet directly, so it posts
     // somewhere else, gets a different answer back, and has no order number to
     // show or table row to reload for.
-    var dest = document.getElementById('mo-moverobot-dest').value;
+    var dest = MO['mo-moverobot-dest'].value();
     if (!dest) { status.textContent = 'Destination node is required'; status.style.color = 'var(--danger)'; return; }
     status.textContent = 'Submitting...';
     status.style.color = 'var(--text-muted)';

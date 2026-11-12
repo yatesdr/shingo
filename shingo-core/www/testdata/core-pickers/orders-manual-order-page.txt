@@ -7,32 +7,37 @@
   GET /api/payloads/templates
   GET /api/bins/available
   modal: show manual-order-modal
-mo-source, the node list (C4):
-  "" | — select —
-  [Other]
-    "_ROBOT:AMR-01" | _ROBOT:AMR-01  · group
-    "_TRANSIT" | _TRANSIT  · group
-    "GRP-A" | GRP-A  · group
-    "SPOT-9" | SPOT-9
-    "VIRT-1" | VIRT-1  · group
+mo-source, the node list (shared/node-picker.js over /api/nodes, rule: robot, disabled):
+  [ZONE-1]
+    "GRP-A" | GRP-A · group
+      "GRP-A-L1" | GRP-A-L1 · lane
+      "GRP-A-L1-S1" | ↳ GRP-A-L1-S1
+      "GRP-A-L1-S2" | ↳ GRP-A-L1-S2
+    "OLD-SLOT" | OLD-SLOT  (off: disabled)
   [ZONE-2]
-    "GRP-B" | GRP-B  · group
-    "GRP-B-N1" |   ↳ GRP-B-N1
-    "GRP-B-N2" |   ↳ GRP-B-N2
-    "LINE-1" | LINE-1
+    "GRP-B" | GRP-B · group
+      "GRP-B-N1" | GRP-B-N1
+      "GRP-B-N2" | GRP-B-N2
+    "GRP-OFF" | GRP-OFF · group  (off: disabled)
+      "GRP-OFF-N1" | GRP-OFF-N1
+    "LINE-1" | LINE-1 · Line one
+  [Other]
+    "SPOT-9" | SPOT-9
+    "VIRT-1" | VIRT-1 · synthetic
+    "_ROBOT:AMR-01" | _ROBOT:AMR-01 · robot  (off: a robot, not a place)
 mo-delivery: the same list
 mo-staged-source: the same list
 mo-staged-staging: the same list
 mo-staged-delivery: the same list
 mo-moverobot-dest: the same list
-Pinned as is: census #6, GRP-A (a group of lanes) is under Other; its lane and slots and
-GRP-OFF-N1 (member of a disabled group) are not offered at all; _TRANSIT, _ROBOT:AMR-01 and
-VIRT-1 are offered as "group"; the disabled OLD-SLOT and GRP-OFF are left out.
-mo-payload (C5, /api/payloads/templates in its order, whole catalog):
+census #6 fixed: GRP-A sits in the zone of the slots under it, with its lane and the slots of the lane; GRP-OFF-N1
+(member of a disabled group) is offered; the disabled OLD-SLOT and GRP-OFF and the robot deck are
+shown greyed with their reason; _TRANSIT is never offered.
+mo-payload (shared/part-picker.js over /api/payloads/templates, whole catalog):
   "" | — none —
-  "PART-B" | PART-B — Part B
-  "PART-A" | PART-A — Part A
-  "PART-C" | PART-C — Part C
+  "PART-A" | PART-A · Part A
+  "PART-B" | PART-B · Part B
+  "PART-C" | PART-C · Part C
 mo-bin (Retrieve specific, /api/bins/available):
   "" | — select bin —
   [ZONE-1]
@@ -56,9 +61,9 @@ staged payload after the load: read-out: "Select a source node."
   "GRP-B-N2" -> read-out: "2 bins at GRP-B-N2 — which one is picked is decided at dispatch."
   "LINE-1" -> read-out: "BIN-3 — empty"
   "SPOT-9" -> read-out: "No bin at SPOT-9."
-  "_TRANSIT" -> read-out: "Nothing is parked in _TRANSIT right now."
+  "_TRANSIT" -> not taken: not offered
   "VIRT-1" -> read-out: "Nothing is parked in VIRT-1 right now."
-  "NOT-A-NODE" -> read-out: "Read from the bin at the source when the order is submitted."
+  "NOT-A-NODE" -> not taken: not offered
   "" -> read-out: "Select a source node."
   (no request)
 
@@ -75,10 +80,10 @@ staged payload after the load: read-out: "Select a source node."
   POST /api/orders/spot {"priority":0,"description":"","order_type":"retrieve_empty","delivery_node":"GRP-B","payload_code":""}
   timers: 1200 ms
   mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
--- transport retrieve_specific BIN-1 to _TRANSIT (offered, so sendable)
-  POST /api/orders/spot {"priority":0,"description":"","order_type":"retrieve_specific","bin_label":"BIN-1","delivery_node":"_TRANSIT"}
-  timers: 1200 ms
-  mo-status "Order #41 created (dispatched)" color var(--success); submit button disabled
+-- transport retrieve_specific BIN-1 to _TRANSIT (not offered: the delivery stays empty)
+  mo-delivery "_TRANSIT" not taken: not offered
+  (no request)
+  mo-status "Delivery node is required" color var(--danger); submit button enabled
 -- transport move with no source
   (no request)
   mo-status "Source node is required" color var(--danger); submit button enabled
@@ -143,29 +148,30 @@ staged payload after the load: read-out: "Select a source node."
   console.error moveRobot No answer from the server
   mo-status "No answer from the server" color var(--danger); submit button enabled
 
-== census #7 (pinned as is): the first /api/nodes read fails
+== census #7 fixed: the first /api/nodes read fails
 -- open
   GET /api/nodes
   GET /api/payloads/templates
   GET /api/bins/available
   console.error loadManualOrderBinDropdown No answer from the server
-  console.error loadManualOrderDropdowns nodes failed: the store's error
-  console.error loadManualOrderDropdowns payloads Server error (502)
   modal: show manual-order-modal
-  mo-source: Loading...
-  mo-delivery: Loading...
-  mo-staged-source: Loading...
-  mo-staged-staging: Loading...
-  mo-staged-delivery: Loading...
-  mo-moverobot-dest: Loading...
-  mo-payload: — none —
+  mo-source: (list) Could not read the node list: failed: the store's error. Open the list again to retry.
+  mo-delivery: (list) Could not read the node list: failed: the store's error. Open the list again to retry.
+  mo-staged-source: (list) Could not read the node list: failed: the store's error. Open the list again to retry.
+  mo-staged-staging: (list) Could not read the node list: failed: the store's error. Open the list again to retry.
+  mo-staged-delivery: (list) Could not read the node list: failed: the store's error. Open the list again to retry.
+  mo-moverobot-dest: (list) Could not read the node list: failed: the store's error. Open the list again to retry.
+  mo-payload: (list) Could not read the part list: Server error (502). Open the list again to retry.
   mo-bin: Loading...
   staged payload: read-out: "Select a source node."
--- second open: no request (the read is never asked again; _moNodesLoaded was set before it)
-  (no request)
+-- second open: asks again
+  GET /api/nodes
+  GET /api/payloads/templates
+  GET /api/bins/available
+  console.error loadManualOrderBinDropdown No answer from the server
   modal: hide manual-order-modal
   modal: show manual-order-modal
-  mo-source: Loading...
--- submit a move from the Loading... selects
+  mo-source: 8 rows
+-- submit a move with nothing picked
   (no request)
   mo-status "Source node is required" color var(--danger); submit button enabled

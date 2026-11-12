@@ -166,17 +166,24 @@ func corePickerCensusBugs(t *testing.T, got map[string]string) {
 			t.Errorf("census #11 (pinned as is): Create bin no longer offers %s; if that is the fix, say so and regenerate", name)
 		}
 	}
-	// #6: the JS twin's zoneOf looks one level down, so a group whose children
-	// are lanes files under Other (static/pages/orders.js:843).
-	twins := got["node-options-twins.txt"]
-	if !strings.Contains(twins, "JS  [Other] GRP-A  · group") {
-		t.Errorf("census #6 (pinned as is): the JS twin no longer files GRP-A (a group of lanes) under Other")
-	}
-	// #7: a failed first /api/nodes read leaves the six node selects on
-	// "Loading..." and the modal never asks again (static/pages/orders.js:805).
+	// #6, fixed: a group whose children are lanes sits in its slots' zone with
+	// its lane and the lane's slots under it, and a disabled group's live
+	// member is offered (was orders.js:843 zoneOf one level, :864 one level
+	// drawn, :859 the disabled parent dropping its member).
 	orders := got["orders-manual-order-page.txt"]
-	if !strings.Contains(orders, "second open: no request") || !strings.Contains(orders, "mo-source: Loading...") {
-		t.Errorf("census #7 (pinned as is): the failed first load is retried or no longer leaves Loading...")
+	for _, line := range []string{
+		"  [ZONE-1]\n    \"GRP-A\" | GRP-A · group\n      \"GRP-A-L1\" | GRP-A-L1 · lane\n      \"GRP-A-L1-S1\" | ↳ GRP-A-L1-S1\n",
+		"      \"GRP-OFF-N1\" | GRP-OFF-N1\n",
+	} {
+		if !strings.Contains(orders, line) {
+			t.Errorf("census #6: the manual order's node list no longer holds %q", line)
+		}
+	}
+	// #7, fixed: a failed first /api/nodes read says so in the list, and the
+	// next open asks again (was orders.js:805, the flag set before the read).
+	if !strings.Contains(orders, "-- second open: asks again\n  GET /api/nodes\n") ||
+		!strings.Contains(orders, "Could not read the node list") {
+		t.Errorf("census #7: a failed first node read is not said, or not asked again on the next open")
 	}
 }
 

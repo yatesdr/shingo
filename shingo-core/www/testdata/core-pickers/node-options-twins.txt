@@ -19,25 +19,27 @@ Go  GRP-OFF-N1     | GRP-OFF-N1
 Go  LINE-1         | LINE-1
 
 JS (value is the node name)
-JS  (placeholder) "— select —"
-JS  [Other] _ROBOT:AMR-01  · group
-JS  [Other] _TRANSIT  · group
-JS  [Other] GRP-A  · group
-JS  [Other] SPOT-9
-JS  [Other] VIRT-1  · group
+JS  [ZONE-1] GRP-A  · group
+JS  [ZONE-1]   GRP-A-L1  · lane
+JS  [ZONE-1]   ↳ GRP-A-L1-S1
+JS  [ZONE-1]   ↳ GRP-A-L1-S2
+JS  [ZONE-1] OLD-SLOT  (off: disabled)
 JS  [ZONE-2] GRP-B  · group
-JS  [ZONE-2]   ↳ GRP-B-N1
-JS  [ZONE-2]   ↳ GRP-B-N2
-JS  [ZONE-2] LINE-1
+JS  [ZONE-2]   GRP-B-N1
+JS  [ZONE-2]   GRP-B-N2
+JS  [ZONE-2] GRP-OFF  · group  (off: disabled)
+JS  [ZONE-2]   GRP-OFF-N1
+JS  [ZONE-2] LINE-1  · Line one
+JS  [Other] SPOT-9
+JS  [Other] VIRT-1  · synthetic
+JS  [Other] _ROBOT:AMR-01  · robot  (off: a robot, not a place)
 
 Offered by Go, not by JS:
-  GRP-A-L1
-  GRP-A-L1-S1
-  GRP-A-L1-S2
-  GRP-OFF-N1
+  _TRANSIT
 Offered by JS, not by Go:
-  (none)
-Offered by neither: OLD-SLOT, GRP-OFF
+  OLD-SLOT
+  GRP-OFF
+Offered by neither: 
 
 Pinned as is:
   census #6: JS zoneOf looks one level down, so GRP-A (children are lanes, no zone) files under Other.

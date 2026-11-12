@@ -112,15 +112,15 @@
         </div>
         <div class="form-group" id="mo-source-group">
           <label><strong>Source Node</strong></label>
-          <select class="form-input" id="mo-source"><option value="">Loading...</option></select>
+          <div id="mo-source"></div>
         </div>
         <div class="form-group" id="mo-delivery-group">
           <label><strong>Delivery Node</strong></label>
-          <select class="form-input" id="mo-delivery"><option value="">Loading...</option></select>
+          <div id="mo-delivery"></div>
         </div>
         <div class="form-group" id="mo-payload-group">
           <label><strong>Payload</strong> <span class="text-muted">(optional)</span></label>
-          <select class="form-input" id="mo-payload"><option value="">— none —</option></select>
+          <div id="mo-payload"></div>
         </div>
         <div class="form-group hide" id="mo-bin-group">
           <label><strong>Bin</strong></label>
@@ -132,15 +132,15 @@
       <div id="manual-order-tab-staged" class="manual-order-tab-content">
         <div class="form-group">
           <label><strong>Source Node</strong></label>
-          <select class="form-input" id="mo-staged-source" data-action-change="stagedSourceChanged"><option value="">Loading...</option></select>
+          <div id="mo-staged-source"></div>
         </div>
         <div class="form-group">
           <label><strong>Staging Node</strong></label>
-          <select class="form-input" id="mo-staged-staging"><option value="">Loading...</option></select>
+          <div id="mo-staged-staging"></div>
         </div>
         <div class="form-group">
           <label><strong>Delivery Node</strong></label>
-          <select class="form-input" id="mo-staged-delivery"><option value="">Loading...</option></select>
+          <div id="mo-staged-delivery"></div>
         </div>
         {{/* No payload picker. The source node names the place, the place holds
              the bin, and the bin knows what it is — asking again is the same
@@ -155,7 +155,7 @@
         </div>
         <div class="form-group hide" id="mo-staged-payload-group">
           <label><strong>Payload</strong> <span class="text-muted">(which bin to take from the group)</span></label>
-          <select class="form-input" id="mo-staged-payload"><option value="">— any —</option></select>
+          <div id="mo-staged-payload"></div>
         </div>
       </div>
 
@@ -165,7 +165,7 @@
         <p class="form-hint">Sends a robot to that location. No bin is picked up or dropped off, and no order is created — the robot goes, then parks itself when it next sits idle.</p>
         <div class="form-group">
           <label><strong>Destination Node</strong></label>
-          <select class="form-input" id="mo-moverobot-dest"><option value="">Loading...</option></select>
+          <div id="mo-moverobot-dest"></div>
         </div>
       </div>
 

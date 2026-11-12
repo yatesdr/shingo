@@ -170,12 +170,15 @@ function answerOrderReads(net) {
 }
 
 const NODE_SELECTS = ['mo-source', 'mo-delivery', 'mo-staged-source', 'mo-staged-staging', 'mo-staged-delivery', 'mo-moverobot-dest'];
+// Each case starts from empty pickers, as a person clears what the last one picked.
+const MO_CLEAR = { 'mo-source': 1, 'mo-delivery': 1, 'mo-payload': 1, 'mo-staged-source': 1, 'mo-staged-staging': 1,
+    'mo-staged-delivery': 1, 'mo-moverobot-dest': 1 };
 
 function stagedPayloadShown(t) {
     const doc = t.doc;
     if (!doc.getElementById('mo-staged-payload-group').classList.contains('hide')) {
-        return 'picker: ' + D.parseOptions(doc.getElementById('mo-staged-payload').innerHTML)
-            .map((o) => JSON.stringify(o.value) + ' ' + o.text).join(', ');
+        return 'picker: ' + t.p.pickers['mo-staged-payload'].rows()
+            .map((r) => JSON.stringify(r.value) + ' ' + r.label).join(', ');
     }
     return 'read-out: ' + JSON.stringify(doc.getElementById('mo-staged-payload-readout').textContent);
 }
@@ -186,12 +189,32 @@ function moStatus(t) {
         '; submit button ' + (t.doc.getElementById('manual-order-submit-btn').disabled ? 'disabled' : 'enabled');
 }
 
-// setForm sets the manual order's fields and its tab, as a person would.
+// setForm sets the manual order's fields and its tab, as a person would: a
+// picker's field by picking its row (setPick), the rest by value.
 function setForm(t, tab, fields) {
     t.p.run('_moActiveTab = ' + JSON.stringify(tab));
-    Object.keys(fields).forEach((id) => { t.doc.getElementById(id).value = fields[id]; });
+    const refused = [];
+    Object.keys(fields).forEach((id) => {
+        const why = setPick(t, id, fields[id]);
+        if (why) refused.push(id + ' ' + JSON.stringify(fields[id]) + ' not taken: ' + why);
+    });
     if (tab === 'transport') t.p.run('manualOrderTransportTypeChanged()');
     if (tab === 'staged') t.p.run('stagedSourceChanged()');
+    return refused;
+}
+
+// setPick picks value in the picker mounted on id, or sets the element's
+// value where there is none; '' when taken, else why not.
+function setPick(t, id, value) {
+    const k = t.p.pickers[id];
+    if (!k) { t.doc.getElementById(id).value = value; return ''; }
+    return k.choose(value);
+}
+
+// pickerText is what a picker that cannot show its list shows instead.
+function pickerText(k) {
+    const rows = k.rows();
+    return rows === null ? '(list) ' + k.opts.loading : rows.length + ' rows';
 }
 
 async function ordersPins() {
@@ -208,18 +231,21 @@ async function ordersPins() {
     await D.settle();
     L.push('== open the modal (the three reads answer)');
     flush(L, t.net, t.rec);
-    const html = t.doc.getElementById('mo-source').innerHTML;
-    twinJS = D.parseOptions(html).map((o) => ({ zone: o.group, value: o.value, label: o.text }));
-    L.push('mo-source, the node list (C4):');
-    D.optionLines(html).forEach((l) => L.push(l));
-    NODE_SELECTS.slice(1).forEach((id) => {
-        L.push(id + ': ' + (t.doc.getElementById(id).innerHTML === html ? 'the same list' : 'A DIFFERENT LIST'));
+    const rows = t.p.pickers['mo-source'].rows();
+    rows.forEach((r) => {
+        twinJS.push({ zone: r.section || '', value: String(r.value), label: r.label + (r.note ? '  · ' + r.note : '') + (r.reason ? '  (off: ' + r.reason + ')' : '') });
+        (r.members || []).forEach((m) => twinJS.push({ zone: r.section || '', value: String(m.value), label: '  ' + m.label + (m.note ? '  · ' + m.note : '') + (m.reason ? '  (off: ' + m.reason + ')' : '') }));
     });
-    L.push('Pinned as is: census #6, GRP-A (a group of lanes) is under Other; its lane and slots and');
-    L.push('GRP-OFF-N1 (member of a disabled group) are not offered at all; _TRANSIT, _ROBOT:AMR-01 and');
-    L.push('VIRT-1 are offered as "group"; the disabled OLD-SLOT and GRP-OFF are left out.');
-    L.push('mo-payload (C5, /api/payloads/templates in its order, whole catalog):');
-    D.optionLines(t.doc.getElementById('mo-payload').innerHTML).forEach((l) => L.push(l));
+    L.push('mo-source, the node list (shared/node-picker.js over /api/nodes, rule: robot, disabled):');
+    D.rowLines(rows).forEach((l) => L.push(l));
+    NODE_SELECTS.slice(1).forEach((id) => {
+        L.push(id + ': ' + (JSON.stringify(t.p.pickers[id].rows()) === JSON.stringify(rows) ? 'the same list' : 'A DIFFERENT LIST'));
+    });
+    L.push('census #6 fixed: GRP-A sits in the zone of the slots under it, with its lane and the slots of the lane; GRP-OFF-N1');
+    L.push('(member of a disabled group) is offered; the disabled OLD-SLOT and GRP-OFF and the robot deck are');
+    L.push('shown greyed with their reason; _TRANSIT is never offered.');
+    L.push('mo-payload (shared/part-picker.js over /api/payloads/templates, whole catalog):');
+    D.rowLines(t.p.pickers['mo-payload'].rows()).forEach((l) => L.push(l));
     L.push('mo-bin (Retrieve specific, /api/bins/available):');
     D.optionLines(t.doc.getElementById('mo-bin').innerHTML).forEach((l) => L.push(l));
     L.push('staged payload after the load: ' + stagedPayloadShown(t));
@@ -231,8 +257,8 @@ async function ordersPins() {
 
     L.push('', '== staged payload (C6) per source picked');
     ['GRP-A', 'GRP-B', 'GRP-B-N1', 'GRP-B-N2', 'LINE-1', 'SPOT-9', '_TRANSIT', 'VIRT-1', 'NOT-A-NODE', ''].forEach((name) => {
-        t.doc.getElementById('mo-staged-source').value = name;
-        t.p.run('stagedSourceChanged()');
+        const why = setPick(t, 'mo-staged-source', name);
+        if (why) { L.push('  ' + JSON.stringify(name) + ' -> not taken: ' + why); return; }
         L.push('  ' + JSON.stringify(name) + ' -> ' + stagedPayloadShown(t));
     });
     flush(L, t.net, t.rec);
@@ -247,7 +273,7 @@ async function ordersPins() {
             { 'mo-transport-type': 'retrieve', 'mo-source': 'GRP-B-N1', 'mo-delivery': 'LINE-1', 'mo-payload': 'PART-A', 'mo-quantity': '3' }],
         ['transport retrieve_empty to the group GRP-B, no payload', 'transport',
             { 'mo-transport-type': 'retrieve_empty', 'mo-delivery': 'GRP-B', 'mo-payload': '', 'mo-quantity': '1' }],
-        ['transport retrieve_specific BIN-1 to _TRANSIT (offered, so sendable)', 'transport',
+        ['transport retrieve_specific BIN-1 to _TRANSIT (not offered: the delivery stays empty)', 'transport',
             { 'mo-transport-type': 'retrieve_specific', 'mo-bin': 'BIN-1', 'mo-delivery': '_TRANSIT' }],
         ['transport move with no source', 'transport', { 'mo-transport-type': 'move', 'mo-source': '', 'mo-delivery': 'LINE-1' }],
         ['staged from the group GRP-B, payload PART-C picked', 'staged',
@@ -261,11 +287,13 @@ async function ordersPins() {
     ];
     L.push('', '== the body each pick sends (an answer of 200)');
     for (const c of cases) {
-        setForm(t, c[1], c[2]);
-        Object.keys(c[3] || {}).forEach((id) => { t.doc.getElementById(id).value = c[3][id]; });
+        Object.keys(MO_CLEAR).forEach((id) => setPick(t, id, ''));
+        const refused = setForm(t, c[1], c[2]);
+        Object.keys(c[3] || {}).forEach((id) => { const why = setPick(t, id, c[3][id]); if (why) refused.push(id + ' not taken: ' + why); });
         t.p.run('submitManualOrder()');
         await D.settle();
         L.push('-- ' + c[0]);
+        refused.forEach((m) => L.push('  ' + m));
         flush(L, t.net, t.rec);
         L.push('  ' + moStatus(t));
         t.doc.getElementById('mo-status').textContent = '';
@@ -306,7 +334,7 @@ async function ordersPins() {
     }
 
     // --- census #7 ------------------------------------------------------
-    L.push('', '== census #7 (pinned as is): the first /api/nodes read fails');
+    L.push('', '== census #7 fixed: the first /api/nodes read fails');
     t = ordersPage();
     t.net.on('GET', '/api/nodes', answer('json.500'))
         .on('GET', '/api/payloads/templates', answer('proxy.502'))
@@ -315,20 +343,19 @@ async function ordersPins() {
     await D.settle();
     L.push('-- open');
     flush(L, t.net, t.rec);
-    NODE_SELECTS.concat(['mo-payload', 'mo-bin']).forEach((id) => {
-        L.push('  ' + id + ': ' + D.parseOptions(t.doc.getElementById(id).innerHTML).map((o) => o.text).join(' / '));
-    });
+    NODE_SELECTS.concat(['mo-payload']).forEach((id) => { L.push('  ' + id + ': ' + pickerText(t.p.pickers[id])); });
+    L.push('  mo-bin: ' + D.parseOptions(t.doc.getElementById('mo-bin').innerHTML).map((o) => o.text).join(' / '));
     L.push('  staged payload: ' + stagedPayloadShown(t));
     t.net.on('GET', '/api/nodes', { json: fx.nodes });
     t.p.run('closeManualOrderModal(); openManualOrderModal()');
     await D.settle();
-    L.push('-- second open: no request (the read is never asked again; _moNodesLoaded was set before it)');
+    L.push('-- second open: asks again');
     flush(L, t.net, t.rec);
-    L.push('  mo-source: ' + D.parseOptions(t.doc.getElementById('mo-source').innerHTML).map((o) => o.text).join(' / '));
+    L.push('  mo-source: ' + pickerText(t.p.pickers['mo-source']));
     setForm(t, 'transport', { 'mo-transport-type': 'move' });
     t.p.run('submitManualOrder()');
     await D.settle();
-    L.push('-- submit a move from the Loading... selects');
+    L.push('-- submit a move with nothing picked');
     flush(L, t.net, t.rec);
     L.push('  ' + moStatus(t));
 

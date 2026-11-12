@@ -243,10 +243,22 @@ function normal(s) {
 function loadPage(rel, globals, lend) {
     const file = path.join(WWW, rel);
     let src = fs.readFileSync(file, 'utf8');
+    const ctx = vm.createContext(globals);
+    vm.runInContext(HELPERS, ctx, { filename: 'core-pickers-harness/helpers' });
+    // The adapters are the tree's own, in the page's context (loadAdapters);
+    // the pickers a page mounts are kept by their host's id.
+    const pickers = {};
+    let adapters = null;
     src = src.replace(/^import \{([^}]*)\} from '([^']*)';[ \t]*$/mg, (_, names, from) => {
         // `confirm as uiConfirm` binds uiConfirm: lend by the name the page uses.
         names.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean).forEach((n) => {
             if (OWN.has(n)) return;
+            if (from === '/static/shared/node-picker.js' || from === '/static/shared/part-picker.js') {
+                adapters = adapters || loadAdapters(ctx, pickers);
+                if (!(n in adapters)) throw new Error(rel + ' imports ' + n + ' from ' + from + ', which does not export it');
+                globals[n] = adapters[n];
+                return;
+            }
             const v = lend(n, from);
             if (v === undefined) throw new Error(rel + ' imports ' + n + ' from ' + from + '; the pin lends nothing for it');
             globals[n] = v;
@@ -254,10 +266,116 @@ function loadPage(rel, globals, lend) {
         return '';
     });
     src = src.replace(/^export (?=(?:async )?function |var |let |const )/mg, '');
-    const ctx = vm.createContext(globals);
-    vm.runInContext(HELPERS, ctx, { filename: 'core-pickers-harness/helpers' });
     vm.runInContext(src, ctx, { filename: file });
-    return { ctx, run: (expr) => vm.runInContext(expr, ctx) };
+    return { ctx, pickers, run: (expr) => vm.runInContext(expr, ctx) };
+}
+
+// --- the shared adapters, over a recorded shell ------------------------------
+
+// The node and part adapters (shared/node-picker.js, part-picker.js) run as
+// served, inside the page's context; the shell under them (shared/picker.js)
+// is this one, which this DOM can hold: it keeps the selection, draws
+// nothing, and answers choose(value) as a person picking a row would (a row
+// not offered, or offered greyed, is not taken). The rows a page's picker
+// offers are what the goldens print (rowLines). The shell's own behaviour is
+// shared/testdata/components/picker.test.js's.
+function moduleSource(file) {
+    const names = [];
+    const src = fs.readFileSync(path.join(REPO, 'shared', file), 'utf8')
+        .replace(/^import [^;]+;[ \t]*$/mg, '')
+        .replace(/^export (?:const|function|async function) ([A-Za-z_$][\w$]*)/mg, (m, n) => { names.push(n); return m.replace(/^export /, ''); });
+    return { src, names };
+}
+
+function asList(v) {
+    if (v === null || v === undefined || v === '') return [];
+    return (Array.isArray(v) ? v : [v]).map(String);
+}
+
+function makeShell(registry) {
+    return function createPicker(host, opts) {
+        const o = opts || {};
+        const multi = !!o.multi;
+        let sel = asList(o.selected);
+        if (!multi) sel = sel.slice(0, 1);
+        const input = makeEl('input');
+        const k = {
+            el: host, input, opts: o, refreshes: 0,
+            value: () => (multi ? sel.slice() : (sel[0] || '')),
+            set(v) { sel = asList(v); if (!multi) sel = sel.slice(0, 1); },
+            markClean() {}, refresh() { k.refreshes++; }, close() {}, focus() {}, destroy() {},
+            open() { (input.listeners.focus || []).forEach((fn) => fn({ type: 'focus' })); },
+            rows() { const r = typeof o.rows === 'function' ? o.rows() : o.rows; return r === undefined ? null : r; },
+            // choose is a person picking value's row: '' why it was taken, or why not.
+            choose(value) {
+                const v = String(value);
+                const rows = k.rows();
+                if (v === '' && !multi && !(rows || []).some((r) => String(r.value) === '')) {
+                    sel = [];
+                } else {
+                    const all = [];
+                    (rows || []).forEach((r) => { all.push(r); (r.members || []).forEach((m) => all.push(m)); });
+                    const r = all.find((x) => String(x.value) === v);
+                    if (!r) return 'not offered';
+                    if (r.reason) return 'offered greyed: ' + r.reason;
+                    const vals = (Array.isArray(r.values) ? r.values : [r.value]).map(String);
+                    if (multi) {
+                        const on = vals.every((x) => sel.indexOf(x) >= 0);
+                        sel = on ? sel.filter((x) => vals.indexOf(x) < 0) : sel.concat(vals.filter((x) => sel.indexOf(x) < 0));
+                    } else {
+                        sel = vals.slice(0, 1);
+                    }
+                }
+                if (o.onChange) o.onChange(k.value(), k);
+                return '';
+            },
+        };
+        host.picker = k;
+        if (registry) registry[host.id] = k;
+        return k;
+    };
+}
+
+// loadAdapters evaluates the two adapters in a page's context over the
+// recorded shell; returns their exports by name.
+function loadAdapters(ctx, registry) {
+    const np = moduleSource('node-picker.js');
+    const pp = moduleSource('part-picker.js');
+    const make = vm.runInContext('(function (createPicker, el) {\n' + np.src + '\nreturn {' + np.names.join(',') + '};\n})', ctx,
+        { filename: 'shared/node-picker.js' });
+    const lend = {};
+    lend.el = function (tag, props) {
+        const e = makeEl(tag);
+        Object.keys(props || {}).forEach((key) => {
+            if (key === 'className') e.className = props[key];
+            else { e.setAttribute(key, props[key]); if (key === 'type') e.type = props[key]; }
+        });
+        return e;
+    };
+    const N = make(makeShell(registry), lend.el);
+    const makeP = vm.runInContext('(function (mountPicker, pickerSource) {\n' + pp.src + '\nreturn {' + pp.names.join(',') + '};\n})', ctx,
+        { filename: 'shared/part-picker.js' });
+    const P = makeP(N.mountPicker, N.pickerSource);
+    return Object.assign({}, N, P);
+}
+
+// rowLines is a picker's rows as golden lines: "[section]" headings, then
+// "value" | label · note, a greyed one with (off: reason), members indented.
+function rowLines(rows, indent) {
+    const pad = indent || '  ';
+    if (rows === null) return [pad + '(not read yet)'];
+    const out = [];
+    let section;
+    const one = (r, p) => out.push(p + JSON.stringify(String(r.value)) + ' | ' + (r.label === undefined ? r.value : r.label) +
+        (r.note ? ' · ' + r.note : '') + (r.reason ? '  (off: ' + r.reason + ')' : ''));
+    rows.forEach((r) => {
+        if (r.section !== undefined && r.section !== section) { section = r.section; out.push(pad + '[' + section + ']'); }
+        const p = pad + (r.section !== undefined ? '  ' : '');
+        one(r, p);
+        (r.members || []).forEach((m) => one(m, p + '  '));
+    });
+    if (!rows.length) out.push(pad + '(no rows)');
+    return out;
 }
 
 function tick() { return new Promise((r) => setImmediate(r)); }
@@ -265,5 +383,5 @@ async function settle() { for (let i = 0; i < 25; i++) await tick(); }
 
 module.exports = {
     readWWW, makeEl, makeDocument, parseOptions, optionLines, selectIn,
-    makeNet, requestLine, normal, loadPage, settle, unesc,
+    makeNet, requestLine, normal, loadPage, settle, unesc, loadAdapters, rowLines,
 };
