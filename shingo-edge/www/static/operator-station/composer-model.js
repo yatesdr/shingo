@@ -2527,8 +2527,7 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 // At Hopkinsville the 4x2's five positions are ALL kind `front` — a position
 // becomes `back` only when some live claim of the process names it as a pair or
 // a staging slot (domain.BackPositionNames), and nothing on that cell ever
-// has — so composer-render's optionsFor offers a 2-robot index NO back
-// position, while flowspec marks paired_core_node REQUIRED for that mode. The
+// has — so a 2-robot index has NO back position to be offered, while flowspec marks paired_core_node REQUIRED for that mode. The
 // operator picked the choreography and got the heading of the one field that
 // blocks the save, with nothing under it, no sentence and no fix-it.
 //
@@ -2537,12 +2536,13 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 // addPosition defaults its pair to freeBackPosition), and Sequential A/B flips
 // between two positions of any kind.
 //
-// THE NEXT ACTION IS THE DESKTOP, and it is real: the desktop's Flows picker
-// offers the backs AND the other positions for a pair (processes-desktop's
-// optionsFor, its `partnering` branch), so the first pair on a press with no
-// back position is made there, and the station offers it from the next save on.
-// That is the same shape as the routing sentences' "Settings › Routing" — the
-// fact, then somewhere to go.
+// THE NEXT ACTION IS ANOTHER POSITION. The desktop's Flows picker, the one
+// place a flow is drawn since the station's composer went (681a912c), offers
+// the backs AND the other positions for a pair (processes-desktop's optionsFor,
+// its `partnering` branch), so this sentence is read only on a cell with no
+// other position at all: add one, or pick another choreography. That is the
+// same shape as the routing sentences' "Settings › Routing" — the fact, then
+// somewhere to go.
 // THE WORD IS CELL, NOT PRESS (owner, 2026-09-17: "it could be a weld cell or
 // some other process"). These three sentences are read by an operator standing
 // at a 4x2 weld cell as often as at a press, and the code's own name for the
@@ -2551,7 +2551,7 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 const PAIRED_NOTE = {
     two_robot_press_index: 'No back position on this cell — an ' + MODES.two_robot_press_index +
         ' pairs with one, and a position becomes a back position only when a flow names it. ' +
-        'Pair this one from the desktop’s Flows, or pick another choreography.',
+        'Add a second position to pair it with, or pick another choreography.',
     sequential: 'Only one position on this cell — ' + MODES.sequential +
         ' fills one side while the other runs, so it needs a second position to flip to.',
 };

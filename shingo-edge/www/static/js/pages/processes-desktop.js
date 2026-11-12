@@ -2528,9 +2528,9 @@ function optionsFor(node, kind) {
             // `secondPaired` that is right: a press pairs with its own slots.
             //
             // For `staging` and `parkOld` it was wrong, and wrong in the way
-            // this page exists to prevent: the STATION offers these two the
-            // routing set's staging rows plus the backs (composer-render's
-            // optionsFor), so one field had two answers depending on which
+            // this page exists to prevent: the station's composer (since torn
+            // out, 681a912c) offered these two the routing set's staging rows
+            // plus the backs, so one field had two answers depending on which
             // screen you asked. At Hopkinsville the 4x2's five positions are
             // all `front`, so `backs` is empty and the desktop offered the
             // other four ALNs as places to park a bin — none of which is a
@@ -2683,8 +2683,8 @@ function pickerEmptyWord(kind) {
 // Reported from the floor on the inbound source, outbound destination and
 // staging pickers, which are the ones lowest on the positions table.
 //
-// The rule is the station's, which has had it all along (composer-render's
-// placePop): measure the room above and below the anchor in the VIEWPORT, open
+// The rule is the one the station's composer had (its popover, torn out with
+// it in 681a912c): measure the room above and below the anchor in the VIEWPORT, open
 // on the side with room, and cap the height to what is there so the list
 // scrolls inside the screen rather than past it.
 // `min` is the least room worth opening into; the part popover asks for more

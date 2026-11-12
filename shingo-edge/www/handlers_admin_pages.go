@@ -152,7 +152,8 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	groupList, _ := h.engine.ProcessService().ListGroups()
 	styles, _ := h.engine.StyleService().List()
 	stationList, _ := h.engine.StationService().List()
-	coreNodes := h.engine.CoreNodes()
+	// No CoreNodes: processes.html never drew them, and the page reads
+	// /api/core-nodes once, when a picker first needs it (census #15).
 	plcNames := h.engine.PLCManager().PLCNames()
 
 	var activeProcess *domain.Process
@@ -244,7 +245,6 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		"ProcessGroups":    groupList,
 		"Styles":           styles,
 		"Stations":         stationList,
-		"CoreNodes":        coreNodes,
 		"PLCNames":         plcNames,
 		"ActiveProcess":    activeProcess,
 		"ActiveProcessID":  activeProcessID,
