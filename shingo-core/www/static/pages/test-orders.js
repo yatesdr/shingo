@@ -4,6 +4,8 @@ import { toast } from '/static/shared/notice.js';
 import { formatTime } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { send } from '/static/shared/http.js';
+import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
+import { partPicker, partSource } from '/static/shared/part-picker.js';
 
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
 
@@ -17,6 +19,33 @@ function ask(method, url, body) {
 function refused(r, say) {
   if (!r.shown) say(r.error);
 }
+// THE PAGE'S ONE NODE LIST AND ONE PART LIST, as handleTestOrders rendered
+// them, on the shared adapters (shared/node-picker.js, part-picker.js), so
+// this page and the Orders page draw one list the same way. Every node field
+// takes any node but a robot deck and a disabled node, each shown greyed with
+// the reason; a container is badged with its nodes under it, at any depth (a
+// group is a valid source for a group-retrieve). _TRANSIT is never offered.
+// The direct-order fields post node ids; the rest post names.
+var toData = document.getElementById('page-data').dataset;
+var toNodeList = JSON.parse(toData.nodes || '[]');
+var toPartList = JSON.parse(toData.payloads || '[]');
+var toNodes = nodeSource(function() { return toNodeList; }, toNodeList);
+var toParts = partSource(function() { return toPartList; }, toPartList);
+var TO = {};
+['k-source-node', 'k-delivery-node', 'kc-location', 'kc-full-source', 'kc-staging1', 'kc-staging2', 'kc-outgoing', 'cx-location', 'cx-full-source', 'cx-staging1', 'cx-staging2', 'cx-outgoing'].forEach(function(id) {
+  var host = document.getElementById(id);
+  TO[id] = nodePicker(host, toNodes, { rule: nodeWhy.any(nodeWhy.robot, nodeWhy.disabled) },
+    { placeholder: host.dataset.placeholder || '' });
+});
+['d-from-node', 'd-to-node'].forEach(function(id) {
+  var host = document.getElementById(id);
+  TO[id] = nodePicker(host, toNodes, { value: 'id', rule: nodeWhy.any(nodeWhy.robot, nodeWhy.disabled) },
+    { placeholder: host.dataset.placeholder || '' });
+});
+['k-payload', 'kc-payload', 'cx-payload'].forEach(function(id) {
+  var host = document.getElementById(id);
+  TO[id] = partPicker(host, toParts, {}, { placeholder: host.dataset.placeholder || '' });
+});
 
 // showOrderTab is this page's own tab handler, bound to its
 // data-action="switchTab:<name>" tabs. Not dom.js's switchTab (§22): its
@@ -243,9 +272,9 @@ async function loadRobots() {
 async function submitKafkaOrder() {
   var body = {
     order_type: document.getElementById('k-order-type').value,
-    source_node: document.getElementById('k-source-node').value,
-    delivery_node: document.getElementById('k-delivery-node').value,
-    payload_code: document.getElementById('k-payload').value,
+    source_node: TO['k-source-node'].value(),
+    delivery_node: TO['k-delivery-node'].value(),
+    payload_code: TO['k-payload'].value(),
     quantity: parseInt(document.getElementById('k-quantity').value) || 1,
     priority: parseInt(document.getElementById('k-priority').value) || 0
   };
@@ -315,12 +344,12 @@ function updateKafkaComplexFields() {
 async function submitKafkaComplexOrder() {
   var body = {
     cycle_mode: document.getElementById('kc-cycle-mode').value,
-    location: document.getElementById('kc-location').value,
-    payload_code: document.getElementById('kc-payload').value,
-    inbound_source: document.getElementById('kc-full-source').value,
-    inbound_staging: document.getElementById('kc-staging1').value,
-    outbound_staging: document.getElementById('kc-staging2').value,
-    outbound_destination: document.getElementById('kc-outgoing').value,
+    location: TO['kc-location'].value(),
+    payload_code: TO['kc-payload'].value(),
+    inbound_source: TO['kc-full-source'].value(),
+    inbound_staging: TO['kc-staging1'].value(),
+    outbound_staging: TO['kc-staging2'].value(),
+    outbound_destination: TO['kc-outgoing'].value(),
     priority: parseInt(document.getElementById('kc-priority').value) || 0
   };
   if (!body.location) { toast('Lineside location is required', 'info'); return; }
@@ -334,8 +363,8 @@ async function submitKafkaComplexOrder() {
 // --- Direct order actions ---
 async function submitDirectOrder() {
   var body = {
-    from_node_id: parseInt(document.getElementById('d-from-node').value),
-    to_node_id: parseInt(document.getElementById('d-to-node').value),
+    from_node_id: parseInt(TO['d-from-node'].value()),
+    to_node_id: parseInt(TO['d-to-node'].value()),
     priority: parseInt(document.getElementById('d-priority').value) || 0
   };
   if (!body.from_node_id || !body.to_node_id) { toast('Select both from and to nodes', 'info'); return; }
@@ -370,12 +399,12 @@ function updateComplexFields() {
 async function submitComplexOrder() {
   var body = {
     cycle_mode: document.getElementById('cx-cycle-mode').value,
-    location: document.getElementById('cx-location').value,
-    payload_code: document.getElementById('cx-payload').value,
-    inbound_source: document.getElementById('cx-full-source').value,
-    inbound_staging: document.getElementById('cx-staging1').value,
-    outbound_staging: document.getElementById('cx-staging2').value,
-    outbound_destination: document.getElementById('cx-outgoing').value,
+    location: TO['cx-location'].value(),
+    payload_code: TO['cx-payload'].value(),
+    inbound_source: TO['cx-full-source'].value(),
+    inbound_staging: TO['cx-staging1'].value(),
+    outbound_staging: TO['cx-staging2'].value(),
+    outbound_destination: TO['cx-outgoing'].value(),
     priority: parseInt(document.getElementById('cx-priority').value) || 0
   };
   if (!body.location) { toast('Lineside location is required', 'info'); return; }

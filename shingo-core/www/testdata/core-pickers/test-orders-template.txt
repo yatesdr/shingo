@@ -1,36 +1,23 @@
-# Core Test orders (census #58-#62, C7 + C8): the selects as served, Nodes =
-# buildNodePickerOptions(ListNodes()), Payloads = PayloadService().List() in its order.
-# Each node select is its placeholder and then the same list; the list is written once.
+# Core Test orders (census #58-#62, C7 + C8): test-orders.html as served. Each node and payload
+# field is a host test-orders.js mounts the shared picker on (its rows: test-orders-page.txt);
+# the page carries the node and part lists once, on #page-data.
 
-node select k-source-node     value = node name, placeholder label="-- select --", 13 options
-node select k-delivery-node   value = node name, placeholder label="-- select --", 13 options
-payload select k-payload      placeholder label="-- select payload --": value="PART-B" label="PART-B"; value="PART-A" label="PART-A"; value="PART-C" label="PART-C"
-node select kc-location       value = node name, placeholder label="-- select --", 13 options
-payload select kc-payload     placeholder label="-- optional --": value="PART-B" label="PART-B"; value="PART-A" label="PART-A"; value="PART-C" label="PART-C"
-node select kc-full-source    value = node name, placeholder label="Core Decides", 13 options
-node select kc-staging1       value = node name, placeholder label="-- select --", 13 options
-node select kc-staging2       value = node name, placeholder label="-- select --", 13 options
-node select kc-outgoing       value = node name, placeholder label="Core Decides", 13 options
-node select d-from-node       value = node ID, placeholder label="-- select --", 13 options
-node select d-to-node         value = node ID, placeholder label="-- select --", 13 options
-node select cx-location       value = node name, placeholder label="-- select --", 13 options
-payload select cx-payload     placeholder label="-- optional --": value="PART-B" label="PART-B"; value="PART-A" label="PART-A"; value="PART-C" label="PART-C"
-node select cx-full-source    value = node name, placeholder label="Core Decides", 13 options
-node select cx-staging1       value = node name, placeholder label="-- select --", 13 options
-node select cx-staging2       value = node name, placeholder label="-- select --", 13 options
-node select cx-outgoing       value = node name, placeholder label="Core Decides", 13 options
+host k-source-node     placeholder "-- select --"
+host k-delivery-node   placeholder "-- select --"
+host k-payload         placeholder "-- select payload --"
+host kc-location       placeholder "-- select --"
+host kc-payload        placeholder "-- optional --"
+host kc-full-source    placeholder "Core Decides"
+host kc-staging1       placeholder "-- select --"
+host kc-staging2       placeholder "-- select --"
+host kc-outgoing       placeholder "Core Decides"
+host d-from-node       placeholder "-- select --"
+host d-to-node         placeholder "-- select --"
+host cx-location       placeholder "-- select --"
+host cx-payload        placeholder "-- optional --"
+host cx-full-source    placeholder "Core Decides"
+host cx-staging1       placeholder "-- select --"
+host cx-staging2       placeholder "-- select --"
+host cx-outgoing       placeholder "Core Decides"
 
-The node list (labels carry the badge and indent buildNodePickerOptions draws):
-  value="SPOT-9" label="SPOT-9"
-  value="VIRT-1" label="VIRT-1 · group"
-  value="_ROBOT:AMR-01" label="_ROBOT:AMR-01 · group"
-  value="_TRANSIT" label="_TRANSIT · group"
-  value="GRP-A" label="GRP-A · group"
-  value="GRP-A-L1" label="↳ GRP-A-L1 · lane"
-  value="GRP-A-L1-S1" label="↳ GRP-A-L1-S1"
-  value="GRP-A-L1-S2" label="↳ GRP-A-L1-S2"
-  value="GRP-B" label="GRP-B · group"
-  value="GRP-B-N1" label="↳ GRP-B-N1"
-  value="GRP-B-N2" label="↳ GRP-B-N2"
-  value="GRP-OFF-N1" label="GRP-OFF-N1"
-  value="LINE-1" label="LINE-1"
+#page-data carries 15 nodes (data-nodes) and 3 payloads (data-payloads), as the server read them.

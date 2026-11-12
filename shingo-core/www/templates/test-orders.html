@@ -26,24 +26,15 @@
         </div>
         <div id="k-source-wrap">
           <label class="to-label">Source Node</label>
-          <select id="k-source-node" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="k-source-node" data-placeholder="-- select --"></div>
         </div>
         <div id="k-delivery-wrap">
           <label class="to-label">Delivery Node</label>
-          <select id="k-delivery-node" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="k-delivery-node" data-placeholder="-- select --"></div>
         </div>
         <div id="k-pt-wrap">
           <label class="to-label">Payload</label>
-          <select id="k-payload" class="to-input">
-            <option value="">-- select payload --</option>
-            {{range .Payloads}}<option value="{{.Code}}">{{.Code}}</option>{{end}}
-          </select>
+          <div id="k-payload" data-placeholder="-- select payload --"></div>
         </div>
         <div>
           <label class="to-label">Quantity</label>
@@ -73,45 +64,27 @@
         </div>
         <div>
           <label class="to-label">Lineside Location</label>
-          <select id="kc-location" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="kc-location" data-placeholder="-- select --"></div>
         </div>
         <div>
           <label class="to-label">Payload Code</label>
-          <select id="kc-payload" class="to-input">
-            <option value="">-- optional --</option>
-            {{range .Payloads}}<option value="{{.Code}}">{{.Code}}</option>{{end}}
-          </select>
+          <div id="kc-payload" data-placeholder="-- optional --"></div>
         </div>
         <div id="kc-source-wrap">
           <label class="to-label">Inbound Source</label>
-          <select id="kc-full-source" class="to-input">
-            <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="kc-full-source" data-placeholder="Core Decides"></div>
         </div>
         <div id="kc-staging1-wrap" class="hide">
           <label class="to-label">Inbound Staging</label>
-          <select id="kc-staging1" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="kc-staging1" data-placeholder="-- select --"></div>
         </div>
         <div id="kc-staging2-wrap" class="hide">
           <label class="to-label">Outbound Staging</label>
-          <select id="kc-staging2" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="kc-staging2" data-placeholder="-- select --"></div>
         </div>
         <div>
           <label class="to-label">Outbound Destination</label>
-          <select id="kc-outgoing" class="to-input">
-            <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="kc-outgoing" data-placeholder="Core Decides"></div>
         </div>
         <div>
           <label class="to-label">Priority</label>
@@ -139,17 +112,11 @@
       <div class="to-form-grid">
         <div>
           <label class="to-label">From Node</label>
-          <select id="d-from-node" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="d-from-node" data-placeholder="-- select --"></div>
         </div>
         <div>
           <label class="to-label">To Node</label>
-          <select id="d-to-node" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="d-to-node" data-placeholder="-- select --"></div>
         </div>
         <div>
           <label class="to-label">Priority</label>
@@ -175,45 +142,27 @@
         </div>
         <div>
           <label class="to-label">Lineside Location</label>
-          <select id="cx-location" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="cx-location" data-placeholder="-- select --"></div>
         </div>
         <div>
           <label class="to-label">Payload Code</label>
-          <select id="cx-payload" class="to-input">
-            <option value="">-- optional --</option>
-            {{range .Payloads}}<option value="{{.Code}}">{{.Code}}</option>{{end}}
-          </select>
+          <div id="cx-payload" data-placeholder="-- optional --"></div>
         </div>
         <div id="cx-source-wrap">
           <label class="to-label">Inbound Source</label>
-          <select id="cx-full-source" class="to-input">
-            <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="cx-full-source" data-placeholder="Core Decides"></div>
         </div>
         <div id="cx-staging1-wrap" class="hide">
           <label class="to-label">Inbound Staging</label>
-          <select id="cx-staging1" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="cx-staging1" data-placeholder="-- select --"></div>
         </div>
         <div id="cx-staging2-wrap" class="hide">
           <label class="to-label">Outbound Staging</label>
-          <select id="cx-staging2" class="to-input">
-            <option value="">-- select --</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="cx-staging2" data-placeholder="-- select --"></div>
         </div>
         <div>
           <label class="to-label">Outbound Destination</label>
-          <select id="cx-outgoing" class="to-input">
-            <option value="">Core Decides</option>
-            {{range .Nodes}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
-          </select>
+          <div id="cx-outgoing" data-placeholder="Core Decides"></div>
         </div>
         <div>
           <label class="to-label">Priority</label>
@@ -368,6 +317,6 @@
   </div>
 </div>
 
-<div id="page-data" data-authenticated="{{.Authenticated}}"></div>
+<div id="page-data" data-authenticated="{{.Authenticated}}" data-nodes="{{.NodesJSON}}" data-payloads="{{.PayloadsJSON}}"></div>
 <script type="module">import "/static/pages/test-orders.js";</script>
 {{end}}

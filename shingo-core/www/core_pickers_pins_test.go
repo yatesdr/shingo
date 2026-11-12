@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -33,12 +34,9 @@ var updateCorePickersGolden = flag.Bool("update-core-pickers-golden", false,
 // explorer) at the tree BEFORE the shared picker replaces them, so each later
 // diff shows as the option, request or refusal that moved:
 //
-//   - node-options-twins.txt: the two node-option builders over one synthetic
-//     plant, buildNodePickerOptions (Go, test-orders) and buildNodeOptionsHTML
-//     (static/pages/orders.js), and what each offers that the other does not;
-//   - bins-template.txt / test-orders-template.txt: the server-rendered
-//     selects ({{range .Nodes}}, {{range .Payloads}}), rendered as router.go
-//     renders them;
+//   - bins-template.txt / test-orders-template.txt: the two pages' templates
+//     rendered as router.go renders them: the hosts the shared node and part
+//     pickers mount on, and the lists the page carries for them;
 //   - refusal-shapes.txt: what the handlers behind these pages write when they
 //     refuse, taken from the handlers themselves where they refuse before
 //     reading the database, and from the writers they call otherwise;
@@ -82,17 +80,15 @@ func TestCorePickerPins(t *testing.T) {
 		t.Fatalf("run the Core picker pins: %v\n%s", err, stderr.String())
 	}
 	var out struct {
-		Goldens map[string]string    `json:"goldens"`
-		TwinJS  []corePickerJSOption `json:"twinJS"`
+		Goldens map[string]string `json:"goldens"`
 	}
 	if err := json.Unmarshal(stdout, &out); err != nil {
 		t.Fatalf("decode the pins' output: %v\n%s", err, stderr.String())
 	}
-	if len(out.Goldens) == 0 || len(out.TwinJS) == 0 {
+	if len(out.Goldens) == 0 {
 		t.Fatalf("the harness produced no goldens; it has drifted\n%s", stderr.String())
 	}
 	got := out.Goldens
-	got["node-options-twins.txt"] = corePickerTwins(fx.Nodes, out.TwinJS)
 	got["bins-template.txt"] = corePickerBinsTemplate(t, fx)
 	got["test-orders-template.txt"] = corePickerTestOrdersTemplate(t, fx)
 	got["refusal-shapes.txt"] = corePickerRefusalGolden(fx.Refusals)
@@ -174,6 +170,12 @@ func corePickerCensusBugs(t *testing.T, got map[string]string) {
 	}
 	if strings.Contains(create, `| _TRANSIT`) {
 		t.Errorf("census #11: Create bin offers _TRANSIT")
+	}
+	// The twins, fixed: the Test orders page and the Orders page draw one node
+	// list through one builder (was buildNodePickerOptions in Go, byte order,
+	// beside orders.js buildNodeOptionsHTML, localeCompare).
+	if !strings.Contains(got["test-orders-page.txt"], "the same rows as the Orders page's manual order: yes") {
+		t.Errorf("the twins: the Test orders page no longer draws the Orders page's node rows")
 	}
 	// otherGroups, fixed: the kanban section's Overflow and Sources show a
 	// disabled group greyed and do not take it (was nodes-kanban.js:170, which
@@ -400,82 +402,6 @@ func corePickerRefusalGolden(r map[string]corePickerAnswer) string {
 	return b.String()
 }
 
-// ── the Go twin, beside the JS one ───────────────────────────────────────────
-
-// corePickerJSOption is one <option> buildNodeOptionsHTML drew, under its
-// <optgroup> label.
-type corePickerJSOption struct {
-	Zone  string `json:"zone"`
-	Value string `json:"value"`
-	Label string `json:"label"`
-}
-
-// corePickerTwins writes the two builders' lists over one plant and what each
-// offers that the other does not. The JS list is what the harness read off
-// buildNodeOptionsHTML in static/pages/orders.js, run as the page runs it.
-func corePickerTwins(nodes []*domain.Node, js []corePickerJSOption) string {
-	var b strings.Builder
-	b.WriteString("# The two node-option builders over one plant (census C4 <-> C7, the twins by their own comments).\n")
-	b.WriteString("# Go: buildNodePickerOptions (handlers_test_orders.go, the Test orders page): no headings, roots by zone then name.\n")
-	b.WriteString("# JS: buildNodeOptionsHTML (static/pages/orders.js, the Orders page's manual order): <optgroup> per zone.\n")
-	b.WriteString("# A line is: value | label as drawn. Bugs pinned as is are named under the lists.\n\n")
-	goOpts := buildNodePickerOptions(nodes)
-	b.WriteString("Go (value is .Name; the Direct tab posts .ID instead)\n")
-	goNames := map[string]bool{}
-	for _, o := range goOpts {
-		goNames[o.Name] = true
-		fmt.Fprintf(&b, "Go  %-14s | %s\n", o.Name, o.Label)
-	}
-	b.WriteString("\nJS (value is the node name)\n")
-	jsNames := map[string]bool{}
-	for _, o := range js {
-		if o.Value == "" {
-			fmt.Fprintf(&b, "JS  (placeholder) %q\n", o.Label)
-			continue
-		}
-		jsNames[o.Value] = true
-		fmt.Fprintf(&b, "JS  [%s] %s\n", o.Zone, o.Label)
-	}
-	b.WriteString("\nOffered by Go, not by JS:\n")
-	none := true
-	for _, o := range goOpts {
-		if !jsNames[o.Name] {
-			fmt.Fprintf(&b, "  %s\n", o.Name)
-			none = false
-		}
-	}
-	if none {
-		b.WriteString("  (none)\n")
-	}
-	b.WriteString("Offered by JS, not by Go:\n")
-	none = true
-	for _, o := range js {
-		if o.Value != "" && !goNames[o.Value] {
-			fmt.Fprintf(&b, "  %s\n", o.Value)
-			none = false
-		}
-	}
-	if none {
-		b.WriteString("  (none)\n")
-	}
-	b.WriteString("Offered by neither: ")
-	var neither []string
-	for _, n := range nodes {
-		if !goNames[n.Name] && !jsNames[n.Name] {
-			neither = append(neither, n.Name)
-		}
-	}
-	b.WriteString(strings.Join(neither, ", ") + "\n")
-	b.WriteString("\nPinned as is:\n")
-	b.WriteString("  census #6: JS zoneOf looks one level down, so GRP-A (children are lanes, no zone) files under Other.\n")
-	b.WriteString("  JS stops at one level and buckets by zone first: a lane's slots (depth 2) and the member of a\n")
-	b.WriteString("  disabled group (its parent is in byId but never drawn) are not offered at all.\n")
-	b.WriteString("  Name order differs: Go sorts bytes (_ROBOT, _TRANSIT after the letters), JS localeCompare (before).\n")
-	b.WriteString("  Both: _TRANSIT, the robot deck and VIRT-1 are offered, badged \"group\" (nodeTypeLabel: synthetic = group).\n")
-	b.WriteString("  Both: labels use .Name; LINE-1's display name is not shown.\n")
-	return b.String()
-}
-
 // ── template-rendered lists ──────────────────────────────────────────────────
 
 var (
@@ -559,41 +485,37 @@ func corePickerBinsTemplate(t *testing.T, fx corePickerFixtureData) string {
 }
 
 // corePickerTestOrdersTemplate renders test-orders.html (census #58-#62, C7
-// and C8): every node select and every payload select, as served.
+// and C8): the hosts its node and part pickers mount on, and the two lists
+// the page carries for them.
 func corePickerTestOrdersTemplate(t *testing.T, fx corePickerFixtureData) string {
 	t.Helper()
+	nodesJSON, _ := json.Marshal(fx.Nodes)
+	payloadsJSON, _ := json.Marshal(fx.Payloads)
 	page := renderPage(t, "test-orders.html", map[string]any{
-		"Page": "test-orders", "Nodes": buildNodePickerOptions(fx.Nodes), "Payloads": fx.Payloads,
+		"Page": "test-orders", "NodesJSON": string(nodesJSON), "PayloadsJSON": string(payloadsJSON),
 	})
 	var b strings.Builder
-	b.WriteString("# Core Test orders (census #58-#62, C7 + C8): the selects as served, Nodes =\n")
-	b.WriteString("# buildNodePickerOptions(ListNodes()), Payloads = PayloadService().List() in its order.\n")
-	b.WriteString("# Each node select is its placeholder and then the same list; the list is written once.\n\n")
-	var first []string
-	for _, m := range corePickerSelectRe.FindAllStringSubmatch(page, -1) {
-		a := corePickerAttrs(m[1])
-		opts := corePickerOptions(m[2])
-		if len(opts) < 2 {
-			continue
-		}
-		id := a["id"]
-		switch {
-		case strings.Contains(opts[1], `value="PART-`):
-			fmt.Fprintf(&b, "payload select %-14s placeholder %s: %s\n", id, strings.TrimPrefix(opts[0], `value="" `), strings.Join(opts[1:], "; "))
-		case strings.Contains(m[2], `>GRP-A  · group<`):
-			kind := "value = node name"
-			if corePickerNumericValueRe.MatchString(opts[1]) {
-				kind = "value = node ID"
-			}
-			fmt.Fprintf(&b, "node select %-17s %s, placeholder %s, %d options\n", id, kind, strings.TrimPrefix(opts[0], `value="" `), len(opts)-1)
-			if first == nil {
-				first = opts[1:]
-			}
-		}
+	b.WriteString("# Core Test orders (census #58-#62, C7 + C8): test-orders.html as served. Each node and payload\n")
+	b.WriteString("# field is a host test-orders.js mounts the shared picker on (its rows: test-orders-page.txt);\n")
+	b.WriteString("# the page carries the node and part lists once, on #page-data.\n\n")
+	for _, m := range regexp.MustCompile(`<div id="([a-z0-9-]+)" data-placeholder="([^"]*)"></div>`).FindAllStringSubmatch(page, -1) {
+		fmt.Fprintf(&b, "host %-17s placeholder %q\n", m[1], m[2])
 	}
-	b.WriteString("\nThe node list (labels carry the badge and indent buildNodePickerOptions draws):\n")
-	for _, o := range first {
-		b.WriteString("  " + o + "\n")
+	pd := regexp.MustCompile(`<div id="page-data"([^>]*)>`).FindStringSubmatch(page)
+	if pd == nil {
+		t.Fatalf("test-orders.html has no #page-data")
+	}
+	a := corePickerAttrs(pd[1])
+	var nodes, parts []map[string]any
+	if err := json.Unmarshal([]byte(html.UnescapeString(a["data-nodes"])), &nodes); err != nil {
+		t.Errorf("#page-data data-nodes is not the node list: %v", err)
+	}
+	if err := json.Unmarshal([]byte(html.UnescapeString(a["data-payloads"])), &parts); err != nil {
+		t.Errorf("#page-data data-payloads is not the part list: %v", err)
+	}
+	fmt.Fprintf(&b, "\n#page-data carries %d nodes (data-nodes) and %d payloads (data-payloads), as the server read them.\n", len(nodes), len(parts))
+	if strings.Contains(page, "<select") && regexp.MustCompile(`<select[^>]*id="(k|kc|d|cx)-[a-z0-9-]*(node|location|source|staging[12]|outgoing|payload)"`).MatchString(page) {
+		t.Errorf("test-orders.html still draws a node or payload <select>")
 	}
 	return b.String()
 }

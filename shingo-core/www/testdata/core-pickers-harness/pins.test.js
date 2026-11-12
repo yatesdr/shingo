@@ -1,6 +1,6 @@
 // The Core picker pins (census rows #50-#71). Run by TestCorePickerPins
 // (core_pickers_pins_test.go) as `node pins.test.js <fixture.json>`; prints
-// {"goldens": {name: text}, "twinJS": [...]} on stdout and nothing else.
+// {"goldens": {name: text}} on stdout and nothing else.
 //
 // Every page runs unmodified in dom.js's fake browser, driven through its own
 // functions (the ones its data-action verbs, listeners and drops call). Per
@@ -29,7 +29,8 @@ const { makeRealm } = require(path.join(__dirname, '..', '..', '..', '..', 'shar
 
 const fx = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const goldens = {};
-let twinJS = [];
+// The Orders page's manual-order node rows, for the Test orders page to be read against.
+let orderRows = null;
 
 // A rejection a page leaves unhandled is an error it never showed anyone.
 const unhandled = [];
@@ -232,10 +233,7 @@ async function ordersPins() {
     L.push('== open the modal (the three reads answer)');
     flush(L, t.net, t.rec);
     const rows = t.p.pickers['mo-source'].rows();
-    rows.forEach((r) => {
-        twinJS.push({ zone: r.section || '', value: String(r.value), label: r.label + (r.note ? '  · ' + r.note : '') + (r.reason ? '  (off: ' + r.reason + ')' : '') });
-        (r.members || []).forEach((m) => twinJS.push({ zone: r.section || '', value: String(m.value), label: '  ' + m.label + (m.note ? '  · ' + m.note : '') + (m.reason ? '  (off: ' + m.reason + ')' : '') }));
-    });
+    orderRows = rows;
     L.push('mo-source, the node list (shared/node-picker.js over /api/nodes, rule: robot, disabled):');
     D.rowLines(rows).forEach((l) => L.push(l));
     NODE_SELECTS.slice(1).forEach((id) => {
@@ -1101,7 +1099,13 @@ function testOrdersPage() {
     const rec = newRec();
     const doc = D.makeDocument();
     const net = D.makeNet();
-    doc.getElementById('page-data').dataset = { authenticated: 'true' };
+    // As handleTestOrders renders #page-data: the node and part lists once.
+    doc.getElementById('page-data').dataset = { authenticated: 'true', nodes: JSON.stringify(fx.nodes), payloads: JSON.stringify(fx.payloads) };
+    ['k-source-node', 'k-delivery-node', 'kc-location', 'kc-staging1', 'kc-staging2', 'cx-location', 'cx-staging1', 'cx-staging2',
+        'd-from-node', 'd-to-node'].forEach((id) => { doc.getElementById(id).dataset = { placeholder: '-- select --' }; });
+    ['kc-full-source', 'kc-outgoing', 'cx-full-source', 'cx-outgoing'].forEach((id) => { doc.getElementById(id).dataset = { placeholder: 'Core Decides' }; });
+    doc.getElementById('k-payload').dataset = { placeholder: '-- select payload --' };
+    ['kc-payload', 'cx-payload'].forEach((id) => { doc.getElementById(id).dataset = { placeholder: '-- optional --' }; });
     const p = D.loadPage('static/pages/test-orders.js', baseGlobals(doc, net, rec), lender(rec, doc));
     return { p, doc, net, rec };
 }
@@ -1113,7 +1117,7 @@ function shownToasts(L, t) {
 
 async function testOrdersPins() {
     const L = [
-        '# Core Test orders, the submits (census #58-#62; the selects are test-orders-template.txt).',
+        '# Core Test orders, the pickers and the submits (census #58-#62; the hosts are test-orders-template.txt).',
         '# static/pages/test-orders.js as served: its writes go through the HTTP door (send), so any',
         '# refusal is one sentence, a body that is not JSON included.',
         '',
@@ -1121,7 +1125,33 @@ async function testOrdersPins() {
     // The cycle modes as the template offers them.
     const modes = D.parseOptions(D.selectIn(D.readWWW('templates/test-orders.html'), 'kc-cycle-mode').inner).map((o) => o.value);
     let t = testOrdersPage();
-    const val = (id, v) => { t.doc.getElementById(id).value = v; };
+    const pk = (id) => t.p.pickers[id];
+    L.push('== the node fields (shared/node-picker.js over #page-data\'s list, rule: robot, disabled)');
+    const first = pk('k-source-node').rows();
+    D.rowLines(first).forEach((l) => L.push(l));
+    Object.keys(t.p.pickers).sort().forEach((id) => {
+        const k = pk(id);
+        if (id.indexOf('payload') >= 0) return;
+        const rows = k.rows();
+        const same = JSON.stringify(rows) === JSON.stringify(first);
+        const byID = rows.length && rows[0].value === String(fx.nodes.find((n) => n.name === rows[0].label).id);
+        L.push('  ' + id + ': ' + (same ? 'the same rows' : byID ? 'the same rows, valued by node id' : 'A DIFFERENT LIST') +
+            ', placeholder ' + JSON.stringify(k.opts.placeholder));
+    });
+    L.push('One builder for both pages (the Go/JS twins are gone): the same rows as the Orders page\'s manual order: ' +
+        (JSON.stringify(first) === JSON.stringify(orderRows) ? 'yes' : 'NO'));
+    L.push('', '== the payload fields (shared/part-picker.js)');
+    D.rowLines(pk('k-payload').rows()).forEach((l) => L.push(l));
+    ['kc-payload', 'cx-payload'].forEach((id) => L.push('  ' + id + ': ' +
+        (JSON.stringify(pk(id).rows()) === JSON.stringify(pk('k-payload').rows()) ? 'the same rows' : 'A DIFFERENT LIST') +
+        ', placeholder ' + JSON.stringify(pk(id).opts.placeholder)));
+    L.push('');
+    const val = (id, v) => {
+        if (!pk(id)) { t.doc.getElementById(id).value = v; return; }
+        pk(id).set('');
+        const why = pk(id).choose(v);
+        if (why) L.push('  (' + id + ' ' + JSON.stringify(v) + ' not taken: ' + why + ')');
+    };
     t.net.on('POST', '/api/test-orders/submit', { json: { order_uuid: 'u-1' } })
         .on('POST', '/api/test-orders/submit/complex', { json: { orders: [{ role: 'swap', order_uuid: 'u-2' }] } })
         .on('POST', '/api/test-orders/direct', { json: { vendor_order_id: 'v-1' } })
@@ -1194,7 +1224,7 @@ async function main() {
     await supermarketPins();
     await rdsPins();
     await testOrdersPins();
-    process.stdout.write(JSON.stringify({ goldens, twinJS }));
+    process.stdout.write(JSON.stringify({ goldens }));
 }
 
 main().catch((e) => {

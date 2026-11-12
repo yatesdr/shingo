@@ -1176,3 +1176,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### DEAD — `TestTestOrdersNodePicker_OffersOnlyValidNodes`
+- test: `TestTestOrdersNodePicker_OffersOnlyValidNodes` · pkg `shingocore/www` · run `-run '^TestTestOrdersNodePicker_OffersOnlyValidNodes$'` · `shingo-core/www/handlers_test_orders_nodes_test.go:23` @ `4d13d68d` · tags `none`
+- code: DEAD (buildNodePickerOptions is deleted: the Test orders page draws its nodes through the shared node adapter, shared/node-picker.js, as the Orders page does)
+- assertion map: a disabled node is not offered → shown greyed "disabled" and not taken, `shared/testdata/components/node-picker.test.js` "no blanket rule…" and `core-pickers/test-orders-page.txt` (OLD-SLOT, GRP-OFF); every enabled node once, a group stays selectable and reads "group", a lane reads "lane", a slot reads neither and sits under its parent at any depth → node-picker.test.js "the tree…" and "cannot happen: a container whose children are lanes…", `test-orders-page.txt`'s rows; the two pages draw one list → `TestCorePickerPins` (`corePickerCensusBugs`, "the twins")
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

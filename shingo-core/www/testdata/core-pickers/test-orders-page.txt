@@ -1,6 +1,47 @@
-# Core Test orders, the submits (census #58-#62; the selects are test-orders-template.txt).
+# Core Test orders, the pickers and the submits (census #58-#62; the hosts are test-orders-template.txt).
 # static/pages/test-orders.js as served: its writes go through the HTTP door (send), so any
 # refusal is one sentence, a body that is not JSON included.
+
+== the node fields (shared/node-picker.js over #page-data's list, rule: robot, disabled)
+  [ZONE-1]
+    "GRP-A" | GRP-A · group
+      "GRP-A-L1" | GRP-A-L1 · lane
+      "GRP-A-L1-S1" | ↳ GRP-A-L1-S1
+      "GRP-A-L1-S2" | ↳ GRP-A-L1-S2
+    "OLD-SLOT" | OLD-SLOT  (off: disabled)
+  [ZONE-2]
+    "GRP-B" | GRP-B · group
+      "GRP-B-N1" | GRP-B-N1
+      "GRP-B-N2" | GRP-B-N2
+    "GRP-OFF" | GRP-OFF · group  (off: disabled)
+      "GRP-OFF-N1" | GRP-OFF-N1
+    "LINE-1" | LINE-1 · Line one
+  [Other]
+    "SPOT-9" | SPOT-9
+    "VIRT-1" | VIRT-1 · synthetic
+    "_ROBOT:AMR-01" | _ROBOT:AMR-01 · robot  (off: a robot, not a place)
+  cx-full-source: the same rows, placeholder "Core Decides"
+  cx-location: the same rows, placeholder "-- select --"
+  cx-outgoing: the same rows, placeholder "Core Decides"
+  cx-staging1: the same rows, placeholder "-- select --"
+  cx-staging2: the same rows, placeholder "-- select --"
+  d-from-node: the same rows, valued by node id, placeholder "-- select --"
+  d-to-node: the same rows, valued by node id, placeholder "-- select --"
+  k-delivery-node: the same rows, placeholder "-- select --"
+  k-source-node: the same rows, placeholder "-- select --"
+  kc-full-source: the same rows, placeholder "Core Decides"
+  kc-location: the same rows, placeholder "-- select --"
+  kc-outgoing: the same rows, placeholder "Core Decides"
+  kc-staging1: the same rows, placeholder "-- select --"
+  kc-staging2: the same rows, placeholder "-- select --"
+One builder for both pages (the Go/JS twins are gone): the same rows as the Orders page's manual order: yes
+
+== the payload fields (shared/part-picker.js)
+  "PART-A" | PART-A · Part A
+  "PART-B" | PART-B · Part B
+  "PART-C" | PART-C · Part C
+  kc-payload: the same rows, placeholder "-- optional --"
+  cx-payload: the same rows, placeholder "-- optional --"
 
 == the body each pick sends (an answer of 200)
 -- Kafka order: move GRP-A -> LINE-1, PART-A
