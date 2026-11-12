@@ -59,9 +59,12 @@ function load(opts) {
     const document = {
         head: head,
         createElement: tag,
-        // The two selectors composer-boot.js asks: a tag of one kind
-        // carrying one data-composer-asset.
+        // The selectors composer-boot.js asks: a tag of one kind carrying
+        // one data-composer-asset, and the page's import map.
         querySelector(sel) {
+            if (sel === 'script[type="importmap"]') {
+                return opts.importMap ? { textContent: JSON.stringify({ imports: opts.importMap }) } : null;
+            }
             const m = /^(link|script)\[data-composer-asset="([^"]+)"\]$/.exec(sel);
             if (!m) throw new Error('composer-boot.js asked a selector this fake does not answer: ' + sel);
             return head.children.find(c => c.tagName === m[1].toUpperCase() && c.dataset.composerAsset === m[2]) || null;
@@ -90,8 +93,10 @@ function load(opts) {
     const names = ['ensureComposer', 'ensureComposerModel'].filter(n => new RegExp('function ' + n + '\\(').test(src));
     vm.runInContext(src + '\n__out = {' + names.map(n => n + ': ' + n).join(', ') + '};', ctx);
     const out = ctx.__out;
-    // tags lists what was appended, by its asset URL, in order.
+    // tags lists what was appended, by its asset URL, in order; urls by the
+    // URL each tag asks for.
     out.tags = () => head.children.map(c => c.dataset.composerAsset);
+    out.urls = () => head.children.map(c => c.src || c.href);
     out.appended = [];
     const append = head.appendChild;
     head.appendChild = c => { out.appended.push(c.dataset.composerAsset); return append(c); };
@@ -147,6 +152,40 @@ console.log('a failed request is made again');
         const second = await p;
         check('and opens the composer once it has it', !!second, String(second));
     }
+}
+
+// ── each tag asks for the hashed URL the page's import map holds ────────────
+//
+// VERSION (a ?v= read off this module's own URL) went with the query: tags
+// carry none now. The table is the page's import map, which lists the three
+// files this loads by tag; a hashed URL is cached for good. The module import
+// stays the plain literal, which the map itself resolves in the browser.
+console.log('the tags ask for the hashed URLs in the import map');
+{
+    const hashedOf = u => u.replace(/\.(js|css)$/, '.0123456789abcdef.$1');
+    const map = {};
+    [CSS, SPEC, MODEL, RENDER].forEach(u => { map[u] = hashedOf(u); });
+    const b = load({ importMap: map });
+    const p = b.ensureComposer();
+    await flush(); b.fire(CSS, 'load');
+    await flush(); b.fire(SPEC, 'load');
+    await flush(); b.fire(MODEL, 'load');
+    check('the composer opens', !!(await p));
+    check('each tag asks for its hashed URL', b.urls().join(' ') === [CSS, SPEC, MODEL].map(hashedOf).join(' '),
+        b.urls().join(', '));
+    check('each tag is still known by its plain URL', b.tags().join(' ') === [CSS, SPEC, MODEL].join(' '),
+        b.tags().join(', '));
+    check('composer-render.js is imported by its plain literal', b.imports.join(' ') === RENDER, b.imports.join(', '));
+}
+{
+    const b = load();
+    const p = b.ensureComposer();
+    await flush(); b.fire(CSS, 'load');
+    await flush(); b.fire(SPEC, 'load');
+    await flush(); b.fire(MODEL, 'load');
+    await p;
+    check('a page with no import map asks for the plain URLs', b.urls().join(' ') === [CSS, SPEC, MODEL].join(' '),
+        b.urls().join(', '));
 }
 
 // ── the model's one loader ──────────────────────────────────────────────────

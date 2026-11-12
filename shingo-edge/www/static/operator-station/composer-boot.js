@@ -28,17 +28,31 @@
 // is still fetching joins it rather than starting a second fetch, and every
 // tap after that is synchronous.
 
-// VERSIONED FROM THIS MODULE'S OWN URL. The template stamps ?v= on the script
-// tag that pulled this in, and import.meta.url carries it — so the deferred
-// files are busted by exactly the same token as the ones in the <head>,
-// without a second mechanism and without a global for the JS to read.
-const VERSION = (() => {
-    try {
-        return new URL(import.meta.url).search || '';
-    } catch (_) {
-        return '';
+// HASHED FROM THE PAGE'S IMPORT MAP. The station's import map
+// (operator-display.html) lists the three files loaded by tag here as well as
+// its modules, each plain URL to its hashed one, and a hashed URL is cached
+// for good: a tap after a restart that changed nothing costs no request. The
+// map is an element in the DOM, so a browser that ignores import maps reads
+// the same table. A page with no map, or a file it does not list, gets the
+// plain URL, which revalidates by ETag. composer-render.js is a module and is
+// not looked up here: its dynamic import names one literal, which the map
+// resolves in a browser that has one and which stays plain in one that has
+// not, so it is one URL either way, like every other import.
+let hashedURLs = null;
+
+function hashed(url) {
+    if (hashedURLs === null) {
+        hashedURLs = {};
+        try {
+            const map = document.querySelector('script[type="importmap"]');
+            const imports = map && JSON.parse(map.textContent).imports;
+            if (imports) hashedURLs = imports;
+        } catch (_) {
+            // An unreadable map loads every file by its plain URL.
+        }
     }
-})();
+    return hashedURLs[url] || url;
+}
 
 let loading = null;
 
@@ -47,7 +61,7 @@ function loadStyle(href) {
         if (document.querySelector('link[data-composer-asset="' + href + '"]')) { resolve(); return; }
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        link.href = href + VERSION;
+        link.href = hashed(href);
         link.dataset.composerAsset = href;
         // RESOLVE EITHER WAY. A stylesheet that 404s must not stop the
         // composer opening: an unstyled sheet an operator can still read beats
@@ -66,7 +80,7 @@ function loadScript(src) {
     return new Promise((resolve, reject) => {
         if (document.querySelector('script[data-composer-asset="' + src + '"]')) { resolve(); return; }
         const s = document.createElement('script');
-        s.src = src + VERSION;
+        s.src = hashed(src);
         s.dataset.composerAsset = src;
         s.addEventListener('load', () => resolve());
         s.addEventListener('error', () => {
@@ -120,7 +134,7 @@ export function ensureComposer() {
         .then(() => loadScript('/static/operator-station/flowspec-data.js'))
         .then(() => ensureComposerModel())
         .then(model => { if (!model) throw new Error('the composer model did not load'); })
-        .then(() => import('/static/operator-station/composer-render.js' + VERSION))
+        .then(() => import('/static/operator-station/composer-render.js'))
         .then(() => window.ComposerUI)
         .catch(err => {
             // A failed load leaves ComposerUI undefined and the caller says
