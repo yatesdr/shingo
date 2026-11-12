@@ -64,7 +64,7 @@ form after: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="
 picks: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
 POST /api/orders/retrieve {"process_node_id":2,"quantity":1,"delivery_node":"SLOT-A1","source_node":"","staging_node":"GRP-A"}
 answer: 500 (empty body)
-shows: toast error: "Error: "
+shows: toast error: "Error: Server error (500)"
 form after: mo-type="retrieve" mo-node="2" mo-qty="1" mo-pickup="" mo-delivery="SLOT-A1" mo-staging="GRP-A"
 
 ## retrieve, fetch rejects

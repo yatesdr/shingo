@@ -45,7 +45,10 @@ export async function postAct(url, body) {
         const text = await res.text();
         let parsed = null;
         try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
-        throw (parsed && parsed.error) || text;
+        // An empty answer (a panic's 500 through Recoverer) still says
+        // something: the HTTP door's words (shared/http.js sentence).
+        throw (parsed && parsed.error) || text.trim() ||
+            (res.status >= 500 ? 'Server error (' + res.status + ')' : 'Refused (' + res.status + ')');
     }
     return res.json();
 }

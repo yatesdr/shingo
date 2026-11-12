@@ -1627,7 +1627,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     const answers = [
         ['refused (writeError 400)', { status: 400, body: { error: 'payload "PART-A" not in allowed list for node SMN_A1' } },
             [['error', 'payload "PART-A" not in allowed list for node SMN_A1']], true, 0],
-        ['500 from a panic (Recoverer, empty body): an empty red toast', { status: 500, raw: '' }, [['error', '']], true, 0],
+        ['500 from a panic (Recoverer, empty body): a sentence, never an empty toast', { status: 500, raw: '' }, [['error', 'Server error (500)']], true, 0],
         ['fetch rejects', 'reject', [['error', 'Network error']], true, 0],
         ['pending (writeAskPending 202)', { status: 202, body: { status: 'pending', pending: true, notice: 'sent — waiting for Core' } },
             [['info', 'sent — waiting for Core']], false, 1],

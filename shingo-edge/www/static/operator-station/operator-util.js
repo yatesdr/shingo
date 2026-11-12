@@ -234,7 +234,10 @@ export async function postAction(url, body, loadView, opts) {
             const text = await res.text();
             let parsed = null;
             try { parsed = JSON.parse(text); } catch { parsed = null; }
-            let msg = (parsed && parsed.error) || text;
+            // An empty answer (a panic's 500 through Recoverer) still says
+            // something: the HTTP door's words (shared/http.js sentence).
+            let msg = (parsed && parsed.error) || text.trim() ||
+                (res.status >= 500 ? 'Server error (' + res.status + ')' : 'Refused (' + res.status + ')');
             // chi's default unmatched-route response is a bare "404 page
             // not found". That happens when the URL was built with a
             // missing/zero param (e.g. confirm-delivery/0 from a half-built

@@ -79,7 +79,7 @@ button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
     value="PART-C" label="PART-C"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-B"}
 answer: 500 (empty body)
-shows: toast error: "Error: "
+shows: toast error: "Error: Server error (500)"
 modal open, re-payload="PART-B"
 
 ## request empty, fetch rejects
