@@ -158,7 +158,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
 ## the Setup tab's actions, from a new process with positions (each on a fresh page)
   positions → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog
   routing → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog
-  style → tab setup, sheet "New style" · GET /api/core-nodes
+  style → tab setup, sheet "New style" · GET /api/core-nodes, GET /api/payload-catalog
   counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET /api/core-nodes
   hmi → tab flows (a recipe draft) · GET …/composer
 

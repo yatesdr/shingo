@@ -5037,6 +5037,7 @@ function onAdvClick(e) {
         return;
     }
     if (act && act.dataset.act === 'add-showmap') { e.stopPropagation(); toggleSheetMap(); return; }
+    if (act && act.dataset.act === 'newstyle-parts') { e.stopPropagation(); closeSheet(); void openSettingsAt('Parts'); return; }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
         openGroupPicker(act, id => {
@@ -6379,6 +6380,10 @@ function loadCoreNodes() {
 //             draw, so a host may change it (a set picker's bucket)
 //   tags      name -> [{label, tone}], marks drawn after the name: what else
 //             the node already is
+//   single    one value, not a set (pickerValue is still a list, of one)
+//   allowed   a part picker's codes, in order: all it offers
+//   add       the shell's "Add and use" slot, {label(q), run(q)}
+//   placeholder  the search box's hint, when the default is not the words
 function pickerInit(key, opts) {
     const o = opts || {};
     dropPicker(key);
@@ -6394,6 +6399,10 @@ function pickerInit(key, opts) {
         checklist: !!o.checklist,
         only: o.only || null,
         tags: o.tags || null,
+        single: !!o.single,
+        allowed: o.allowed || null,
+        add: o.add || null,
+        placeholder: o.placeholder || '',
         filters: 0, // the prefixes its checklist was drawn with
         ui: null,   // the adapter's picker drawn for it, while its host is in the page
     };
@@ -6495,12 +6504,13 @@ function drawPicker(key) {
     if (p.ui) p.ui.destroy();
     const parts = p.source === 'payloads';
     const shell = {
-        multi: true,
+        multi: !p.single,
         open: p.checklist,
         selected: p.sel,
-        placeholder: parts ? 'find a part by name' : p.checklist ? 'filter by name, or pick a prefix below' : 'find a node by name',
+        placeholder: p.placeholder || (parts ? 'find a part by name' : p.checklist ? 'filter by name, or pick a prefix below' : 'find a node by name'),
         filters: p.checklist ? checklistFilters() : null,
-        onChange: v => { p.sel = v.slice(); if (p.onChange) p.onChange(); },
+        add: p.add || undefined,
+        onChange: v => { p.sel = Array.isArray(v) ? v.slice() : (v ? [v] : []); if (p.onChange) p.onChange(); },
         onPick: p.onPick ? (next, row) => {
             const had = p.sel.indexOf(row.value) >= 0;
             const write = had ? (p.onDrop ? p.onDrop(row.value) : null) : p.onPick(row.value);
@@ -6508,7 +6518,7 @@ function drawPicker(key) {
         } : undefined,
     };
     p.ui = parts
-        ? partPicker(host, PARTS, { note: c => p.annotate(c.code) }, shell)
+        ? partPicker(host, PARTS, { allowed: p.allowed || undefined, note: c => p.annotate(c.code) }, shell)
         : nodePicker(host, NODES, {
             rule: n => p.exclude(n.name),
             note: n => p.annotate(n.name),
@@ -6946,6 +6956,27 @@ function openNewStyle(recipeID, sel) {
                 'Parts this process runs.</p>');
     };
     S.newStyle = null;
+    // THE NAME IS A PART OF THIS PROCESS'S PART SET (HOP, 2026-11-12). A style
+    // is a part, and the part set is what this process runs, so with no recipe
+    // the name is picked from it, as a recipe's slots are; a typed one-off name
+    // is still taken, through the picker's Add slot. What Create reads is the
+    // hidden name field the picker keeps in step, so the request is the one a
+    // typed name always made. An empty part set says so and goes to Parts.
+    pickerInit('newname', {
+        source: 'payloads', single: true, allowed: palette,
+        placeholder: palette.length ? 'pick a part, or type a one-off name' : 'type a name',
+        add: { label: q => 'Use “' + q + '” as a one-off name', run: q => ({ value: q, label: q }) },
+        onChange: () => {
+            const el = sheetEl().querySelector('[data-f="name"]');
+            if (el) el.value = pickerValue('newname')[0] || '';
+        },
+    });
+    const nameField = '<div class="pd-fld"><label>Name<small>the part it runs, from this process’s part set · ' +
+        'or type a one-off name</small></label><div class="v">' + pickerBox('newname') +
+        '<input type="hidden" data-f="name" value="">' +
+        (palette.length ? '' : '<p class="pd-note">This process has no parts yet. ' +
+            '<button class="pd-dimlink" data-act="newstyle-parts">Add them in Settings › Parts</button></p>') +
+        '</div></div>';
     // STYLE FIRST (F2): the sheet opens on "draw it" — a name, then the flow
     // on the Styles tab. "Start from a recipe" is there only when the process
     // has one to start from.
@@ -6956,7 +6987,7 @@ function openNewStyle(recipeID, sel) {
             : '') +
         '<div id="pd-newslots"></div>' +
         '<div id="pd-newspots"></div>' +
-        '<div id="pd-newname">' + sheetField('Name', 'the style’s name on the floor', 'name', '') + '</div>' +
+        '<div id="pd-newname">' + nameField + '</div>' +
         sheetField('Expected CATID', 'what the PLC calls it · blank: from the catalog', 'catid', '') +
         '<p class="pd-note">Set it only when the catalog’s is wrong; the style’s ⋯ menu changes it later.</p>',
         'Create', async () => {

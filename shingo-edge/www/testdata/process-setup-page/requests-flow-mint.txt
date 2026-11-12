@@ -1,6 +1,7 @@
 ## + New style, Recipe One (id 7) picked in the chooser: a part per slot and a CATID; no spot moved
   1  GET /api/core-nodes
-  2  POST /api/processes/1/flow/mint
+  2  GET /api/payload-catalog
+  3  POST /api/processes/1/flow/mint
        {
          "preset_id": 7,
          "parts": [
@@ -15,16 +16,16 @@
          ],
          "station_id": 11
        }
-  3  PUT /api/styles/9
+  4  PUT /api/styles/9
        {
          "name": "PART-1 PART-3",
          "description": "",
          "process_id": 1,
          "expected_catid": "CAT-M"
        }
-  4  GET /api/processes
-  5  GET /api/processes/1/composer
-  6  GET /api/processes/1/styles
-  7  POST /api/processes/1/flow/preview
+  5  GET /api/processes
+  6  GET /api/processes/1/composer
+  7  GET /api/processes/1/styles
+  8  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
