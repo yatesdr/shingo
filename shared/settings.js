@@ -138,8 +138,10 @@ export function collectList(container, rowSelector, read) {
 //           shifts: {
 //               label: 'shifts',  // how the outcome line names it (default: the key)
 //               read, write, validate as above,
-//               save(d)       -> Promise<{ok, errors?, error?}>: a section with
-//                                its own door; it is left out of the shared request
+//               save(d)       -> Promise<{ok, errors?, error?, shown?}>: a section
+//                                with its own door; it is left out of the shared
+//                                request (shown: the door already said the
+//                                failure on the notice, so the line adds nothing)
 //           },
 //       },
 //       onSaved(body, sections) -> after the shared request saved, e.g. to redraw live words
@@ -330,7 +332,7 @@ export function settingsPage(root, opts) {
                 } else {
                     const loose = showErrors(r.errors);
                     const placed = Object.keys(r.errors || {}).length - loose.length;
-                    parts.push({ label, ok: false, why: failureText(r, loose, placed, 0) });
+                    parts.push({ label, ok: false, shown: !!r.shown, why: failureText(r, loose, placed, 0) });
                 }
             }
         } finally {
@@ -345,7 +347,8 @@ export function settingsPage(root, opts) {
             state.refusal = parts[0].shown ? 'Not saved.' : 'Not saved. ' + why.charAt(0).toUpperCase() + why.slice(1);
         } else {
             // A partial outcome, said plainly: "Settings saved; shifts failed: …".
-            const line = parts.map((p) => p.label + (p.ok ? ' saved' : ' failed: ' + p.why.replace(/\.$/, ''))).join('; ');
+            // A part the door already said on the notice (shown) adds only "failed".
+            const line = parts.map((p) => p.label + (p.ok ? ' saved' : p.shown ? ' failed' : ' failed: ' + p.why.replace(/\.$/, ''))).join('; ');
             state.refusal = line.charAt(0).toUpperCase() + line.slice(1) + '.';
         }
         render();

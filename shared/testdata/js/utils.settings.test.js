@@ -462,6 +462,25 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         eq(out.ok, false, 'a thrown own save is a failure');
         eq(throwing.isDirty(), true, 'and stays dirty');
         eq(throwing.state.refusal, 'Not saved. Offline', 'one part only: the plain refusal');
+
+        // An own save the door already said on the notice (a lapsed session's
+        // "Signed out" with Sign in: shown) adds nothing to "not saved" or
+        // "failed" (the Edge's shifts, config.js).
+        order.length = 0;
+        cfg.tz = 'America/Chicago';
+        shifts.rows = ['10:00-18:00'];
+        page.update();
+        ownAnswer = { ok: false, shown: true, error: 'Signed out' };
+        out = await page.save();
+        assert(refusal.textContent === 'Settings saved; shifts failed.', 'partial, own save shown: ' + JSON.stringify(refusal.textContent));
+        const shownOnly = u.settingsPage(mk('div', 'set-ui'), {
+            url: '/x', send: () => Promise.resolve(sharedAnswer),
+            sections: { s: { label: 'shifts', read: () => ({ v: shifts.rows[0] }), save: () => Promise.resolve({ ok: false, shown: true, error: 'Signed out' }) } },
+        });
+        shifts.rows = ['11:00-19:00'];
+        shownOnly.update();
+        await shownOnly.save();
+        eq(shownOnly.state.refusal, 'Not saved.', 'one part only, shown: nothing after "Not saved."');
     }
 
     // ─── the default save door: http.js's send, the notice off ────────────

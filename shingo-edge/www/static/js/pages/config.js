@@ -11,6 +11,12 @@
 // A load makes no request: the live words, the restart notice and the backup
 // status come in the render. The backup list is fetched only when storage is
 // configured and someone opens it (E6).
+//
+// Each button answers on its own line, so its request goes through the HTTP
+// door (shared/http.js) with the notice off and the line says the door's
+// sentence. A lapsed session is a refusal (the login page the 303 lands on
+// is not a save): the door has put "Signed out" with its Sign-in link on the
+// notice (shown), and the line says only that it failed.
 
 import { api } from '/static/js/shingoedge.js';
 import { delegateActions, el } from '/static/shared/dom.js';
@@ -18,7 +24,7 @@ import { hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
 import { settingsPage, durationFromText, collectList } from '/static/shared/settings.js';
-import { apiResult } from '/static/shared/utils.js';
+import { send } from '/static/shared/http.js';
 import { backupRow, backupWords, makeStageRestore, stationBody, stationErrors } from '/static/js/pages/config-backups.js';
 
 const root = document.getElementById('config');
@@ -104,6 +110,10 @@ function drawShiftLive() {
 // ─── Sections ────────────────────────────────────────────────────────────
 
 const intOrText = (s) => (/^\d+$/.test(s) ? parseInt(s, 10) : s);
+
+// failedWhy is what a line adds after its own "failed": the door's sentence,
+// or nothing when the door put the failure on the notice itself (shown).
+const failedWhy = (r) => (r.shown ? '.' : ': ' + r.error);
 
 const sections = {
     station: {
@@ -229,9 +239,9 @@ const sections = {
                 if (!s.name && !s.start && !s.end) return;
                 shifts.push({ shift_number: i + 1, name: s.name, start_time: s.start, end_time: s.end });
             });
-            const r = await apiResult('PUT', '/api/shifts', shifts);
+            const r = await send('PUT', '/api/shifts', shifts, { notice: false });
             const b = (r.body && typeof r.body === 'object') ? r.body : {};
-            return Object.assign({ ok: r.ok }, b, { ok: r.ok && b.ok !== false });
+            return Object.assign({ ok: r.ok, error: r.error }, b, { ok: r.ok && b.ok !== false, shown: !!r.shown });
         },
     },
 };
@@ -369,12 +379,12 @@ function storageDraft() {
 
 async function testBackup() {
     note('Testing the storage…');
-    const r = await apiResult('POST', '/api/backups/test', storageDraft());
-    note(r.ok ? 'The storage answered.' : 'Storage test failed: ' + ((r.body && r.body.error) || 'no answer.'), r.ok);
+    const r = await send('POST', '/api/backups/test', storageDraft(), { notice: false });
+    note(r.ok ? 'The storage answered.' : 'Storage test failed' + failedWhy(r), r.ok);
 }
 
 async function refreshBackupStatus() {
-    const r = await apiResult('GET', '/api/backups/status');
+    const r = await send('GET', '/api/backups/status', undefined, { notice: false });
     if (r.ok && r.body && typeof r.body === 'object') {
         backupStatus = Object.assign({ available: true }, r.body);
     }
@@ -384,8 +394,8 @@ async function refreshBackupStatus() {
 
 async function runBackup() {
     note('Backing up…');
-    const r = await apiResult('POST', '/api/backups/run', {});
-    note(r.ok ? 'Backed up.' : 'Backup failed: ' + ((r.body && r.body.error) || 'no answer.'), r.ok);
+    const r = await send('POST', '/api/backups/run', {}, { notice: false });
+    note(r.ok ? 'Backed up.' : 'Backup failed' + failedWhy(r), r.ok);
     await refreshBackupStatus();
 }
 
@@ -393,10 +403,10 @@ async function listBackups() {
     const list = $('#backup-list');
     const status = $('#backup-list-status');
     status.textContent = 'Loading…';
-    const r = await apiResult('GET', '/api/backups');
+    const r = await send('GET', '/api/backups', undefined, { notice: false });
     list.replaceChildren();
     if (!r.ok) {
-        status.textContent = 'Could not list backups: ' + ((r.body && r.body.error) || 'no answer.');
+        status.textContent = 'Could not list backups' + failedWhy(r);
         return;
     }
     const items = Array.isArray(r.body) ? r.body : [];
@@ -407,7 +417,12 @@ async function listBackups() {
 const stageRestore = makeStageRestore({
     stationID,
     prompt,
-    post: (url, body) => apiResult('POST', url, body),
+    // makeStageRestore reads {ok, body, shown} and a refusal's body.error:
+    // the door's sentence is that error when the answer carried none of its own.
+    post: (url, body) => send('POST', url, body, { notice: false }).then((r) => ({
+        ok: r.ok, shown: !!r.shown,
+        body: r.ok || (r.body && typeof r.body === 'object' && r.body.error) ? r.body : { error: r.error },
+    })),
     done: (msg, ok) => {
         $('#backup-list-status').textContent = msg;
         toast(msg, ok ? 'warning' : 'error');
@@ -440,9 +455,9 @@ async function changePassword() {
     const next = pw('new').value;
     if (!next) { pwRefuse('Enter a new password.'); return; }
     if (next !== pw('again').value) { pwRefuse('The two new passwords are not the same.'); return; }
-    const r = await apiResult('POST', '/api/config/password', { old_password: pw('old').value, new_password: next });
+    const r = await send('POST', '/api/config/password', { old_password: pw('old').value, new_password: next }, { notice: false });
     if (!r.ok) {
-        pwRefuse('Not changed: ' + ((r.body && r.body.error) || 'no answer.'));
+        pwRefuse('Not changed' + failedWhy(r));
         return;
     }
     closePassword();

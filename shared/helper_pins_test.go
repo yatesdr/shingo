@@ -209,6 +209,9 @@ var sharedExportsNoImporter = map[string]string{
 	"utils.js api":       "Core's pages use app.js's verbs; goes with utils.js's remnants",
 	"utils.js showModal": "Core's pages take layer.js's; goes with utils.js's remnants",
 	"utils.js hideModal": "Core's pages take layer.js's; goes with utils.js's remnants",
+	// Its non-throwing door: the Edge Configuration page took it last, and
+	// takes http.js's send now (s2-utils-out).
+	"utils.js apiResult": "the Edge Config page takes http.js's send; goes with utils.js's remnants",
 	// utils.js's own banner, still shown by its createSSE; Core's hub shows
 	// notice.js's banner on the bus's build-changed instead.
 	"utils.js showRefreshBanner": "read by createSSE alone; Core's hub shows notice.js's banner",

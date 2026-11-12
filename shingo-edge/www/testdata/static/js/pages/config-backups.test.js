@@ -144,6 +144,30 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         eq(posts.length, 0, 'mismatched station ID posts nothing');
     }
 
+    // A refused restore says the server's error; one the door already put on
+    // the notice (a lapsed session: shown) adds nothing to "not staged".
+    for (const [label, answer, want] of [
+        ['a refusal', { ok: false, body: { error: 'no such backup' } }, 'Restore not staged: no such backup'],
+        ['a lapsed session (shown on the notice)', { ok: false, shown: true, body: { error: 'Signed out' } }, 'Restore not staged.'],
+    ]) {
+        const said = [];
+        const handler = ctx.makeStageRestore({
+            stationID: 'stn-0001',
+            prompt: async (_msg, opts) => opts.value,
+            post: async () => answer,
+            done: (msg, ok) => said.push({ msg, ok }),
+        });
+        const root = new Node('div');
+        ctx.delegateActions(root, { stageRestore: handler });
+        const row = ctx.backupRow({ key: 'k3', size: 1 }, ctx.el, () => '');
+        root.appendChild(row);
+        const btn = row.find((n) => n.dataset && n.dataset.action === 'stageRestore');
+        (root._listeners.click || []).forEach((fn) => fn({ target: btn }));
+        await tick();
+        await tick();
+        eq(said.length === 1 && said[0].msg, want, 'restore, ' + label);
+    }
+
     // A restore already staged shows no button.
     {
         const row = ctx.backupRow({ key: 'k2', restore_pending: true }, ctx.el, () => '');

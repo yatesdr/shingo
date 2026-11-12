@@ -42,7 +42,9 @@ export function backupRow(item, el, fmt) {
 
 // makeStageRestore returns the delegateActions handler for a Restore button.
 // deps: stationID, prompt(message, opts) → Promise<string|null>,
-// post(url, body) → Promise<{ok, body}>, done(message, ok).
+// post(url, body) → Promise<{ok, body, shown}>, done(message, ok). shown: the
+// HTTP door already put the failure on the notice (a lapsed session's
+// "Signed out" with its Sign-in link), so the message adds nothing to it.
 // The typed-station-ID confirmation stays (U3).
 export function makeStageRestore(deps) {
     return async function stageRestore(...args) {
@@ -61,7 +63,8 @@ export function makeStageRestore(deps) {
         if (res && res.ok) {
             deps.done('Restore staged. It applies when shingo-edge restarts.', true);
         } else {
-            deps.done('Restore not staged: ' + ((res && res.body && res.body.error) || 'no answer.'), false);
+            deps.done(res && res.shown ? 'Restore not staged.'
+                : 'Restore not staged: ' + ((res && res.body && res.body.error) || 'no answer.'), false);
         }
         return res;
     };
