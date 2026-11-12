@@ -7,60 +7,74 @@
 ### PATCH /api/processes/1/presets/7  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "Rename Recipe One", status "the Edge refused it" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PATCH /api/processes/1/presets/7 · GET /api/processes/1/presets → sheet: closed
 ### PATCH /api/processes/1/presets/7  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "Rename Recipe One", status "the server refused it (500)" (bad), OK "Rename" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "Rename Recipe One", status "Server error (500)" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PATCH /api/processes/1/presets/7 · GET /api/processes/1/presets → sheet: closed
 ### PATCH /api/processes/1/presets/7  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "Rename Recipe One", no status, OK "Rename" enabled
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "Rename Recipe One", status "No answer from the server" (bad), OK "Rename" enabled
     state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    unhandled rejection: none
     pressed again: PATCH /api/processes/1/presets/7 · GET /api/processes/1/presets → sheet: closed
 ### PATCH /api/processes/1/presets/7  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/presets
-    new text: #pd-root div.pd-refusal: Could not reach this edge.
-    sheet: closed
-    state: presets.error="Could not reach this edge."
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "Rename Recipe One", status "Signed out" (bad), OK "Rename" enabled
+    state: no message set
     unhandled rejection: none
+    pressed again: PATCH /api/processes/1/presets/7 → sheet: open "Rename Recipe One", status "Signed out" (bad), OK "Rename" enabled
 
 ## Archive Recipe One
 # writes, in order: POST /api/processes/1/presets/7/archive
 ### POST /api/processes/1/presets/7/archive  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "Archive Recipe One v1?", status "the Edge refused it" (bad), OK "Archive" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/presets/7/archive · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets/7/archive  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "Archive Recipe One v1?", status "the server refused it (500)" (bad), OK "Archive" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "Archive Recipe One v1?", status "Server error (500)" (bad), OK "Archive" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/presets/7/archive · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets/7/archive  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "Archive Recipe One v1?", no status, OK "Archive" enabled
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "Archive Recipe One v1?", status "No answer from the server" (bad), OK "Archive" enabled
     state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    unhandled rejection: none
     pressed again: POST /api/processes/1/presets/7/archive · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets/7/archive  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/presets
-    new text: #pd-root div.pd-refusal: Could not reach this edge.
-    sheet: closed
-    state: presets.error="Could not reach this edge."
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "Archive Recipe One v1?", status "Signed out" (bad), OK "Archive" enabled
+    state: no message set
     unhandled rejection: none
+    pressed again: POST /api/processes/1/presets/7/archive → sheet: open "Archive Recipe One v1?", status "Signed out" (bad), OK "Archive" enabled
 
 ## Apply: the tick's preview (and each pick's)
 # writes, in order: POST /api/processes/1/flow/preview

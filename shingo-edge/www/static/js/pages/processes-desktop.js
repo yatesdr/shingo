@@ -382,7 +382,7 @@ async function catidCharge(holdID) {
 // changeover page does; the changeover orders its legs and the CATID monitor
 // completes it. A refusal is shown in the sheet, by name.
 async function catidStartChangeover(pid, styleID, name) {
-    const out = await postJSON('POST', '/api/processes/' + pid + '/changeover/start',
+    const out = await send('POST', '/api/processes/' + pid + '/changeover/start',
         { to_style_id: Number(styleID), called_by: 'engineer', notes: 'from the health strip: the PLC is on its part' });
     if (!out.ok) {
         openSheet('The changeover to ' + (name || 'style ' + styleID) + ' did not start', out.error, '', 'Close', closeSheet);
@@ -2456,7 +2456,7 @@ async function saveFlow() {
 // or no answer at all is a refusal by name and not an empty object read as a
 // success.
 function answerBody(out) {
-    const body = out.body && typeof out.body === 'object' ? out.body : {};
+    const body = bodyOf(out);
     return out.ok ? body : Object.assign({}, body, { error: out.error });
 }
 
@@ -2935,7 +2935,7 @@ function partNote(text) {
 }
 
 async function writePartSet(codes) {
-    const out = await postJSON('PUT', '/api/processes/' + S.processID + '/payloads', B().processPayloads(codes));
+    const out = await send('PUT', '/api/processes/' + S.processID + '/payloads', B().processPayloads(codes));
     if (!out.ok) return out;
     S.partSet = codes.slice().sort();
     // The palette is the server's union with what saved flows run, so it is
@@ -3641,7 +3641,7 @@ async function rsAllOn(role) {
     const off = switchedOffIn(role);
     if (!off.length) return;
     for (const r of off) {
-        const out = await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + r.id,
+        const out = await send('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + r.id,
             B().routingEnable(true));
         if (!out.ok) {
             S.routingError = 'Switching ' + r.core_node_name + ' on was refused: ' + out.error;
@@ -3718,23 +3718,23 @@ async function setRoutingNode(role, name, on) {
     let out;
     if (!on) {
         if (!have) return;
-        out = await postJSON('DELETE', '/api/processes/' + S.processID + '/routing-nodes/' + have.id, null);
+        out = await send('DELETE', '/api/processes/' + S.processID + '/routing-nodes/' + have.id, null);
     } else if (have) {
         // Already a row — an old one the backfill left switched off. The PATCH
         // is the documented adopt path and the store stamps origin='engineer'
         // and the session user, so it keeps its created_at and its history
         // rather than minting a second record of the same decision.
-        out = await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + have.id,
+        out = await send('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + have.id,
             B().routingEnable(true));
     } else {
         // At the end of its role, so the first name added to a role stays the
         // one a new position defaults to (composer-model's defaultRouting
         // takes the lowest sequence).
-        out = await postJSON('POST', '/api/processes/' + S.processID + '/routing-nodes',
+        out = await send('POST', '/api/processes/' + S.processID + '/routing-nodes',
             B().routingAdd(name, role, routingRowsFor(role).length));
     }
     S.routingError = out.ok ? '' : out.error;
-    S.routingWarning = out.ok && out.body ? (out.body.warning || '') : '';
+    S.routingWarning = out.ok ? (bodyOf(out).warning || '') : '';
     await loadRouting();
     drawSettings();
     // Back into the field the name was typed into: the engineer adding one
@@ -4493,7 +4493,7 @@ function loaderGapRows() {
 // The screen and the window bindings in one write, which is what the endpoint
 // does. A refusal names the window Core does not have.
 async function bindLoaderBoard(key) {
-    const out = await postJSON('POST', '/api/loader-boards',
+    const out = await send('POST', '/api/loader-boards',
         { loader_key: key, process_id: S.processID });
     if (!out.ok) {
         S.settingsError = 'Could not make a screen for ' + key + ': ' + out.error;
@@ -4791,7 +4791,7 @@ function saveStationPositions(id) {
         (back.length ? 'Back to the production counter: ' + back.join(', ') + '.' : ''),
         '', 'Save', async () => {
             for (const x of changes) {
-                const out = await postJSON('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id });
+                const out = await send('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id });
                 if (!out.ok) {
                     sheetStatus(name(x.id) + ': ' + out.error, true);
                     await afterStationChange();
@@ -4843,15 +4843,15 @@ function openStationCounter(id, bindNode) {
         'Save', async () => {
             const body = { label: $('sc-label').value, tag_name: $('sc-tag').value, tag_name_2: $('sc-tag2').value };
             const url = id ? '/api/station-counters/' + id : '/api/processes/' + S.processID + '/station-counters';
-            const out = await postJSON(id ? 'PUT' : 'POST', url, body);
+            const out = await send(id ? 'PUT' : 'POST', url, body);
             if (!out.ok) { sheetStatus(out.error, true); return; }
-            if (!id && bindNode && out.body && out.body.id) {
-                const b = await postJSON('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: out.body.id });
+            if (!id && bindNode && bodyOf(out).id) {
+                const b = await send('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: bodyOf(out).id });
                 if (!b.ok) { sheetStatus(b.error, true); return; }
             }
             // A new counter counts nothing yet: its checklist opens, its
             // countable positions ticked when it is the only one.
-            if (!id && !bindNode && out.body && out.body.id) S.scOpen = out.body.id;
+            if (!id && !bindNode && bodyOf(out).id) S.scOpen = bodyOf(out).id;
             closeSheet();
             await afterStationChange();
         });
@@ -4872,7 +4872,7 @@ async function setCountedAt(nodeID, value) {
         openStationCounter(0, nodeID);
         return;
     }
-    const out = await postJSON('PUT', '/api/process-nodes/' + nodeID + '/counted-at',
+    const out = await send('PUT', '/api/process-nodes/' + nodeID + '/counted-at',
         { line_counter_id: value ? Number(value) : null });
     S.settingsError = out.ok ? '' : out.error;
     await afterStationChange();
@@ -5015,7 +5015,7 @@ async function submitAddPositions() {
     const stationID = S.addPos.station;
     const current = await readStationNodes(stationID);
     if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was added.', true); return; }
-    const out = await postJSON('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
+    const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
         B().stationNodes(current.concat(picked)));
     if (!out.ok) { sheetStatus(out.error, true); return; }
     const st = stationsOf(S.processID).find(s => s.id === stationID);
@@ -5035,10 +5035,10 @@ async function openRemovePosition(name, stationID) {
         drawSettings();
         return;
     }
-    const impact = await postJSON('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact',
+    const impact = await send('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact',
         B().stationNodes(current.filter(n => n !== name)));
     const says = !impact.ok ? 'What still names it could not be read (' + impact.error + ').'
-        : impact.body.warning || 'No recipe or style of this process names it.';
+        : bodyOf(impact).warning || 'No recipe or style of this process names it.';
     openSheet('Remove ' + name, 'from ' + st.name,
         '<p class="pd-note">' + esc(says) + ' Removing it takes its tile off the screen.</p>',
         'Remove', () => submitRemovePosition(name, stationID, st.name), true);
@@ -5047,10 +5047,10 @@ async function openRemovePosition(name, stationID) {
 async function submitRemovePosition(name, stationID, screenName) {
     const current = await readStationNodes(stationID);
     if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was removed.', true); return; }
-    const out = await postJSON('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
+    const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
         B().stationNodes(current.filter(n => n !== name)));
     if (!out.ok) { sheetStatus(out.error, true); return; }
-    const kept = Array.isArray(out.body.kept) ? out.body.kept : [];
+    const kept = Array.isArray(bodyOf(out).kept) ? bodyOf(out).kept : [];
     closeSheet();
     await afterPositionsChanged(stationID);
     S.settingsNotice = kept.length ? keptPositionsSentence(kept) : 'Removed ' + name + ' from ' + screenName + '.';
@@ -6065,24 +6065,22 @@ function sheetField(label, sub, name, value) {
 // server's refusal BY NAME when it did not. Every write on this page wants the
 // same three lines — "PLN_02 is used by PART SYN-A-S003" is an answer and
 // "could not save" is not — and the Add-process chain wants the answer as well,
-// because step 2 is posted against the id step 1 returned.
-async function postJSON(method, url, body) {
-    const res = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        body: body === null ? undefined : JSON.stringify(body),
-    });
-    let parsed = null;
-    try { parsed = await res.json(); } catch (_) { /* a write may answer with nothing */ }
-    if (res.ok) return { ok: true, body: parsed || {} };
-    const named = parsed && (parsed.error || parsed.message);
-    return { ok: false, status: res.status, error: named || ('the server refused it (' + res.status + ')') };
+// because step 2 is posted against the id step 1 returned. That read is the
+// door's (send): postJSON's own took a lapsed session's login page as a
+// success with an empty body (P0 bug, :6056), so Add process went on to write
+// /api/processes/NaN/…, and let a dead Edge's rejection go uncaught (:6049).
+// The door answers 401 "Signed out" and status 0, and every chain on this page
+// stops at the first answer that is not ok (ruling 3: no write proceeds on a
+// 401). bodyOf is the body a caller reads an id or a warning from: {} for a
+// write that answered with nothing, as postJSON's was.
+function bodyOf(out) {
+    return out.body && typeof out.body === 'object' ? out.body : {};
 }
 
 // A write that goes through a sheet, with the server's refusal shown BY NAME
 // rather than swallowed into "could not save".
 async function sheetSubmit(method, url, body, after) {
-    const out = await postJSON(method, url, body);
+    const out = await send(method, url, body);
     if (!out.ok) { sheetStatus(out.error, true); return false; }
     closeSheet();
     if (after) await after();
@@ -6295,13 +6293,13 @@ function openNewStyle(recipeID, sel) {
             if (recipe) { await mintNewStyle(recipe); return; }
             const name = String(sheetValue('name') || '').trim();
             if (!name) { sheetStatus('A part needs a name, or pick a recipe.', true); return; }
-            const made = await postJSON('POST', '/api/styles',
+            const made = await send('POST', '/api/styles',
                 B().styleCreate(name, S.processID, sheetValue('catid')));
             if (!made.ok) { sheetStatus(made.error, true); return; }
             closeSheet();
             // Selected, because the reason to make one is to draw its flow.
             // refreshProcess keeps the id when the re-read still has it.
-            S.styleID = Number(made.body.id) || S.styleID;
+            S.styleID = Number(bodyOf(made).id) || S.styleID;
             await refreshProcess();
         }, false);
     const pick = id => {
@@ -6483,18 +6481,18 @@ async function mintNewStyle(recipe) {
         const head = (p.slots[i].nodes || [])[0] || '';
         picks.push({ code: code, node: moves[head] || head });
     }
-    const made = await postJSON('POST', '/api/processes/' + S.processID + '/flow/mint',
+    const made = await send('POST', '/api/processes/' + S.processID + '/flow/mint',
         B().flowMint(recipe, picks, stationIDForSave(), moves));
     if (!made.ok) { sheetStatus(made.error, true); return; }
     const catid = String(sheetValue('catid') || '').trim();
     if (catid) {
-        const st = { id: made.body.style_id, name: made.body.style_name, process_id: S.processID };
-        const set = await postJSON('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }));
+        const st = { id: bodyOf(made).style_id, name: bodyOf(made).style_name, process_id: S.processID };
+        const set = await send('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }));
         if (!set.ok) { sheetStatus('Minted ' + st.name + ', but its CATID did not save: ' + set.error, true); return; }
     }
     closeSheet();
-    S.notice = (made.body.minted ? 'Minted ' : 'Already runs as ') + made.body.style_name + '.';
-    S.styleID = Number(made.body.style_id) || S.styleID;
+    S.notice = (bodyOf(made).minted ? 'Minted ' : 'Already runs as ') + bodyOf(made).style_name + '.';
+    S.styleID = Number(bodyOf(made).style_id) || S.styleID;
     await refreshProcess();
 }
 
@@ -6507,7 +6505,7 @@ function openNewGroup() {
         'Add', async () => {
             const name = String(sheetValue('name') || '').trim();
             if (!name) { sheetStatus('A group needs a name.', true); return; }
-            const made = await postJSON('POST', '/api/process-groups',
+            const made = await send('POST', '/api/process-groups',
                 B().processGroupCreate(name, sheetValue('description')));
             if (!made.ok) { sheetStatus(made.error, true); return; }
             closeSheet();
@@ -6800,25 +6798,25 @@ async function submitAddProcess() {
     S.add.refused = false;
 
     sheetStatus('Creating…');
-    const made = await postJSON('POST', '/api/processes',
+    const made = await send('POST', '/api/processes',
         B().processCreate({ name: name, description: sheetValue('description'), group_id: S.add.groupID }));
     if (!made.ok) { sheetStatus(made.error, true); return; }
-    const processID = Number(made.body.id);
+    const processID = Number(bodyOf(made).id);
 
     // What already exists, so a refusal halfway through says so rather than
     // leaving the engineer to find out from the list.
     const done = ['The process was created'];
     const stop = (what, why) => sheetStatus(done.join('; ') + '. ' + what + ' was refused: ' + why, true);
 
-    const st = await postJSON('POST', '/api/operator-stations',
+    const st = await send('POST', '/api/operator-stations',
         B().stationWrite(null, processID, false, { name: screen, note: '' }));
     if (!st.ok) { stop('Its operator screen', st.error); return; }
-    const stationID = Number(st.body.id);
+    const stationID = Number(bodyOf(st).id);
     done.push('its screen added');
 
     const claimed = pickerValue('positions');
     if (claimed.length) {
-        const nodes = await postJSON('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
+        const nodes = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
             B().stationNodes(claimed));
         if (!nodes.ok) { stop('Its positions', nodes.error); return; }
         done.push('its positions claimed');
@@ -6841,7 +6839,7 @@ async function submitAddProcess() {
         }
     }
     if (routingRows.length) {
-        const rows = await postJSON('PUT', '/api/processes/' + processID + '/routing-nodes',
+        const rows = await send('PUT', '/api/processes/' + processID + '/routing-nodes',
             B().routingSet(routingRows));
         if (!rows.ok) { stop('Its routing set', rows.error); return; }
     }
@@ -6852,7 +6850,7 @@ async function submitAddProcess() {
     // on should have both lists the composer's pickers read.
     const partSet = pickerValue(PART_SET_PICKER);
     if (partSet.length) {
-        const parts = await postJSON('PUT', '/api/processes/' + processID + '/payloads',
+        const parts = await send('PUT', '/api/processes/' + processID + '/payloads',
             B().processPayloads(partSet));
         if (!parts.ok) { stop('Its part set', parts.error); return; }
         done.push('its part set written');
@@ -6969,22 +6967,22 @@ async function openScreenSheet(stationID) {
                 want.every((n, i) => n === baseline[i]);
             const key = JSON.stringify(want);
             if (!same && baseline.some(n => want.indexOf(n) < 0) && warnedFor !== key) {
-                const impact = await postJSON('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact',
+                const impact = await send('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact',
                     { nodes: want });
                 if (!impact.ok) { sheetStatus(impact.error, true); return; }
-                if (impact.body.warning) {
+                if (bodyOf(impact).warning) {
                     warnedFor = key;
-                    sheetStatus(impact.body.warning, false);
+                    sheetStatus(bodyOf(impact).warning, false);
                     return;
                 }
             }
-            const wrote = await postJSON(editing ? 'PUT' : 'POST',
+            const wrote = await send(editing ? 'PUT' : 'POST',
                 editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
                 stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }));
             if (!wrote.ok) { sheetStatus(wrote.error, true); return; }
-            const id = editing ? st.id : Number(wrote.body.id);
+            const id = editing ? st.id : Number(bodyOf(wrote).id);
             if (!same) {
-                const nodes = await postJSON('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
+                const nodes = await send('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
                     { nodes: want });
                 if (!nodes.ok) {
                     sheetStatus('The screen was saved; its positions were refused: ' + nodes.error, true);
@@ -6996,7 +6994,7 @@ async function openScreenSheet(stationID) {
                 // in `kept`. Closing would tell the engineer it was gone, so the
                 // sheet stays open and says which and why. Not a refusal — the
                 // save landed. An older server sends no `kept` and closes as before.
-                const kept = Array.isArray(nodes.body.kept) ? nodes.body.kept : [];
+                const kept = Array.isArray(bodyOf(nodes).kept) ? bodyOf(nodes).kept : [];
                 if (kept.length) {
                     await reloadStations();
                     await refreshStationNodes(id);
@@ -7537,7 +7535,7 @@ function openPresetNaming(title, prefill, from) {
 // is the answer to the save. The way back is the draft's own Back.
 async function saveGroupedRecipe(name, from) {
     const d = S.shapeDraft;
-    const out = await postJSON('POST', '/api/processes/' + S.processID + '/presets', B().flowPresetCreate(name, from));
+    const out = await send('POST', '/api/processes/' + S.processID + '/presets', B().flowPresetCreate(name, from));
     if (!out.ok) {
         sheetStatus(out.error, true);
         if (d && S.shapeDraft === d) { d.refusal = out.error; drawFlows(); }
@@ -7549,7 +7547,7 @@ async function saveGroupedRecipe(name, from) {
         const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
         if (res.ok) takeComposer(await res.json());
     } catch (_) { /* the rail catches up on its next read */ }
-    const id = String((out.body && out.body.id) || '');
+    const id = String(bodyOf(out).id || '');
     if (id && (S.composer.presets || []).some(p => String(p.id) === id)) {
         openRecipe(id);
         if (S.shapeDraft && keep) Object.assign(S.shapeDraft, keep);

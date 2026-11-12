@@ -4,3 +4,19 @@
 ## dead Edge, Save style (processes-desktop.js:2415): flow/save gets no answer
 ok   no unhandled rejection
 ok   the page says "No answer from the server"
+
+## dead Edge, a sheet's write (processes-desktop.js:6049, postJSON): Rename Style B gets no answer
+ok   no unhandled rejection
+ok   the page says "No answer from the server"
+ok   the sheet is open and its OK pressable
+
+## lapsed session reads as done (processes-desktop.js:6056; ruling 3): Add process, POST /api/processes lands on the login page
+ok   no request names /NaN/
+ok   no write follows it
+ok   the page says "Signed out"
+ok   the notice offers Sign in
+
+## "Creating…" stuck (processes-desktop.js:6781): Add process, POST /api/processes gets no answer
+ok   no unhandled rejection
+ok   the status line is not left on "Creating…"
+ok   the page says "No answer from the server"

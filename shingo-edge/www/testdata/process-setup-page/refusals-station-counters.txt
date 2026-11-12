@@ -7,86 +7,107 @@
 ### POST /api/processes/1/station-counters  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "New station counter", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/station-counters · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### POST /api/processes/1/station-counters  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "New station counter", status "the server refused it (500)" (bad), OK "Save" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "New station counter", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/station-counters · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### POST /api/processes/1/station-counters  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "New station counter", no status, OK "Save" enabled
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: POST /api/processes/1/station-counters · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
-### POST /api/processes/1/station-counters  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "New station counter", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: POST /api/processes/1/station-counters · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
+### POST /api/processes/1/station-counters  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "New station counter", status "Signed out" (bad), OK "Save" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/station-counters → sheet: open "New station counter", status "Signed out" (bad), OK "Save" enabled
 
 ## Edit Station 1
 # writes, in order: PUT /api/station-counters/51
 ### PUT /api/station-counters/51  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "Edit station counter", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/station-counters/51  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "Edit station counter", status "the server refused it (500)" (bad), OK "Save" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "Edit station counter", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/station-counters/51  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "Edit station counter", no status, OK "Save" enabled
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: PUT /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
-### PUT /api/station-counters/51  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "Edit station counter", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: PUT /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
+### PUT /api/station-counters/51  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "Edit station counter", status "Signed out" (bad), OK "Save" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: PUT /api/station-counters/51 → sheet: open "Edit station counter", status "Signed out" (bad), OK "Save" enabled
 
 ## POS_A1 › Counted at: Station 1
 # writes, in order: PUT /api/process-nodes/201/counted-at
 ### PUT /api/process-nodes/201/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
     new text: #pd-root div.pd-refusal: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/process-nodes/201/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
-    new text: #pd-root div.pd-refusal: the server refused it (500)
+    new text: #pd-root div.pd-refusal: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="the server refused it (500)"
+    state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/process-nodes/201/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
+    new text: #pd-root div.pd-refusal: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="No answer from the server"
+    unhandled rejection: none
 ### PUT /api/process-nodes/201/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
     new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-root div.pd-refusal: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: no message set
+    state: settingsError="Signed out"
     unhandled rejection: none
 
 ## POS_A2 › Counted at: New station counter… (the create, then the bind)
@@ -94,141 +115,178 @@
 ### POST /api/processes/1/station-counters  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "New station counter", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### POST /api/processes/1/station-counters  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "New station counter", status "the server refused it (500)" (bad), OK "Save" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "New station counter", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### POST /api/processes/1/station-counters  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "New station counter", no status, OK "Save" enabled
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
-### POST /api/processes/1/station-counters  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "New station counter", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
+### POST /api/processes/1/station-counters  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "New station counter", status "Signed out" (bad), OK "Save" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/station-counters → sheet: open "New station counter", status "Signed out" (bad), OK "Save" enabled
 ### PUT /api/process-nodes/202/counted-at  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "New station counter", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "New station counter", status "the server refused it (500)" (bad), OK "Save" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "New station counter", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "New station counter", no status, OK "Save" enabled
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
-### PUT /api/process-nodes/202/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "New station counter", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
+### PUT /api/process-nodes/202/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "New station counter", status "Signed out" (bad), OK "Save" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/station-counters → sheet: open "New station counter", status "Signed out" (bad), OK "Save" enabled
 
 ## Change positions… › Save positions (two binds)
 # writes, in order: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at
 ### PUT /api/process-nodes/201/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
     new text: #pd-scrim .mf .st (textContent): POS_A1: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "Save this station counter’s positions?", status "POS_A1: the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/201/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
-    new text: #pd-scrim .mf .st (textContent): POS_A1: the server refused it (500)
-    sheet: open "Save this station counter’s positions?", status "POS_A1: the server refused it (500)" (bad), OK "Save" enabled
+    new text: #pd-scrim .mf .st (textContent): POS_A1: Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "Save this station counter’s positions?", status "POS_A1: Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/201/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
-    sheet: open "Save this station counter’s positions?", no status, OK "Save" enabled
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
-### PUT /api/process-nodes/201/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
+    new text: #pd-scrim .mf .st (textContent): POS_A1: No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "Save this station counter’s positions?", status "POS_A1: No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
+### PUT /api/process-nodes/201/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
+    new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-scrim .mf .st (textContent): POS_A1: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "Save this station counter’s positions?", status "POS_A1: Signed out" (bad), OK "Save" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: PUT /api/process-nodes/201/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health → sheet: open "Save this station counter’s positions?", status "position 201: Signed out" (bad), OK "Save" enabled
 ### PUT /api/process-nodes/202/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
     new text: #pd-scrim .mf .st (textContent): POS_A2: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "Save this station counter’s positions?", status "POS_A2: the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
-    new text: #pd-scrim .mf .st (textContent): POS_A2: the server refused it (500)
-    sheet: open "Save this station counter’s positions?", status "POS_A2: the server refused it (500)" (bad), OK "Save" enabled
+    new text: #pd-scrim .mf .st (textContent): POS_A2: Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "Save this station counter’s positions?", status "POS_A2: Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
-    sheet: open "Save this station counter’s positions?", no status, OK "Save" enabled
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable
+    new text: #pd-scrim .mf .st (textContent): POS_A2: No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "Save this station counter’s positions?", status "POS_A2: No answer from the server" (bad), OK "Save" enabled
     state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    unhandled rejection: none
     pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
     new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    new text: #pd-scrim .mf .st (textContent): POS_A2: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "Save this station counter’s positions?", status "POS_A2: Signed out" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: PUT /api/process-nodes/201/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health → sheet: open "Save this station counter’s positions?", status "position 201: Signed out" (bad), OK "Save" enabled
 
 ## Remove Station 1
 # writes, in order: DELETE /api/station-counters/51
 ### DELETE /api/station-counters/51  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    notice: error "the Edge refused it"
     sheet: open "Remove this station counter?", status "the Edge refused it" (bad), OK "Remove" enabled
     state: no message set
     unhandled rejection: none
     pressed again: DELETE /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### DELETE /api/station-counters/51  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the server refused it (500)
-    sheet: open "Remove this station counter?", status "the server refused it (500)" (bad), OK "Remove" enabled
+    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    notice: error "Server error (500)"
+    sheet: open "Remove this station counter?", status "Server error (500)" (bad), OK "Remove" enabled
     state: no message set
     unhandled rejection: none
     pressed again: DELETE /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
 ### DELETE /api/station-counters/51  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
-    sheet: open "Remove this station counter?", no status, OK "Remove" enabled
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: DELETE /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
-### DELETE /api/station-counters/51  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    sheet: closed
+    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    notice: error "No answer from the server"
+    sheet: open "Remove this station counter?", status "No answer from the server" (bad), OK "Remove" enabled
     state: no message set
     unhandled rejection: none
+    pressed again: DELETE /api/station-counters/51 · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/process-nodes/201/countable · GET /api/process-nodes/202/countable · GET /api/process-nodes/203/countable · GET /api/process-nodes/204/countable · GET /api/process-nodes/205/countable · GET /api/process-nodes/206/countable · GET /api/process-nodes/207/countable · GET /api/process-nodes/208/countable · GET /api/process-nodes/209/countable · GET /api/process-nodes/210/countable · GET /api/process-nodes/211/countable · GET /api/process-nodes/212/countable · GET /api/process-nodes/213/countable · GET /api/process-nodes/214/countable · GET /api/process-nodes/215/countable · GET /api/process-nodes/216/countable → sheet: closed
+### DELETE /api/station-counters/51  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: nothing
+    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    sheet: open "Remove this station counter?", status "Signed out" (bad), OK "Remove" enabled
+    state: no message set
+    unhandled rejection: none
+    pressed again: DELETE /api/station-counters/51 → sheet: open "Remove this station counter?", status "Signed out" (bad), OK "Remove" enabled

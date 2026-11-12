@@ -1054,6 +1054,22 @@ const DOOR_BUGS = [
         spec: () => T.DRIVE.flowSave, target: { method: 'POST', url: '/api/processes/1/flow/save', k: 0 }, answer: NO_ANSWER,
         checks: [checks.noRejection, checks.says('No answer from the server')],
     },
+    {
+        title: 'dead Edge, a sheet\'s write (processes-desktop.js:6049, postJSON): Rename Style B gets no answer',
+        spec: () => D.styleRename, target: { method: 'PUT', url: '/api/styles/2', k: 0 }, answer: NO_ANSWER,
+        checks: [checks.noRejection, checks.says('No answer from the server'), checks.okLive],
+    },
+    {
+        title: 'lapsed session reads as done (processes-desktop.js:6056; ruling 3): Add process, POST /api/processes lands on the login page',
+        spec: () => T.DRIVE.addProcess, target: { method: 'POST', url: '/api/processes', k: 0 }, answer: LAPSED,
+        checks: [checks.noNaN, checks.noWriteAfter, checks.says('Signed out'), checks.signIn],
+    },
+    {
+        title: '"Creating…" stuck (processes-desktop.js:6781): Add process, POST /api/processes gets no answer',
+        spec: () => T.DRIVE.addProcess, target: { method: 'POST', url: '/api/processes', k: 0 }, answer: NO_ANSWER,
+        checks: [checks.noRejection, r => ['the status line is not left on "Creating…"', statusWords(r.page) !== 'Creating…', 'status ' + JSON.stringify(statusWords(r.page))],
+            checks.says('No answer from the server')],
+    },
 ];
 async function pinDoorBugs() {
     T.setCurrent('door-bugs.txt');
