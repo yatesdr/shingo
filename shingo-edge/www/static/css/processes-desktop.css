@@ -168,8 +168,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-radius: 12px; overflow: hidden; table-layout: fixed;
 }
 /* The process list lays out by content: its state column holds a style name
-   whole on one line and has to grow to the longest one. */
+   whole on one line and has to grow to the longest one. Every row is one line
+   (F19): no cell wraps, and the list scrolls sideways before a row grows. */
 .pd-proctbl { table-layout: auto; }
+.pd-proctbl td { white-space: nowrap; }
 .pd-tbl th {
     padding: 10px 14px; background: var(--surface-2, var(--surface));
     border-bottom: 1px solid var(--sub-1); text-align: left;
@@ -184,7 +186,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-tbl td.pn b { font-size: 14px; }
 .pd-tbl td.pn small { display: block; color: var(--text-muted); font-size: 11.5px; }
 .pd-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
-.pd-runname { font-weight: 600; }
 .pd-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--sub-3); color: var(--text-muted); }
 .pd-tag.ok { color: var(--chip-ink-ok); border-color: var(--viz-green); }
 .pd-tag.build { color: var(--accent); border-color: var(--accent); }

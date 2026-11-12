@@ -212,14 +212,15 @@ function drawList() {
         // THE STATE IS DERIVED, NOT ANNOUNCED. production_state is a store
         // column the page only ever read to split Running/Idle, and both of
         // those are already derivable from the style pointers the list row
-        // carries for the Running column: a target set and not yet active is
-        // the changeover, the active style is the running part, and neither
-        // means anything is being made. The word says what is true; the ok
-        // tone marks only a part being made, so a changeover stays untoned
-        // (it is neither a success nor an alert). The style name is typed by
-        // an engineer, so it is escaped, and it sits in its own no-wrap box:
-        // a hyphenated name breaks only after "Running", never inside itself,
-        // and the column is as wide as its longest name (see cols below).
+        // carries: a target set and not yet active is the changeover, the
+        // active style is the running part, and neither means anything is
+        // being made. The word says what is true; the ok tone marks only a
+        // part being made, so a changeover stays untoned (it is neither a
+        // success nor an alert). ONE STATE COLUMN (F19): a Running column
+        // beside it said the running style's name a second time. The style
+        // name is typed by an engineer, so it is escaped; the row is one line
+        // (.pd-proctbl), and the column is as wide as its longest state (see
+        // cols below).
         const changing = !!(p.target_style_id && p.target_style_id !== p.active_style_id);
         const running = !changing && !!run;
         const state = changing ? 'Changing over'
@@ -227,13 +228,13 @@ function drawList() {
                 : 'No part running');
         // EVERY STYLE IS SEARCHABLE, not only the running one: the cells show
         // one style name at most, so a part that is not running could never
-        // be found by name. The names are already on the page.
-        const hay = stylesOf(p.id).map(s => s.name).join(' · ');
+        // be found by name. The names are already on the page. So is every
+        // screen's name, which the row no longer prints under the process's
+        // (one line per row, F19): the search box still finds a station.
+        const hay = stylesOf(p.id).map(s => s.name).concat(st.map(s => s.name)).join(' · ');
         return '<tr data-open="' + p.id + '" data-hay="' + esc(hay) + '">' +
-            '<td class="pn"><b>' + esc(p.name) + '</b><span id="pd-h-' + p.id + '">' + healthCount(p.id) + '</span>' +
-            '<small>' + esc(st.length ? st[0].name : '—') + '</small></td>' +
+            '<td class="pn"><b>' + esc(p.name) + '</b><span id="pd-h-' + p.id + '">' + healthCount(p.id) + '</span></td>' +
             '<td>' + esc(groupName(p.group_id) || '—') + '</td>' +
-            '<td>' + (run ? '<span class="pd-runname">' + esc(run.name) + '</span>' : '<span class="pd-dim">—</span>') + '</td>' +
             '<td class="num">' + stylesOf(p.id).length + '</td>' +
             '<td>' + (p.flow_composer_enabled ? '<span class="pd-tag ok">on</span>' : '<span class="pd-dim">off</span>') + '</td>' +
             '<td><span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' +
@@ -257,7 +258,7 @@ function drawList() {
             // editor: a process's name and group on Settings, its positions
             // on Operator screens, its routing set and part set beside them.
             '<td class="pd-acts">' +
-            '<button class="pd-dimlink" data-act="open-flows" data-process="' + p.id + '">Flows</button>' +
+            '<button class="pd-dimlink" data-act="open-flows" data-process="' + p.id + '">Styles</button>' +
             '<button class="pd-dimlink" data-act="open-settings" data-process="' + p.id + '">Settings</button>' +
             '</td></tr>';
     };
@@ -269,9 +270,9 @@ function drawList() {
     // and zero-high, so every table's column is sized by the longest one.
     const sizer = '<span class="pd-statesizer" aria-hidden="true">' +
         [...new Set(S.processes.map(runningStyle).filter(Boolean).map(s => s.name))]
-            .map(n => '<span>' + esc(n) + '</span>').join('') + '</span>';
-    const head = '<thead><tr><th>Process</th><th>Group</th><th>Running</th><th class="num">Flows</th>' +
-        '<th>HMI editing</th><th>Counter</th><th>Curtain</th><th class="num">Screens</th><th>State' + sizer + '</th>' +
+            .map(n => '<span>Running ' + esc(n) + '</span>').join('') + '</span>';
+    const head = '<thead><tr><th>Process</th><th>Group</th><th class="num">Styles</th>' +
+        '<th>HMI setup</th><th>Counter</th><th>Curtain</th><th class="num">Screens</th><th>State' + sizer + '</th>' +
         '<th></th></tr></thead>';
     // THE STATE COLUMN HAS NO WIDTH OF ITS OWN. Its name is whole and on one
     // line, so the column has to grow to it; under a fixed layout with an 8%
@@ -279,10 +280,11 @@ function drawList() {
     // The table lays out by content (.pd-proctbl), the other columns keep
     // their shares as hints and give way, and the state takes the rest (8%,
     // what "No part running" needs) or its longest name, whichever is more.
-    // The shares sum to 92 so that rest exists; they summed to 106 before.
-    const cols = '<colgroup><col style="width:15%"><col style="width:8%"><col style="width:19%"><col style="width:6%">' +
-        '<col style="width:9%"><col style="width:11%"><col style="width:7%"><col style="width:6%"><col>' +
-        '<col style="width:11%"></colgroup>';
+    // The shares sum to 85 so that rest exists (the Running column's 19%
+    // went to the process name, the counter and the state).
+    const cols = '<colgroup><col style="width:20%"><col style="width:9%"><col style="width:6%">' +
+        '<col style="width:8%"><col style="width:15%"><col style="width:9%"><col style="width:6%"><col>' +
+        '<col style="width:12%"></colgroup>';
     // P0 is a table and gets the page, with the same 24 px gutter every other
     // block on this page has.
 
