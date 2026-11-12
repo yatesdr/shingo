@@ -1,4 +1,6 @@
-import { confirm, delegateActions, toast } from '/static/js/shingoedge.js';
+import { delegateActions } from '/static/shared/dom.js';
+import { confirm } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 
 // replenishment.js — cell-autoreorder admin page.
 //

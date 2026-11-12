@@ -1,4 +1,6 @@
-import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+import { api, createSSE } from '/static/js/shingoedge.js';
+import { delegateActions } from '/static/shared/dom.js';
+import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
 
 // Merge core-synced nodes with edge-local nodes for the dropdowns.

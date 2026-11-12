@@ -1,4 +1,7 @@
-import { api, confirm, delegateActions, escapeHtml, navigateToProcess, toast } from '/static/js/shingoedge.js';
+import { api, navigateToProcess } from '/static/js/shingoedge.js';
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
+import { confirm } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 
 var processID = parseInt(document.getElementById('page-data').dataset.processId || '0', 10);
 

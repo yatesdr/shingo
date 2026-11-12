@@ -1,4 +1,7 @@
-import { api, createSSE, delegateActions, escapeHtml, hideModal, navigateToProcess, prompt, showModal, toast } from '/static/js/shingoedge.js';
+import { api, createSSE, navigateToProcess } from '/static/js/shingoedge.js';
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
+import { hideModal, prompt, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 import { productionStreamHandlers } from '/static/js/pages/production-refresh.js';
 import { postAct } from '/static/js/ask-act.js';
 

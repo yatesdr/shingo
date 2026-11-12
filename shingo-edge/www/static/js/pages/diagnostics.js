@@ -1,4 +1,5 @@
-import { createSSE, delegateActions, escapeHtml } from '/static/js/shingoedge.js';
+import { createSSE } from '/static/js/shingoedge.js';
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 
 (function() {
   // Debug-log rendering.

@@ -7,7 +7,7 @@
 // pass with the element hidden, the list empty, or the node names dropped.
 //
 // Loaded the same way composer-fields.characterization.test.js loads its target: an
-// ES module run through vm.runInContext with the import line stripped and the
+// ES module run through vm.runInContext with the import lines stripped and the
 // imported names supplied as bare globals.
 
 const fs = require('fs');
@@ -61,7 +61,7 @@ function makeContext() {
         setTimeout, clearTimeout, encodeURIComponent,
     });
     let src = fs.readFileSync(path.join(SRC_DIR, 'changeover.js'), 'utf8');
-    src = src.replace(/^import \{[^}]+\} from [^\n]+\n+/m, '');
+    src = src.replace(/^import \{[^}]+\} from [^\n]+\n+/gm, '');
     // Expose the function under test — module scope is not reachable from
     // outside a vm script otherwise.
     src += '\n;globalThis.__render = renderUnresolvedParticipants;';

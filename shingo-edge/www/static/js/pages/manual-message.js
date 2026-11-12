@@ -1,4 +1,6 @@
-import { api, delegateActions, toast } from '/static/js/shingoedge.js';
+import { api } from '/static/js/shingoedge.js';
+import { delegateActions } from '/static/shared/dom.js';
+import { toast } from '/static/shared/notice.js';
 
 var _pd = document.getElementById('page-data').dataset;
 var _stationID = _pd.stationId;

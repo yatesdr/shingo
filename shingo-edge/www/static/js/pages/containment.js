@@ -1,6 +1,8 @@
-import { api, confirm, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+import { api, createSSE } from '/static/js/shingoedge.js';
+import { delegateActions } from '/static/shared/dom.js';
+import { confirm, layerDepth } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
-import { layerDepth } from '/static/shared/layer.js';
 
 // Quality Containment page: Verify Good releases one verified bin from its
 // containment node to the claim's outbound; Recall walks a contained

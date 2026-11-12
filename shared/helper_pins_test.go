@@ -204,6 +204,8 @@ var sharedExportsNoImporter = map[string]string{
 	"utils.js confirm":   "pages take the Edge hub's copy",
 	"utils.js prompt":    "pages take the Edge hub's copy",
 	"utils.js createSSE": "pages take the Edge hub's copy or the bus",
+	// Its toast: the Edge Config page took it, and takes notice.js's now.
+	"utils.js toast": "pages take notice.js's (wave C); the copy goes with utils.js's remnants",
 	// utils.js's own banner, still shown by its createSSE; Core's hub shows
 	// notice.js's banner on the bus's build-changed instead.
 	"utils.js showRefreshBanner": "read by createSSE alone; Core's hub shows notice.js's banner",

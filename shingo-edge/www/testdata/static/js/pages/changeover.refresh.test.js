@@ -7,7 +7,7 @@
 //   - a reload keeps the chosen target style and its open preview.
 //
 // Loaded like changeover.advisory.test.js: the module run through
-// vm.runInContext with the import line stripped and its imports supplied as
+// vm.runInContext with the import lines stripped and its imports supplied as
 // globals. Timers and the clock are fakes, so the windows are exact.
 
 const fs = require('fs');
@@ -80,7 +80,7 @@ function makeContext() {
         Array, Object, String, Number, Boolean, Promise, encodeURIComponent,
     });
     let src = fs.readFileSync(path.join(SRC_DIR, 'changeover.js'), 'utf8');
-    src = src.replace(/^import \{[^}]+\} from [^\n]+\n+/m, '');
+    src = src.replace(/^import \{[^}]+\} from [^\n]+\n+/gm, '');
     vm.runInContext(src, context);
 
     const content = { id: 'changeover-content' };

@@ -90,9 +90,9 @@ func pinContains(keys []string, k string) bool {
 	return false
 }
 
-// W1 (Edge). production.js imports hideModal and now maps it, so the four
-// data-action="hideModal:<id>" buttons in production.html (view-bin and
-// request-empty modals: × and Close/Cancel) close their modal.
+// W1 (Edge). production.js imports hideModal (shared/layer.js's) and now maps
+// it, so the four data-action="hideModal:<id>" buttons in production.html
+// (view-bin and request-empty modals: × and Close/Cancel) close their modal.
 func TestPinWire_W1_EdgeProductionHideModalMapped(t *testing.T) {
 	t.Parallel()
 	js := pinReadFile(t, "static/js/pages/production.js")
@@ -104,8 +104,8 @@ func TestPinWire_W1_EdgeProductionHideModalMapped(t *testing.T) {
 	if len(maps[0]) < 10 || !pinContains(maps[0], "viewBinContents") || !pinContains(maps[0], "autofillNodeDefaults") {
 		t.Fatalf("production.js map parsed as %v; want autofillNodeDefaults and viewBinContents among its keys", maps[0])
 	}
-	if !regexp.MustCompile(`(?m)^import \{[^}]*\bhideModal\b[^}]*\} from '/static/js/shingoedge.js';`).MatchString(js) {
-		t.Errorf("production.js no longer imports hideModal from shingoedge.js")
+	if !regexp.MustCompile(`(?m)^import \{[^}]*\bhideModal\b[^}]*\} from '/static/shared/layer.js';`).MatchString(js) {
+		t.Errorf("production.js no longer imports hideModal from shared/layer.js")
 	}
 	if !pinContains(maps[0], "hideModal") {
 		t.Errorf("W1: hideModal is missing from production.js's delegateActions map; its four buttons do nothing")

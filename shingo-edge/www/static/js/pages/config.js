@@ -12,11 +12,13 @@
 // status come in the render. The backup list is fetched only when storage is
 // configured and someone opens it (E6).
 
-import { api, delegateActions, prompt, showModal, hideModal } from '/static/js/shingoedge.js';
-import { el } from '/static/shared/dom.js';
+import { api } from '/static/js/shingoedge.js';
+import { delegateActions, el } from '/static/shared/dom.js';
+import { hideModal, prompt, showModal } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
 import { settingsPage, durationFromText, collectList } from '/static/shared/settings.js';
-import { apiResult, toast } from '/static/shared/utils.js';
+import { apiResult } from '/static/shared/utils.js';
 import { backupRow, backupWords, makeStageRestore, stationBody, stationErrors } from '/static/js/pages/config-backups.js';
 
 const root = document.getElementById('config');

@@ -16,6 +16,9 @@
 //   - getElementById over the document's tree, querySelector(All) for
 //     comma-separated compound selectors: tag, #id, .class, [attr], [attr="v"].
 //
+//   - focus(), contains(), isConnected and document.activeElement, for
+//     shared/layer.js's modals.
+//
 // WHAT IT DOES NOT: events (the pins call the page's functions themselves),
 // layout, scripts in markup, descendant combinators.
 
@@ -121,6 +124,11 @@ class Element {
         for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (matches(n, sel)) return n;
         return null;
     }
+    // Focus and containment, as shared/layer.js reads them: the document's
+    // activeElement is the element focused last.
+    focus() { this.ownerDocument.activeElement = this; }
+    contains(n) { for (; n; n = n.parentNode) if (n === this) return true; return false; }
+    get isConnected() { return !!this.ownerDocument && this.ownerDocument.body.contains(this); }
 
     get textContent() { return this.childNodes.map(n => n.textContent).join(''); }
     set textContent(v) {
@@ -264,6 +272,7 @@ function parseInto(parent, html, doc) {
 class Document {
     constructor(html) {
         this.body = new Element('body', this);
+        this.activeElement = this.body;
         if (html) parseInto(this.body, html, this);
     }
     createElement(tag) { return new Element(tag, this); }

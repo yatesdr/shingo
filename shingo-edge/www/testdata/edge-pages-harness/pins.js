@@ -9,9 +9,10 @@
 //
 // WHAT IS REAL. The page markup (sliced from <main> to the page's module
 // tag), each page module byte for byte less its import/export lines, and the
-// helpers they import: shingoedge.js's api (over shared/http.js, read whole),
-// showModal and hideModal; shared/dom.js's escapeHtml; ask-act.js's postAct;
-// and production-refresh.js. Each is read off its own file.
+// helpers they import: shingoedge.js's api (over shared/http.js, read whole);
+// shared/layer.js's showModal and hideModal (read whole); shared/dom.js's
+// escapeHtml; ask-act.js's postAct; and production-refresh.js. Each is read
+// off its own file.
 //
 // WHAT IS STUBBED, AND WHY EACH IS SAFE FOR THESE PINS.
 //   - The DOM (dom.js): elements parsed from the markup, selects answering
@@ -76,6 +77,13 @@ const SHARED_DOM = read(path.join(SHARED, 'dom.js'));
 // shared/http.js whole, in a function of its own so its private names stay
 // its own; its notice is the context's toast (the hub's api turns it off).
 const HTTP = 'var http = (function () {\n' + unModule(read(path.join(SHARED, 'http.js'))) + '\nreturn http;\n})();';
+// shared/layer.js whole, likewise: the pages' showModal and hideModal are its
+// (one overlay stack: focus in and back, a counted scroll lock, fields back to
+// their markup on close). The el it builds its dialogs with is dom.js's.
+const LAYER = 'var { showModal, hideModal } = (function () {\n'
+    + block(SHARED_DOM, /export function el\(/, 'el') + '\n'
+    + block(SHARED_DOM, /function appendChildren\(/, 'appendChildren') + '\n'
+    + unModule(read(path.join(SHARED, 'layer.js'))) + '\nreturn { showModal, hideModal };\n})();';
 const HELPERS = [
     block(SHARED_DOM, /const HTML_ESCAPES = /, 'HTML_ESCAPES').replace(/^const /, 'var '),
     block(SHARED_DOM, /export function escapeHtml\(/, 'escapeHtml'),
@@ -83,8 +91,7 @@ const HELPERS = [
     block(EDGE, /const QUIET = /, 'QUIET').replace(/^const /, 'var '),
     block(EDGE, /function answered\(/, 'answered'),
     block(EDGE, /export const api = /, 'api').replace(/^const /, 'var '),
-    block(EDGE, /export function showModal\(/, 'showModal'),
-    block(EDGE, /export function hideModal\(/, 'hideModal'),
+    LAYER,
     unModule(read(path.join(JS, 'ask-act.js'))),
 ].join('\n');
 const REFRESH = unModule(read(path.join(JS, 'pages', 'production-refresh.js')));

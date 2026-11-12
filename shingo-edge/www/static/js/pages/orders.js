@@ -1,4 +1,7 @@
-import { api, confirm, delegateActions, navigateToProcessOrOrders, prompt, toast } from '/static/js/shingoedge.js';
+import { api, navigateToProcessOrOrders } from '/static/js/shingoedge.js';
+import { delegateActions } from '/static/shared/dom.js';
+import { confirm, prompt } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 
 // Order actions that need JSON bodies or confirm dialogs.
 // SSE auto-refresh and HX-Trigger-based refresh are handled by htmx.
