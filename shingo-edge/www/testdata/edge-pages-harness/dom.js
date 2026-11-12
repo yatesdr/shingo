@@ -166,6 +166,12 @@ class Element {
         if (at >= 0) return at;
         return this._none || opts.length === 0 ? -1 : 0;
     }
+    // selectedOptions as a single <select> answers it: the selected option,
+    // or none (manual-order.js reads it since v0.4.0).
+    get selectedOptions() {
+        const i = this.selectedIndex;
+        return i >= 0 ? [this.options[i]] : [];
+    }
     set selectedIndex(i) {
         this.options.forEach((o, j) => { o.selected = j === i; });
         this._none = !(i >= 0 && i < this.options.length);

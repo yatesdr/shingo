@@ -14,79 +14,79 @@ POS_A9 sequential/produce  advancedCount=0
 POS_A10 sequential/produce  advancedCount=0
 
 ## Style B
-POS_A1 two_robot_press_index/consume  advancedCount=15  sheet total=14
+POS_A1 two_robot_press_index/consume  advancedCount=12  sheet total=12
     section "Part identity"  1 set
     section "Replenishment"  5 set
-    section "Changeover specials"  4 set
+    section "Changeover specials"  2 set
     section "Press hardware"  1 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A2 two_robot_press_index/produce  advancedCount=16  sheet total=16
+POS_A2 two_robot_press_index/produce  advancedCount=13  sheet total=14
     section "Part identity"  1 set
     section "Replenishment"  4 set
-    section "Changeover specials"  4 set
+    section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Press hardware"  1 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A3 two_robot/consume  advancedCount=13  sheet total=12
+POS_A3 two_robot/consume  advancedCount=12  sheet total=11
     section "Part identity"  1 set
     section "Replenishment"  5 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A4 two_robot/produce  advancedCount=14  sheet total=14
+POS_A4 two_robot/produce  advancedCount=13  sheet total=13
     section "Part identity"  1 set
     section "Replenishment"  4 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A5 single_robot/consume  advancedCount=13  sheet total=12
+POS_A5 single_robot/consume  advancedCount=12  sheet total=11
     section "Part identity"  1 set
     section "Replenishment"  5 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A6 single_robot/produce  advancedCount=14  sheet total=14
+POS_A6 single_robot/produce  advancedCount=13  sheet total=13
     section "Part identity"  1 set
     section "Replenishment"  4 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A7 sequential/consume  advancedCount=13  sheet total=12
+POS_A7 sequential/consume  advancedCount=12  sheet total=11
     section "Part identity"  1 set
     section "Replenishment"  5 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A8 sequential/consume  advancedCount=13  sheet total=12
+POS_A8 sequential/consume  advancedCount=12  sheet total=11
     section "Part identity"  1 set
     section "Replenishment"  5 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A9 sequential/produce  advancedCount=14  sheet total=14
+POS_A9 sequential/produce  advancedCount=13  sheet total=13
     section "Part identity"  1 set
     section "Replenishment"  4 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Light curtain"  1 set
     section "Station policy"  1 set
     section "Board"  1 set
-POS_A10 sequential/produce  advancedCount=14  sheet total=14
+POS_A10 sequential/produce  advancedCount=13  sheet total=13
     section "Part identity"  1 set
     section "Replenishment"  4 set
-    section "Changeover specials"  3 set
+    section "Changeover specials"  2 set
     section "Finished goods"  3 set
     section "Light curtain"  1 set
     section "Station policy"  1 set

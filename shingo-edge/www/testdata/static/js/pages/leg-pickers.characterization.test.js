@@ -47,8 +47,8 @@ const CORE = [
     { name: 'STG-1', node_type: '' },
     { name: 'SUP-S2', group: 'SUP' },
 ];
-const MO = fs.readFileSync(path.join(__dirname, 'manual-order.js'), 'utf8');
-const PROD = fs.readFileSync(path.join(__dirname, 'production.js'), 'utf8');
+const MO = fs.readFileSync(path.join(SRC_DIR, 'manual-order.js'), 'utf8');
+const PROD = fs.readFileSync(path.join(SRC_DIR, 'production.js'), 'utf8');
 
 test('isLane: a LANE is a lane', () => {
     assert.strictEqual(B.isLane(CORE[1]), true);

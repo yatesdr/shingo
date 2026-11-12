@@ -16,6 +16,17 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- Static files are gzipped once at start-up and named by their content: an Edge restart costs a screen a round of "not modified", not the whole page set
+- The station loads the composer only when the flow panel or the composer opens, and fewer shared files at boot
+- No test file is built into or served by either binary
+- One overlay stack on every Core and Edge admin page: Escape closes the top layer first and asks before discarding typed work
+- One toast, one banner and one request door: a lapsed session says "Signed out" once, with Sign in, and nothing is written while signed out
+- A save on an Edge that does not answer says so instead of nothing; Apply no longer sticks on "Saving…"
+- Edge admin pages share one event stream, asking only for their own events; a failed htmx refresh says so
+- A Core admin page shows the new-version banner on a redeploy; the dashboards and the station still reload
+
 ## v0.4.0 — 2026-11-12
 
 Deploy: Edge v47. Update Core and every Edge at a plant in one window.
