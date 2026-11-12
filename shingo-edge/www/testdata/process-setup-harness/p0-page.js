@@ -469,7 +469,7 @@ Object.assign(D, {
     } },
     bindLoader: {
         hash: '#tab=screens', extra: MISC_ROUTES,
-        page: () => withPage(() => ({ loaderGaps: [{ loader_key: 'LDR_1' }] })),
+        page: () => withPage(() => ({ loaderGaps: [{ loader_key: 'LDR_1', process_id: 1 }] })),
         drive: async page => { page.click('root', rootButton(page, 'bind-loader')); await page.settle(); },
     },
     sync: { hash: '#tab=settings', extra: MISC_ROUTES, drive: async page => {

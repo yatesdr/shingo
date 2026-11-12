@@ -4442,9 +4442,11 @@ function drawScreens() {
             ? '<table class="pd-tbl"><thead><tr><th>Screen</th><th>Claimed positions</th><th>Note</th>' +
             '<th>Health</th><th>HMI setup</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
             : '<p class="pd-dim">No screen works this process yet. An operator cannot reach it until one does.</p>') +
-        '<div class="pd-sect"><h2>Loader windows</h2>' +
-        '<span class="pd-dim">Core loaders with no screen on this edge</span></div>' +
-        '<p class="pd-dim">' + esc(loaderBindingSentence()) + '</p>' + loaderGapRows() +
+        (loaderGapsHere()
+            ? '<div class="pd-sect"><h2>Loader windows</h2>' +
+                '<span class="pd-dim">Core loaders with no screen on this edge</span></div>' +
+                '<p class="pd-dim">' + esc(loaderBindingSentence()) + '</p>' + loaderGapRows()
+            : '') +
         (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
         (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '') +
         '</div>';
@@ -4455,8 +4457,28 @@ function drawScreens() {
 // here has nobody to work it, and that is the only case worth a row.
 function loaderKeyOf(g) { return g.loader_key || g.core_node_name || g.name || String(g); }
 
-function loaderBindingSentence() {
+// LOADER WINDOWS ONLY ON A LOADER'S PROCESS (F17): the block offered "Make a
+// screen on <this process>" for every unboarded loader on every process, a
+// press included. loaderGapsHere is the gaps this process may take, or null
+// where the block has no business: a process is a loader's when a loader's
+// windows are its positions (the gap names it: LoaderBoardGaps' process_id), a
+// style of it claims a loader window (manual_swap, the stored loader claim),
+// or it has no position yet (an empty process is what a loader's board is made
+// on). A gap whose windows another process holds is that process's to bind.
+// All of it is data the tab already holds; nothing is read for it.
+function loaderGapsHere() {
+    const pid = S.processID;
     const gaps = S.loaderGaps || [];
+    const owns = gaps.some(g => g.process_id === pid);
+    const claims = ((S.composer && S.composer.styles) || []).some(st =>
+        (st.claims || []).some(c => c.swap_mode === 'manual_swap'));
+    const empty = !stationsOf(pid).some(st => (S.stationNodes[String(st.id)] || []).length);
+    if (!(owns || claims || empty)) return null;
+    return gaps.filter(g => !g.process_id || g.process_id === pid);
+}
+
+function loaderBindingSentence() {
+    const gaps = loaderGapsHere() || [];
     if (!gaps.length) return 'Every loader Core knows about has a screen. Nothing to bind.';
     const names = gaps.map(loaderKeyOf);
     return names.length + ' loader' + (names.length === 1 ? '' : 's') + ' Core knows about have no screen ' +
@@ -4474,7 +4496,7 @@ function loaderBindingSentence() {
 // Core sends every loader to every edge — so the button is on the process the
 // engineer is looking at, and says so.
 function loaderGapRows() {
-    const gaps = S.loaderGaps || [];
+    const gaps = loaderGapsHere() || [];
     if (!gaps.length) return '';
     const p = process();
     return gaps.map(g => {
