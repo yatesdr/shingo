@@ -396,6 +396,44 @@ block({
     }],
 });
 
+// Owner 2026-11-12: parts picked in Setup's Change… reached the Styles tab's
+// part popover as the page first read them — "No parts yet" over Core's
+// catalog. The write is any refreshProcess off the Styles tab; the composer
+// read after the first one names one more part.
+block({
+    title: 'owner 2026-11-12: a part added off the Styles tab is in the Styles part popover, the catalog behind its button',
+    open: () => {
+        let k = 0;
+        return {
+            hash: '#tab=screens', answer: (m, u) => {
+                if (m !== 'GET' || u.split('?')[0] !== '/api/processes/1/composer' || k++ === 0) return undefined;
+                const c = JSON.parse(JSON.stringify(T.FX.composer));
+                c.palette = c.palette.concat(['PART-NEW']).sort();
+                return { body: c };
+            },
+        };
+    },
+    act: async page => {
+        await page.pd('refreshProcess')();
+        await page.settle();
+        page.pd('showTab')('flows');
+        await page.settle();
+        page.click('root', { act: 'pick', node: 'POS_A1', kind: 'part' });
+        await page.settle();
+        const rows = page.rows('pd-partlist', 'data-pp');
+        return {
+            offered: rows.filter(x => x.dataset.pp === 'place').map(x => x.dataset.code),
+            catalog: rows.filter(x => x.dataset.pp === 'add').length,
+            button: rows.some(x => x.dataset.pp === 'catalog'),
+        };
+    },
+    checks: [
+        r => ['PART-NEW is one of this process\'s parts', r.offered.indexOf('PART-NEW') >= 0, 'offers ' + r.offered.join(', ')],
+        r => ['Core\'s catalog waits behind its button', r.button && !r.catalog,
+            r.catalog + ' catalog rows, ' + (r.button ? 'a' : 'no') + ' catalog button'],
+    ],
+});
+
 // Ruling 5 — a refusal midway through a chain; the next press resumes at the
 // step that failed and makes nothing twice.
 const resume = (title, o) => block({

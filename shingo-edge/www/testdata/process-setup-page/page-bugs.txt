@@ -71,6 +71,10 @@ ok   nothing is sent
 ## P0 desktop-bodies.js:431: an apply save refused 409 that is not stale is not retried
 ok   one save, no preview-and-retry
 
+## owner 2026-11-12: a part added off the Styles tab is in the Styles part popover, the catalog behind its button
+BUG  PART-NEW is one of this process's parts: offers PART-1, PART-10, PART-11, PART-2, PART-3, PART-4, PART-5, PART-6, PART-7, PART-8, PART-9
+BUG  Core's catalog waits behind its button: 2 catalog rows, no catalog button
+
 ## ruling 5: Add process, its positions refused, then pressed again
 ok   the refusal is said
 ok   pressed again, nothing is made twice
