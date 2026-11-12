@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.6.3 — 2026-11-12
+
 Deploy: no migration.
 
 - The robot map no longer draws a blue route line for a robot standing still
