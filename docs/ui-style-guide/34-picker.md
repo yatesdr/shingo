@@ -79,6 +79,11 @@ list and re-asked on the next open, never kept as an empty plant.
   `nodeWhy`'s pieces (`robot`, `disabled`, `lane`, `group`, `member`,
   `synthetic`, `any(...)`), and the excluded node is drawn greyed with the
   reason. The one node never offered is `_TRANSIT`.
+- **A field's universe.** A field that takes only some kind of node (groups,
+  say) names it with `only(node)`: a node outside it is not drawn at all, as
+  it is no choice of that field's, and the nodes inside it below one move up.
+  A node inside the universe that the field may not take is still drawn,
+  greyed with its reason.
 - **The plant's tree.** A container comes first in its zone with every node
   under it indented, at any depth (two levels down reads `↳ name`); one with
   no zone sits with the first node under it that has one. Names sort in

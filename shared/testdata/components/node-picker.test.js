@@ -171,6 +171,20 @@ test('the Edge\'s rows: a member under its group, by its group or by the group\'
     ]);
 });
 
+test('a field\'s universe (only): a node outside it is not drawn, and the ones inside under it move up', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, CORE);
+    const groups = (n) => n.type === 'NGRP';
+    eq(lines(N.nodeRows(s.rows(), { only: groups, sections: false })), ['GRP-A · group', 'GRP-OFF · group']);
+    const slots = (n) => !n.synthetic && !n.robot;
+    eq(lines(N.nodeRows(s.rows(), { only: slots, sections: false })), [
+        'GRP-A-L1-S1', 'GRP-A-L1-S2', 'GRP-OFF-N1', 'LINE-1 · Line one', 'OLD-SLOT', 'SPOT-9', 'Spot-10',
+    ]);
+    const notLanes = (n) => n.type !== 'LANE';
+    eq(lines(N.nodeRows(s.rows(), { only: notLanes, sections: false })).slice(0, 3),
+        ['GRP-A · group', '  GRP-A-L1-S1', '  GRP-A-L1-S2'], 'a slot under a lane left out reads one level down');
+});
+
 // ── the source: one read per page ───────────────────────────────────────────
 
 function mounted(N, r, src, field, opts) {

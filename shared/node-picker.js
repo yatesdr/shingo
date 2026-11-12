@@ -205,6 +205,10 @@ function kindOf(n) {
 //   value        'name' (default) or 'id'
 //   expand       picking a container picks the nodes under it (positions)
 //   sections     zone headings; default: on when any node has a zone
+//   only(node)   the field's universe, when it is not the plant: a node
+//                outside it is not drawn (it is not a choice this field has,
+//                as a slot is not one for a field that takes groups), and the
+//                nodes under it that are inside move up to its place
 export function nodeRows(nodes, field) {
     const f = field || {};
     if (!Array.isArray(nodes)) return [];
@@ -228,14 +232,40 @@ export function nodeRows(nodes, field) {
         }
         return row;
     };
-    const tops = plant.tops.slice().sort((a, b) =>
+    const inside = typeof f.only === 'function' ? f.only : null;
+    // Without a universe, the plant's tops and every node under each; with
+    // one, the first nodes inside it on each branch, and the nodes inside it
+    // under those, a level counted only for a node that is drawn.
+    const firstInside = (n, out) => {
+        if (!inside || inside(n)) { out.push(n); return out; }
+        for (const k of n.kids) firstInside(k, out);
+        return out;
+    };
+    const below = (n) => {
+        if (!inside) return under(n, 1, [], new Set());
+        const out = [];
+        const walk = (m, depth, seen) => {
+            for (const k of m.kids) {
+                if (seen.has(k)) continue;
+                seen.add(k);
+                const shown = inside(k);
+                if (shown) out.push({ n: k, depth });
+                walk(k, shown ? depth + 1 : depth, seen);
+            }
+        };
+        walk(n, 1, new Set());
+        return out;
+    };
+    const tops = [];
+    for (const t of plant.tops) firstInside(t, tops);
+    tops.sort((a, b) =>
         (zoned ? cmpZone(zoneOf(a), zoneOf(b)) : 0) ||
         (isContainer(b) ? 1 : 0) - (isContainer(a) ? 1 : 0) ||
         byName(a, b));
     return tops.map((n) => {
         const section = zoned ? (zoneOf(n) || 'Other') : undefined;
         const row = rowOf(n, 0, section);
-        const members = under(n, 1, [], new Set()).map((x) => rowOf(x.n, x.depth));
+        const members = below(n).map((x) => rowOf(x.n, x.depth));
         if (members.length) row.members = members;
         return row;
     });
