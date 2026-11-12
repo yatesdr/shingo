@@ -1,65 +1,32 @@
 package www
 
 import (
-	"io/fs"
-	"regexp"
-	"strings"
 	"testing"
+
+	"shingo/shared/assets/assetcheck"
 )
 
-// assetAttrRe reads every src= / href= attribute value out of a template,
-// quoted either way, across a line break between the name and the value.
-// ATTRIBUTES, NOT TEXT: Core's layout.html carries a literal `?v=` in a comment that
-// explains why there is none, and that must not trip the guard.
-var assetAttrRe = regexp.MustCompile(`(?i)\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-
-// TestTemplates_NoCacheBustQuery fails on a `?v=` query inside any src or href
-// in a page template.
+// TestTemplates_OnlyTheHandlersHashForm holds every template to the one way
+// of naming a static file: a src or href is {{assetURL "/static/…"}} on a file
+// the handler serves, which renders the hashed URL cached for good; a module
+// entry is an inline import of a plain URL after the page's import map, never
+// a src tag; every importMap argument is a plain URL the handler serves.
 //
-// Every asset tag used to carry ?v=<per-render stamp>, so every stamped asset was
-// downloaded in full on every page view, and a module named by a stamped tag
-// and by a bare import was two URLs and two module instances. serverInstanceETag's
-// ETag already makes a bare URL fresh across a restart (router.go), so a
-// query buys nothing and costs the whole file each time.
-func TestTemplates_NoCacheBustQuery(t *testing.T) {
+// WHY NOTHING ELSE. Every asset tag used to carry ?v=<per-render stamp>, so
+// every stamped asset was downloaded in full on every page view, and a module
+// named by a stamped tag and by a bare import was two URLs and two module
+// instances. A query, a hand-written hash or a plain URL in a tag is each a
+// way back to one of those: a plain URL revalidates on every view, a
+// hand-written hash goes stale on the next change, and a src module tag is
+// one URL with the map and another without. Read from source, so a tag on a
+// branch the render tests never take is held too.
+func TestTemplates_OnlyTheHandlersHashForm(t *testing.T) {
 	t.Parallel()
-	assertNoAssetQuery(t, templatesFS, nil)
-}
-
-func assertNoAssetQuery(t *testing.T, fsys fs.FS, exempt map[string]bool) {
-	t.Helper()
-	var files []string
-	for _, pat := range []string{"templates/*.html", "templates/partials/*.html"} {
-		m, err := fs.Glob(fsys, pat)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, m...)
+	problems, err := assetcheck.Templates(templatesFS, staticAssets(), "templates/*.html", "templates/partials/*.html")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(files) == 0 {
-		t.Fatal("no templates found — the guard would pass on nothing")
-	}
-	for _, f := range files {
-		if exempt[f] {
-			continue
-		}
-		b, err := fs.ReadFile(fsys, f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		src := string(b)
-		for _, m := range assetAttrRe.FindAllStringSubmatchIndex(src, -1) {
-			val := ""
-			if m[2] >= 0 {
-				val = src[m[2]:m[3]]
-			} else {
-				val = src[m[4]:m[5]]
-			}
-			if strings.Contains(val, "?v=") {
-				line := strings.Count(src[:m[0]], "\n") + 1
-				t.Errorf("%s:%d: %q carries a ?v= query — serve the bare URL; the ETag handler "+
-					"keeps it fresh across a restart", f, line, val)
-			}
-		}
+	for _, p := range problems {
+		t.Error(p)
 	}
 }

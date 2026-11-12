@@ -98,15 +98,27 @@ func TestStaticAssets_EveryTagThePagesNameIsServedAndCompressed(t *testing.T) {
 	}
 
 	for _, page := range []struct {
-		label string
-		path  string
-		extra []string
+		label    string
+		path     string
+		template string
+		extra    []string
 	}{
-		{"the Processes page", fmt.Sprintf("/processes?process=%d", seeded.ProcessID), nil},
-		{"the operator station", fmt.Sprintf("/operator/station/%d", stationID), deferredComposerAssets},
+		{"the Processes page", fmt.Sprintf("/processes?process=%d", seeded.ProcessID), "processes.html", nil},
+		{"the operator station", fmt.Sprintf("/operator/station/%d", stationID), "operator-display.html", deferredComposerAssets},
 	} {
 		t.Run(page.label, func(t *testing.T) {
 			assertAssetsServed(t, srv.URL, page.label, page.path, page.extra...)
+			// And the page as rendered, loaded in both browsers, held to the
+			// gates page_static_set_test.go holds its template to.
+			resp, err := http.Get(srv.URL + page.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			testutil.MustNoErr(t, err, "read the page")
+			b := edgePageBudgets[page.template]
+			assertStaticSet(t, page.label, string(body), b.requests, b.bytes)
 		})
 	}
 }
