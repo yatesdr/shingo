@@ -4,9 +4,11 @@ import (
 	"html/template"
 	"io/fs"
 	"path"
+	"regexp"
 	"slices"
 	"testing"
 
+	"shingo/shared/assets"
 	"shingo/shared/assets/assetcheck"
 )
 
@@ -48,6 +50,11 @@ var edgePageBudgets = map[string]struct {
 	"replenishment.html":    {17, 59 << 10},  // 15, 54516
 }
 
+var (
+	hxAttrRe      = regexp.MustCompile(`\shx-[a-z-]+=`)
+	htmlCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
+)
+
 // edgePageSet is the one template set NewRouter parses.
 func edgePageSet(t *testing.T) *template.Template {
 	t.Helper()
@@ -76,6 +83,20 @@ func TestPages_StaticSetLoadsInEveryBrowser(t *testing.T) {
 			continue
 		}
 		assertStaticSet(t, name, html, edgePageBudgets[name].requests, edgePageBudgets[name].bytes)
+		// HTMX WHERE IT SWAPS, NOWHERE ELSE: a page loads htmx.min.js (16 kB
+		// gzipped) exactly when its markup, partials included, carries an hx-
+		// attribute — today changeover, orders and production.
+		swaps := hxAttrRe.MatchString(htmlCommentRe.ReplaceAllString(html, ""))
+		loads := false
+		for _, f := range assetcheck.Load(staticAssets(), html, assetcheck.WithImportMap).Fetches {
+			if p, _ := assets.PlainURL(f.URL); p == "/static/js/htmx.min.js" {
+				loads = true
+			}
+		}
+		if swaps != loads {
+			t.Errorf("%s: carries hx- attributes %v, loads htmx %v: htmx goes on the pages that swap and only those",
+				name, swaps, loads)
+		}
 	}
 	for name := range edgePageBudgets {
 		if !pages[name] {
