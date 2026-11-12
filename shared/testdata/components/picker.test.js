@@ -239,4 +239,55 @@ test('set() moves the selection without calling onChange; {clean} makes it the s
     eq(f.k.el.hasAttribute('data-dirty'), false);
 });
 
+// ── write-through (the wave C ruling) ───────────────────────────────────────
+
+// A write the test answers by hand: onPick's promise, and what it was asked.
+function writeThrough(extra) {
+    const asked = [];
+    let answer = null;
+    const f = picker(Object.assign({
+        multi: true, open: true, selected: ['PLN_001'],
+        onPick: (next, row) => { asked.push({ next, row: row.value }); return new Promise((res) => { answer = res; }); },
+    }, extra || {}));
+    const chips = () => f.k.el.querySelectorAll('.picker-chip').map((c) => c.firstChild.textContent);
+    return Object.assign(f, { asked, chips, answer: (v) => answer(v) });
+}
+
+test('write-through: the picked row shows pending and the chips do not move until the write answers', async () => {
+    const f = writeThrough();
+    f.row('PLN_003').click();
+    eq([f.asked, f.chips(), f.row('PLN_003').classList.contains('is-pending'), f.row('PLN_003').getAttribute('aria-busy')],
+        [[{ next: ['PLN_001', 'PLN_003'], row: 'PLN_003' }], ['PLN_001'], true, 'true']);
+    f.row('PLN_001').click();
+    eq(f.asked.length, 1, 'a second pick while one is out is not taken');
+    f.answer(['PLN_001', 'PLN_003', 'SMN_001']);
+    await f.r.advance(0);
+    eq([f.chips(), f.k.value(), f.row('PLN_003').classList.contains('is-pending'), f.k.el.hasAttribute('data-dirty'), f.changes],
+        [['PLN_001', 'PLN_003', 'SMN_001'], ['PLN_001', 'PLN_003', 'SMN_001'], false, false, [['PLN_001', 'PLN_003', 'SMN_001']]],
+        'the server\'s selection, drawn clean');
+});
+
+test('write-through: a refusal leaves the chips as they were and shows the reason; a chip\'s × writes through too', async () => {
+    const f = writeThrough();
+    f.row('PLN_003').click();
+    f.answer({ error: 'PLN_003 is used by PART SYN-A' });
+    await f.r.advance(0);
+    const why = f.k.el.querySelector('.picker-refused');
+    eq([f.chips(), f.k.value(), why.hidden, why.textContent, f.changes], [['PLN_001'], ['PLN_001'], false, 'PLN_003 is used by PART SYN-A', []]);
+    f.k.el.querySelector('[data-drop="PLN_001"]').click();
+    eq([f.asked[1], f.chips(), why.hidden], [{ next: [], row: 'PLN_001' }, ['PLN_001'], true], 'the × asks; the old reason goes');
+    f.answer({ values: [] });
+    await f.r.advance(0);
+    eq(f.chips(), []);
+});
+
+test('write-through: an answer that is not a promise is taken at once; a throw is a refusal', async () => {
+    const f = picker({ multi: true, open: true, onPick: (next) => next.filter((v) => v !== 'SMN_002') });
+    f.row('GRP_A').click();
+    eq(f.k.value(), ['SMN_001'], 'what onPick returned, not what was picked');
+    const g = picker({ open: true, onPick: () => { throw new Error('no answer'); } });
+    g.row('PLN_001').click();
+    eq([g.k.value(), g.k.el.querySelector('.picker-refused').textContent], ['', 'no answer']);
+});
+
 run();

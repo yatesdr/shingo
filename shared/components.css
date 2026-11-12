@@ -1325,4 +1325,8 @@ nav {
 .picker-note, .picker-why { color: var(--text-muted); font-size: var(--font-xs); }
 .picker-add { color: var(--accent); }
 .picker-add.is-busy { color: var(--text-muted); cursor: progress; }
+/* A write-through pick out with the caller (onPick), and its refusal. */
+.picker-row.is-pending { color: var(--text-muted); cursor: progress; }
+.picker-refused { color: var(--chip-ink-below); font-size: var(--font-sm); }
+.picker-refused[hidden] { display: none; }
 .picker-none { padding: var(--sp-2); color: var(--text-muted); font-size: var(--font-sm); }

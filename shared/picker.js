@@ -51,6 +51,14 @@ let dropped = null;   // the picker whose dropdown list is open
 //                thing typed and resolves its value or row (null: nothing was
 //                made, the door already said why); the shell then picks it
 //   onChange(value, picker)  after the engineer moved the selection
+//   onPick(next, row, picker)  WRITE-THROUGH: a pick (a row, a chip's ×) is
+//                the caller's write, not the picker's. next is the selection
+//                it would make; the picked row shows pending and the chips do
+//                not move until what onPick returns (or resolves to) answers:
+//                the selection as the server now holds it (an array, or
+//                {values}), drawn as clean; or {error} (or nothing), a
+//                refusal, and the chips stay as they were with the reason
+//                beside them. One pick at a time; no timer.
 //
 // The picker: { el, input, value(), set(values, {clean}), markClean(),
 // refresh(), open(), close(), focus(), destroy() }. value() is an array for a
@@ -60,7 +68,7 @@ export function createPicker(host, opts) {
     const id = 'picker-' + (++seq);
     const multi = !!o.multi;
     const always = !!o.open;
-    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [] };
+    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '' };
     st.was = st.sel.slice();
 
     const root = el('div', { className: 'picker' + (multi ? ' picker--multi' : '') + (always ? ' picker--open' : '') });
@@ -73,7 +81,10 @@ export function createPicker(host, opts) {
     const filters = o.filters && o.filters.length ? el('div', { className: 'picker-filters' }) : null;
     const box = el('div', { className: 'picker-list', id, role: 'listbox', 'aria-multiselectable': multi ? 'true' : null });
     box.hidden = !always;
-    for (const part of [chips, input, filters, box]) if (part) root.appendChild(part);
+    // A write-through pick's refusal, beside the chips it left as they were.
+    const refusal = o.onPick ? el('div', { className: 'picker-refused', role: 'status' }) : null;
+    if (refusal) refusal.hidden = true;
+    for (const part of [chips, refusal, input, filters, box]) if (part) root.appendChild(part);
     host.textContent = '';
     host.appendChild(root);
 
@@ -127,8 +138,8 @@ export function createPicker(host, opts) {
         chips.addEventListener('click', (ev) => {
             const b = ev.target.closest ? ev.target.closest('[data-drop]') : null;
             if (!b) return;
-            st.sel = st.sel.filter((v) => v !== b.getAttribute('data-drop'));
-            changed();
+            const v = b.getAttribute('data-drop');
+            commit(st.sel.filter((x) => x !== v), v);
         });
     }
     if (filters) {
@@ -167,6 +178,7 @@ export function createPicker(host, opts) {
 
     function draw() {
         dirty();
+        if (refusal) { refusal.textContent = st.refused; refusal.hidden = !st.refused; }
         drawChips();
         drawFilters();
         drawRows();
@@ -239,7 +251,9 @@ export function createPicker(host, opts) {
         const on = vals.length > 0 && vals.every((v) => st.sel.indexOf(v) >= 0);
         const off = !!r.reason;
         const node = el('div', {
-            className: 'picker-row' + (member ? ' picker-row--member' : '') + (on ? ' is-on' : '') + (off ? ' is-off' : ''),
+            className: 'picker-row' + (member ? ' picker-row--member' : '') + (on ? ' is-on' : '') + (off ? ' is-off' : '') +
+                (st.pending !== null && st.pending === String(r.value) ? ' is-pending' : ''),
+            'aria-busy': st.pending !== null && st.pending === String(r.value) ? 'true' : null,
             role: 'option', id: id + '-' + (box.children.length + 1),
             'aria-selected': on ? 'true' : 'false', 'aria-disabled': off ? 'true' : null,
             'data-value': String(r.value),
@@ -282,19 +296,49 @@ export function createPicker(host, opts) {
 
     function choose(k) {
         if (k.add) { void addAndUse(); return; }
-        pick(valuesOf(k.row));
+        pick(valuesOf(k.row), String(k.row.value));
     }
 
-    function pick(vals) {
+    function pick(vals, value) {
+        let next;
         if (multi) {
             const allOn = vals.every((v) => st.sel.indexOf(v) >= 0);
-            st.sel = allOn ? st.sel.filter((v) => vals.indexOf(v) < 0)
+            next = allOn ? st.sel.filter((v) => vals.indexOf(v) < 0)
                 : st.sel.concat(vals.filter((v) => st.sel.indexOf(v) < 0));
         } else {
-            st.sel = vals.slice(0, 1);
+            next = vals.slice(0, 1);
         }
-        changed();
-        if (!multi) closeList();
+        commit(next, value);
+        if (!multi && !o.onPick) closeList();
+    }
+
+    // commit moves the selection to next: at once, or, write-through, when
+    // the caller's write answers (see onPick). A pick made while one is out
+    // is not taken: the first answer has not said where the selection is.
+    function commit(next, value) {
+        if (!o.onPick) { st.sel = next; changed(); return; }
+        if (st.pending !== null) return;
+        st.pending = value === undefined ? '' : String(value);
+        st.refused = '';
+        draw();
+        const done = (ans) => {
+            st.pending = null;
+            const vals = Array.isArray(ans) ? ans : (ans && Array.isArray(ans.values) ? ans.values : null);
+            if (vals) {
+                st.sel = list(vals);
+                if (!multi) st.sel = st.sel.slice(0, 1);
+                st.was = st.sel.slice();
+            } else {
+                st.refused = ans && ans.error ? String(ans.error) : '';
+            }
+            draw();
+            if (vals && o.onChange) o.onChange(picker.value(), picker);
+            if (vals && !multi) closeList();
+        };
+        let ans;
+        try { ans = o.onPick(next.slice(), { value: st.pending }, picker); } catch (e) { done({ error: String((e && e.message) || e) }); return; }
+        if (ans && typeof ans.then === 'function') ans.then(done, (e) => done({ error: String((e && e.message) || e) }));
+        else done(ans);
     }
 
     async function addAndUse() {

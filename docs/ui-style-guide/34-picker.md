@@ -45,6 +45,14 @@ field but `value` optional:
 - **Work.** The search box is `data-scratch`, never work. A selection that
   moved marks the picker `data-dirty`, which a sheet asks before discarding;
   `set(values, { clean: true })` and `markClean()` set the starting point.
+- **Write-through.** Given `onPick(next, row, picker)`, a pick (a row, a
+  chip's ×) is the caller's write. The picked row shows pending and the chips
+  do not move until what `onPick` returns, or its promise resolves to,
+  answers: the selection as the server now holds it (an array, or
+  `{ values }`), drawn as clean; or a refusal (`{ error }`, or nothing), and
+  the chips stay as they were with the reason beside them. One pick at a time;
+  no timer. A list whose truth is the server (a routing set) uses it, so the
+  page never shows a pick the Edge has not taken.
 
 ```js
 import { createPicker } from '/static/shared/picker.js';
