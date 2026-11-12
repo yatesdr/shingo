@@ -619,6 +619,8 @@ async function setupGo(key) {
     if (key === 'counter') { await openSettingsAt('Production counter'); return; }
     if (key === 'hmi') {
         if (r.verb === 'New recipe') { await openNewRecipe(); return; }
+        // Settings' HMI setup row, opened: its switch is what Change… is for.
+        stMoreOpen().hmi = true;
         await openSettingsAt('HMI');
         return;
     }
@@ -636,15 +638,17 @@ async function setupGo(key) {
 
 // openSettingsAt opens Settings scrolled to the section whose heading starts
 // with `heading` — the words of the brief's sections, which Settings' own
-// headings carry.
+// headings carry — or, for 'HMI', to HMI setup's recipes (a row, not a
+// section, on Settings).
 async function openSettingsAt(heading) {
     S.tab = 'settings';
     // What the last write saved is said on Settings' own notice line.
     if (S.notice) { S.settingsNotice = S.notice; S.notice = ''; }
     await openSettings();
     syncHash();
-    const h = [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(heading) === 0);
-    if (h && h.scrollIntoView) h.scrollIntoView({ block: 'start' });
+    const h = heading === 'HMI' ? $('pd-hmirecipes')
+        : [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(heading) === 0);
+    if (h && h.scrollIntoView) h.scrollIntoView({ block: 'center' });
 }
 
 // ── D1 · Flows ───────────────────────────────────────────────────────────────
@@ -708,7 +712,8 @@ async function openProcess(id) {
     else if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
     else if (h.tab === 'presets' || h.tab === 'recipes') {
         await openPresets();
-        // #tab=presets;preset=<id> opens the tab with that row's member list
+        // #tab=presets;preset=<id> opens the recipes (beside HMI setup on
+        // Settings) with that row's member list
         // expanded, and `;apply=<id>` with its apply modal open on the first
         // part that would change. Same convention as `;adv=` above and for the
         // same reason: the shots harness cannot drive a mouse, and a state only
