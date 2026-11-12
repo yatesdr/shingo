@@ -41,7 +41,55 @@ main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
 
 ## Press A with no style and no recipe
-rail headings: ["Styles · 0"] · + New recipe not drawn
-rail foot: "+ New style a part this process runs"
-main: "No style yet name the first style, then draw its flow" · buttons ["+ New style","+ New style"]
+rail headings: [] · + New recipe not drawn
+rail foot: ""
+main: "" · buttons ["Change…","Change…","+ New style","Set up…","New recipe"]
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
+
+## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)
+# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+  · positions: "none yet" → Add positions [primary]
+  · routing: "none yet" → Set the routing set
+  · style: "none yet" → + New style
+  · screen: "Screen A · not run yet" → Open the screen
+  · counter: "counting on PLC_A · CountA" → Set up…
+  · hmi: "off · no recipe yet" → New recipe
+# positions claimed · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+  ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
+  · routing: "none yet" → Set the routing set [primary]
+  · style: "none yet" → + New style
+  · screen: "Screen A · not run yet" → Open the screen
+  · counter: "counting on PLC_A · CountA" → Set up…
+  · hmi: "off · no recipe yet" → New recipe
+# and a routing set · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+  ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
+  ✓ routing: "2 sources · 3 staging · 2 destinations" → Change…
+  · style: "none yet" → + New style [primary]
+  · screen: "Screen A · not run yet" → Open the screen
+  · counter: "counting on PLC_A · CountA" → Set up…
+  · hmi: "off · no recipe yet" → New recipe
+# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+  ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
+  ✓ routing: "2 sources · 3 staging · 2 destinations" → Change…
+  · style: "Style A · no flow yet" → Draw its flow [primary]
+  · screen: "Screen A · not run yet" → Open the screen
+  · counter: "counting on PLC_A · CountA" → Set up…
+  · hmi: "off · no recipe yet" → New recipe
+# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+  ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
+  ✓ routing: "2 sources · 3 staging · 2 destinations" → Change…
+  ✓ style: "Style A · +1" → Open
+  · screen: "Screen A · not run yet" → Open the screen [primary]
+  · counter: "counting on PLC_A · CountA" → Set up…
+  · hmi: "off · 1 recipe" → Change…
+# run once (active style set) · lands on flows · tabs ["Styles*","Operator screens","Settings","Recipes"]
+# HMI setup on with no recipe, never run · lands on setup
+  · counter: "counting on PLC_A · CountA" → Set up…
+  · hmi: "on · no recipe yet" (warn) → New recipe
+
+## the Setup tab's actions, from a new process with positions (each on a fresh page)
+  positions → tab setup, sheet "Add positions" · GET /api/core-nodes, GET /api/process-nodes
+  routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/core-nodes
+  style → tab setup, sheet "New style" · GET /api/core-nodes
+  counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/core-nodes
+  hmi → tab flows (a recipe draft) · GET …/composer

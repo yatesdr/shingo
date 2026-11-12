@@ -221,6 +221,60 @@ async function pinStyleFirst() {
     }
 }
 
+// ── the Setup tab (U2): the tabs and the four rows at each state ────────────
+const tabsOf = page => [...page.root.innerHTML.matchAll(/<button class="([^"]*)" data-tab="([^"]*)">([^<]*)</g)]
+    .map(m => m[3] + (/\bon\b/.test(m[1]) ? '*' : ''));
+function setupLines(page) {
+    const html = page.root.innerHTML;
+    const parts = html.split(/(?=<div class="pd-step[^"]*" data-setup-row=)/).slice(1);
+    return parts.map(h => {
+        const key = (/data-setup-row="([^"]*)"/.exec(h) || [])[1];
+        const done = /^<div class="pd-step done"/.test(h);
+        const val = T.text((/<div class="pd-stepval[^"]*">([^<]*)</.exec(h) || [])[1] || '');
+        const warn = /pd-stepval warn/.test(h);
+        const b = /<(?:button|a) class="pd-btn( primary)?"[^>]*>([^<]*)</.exec(h) || [];
+        return '  ' + (done ? '✓ ' : '· ') + key + ': ' + JSON.stringify(val) + (warn ? ' (warn)' : '') +
+            ' → ' + (b[2] || '?') + (b[1] ? ' [primary]' : '');
+    });
+}
+const STATES = [
+    ['a new process: nothing yet', c => { c.cell.positions = []; c.routing = []; c.styles = []; c.presets = []; }],
+    ['positions claimed', c => { c.routing = []; c.styles = []; c.presets = []; }],
+    ['and a routing set', c => { c.styles = []; c.presets = []; }],
+    ['and a style with no flow yet', c => { c.styles = c.styles.slice(0, 1).map(st => Object.assign(st, { claims: [], claim_count: 0, claim_modes: [], last_run: '' })); c.presets = []; }],
+    ['and its flow drawn, never run', c => { c.styles.forEach(st => { st.last_run = ''; }); }],
+];
+const NOT_RUN = pg => { pg.processes[0].active_style_id = 0; pg.processes[0].flow_composer_enabled = false; };
+async function pinSetup() {
+    L.push('', '## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)');
+    for (const [title, edit] of STATES) {
+        const page = await T.openPage(pressA(edit, NOT_RUN));
+        L.push('# ' + title + ' · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
+        L.push(...setupLines(page));
+    }
+    {
+        const page = await T.openPage(pressA(c => { c.styles.forEach(st => { st.last_run = ''; }); }));
+        L.push('# run once (active style set) · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
+    }
+    {
+        const page = await T.openPage(pressA(c => { c.presets = []; c.styles.forEach(st => { st.last_run = ''; }); }, pg => { pg.processes[0].active_style_id = 0;
+            pg.processes[0].flow_composer_enabled = true; }));
+        L.push('# HMI setup on with no recipe, never run · lands on ' + page.S.tab);
+        L.push(...setupLines(page).filter(l => /hmi|counter/.test(l)));
+    }
+    L.push('', '## the Setup tab\'s actions, from a new process with positions (each on a fresh page)');
+    for (const key of ['positions', 'routing', 'style', 'counter', 'hmi']) {
+        const page = await T.openPage(pressA(STATES[1][1], NOT_RUN));
+        const from = page.mark();
+        page.click('root', { act: 'setup-go', setup: key });
+        await page.settle();
+        const sheet = page.sheetOpen() ? page.scrim.querySelector('.layer-head') : null;
+        L.push('  ' + key + ' → tab ' + page.S.tab + (page.S.shapeDraft ? ' (a recipe draft)' : '') +
+            (sheet ? ', sheet ' + JSON.stringify(sheet.childNodes[0].textContent) : '') +
+            ' · ' + page.since(from).map(c => c.method + ' ' + c.url.replace('/api/processes/1', '…')).join(', '));
+    }
+}
+
 async function run(t) {
     T = t;
     T.setCurrent('cold-start.txt');
@@ -232,6 +286,7 @@ async function run(t) {
     await bugDeadEnd();
     await bugHmiNoRecipe();
     await pinStyleFirst();
+    await pinSetup();
     T.out['cold-start.txt'] = L.join('\n') + '\n';
 }
 

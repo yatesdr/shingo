@@ -933,6 +933,32 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-empty p { margin: 0 0 10px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
 .pd-empty b { color: var(--text); font-weight: 600; }
 
+/* ── Setup: the cold start (U2) ─────────────────────────────────────────
+   Settings' width and rhythm; a row is its number (✓ once done), what it is,
+   what the process has now, and its one action. Only the next row's action is
+   primary, so the eye goes there. */
+.pd-sheet.pd-setup { max-width: 1040px; }
+.pd-steps { display: flex; flex-direction: column; margin: 2px 0 10px; }
+.pd-step {
+    display: grid; grid-template-columns: 28px 260px 1fr auto; align-items: center;
+    gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--sub-1);
+}
+.pd-step:last-child { border-bottom: 0; }
+.pd-stepn {
+    width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--sub-3);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+}
+.pd-stepn:empty { border-color: transparent; }
+.pd-step.done .pd-stepn { border-color: var(--viz-green); color: var(--viz-green); }
+.pd-steplbl b { display: block; font-size: 14px; font-weight: 600; }
+.pd-steplbl small { display: block; color: var(--text-muted); font-size: 12px; }
+.pd-stepval { color: var(--text-muted); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.pd-stepval.warn { color: var(--chip-ink-near); }
+.pd-step .pd-btn { justify-self: end; white-space: nowrap; text-decoration: none; }
+/* Open the screen is a link to the HMI, drawn as the button it is. */
+.pd-step a.pd-btn { display: inline-flex; align-items: center; }
+
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the
    gate it is the precondition for. Nothing here is a new shape — the rows are

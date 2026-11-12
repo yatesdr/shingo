@@ -474,7 +474,8 @@ function appbar() {
         // NO ROUTING TAB. The routing set is REVIEWED, and review is Settings'
         // job — it sits there beside the gate it is the precondition for
         // (owner ruling 2026-09-16). Creation is the Add-process sheet's.
-        '<div class="pd-tabs">' + tab('flows', 'Styles') +
+        // SETUP IS FIRST, AND ONLY WHILE THE PROCESS CANNOT RUN (U2).
+        '<div class="pd-tabs">' + (needsSetup() ? tab('setup', 'Setup') : '') + tab('flows', 'Styles') +
         tab('screens', 'Operator screens') + tab('settings', 'Settings') +
         tab('presets', 'Recipes') + '</div>' +
         '<div class="pd-spacer"></div>' +
@@ -485,6 +486,161 @@ function appbar() {
         // read-only; the words carry the state, so no border and no tone.
         '<div class="pd-gate">' +
         (on ? 'HMI setup on: operators set up styles' : 'HMI setup off: operators pick from the styles') + '</div></div>';
+}
+
+// ── Setup · the cold start (brief U2) ───────────────────────────────────────
+//
+// A PROCESS THAT CANNOT RUN YET OPENS ON WHAT IT STILL NEEDS (owner rulings 1
+// and 6, 2026-11-10): four rows in the order an engineer does them, each with
+// what the process has now and the one thing to do, and only the first row not
+// yet done is the primary button. Once all four are done the tab is gone.
+//
+// EVERYTHING HERE IS READ OFF WHAT THE PAGE HOLDS: the composer read (its
+// positions, routing set and styles), the routing rows when Settings has read
+// them (they are fresher: its pickers write through), the screens and the
+// process row. The tab costs no request and no timer.
+function setupRows() {
+    const p = process() || {};
+    const c = S.composer || {};
+    const positions = ((c.cell || {}).positions || []).map(x => x.core_node_name);
+    const routing = (S.routing || c.routing || []).filter(r => r.enabled !== false);
+    const inRole = role => routing.filter(r => r.role === role).length;
+    const styles = (c.styles || []).map(st => Object.assign({}, st, M().styleFacts(st)));
+    const flowed = styles.filter(st => st.claim_count);
+    const screens = stationsOf(S.processID);
+    const ran = !!p.active_style_id || styles.some(st => st.last_run);
+    const running = runningStyle(p);
+    const names = list => list.slice(0, 3).join(' · ') + (list.length > 3 ? ' · +' + (list.length - 3) : '');
+    const counts = [[inRole('source'), 'source', 'sources'], [inRole('staging'), 'staging', 'staging'],
+        [inRole('destination'), 'destination', 'destinations']].filter(x => x[0]).map(x => x[0] + ' ' + (x[0] === 1 ? x[1] : x[2]));
+    return [
+        {
+            key: 'positions', label: 'Positions', sub: 'the spots this process works',
+            done: positions.length > 0, value: positions.length ? names(positions) : 'none yet',
+            verb: !screens.length ? 'Add operator screen' : positions.length ? 'Change…' : 'Add positions',
+        },
+        {
+            key: 'routing', label: 'Routing set', sub: 'where its bins come from and go',
+            done: inRole('source') > 0 && inRole('destination') > 0,
+            value: counts.length ? counts.join(' · ') : 'none yet',
+            verb: inRole('source') && inRole('destination') ? 'Change…' : 'Set the routing set',
+        },
+        {
+            key: 'style', label: 'First style', sub: 'a part and its flow',
+            done: flowed.length > 0,
+            value: flowed.length ? flowed[0].name + (flowed.length > 1 ? ' · +' + (flowed.length - 1) : '')
+                : styles.length ? styles[0].name + ' · no flow yet' : 'none yet',
+            verb: flowed.length ? 'Open' : styles.length ? 'Draw its flow' : '+ New style',
+        },
+        {
+            key: 'screen', label: 'Operator screen', sub: 'start the first changeover here',
+            done: ran,
+            value: !screens.length ? 'none yet'
+                : screens[0].name + (running ? ' · running ' + running.name : ran ? ' · has run' : ' · not run yet'),
+            verb: screens.length ? 'Open the screen' : 'Add operator screen',
+            href: screens.length ? '/operator/station/' + screens[0].id : '',
+        },
+    ];
+}
+
+// needsSetup: the process cannot run yet, so the Setup tab is drawn, first.
+function needsSetup() {
+    if (!S.processID || !S.composer) return false;
+    return setupRows().some(r => !r.done);
+}
+
+// The two rows below the line: things a process runs without.
+function setupExtras() {
+    const p = process() || {};
+    const plc = p.counter_plc_name || '', tag = p.counter_tag_name || '';
+    return [
+        {
+            key: 'counter', label: 'Production counter', sub: 'what the PLC counts',
+            value: plc && tag ? (p.counter_enabled ? 'counting on ' : 'off · ') + plc + ' · ' + tag : 'not wired',
+            verb: 'Set up…',
+        },
+        Object.assign({ key: 'hmi', label: 'HMI setup', sub: 'operators set a style up from a recipe' }, hmiSetupFacts()),
+    ];
+}
+
+// hmiSetupFacts is HMI setup's value and its action, said the same on the
+// Setup tab and beside the switch on Settings (F36): one of HMI setup and its
+// recipes, so a switch with no recipe behind it says so and offers one.
+function hmiSetupFacts() {
+    const p = process() || {};
+    const n = (S.composer && S.composer.presets || []).length;
+    const on = !!p.flow_composer_enabled;
+    return {
+        value: (on ? 'on' : 'off') + ' · ' + (n ? n + ' recipe' + (n === 1 ? '' : 's') : 'no recipe yet'),
+        warn: on && !n,
+        verb: n ? 'Change…' : 'New recipe',
+    };
+}
+
+function setupRowHTML(r, primary, n) {
+    const act = r.href
+        ? '<a class="pd-btn' + (primary ? ' primary' : '') + '" href="' + esc(r.href) + '">' + esc(r.verb) + '</a>'
+        : '<button class="pd-btn' + (primary ? ' primary' : '') + '" data-act="setup-go" data-setup="' + r.key + '">' +
+        esc(r.verb) + '</button>';
+    return '<div class="pd-step' + (r.done ? ' done' : '') + '" data-setup-row="' + r.key + '">' +
+        '<span class="pd-stepn">' + (r.done ? '✓' : n ? String(n) : '') + '</span>' +
+        '<div class="pd-steplbl"><b>' + esc(r.label) + '</b><small>' + esc(r.sub) + '</small></div>' +
+        '<div class="pd-stepval' + (r.warn ? ' warn' : '') + '">' + esc(r.value) + '</div>' + act + '</div>';
+}
+
+function drawSetup() {
+    if (!needsSetup()) { S.tab = 'flows'; drawFlows(); syncHash(); return; }
+    const rows = setupRows();
+    const next = rows.findIndex(r => !r.done);
+    root().innerHTML = appbar() + '<div class="pd-sheet pd-setup">' +
+        '<div class="pd-sect"><h2>Setup</h2><span class="pd-dim">' +
+        rows.filter(r => r.done).length + ' of ' + rows.length + ' done · what this process needs to run</span></div>' +
+        '<div class="pd-steps">' + rows.map((r, i) => setupRowHTML(r, i === next, i + 1)).join('') + '</div>' +
+        '<div class="pd-sect"><h2>Not needed to run</h2></div>' +
+        '<div class="pd-steps">' + setupExtras().map(r => setupRowHTML(r, false, 0)).join('') + '</div>' +
+        '<div class="pd-pop" id="pd-pop" hidden></div></div>';
+}
+
+// setupGo is a row's one action. Each goes where that thing is set: the
+// positions editor, Settings at its section, the Styles tab, New recipe.
+async function setupGo(key) {
+    const rows = setupRows().concat(setupExtras());
+    const r = rows.find(x => x.key === key);
+    if (!r) return;
+    if (key === 'positions') {
+        if (!stationsOf(S.processID).length) { S.tab = 'screens'; drawScreens(); syncHash(); void openScreenSheet(0); return; }
+        await openAddPositions('');
+        return;
+    }
+    if (key === 'routing') { await openSettingsAt('Routing set'); return; }
+    if (key === 'counter') { await openSettingsAt('Production counter'); return; }
+    if (key === 'hmi') {
+        if (r.verb === 'New recipe') { await openNewRecipe(); return; }
+        await openSettingsAt('HMI');
+        return;
+    }
+    if (key === 'style') {
+        const styles = S.composer.styles || [];
+        if (!styles.length) { openNewStyle(); return; }
+        S.tab = 'flows';
+        const flowed = styles.find(st => M().styleFacts(st).claim_count);
+        selectStyle((flowed || styles[0]).id);
+        syncHash();
+        return;
+    }
+    if (key === 'screen') { S.tab = 'screens'; drawScreens(); syncHash(); void openScreenSheet(0); }
+}
+
+// openSettingsAt opens Settings scrolled to the section whose heading starts
+// with `heading` — the words of the brief's sections, which Settings' own
+// headings carry.
+async function openSettingsAt(heading) {
+    S.tab = 'settings';
+    S.notice = '';
+    await openSettings();
+    syncHash();
+    const h = [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(heading) === 0);
+    if (h && h.scrollIntoView) h.scrollIntoView({ block: 'start' });
 }
 
 // ── D1 · Flows ───────────────────────────────────────────────────────────────
@@ -542,7 +698,10 @@ async function openProcess(id) {
             CSS.escape(h.part) + '"]');
         if (chip) await openPartPop(chip, h.part);
     }
-    if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
+    // A PROCESS THAT CANNOT RUN YET OPENS ON SETUP, unless the link names
+    // another tab or a style.
+    if (h.tab === 'setup' || (!h.tab && !h.style && !h.newstyle && needsSetup())) { S.tab = 'setup'; drawSetup(); }
+    else if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
     else if (h.tab === 'presets') {
         await openPresets();
         // #tab=presets;preset=<id> opens the tab with that row's member list
@@ -5176,7 +5335,7 @@ async function submitAddPositions() {
     S.settingsNotice = kept.length ? keptPositionsSentence(kept)
         : [c.added.length ? 'Added ' + c.added.join(', ') + ' to ' + where + '.' : '',
             c.gone.length ? 'Took ' + c.gone.join(', ') + ' off ' + where + '.' : ''].filter(Boolean).join(' ');
-    drawSettings();
+    if (S.tab === 'setup') drawSetup(); else drawSettings();
 }
 
 // openRemovePosition asks first, with what still names the position
@@ -6437,6 +6596,7 @@ async function refreshProcess() {
     }
     S.settings = settingsDraft();
     if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
+    else if (S.tab === 'setup') drawSetup();
     else if (S.tab === 'screens') drawScreens();
     else if (S.tab === 'presets') await refreshPresets();
     else await openSettings();
@@ -8266,7 +8426,7 @@ const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position
 function hashTab(t) {
     if (!t) return 'flows';
     if (t === 'recipes') return 'presets';
-    return ['flows', 'screens', 'settings', 'presets'].indexOf(t) >= 0 ? t : '';
+    return ['flows', 'setup', 'screens', 'settings', 'presets'].indexOf(t) >= 0 ? t : '';
 }
 
 // showTab is a tab's click, and the address bar's #tab= edited in place.
@@ -8275,6 +8435,7 @@ function showTab(t) {
     // A notice is about the tab it was written on, and this is another.
     S.notice = '';
     if (S.tab === 'flows') drawFlows();
+    else if (S.tab === 'setup') drawSetup();
     else if (S.tab === 'screens') drawScreens();
     else if (S.tab === 'presets') openPresets();
     else if (S.tab === 'settings') openSettings();
@@ -8515,6 +8676,7 @@ function onClick(e) {
             case 'add-group': openNewGroup(); return;
             case 'new-style': openNewStyle(); return;
             case 'add-position': addFreePosition(btn); return;
+            case 'setup-go': void setupGo(btn.dataset.setup); return;
             default: break;
         }
     }
