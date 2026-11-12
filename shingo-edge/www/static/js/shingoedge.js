@@ -1,9 +1,10 @@
 // Shingo Edge — the Edge admin hub: what every admin page does on load, and
 // the Edge's own page verbs.
 //
-// ES module, loaded by header.html on every Edge admin page before the page's
-// own module. A page imports each shared helper from the file that defines it
-// (/static/shared/dom.js, layer.js, notice.js, bus.js, …); this module exports
+// ES module, every Edge admin page's first entry (an inline import after its
+// import map), before the page's own module. A page imports each shared helper
+// from the file that defines it (/static/shared/dom.js, layer.js, notice.js,
+// bus.js, …); this module exports
 // only what is the Edge's: api, refreshOnEvents, the process selector verbs,
 // and the Processes page's modal pair until it moves.
 //
