@@ -16,6 +16,15 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Core v177; Core first, then the Edges.
+
+- A Pull full from home's orders say so: the partial coming home, and the emptied carrier going out to a buffer spot to make room
+- A spot taken out of a lane stands at depth 1 in its group, or with none when loose; a lane's depths no longer outlive it
+- Spots a removed lane left tiered in a group are set to depth 1 (Core v177), so the group stops filling in that old order
+- The startup lane audit no longer warns about a flat spot's depth 1 in a group
+- The installers make the checkout match origin before they build: local edits and commits are saved, then discarded
+- A box on a branch other than main still installs, with a warning on the run and on the install summary
+
 ## v0.5.0 — 2026-11-12
 
 Deploy: Edge v48.
