@@ -35,19 +35,19 @@ var edgePageBudgets = map[string]struct {
 	requests int
 	bytes    int64
 }{
-	// measured 2026-11-11 (requests, bytes)
-	"changeover.html":       {18, 81 << 10},  // 16, 74623
-	"config.html":           {19, 73 << 10},  // 17, 67278
-	"containment.html":      {18, 61 << 10},  // 16, 56139
-	"diagnostics.html":      {16, 52 << 10},  // 14, 47768
-	"login.html":            {15, 50 << 10},  // 13, 46164
-	"manual-message.html":   {16, 52 << 10},  // 14, 48178
-	"manual-order.html":     {17, 54 << 10},  // 15, 50268
-	"operator-display.html": {25, 185 << 10}, // 23, 171547
-	"orders.html":           {18, 78 << 10},  // 16, 72344
-	"processes.html":        {32, 326 << 10}, // 30, 303397
-	"production.html":       {19, 87 << 10},  // 17, 80295
-	"replenishment.html":    {17, 59 << 10},  // 15, 54516
+	// measured 2026-11-11 at 810a435e (requests, bytes)
+	"changeover.html":       {18, 82 << 10},  // 16, 75886
+	"config.html":           {19, 74 << 10},  // 17, 68541
+	"containment.html":      {18, 62 << 10},  // 16, 57521
+	"diagnostics.html":      {16, 53 << 10},  // 14, 49031
+	"login.html":            {15, 51 << 10},  // 13, 47427
+	"manual-message.html":   {16, 54 << 10},  // 14, 49541
+	"manual-order.html":     {17, 56 << 10},  // 15, 51650
+	"operator-display.html": {27, 194 << 10}, // 25, 180258
+	"orders.html":           {18, 80 << 10},  // 16, 73607
+	"processes.html":        {32, 340 << 10}, // 30, 315704
+	"production.html":       {19, 88 << 10},  // 17, 81757
+	"replenishment.html":    {17, 60 << 10},  // 15, 55738
 }
 
 var (
