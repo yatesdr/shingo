@@ -395,7 +395,7 @@ async function productionPartPickers() {
     L.push(await loadBin('load bin, three allowed, PART-A picked', many, 'PART-A', [A['act-ok']], { reopen: true }));
     L.push(await loadBin('load bin, PART-B picked (its catalog row has no manifest lines)', many, 'PART-B', [A['act-ok']]));
     L.push(await loadBin('load bin, nothing picked', many, null, []));
-    L.push(await loadBin('load bin, the catalog read fails (500): codes alone, and the failure is kept for the page', many, 'PART-A', [A['act-ok']],
+    L.push(await loadBin('load bin, the catalog read fails (500): codes alone, and the next open reads it again', many, 'PART-A', [A['act-ok']],
         { catalogFails: true, reopen: true }));
     L.push(await loadBin('load bin refused (apiLoadBin: 400)', many, 'PART-A', [A['load-bin-refused']]));
     L.push(await loadBin('load bin pending (202)', many, 'PART-A', [A.pending]));

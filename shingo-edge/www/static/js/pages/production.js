@@ -134,10 +134,13 @@ async function submitRequestEmpty() {
 
 var _loadBinCatalog = null;
 
+// ensureLoadBinCatalog reads the catalog once per page. A failed read is not
+// kept: this open shows the codes alone and the next open reads again.
 async function ensureLoadBinCatalog() {
     if (_loadBinCatalog) return _loadBinCatalog;
-    try { _loadBinCatalog = await api.get('/api/payload-catalog'); } catch(_) { _loadBinCatalog = []; }
-    if (!Array.isArray(_loadBinCatalog)) _loadBinCatalog = [];
+    var got;
+    try { got = await api.get('/api/payload-catalog'); } catch(_) { return []; }
+    _loadBinCatalog = Array.isArray(got) ? got : [];
     return _loadBinCatalog;
 }
 

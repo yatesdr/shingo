@@ -141,7 +141,7 @@ on open: GET /api/payload-catalog
 shows: toast warning: "Select a payload first"
 modal open, rb-payload=""
 
-## load bin, the catalog read fails (500): codes alone, and the failure is kept for the page
+## load bin, the catalog read fails (500): codes alone, and the next open reads it again
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog (answered 500)
 #rb-payload (Payload) — modal open selectedIndex=0
@@ -149,11 +149,11 @@ on open: GET /api/payload-catalog (answered 500)
     value="PART-B" label="PART-B"
     value="PART-A" label="PART-A"
     value="PART-C" label="PART-C"
-opened again: (no request)
+opened again: GET /api/payload-catalog
 #rb-payload (Payload) selectedIndex=0
   * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
+    value="PART-B" label="PART-B — Part <b>B</b>"
+    value="PART-A" label="PART-A — Part A"
     value="PART-C" label="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
   rows: UoP count="24" PN-A1=48 "left"
