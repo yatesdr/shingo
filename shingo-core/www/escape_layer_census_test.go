@@ -17,10 +17,6 @@ var escapeLeftToPage = map[string]string{
 	// An input's own Escape: thrKey puts the stored threshold back in the
 	// box and leaves it. It closes nothing.
 	"static/pages/inventory.js\t} else if (e.key === 'Escape') {": "the threshold box's own Escape (thrKey): puts the stored value back",
-	// The two drill pop-ups draw their own overlay and close it themselves
-	// (Escape, backdrop, ✕, a 60 s idle timer); they are not on the layer.
-	"static/components/CellDrill.js\tstate.onEsc = (e) => { if (e.key === 'Escape') closeCellDrill(); };": "the cell drill's own overlay, not on the layer",
-	"static/components/DrillModal.js\tstate.onEsc = (e) => { if (e.key === 'Escape') close(); };":         "the metric drill's own overlay, not on the layer",
 }
 
 // TestCorePagesLeaveEscapeToTheLayer: on a Core page Escape belongs to the one

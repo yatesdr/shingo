@@ -2,12 +2,22 @@
 // modal"). One component opened from every section's KPI / "View detail →"
 // via data-action="openDrill:<metric>". Renders the metric over a longer
 // range (4w/12w/52w) with wheel-zoom (chartjs-plugin-zoom), an auto-generated
-// narrative line, Esc/backdrop/✕ close, and a 60s idle auto-dismiss. Cancels
+// narrative line, ✕/Escape/backdrop close, and a 60s idle auto-dismiss. Cancels
 // in-flight fetches on re-open/range-change (AbortController) and calls
 // chart.destroy() on dismiss to avoid the Chart.js leak vector (§13).
+//
+// The drill is an entry of the one overlay stack (shared/layer.js, style guide
+// §10), as CellDrill is: Escape and the backdrop close it innermost first (a
+// confirm over it goes before it does), the page behind is locked while it is
+// open (counted with any other entry), focus goes into it and back to what
+// opened it, and a press that began in the card never closes it. It holds no
+// typed work (the range buttons are not fields), so it never asks. Every close
+// (✕, Escape, the backdrop, the idle timer) runs drillClosed as the entry's
+// onClose.
 
 import { el, h } from '/static/shared/dom.js';
 import { formatDuration } from '/static/shared/clock.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
 import { makeChart, registerZoom, chartColors, progressBarColors, progressSegment } from '/static/components/charts.js';
 import { windowFor, bucketLabel, inProgress } from '/static/components/plantclock.js';
 
@@ -41,7 +51,7 @@ export function openDrillModal(metric, filterState) {
     const cfg = METRICS[metric];
     if (!cfg) return;
 
-    const overlay = el('div', { className: 'modal-overlay drill-modal active' });
+    const overlay = el('div', { className: 'modal-overlay drill-modal' });
     const box = el('div', { className: 'modal' });
     box.innerHTML = h`
         <div class="modal-header flex flex-between">
@@ -65,15 +75,11 @@ export function openDrillModal(metric, filterState) {
         chart: null,
         controller: null,
         idleTimer: null,
-        onEsc: null,
     };
     _active = state;
 
-    const close = () => closeDrillModal();
-    box.querySelector('.modal-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    state.onEsc = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', state.onEsc);
+    box.querySelector('.modal-close').addEventListener('click', () => closeDrillModal());
+    showModal(overlay, { closeOnBackdrop: true, ask: false, onClose: () => drillClosed(state) });
 
     box.querySelectorAll('.drill-range button').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -203,15 +209,20 @@ function render(state, data) {
     box.querySelector('.drill-modal__narrative').textContent = narrate(cfg.title, narrativeSeries, state.range);
 }
 
+// closeDrillModal is the drill's own close (✕, the idle timer, a re-open):
+// the layer's, so drillClosed runs as for Escape or the backdrop.
 export function closeDrillModal() {
-    if (!_active) return;
-    const a = _active;
-    _active = null;
+    if (_active) hideModal(_active.overlay);
+}
+
+// drillClosed is the drill's close however it came: its idle timer, its read
+// in flight and its chart go, and so does its overlay.
+function drillClosed(a) {
+    if (_active === a) _active = null;
     clearTimeout(a.idleTimer);
-    if (a.onEsc) document.removeEventListener('keydown', a.onEsc);
     if (a.controller) { try { a.controller.abort(); } catch (_) {} }
     if (a.chart) { try { a.chart.destroy(); } catch (_) {} }
-    if (a.overlay && a.overlay.parentNode) a.overlay.parentNode.removeChild(a.overlay);
+    if (a.overlay.parentNode) a.overlay.parentNode.removeChild(a.overlay);
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────

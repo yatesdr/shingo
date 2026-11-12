@@ -6,11 +6,20 @@
 // sub→sub→primary flow reads top-to-bottom.
 //
 // Deliberately chart-free (plain DOM strips) so there's no Chart.js instance to
-// leak — the §13 drill concern doesn't apply here. Esc / backdrop / ✕ close
+// leak — the §13 drill concern doesn't apply here. ✕ / Escape / backdrop close
 // plus a 60s idle auto-dismiss, matching DrillModal.
+//
+// The drill is an entry of the one overlay stack (shared/layer.js, style guide
+// §10), as DrillModal is: Escape and the backdrop close it innermost first (a
+// confirm over it goes before it does), the page behind is locked while it is
+// open (counted with any other entry), focus goes into it and back to the tile
+// that opened it, and a press that began in the card never closes it. It
+// holds no typed work, so it never asks. Every close (✕, Escape, the backdrop,
+// the idle timer) runs drillClosed as the entry's onClose.
 
 import { el, h } from '/static/shared/dom.js';
 import { formatClock, formatDuration, formatTime } from '/static/shared/clock.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
 
 let _active = null;
 const MAX_DOTS = 400; // cap per strip; a wider window samples down to this
@@ -18,7 +27,7 @@ const MAX_DOTS = 400; // cap per strip; a wider window samples down to this
 export function openCellDrill(cellID) {
     closeCellDrill();
 
-    const overlay = el('div', { className: 'modal-overlay drill-modal active' });
+    const overlay = el('div', { className: 'modal-overlay drill-modal' });
     const box = el('div', { className: 'modal', style: { maxWidth: '720px' } });
     box.innerHTML = h`
         <div class="modal-header flex flex-between">
@@ -29,13 +38,11 @@ export function openCellDrill(cellID) {
     overlay.appendChild(box);
     document.body.appendChild(overlay);
 
-    const state = { overlay, box, cellID, idleTimer: null, onEsc: null, controller: null };
+    const state = { overlay, box, cellID, idleTimer: null, controller: null };
     _active = state;
 
     box.querySelector('.modal-close').addEventListener('click', closeCellDrill);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeCellDrill(); });
-    state.onEsc = (e) => { if (e.key === 'Escape') closeCellDrill(); };
-    document.addEventListener('keydown', state.onEsc);
+    showModal(overlay, { closeOnBackdrop: true, ask: false, onClose: () => drillClosed(state) });
     overlay.addEventListener('mousemove', resetIdle);
     resetIdle();
 
@@ -50,14 +57,19 @@ export function openCellDrill(cellID) {
         });
 }
 
+// closeCellDrill is the drill's own close (✕, the idle timer, a re-open):
+// the layer's, so drillClosed runs as for Escape or the backdrop.
 export function closeCellDrill() {
-    if (!_active) return;
-    const a = _active;
-    _active = null;
+    if (_active) hideModal(_active.overlay);
+}
+
+// drillClosed is the drill's close however it came: its idle timer and its
+// read in flight go, and so does its overlay.
+function drillClosed(a) {
+    if (_active === a) _active = null;
     clearTimeout(a.idleTimer);
-    if (a.onEsc) document.removeEventListener('keydown', a.onEsc);
     if (a.controller) { try { a.controller.abort(); } catch (_) {} }
-    if (a.overlay && a.overlay.parentNode) a.overlay.parentNode.removeChild(a.overlay);
+    if (a.overlay.parentNode) a.overlay.parentNode.removeChild(a.overlay);
 }
 
 function resetIdle() {
