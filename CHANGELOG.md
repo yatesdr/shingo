@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.6.0 — 2026-11-12
+
 Deploy: Core v177; Core first, then the Edges.
 
 - A Pull full from home's orders say so: the partial coming home, and the emptied carrier going out to a buffer spot to make room
