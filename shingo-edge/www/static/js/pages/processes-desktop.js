@@ -2500,13 +2500,11 @@ function openReorderPop(btn, node) {
     pop.classList.remove('pd-partpop');
     S.partPop = null;
     const a = M().advancedFor(S.model, node);
-    const src = REORDER_SOURCE[a.reorder_point_source];
     pop.innerHTML = '<div class="pd-rpop">' +
         '<label class="pd-lbl">' + esc(W('reorder_point')) + '</label>' +
         '<div class="pd-rprow"><input class="pd-inp" type="text" inputmode="numeric" data-f="rp" value="' +
             esc(a.reorder_point ? String(a.reorder_point) : '') + '" placeholder="—">' +
-        '<button class="pd-btn primary" data-rp="set">' + (a.auto_reorder ? 'Set' : 'Turn on') + '</button>' +
-        (src ? '<span class="pd-src" title="' + esc(src[1]) + '">' + esc(src[0]) + '</span>' : '') + '</div>' +
+        '<button class="pd-btn primary" data-rp="set">' + (a.auto_reorder ? 'Set' : 'Turn on') + '</button></div>' +
         '<small>' + esc(REORDER_WORDS) + '</small>' +
         '<button data-rp="off" class="' + (a.auto_reorder ? '' : 'on') + '">' + esc(W('auto_reorder')) + ' off</button>' +
         '<div class="none" data-rpnote></div></div>';
@@ -2533,10 +2531,7 @@ function openReorderPop(btn, node) {
 // sheet's Apply does; point null keeps the stored point.
 function setReorder(node, point, on) {
     const a = M().advancedFor(S.model, node);
-    if (point !== null) {
-        a.reorder_point = point;
-        a.reorder_point_source = 'manual';
-    }
+    if (point !== null) a.reorder_point = point;
     a.auto_reorder = on;
     closePop();
     apply({ type: 'setAdvanced', node: node, advanced: a });
