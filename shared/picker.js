@@ -412,6 +412,36 @@ export function createPicker(host, opts) {
 
     // ─── the list as a popover ──────────────────────────────────────────────
 
+    // A DROPDOWN'S LIST IS PLACED AGAINST THE WINDOW, NOT ITS CONTAINER
+    // (bins pop-up, HOP 2026-11-12). Hung under its box with position:
+    // absolute, it was clipped by any scrolling box it sat in — a modal is
+    // one — so a payload field near a pop-up's foot showed one row of its list.
+    // Fixed, it escapes the clip: under the box when there is room, above it
+    // when there is more room there, and never taller than the window allows.
+    // It follows the box while the page or a pop-up scrolls.
+    const LIST_MAX = 288;   // 18rem, the list's own CSS cap
+    const LIST_MIN = 120;
+    function place() {
+        if (always || box.hidden || typeof window === 'undefined' || !window.innerHeight) return;
+        if (typeof field.getBoundingClientRect !== 'function') return;
+        const r = field.getBoundingClientRect();
+        const vh = window.innerHeight, gap = 4, pad = 8;
+        const below = vh - r.bottom - gap - pad, above = r.top - gap - pad;
+        const up = below < LIST_MAX && above > below;
+        const room = Math.max(LIST_MIN, Math.min(LIST_MAX, up ? above : below));
+        Object.assign(box.style, {
+            position: 'fixed', left: r.left + 'px', width: r.width + 'px', right: 'auto',
+            marginTop: '0', maxHeight: room + 'px',
+            top: up ? 'auto' : (r.bottom + gap) + 'px',
+            bottom: up ? (vh - r.top + gap) + 'px' : 'auto',
+        });
+    }
+    function unplace() {
+        if (!box.style) return;
+        for (const k of ['position', 'left', 'width', 'right', 'marginTop', 'maxHeight', 'top', 'bottom']) box.style[k] = '';
+    }
+    const follow = () => place();
+
     function openList() {
         if (always || st.layer) return;
         if (dropped && dropped !== picker) dropped.close();
@@ -424,10 +454,20 @@ export function createPicker(host, opts) {
                 if (dropped === picker) dropped = null;
                 input.setAttribute('aria-expanded', 'false');
                 input.removeAttribute('aria-activedescendant');
+                if (typeof window !== 'undefined' && window.removeEventListener) {
+                    window.removeEventListener('scroll', follow, true);
+                    window.removeEventListener('resize', follow);
+                }
+                unplace();
             },
         });
         input.setAttribute('aria-expanded', 'true');
         drawRows();
+        place();
+        if (typeof window !== 'undefined' && window.addEventListener) {
+            window.addEventListener('scroll', follow, true);
+            window.addEventListener('resize', follow);
+        }
     }
 
     function closeList() {
