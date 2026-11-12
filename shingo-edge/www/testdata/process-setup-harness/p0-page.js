@@ -797,7 +797,8 @@ async function pinSheetStack() {
     const block = (title, rows) => { L.push('', '## ' + title); for (const r of rows) L.push(r); };
     const focusSince = (page, n) => {
         const f = page.focused.slice(n);
-        return 'focus: ' + (f.length ? f.map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className : '')).join(', ') : 'none');
+        return 'focus: ' + (f.length ? f.map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className : '') +
+            (e.dataset && e.dataset.act ? '[data-act="' + e.dataset.act + '"]' : '')).join(', ') : 'none');
     };
     const openRename = async page => {
         page.click('root', { act: 'style-menu', style: '2' });

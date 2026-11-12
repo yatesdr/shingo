@@ -135,7 +135,10 @@ whatever the run did. Its `state` lives while the entry is open and is dropped
 when it closes, so a chain that refused midway resumes at the step that failed
 and nothing outlives the sheet. `status(text, bad)` writes the entry's one line
 of feedback (`[data-layer-status]`). `openSheet` is the Processes page's sheet
-shell on the layer: title, body, status line, Cancel and OK. `showModal`,
+shell on the layer: title, body, status line, Cancel and OK. Focus goes back to
+what had it when the entry opened; `opener` (on `openLayer` and `openSheet`)
+names another element, for a sheet opened from a menu row that is gone by the
+time it closes: the menu's trigger. `showModal`,
 `hideModal`, `confirm`, `prompt` and `confirmWithInput` are the hubs' names on
 the same stack.
 

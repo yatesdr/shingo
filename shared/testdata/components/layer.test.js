@@ -354,6 +354,25 @@ test('cannot happen: no surface moves focus in or returns it (P0: shingoedge.js,
     eq(f.r.doc.activeElement.id, 'opener', 'back from a sheet');
 });
 
+test('an opener named at open is where focus returns: a sheet opened from a menu row that is gone by then (ruling, wave C)', async () => {
+    const f = modals();
+    const trigger = mk(f.r, 'button', { id: 'trigger' });
+    f.r.doc.body.appendChild(trigger);
+    const row = mk(f.r, 'button', { id: 'row' });
+    f.r.doc.body.appendChild(row);
+    row.focus();
+    row.remove();   // the menu closed before the sheet opened
+    const s = f.L.openSheet({ title: 'T', body: mk(f.r, 'input', { 'data-f': 'x' }), opener: trigger });
+    eq(f.r.doc.activeElement === s.el.querySelector('input'), true, 'into the sheet');
+    s.close('cancel');
+    eq(f.r.doc.activeElement.id, 'trigger', 'back to the named opener, from openSheet');
+    const pop = mk(f.r, 'div', { id: 'pop' }, [mk(f.r, 'input', {})]);
+    f.r.doc.body.appendChild(pop);
+    f.L.openLayer(pop, { kind: 'modal', reveal: 'none', opener: f.g('opener') });
+    f.L.closeLayer(pop);
+    eq(f.r.doc.activeElement.id, 'opener', 'back to the named opener, from openLayer');
+});
+
 test('focus goes where asked: an element, a selector, [autofocus], else the first field, else the first button', async () => {
     const f = modals();
     f.L.showModal('m1', { focus: '#m1-area' });

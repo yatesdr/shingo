@@ -199,7 +199,9 @@ export function confirmWithInput(message, opts) {
 // entry's run (one run per press, the OK disabled while it runs); Cancel
 // closes without asking, because it is a deliberate click. opts: title, sub,
 // body (a Node, or markup the page built and escaped), ok, cancel, danger,
-// run(state, handle), backdrop, ask, focus, onClose, cardClass (the card's
+// run(state, handle), backdrop, ask, focus, opener (where focus returns on
+// close, as openLayer's: a sheet opened from a menu row names the menu's
+// trigger, since the row is gone by then), onClose, cardClass (the card's
 // class instead of .layer-card .layer-sheet, for a page that keeps its own).
 export function openSheet(opts) {
     const o = opts || {};
@@ -221,7 +223,7 @@ export function openSheet(opts) {
     document.body.appendChild(scrim);
     const h = openLayer(scrim, {
         kind: 'sheet', reveal: 'remove', preserveState: true,
-        backdrop: !!o.backdrop, ask: o.ask, focus: o.focus, onClose: o.onClose,
+        backdrop: !!o.backdrop, ask: o.ask, focus: o.focus, opener: o.opener, onClose: o.onClose,
     });
     ok.addEventListener('click', () => { if (o.run) h.run(o.run); });
     cancel.addEventListener('click', () => h.close('cancel'));

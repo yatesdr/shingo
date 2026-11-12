@@ -843,6 +843,9 @@ async function open(opts) {
                 preventDefault() {},
             };
             const el = host === 'scrim' ? sheetHost() : statics['pd-root'];
+            // The target is in its host, as a clicked control is: a sheet that
+            // names it as its opener can hand focus back to it.
+            target.parentNode = el;
             // A SHEET'S OWN OK AND CANCEL ARE THE LAYER'S BUTTONS when the
             // layer built its shell: a pin names them by the words the page's
             // shell used (sheet-ok, sheet-cancel), and they are pressed, as an

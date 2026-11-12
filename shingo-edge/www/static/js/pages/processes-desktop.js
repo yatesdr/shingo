@@ -94,6 +94,7 @@ const S = {
     notice: '',          // the same, on the Flows and Presets tabs: what the last write saved
     flowSaved: null,     // {styleID, at}: the last Save flow, which the bar names until the next edit
     sheet: null,         // the open sheet: {handle} (its layer entry), and {run} for the apply modal's own OK
+    menuFrom: null,      // the control the open popover menu hangs off: a sheet a row opens returns focus there
     mapZoom: 1,
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
@@ -5879,17 +5880,19 @@ function onPickerClick(el) {
 // to what opened it.
 //
 // ONE SHEET AT A TIME, as the one scrim had it: a sheet opened over another
-// takes its place ('replaced') rather than stacking on it.
+// takes its place ('replaced') rather than stacking on it. opener, when given,
+// is where focus returns on close (a sheet a menu row opened: the menu's
+// trigger, since the row is gone).
 //
 // #pd-advpop RIDES IN THE BODY rather than on the sheets that want a popover.
 // It is the Advanced sheet's answer to #pd-pop living inside #pd-root, which
 // the scrim covers; a list opened from a sheet against the page's popover
 // draws behind the modal. One per sheet — and the sheets that never open one
 // pay an empty div.
-function pageSheet(title, sub, body, confirm, run, danger) {
+function pageSheet(title, sub, body, confirm, run, danger, opener) {
     if (S.sheet && S.sheet.handle) S.sheet.handle.close('replaced');
     const h = openSheet({
-        title: title, sub: sub, ok: confirm, danger: !!danger,
+        title: title, sub: sub, ok: confirm, danger: !!danger, opener: opener || undefined,
         body: body + '<div class="pd-pop" id="pd-advpop" hidden></div>',
         cardClass: 'layer-card layer-sheet pd-modal',
         backdrop: true,
@@ -6025,6 +6028,9 @@ function openStyleMenu(btn) {
         (m[0] === 'delete' ? ' class="bad"' : '') + '>' + esc(m[1]) + '</button>').join('');
     showPop(pop, btn);
     placePopover(pop, btn);
+    // The ⋯ the menu hangs off: a sheet a row opens returns focus there, the
+    // row itself being gone by the time it closes.
+    S.menuFrom = btn;
 }
 
 // What a blank Expected CATID means for a style: its produced parts' catalog
@@ -6051,19 +6057,20 @@ function styleBody(st, change) {
 
 function styleAction(act, id) {
     const st = styleByID(id);
+    const from = S.menuFrom;
     closePop();
     switch (act) {
         case 'rename':
             pageSheet('Rename ' + st.name, '', sheetField('Name', 'what this part is called here', 'name', st.name),
                 'Rename', () => sheetSubmit('PUT', '/api/styles/' + id,
-                    styleBody(st, { name: sheetValue('name') }), refreshProcess));
+                    styleBody(st, { name: sheetValue('name') }), refreshProcess), false, from);
             return;
         case 'catid':
             pageSheet('Expected CATID · ' + st.name,
                 'what the PLC calls this part. A confirmed change to it is what arms a changeover cutover.',
                 sheetField('Expected CATID', catidBlankHint(id), 'catid', st.expected_catid),
                 'Save', () => sheetSubmit('PUT', '/api/styles/' + id,
-                    styleBody(st, { expected_catid: sheetValue('catid') }), refreshProcess));
+                    styleBody(st, { expected_catid: sheetValue('catid') }), refreshProcess), false, from);
             return;
         case 'clone':
             pageSheet('Clone ' + st.name, 'a new style with the same flow, ready to be renamed.',
@@ -6074,19 +6081,19 @@ function styleAction(act, id) {
                         S.notice = 'Saved ' + name + ', a copy of ' + st.name + '.';
                         return refreshProcess();
                     });
-                });
+                }, false, from);
             return;
         // R4: "Set Active" is now "Mark as running", and the sentence says
         // exactly what it does — because the old verb read like an instruction
         // to the cell, and this one is an admin correction to shingo's record.
         case 'running':
-            openRunningSheet(st, id);
+            openRunningSheet(st, id, from);
             return;
         case 'delete':
             pageSheet('Delete ' + st.name + '?', 'its flow goes with it.',
                 '<p class="pd-note">A style the process has run is part of its history. Deleting it removes ' +
                 'the flow an operator would pick, not what already ran.</p>',
-                'Delete', () => sheetSubmit('DELETE', '/api/styles/' + id, null, refreshProcess), true);
+                'Delete', () => sheetSubmit('DELETE', '/api/styles/' + id, null, refreshProcess), true, from);
             return;
         default: return;
     }
@@ -6096,7 +6103,7 @@ function styleAction(act, id) {
 // completes that changeover now — to its target, then to this style when this
 // is a third — past whatever the cutover still waits on, and leaves every robot
 // already moving to finish its trip. The sheet names what is in flight first.
-async function openRunningSheet(st, id) {
+async function openRunningSheet(st, id, from) {
     const p = process();
     let inFlight = '';
     if (p && p.target_style_id && p.target_style_id !== p.active_style_id) {
@@ -6121,7 +6128,7 @@ async function openRunningSheet(st, id) {
         inFlight + '<p class="pd-note">Use this when the plant changed parts without shingo. To change ' +
         'parts WITH shingo, start a changeover from the operator screen.</p>',
         'Mark as running', () => sheetSubmit('PUT', '/api/processes/' + S.processID + '/active-style',
-            B().processActiveStyle(id), refreshProcess));
+            B().processActiveStyle(id), refreshProcess), false, from);
 }
 
 // After any write that changes what a screen shows: re-read the process list

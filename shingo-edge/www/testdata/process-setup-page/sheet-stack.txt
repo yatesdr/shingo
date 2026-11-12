@@ -14,7 +14,7 @@ focus: input.pd-inp wide
 active element: set
 pd-pop hidden, pd-stpop absent, pd-advpop hidden
 after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
-focus: none
+focus: div[data-act="style-menu"]
 
 ## the backdrop (ruling 2: the Processes sheets opt in)
 nothing typed, pressed and released on the backdrop: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
@@ -101,5 +101,5 @@ reopened, Apply with nothing changed: sheet closed, #pd-scrim markup empty, laye
 
 ## facts
 body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (the layer's counted lock; every block above)
-focus() calls across every block above: 27
+focus() calls across every block above: 33
 Escape: document keydown listeners per page, at most 2 (the page's own, for nothing open; the layer's, added with its first entry); the window listeners boot adds: error, unhandledrejection, resize, focus
