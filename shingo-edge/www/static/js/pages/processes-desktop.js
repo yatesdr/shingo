@@ -23,6 +23,17 @@ import {
 // The edge's own modal helpers. header.html loads shingoedge.js on every page,
 // so this import is already in the module map — see showSheet.
 import { showModal, hideModal } from '/static/js/shingoedge.js';
+// THE ONE HTTP DOOR (style guide §17). Every request this page sends goes
+// through send: it never throws, it answers {ok, status, body, error,
+// fieldErrors} with status 0 when nothing answered and 401 for a lapsed
+// session (ruling 3), and it puts a failure on the notice once. The page
+// still says a refusal where it is about (a sheet's status line, the bar),
+// so a refused write the engineer pressed reads there and on the notice;
+// only the automatic reads (the preview, the ten-second re-reads) pass
+// {notice: false}, since what they would say is drawn where they draw.
+// `cache: 'no-store'` went with the bare fetches: the Edge's JSON answers
+// carry no validator (writeJSON sets none), so the browser never held one.
+import { send } from '/static/shared/http.js';
 
 const M = () => window.ComposerModel;
 // Every request body this page sends is built in desktop-bodies.js, so a
@@ -2412,15 +2423,15 @@ async function runPreview() {
 // and says so; 422 puts the server's findings on the rows.
 async function saveFlow() {
     const pv = S.model.preview || {};
-    const res = await fetch('/api/processes/' + S.processID + '/flow/save', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            to_style_id: S.model.styleId, cells: M().toCells(S.model),
-            fingerprint: pv.fingerprint || '',
-            station_id: stationIDForSave(),
-        }),
+    // A DEAD EDGE IS AN ANSWER (P0 bug, :2415). The bare fetch rejected on
+    // no answer and nothing caught it, so Save did nothing on screen; the door
+    // answers status 0 and saveOutcome reads its sentence as the refusal.
+    const res = await send('POST', '/api/processes/' + S.processID + '/flow/save', {
+        to_style_id: S.model.styleId, cells: M().toCells(S.model),
+        fingerprint: pv.fingerprint || '',
+        station_id: stationIDForSave(),
     });
-    const json = await res.json().catch(() => ({}));
+    const json = answerBody(res);
     // The decision is B().saveOutcome — every branch in one place, driven under
     // node by apply-loop.test.js. This function does the DOM.
     const out = B().saveOutcome(res.status, json);
@@ -2437,6 +2448,16 @@ async function saveFlow() {
     S.baseline = JSON.stringify(M().toCells(S.model));
     S.flowSaved = { styleID: S.model.styleId, at: clockNow() };
     await openProcess(S.processID);
+}
+
+// answerBody is the body a flow answer's readers take (saveOutcome,
+// applyOutcome, applyPreview), from the door's answer: the server's own body,
+// and on a failure the door's sentence as its `error`, so a 500 with no body
+// or no answer at all is a refusal by name and not an empty object read as a
+// success.
+function answerBody(out) {
+    const body = out.body && typeof out.body === 'object' ? out.body : {};
+    return out.ok ? body : Object.assign({}, body, { error: out.error });
 }
 
 // flow/save wants the station that saved it, and on the desktop there is no

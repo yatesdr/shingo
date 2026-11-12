@@ -182,6 +182,7 @@ async function open(opts) {
         focused: [],     // every element the page called focus() on, in order
         winListeners: {},// window.addEventListener's, by type
         notices: [],     // every toast notice.js showed, in order: see noticeAppended
+        noticeAt: {},    // a mark (a call count) -> how many notices had shown by then
     };
     let timerID = 0;
 
@@ -814,7 +815,9 @@ async function open(opts) {
         },
         notices: h.notices,
         // mark/since: the calls one act made.
-        mark() { return h.calls.length; },
+        // (and the notices shown since that mark, for the act's golden).
+        mark() { h.noticeAt[h.calls.length] = h.notices.length; return h.calls.length; },
+        noticesSince(i) { return h.notices.slice(h.noticeAt[i] !== undefined ? h.noticeAt[i] : h.notices.length); },
         since(i) { return h.calls.slice(i); },
         settle: () => settle(h),
         // click dispatches a click the way a browser's bubble reaches the

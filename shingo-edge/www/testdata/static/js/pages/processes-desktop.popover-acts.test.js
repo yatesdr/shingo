@@ -151,6 +151,19 @@ function bubble(target, type, doc) {
     return ev;
 }
 
+// ── the shared modules the page imports ──────────────────────────────────────
+//
+// loadShared runs shared/http.js as the page imports it, its own imports
+// bound to what the caller passes (notice.js's toast, here a recorder), and
+// returns its exports.
+const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
+function loadShared(deps) {
+    const src = fs.readFileSync(path.join(SHARED_DIR, 'http.js'), 'utf8')
+        .replace(/^import\s*\{[^}]*\}\s*from\s*'[^']+';[ \t]*$/gm, '')
+        .replace(/^export\s+/gm, '');
+    return vm.runInThisContext('(function (toast) {' + src + '\nreturn { send, http };\n})', { filename: 'http.js' })(deps.toast);
+}
+
 // ── the page, booted for real ────────────────────────────────────────────────
 
 function loadPage(loadOpts) {
@@ -276,16 +289,29 @@ function loadPage(loadOpts) {
     // The plant-local time formats the page imports from shared/clock.js; the
     // imports are stripped, so the Settings tab's live words read these.
     Object.assign(global, { formatTime: ts => String(ts || ''), formatClock: ts => String(ts || '') });
+    // A pin's answer is {ok, status?, json}; the page reads it through the
+    // HTTP door (shared/http.js), which reads text() and a status, so each
+    // answer is given both, from what the pin said.
+    const asRead = r => Promise.resolve(r).then(res => {
+        const status = res.status !== undefined ? res.status : (res.ok ? 200 : 404);
+        const text = res.text || (async () => { const b = await res.json(); return b === undefined ? '' : JSON.stringify(b); });
+        return Object.assign({ headers: { get: () => null }, redirected: false, url: '' }, res, { status: status, text: text });
+    });
     global.fetch = (url, init) => {
         if (loadOpts.fetch) {
             const r = loadOpts.fetch(url, init);
-            if (r) return r;
+            if (r) return asRead(r);
         }
         if (/\/api\/processes\/1\/composer$/.test(url)) {
-            return Promise.resolve({ ok: true, json: async () => COMPOSER });
+            return asRead({ ok: true, json: async () => COMPOSER });
         }
-        return Promise.resolve({ ok: false, json: async () => ({}) });
+        return asRead({ ok: false, json: async () => ({}) });
     };
+    // The door itself, loaded as the page imports it; what it would put on
+    // the notice is recorded on the window (win.notices), not drawn.
+    win.notices = [];
+    const shared = loadShared({ toast: (message, level, o) => { win.notices.push({ message, level, opts: o }); } });
+    Object.assign(global, { send: shared.send });
     // schedulePreview must not fire: this pin is about the click, and a timer
     // landing mid-test would redraw the tab under it.
     global.setTimeout = () => 0;

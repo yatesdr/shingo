@@ -1,0 +1,6 @@
+# The S2 door bugs on the Processes page (REPORT-v2-stop1-P0 bug table; ruling 3), each on a fresh
+# page with the one answer that shows it. "ok" is what must hold; "BUG" is a bug back.
+
+## dead Edge, Save style (processes-desktop.js:2415): flow/save gets no answer
+ok   no unhandled rejection
+ok   the page says "No answer from the server"

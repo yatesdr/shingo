@@ -128,6 +128,12 @@ function stateLine(page) {
     return f.length ? 'state: ' + f.map(x => x[0] + '=' + JSON.stringify(x[1])).join(', ') : 'state: no message set';
 }
 
+// What the HTTP door put on the notice (shared/http.js: a failure is shown
+// once, there): its level, its words and its one action.
+function noticeLine(n) {
+    return 'notice: ' + n.level + ' ' + JSON.stringify(n.text) + (n.sticky ? ' (sticky)' : '') + (n.action ? ' · ' + n.action : '');
+}
+
 // ── refusal answers ──────────────────────────────────────────────────────
 //
 // The answers a write is refused with. The 4xx shapes are the handler's own:
@@ -202,7 +208,7 @@ async function runOnce(spec, target, answer) {
             if (hit && answer.sticky && !isPublic(u)) return answer;
             if (!armed || !target || m !== target.method || u !== target.url) return undefined;
             if (k++ !== target.k) return undefined;
-            hit = { at: page.calls.length - 1, before: new Set(page.segments()) };
+            hit = { at: page.calls.length - 1, before: new Set(page.segments()), notices: page.notices.length };
             return answer;
         },
     });
@@ -256,6 +262,7 @@ async function refusalBlock(spec) {
             const shown = fresh.length > 8 ? fresh.filter(s => MESSAGE.test(s)) : fresh;
             for (const s of shown) lines.push("    new text: " + s);
             if (shown.length < fresh.length) lines.push("    new text: … and " + (fresh.length - shown.length) + " more runs (the tab redrew)");
+            for (const n of page.notices.slice(r.hit.notices)) lines.push('    ' + noticeLine(n));
             if (r.stopped) lines.push('    the act stopped: ' + r.stopped);
             lines.push('    ' + sheetLine(page));
             lines.push('    ' + stateLine(page));
@@ -1002,6 +1009,70 @@ async function pinSheetStack() {
     T.out['sheet-stack.txt'] = L.join('\n') + '\n';
 }
 
+// ── the door bugs ────────────────────────────────────────────────────────
+//
+// THE S2 DOOR BUGS the refusal pins found (REPORT-v2-stop1-P0, the bug table:
+// "S2 HTTP door on the Processes page", "S2 door conversion", ruling 3), each
+// driven on a fresh page with the one answer that shows it, and what must hold
+// once it is fixed. A line is "ok   <what holds>" or "BUG  <what holds>:
+// <what happened>". The golden holds only ok lines, so each block was red
+// before its fix and goes red again if the bug comes back. The refusal
+// goldens say what the page does; these say what it must not do.
+const NO_ANSWER = { reject: 'Failed to fetch' };
+const LAPSED = { status: 200, raw: '<!doctype html><title>Log in</title>', redirected: true, sticky: true };
+const BODILESS_500 = { status: 500, raw: '' };
+// What a run put on screen: the runs of text that were not there before the
+// refused write, the sheet's status line, and the notices.
+function shown(r) {
+    const fresh = r.page.segments().filter(s => !r.hit.before.has(s));
+    return fresh.concat(['status: ' + r.page.status()], r.page.notices.map(n => 'notice: ' + n.text));
+}
+const has = (r, text) => shown(r).some(s => s.indexOf(text) >= 0);
+// The status line's words, whether the page set them (textContent) or drew
+// them in its markup (the apply modal redraws its footer).
+function statusWords(page) {
+    const host = page.scrim;
+    const st = host.querySelector('[data-layer-status]') || host.querySelector('.mf .st');
+    return st ? (st.textContent || T.text(st.innerHTML)) : '';
+}
+const after = r => r.page.calls.slice(r.hit.at + 1);
+const checks = {
+    noRejection: r => ['no unhandled rejection', !r.rejections.length, r.rejections.map(x => x.text).join('; ')],
+    says: text => r => ['the page says ' + JSON.stringify(text), has(r, text), 'on screen: ' + JSON.stringify(shown(r).slice(-6))],
+    notSays: text => r => ['the page does not say ' + JSON.stringify(text), !has(r, text), 'it does'],
+    noNaN: r => ['no request names /NaN/', !after(r).some(c => /\bNaN\b/.test(c.url)),
+        after(r).filter(c => /\bNaN\b/.test(c.url)).map(c => c.method + ' ' + c.url).join(' · ')],
+    noWriteAfter: r => ['no write follows it', !after(r).some(c => c.method !== 'GET'),
+        after(r).filter(c => c.method !== 'GET').map(c => c.method + ' ' + c.url).join(' · ')],
+    signIn: r => ['the notice offers Sign in', r.page.notices.some(n => /^Sign in → \/login\?next=/.test(n.action)),
+        'notices: ' + JSON.stringify(r.page.notices)],
+    okLive: r => { const ok = okButton(r.page) || r.page.scrim.querySelector('[data-layer-ok]'); return ['the sheet is open and its OK pressable', r.page.sheetOpen() && !!ok && !ok.disabled, sheetLine(r.page)]; },
+};
+const DOOR_BUGS = [
+    {
+        title: 'dead Edge, Save style (processes-desktop.js:2415): flow/save gets no answer',
+        spec: () => T.DRIVE.flowSave, target: { method: 'POST', url: '/api/processes/1/flow/save', k: 0 }, answer: NO_ANSWER,
+        checks: [checks.noRejection, checks.says('No answer from the server')],
+    },
+];
+async function pinDoorBugs() {
+    T.setCurrent('door-bugs.txt');
+    const L = ['# The S2 door bugs on the Processes page (REPORT-v2-stop1-P0 bug table; ruling 3), each on a fresh',
+        '# page with the one answer that shows it. "ok" is what must hold; "BUG" is a bug back.'];
+    for (const b of DOOR_BUGS) {
+        const r = await runOnce(b.spec(), b.target, b.answer);
+        if (!r.hit) throw new Error(b.title + ': ' + b.target.method + ' ' + b.target.url + ' was not sent');
+        L.push('', '## ' + b.title);
+        for (const c of b.checks) {
+            const [holds, ok, detail] = await c(r);
+            L.push(ok ? 'ok   ' + holds : 'BUG  ' + holds + ': ' + detail);
+        }
+        for (const c of r.page.calls.slice(r.from)) T.SEEN.push({ site: c.site, stack: c.stack, golden: 'door-bugs.txt' });
+        running = null;
+    }
+    T.out['door-bugs.txt'] = L.join('\n') + '\n';
+}
+
 // ── the fetch( site table (`node pins.js --sites`) ───────────────────────
 function sitesTable(seen) {
     const src = fs.readFileSync(PAGE, 'utf8').split('\n');
@@ -1046,6 +1117,7 @@ async function run(t) {
     await pinRefusals();
     T.lastPage = await T.openPage();
     await pinSheetStack();
+    await pinDoorBugs();
 }
 
-module.exports = { run, sitesTable };
+module.exports = { run, sitesTable, noticeLine };

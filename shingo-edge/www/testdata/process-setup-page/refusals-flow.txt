@@ -38,12 +38,14 @@
 ### POST /api/processes/1/flow/save  ←  409 {"error"} (writeFlowRefusal)
     then: nothing
     new text: #pd-bar div.h.bad: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/flow/save  ←  409 {"error", stale:true} (a stale fingerprint)
     then: POST /api/processes/1/flow/preview
     new text: none
+    notice: error "the Edge refused it"
     sheet: closed
     state: no message set
     unhandled rejection: none
@@ -52,18 +54,21 @@
     new text: #pd-svg text.needlbl: POS_A1 needs a source
     new text: #pd-bar div.h.bad: 1 to fix
     new text: #pd-bar div.d: POS_A1 needs a source · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    notice: error "the Edge refused it"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/flow/save  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-bar div.h.bad: The save was refused (500)
+    new text: #pd-bar div.h.bad: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/flow/save  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
+    new text: #pd-bar div.h.bad: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
     state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    unhandled rejection: none
