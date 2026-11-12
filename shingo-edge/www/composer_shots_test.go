@@ -1324,7 +1324,7 @@ func TestComposerShots(t *testing.T) {
 	// set IS the intent to use it, and the whole-set switch is the flow-composer
 	// gate in the section above. So a role is one picker box and its chips are
 	// the set (2026-09-16, second pass).
-	desktopDOM("D3 routing chips", d5, `class="pd-nchip"`)
+	desktopDOM("D3 routing chips", d5, `class="picker-chip"`)
 	desktopRefuteDOM("no per-row routing switches", d5, `data-act="rs-toggle"`)
 
 	// ── A PLAIN ROUTING NODE IS ON THE MAP ──────────────────────────────
@@ -2067,11 +2067,11 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
 // undefined renders this sheet perfectly and writes nothing, which is exactly
 // the failure the D5 driver exists for, one screen along.
 //
-// The node picker is driven by its own two parts: type into [data-npkq] and
-// dispatch an input event (the page listens for `input`, not for a value
-// assignment), then click the [data-npk=add] row for the wanted name. If it is
-// not offered the driver says so by name rather than timing out on a click it
-// never made.
+// The node picker is the shared shell (shared/picker.js), driven by its own
+// two parts: type into its search box (.picker-q) and dispatch an input event
+// (the shell listens for `input`, not for a value assignment), then click the
+// row (.picker-row) whose data-value is the wanted name. If it is not offered
+// the driver says so by name rather than timing out on a click it never made.
 //
 // `source` is put in the SOURCES list, so the routing set is non-empty and the
 // gate should come out open. The Go side reads all five rows back.
@@ -2132,26 +2132,25 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
         out.dataset.step = 'pick ' + node;
         const box = sheet.querySelector('#npk-' + key);
         if (!box) throw new Error('no picker #npk-' + key + ' on the sheet');
-        type('#npk-' + key + ' [data-npkq]', node);
+        type('#npk-' + key + ' .picker-q', node);
         const row = await until('the picker offers ' + node, () => {
             threw();
-            const hit = box.querySelector('[data-npk="add"][data-npkname="' + node + '"]');
-            if (hit) return hit;
+            const hit = [...box.querySelectorAll('.picker-row')].find(r => r.dataset.value === node);
             // A name Core does not have is a fixture problem, and saying so
-            // beats eight seconds of silence.
-            const off = box.querySelector('.opts button.off');
-            // .none.loading is the list still being read, which is a reason
-            // to keep polling; .none on its own is Core answering that it has
-            // no such name, which is a finding.
-            const none = box.querySelector('.opts .none:not(.loading)');
+            // beats eight seconds of silence; so is one the field greys.
+            if (hit && hit.classList.contains('is-off')) throw new Error(node + ' is excluded: ' + hit.textContent.trim());
+            if (hit) return hit;
+            // .picker-none.is-loading is the list still being read, which is
+            // a reason to keep polling; .picker-none on its own is Core
+            // answering that it has no such name, which is a finding.
+            const none = box.querySelector('.picker-none:not(.is-loading)');
             if (none) throw new Error(node + ' is not in Core\u2019s list: ' + none.textContent.trim());
-            if (off && off.textContent.indexOf(node) === 0) throw new Error(node + ' is excluded: ' + off.textContent.trim());
             return null;
         });
         row.click();
         await until(node + ' becomes a chip', () => {
             threw();
-            return [...box.querySelectorAll('.chips .pd-nchip')].some(c => c.textContent.indexOf(node) === 0);
+            return !!box.querySelector('.picker-chip [data-drop="' + node + '"]');
         });
     };
     await pick('positions', POSITION);
@@ -2343,12 +2342,12 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
     // exact shape the screen sheet shipped with this morning.
     await until('the pickers fill', () => {
         threw();
-        return sheet.querySelector('#npk-positions .chips .pd-nchip, #npk-positions .chips .pd-dim');
+        return sheet.querySelector('#npk-positions .picker-chips');
     });
     out.dataset.name = (sheet.querySelector('[data-f="name"]') || {}).value || '';
-    out.dataset.positions = String(sheet.querySelectorAll('#npk-positions .chips .pd-nchip').length);
-    out.dataset.sources = String(sheet.querySelectorAll('#npk-rs_source .chips .pd-nchip').length);
-    out.dataset.dests = String(sheet.querySelectorAll('#npk-rs_destination .chips .pd-nchip').length);
+    out.dataset.positions = String(sheet.querySelectorAll('#npk-positions .picker-chip').length);
+    out.dataset.sources = String(sheet.querySelectorAll('#npk-rs_source .picker-chip').length);
+    out.dataset.dests = String(sheet.querySelectorAll('#npk-rs_destination .picker-chip').length);
 
     const desc = sheet.querySelector('[data-f="description"]');
     desc.value = WANT;
@@ -2429,9 +2428,9 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
     // the loaded gun.
     await until('the positions picker fills', () => {
         threw();
-        return sheet.querySelector('#npk-positions .chips .pd-nchip, #npk-positions .chips .pd-dim');
+        return sheet.querySelector('#npk-positions .picker-chips');
     });
-    out.dataset.sheetchips = String(sheet.querySelectorAll('#npk-positions .chips .pd-nchip').length);
+    out.dataset.sheetchips = String(sheet.querySelectorAll('#npk-positions .picker-chip').length);
 
     // Change ONLY the note, exactly as an engineer fixing a typo would.
     const note = sheet.querySelector('[data-f="note"]');

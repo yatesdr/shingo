@@ -197,6 +197,15 @@ function madeElement(tag) {
         focus() {}, blur() {},
         querySelector: sel => findIn(el, sel)[0] || null,
         querySelectorAll: sel => findIn(el, sel),
+        // A selector list, as a browser's closest takes one (the picker asks
+        // '.picker-row, .picker-add'); past the built tree, the page's matcher.
+        closest(sel) {
+            const alts = String(sel).split(',').map(x => x.trim());
+            for (let n = el; n; n = n.parentNode) {
+                if (n._made ? alts.some(x => matchAttrs(n, x)) : matches(n, sel)) return n;
+            }
+            return null;
+        },
     });
     Object.defineProperty(el, 'className', {
         get: () => el.classList.all().join(' '),
@@ -269,6 +278,35 @@ function textNode(s) {
 function openSheetEl(doc) {
     return doc.body.children.filter(c => c.classList && c.classList.contains('layer-scrim') && findIn(c, '[role="dialog"]').length).pop() || null;
 }
+// pk reads and drives a picker the page drew (shared/picker.js) into its
+// host: a row by its value, the note or reason beside it, a pick (a dropdown's
+// list opens when its search box takes focus; a checklist's is open), a
+// chip's ×, a prefix filter, and the filters it offers.
+const pk = {
+    rows: host => findIn(host, '.picker-row'),
+    row: (host, v) => findIn(host, '.picker-row').find(r => r.getAttribute('data-value') === v) || null,
+    open: host => { const q = findIn(host, '.picker-q')[0]; if (q) for (const fn of (q.listeners.focus || [])) fn({ type: 'focus' }); },
+    side: (host, v) => { const r = pk.row(host, v); const t = r && findIn(r, '.picker-note, .picker-why')[0]; return t ? t.textContent : ''; },
+    off: (host, v) => { const r = pk.row(host, v); return !!r && r.classList.contains('is-off'); },
+    on: (host, v) => { const r = pk.row(host, v); return !!r && r.classList.contains('is-on'); },
+    pick(host, v) {
+        pk.open(host);
+        const r = pk.row(host, v);
+        if (!r) throw new Error('the picker draws no row ' + v + ': ' + host.innerHTML.slice(0, 300));
+        r.click();
+    },
+    drop(host, v) {
+        const b = findIn(host, '[data-drop]').find(x => x.getAttribute('data-drop') === v);
+        if (!b) throw new Error('the picker has no chip ' + v);
+        b.click();
+    },
+    filters: host => findIn(host, '[data-query]').map(b => ({ label: b.textContent, on: b.classList.contains('is-on') })),
+    filter: (host, label) => findIn(host, '[data-query]').find(b => b.textContent === label).click(),
+};
+// pickerHost is a host the page draws a picker into, where this harness
+// cannot find one in the markup string the page wrote (extraIds).
+function pickerHost(id) { const e = madeElement('div'); e.setAttribute('id', id); return e; }
+
 // sheetParts is the open sheet, for a pin: its element (the layer's shell on
 // the body, else #pd-scrim, where Advanced and the apply modal draw), whether
 // one is open, its status line, and its OK pressed as an engineer presses it
@@ -300,7 +338,7 @@ function sheetParts(doc, scrim) {
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
 function loadShared(deps) {
     const mods = { 'notice.js': { toast: deps.toast } };
-    for (const file of ['dom.js', 'layer.js', 'http.js']) {
+    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js']) {
         const names = [];
         const binds = [];
         const src = fs.readFileSync(path.join(SHARED_DIR, file), 'utf8')
@@ -312,7 +350,7 @@ function loadShared(deps) {
         mods[file] = vm.runInThisContext('(function (__mods) {' + binds.join(' ') + src + '\nreturn { ' + names.join(', ') + ' };\n})',
             { filename: file })(mods);
     }
-    return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js']);
+    return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js']);
 }
 
 // ── the page, booted for real ────────────────────────────────────────────────
@@ -455,7 +493,11 @@ function loadPage(loadOpts) {
         }),
         showModal: guard(shared.showModal), hideModal: guard(shared.hideModal),
     };
-    Object.assign(global, layer, { send: shared.send });
+    Object.assign(global, layer, {
+        send: shared.send, createPicker: shared.createPicker,
+        nodePicker: shared.nodePicker, nodeSource: shared.nodeSource, nodeWhy: shared.nodeWhy,
+        partPicker: shared.partPicker, partSource: shared.partSource,
+    });
     // The sheets' writes build their bodies through the real body module.
     win.DesktopBodies = require(path.join(SRC_DIR, 'desktop-bodies.js'));
     Object.assign(global, { esc });
@@ -948,8 +990,6 @@ async function mainAsync() {
         const input = makeElement('');
         const box = makeElement('npk-positions');
         box.dataset.npkbox = 'positions';
-        box.querySelector = sel => (sel === '[data-npkq]' ? input
-            : sel === '[data-npkpart="opts"]' ? opts : null);
         let sheetOpen = false;
         const fetched = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
@@ -1001,14 +1041,12 @@ async function mainAsync() {
         if (JSON.stringify(others) !== JSON.stringify(want)) {
             throw new Error('the sheet\'s other reads changed: ' + JSON.stringify(others));
         }
-        for (const fn of (input.listeners.focus || [])) fn({ type: 'focus' });
-        // A row is a box: tickable (data-npkname) or greyed (disabled), its
-        // note or reason in <small>.
+        pk.open(box);
+        // A row is a box: tickable, or greyed (the shell's excluded row), its
+        // note or reason beside it.
         const row = name => {
-            const m = opts.innerHTML.match(new RegExp('<button class="([^"]*)"( disabled| data-npk="add" data-npkkey="positions" data-npkname="' +
-                name + '")><i class="box"></i>' + name + '(?:<small>([^<]*)</small>)?</button>'));
-            if (!m) throw new Error('no picker row for ' + name + ': ' + opts.innerHTML.slice(0, 400));
-            return (m[2] === ' disabled' ? 'greyed: ' : '') + (m[3] || '');
+            if (!pk.row(box, name)) throw new Error('no picker row for ' + name + ': ' + box.innerHTML.slice(0, 400));
+            return (pk.off(box, name) ? 'greyed: ' : '') + pk.side(box, name);
         };
         const got = {};
         for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']) got[n] = row(n);
@@ -1032,8 +1070,6 @@ async function mainAsync() {
         const input = makeElement('');
         const box = makeElement('npk-positions');
         box.dataset.npkbox = 'positions';
-        box.querySelector = sel => (sel === '[data-npkq]' ? input
-            : sel === '[data-npkpart="opts"]' ? opts : null);
         let sheetOpen = false;
         const puts = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
@@ -1078,12 +1114,7 @@ async function mainAsync() {
         if (!at.open) throw new Error('setup: the screen sheet did not open');
         const status = at.status;
         // The engineer takes PLN_02 off the screen with its chip's ×.
-        const drop = makeElement('');
-        drop.dataset.npk = 'drop';
-        drop.dataset.npkkey = 'positions';
-        drop.dataset.npkname = 'PLN_02';
-        at.el.appendChild(drop);
-        bubble(drop, 'click', doc);
+        pk.drop(box, 'PLN_02');
         at.ok();
         for (let i = 0; i < 10; i++) await drain();
         if (puts.length !== 1 || JSON.stringify(puts[0]) !== JSON.stringify({ nodes: ['PLN_01'] })) {
@@ -1142,8 +1173,6 @@ async function mainAsync() {
         const input = makeElement('');
         const box = makeElement('npk-positions');
         box.dataset.npkbox = 'positions';
-        box.querySelector = sel => (sel === '[data-npkq]' ? input
-            : sel === '[data-npkpart="opts"]' ? opts : null);
         let sheetOpen = false;
         const puts = [];
         let rowPuts = 0;
@@ -1193,12 +1222,7 @@ async function mainAsync() {
         for (let i = 0; i < 6; i++) await drain();
         const at = sheet();
         const status = at.status;
-        const drop = makeElement('');
-        drop.dataset.npk = 'drop';
-        drop.dataset.npkkey = 'positions';
-        drop.dataset.npkname = 'PLN_02';
-        at.el.appendChild(drop);
-        bubble(drop, 'click', doc);
+        pk.drop(box, 'PLN_02');
         const after = [];
         for (let s = 0; s < saves; s++) {
             sheet().ok();
@@ -2708,15 +2732,16 @@ async function mainAsync() {
     await pin('taking a routing name out goes through and shows what it orphans', async () => {
         const warning = 'Removed DN_001. Recipes left without their destination (2): "A" and "B".';
         const sent = [];
+        const dest = pickerHost('npk-rs_destination');
         const { root, doc } = loadPage({
-            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings',
+            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'npk-rs_destination': dest },
             fetch: (url, init) => {
                 if (init && init.method === 'DELETE') { sent.push(url); return okJSON({ status: 'ok', warning }); }
                 return url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null;
             },
         });
         await settle();
-        click(root, doc, { npk: 'drop', npkkey: 'rs_destination', npkname: 'DN_001' });
+        pk.drop(dest, 'DN_001');
         await settle();
         if (sent[0] !== '/api/processes/1/routing-nodes/2') throw new Error('the removal sent ' + JSON.stringify(sent));
         if (root.innerHTML.indexOf('<div class="pd-warn">' + warning.replace(/"/g, '&quot;')) < 0) {
@@ -2739,13 +2764,16 @@ async function mainAsync() {
     });
 
     const addProcessSheet = async map => {
-        const { root, doc, sheet } = loadPage({ allowSheet: true, composer: mapComposer(map) });
+        const hosts = {};
+        for (const k of ['positions', 'rs_source', 'rs_staging', 'rs_destination', 'parts']) hosts['npk-' + k] = pickerHost('npk-' + k);
+        const { root, doc, sheet } = loadPage({ allowSheet: true, composer: mapComposer(map), extraIds: hosts });
         if (map) realGeometry();
         await settle();
         click(root, doc, { act: 'add-process' });
         await settle();
         if (!sheet().open) throw new Error('setup: the Add process sheet did not open');
-        return sheet().el.innerHTML;
+        // The pickers are the shell's, drawn into their hosts.
+        return sheet().el.innerHTML + Object.values(hosts).map(h => h.innerHTML).join('');
     };
 
     await pin('the Add process sheet with no plant map has no "Where that is" section', async () => {
@@ -3740,8 +3768,9 @@ async function settingsPositionsPins(h) {
     const page = (hash, o) => {
         o = o || {};
         const writes = [];
+        const host = pickerHost('npk-addpos');
         const ctx = loadPage({
-            allowSheet: true, hash: hash,
+            allowSheet: true, hash: hash, extraIds: { 'npk-addpos': host },
             processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
             stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }],
             stationNodes: { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
@@ -3760,7 +3789,7 @@ async function settingsPositionsPins(h) {
                 return okJSON({ status: 'ok', kept: [] });
             },
         });
-        return Object.assign(ctx, { writes: writes });
+        return Object.assign(ctx, { writes: writes, host: host });
     };
     const rowOf = (html, name) => (html.match(new RegExp('<button[^>]*>(?:<i class="box"></i>)?' + name + '(?:<small>[^<]*</small>)?</button>')) || [''])[0];
 
@@ -3794,37 +3823,36 @@ async function settingsPositionsPins(h) {
         await settle();
         const s = ctx.sheet().el.innerHTML;
         if (!ctx.sheet().open || s.indexOf('<h2>Positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
-        const want = {
-            PLN_001: '<button class="off" disabled><i class="box"></i>PLN_001<small>on Press 4</small></button>',
-            PLN_005: '<button class="on" data-npk="add" data-npkkey="addpos" data-npkname="PLN_005"><i class="box"></i>PLN_005</button>',
-            ULN_002: '<button class="" data-npk="add" data-npkkey="addpos" data-npkname="ULN_002"><i class="box"></i>ULN_002' +
-                '<small>on Unloader · ticking moves it here</small></button>',
-        };
+        // A row is the shell's: greyed (is-off) with its reason beside it, or
+        // tickable, ticked (is-on) or not, with its note.
+        const h = ctx.host;
+        const state = n => (pk.off(h, n) ? 'off' : pk.on(h, n) ? 'on' : '') + ' ' + JSON.stringify(pk.side(h, n));
+        const want = { PLN_001: 'off "on Press 4"', PLN_005: 'on ""', ULN_002: ' "on Unloader · ticking moves it here"' };
         for (const n of Object.keys(want)) {
-            if (rowOf(s, n) !== want[n]) throw new Error(n + ' draws ' + JSON.stringify(rowOf(s, n)) + '\n      want ' + want[n]);
+            if (state(n) !== want[n]) throw new Error(n + ' draws ' + state(n) + '\n      want ' + want[n]);
         }
-        if (!/data-npkname="SMN_001"><i class="box"><\/i>SMN_001<small>loader window · also on Bin Loader<\/small>/.test(s)) {
-            throw new Error('the loader window is not offered with its note: ' + JSON.stringify(rowOf(s, 'SMN_001')));
+        if (pk.off(h, 'SMN_001') || pk.side(h, 'SMN_001') !== 'loader window · also on Bin Loader') {
+            throw new Error('the loader window is not offered with its note: ' + JSON.stringify(pk.side(h, 'SMN_001')));
         }
-        if (!/data-npk="add"[^>]*data-npkname="PLN_005PAL"/.test(s)) throw new Error('PLN_005PAL is not tickable');
-        if (!/data-npkname="PLN_009"><i class="box"><\/i>PLN_009<small>on no screen yet<\/small>/.test(s)) {
-            throw new Error('a position on no screen is not offered to put on one: ' + JSON.stringify(rowOf(s, 'PLN_009')));
+        if (!pk.row(h, 'PLN_005PAL') || pk.off(h, 'PLN_005PAL')) throw new Error('PLN_005PAL is not tickable');
+        if (pk.off(h, 'PLN_009') || pk.side(h, 'PLN_009') !== 'on no screen yet') {
+            throw new Error('a position on no screen is not offered to put on one: ' + JSON.stringify(pk.side(h, 'PLN_009')));
         }
-        if (s.indexOf('Press Unloader') >= 0) throw new Error('a group is offered as a box');
-        const pres = (s.match(/data-npk="prefix" data-npkkey="addpos" data-npkname="(\w+)"/g) || []).map(x => x.replace(/.*"(\w+)"$/, '$1'));
+        if (pk.rows(h).some(r => r.textContent.indexOf('Press Unloader') >= 0)) throw new Error('a group is offered as a box');
+        const pres = pk.filters(h).map(f => f.label);
         if (pres.join(' ') !== 'PLN SMN ULN') throw new Error('prefixes ' + JSON.stringify(pres));
-        if (/data-npk="(all|none)"/.test(s)) throw new Error('the checklist offers a tick-all');
+        if (findIn(h, 'button').some(b => /^(all|none)$/i.test(b.textContent))) throw new Error('the checklist offers a tick-all');
         if (s.indexOf('data-act="pos-screen" data-station="25"') < 0) throw new Error('two screens, and no chooser');
     });
 
     await pin('a prefix filters the checklist to its family and only filters', async () => {
         const ctx = page('#tab=settings;addpos=PLN_');
         await settle();
-        const s = ctx.sheet().el.innerHTML;
-        if (s.indexOf('PLN_005PAL') < 0 || s.indexOf('>SMN_002<') >= 0) throw new Error('PLN_ did not filter to PLN: ' + s.length);
-        if (!/<button class="on" data-npk="prefix" data-npkkey="addpos" data-npkname="PLN">/.test(s)) throw new Error('PLN is not marked as the filter');
-        click(ctx.scrim, ctx.doc, { npk: 'prefix', npkkey: 'addpos', npkname: 'PLN' });
-        click(ctx.scrim, ctx.doc, { npk: 'prefix', npkkey: 'addpos', npkname: 'SMN' });
+        const h = ctx.host;
+        if (!pk.row(h, 'PLN_005PAL') || pk.row(h, 'SMN_002')) throw new Error('PLN_ did not filter to PLN: ' + pk.rows(h).length + ' rows');
+        if (!pk.filters(h).some(f => f.label === 'PLN' && f.on)) throw new Error('PLN is not marked as the filter');
+        pk.filter(h, 'PLN');
+        pk.filter(h, 'SMN');
         wireSheet(ctx.scrim, '');
         ctx.sheet().ok();
         await settle();
@@ -3834,8 +3862,8 @@ async function settingsPositionsPins(h) {
     await pin('Add sends the screen\'s list as the server answers it, plus the ticked nodes', async () => {
         const ctx = page('#tab=settings;addpos=');
         await settle();
-        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_005PAL' });
-        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_006PAL' });
+        pk.pick(ctx.host, 'PLN_005PAL');
+        pk.pick(ctx.host, 'PLN_006PAL');
         ctx.sheet().ok();
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
@@ -3851,7 +3879,7 @@ async function settingsPositionsPins(h) {
         const ctx = page('#tab=settings;addpos=');
         await settle();
         click(ctx.scrim, ctx.doc, { act: 'pos-screen', station: '25' });
-        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'SMN_002' });
+        pk.pick(ctx.host, 'SMN_002');
         ctx.sheet().ok();
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');

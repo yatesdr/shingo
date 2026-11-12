@@ -2,9 +2,8 @@
 // filters, the selection as chips, and an "Add and use" slot. It knows
 // nothing about nodes or parts. An adapter hands it rows and decides what each
 // row may be; the shell draws them, says why an excluded one is excluded, and
-// moves the selection. Extracted from the Processes page's node picker
-// (processes-desktop.js pickerInit / pickerBox / pickerOptions /
-// onPickerClick), which it is meant to replace.
+// moves the selection. Extracted from the Processes page's own node picker,
+// which it replaced (S3): every node and part picker in the apps is this one.
 //
 // A ROW is { value, label, section?, note?, reason?, members?, values?,
 // search? }:

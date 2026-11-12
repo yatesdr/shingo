@@ -343,9 +343,26 @@ function actLines(title, page, from, note) {
     lines.push('-- sheet ' + (page.sheetOpen() ? 'open' : 'closed') + (page.status() ? ', status ' + JSON.stringify(page.status()) : ''));
     return lines;
 }
-// A picker in a sheet answers on the scrim; one on a page answers on #pd-root.
+// A picker is the shared shell (shared/picker.js, under the node and part
+// adapters) drawn into #npk-<key>: a name is picked by clicking its row, as an
+// engineer does (a dropdown's list opens when its search box takes focus; a
+// checklist's is open), and dropped by its chip's ×. host (the sheet or
+// #pd-root) is where the picker sits; the row's click bubbles from the row as
+// a browser's would.
 function npk(page, host, key, name, how) {
-    page.click(host, { npk: how || 'add', npkkey: key, npkname: name });
+    const box = page.byId('npk-' + key);
+    if (!box) throw new Error('no picker ' + key + ' is drawn');
+    if (how === 'drop') {
+        const x = box.querySelectorAll('[data-drop]').find(b => b.getAttribute('data-drop') === name);
+        if (!x) throw new Error(key + ' has no chip ' + name);
+        x.click();
+        return;
+    }
+    const q = box.querySelector('.picker-q');
+    if (q) page.fire(q, 'focus');
+    const row = box.querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === name);
+    if (!row) throw new Error(key + ' draws no row ' + name);
+    row.click();
 }
 async function sheetOK(page) {
     page.click('scrim', { act: 'sheet-ok' });

@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// No page outside the Processes page builds its own node or part list (brief
-// v2 S3's gate). A page reads its nodes and parts once and draws every field
-// on them through the shared adapters, shared/node-picker.js and
-// shared/part-picker.js, so a rule written for one field cannot drift into
-// another page's copy: the Orders page's JS builder and the Test orders page's
-// Go one sorted two ways, and only one of them looked past one level.
+// No page builds its own node or part list (brief v2 S3's gate). A page reads
+// its nodes and parts once and draws every field on them through the shared
+// adapters, shared/node-picker.js and shared/part-picker.js, so a rule written
+// for one field cannot drift into another page's copy: the Orders page's JS
+// builder and the Test orders page's Go one sorted two ways, and only one of
+// them looked past one level.
 //
 // Two rules, over the sources the browser reads (sharedCensusSources):
 //
@@ -27,10 +27,9 @@ import (
 // fails, so the change that moves a page deletes its entry.
 
 // pageListReaders are the page modules that read a node or part list and
-// import no adapter, by repo path.
-var pageListReaders = map[string]string{
-	"shingo-edge/www/static/js/pages/processes-desktop.js": "the Processes page: its pickers move onto the adapters in S3 (s3-processes)",
-}
+// import no adapter, by repo path. None: the Processes page, the last, came
+// onto the adapters in S3 (s3-processes).
+var pageListReaders = map[string]string{}
 
 // templateRangeSelects are the <select>s a template fills from a {{range}},
 // as "path id".

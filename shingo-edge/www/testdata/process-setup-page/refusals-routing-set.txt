@@ -7,30 +7,18 @@
 ### POST /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: #npk-rs_source span.pd-nchip: GRP_A
-    new text: #npk-rs_source button: ×
-    new text: #npk-rs_source span.pd-nchip: SRC_1
-    new text: #npk-rs_source button: ×
     sheet: closed
     state: routingError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: Server error (500)
-    new text: #npk-rs_source span.pd-nchip: GRP_A
-    new text: #npk-rs_source button: ×
-    new text: #npk-rs_source span.pd-nchip: SRC_1
-    new text: #npk-rs_source button: ×
     sheet: closed
     state: routingError="Server error (500)"
     unhandled rejection: none
 ### POST /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: No answer from the server
-    new text: #npk-rs_source span.pd-nchip: GRP_A
-    new text: #npk-rs_source button: ×
-    new text: #npk-rs_source span.pd-nchip: SRC_1
-    new text: #npk-rs_source button: ×
     sheet: closed
     state: routingError="No answer from the server"
     unhandled rejection: none
@@ -49,30 +37,18 @@
 ### PATCH /api/processes/1/routing-nodes/109  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: #npk-rs_destination span.pd-nchip: DST_1
-    new text: #npk-rs_destination button: ×
-    new text: #npk-rs_destination span.pd-nchip: DST_2
-    new text: #npk-rs_destination button: ×
     sheet: closed
     state: routingError="the Edge refused it"
     unhandled rejection: none
 ### PATCH /api/processes/1/routing-nodes/109  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: Server error (500)
-    new text: #npk-rs_destination span.pd-nchip: DST_1
-    new text: #npk-rs_destination button: ×
-    new text: #npk-rs_destination span.pd-nchip: DST_2
-    new text: #npk-rs_destination button: ×
     sheet: closed
     state: routingError="Server error (500)"
     unhandled rejection: none
 ### PATCH /api/processes/1/routing-nodes/109  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: No answer from the server
-    new text: #npk-rs_destination span.pd-nchip: DST_1
-    new text: #npk-rs_destination button: ×
-    new text: #npk-rs_destination span.pd-nchip: DST_2
-    new text: #npk-rs_destination button: ×
     sheet: closed
     state: routingError="No answer from the server"
     unhandled rejection: none
@@ -91,36 +67,18 @@
 ### DELETE /api/processes/1/routing-nodes/105  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: #npk-rs_staging span.pd-nchip: STG_1
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_2
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_3
-    new text: #npk-rs_staging button: ×
     sheet: closed
     state: routingError="the Edge refused it"
     unhandled rejection: none
 ### DELETE /api/processes/1/routing-nodes/105  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: Server error (500)
-    new text: #npk-rs_staging span.pd-nchip: STG_1
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_2
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_3
-    new text: #npk-rs_staging button: ×
     sheet: closed
     state: routingError="Server error (500)"
     unhandled rejection: none
 ### DELETE /api/processes/1/routing-nodes/105  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: No answer from the server
-    new text: #npk-rs_staging span.pd-nchip: STG_1
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_2
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_3
-    new text: #npk-rs_staging button: ×
     sheet: closed
     state: routingError="No answer from the server"
     unhandled rejection: none
@@ -139,36 +97,18 @@
 ### DELETE /api/processes/1/routing-nodes/103  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: #npk-rs_staging span.pd-nchip: STG_1
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_2
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_3
-    new text: #npk-rs_staging button: ×
     sheet: closed
     state: routingError="the Edge refused it"
     unhandled rejection: none
 ### DELETE /api/processes/1/routing-nodes/103  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: Server error (500)
-    new text: #npk-rs_staging span.pd-nchip: STG_1
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_2
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_3
-    new text: #npk-rs_staging button: ×
     sheet: closed
     state: routingError="Server error (500)"
     unhandled rejection: none
 ### DELETE /api/processes/1/routing-nodes/103  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes/1/routing-nodes
     new text: #pd-root div.pd-refusal: No answer from the server
-    new text: #npk-rs_staging span.pd-nchip: STG_1
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_2
-    new text: #npk-rs_staging button: ×
-    new text: #npk-rs_staging span.pd-nchip: STG_3
-    new text: #npk-rs_staging button: ×
     sheet: closed
     state: routingError="No answer from the server"
     unhandled rejection: none

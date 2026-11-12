@@ -43,6 +43,11 @@ import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal, con
 // carry no validator (writeJSON sets none), so the browser never held one.
 import { send } from '/static/shared/http.js';
 import { toast } from '/static/shared/notice.js';
+// THE PICKERS ARE THE SHARED ADAPTERS' (style guide §34): every node and part
+// picker on this page draws from the page's one node list and one part list,
+// each field with its own rule (pickerInit, drawPicker).
+import { nodePicker, nodeSource } from '/static/shared/node-picker.js';
+import { partPicker, partSource } from '/static/shared/part-picker.js';
 const NO_NOTICE = { notice: false };
 
 const M = () => window.ComposerModel;
@@ -100,8 +105,7 @@ const S = {
     mapZoom: 1,
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
-    coreNodes: null,     // Core's node list, [{name, node_type}] — the node picker's source
-    coreNodesReq: null,  // the in-flight read of it, so four pickers share one request
+    coreNodes: null,     // Core's node list as the Edge sent it (NODES' rows), null until read
     pickers: {},         // every open node picker, by key — see pickerInit
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
     addPos: null,        // the Add positions sheet's screen: {station}
@@ -667,7 +671,7 @@ async function openProcess(id) {
     // The routing pickers go with the routing set: they are write-through onto
     // THIS process's rows, and one left behind would post another press's name
     // into this one.
-    S.pickers = {};
+    for (const k of Object.keys(S.pickers)) dropPicker(k);
     // The part set is this process's too, and the popover writes it through.
     S.partSet = null;
     S.partPop = null;
@@ -4141,9 +4145,8 @@ async function setRoutingNode(role, name, on) {
     drawSettings();
     // Back into the field the name was typed into: the engineer adding one
     // name is usually adding three.
-    const box = $('npk-' + routingPickerKey(role));
-    const input = box && box.querySelector('[data-npkq]');
-    if (input) input.focus();
+    const picked = S.pickers[routingPickerKey(role)];
+    if (picked && picked.ui) picked.ui.focus();
 }
 
 // keepRefusal is a routing write's answer, after its re-read. The re-read
@@ -4211,7 +4214,8 @@ async function loadRouting() {
 function flashRoutingRow(name) {
     // The chip, because the chip is the set now — the rows this used to find
     // went with the per-row switches.
-    const chip = root().querySelector('[data-npkchip="' + CSS.escape(name) + '"]');
+    const drop = root().querySelector('.picker-chip [data-drop="' + CSS.escape(name) + '"]');
+    const chip = drop && drop.closest('.picker-chip');
     if (!chip) return;
     chip.scrollIntoView({ block: 'nearest' });
     chip.classList.add('flash');
@@ -4721,10 +4725,7 @@ function openAdvPicker(btn) {
 }
 
 function onAdvClick(e) {
-    // A NODE PICKER IN A SHEET ANSWERS HERE, for the reason the apply modal's
-    // controls do: the scrim is outside #pd-root and onClick never sees it.
-    const npk = e.target.closest && e.target.closest('[data-npk]');
-    if (npk) { e.stopPropagation(); onPickerClick(npk); return; }
+    // A node picker in a sheet answers its own clicks (shared/picker.js).
     // A POPOVER OPENED FROM A SHEET CLOSES ON THE NEXT CLICK OUTSIDE IT, which
     // is what #pd-pop's own document listener does for the page. The option
     // rows are inside .pd-pop and so are not "outside" — they run their own
@@ -4755,7 +4756,7 @@ function onAdvClick(e) {
         if (p) p.sel = (S.addPos.lists[S.addPos.station] || []).slice();
         const seg = $('pd-posscreen');
         if (seg) seg.innerHTML = addPositionsScreens();
-        redrawPicker(ADD_POSITIONS_PICKER);
+        redrawPicker(ADD_POSITIONS_PICKER, true);
         markAddPositions();
         return;
     }
@@ -6094,39 +6095,30 @@ function sheetEl() {
 // the map beside it is a read-back and not an input.
 //
 // ONE COMPONENT, EVERY HOST: the Add-process sheet's four lists, the operator
-// screen's positions, and Settings' three role lists. A picker in a sheet and
-// a picker on a page are the same object — only the handler that reaches its
-// clicks differs, because #pd-scrim is outside #pd-root.
+// screen's positions, and Settings' three role lists. Each is the shared node
+// adapter (shared/node-picker.js) over the page's one node list, with the
+// field's own rule; the part set is the part adapter over the one part list.
+// The shell answers its own clicks, in a sheet and on the page alike.
 //
 // EXCLUDED NAMES ARE SHOWN, DIMMED, WITH THE REASON. Hiding them makes the
 // engineer think the node does not exist, and the reason — "already a position
 // of this press" — is the sentence they actually need.
-//
-// No native <select>, for the reason the rest of this page has none: the
-// browser draws its own chrome over ours.
 
-// The node list, once per page load, held as the PROMISE rather than as the
-// rows alone — four pickers opening in one sheet share one request instead of
-// racing four.
+// THE PAGE'S ONE NODE LIST AND ONE PART LIST, each read once a page load and
+// asked again after a failure (a failed read is not an empty plant, and is not
+// kept as one: the pickers say it and re-ask on their next open). S.coreNodes
+// and S.payloadCatalog are the rows as the Edge sent them, for the rules and
+// the page's other readers; they stay null until a read lands.
+const NODES = nodeSource(() => send('GET', '/api/core-nodes'));
+const PARTS = partSource(() => send('GET', '/api/payload-catalog'));
+NODES.watch(() => { const r = NODES.rows(); S.coreNodes = r ? r.map(n => n.raw) : null; });
+PARTS.watch(() => { const r = PARTS.rows(); S.payloadCatalog = r ? r.map(c => c.raw) : null; });
+
+// loadCoreNodes resolves once the node list is read (or its read failed: it
+// never rejects, and a failure leaves S.coreNodes null). Four pickers opening
+// in one sheet share the one request.
 function loadCoreNodes() {
-    if (!S.coreNodesReq) {
-        S.coreNodesReq = send('GET', '/api/core-nodes')
-            .then(res => {
-                if (!res.ok) throw new Error('core nodes: ' + res.error);
-                return res.body;
-            })
-            .then(rows => { S.coreNodes = Array.isArray(rows) ? rows : []; })
-            // A FAILED READ IS NOT AN EMPTY PLANT, and it must not be cached as
-            // one. This swallowed the failure into `S.coreNodes = []` and kept
-            // the resolved promise forever, so after one transient error every
-            // picker for the rest of the session said "No node Core knows
-            // about is called that. The list is the fleet's" — blaming the
-            // fleet for a fetch. Dropping the promise lets the next picker ask
-            // again; leaving S.coreNodes null keeps it on "reading" rather
-            // than on a false answer.
-            .catch(() => { S.coreNodesReq = null; });
-    }
-    return S.coreNodesReq;
+    return NODES.load();
 }
 
 // Core answers from a map, so the order it sends is that map's iteration order.
@@ -6144,56 +6136,58 @@ function coreNodeList() {
         String(a.name || '').localeCompare(String(b.name || '')));
 }
 
-// pickerInit declares one picker before it is drawn.
+// pickerInit declares one picker before it is drawn: its rules, which the
+// shared adapter draws and runs (drawPicker).
 //
 //   selected  the names it opens with
-//   exclude   name -> reason, or '' — a name that may not be picked, and why
+//   exclude   name -> reason, or '' — a name that may not be picked, and why:
+//             the field's rule, drawn greyed with the reason, never reached by
+//             click or key
 //   annotate  name -> note, or '' — a name that MAY be picked and comes with a
-//             consequence. Drawn the same way as a reason and live, because
-//             the difference between "you cannot" and "you can, and here is
-//             what happens" is the whole of it
-//   onPick    given, the picker WRITES THROUGH: a click calls this instead of
-//             adding to the local list, and the caller re-reads the selection
-//             from wherever it really lives. That is Settings' three routing
-//             lists, whose truth is the server. Without it the picker
-//             accumulates, which is every sheet.
-//   onDrop    the same for a chip's ×. A write-through picker needs both or
-//             its two halves disagree about where the selection lives.
+//             consequence. Drawn beside it, because the difference between
+//             "you cannot" and "you can, and here is what happens" is the
+//             whole of it
+//   onPick    given, the picker WRITES THROUGH (picker.js onPick): a click
+//             calls this instead of moving the selection, the row shows
+//             pending and the chips stay where they are until it answers; then
+//             they are the selection the page re-read from wherever it really
+//             lives. That is Settings' three routing lists and the part set,
+//             whose truth is the server. Without it the picker accumulates,
+//             which is every sheet.
+//   onDrop    the same for a chip's ×, or a picked row clicked again. A
+//             write-through picker needs both or its two halves disagree about
+//             where the selection lives.
 //   onChange  after the selection moved, for a picker whose choice changes
 //             what another picker may offer.
-//   source    'core' (default) or 'payloads' — which universe the option list
-//             is drawn from. A part is not a place, and the part set's picker
-//             offers the payload catalog rather than Core's node list
-//   expandGroups  a group picked is its nodes (groupMembers). For the positions
-//             pickers only: a group has no slot, so as a position it renders
-//             nothing, while in a routing list a group is a real source or
-//             destination and must stay itself
+//   source    'core' (default) or 'payloads' — which list the rows are drawn
+//             from. A part is not a place, and the part set's picker offers
+//             the payload catalog rather than Core's node list
 //   checklist the list is always open, one box per node, with the name
-//             prefixes (PLN, SMN…) as filters over it — see checklistOptions
+//             prefixes (PLN, SMN…) as filters over it — see checklistFilters
 function pickerInit(key, opts) {
     const o = opts || {};
+    dropPicker(key);
     S.pickers[key] = {
         sel: (o.selected || []).slice(),
         q: '',
-        open: !!o.checklist,
         source: o.source || 'core',
         exclude: o.exclude || (() => ''),
         annotate: o.annotate || (() => ''),
         onPick: o.onPick || null,
         onDrop: o.onDrop || null,
         onChange: o.onChange || null,
-        expandGroups: !!o.expandGroups,
         checklist: !!o.checklist,
+        filters: 0, // the prefixes its checklist was drawn with
+        ui: null,   // the adapter's picker drawn for it, while its host is in the page
     };
 }
 
-// groupMembers is the plain nodes standing in a group, from Core's node list,
-// or [] for anything that is not a group with members. The server applies the
-// same rule at save (StationService.expandGroups), so a list that reaches it
-// with a group in it still lands as the group's nodes.
-function groupMembers(name) {
-    const n = (S.coreNodes || []).find(c => c.name === name);
-    return (n && Array.isArray(n.members)) ? n.members : [];
+// dropPicker forgets a picker, its drawn shell first: a list left open on the
+// layer, and the shell's watch on the node list, go with it.
+function dropPicker(key) {
+    const p = S.pickers[key];
+    if (p && p.ui) p.ui.destroy();
+    delete S.pickers[key];
 }
 
 function pickerValue(key) {
@@ -6201,20 +6195,12 @@ function pickerValue(key) {
     return p ? p.sel.slice() : [];
 }
 
-// pickerBox is the component's markup. THE INPUT IS NOT REDRAWN — the chips
-// and the option list are their own elements, so a keystroke replaces neither
-// the field under the caret nor the caret in it. Same reason markSettingsBar
-// exists.
+// pickerBox is where a picker is drawn: an empty host the adapter fills when
+// the markup it is in lands (bindPickers). THE SEARCH BOX IS THE SHELL'S, and
+// it is never redrawn under the caret (picker.js).
 function pickerBox(key) {
     const p = S.pickers[key];
-    const check = !!(p && p.checklist);
-    return '<div class="pd-npk' + (check ? ' check' : '') + '" data-npkbox="' + key + '" id="npk-' + key + '">' +
-        '<div class="chips" data-npkpart="chips">' + pickerChips(key) + '</div>' +
-        '<input class="pd-npkq" type="text" autocomplete="off" data-scratch data-npkq="' + key +
-        '" placeholder="' + (p && p.source === 'payloads' ? 'find a part by name'
-            : check ? 'filter by name, or pick a prefix below' : 'find a node by name') + '">' +
-        (check ? '<div class="pre" data-npkpart="pre">' + checklistPrefixes(key) + '</div>' : '') +
-        '<div class="opts" data-npkpart="opts">' + pickerOptions(key) + '</div></div>';
+    return '<div class="pd-npk' + (p && p.checklist ? ' check' : '') + '" data-npkbox="' + key + '" id="npk-' + key + '"></div>';
 }
 
 // The same component inside a sheet's field grid, so a picker sits under a
@@ -6225,66 +6211,13 @@ function pickerField(key, label, sub) {
         '<div class="v">' + pickerBox(key) + '</div></div>';
 }
 
-function pickerChips(key) {
-    const p = S.pickers[key];
-    // THE CHIPS ARE THE SELECTION, including in write-through mode. They used
-    // to be suppressed there because a list of rows sat above the picker and
-    // WAS the selection; those rows and their per-row switches are gone (owner,
-    // 2026-09-16 second pass), so the chips are the only thing left saying what
-    // is in the set — which is what they should have been.
-    if (!p) return '';
-    if (!p.sel.length) return '<span class="pd-dim">nothing picked yet</span>';
-    return p.sel.map(n => '<span class="pd-nchip" data-npkchip="' + esc(n) + '">' + esc(n) +
-        '<button data-npk="drop" data-npkkey="' + key + '" data-npkname="' + esc(n) +
-        '" aria-label="remove ' + esc(n) + '">&times;</button></span>').join('');
-}
-
 // THE PART SET'S OPTIONS COME FROM THE PAYLOAD CATALOG, not from Core's node
-// list. Same component, same chips, same search field — a different universe,
+// list. Same shell, same chips, same search field — a different universe,
 // because a part is not a place. The catalog is Core's too and shingo mirrors
-// it the same way, so the "cannot add to it" sentence is as true here.
+// it the same way.
 function payloadCatalogList() {
     return (S.payloadCatalog || []).slice().sort((a, b) =>
         String(a.code || a.name || '').localeCompare(String(b.code || b.name || '')));
-}
-
-function pickerOptions(key) {
-    const p = S.pickers[key];
-    if (!p || !p.open) return '';
-    if (p.source === 'payloads') return payloadPickerOptions(key, p);
-    // NOT YET READ IS NOT THE SAME ANSWER AS NO SUCH NODE, and they are not
-    // the same element: `.loading` is what says so to anything reading this
-    // list rather than looking at it — which is how the shots driver knows to
-    // wait rather than to report the fixture missing a name it does have.
-    if (!S.coreNodes) return '<div class="none loading">Reading Core’s node list…</div>';
-    if (p.checklist) return checklistOptions(key, p);
-    const needle = p.q.trim().toLowerCase();
-    const hits = coreNodeList().filter(n => !needle || String(n.name).toLowerCase().indexOf(needle) >= 0);
-    if (!hits.length) {
-        return '<div class="none">No node Core knows about is called that. The list is the ' +
-            'fleet’s — shingo mirrors it and cannot add to it.</div>';
-    }
-    let out = '', group = null;
-    for (const n of hits) {
-        const type = n.node_type || 'other';
-        if (type !== group) { group = type; out += '<div class="pd-lbl">' + esc(type) + '</div>'; }
-        const why = p.exclude(n.name);
-        if (why) {
-            out += '<button class="off" disabled>' + esc(n.name) + '<small>' + esc(why) + '</small></button>';
-            continue;
-        }
-        const members = p.expandGroups ? groupMembers(n.name) : [];
-        const on = members.length
-            ? members.every(m => p.sel.indexOf(m) >= 0)
-            : p.sel.indexOf(n.name) >= 0;
-        const note = members.length
-            ? 'adds its ' + members.length + ' node' + (members.length === 1 ? '' : 's') + ': ' + members.join(', ')
-            : p.annotate(n.name);
-        out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
-            '" data-npkname="' + esc(n.name) + '">' + esc(n.name) +
-            (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
-    }
-    return out;
 }
 
 // ── the checklist: the same picker, one box per node ─────────────────────────
@@ -6297,9 +6230,10 @@ function pickerOptions(key) {
 // members, and a box that ticks a dozen nodes at once is not one the engineer
 // looked at. Nor is there a tick-all: each position added is one chosen.
 
-// checklistNodes is the checklist's universe: Core's plain nodes, no groups.
-function checklistNodes() {
-    return coreNodeList().filter(n => !(Array.isArray(n.members) && n.members.length));
+// isGroupRow is a row of Core's list that stands for other nodes: a group with
+// members. It is outside the checklist's universe (the adapter's only()).
+function isGroupRow(raw) {
+    return !!(raw && Array.isArray(raw.members) && raw.members.length);
 }
 
 // nodePrefix is the family a node's name opens with — PLN of PLN_006BCD — or
@@ -6309,194 +6243,99 @@ function nodePrefix(name) {
     return m ? m[1].toUpperCase() : '';
 }
 
-// checklistPrefixes draws one filter per family in the universe. A prefix
-// only FILTERS: it types `PLN_` into the field, and a second press clears it.
-function checklistPrefixes(key) {
-    const p = S.pickers[key];
-    if (!p || !S.coreNodes) return '';
+// checklistFilters is one filter per family in the checklist's universe. A
+// prefix only FILTERS: it puts `PLN_` in the search box, and a second press
+// clears it.
+function checklistFilters() {
     const seen = [];
-    for (const n of checklistNodes()) {
+    for (const n of S.coreNodes || []) {
+        if (isGroupRow(n)) continue;
         const pre = nodePrefix(n.name);
         if (pre && seen.indexOf(pre) < 0) seen.push(pre);
     }
-    const q = p.q.trim().toUpperCase();
-    return seen.sort().map(pre => '<button class="' + (q === pre + '_' ? 'on' : '') + '" data-npk="prefix" ' +
-        'data-npkkey="' + key + '" data-npkname="' + esc(pre) + '">' + esc(pre) + '</button>').join('');
-}
-
-// checklistOptions is the rows: a box, the name, and the reason a greyed one
-// cannot be ticked or the note a tickable one carries.
-function checklistOptions(key, p) {
-    const needle = p.q.trim().toLowerCase();
-    const hits = checklistNodes().filter(n => !needle || String(n.name).toLowerCase().indexOf(needle) >= 0);
-    if (!hits.length) {
-        return '<div class="none">No node Core knows about is called that. The list is the ' +
-            'fleet’s — shingo mirrors it and cannot add to it.</div>';
-    }
-    let out = '';
-    for (const n of hits) {
-        const why = p.exclude(n.name);
-        if (why) {
-            out += '<button class="off" disabled><i class="box"></i>' + esc(n.name) +
-                '<small>' + esc(why) + '</small></button>';
-            continue;
-        }
-        const note = p.annotate(n.name);
-        out += '<button class="' + (p.sel.indexOf(n.name) >= 0 ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
-            '" data-npkname="' + esc(n.name) + '"><i class="box"></i>' + esc(n.name) +
-            (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
-    }
-    return out;
-}
-
-// The same three states as the node list above: not read yet, no match, and
-// the rows. A part ALREADY CLAIMED by one of this process's live flows is
-// annotated rather than excluded — it is in the palette either way (the union
-// is the server's, store/processes.ProcessPalette), and ticking it here is the
-// engineer saying the part set names it too, which is not wrong and not a
-// no-op the screen should hide.
-function payloadPickerOptions(key, p) {
-    if (!S.payloadCatalog) return '<div class="none loading">Reading the payload catalog…</div>';
-    const needle = p.q.trim().toLowerCase();
-    const hits = payloadCatalogList().filter(c => {
-        const code = String(c.code || c.name || '');
-        return !needle || code.toLowerCase().indexOf(needle) >= 0 ||
-            String(c.name || '').toLowerCase().indexOf(needle) >= 0;
-    });
-    if (!hits.length) {
-        return '<div class="none">No payload in the catalog is called that. The catalog is ' +
-            'Core’s — shingo mirrors it and cannot add to it.</div>';
-    }
-    let out = '';
-    for (const c of hits) {
-        const code = String(c.code || c.name || '');
-        if (!code) continue;
-        const on = p.sel.indexOf(code) >= 0;
-        const note = p.annotate(code);
-        out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
-            '" data-npkname="' + esc(code) + '">' + esc(code) +
-            (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
-    }
-    return out;
+    return seen.sort().map(pre => ({ label: pre, query: pre + '_' }));
 }
 
 // loadPayloadCatalog reads Core's mirrored catalog once per page, the way
-// loadCoreNodes reads the node list. A failed read is not an empty catalog and
-// is not cached as one — same reasoning, same shape.
+// loadCoreNodes reads the node list, and never rejects.
 function loadPayloadCatalog() {
-    if (!S.payloadCatalogReq) {
-        S.payloadCatalogReq = send('GET', '/api/payload-catalog')
-            .then(r => (r.ok ? r.body : Promise.reject(new Error('payload catalog: ' + r.error))))
-            .then(rows => { S.payloadCatalog = Array.isArray(rows) ? rows : []; })
-            .catch(() => { S.payloadCatalogReq = null; });
-    }
-    return S.payloadCatalogReq;
+    return PARTS.load();
 }
 
-function redrawPicker(key) {
-    const box = $('npk-' + key);
-    if (!box) return;
-    const chips = box.querySelector('[data-npkpart="chips"]');
-    const opts = box.querySelector('[data-npkpart="opts"]');
-    const pre = box.querySelector('[data-npkpart="pre"]');
-    if (chips) chips.innerHTML = pickerChips(key);
-    if (opts) opts.innerHTML = pickerOptions(key);
-    if (pre) pre.innerHTML = checklistPrefixes(key);
-}
-
-// Every picker now in the document, bound and filled. The node list is read
-// once here rather than once per picker, and a picker drawn before it lands
-// says so and fills itself when it does.
-function bindPickers() {
-    for (const box of document.querySelectorAll('.pd-npk')) {
-        const key = box.dataset.npkbox;
-        const input = box.querySelector('[data-npkq]');
-        if (!key || !input || !S.pickers[key]) continue;
-        input.value = S.pickers[key].q;
-        input.addEventListener('input', () => {
-            S.pickers[key].q = input.value;
-            openOnlyPicker(key);
-        });
-        input.addEventListener('focus', () => openOnlyPicker(key));
-    }
-    // BOTH UNIVERSES, EACH READ ONCE. A sheet can carry pickers of both kinds
-    // — Add process carries four node pickers and one payload picker — and
-    // each read redraws every picker, so whichever arrives second fills the
-    // ones the first left saying "reading".
-    const fill = () => {
-        for (const box of document.querySelectorAll('.pd-npk')) redrawPicker(box.dataset.npkbox);
-    };
-    loadCoreNodes().then(fill);
-    if (Object.keys(S.pickers).some(k => S.pickers[k].source === 'payloads')) {
-        loadPayloadCatalog().then(fill);
-    }
-}
-
-// ONE LIST OPEN AT A TIME. The Add-process sheet carries four pickers over the
-// whole plant, and four open lists is fifteen hundred buttons in one modal
-// while the engineer is typing into one of them.
-function openOnlyPicker(key) {
-    for (const k of Object.keys(S.pickers)) {
-        // A checklist is not a dropdown: it stays open beside the one typed in.
-        if (k === key || !S.pickers[k].open || S.pickers[k].checklist) continue;
-        S.pickers[k].open = false;
-        redrawPicker(k);
-    }
-    S.pickers[key].open = true;
-    redrawPicker(key);
-}
-
-// The picker's clicks, from either handler: one drawn in a sheet is reached by
-// onAdvClick and one drawn on a page by onClick, and this is what both call.
-function onPickerClick(el) {
-    const key = el.dataset.npkkey, name = el.dataset.npkname;
+// drawPicker draws a declared picker into its host, once per host: the node
+// adapter over the page's node list with the field's own rule and notes, or
+// the part adapter over its part list. ONE LIST OPEN AT A TIME is the shell's
+// (a dropdown list is a layer popover); a checklist keeps its list up. A
+// write-through picker's answer is the selection as the page re-read it: a
+// refusal leaves it where it was, and the page says why where it says every
+// refusal (the Settings refusal line).
+function drawPicker(key) {
     const p = S.pickers[key];
-    if (!p) return;
-    if (el.dataset.npk === 'prefix') {
-        // A filter, never a selection: the family typed into the field, or
-        // cleared by a second press. The field is not redrawn (pickerBox), so
-        // its value is set here to say what the list is filtered by.
-        p.q = p.q.trim().toUpperCase() === name + '_' ? '' : name + '_';
-        const input = $('npk-' + key) && $('npk-' + key).querySelector('[data-npkq]');
-        if (input) input.value = p.q;
-        redrawPicker(key);
-        return;
+    const host = $('npk-' + key);
+    if (!p || !host) return;
+    if (p.ui && p.ui.el.parentNode === host) return;
+    if (p.ui) p.ui.destroy();
+    const parts = p.source === 'payloads';
+    const shell = {
+        multi: true,
+        open: p.checklist,
+        selected: p.sel,
+        placeholder: parts ? 'find a part by name' : p.checklist ? 'filter by name, or pick a prefix below' : 'find a node by name',
+        filters: p.checklist ? checklistFilters() : null,
+        onChange: v => { p.sel = v.slice(); if (p.onChange) p.onChange(); },
+        onPick: p.onPick ? (next, row) => {
+            const had = p.sel.indexOf(row.value) >= 0;
+            const write = had ? (p.onDrop ? p.onDrop(row.value) : null) : p.onPick(row.value);
+            return Promise.resolve(write).then(() => (S.pickers[key] || p).sel.slice());
+        } : undefined,
+    };
+    p.ui = parts
+        ? partPicker(host, PARTS, { note: c => p.annotate(c.code) }, shell)
+        : nodePicker(host, NODES, {
+            rule: n => p.exclude(n.name),
+            note: n => p.annotate(n.name),
+            only: p.checklist ? n => !isGroupRow(n.raw) : undefined,
+        }, shell);
+    p.filters = shell.filters ? shell.filters.length : 0;
+    // The query it had (a prefix the page opened it on) stays its query: a
+    // prefix is pressed as its filter, so the filter reads on; anything else
+    // is typed.
+    if (p.q) {
+        const f = (shell.filters || []).find(x => x.query === p.q);
+        const b = f && p.ui.el.querySelector('[data-query="' + f.query + '"]');
+        if (b) b.click();
+        else { p.ui.input.value = p.q; p.ui.input.dispatchEvent(new Event('input')); }
     }
-    if (el.dataset.npk === 'drop') {
-        // A write-through picker's × writes through as well. Splicing the
-        // local list instead would take the chip off the screen and leave the
-        // row in the set, which is the page and the floor disagreeing.
-        if (p.onDrop) { p.onDrop(name); return; }
-        const at = p.sel.indexOf(name);
-        if (at < 0) return;
-        p.sel.splice(at, 1);
-    } else if (p.onPick) {
-        // A name already in the set is TAKEN OUT by clicking it, the way every
-        // other multi-select on this page behaves and the way the `on` class
-        // drawn on that row implies. It used to re-call onPick, which is a
-        // no-op PATCH enabling an already-enabled row: the engineer clicked
-        // the highlighted name to remove it and nothing happened at all.
-        if (p.onDrop && p.sel.indexOf(name) >= 0) { p.onDrop(name); return; }
-        p.onPick(name);
-        return;
-    } else if (p.expandGroups && groupMembers(name).length) {
-        // A group is its nodes: picking it adds the ones not yet picked, and
-        // picking it with all of them in unpicks them all, which is what the
-        // `on` class drawn on its row says.
-        const members = groupMembers(name);
-        if (members.every(m => p.sel.indexOf(m) >= 0)) {
-            p.sel = p.sel.filter(m => members.indexOf(m) < 0);
-        } else {
-            for (const m of members) if (p.sel.indexOf(m) < 0) p.sel.push(m);
+    p.ui.input.addEventListener('input', () => { p.q = p.ui.input.value; });
+}
+
+// redrawPicker draws a picker again from the page's state: the selection the
+// page holds, and its rows (an exclusion that a read just made true). clean:
+// that selection is the new starting point (another screen's list), not work.
+function redrawPicker(key, clean) {
+    const p = S.pickers[key];
+    if (!p || !p.ui) return;
+    p.ui.set(p.sel, clean ? { clean: true } : undefined);
+}
+
+// Every declared picker whose host is in the document, drawn. BOTH LISTS,
+// EACH READ ONCE: a sheet can carry pickers of both kinds — Add process
+// carries four node pickers and one part picker — and a picker drawn before
+// its list lands says so and fills itself when it does. A checklist drawn
+// before the node list is drawn again then, its filters being the list's
+// prefixes.
+function bindPickers() {
+    for (const key of Object.keys(S.pickers)) drawPicker(key);
+    loadCoreNodes().then(() => {
+        for (const key of Object.keys(S.pickers)) {
+            const p = S.pickers[key];
+            if (!p.checklist || !p.ui || p.filters || !S.coreNodes) continue;
+            p.ui.destroy();
+            p.ui = null;
+            drawPicker(key);
         }
-    } else {
-        // A name already picked is unpicked, which is what clicking a chosen
-        // row of a multi-select means everywhere else.
-        const at = p.sel.indexOf(name);
-        if (at >= 0) p.sel.splice(at, 1); else p.sel.push(name);
-    }
-    redrawPicker(key);
-    if (p.onChange) p.onChange();
+    });
+    if (Object.keys(S.pickers).some(k => S.pickers[k].source === 'payloads')) loadPayloadCatalog();
 }
 
 // ── the sheets D4 and D5 open ────────────────────────────────────────────────
@@ -6601,7 +6440,7 @@ function sheetGone(h, why) {
     // picker with a selection is what would put last time's nodes in front of
     // the engineer when this sheet is opened again. Settings' own pickers are
     // in #pd-root and stay.
-    for (const k of Object.keys(S.pickers)) if (!$('npk-' + k)) delete S.pickers[k];
+    for (const k of Object.keys(S.pickers)) if (!$('npk-' + k)) dropPicker(k);
     S.addPos = null;
     // The apply modal's ticks and previews go with it: reopening it must start
     // from nothing ticked (explicit re-apply), not from what was ticked last
@@ -8812,8 +8651,6 @@ function onClick(e) {
     const card = e.target.closest && e.target.closest('#pd-svg [data-pos]');
     const row = e.target.closest && e.target.closest('[data-row]');
 
-    const npk = e.target.closest && e.target.closest('[data-npk]');
-    if (npk) { onPickerClick(npk); return; }
     // EVERY ACT THAT OPENS #pd-pop HAS TO STOP THE EVENT. onClick is bound to
     // #pd-root and boot() puts a listener on the DOCUMENT that closes the
     // popover on any click outside it — and a click on the button that opens

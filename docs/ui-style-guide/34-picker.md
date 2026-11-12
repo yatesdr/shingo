@@ -6,7 +6,8 @@ Verified against: 69ffb314
 the selection as chips, and an **Add and use** slot. It knows no node and no
 part. An adapter hands it rows and decides what each row may be; the shell
 draws them and moves the selection. It is the Processes page's node picker,
-extracted; the node and part adapters, and the pages, come onto it in S3.
+extracted; every node and part field in the apps, the Processes page's
+included, is on it through the node and part adapters (S3).
 
 ### A row
 
