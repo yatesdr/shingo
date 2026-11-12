@@ -1068,8 +1068,8 @@ function shownToasts(L, t) {
 async function testOrdersPins() {
     const L = [
         '# Core Test orders, the submits (census #58-#62; the selects are test-orders-template.txt).',
-        '# static/pages/test-orders.js as served: its own fetch, not api(); a refusal is read with',
-        '# res.json(), so a body that is not JSON lands in the catch.',
+        '# static/pages/test-orders.js as served: its writes go through the HTTP door (send), so any',
+        '# refusal is one sentence, a body that is not JSON included.',
         '',
     ];
     // The cycle modes as the template offers them.

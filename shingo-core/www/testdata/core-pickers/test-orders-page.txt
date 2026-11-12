@@ -1,6 +1,6 @@
 # Core Test orders, the submits (census #58-#62; the selects are test-orders-template.txt).
-# static/pages/test-orders.js as served: its own fetch, not api(); a refusal is read with
-# res.json(), so a body that is not JSON lands in the catch.
+# static/pages/test-orders.js as served: its writes go through the HTTP door (send), so any
+# refusal is one sentence, a body that is not JSON included.
 
 == the body each pick sends (an answer of 200)
 -- Kafka order: move GRP-A -> LINE-1, PART-A
@@ -37,16 +37,16 @@
   toast error: refused: the service's sentence
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
   POST /api/test-orders/submit {"order_type":"move","source_node":"GRP-A","delivery_node":"LINE-1","payload_code":"PART-A","quantity":1,"priority":0}
-  toast error: unauthorized
+  toast error (sticky): Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/test-orders/submit {"order_type":"move","source_node":"GRP-A","delivery_node":"LINE-1","payload_code":"PART-A","quantity":1,"priority":0}
   toast error: failed: the store's error
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
   POST /api/test-orders/submit {"order_type":"move","source_node":"GRP-A","delivery_node":"LINE-1","payload_code":"PART-A","quantity":1,"priority":0}
-  toast error: Error: SyntaxError: <JSON.parse message>
+  toast error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/test-orders/submit {"order_type":"move","source_node":"GRP-A","delivery_node":"LINE-1","payload_code":"PART-A","quantity":1,"priority":0}
-  toast error: Error: TypeError: Failed to fetch
+  toast error: No answer from the server
 
 == refusals: Kafka complex
 -- test-orders.complex.400: 400 "{\"error\":\"location is required\"}"
@@ -56,11 +56,11 @@
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
   POST /api/test-orders/submit/complex {"cycle_mode":"two_robot","location":"GRP-A-L1-S1","payload_code":"PART-A","inbound_source":"","inbound_staging":"SPOT-9","outbound_staging":"","outbound_destination":"GRP-B","priority":0}
   timers: 10, 6000 ms
-  showToast to-toast to-toast-error: Error: SyntaxError: <JSON.parse message>
+  showToast to-toast to-toast-error: Error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/test-orders/submit/complex {"cycle_mode":"two_robot","location":"GRP-A-L1-S1","payload_code":"PART-A","inbound_source":"","inbound_staging":"SPOT-9","outbound_staging":"","outbound_destination":"GRP-B","priority":0}
   timers: 10, 6000 ms
-  showToast to-toast to-toast-error: Error: TypeError: Failed to fetch
+  showToast to-toast to-toast-error: Error: No answer from the server
 
 == refusals: Direct order
 -- json.409: 409 "{\"error\":\"refused: the service's sentence\"}"
@@ -68,4 +68,4 @@
   toast error: refused: the service's sentence
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/test-orders/direct {"from_node_id":6,"to_node_id":8,"priority":0}
-  toast error: Error: TypeError: Failed to fetch
+  toast error: No answer from the server

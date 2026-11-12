@@ -3,8 +3,20 @@ import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer
 import { toast } from '/static/shared/notice.js';
 import { formatTime } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
+import { send } from '/static/shared/http.js';
 
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
+
+// ask sends a write (or a read that may be refused) through the HTTP door: it
+// resolves {ok, body, error} whatever came back, so a body that is not JSON
+// (a proxy's 502 page, a panic's empty 500) is a sentence, never a
+// SyntaxError. A lapsed session is on the notice already (shown).
+function ask(method, url, body) {
+  return send(method, url, body, { notice: false });
+}
+function refused(r, say) {
+  if (!r.shown) say(r.error);
+}
 
 // showOrderTab is this page's own tab handler, bound to its
 // data-action="switchTab:<name>" tabs. Not dom.js's switchTab (§22): its
@@ -238,23 +250,17 @@ async function submitKafkaOrder() {
     priority: parseInt(document.getElementById('k-priority').value) || 0
   };
   if (!body.payload_code) { toast('Payload is required', 'info'); return; }
-  try {
-    var res = await fetch('/api/test-orders/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    toast('Order submitted: ' + data.order_uuid, 'info');
-    refreshKafkaOrders();
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-orders/submit', body);
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  toast('Order submitted: ' + (r.body || {}).order_uuid, 'info');
+  refreshKafkaOrders();
 }
 
 async function cancelOrder(uuid) {
   if (!await uiConfirm('Cancel order ' + uuid + '?')) return;
-  try {
-    var res = await fetch('/api/test-orders/cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_uuid: uuid, reason: 'cancelled via test page'}) });
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    refreshKafkaOrders();
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-orders/cancel', {order_uuid: uuid, reason: 'cancelled via test page'});
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  refreshKafkaOrders();
 }
 
 var receiptDirect = false;
@@ -279,13 +285,10 @@ async function sendReceipt() {
     final_count: parseInt(document.getElementById('receipt-count').value) || 0
   };
   var url = receiptDirect ? '/api/test-orders/direct/receipt' : '/api/test-orders/receipt';
-  try {
-    var res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    hideModal('receipt-modal');
-    if (receiptDirect) { refreshDirectOrders(); } else { refreshKafkaOrders(); }
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('POST', url, body);
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  hideModal('receipt-modal');
+  if (receiptDirect) { refreshDirectOrders(); } else { refreshKafkaOrders(); }
 }
 
 // --- Kafka complex order ---
@@ -321,19 +324,11 @@ async function submitKafkaComplexOrder() {
     priority: parseInt(document.getElementById('kc-priority').value) || 0
   };
   if (!body.location) { toast('Lineside location is required', 'info'); return; }
-  try {
-    var res = await fetch('/api/test-orders/submit/complex', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
-    });
-    var data = await res.json();
-    if (res.ok) {
-      var uuids = (data.orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
-      showToast('Kafka complex order published: ' + uuids, 'info');
-      refreshKafkaOrders();
-    } else {
-      showToast('Error: ' + (data.error || 'unknown'), 'error');
-    }
-  } catch(e) { showToast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-orders/submit/complex', body);
+  if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
+  var uuids = ((r.body || {}).orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
+  showToast('Kafka complex order published: ' + uuids, 'info');
+  refreshKafkaOrders();
 }
 
 // --- Direct order actions ---
@@ -344,13 +339,10 @@ async function submitDirectOrder() {
     priority: parseInt(document.getElementById('d-priority').value) || 0
   };
   if (!body.from_node_id || !body.to_node_id) { toast('Select both from and to nodes', 'info'); return; }
-  try {
-    var res = await fetch('/api/test-orders/direct', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    toast('Direct order dispatched: ' + data.vendor_order_id, 'info');
-    refreshDirectOrders();
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-orders/direct', body);
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  toast('Direct order dispatched: ' + (r.body || {}).vendor_order_id, 'info');
+  refreshDirectOrders();
 }
 
 // --- Complex order actions ---
@@ -387,35 +379,18 @@ async function submitComplexOrder() {
     priority: parseInt(document.getElementById('cx-priority').value) || 0
   };
   if (!body.location) { toast('Lineside location is required', 'info'); return; }
-  try {
-    var res = await fetch('/api/test-orders/direct/complex', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
-    });
-    var data = await res.json();
-    if (res.ok) {
-      var uuids = (data.orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
-      showToast('Complex order created: ' + uuids, 'info');
-      refreshDirectOrders();
-    } else {
-      showToast('Error: ' + (data.error || 'unknown'), 'error');
-    }
-  } catch(e) { showToast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-orders/direct/complex', body);
+  if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
+  var uuids = ((r.body || {}).orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
+  showToast('Complex order created: ' + uuids, 'info');
+  refreshDirectOrders();
 }
 
 async function releaseComplexOrder(orderUUID) {
-  try {
-    var res = await fetch('/api/test-orders/direct/release', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ order_uuid: orderUUID })
-    });
-    var data = await res.json();
-    if (res.ok) {
-      showToast('Released: ' + orderUUID, 'info');
-      refreshDirectOrders();
-    } else {
-      showToast('Error: ' + (data.error || 'unknown'), 'error');
-    }
-  } catch(e) { showToast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-orders/direct/release', { order_uuid: orderUUID });
+  if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
+  showToast('Released: ' + orderUUID, 'info');
+  refreshDirectOrders();
 }
 
 // --- Robot command actions ---
@@ -433,34 +408,26 @@ async function submitCommand() {
     goods_id: document.getElementById('c-goods-id').value
   };
   if (cmdType !== 'terminate' && !body.robot_id) { toast('Select a robot', 'info'); return; }
-  try {
-    var res = await fetch('/api/test-commands/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    var msg = data.vendor_order_id ? 'Order created: ' + data.vendor_order_id : 'Command ' + (data.status || 'sent');
-    toast(msg, 'info');
-    refreshCommands();
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-commands/submit', body);
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  var data = r.body || {};
+  var msg = data.vendor_order_id ? 'Order created: ' + data.vendor_order_id : 'Command ' + (data.status || 'sent');
+  toast(msg, 'info');
+  refreshCommands();
 }
 
 async function refreshCmdStatus(id) {
-  try {
-    var res = await fetch('/api/test-commands/status?id=' + id);
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    refreshCommands();
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('GET', '/api/test-commands/status?id=' + id);
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  refreshCommands();
 }
 
 async function cancelCommand(id) {
   if (!await uiConfirm('Terminate command #' + id + '?')) return;
-  try {
-    var res = await fetch('/api/test-commands/cancel?id=' + id, { method: 'POST' });
-    var data = await res.json();
-    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
-    toast('Command terminated', 'info');
-    refreshCommands();
-  } catch(e) { toast('Error: ' + e, 'error'); }
+  var r = await ask('POST', '/api/test-commands/cancel?id=' + id);
+  if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
+  toast('Command terminated', 'info');
+  refreshCommands();
 }
 
 // --- History modal ---
@@ -469,9 +436,9 @@ async function viewHistory(orderId) {
   document.getElementById('hist-body').innerHTML = '<p style="color:#888;">Loading...</p>';
   showModal('history-modal');
   try {
-    var res = await fetch('/api/test-orders/detail?id=' + orderId);
-    var data = await res.json();
-    if (!res.ok) { document.getElementById('hist-body').innerHTML = '<p style="color:red;">' + escapeHtml(data.error || 'Error') + '</p>'; return; }
+    var r = await ask('GET', '/api/test-orders/detail?id=' + orderId);
+    if (!r.ok) { document.getElementById('hist-body').innerHTML = '<p style="color:red;">' + escapeHtml(r.error) + '</p>'; return; }
+    var data = r.body || {};
 
     var html = '';
     if (data.order) {
