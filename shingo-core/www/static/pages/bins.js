@@ -14,6 +14,7 @@ var currentBinData = null;
 // when the Journal is opened, and again on an update while it is the open tab.
 var journalFresh = false;
 var ccState = newCCState();
+var ccLayer = null; // the wizard's entry on the overlay stack (layer.js)
 
 function newCCState() {
   return { step: 0, bins: [], index: 0, results: [], ready: false, busy: false, seq: 0 };
@@ -885,7 +886,7 @@ function openCycleCount() {
   document.getElementById('cc-step3').classList.add('hide');
   // A wizard closed any way (×, Escape, the backdrop, Discard) is closed for
   // good: its bins, index and results do not outlive it.
-  showModal('cc-modal', { onClose: function() { ccState = newCCState(); } });
+  ccLayer = showModal('cc-modal', { onClose: function() { ccState = newCCState(); } });
 }
 
 function closeCycleCount() {
@@ -938,6 +939,9 @@ function ccShowBin() {
       bin.uopCapacity = resp.bin.uop_capacity || 0;
       ccPaintCard(bin, String(bin.uop));
       document.getElementById('cc-actual').value = bin.uop;
+      // The wizard filled the count, not the person: only what is typed over
+      // it is work the layer asks about before Escape discards it.
+      if (ccLayer && ccLayer.open) ccLayer.markClean();
       st.ready = true;
     })
     .catch(function(e) {
