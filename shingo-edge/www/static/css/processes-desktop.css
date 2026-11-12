@@ -568,6 +568,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* A staging node another position already uses: still a choice, marked in the
    warning ink, because shared staging is a warning and never a refusal. */
 .pd-pop button .use { color: var(--chip-ink-near); font-size: 11px; }
+/* Add a position's mode menu: the mode's name, the card's line under it. */
+.pd-pop button.pd-modeopt span { display: flex; flex-direction: column; }
+.pd-pop button.pd-modeopt small { color: var(--text-muted); font-size: 11.5px; }
 
 /* ── D2 · the Advanced sheet ──────────────────────────────────────────────
    600 wide over a scrim, from the row's gear. It is the only place the twelve

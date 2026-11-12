@@ -6777,39 +6777,14 @@ function defaultModeFor() {
     return Object.keys(seen).sort((a, b) => seen[b] - seen[a])[0] || '';
 }
 
+// THE POSITION FIRST, THEN HOW IT SWAPS (F6). The engineer is looking at the
+// press and knows which spot they mean; the mode is a question about that
+// spot. One free position is the whole first answer, so it is not asked.
 function addFreePosition(btn) {
     const free = freePositions();
     if (!free.length) return;
     const mode = defaultModeFor();
-    if (mode) addFreeAs(btn, free, mode);
-    else openFreeModes(btn, free);
-}
-
-// openFreeModes asks for the first row's choreography, then its position.
-function openFreeModes(btn, free) {
-    const pop = $('pd-pop');
-    if (!pop) return;
-    const labels = M().modeLabels();
-    pop.innerHTML = '<div class="pd-lbl">Choreography for the first position</div>' +
-        Object.keys(labels).map(m => '<button data-freemode="' + esc(m) + '">' + gl(m, 22, {}) +
-            esc(labels[m]) + '</button>').join('');
-    showPop(pop, btn);
-    placePopover(pop, btn);
-    // The click is stopped here: the position menu replaces this one, so the
-    // button is gone from #pd-pop by the time the document's outside-click
-    // closer sees it, and it would close the menu it just opened.
-    pop.querySelectorAll('[data-freemode]').forEach(b => b.addEventListener('click', e => {
-        e.stopPropagation();
-        const mode = b.dataset.freemode;
-        closePop();
-        addFreeAs(btn, free, mode);
-    }));
-}
-
-// addFreeAs adds a free position as mode: the one free position at once, or
-// the position the engineer picks from the free ones.
-function addFreeAs(btn, free, mode) {
-    if (free.length === 1) { apply({ type: 'addPosition', node: free[0], mode: mode }); return; }
+    if (free.length === 1) { pickFreeMode(btn, free[0], mode); return; }
     const pop = $('pd-pop');
     if (!pop) return;
     pop.innerHTML = '<div class="pd-lbl">Add a position</div>' +
@@ -6820,11 +6795,68 @@ function addFreeAs(btn, free, mode) {
     // measures, and caps the height so a press with many free positions still
     // fits on the screen.
     placePopover(pop, btn);
-    pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', () => {
+    // The click is stopped here: the mode menu replaces this one, so the
+    // button is gone from #pd-pop by the time the document's outside-click
+    // closer sees it, and it would close the menu it just opened.
+    pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
         const node = b.dataset.freepos;
         closePop();
-        apply({ type: 'addPosition', node: node, mode: mode });
+        pickFreeMode(btn, node, mode);
     }));
+}
+
+// THE MODE MENU CARRIES THE CARDS' OWN WORDS (F25): the mode's name, and
+// under it the line the picture's card says about that mode. A mode with no
+// line here still shows, by its name alone.
+const MODE_WORDS = {
+    single_robot: 'One robot, parks and swaps',
+    two_robot: 'Robot 1 stages the new bin, Robot 2 pulls old',
+    two_robot_press_index: 'Robot 1 supplies the on-deck spot, Robot 2 indexes',
+    sequential: 'One robot, A/B flip with its pair',
+};
+
+// pickFreeMode adds node with the mode the flow already runs, or asks for one
+// when it runs none (a recipe's first row, an empty style's).
+function pickFreeMode(btn, node, mode) {
+    if (mode) { addFreeAs(node, mode); return; }
+    const pop = $('pd-pop');
+    if (!pop) return;
+    const labels = M().modeLabels();
+    const order = Object.keys(MODE_WORDS).filter(m => labels[m])
+        .concat(Object.keys(labels).filter(m => !MODE_WORDS[m]));
+    pop.innerHTML = '<div class="pd-lbl">How ' + esc(node) + ' swaps</div>' +
+        order.map(m => '<button class="pd-modeopt" data-freemode="' + esc(m) + '">' + gl(m, 22, {}) +
+            '<span>' + esc(labels[m]) + (MODE_WORDS[m] ? '<small>' + esc(MODE_WORDS[m]) + '</small>' : '') +
+            '</span></button>').join('');
+    showPop(pop, btn);
+    placePopover(pop, btn);
+    pop.querySelectorAll('[data-freemode]').forEach(b => b.addEventListener('click', () => {
+        const m = b.dataset.freemode;
+        closePop();
+        addFreeAs(node, m);
+    }));
+}
+
+// addFreeAs adds the position as mode, and the staging its mode requires from
+// the routing set (F7), the way the model fills its source and destination:
+// the role's rows in their order, inbound first, outbound the next one.
+function addFreeAs(node, mode) {
+    const acts = [{ type: 'addPosition', node: node, mode: mode }];
+    const after = M().reduce(S.model, acts[0]);
+    const rows = (S.composer.routing || []).filter(r => r.role === 'staging' && r.enabled !== false &&
+        r.core_node_name !== node && !isPositionRow(r.core_node_name))
+        .sort((a, b) => (a.sequence || 0) - (b.sequence || 0)).map(r => r.core_node_name);
+    const set = { staging: 'setStaging', parkOld: 'setParkOld' };
+    const taken = [];
+    for (const chip of M().rowColumns(after, node, 'staging')) {
+        if (!chip.required || chip.value || !set[chip.key]) continue;
+        const pick = rows.find(n => taken.indexOf(n) < 0);
+        if (!pick) break;
+        taken.push(pick);
+        acts.push({ type: set[chip.key], node: node, staging: pick });
+    }
+    apply(acts);
 }
 
 // ── Add process, end to end ──────────────────────────────────────────────────

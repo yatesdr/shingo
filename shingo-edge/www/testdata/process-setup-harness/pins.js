@@ -514,15 +514,15 @@ const DRIVE = {
         page.type('name', 'From A');
         await sheetOK(page);
     } },
-    // + New recipe; + Add a position asks the choreography first (the draft
-    // has none), then the position.
+    // + New recipe; + Add a position asks the position first, then how it
+    // swaps (the draft runs no mode yet).
     recipeDraft: { drive: async page => {
         page.click('root', { act: 'new-recipe' });
         await page.settle();
         const mode = freeMode(page);
         page.click('root', { act: 'add-position' });
-        pickRow(page, 'pd-pop', 'data-freemode', mode);
         pickRow(page, 'pd-pop', 'data-freepos', 'POS_A11');
+        pickRow(page, 'pd-pop', 'data-freemode', mode);
         await page.settle();
     } },
     recipeCells: {
@@ -745,6 +745,10 @@ const P0 = require('./p0-page.js');
         bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
     });
     await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, text, setCurrent: n => { CURRENT = n; }, SEEN });
+    await require('./cold-start.js').run({
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
+        setCurrent: n => { CURRENT = n; }, SEEN,
+    });
     if (process.argv.includes('--sites')) {
         process.stdout.write(P0.sitesTable(SEEN));
         return;

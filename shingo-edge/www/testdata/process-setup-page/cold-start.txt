@@ -1,0 +1,28 @@
+# The cold start (brief U2): the U2 bugs, then the Setup tab, the tabs, the rail, New style and
+# Add a position. "ok" is what must hold; "BUG" is a bug back.
+
+## F7: + Add a position on a recipe draft, a mode that needs inbound staging
+ok   the row is added with the mode picked
+ok   its inbound source and destination come from the routing set
+ok   its inbound staging comes from the routing set too (STG_1, the first staging row)
+
+## F5/F33: the recipe draft's bar, on a routing set with no staging row
+BUG  an untouched draft says "No unsaved changes": prov="Unsaved changes"
+BUG  a required cell left empty is "1 to fix" on the bar: bar="Preview OK · 0 orders Inbound source GRP_A · outbound destination DST_1 Unsaved changes"
+BUG  the bar never says "Preview OK" over a recipe draft: bar="Preview OK · 0 orders Inbound source GRP_A · outbound destination DST_1 Unsaved changes"
+BUG  Save recipe… is disabled while it is: Save recipe… enabled
+ok   and the bar says "Unsaved changes" now
+
+## F4: Back on a recipe draft
+ok   an untouched draft leaves without asking
+BUG  a changed draft asks before it is discarded: dialog=none, draft discarded
+
+## F3: the required inbound staging chip, with no staging row and no back position
+#    the popover: "required for 2‑Robot Swap 1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
+BUG  the popover offers places from the plant to add and use: nothing to pick
+
+## F36: Settings › HMI setup on a process with no recipe
+#    "HMI setup off: the operator changes over to a style an engineer made · on: they may set a style up — pick a part and a recipe, and move its spots For a cell bei"
+BUG  the HMI setup row says the process has no recipe: nothing says so
+BUG  and offers New recipe there: no New recipe on Settings
+BUG  "Found in your flows" is beside it: not on Settings
