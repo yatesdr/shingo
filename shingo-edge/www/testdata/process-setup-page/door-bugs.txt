@@ -34,3 +34,7 @@ ok   the page says "Server error (500)"
 ## Save settings on a dead Edge (processes-desktop.js:5306): PUT /api/processes/1 gets no answer
 ok   no unhandled rejection
 ok   the page says "No answer from the server"
+
+## the presets read (processes-desktop.js:7138): the Recipes tab's read lands on the login page
+ok   the page says "Signed out"
+ok   the page does not say "Could not reach this edge"

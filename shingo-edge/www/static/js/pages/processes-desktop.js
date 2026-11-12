@@ -7139,21 +7139,16 @@ async function openPresets() {
     drawPresets();
 }
 
+// A LOGIN PAGE IS NOT "COULD NOT REACH" (P0 bug, :7138). The read parsed the
+// login page a lapsed session lands on, threw, and the catch said the Edge
+// was unreachable. Through the door it is "Signed out", with the notice's
+// sign-in link, and no answer is the door's own sentence.
 async function loadPresets() {
     S.presets = S.presets || { view: null, error: '', expanded: 0 };
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/presets');
-        if (!res.ok) {
-            let why = 'Could not read the presets for this process (' + res.status + ').';
-            try { const j = await res.json(); why = j.error || why; } catch (_) { /* status only */ }
-            S.presets.error = why;
-            return;
-        }
-        S.presets.view = await res.json();
-        S.presets.error = '';
-    } catch (_) {
-        S.presets.error = 'Could not reach this edge.';
-    }
+    const res = await send('GET', '/api/processes/' + S.processID + '/presets');
+    if (!res.ok) { S.presets.error = res.error; return; }
+    S.presets.view = res.body;
+    S.presets.error = '';
 }
 
 // The Shape column: the glyph the mode draws on every other surface, the mode

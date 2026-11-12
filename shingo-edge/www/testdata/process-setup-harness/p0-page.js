@@ -1105,6 +1105,12 @@ const DOOR_BUGS = [
         spec: () => T.DRIVE.settingsSave, target: { method: 'PUT', url: '/api/processes/1', k: 0 }, answer: NO_ANSWER,
         checks: [checks.noRejection, checks.says('No answer from the server')],
     },
+    {
+        title: 'the presets read (processes-desktop.js:7138): the Recipes tab\'s read lands on the login page',
+        spec: () => ({ drive: async page => { page.click('root', { tab: 'presets' }); await page.settle(); } }),
+        target: { method: 'GET', url: '/api/processes/1/presets', k: 0 }, answer: LAPSED,
+        checks: [checks.says('Signed out'), checks.notSays('Could not reach this edge')],
+    },
 ];
 async function pinDoorBugs() {
     T.setCurrent('door-bugs.txt');
