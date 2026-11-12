@@ -476,8 +476,9 @@ function appbar() {
         // (owner ruling 2026-09-16). Creation is the Add-process sheet's.
         // SETUP IS FIRST, AND ONLY WHILE THE PROCESS CANNOT RUN (U2).
         '<div class="pd-tabs">' + (needsSetup() ? tab('setup', 'Setup') : '') + tab('flows', 'Styles') +
-        tab('screens', 'Operator screens') + tab('settings', 'Settings') +
-        tab('presets', 'Recipes') + '</div>' +
+        // NO RECIPES TAB (F36): recipes are HMI setup's, and sit beside it
+        // on Settings (hmiRecipes); #tab=presets and #tab=recipes land there.
+        tab('screens', 'Operator screens') + tab('settings', 'Settings') + '</div>' +
         '<div class="pd-spacer"></div>' +
         // THE GATE IS A SENTENCE, NOT A BADGE, AND THE SETTINGS LINK WAS THE
         // TABS' OWN DOOR DRAWN TWICE: a pill shape claims "status chip" for a
@@ -702,7 +703,7 @@ async function openProcess(id) {
     // another tab or a style.
     if (h.tab === 'setup' || (!h.tab && !h.style && !h.newstyle && needsSetup())) { S.tab = 'setup'; drawSetup(); }
     else if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
-    else if (h.tab === 'presets') {
+    else if (h.tab === 'presets' || h.tab === 'recipes') {
         await openPresets();
         // #tab=presets;preset=<id> opens the tab with that row's member list
         // expanded, and `;apply=<id>` with its apply modal open on the first
@@ -4050,7 +4051,7 @@ async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
     await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots(),
-        loadCatidItems(), loadPLCs()]);
+        loadCatidItems(), loadPLCs(), loadPresets()]);
     await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
@@ -5510,7 +5511,10 @@ function drawSettings() {
         '<p class="pd-note">For a cell being set up. The robot moves — mode, pairing, role — stay the ' +
         'recipe’s; the spots an operator moves are checked against your recipes: a press spot, its ' +
         'on-deck spot and its lanes go only where a recipe here pairs them.</p>',
-        hmiOn !== saved.flow_composer_enabled);
+        hmiOn !== saved.flow_composer_enabled) +
+        // F36: HMI setup and its recipes are one feature (hmiRecipes), drawn
+        // under its row whether or not the row is open.
+        hmiRecipes();
 
     // QUALITY HOLD — a per-process opt-in. Off (the default) means every
     // finished-goods delivery goes to its outbound destination as always; on,
@@ -6598,7 +6602,6 @@ async function refreshProcess() {
     if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
     else if (S.tab === 'setup') drawSetup();
     else if (S.tab === 'screens') drawScreens();
-    else if (S.tab === 'presets') await refreshPresets();
     else await openSettings();
 }
 
@@ -7551,14 +7554,12 @@ async function syncCatalog() {
 
 function presetsView() { return (S.presets && S.presets.view) || null; }
 
+// THE RECIPES' HOME IS BESIDE HMI SETUP (F36): openPresets is every door the
+// Recipes tab had (#tab=presets, #tab=recipes, its tab click), and opens
+// Settings there. Settings reads the recipes view with the rest of its reads.
 async function openPresets() {
-    S.tab = 'presets';
     S.presets = S.presets || { view: null, error: '', expanded: 0 };
-    if (!S.presets.view) {
-        root().innerHTML = appbar() + '<div class="pd-sheet"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
-    }
-    await loadPresets();
-    drawPresets();
+    await openSettingsAt('HMI');
 }
 
 // A LOGIN PAGE IS NOT "COULD NOT REACH" (P0 bug, :7138). The read parsed the
@@ -7689,22 +7690,36 @@ function candidateRow(c) {
         esc(c.shape_key) + '">Name it…</button></td></tr>';
 }
 
+// drawPresets redraws the recipes where they are drawn: Settings, whose
+// notice line is its own (a recipe write's "Saved to 2 parts." lands there).
 function drawPresets() {
-    if (S.presets.error) {
-        root().innerHTML = appbar() + '<div class="pd-sheet"><div class="pd-refusal">' +
-            esc(S.presets.error) + '</div></div>';
-        return;
-    }
-    const v = presetsView();
-    if (!v) { root().innerHTML = appbar() + '<div class="pd-sheet"></div>'; return; }
+    if (S.tab !== 'settings') return;
+    if (S.notice) { S.settingsNotice = S.notice; S.notice = ''; }
+    drawSettings();
+}
 
+// hmiRecipes is HMI setup's recipes, under its switch on Settings (F36): the
+// fact (none, or how many) with New recipe, the recipes themselves with their
+// Apply to parts… and ⋯, and "Found in your flows" — what the Recipes tab
+// held, in the place the feature is switched on.
+function hmiRecipes() {
+    const f = hmiSetupFacts();
+    const fact = stField('Recipes', 'what an operator sets a style up from',
+        '<span class="pd-cnt' + (f.warn ? ' warn' : '') + '"><i></i>' +
+        esc(f.value.replace(/^(on|off) · /, '')) + '</span>' +
+        '<button class="pd-btn" data-act="new-recipe">New recipe</button>');
+    return '<div class="pd-hmirecipes" id="pd-hmirecipes">' + fact + recipesHTML() +
+        '<div class="pd-pop" id="pd-pop" hidden></div></div>';
+}
+
+function recipesHTML() {
+    if (S.presets && S.presets.error) return '<div class="pd-refusal">' + esc(S.presets.error) + '</div>';
+    const v = presetsView();
+    if (!v) return '';
     const presets = v.presets || [];
     const cands = v.candidates || [];
     const flows = v.styles_with_flow || 0;
-    let h = (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
-        '<div class="pd-sect"><h2>Recipes</h2><span class="pd-lbl"><span class="cnt">' +
-        presets.length + '</span></span>' +
-        '<span class="pd-dim">spots and robot moves with no part — a style is one of these with its parts on</span></div>';
+    let h = '';
     // THE COLUMNS ARE SIZED, the way D1's positions table is, and for the same
     // reason: left to itself the browser gave Name a third of what its content
     // needs and Shape less than its position list, so the one thing an
@@ -7721,17 +7736,15 @@ function drawPresets() {
         '<thead><tr><th>Name</th><th>Shape</th><th>Applied to</th>' +
         '<th>Drift</th><th>Saved</th><th></th></tr></thead><tbody>' +
         presets.map(presetRow).join('') + '</tbody></table>'
-        : '<p class="pd-dim">No recipes yet — + New recipe in the Styles tab’s rail.</p>';
+        : '';
 
     // THE OFFER, while there is one. Once every shape the press runs has a
     // name this section is not empty, it is finished — and a heading over
     // nothing would read as a thing still to do.
     if (cands.length) {
-        h += '<div class="pd-sect"><h2>Found in your flows</h2><span class="pd-lbl"><span class="cnt">' +
-            cands.length + '</span></span>' +
-            '<span class="pd-dim">shape' + (cands.length === 1 ? '' : 's') +
-            ' this process already runs, over ' + flows + ' flow' + (flows === 1 ? '' : 's') +
-            ', that nobody has named</span></div>' +
+        h += '<div class="pd-lbl pd-foundlbl">Found in your flows · ' + cands.length +
+            '<span class="pd-dim"> shape' + (cands.length === 1 ? '' : 's') +
+            ' run by ' + flows + ' style' + (flows === 1 ? '' : 's') + ', not named yet</span></div>' +
             // THREE COLUMNS, NOT FOUR. Section 1c asks for "glyph + suggested
             // name, used by N parts, Name it…", and a suggested name IS the
             // mode word and the positions — so a separate Shape column
@@ -7742,14 +7755,9 @@ function drawPresets() {
             '<thead><tr><th>Shape</th><th>Run by</th><th></th></tr></thead><tbody>' +
             cands.map(candidateRow).join('') + '</tbody></table>';
     }
-    // THE ROW MENU NEEDS A POPOVER TO OPEN INTO. #pd-pop is rendered by main(),
-    // which is the FLOWS tab — so on Presets openPresetMenu found nothing and
-    // returned, and the ⋯ on every row was silent. Apply, Rename and Archive
-    // have no other door, so the whole apply flow was unreachable by mouse.
-    // The shots harness reaches the modal through its `;apply=` hash, which is
-    // why three rounds of screenshots never noticed.
-    root().innerHTML = appbar() + '<div class="pd-sheet">' + h +
-        '<div class="pd-pop" id="pd-pop" hidden></div></div>';
+    // THE ROW MENU NEEDS A POPOVER TO OPEN INTO: hmiRecipes draws #pd-pop
+    // beside these rows (Settings' own is #pd-stpop).
+    return h;
 }
 
 // openUsePreset lists this cell's named shapes for the style currently open.
@@ -7851,7 +7859,8 @@ async function leaveShapeDraft() {
     const res = await send('GET', '/api/processes/' + S.processID + '/composer');
     if (res.ok) takeComposer(res.body);
     selectStyle(back);
-    if (fromTab === 'presets') await openPresets();
+    if (fromTab === 'settings') await openSettingsAt('HMI');
+    else if (fromTab === 'setup') { S.tab = 'setup'; drawSetup(); syncHash(); }
 }
 
 function presetByID(id) { return (presetsView() ? presetsView().presets : []).find(p => p.id === id) || null; }
@@ -7926,7 +7935,7 @@ function openPresetNaming(title, prefill, from) {
                     // else, and the sentence says where; on Presets it is in
                     // the list under the notice.
                     S.notice = 'Saved recipe ' + name + '.' +
-                        (S.tab === 'presets' ? '' : ' It is in the rail under Recipes.');
+                        (S.tab === 'settings' ? '' : ' It is in the rail under Recipes.');
                     await refreshPresets();
                     if (S.tab === 'flows') drawFlows();
                 });
@@ -7974,7 +7983,7 @@ async function saveGroupedRecipe(name, from) {
 
 async function refreshPresets() {
     await loadPresets();
-    if (S.tab === 'presets') drawPresets();
+    drawPresets();
 }
 
 // ── the apply modal (640) ────────────────────────────────────────────────────
@@ -8395,8 +8404,8 @@ async function runPresetApply() {
     // were already in step. Worse, an edit made on that stale draft and saved
     // would have written the whole cell list back and silently reverted the
     // apply. refreshProcess is the one path that re-reads the composer and the
-    // styles, and every other write on this page already goes through it.
-    await refreshPresets();
+    // styles, and every other write on this page already goes through it; on
+    // Settings, the recipes' home, it re-reads /presets too.
     await refreshProcess();
     // EVERY PART SAVED, SO THE DIALOG HAS NOTHING LEFT TO SAY. It stayed open
     // on `N saved` over rows that were all done, and the engineer closed it by
@@ -8405,7 +8414,7 @@ async function runPresetApply() {
     if (S.papply && !failed && saved) {
         closeSheet();
         S.notice = 'Saved to ' + saved + ' part' + (saved === 1 ? '' : 's') + '.';
-        if (S.tab === 'presets') drawPresets();
+        drawPresets();
         return;
     }
     if (S.papply) drawPresetApply();
@@ -8685,7 +8694,7 @@ function onClick(e) {
     if (tab) { showTab(tab.dataset.tab); return; }
     // A preset row expands its member list; a second click closes it.
     const presetRowEl = e.target.closest && e.target.closest('[data-preset]');
-    if (presetRowEl && !btn && S.tab === 'presets') {
+    if (presetRowEl && !btn && S.tab === 'settings') {
         const id = Number(presetRowEl.dataset.preset);
         S.presets.expanded = S.presets.expanded === id ? 0 : id;
         drawPresets();

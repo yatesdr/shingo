@@ -1,16 +1,14 @@
 ## Recipes › Recipe One ⋯ › Rename: Recipe Uno
-  1  GET /api/core-nodes
-  2  PATCH /api/processes/1/presets/7
+  1  PATCH /api/processes/1/presets/7
        {
          "name": "Recipe Uno"
        }
-  3  GET /api/processes/1/presets
+  2  GET /api/processes/1/presets
 -- sheet closed
 
 ## Recipes › Recipe One ⋯ › Archive
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/presets/7/archive
-  3  GET /api/processes/1/presets
+  1  POST /api/processes/1/presets/7/archive
+  2  GET /api/processes/1/presets
 -- sheet closed
 
 ## Recipes › Apply to parts…: tick Style B (its preview), each "which part?" answered with its first part
@@ -70,9 +68,12 @@
          "source_preset_id": 7,
          "source_preset_version": 1
        }
-  2  GET /api/processes/1/presets
-  3  GET /api/processes
-  4  GET /api/processes/1/composer
-  5  GET /api/processes/1/styles
-  6  GET /api/processes/1/presets
+  2  GET /api/processes
+  3  GET /api/processes/1/composer
+  4  GET /api/processes/1/styles
+  5  GET /api/process-nodes
+  6  GET /api/processes/1/station-counters
+  7  GET /api/processes/1/counting-slots
+  8  GET /api/processes/1/catid-health
+  9  GET /api/processes/1/presets
 -- sheet closed

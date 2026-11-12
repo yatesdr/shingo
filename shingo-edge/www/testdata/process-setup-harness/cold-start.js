@@ -262,6 +262,22 @@ async function pinSetup() {
         L.push('# HMI setup on with no recipe, never run · lands on ' + page.S.tab);
         L.push(...setupLines(page).filter(l => /hmi|counter/.test(l)));
     }
+    L.push('', '## where a #tab= link lands (the Recipes tab went to HMI setup on Settings)');
+    for (const hash of ['#tab=presets', '#tab=recipes', '#tab=presets;preset=7', '#tab=settings', '#tab=setup']) {
+        const page = await T.openPage({ hash: hash });
+        await page.settle();
+        const html = page.root.innerHTML;
+        L.push('  ' + hash + ' → tab ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)) +
+            (/id="pd-hmirecipes"/.test(html) ? ' · the recipes beside HMI setup' : '') +
+            (/<tr class="on" data-preset="7">/.test(html) ? ' · Recipe One expanded' : '') +
+            ' · hash ' + JSON.stringify(page.replaceStates[page.replaceStates.length - 1] || ''));
+    }
+    {
+        const page = await T.openPage({ hash: '#tab=settings' });
+        const at = page.root.innerHTML.indexOf('id="pd-hmirecipes"');
+        L.push('  Settings › HMI setup: ' + JSON.stringify(T.text(page.root.innerHTML.slice(at, at + 2000)).slice(0, 220)));
+    }
+
     L.push('', '## the Setup tab\'s actions, from a new process with positions (each on a fresh page)');
     for (const key of ['positions', 'routing', 'style', 'counter', 'hmi']) {
         const page = await T.openPage(pressA(STATES[1][1], NOT_RUN));

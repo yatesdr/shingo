@@ -23,9 +23,9 @@ BUG  the popover offers places from the plant to add and use: nothing to pick
 
 ## F36: Settings › HMI setup on a process with no recipe
 #    "HMI setup off: the operator changes over to a style an engineer made · on: they may set a style up — pick a part and a recipe, and move its spots For a cell bei"
-BUG  the HMI setup row says the process has no recipe: nothing says so
-BUG  and offers New recipe there: no New recipe on Settings
-BUG  "Found in your flows" is beside it: not on Settings
+ok   the HMI setup row says the process has no recipe
+ok   and offers New recipe there
+ok   "Found in your flows" is beside it
 
 ## Press A with Recipe One
 rail headings: ["Recipes · 1","Styles · 2"] · + New recipe drawn
@@ -47,49 +47,57 @@ main: "" · buttons ["Change…","Change…","+ New style","Set up…","New reci
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
 
 ## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)
-# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
   · positions: "none yet" → Add positions [primary]
   · routing: "none yet" → Set the routing set
   · style: "none yet" → + New style
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# positions claimed · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+# positions claimed · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
   ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
   · routing: "none yet" → Set the routing set [primary]
   · style: "none yet" → + New style
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and a routing set · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+# and a routing set · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
   ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
   ✓ routing: "2 sources · 3 staging · 2 destinations" → Change…
   · style: "none yet" → + New style [primary]
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
   ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
   ✓ routing: "2 sources · 3 staging · 2 destinations" → Change…
   · style: "Style A · no flow yet" → Draw its flow [primary]
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings","Recipes"]
+# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
   ✓ positions: "POS_A1 · POS_A2 · POS_A3 · +13" → Change…
   ✓ routing: "2 sources · 3 staging · 2 destinations" → Change…
   ✓ style: "Style A · +1" → Open
   · screen: "Screen A · not run yet" → Open the screen [primary]
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · 1 recipe" → Change…
-# run once (active style set) · lands on flows · tabs ["Styles*","Operator screens","Settings","Recipes"]
+# run once (active style set) · lands on flows · tabs ["Styles*","Operator screens","Settings"]
 # HMI setup on with no recipe, never run · lands on setup
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "on · no recipe yet" (warn) → New recipe
 
+## where a #tab= link lands (the Recipes tab went to HMI setup on Settings)
+  #tab=presets → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=recipes → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=presets;preset=7 → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
+  #tab=settings → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=setup → tab flows · tabs ["Styles*","Operator screens","Settings"] · hash "?process=1#style=1"
+  Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from 1 recipe New recipe Name Shape Applied to Drift Saved Recipe One v1 mixed 0 parts in step — Apply to parts… ⋯ Parts this process runs the operator’s part "
+
 ## the Setup tab's actions, from a new process with positions (each on a fresh page)
   positions → tab setup, sheet "Add positions" · GET /api/core-nodes, GET /api/process-nodes
-  routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/core-nodes
+  routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET …/presets, GET /api/core-nodes
   style → tab setup, sheet "New style" · GET /api/core-nodes
-  counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/core-nodes
+  counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET …/presets, GET /api/core-nodes
   hmi → tab flows (a recipe draft) · GET …/composer

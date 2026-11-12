@@ -958,6 +958,16 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-step .pd-btn { justify-self: end; white-space: nowrap; text-decoration: none; }
 /* Open the screen is a link to the HMI, drawn as the button it is. */
 .pd-step a.pd-btn { display: inline-flex; align-items: center; }
+/* HMI setup's recipes on Settings (F36): the fact row, the recipes table and
+   "Found in your flows" under the switch, in the value column's indent. A
+   switch on with no recipe is the one state here that needs someone. */
+.pd-cnt.warn { color: var(--chip-ink-near); }
+.pd-cnt.warn i { background: var(--viz-amber); }
+.pd-hmirecipes { position: relative; margin: 4px 0 6px; }
+.pd-hmirecipes > .pd-tbl, .pd-hmirecipes > .pd-foundlbl, .pd-hmirecipes > .pd-refusal { margin-left: 314px; }
+.pd-hmirecipes > .pd-tbl { width: calc(100% - 314px); margin-top: 6px; }
+.pd-foundlbl { display: block; margin-top: 10px; }
+.pd-foundlbl .pd-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
 
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the

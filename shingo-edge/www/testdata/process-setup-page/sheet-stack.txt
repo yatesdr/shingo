@@ -49,8 +49,8 @@ style menu open: pd-pop open, pd-stpop absent, pd-advpop absent
 Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## Escape: Settings' group list (#pd-stpop)
-Settings group list open: pd-pop absent, pd-stpop open, pd-advpop absent
-Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop absent, pd-stpop hidden, pd-advpop absent
+Settings group list open: pd-pop hidden, pd-stpop open, pd-advpop absent
+Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop hidden, pd-advpop absent
 
 ## Escape: a popover in a sheet (#pd-advpop), then the sheet (nothing typed)
 Add process with its group list open: sheet open (the layer's shell), #pd-scrim markup empty, layers 2, body overflow "hidden", S.sheet set, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop open
