@@ -208,6 +208,11 @@ var sharedExportsNoImporter = map[string]string{
 	// Its backdrop listener: the Edge hub called it last; layer.js reads
 	// data-backdrop-close when it opens an overlay.
 	"utils.js installBackdropClose": "no hub calls it since wave C; goes with utils.js's remnants",
+	// Its door and modals: Core's config, sourcing and robots' cleaning tab
+	// took them last (s2-core-pages); no Core file imports utils.js now.
+	"utils.js api":       "Core's pages use app.js's verbs; goes with utils.js's remnants",
+	"utils.js showModal": "Core's pages take layer.js's; goes with utils.js's remnants",
+	"utils.js hideModal": "Core's pages take layer.js's; goes with utils.js's remnants",
 	// utils.js's own banner, still shown by its createSSE; Core's hub shows
 	// notice.js's banner on the bus's build-changed instead.
 	"utils.js showRefreshBanner": "read by createSSE alone; Core's hub shows notice.js's banner",

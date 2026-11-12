@@ -15,7 +15,7 @@
 import { debounce, escapeHtml } from '/static/shared/dom.js';
 import { formatTime } from '/static/shared/clock.js';
 import { collectList, settingsPage } from '/static/shared/settings.js';
-import { apiResult } from '/static/shared/utils.js';
+import { send } from '/static/shared/http.js';
 
 const root = () => document.getElementById('cleaning-setup');
 const pointsBox = () => document.getElementById('cleaning-points');
@@ -143,13 +143,16 @@ function validate(d) {
   return Object.keys(e).length ? e : null;
 }
 
+// save is the section's own door (settingsPage draws its answer), so the
+// HTTP door's notice is off; its sentence (a lapsed session is "Signed out")
+// stands when the body names no error.
 function save(d) {
-  return apiResult('POST', '/api/robots/cleaning/setup', {
+  return send('POST', '/api/robots/cleaning/setup', {
     points: d.points, frequency: d.frequency, min_battery: parseInt(d.min_battery, 10),
-  }).then((r) => {
+  }, { notice: false }).then((r) => {
     const b = (r.body && typeof r.body === 'object') ? r.body : {};
     if (r.ok && b.ok !== false) loadCleaning();
-    return { ok: r.ok && b.ok !== false, errors: b.errors, error: b.error };
+    return { ok: r.ok && b.ok !== false, errors: b.errors, error: b.error || r.error };
   });
 }
 

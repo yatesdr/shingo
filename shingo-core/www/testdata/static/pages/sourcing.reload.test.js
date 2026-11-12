@@ -148,19 +148,24 @@ function load(opts) {
         // the history durations below deterministic — and it is also what the
         // real serverNow() does with no server inline to sync from.
         serverNow: () => ctxObj.Date.now(),
-        api: {
-            get: (url) => {
-                apiCalls.push(url);
-                if (opts.apiFails) return Promise.reject('boom');
-                return Promise.resolve(feed || { since: '2026-07-20T00:00:00Z', events: [] });
-            },
+        // app.js's apiGet: a refusal rejects an ApiError whose string is the
+        // door's sentence.
+        apiGet: (url) => {
+            apiCalls.push(url);
+            if (opts.apiFails) {
+                const err = new Error('boom');
+                err.name = 'ApiError';
+                err.toString = function () { return this.message; };
+                return Promise.reject(err);
+            }
+            return Promise.resolve(feed || { since: '2026-07-20T00:00:00Z', events: [] });
         },
         h: htmlTag,
     };
     vm.createContext(ctxObj);
 
     const src = fs.readFileSync(path.join(SRC_DIR, 'sourcing.js'), 'utf8')
-        .replace(/^import[^;]+;\s*/gm, '');  // drop the ES imports; onSSE/api/h/serverNow injected
+        .replace(/^import[^;]+;\s*/gm, '');  // drop the ES imports; onSSE/apiGet/h/serverNow injected
     vm.runInContext(src, ctxObj);
 
     return {

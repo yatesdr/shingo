@@ -1,7 +1,7 @@
 import { h } from '/static/shared/dom.js';
 import { convertTimestamps, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
-import { api } from '/static/shared/utils.js';
+import { apiGet } from '/static/app.js';
 
 // Sourcing page — direction B (two-pane): a process rail on the left, that
 // process's changeover detail on the right.
@@ -295,7 +295,7 @@ async function loadVerdictHistory() {
 
     let payload;
     try {
-        payload = await api.get('/api/sourceability/events?limit=' + HISTORY_LIMIT);
+        payload = await apiGet('/api/sourceability/events?limit=' + HISTORY_LIMIT);
     } catch (err) {
         // A failed fetch is NOT an empty history. Saying "no changes" here would
         // be the A1 defect in miniature: reading an absent answer as a positive

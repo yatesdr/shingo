@@ -5,10 +5,13 @@
 // rows. What is not a setting is its own button and never touches the draft:
 // Test connection (POST /api/config/test-database), Send a test (the two
 // /config/test-* doors, with the draft's mail settings), Change password
-// (POST /config/password).
+// (POST /config/password). Each of those answers beside its own field, so
+// each goes through the HTTP door with its notice off; its sentence (a lapsed
+// session is "Signed out") is the last word when the body says nothing.
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { collectList, durationFromText, durationToText, settingsPage } from '/static/shared/settings.js';
-import { apiResult, hideModal, showModal } from '/static/shared/utils.js';
+import { send } from '/static/shared/http.js';
+import { hideModal, showModal } from '/static/shared/layer.js';
 
 const root = document.getElementById('config-page');
 const $ = (sel) => root.querySelector(sel);
@@ -322,14 +325,14 @@ async function testDatabase(btn) {
     const d = readDatabase();
     btn.disabled = true;
     btn.textContent = 'Testing…';
-    const res = await apiResult('POST', '/api/config/test-database', databaseBody(d));
+    const res = await send('POST', '/api/config/test-database', databaseBody(d), { notice: false });
     btn.disabled = false;
     btn.textContent = 'Test connection';
     const b = res.body || {};
     const ok = res.ok && b.ok === true;
     const why = b.errors && Object.keys(b.errors).length ? Object.values(b.errors).join(' ') : (b.error || b.message);
     resultLine(field('pg_host').closest('.set-fld'), ok,
-        ok ? (b.message || 'Connected.') : 'Did not connect: ' + (why || 'the server answered ' + res.status + '.'));
+        ok ? (b.message || 'Connected.') : 'Did not connect: ' + (why || res.error || 'the server answered ' + res.status + '.'));
 }
 
 async function sendTest(btn) {
@@ -337,12 +340,12 @@ async function sendTest(btn) {
     const url = kind === 'email' ? '/config/test-email' : '/config/test-alert?type=' + encodeURIComponent(kind);
     btn.disabled = true;
     btn.textContent = 'Sending…';
-    const res = await apiResult('POST', url, notificationsBody(sections.notifications.read()));
+    const res = await send('POST', url, notificationsBody(sections.notifications.read()), { notice: false });
     btn.disabled = false;
     btn.textContent = 'Send';
     const b = res.body || {};
     const ok = res.ok && b.ok === true;
-    resultLine(btn.closest('.set-fld'), ok, (b && (b.message || b.error)) || ('The server answered ' + res.status + '.'));
+    resultLine(btn.closest('.set-fld'), ok, (b && (b.message || b.error)) || res.error || ('The server answered ' + res.status + '.'));
 }
 
 async function changePassword() {
@@ -352,14 +355,14 @@ async function changePassword() {
     modal.querySelectorAll('[data-result]').forEach((l) => l.remove());
     if (!get('new')) { resultLine(row('new'), false, 'Type a new password.'); return; }
     if (get('new') !== get('again')) { resultLine(row('again'), false, 'The two new passwords are not the same.'); return; }
-    const res = await apiResult('POST', '/config/password', { old_password: get('old'), new_password: get('new') });
+    const res = await send('POST', '/config/password', { old_password: get('old'), new_password: get('new') }, { notice: false });
     const b = res.body || {};
     if (res.ok && b.ok) {
         hideModal('cfg-password-modal');
         resultLine(root.querySelector('[data-action="openPasswordModal"]').closest('.set-fld'), true, 'Password changed.');
         return;
     }
-    const msg = b.message || b.error || ('The server answered ' + res.status + '.');
+    const msg = b.message || b.error || res.error || ('The server answered ' + res.status + '.');
     resultLine(row(/current/.test(msg) ? 'old' : 'new'), false, msg.charAt(0).toUpperCase() + msg.slice(1) + '.');
 }
 
