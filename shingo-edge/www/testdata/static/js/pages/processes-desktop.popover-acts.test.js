@@ -2710,7 +2710,8 @@ async function mainAsync() {
         fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null),
     });
     const routingHead = '<div class="pd-sect"><h2>Routing set</h2><span class="pd-dim">' +
-        'where this process may draw bins from, stage them, and send them</span></div>';
+        'where this process may draw bins from, stage them, and send them</span>' +
+        '<span class="pd-wt">saved as you pick</span></div>';
     const noMapNote = '<p class="pd-note">No plant map on this Edge yet. Core sends it with the node ' +
         'list; until then the lists above are the whole routing set.</p>';
 

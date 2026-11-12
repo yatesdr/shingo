@@ -1036,3 +1036,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-ch-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
     margin-top: 4px; padding: 4px 6px; border-left: 3px solid; border-radius: 2px; }
 .pd-ch-acts { display: flex; gap: 6px; align-items: center; }
+
+/* A Settings section written as each pick is made says so beside its heading:
+ * the save bar's Save and Discard do not cover it. */
+.pd-wt {
+    padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
+    color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
+}

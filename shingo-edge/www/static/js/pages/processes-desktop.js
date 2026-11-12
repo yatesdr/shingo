@@ -4099,7 +4099,8 @@ function routingSection() {
     // not: it counts the rows a backfill derived, a true answer to a narrower
     // question, read above the whole set as though it described it.
     return '<div class="pd-sect"><h2>Routing set</h2>' +
-        '<span class="pd-dim">where this process may draw bins from, stage them, and send them</span></div>' +
+        '<span class="pd-dim">where this process may draw bins from, stage them, and send them</span>' +
+        SAVED_AS_YOU_PICK + '</div>' +
         ROUTING_GROUPS.map(routingRole).join('') +
         (way.length ? stBlock('Waypoints', 'from the map, on the shortest supply path — not editable',
             '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
@@ -5179,6 +5180,12 @@ function settingsDirty() {
     return (!!S.settings && JSON.stringify(S.settings) !== JSON.stringify(settingsDraft())) || curtainDirty();
 }
 
+// THE WRITE-THROUGH SECTIONS SAY SO. Positions, the routing set and the part
+// set are written as each pick is made, outside the save bar's draft, so
+// neither Save settings nor Discard covers them; their headings say that
+// rather than leaving the save bar to be read as theirs too.
+const SAVED_AS_YOU_PICK = '<span class="pd-wt">saved as you pick</span>';
+
 function stField(label, sub, control) {
     return '<div class="pd-sfld"><label>' + esc(label) +
         (sub ? '<small>' + esc(sub) + '</small>' : '') + '</label><div class="v">' + control + '</div></div>';
@@ -5460,7 +5467,7 @@ function countedAtName(n) {
 function positionsSection() {
     const screens = stationsOf(S.processID);
     const head = '<div class="pd-sect"><h2>Positions</h2>' +
-        '<span class="pd-dim">the spots this process works, by the screen each is on</span>' +
+        '<span class="pd-dim">the spots this process works, by the screen each is on</span>' + SAVED_AS_YOU_PICK +
         '<span class="pd-spacer"></span>' +
         (screens.length ? '<button class="pd-btn" data-act="pos-add">Add positions</button>' : '') + '</div>';
     if (!screens.length) {
@@ -5726,7 +5733,9 @@ function drawSettings() {
         (card ? card.titleHTML(view)
             : '<span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' + esc(counting ? 'counting' : 'not wired') + '</span>') +
         '</div>' +
-        stField('PLC', 'the PLCs WarLink reports', plcPick()) +
+        // WarLink's own list, not one Shingo keeps: a PLC missing here is one
+        // WarLink was never told about, so the field says where to add it.
+        stField('PLC', 'Only PLCs set up in WarLink are listed — add one in WarLink’s PLCs tab', plcPick()) +
         stField('Tag', 'type to filter this PLC’s tags; a MES_ struct offers its counter member',
             stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
         stField('Counting', 'off: this process isn’t counted', stToggle('counter_enabled')) +
@@ -5741,7 +5750,8 @@ function drawSettings() {
     // catalog is the section's action, not a setting: it asks Core for the
     // catalog the picker offers.
     const partsSect = '<div class="pd-sect"><h2>Parts</h2>' +
-        '<span class="pd-dim">the operator’s part list on CHANGEOVER</span><span class="pd-spacer"></span>' +
+        '<span class="pd-dim">the operator’s part list on CHANGEOVER</span>' + SAVED_AS_YOU_PICK +
+        '<span class="pd-spacer"></span>' +
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
         (S.partSet === null
             ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
@@ -5824,7 +5834,7 @@ function drawSettings() {
         healthSection() + general + counter + positions + routingSection() + partsSect + more + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
-        '<button class="pd-btn" data-act="st-discard">Discard</button>' +
+        '<button class="pd-btn" data-act="st-discard"' + (settingsDirty() ? '' : ' disabled') + '>Discard</button>' +
         '<button class="pd-btn primary" data-act="st-save"' + (settingsDirty() ? '' : ' disabled') +
         '>Save settings</button></div>' +
         (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
@@ -5953,6 +5963,7 @@ function markSettingsBar() {
     bar.querySelector('.prov').className = 'prov' + (d ? ' dirty' : '');
     bar.querySelector('.prov').textContent = d ? 'Unsaved changes' : 'No unsaved changes';
     bar.querySelector('[data-act="st-save"]').disabled = !d;
+    bar.querySelector('[data-act="st-discard"]').disabled = !d;
 }
 
 // TWO DOORS, AND THAT IS THE SERVER'S SHAPE, NOT A CHOICE MADE HERE. PUT
