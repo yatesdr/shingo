@@ -141,6 +141,9 @@ type CellPosition struct {
 	// so the desktop, which draws every station of the process, offers what
 	// the station's HMI offers and never an unloader's window.
 	StationID int64 `json:"station_id,omitempty"`
+	// Curtain is the node's light-curtain switch (Node.CurtainEnabled): the
+	// Processes page draws a style's Curtain required only where it is on.
+	Curtain bool `json:"curtain,omitempty"`
 }
 
 // CellClaim is the slice of a NodeClaim the picture reads: the choreography,
@@ -374,6 +377,7 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 		if n.OperatorStationID != nil {
 			pos.StationID = *n.OperatorStationID
 		}
+		pos.Curtain = n.CurtainEnabled
 		if x, y, ok := LocateCellPosition(in.Geometry, n.CoreNodeName); ok {
 			pos.X, pos.Y = &x, &y
 			placed++

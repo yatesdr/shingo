@@ -10,11 +10,11 @@ BUG  col:partner:secondPaired offers no position bound to another screen: POS_A1
 ok   every row
 
 ## B6 · the row's "N set" is the sheet's own total
-BUG  every row of Style B: POS_A2 badge 13, sheet 14; POS_A3 badge 12, sheet 11; POS_A5 badge 12, sheet 11; POS_A7 badge 12, sheet 11; POS_A8 badge 12, sheet 11
+ok   every row of Style B
 
 ## F15 · Board order only on a loader position; Curtain required only where the node has a curtain
-BUG  Board order is drawn on no line-mode position: POS_A1 (two_robot_press_index), POS_A2 (two_robot_press_index), POS_A3 (two_robot), POS_A4 (two_robot), POS_A5 (single_robot), POS_A6 (single_robot), POS_A7 (sequential), POS_A8 (sequential), POS_A9 (sequential), POS_A10 (sequential)
-BUG  Curtain required is drawn exactly on the curtained position: POS_A1 has none, drawn, POS_A2 has none, drawn, POS_A4 has none, drawn, POS_A5 has none, drawn, POS_A6 has none, drawn, POS_A7 has none, drawn, POS_A8 has none, drawn, POS_A9 has none, drawn, POS_A10 has none, drawn
+ok   Board order is drawn on no line-mode position
+ok   Curtain required is drawn exactly on the curtained position
 
 ## B7 · the key-route picker offers no waypoint already on the route
 BUG  POS_A3 via:0 (LM_2 of LM_2 › LM_3): offers LM_3, already on the route

@@ -2469,16 +2469,15 @@ function syncPosHead(e) {
     if (head) head.scrollLeft = e.target.scrollLeft;
 }
 
-// The row's `N set` badge. The model counts it, by domain.ClaimHas's rule, so
-// the badge and the server agree on what "set" means; the tool change's marks
-// and the partial home are the cell's own and are counted here beside them
-// because the modal draws them all in one sheet.
+// The row's `N set` badge IS THE SHEET'S TOTAL (B6): the fields its gear's
+// sheet draws, counted by the sheet's own rule (advShows, advIsSet). It
+// counted the model's set beside the cell's three fields, drawn or not, so
+// every consume row read one over the sheet it opened.
 function advancedCount(node) {
     const c = S.model.cells[node];
-    let n = M().advancedSet(S.model, node).length;
-    if ((c.evacNodes || []).length) n++;
-    if (c.partialDest) n++;
-    return n;
+    if (!c) return 0;
+    const ctx = { node: node, a: M().advancedFor(S.model, node), evacNodes: c.evacNodes || [], partialDest: c.partialDest || '' };
+    return ADV_SECTIONS.reduce((n, sec) => n + sec[1].filter(k => advShows(k, ctx) && advIsSet(k, ctx)).length, 0);
 }
 
 function gearSVG() {
@@ -4228,30 +4227,52 @@ function openGroupAdvanced(i) {
     drawAdvanced();
 }
 
-function advShows(key) {
+// ctx is the sheet's draft, S.adv: {node, a, evacNodes, partialDest, group};
+// the row's badge passes the same shape built from the cell (advancedCount).
+function advShows(key, ctx) {
+    const d = ctx || S.adv;
     // The tolerance is read only through strict pack, so it is drawn only
     // while the sheet has strict pack on, in either scope. A stored value
     // stays when the cap is switched off; nothing reads it then.
-    if (key === 'pack_tolerance_pct' && !S.adv.a.strict_pack) return false;
-    if (S.adv.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, S.adv.node, key);
+    if (key === 'pack_tolerance_pct' && !d.a.strict_pack) return false;
+    if (d.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, d.node, key);
     if (key === 'evac_nodes') {
-        return M().advancedShows(S.model, S.adv.node, 'changeover_evac_nodes');
+        return M().advancedShows(S.model, d.node, 'changeover_evac_nodes');
     }
-    if (key === 'partial_dest') return M().advancedShows(S.model, S.adv.node, 'partial_destination');
-    return M().advancedShows(S.model, S.adv.node, key);
+    if (key === 'partial_dest') return M().advancedShows(S.model, d.node, 'partial_destination');
+    // F15: BOARD ORDER IS A LOADER BOARD'S, so it is drawn on a loader
+    // position only (a manual_swap claim, which a loader board draws); on a
+    // press it is a number nothing on the floor reads.
+    if (key === 'sequence' && (S.model.cells[d.node] || {}).mode !== 'manual_swap') return false;
+    // F15: A CURTAIN TIE NEEDS A CURTAIN. Drawn where the node has one wired
+    // (the cell picture's `curtain`, from the node's curtain switch).
+    if (key === 'curtain_required' && !hasCurtain(d.node)) return false;
+    return M().advancedShows(S.model, d.node, key);
 }
 
-function advValue(key) {
-    if (key === 'evac_nodes') return S.adv.evacNodes;
-    if (key === 'partial_dest') return S.adv.partialDest;
-    return S.adv.a[key];
+// hasCurtain is whether the node's light curtain is switched on, as the
+// composer's cell picture says (CellPosition.Curtain).
+function hasCurtain(node) {
+    return !!((S.composer.cell.positions || []).find(p => p.core_node_name === node) || {}).curtain;
 }
 
-// A field "carries a value" by the same rule the server counts by; the two
-// cell fields follow it because they are counted on the row beside the twelve.
-function advIsSet(key) {
-    const v = advValue(key);
+function advValue(key, ctx) {
+    const d = ctx || S.adv;
+    if (key === 'evac_nodes') return d.evacNodes;
+    if (key === 'partial_dest') return d.partialDest;
+    return d.a[key];
+}
+
+// A field "carries a value" by the rule the server counts by (the model's
+// advancedSet, domain.ClaimHas): the carry-over's replace and the refill's
+// Robot 1 are the defaults, not an opinion. BOARD ORDER IS NEVER COUNTED:
+// the store stamps one on every claim it inserts (max + 1), so a value says
+// nothing about whether an engineer set it (F15: "1 set" on every row).
+function advIsSet(key, ctx) {
+    const v = advValue(key, ctx);
     if (key === 'changeover_carryover_disposition') return !!v && v !== 'replace';
+    if (key === 'refill_by') return !!v && v !== 'clearing_robot';
+    if (key === 'sequence') return false;
     return Array.isArray(v) ? v.length > 0 : Boolean(v);
 }
 
@@ -4346,9 +4367,9 @@ function drawAdvanced() {
     const node = S.adv.node;
     let body = '';
     for (const [title, keys] of ADV_SECTIONS) {
-        const shown = keys.filter(advShows);
+        const shown = keys.filter(k => advShows(k));
         if (!shown.length) continue;
-        const n = shown.filter(advIsSet).length;
+        const n = shown.filter(k => advIsSet(k)).length;
         body += '<div class="pd-sec"><div class="pd-lbl">' + esc(title) +
             (n ? '<span class="cnt">' + n + ' set</span>' : '') + '</div>' +
             shown.map(advField).join('') + '</div>';
