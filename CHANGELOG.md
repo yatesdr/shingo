@@ -35,6 +35,15 @@ Deploy: Edge v48.
 - A station's slot being filled on the Nodes page dims a robot, a disabled node and a synthetic one, and a failed node list on Orders is read again on the next open
 - A changed recipe draft asks "Discard the changes?" before a tab, the address bar or + New style leaves it, as Back does; a rename from the rail keeps it
 - Add process fits one screen at 900 px on an Edge with a plant map: the map waits behind Show on map on the routing set, and shown it is the sheet's full width
+- A process that cannot run yet opens on Setup: positions, routing set, first style, operator screen, in order, the next one to do lit
+- A style comes first and a recipe is optional; recipes live with HMI setup on Settings, and HMI setup with no recipe says so
+- Add a position asks for the position, then the swap mode, each mode with its own words
+- The positions table shows only the columns its rows use and sets Auto reorder on the row; the Advanced badge counts only what the engineer set
+- Settings opens on General, Production counter, Positions, Routing set and Parts; everything else is one row with Change…; the PLC is a pick; one positions editor, a position another process holds greyed with why
+- The Processes list has one State column and one line per row; a process with a red or amber part-identity item shows one count, and the items open inside it, on Settings; the list reads once per refresh
+- REQUEST EMPTY at a manual-swap loader names no part: Core picks the empty from the loader's mix
+- On the Processes page a refusal stays on screen, a style keeps its description through a CATID or a rename, a chain of writes resumes at the step that failed, and a changed Advanced sheet asks before a click outside closes it
+- Kafka Direct and the RDS explorer escape the names they show; Create bin checks one label as the server makes it; a refused reparent names its orders
 
 ## v0.4.0 — 2026-11-12
 
