@@ -8249,6 +8249,15 @@ async function runPresetApply() {
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
     'gspot-add': 1, 'glist-add': 1 };
 
+// hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
+// Styles. The Recipes tab's hash still says presets (F23); recipes names it
+// too, so a link in either word lands.
+function hashTab(t) {
+    if (!t) return 'flows';
+    if (t === 'recipes') return 'presets';
+    return ['flows', 'screens', 'settings', 'presets'].indexOf(t) >= 0 ? t : '';
+}
+
 // showTab is a tab's click, and the address bar's #tab= edited in place.
 function showTab(t) {
     S.tab = t;
@@ -8268,8 +8277,8 @@ function showTab(t) {
 function onHashChange() {
     if (!S.processID || !S.composer) return;
     const h = hashOpts();
-    const t = h.tab || 'flows';
-    if (['flows', 'screens', 'settings', 'presets'].indexOf(t) < 0) return;
+    const t = hashTab(h.tab);
+    if (!t) return;
     if (t === 'flows' && Number(h.style) && Number(h.style) !== S.styleID && composerStyle(Number(h.style))) {
         S.tab = 'flows';
         selectStyle(Number(h.style));

@@ -173,7 +173,7 @@ block({
     open: () => ({}),
     act: async page => {
         const seen = [];
-        for (const h of ['#tab=settings', '#tab=screens', '#style=2']) {
+        for (const h of ['#tab=settings', '#tab=screens', '#tab=recipes', '#style=2']) {
             page.ctx.location.hash = h;
             page.fireWindow('hashchange');
             await page.settle();
@@ -181,7 +181,7 @@ block({
         }
         return { seen: seen };
     },
-    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> screens | #style=2 -> flows style 2',
+    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> screens | #tab=recipes -> presets | #style=2 -> flows style 2',
         r.seen.join(' | ')]],
 });
 
