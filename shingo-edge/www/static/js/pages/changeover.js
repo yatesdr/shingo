@@ -1,4 +1,4 @@
-import { api, navigateToProcess, refreshOnEvents, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { api, navigateToProcess, refreshOnEvents } from '/static/js/shingoedge.js';
 import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm } from '/static/shared/layer.js';
@@ -211,10 +211,9 @@ function renderUnresolvedParticipants(nodes) {
 // joins one pending reload, issued once the burst has settled. Order traffic
 // keeps the 2 s spacing its throttle gave it; anything else is not held back
 // by it.
-// The page's one stream (shared/bus.js), and only where the page draws a
-// changeover: with no process picked there is no #changeover-content, and a
-// banner subscription alone would open a stream for nothing.
-if (refreshOnEvents('changeover-content', onSSE)) onSSE('build-changed', showNewBuildBanner);
+// The page's one stream (shared/bus.js). With no process picked there is
+// no #changeover-content: nothing is subscribed and the page holds no stream.
+refreshOnEvents('changeover-content', onSSE);
 
 var SETTLE_MS = 300;
 var ORDER_GAP_MS = 2000;

@@ -1,4 +1,4 @@
-import { api, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { api } from '/static/js/shingoedge.js';
 import { onSSE } from '/static/shared/bus.js';
 import { delegateActions } from '/static/shared/dom.js';
 import { confirm, layerDepth } from '/static/shared/layer.js';
@@ -120,4 +120,3 @@ async function confirmHolding(message) {
 }
 
 onSSE('containment', reloadOnContainment);
-onSSE('build-changed', showNewBuildBanner);

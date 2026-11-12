@@ -20,7 +20,7 @@
 //   - toast: recorded as [kind, text]; the pins read what the page said.
 //   - onSSE (shared/bus.js): each subscription is kept by type, and a pin
 //     fires core-nodes with the frame the engine sends
-//     (CoreNodesUpdatedEvent). showNewBuildBanner: a no-op.
+//     (CoreNodesUpdatedEvent).
 //   - delegateActions: its handler map is kept, and a pin calls a handler
 //     with `this` set to the element the click would have been on.
 //   - fetch: every call is recorded (method, url, body) and answered by
@@ -152,7 +152,6 @@ function boot(page) {
         setTimeout: () => 0, clearTimeout() {},
         toast: (msg, kind) => { rec.toasts.push([kind || 'info', String(msg)]); },
         onSSE: (type, fn) => { (rec.sse[type] = rec.sse[type] || []).push(fn); return () => {}; },
-        showNewBuildBanner() {},
         delegateActions: (root, map) => { rec.actions = map; },
         prompt: async () => null,
         navigateToProcess() {},

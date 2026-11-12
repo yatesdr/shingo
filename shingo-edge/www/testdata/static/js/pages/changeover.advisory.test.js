@@ -59,7 +59,6 @@ function makeContext() {
         // refreshOnEvents) are not what this test drives.
         refreshOnEvents: () => 0,
         onSSE: () => () => {},
-        showNewBuildBanner: () => {},
         htmx: { trigger: () => {} },
         console, parseInt, parseFloat, JSON, Math,
         Array, Object, String, Number, Boolean, Promise,

@@ -32,14 +32,14 @@ core robots.html: opens a stream; topics robot-update,system-status; bus frames 
 core sourcing.html: opens a stream; topics bin-update,sourcing-update,system-status; bus frames build-changed,connected,disconnected
 core test-orders.html: opens a stream; topics order-update,system-status; bus frames build-changed
 edge changeover.html: opens a stream; topics changeover-update,order-failed,order-update; bus frames build-changed
-edge config.html: no bus
+edge config.html: no stream; bus frames build-changed
 edge containment.html: opens a stream; topics containment; bus frames build-changed
 edge diagnostics.html: opens a stream; topics debug-log; bus frames build-changed
-edge login.html: no bus
-edge manual-message.html: no bus
+edge login.html: no stream; bus frames build-changed
+edge manual-message.html: no stream; bus frames build-changed
 edge manual-order.html: opens a stream; topics core-nodes; bus frames build-changed
 edge operator-display.html: opens a stream; operator-station/operator.js: onSSE(type, …); bus frames connected,disconnected,heartbeat,stream-gap
 edge orders.html: opens a stream; topics order-completed,order-failed,order-update; bus frames build-changed
-edge processes.html: no bus
+edge processes.html: no stream; bus frames build-changed
 edge production.html: opens a stream; topics core-nodes,counter-update,order-failed,order-update; bus frames build-changed
-edge replenishment.html: no bus
+edge replenishment.html: no stream; bus frames build-changed

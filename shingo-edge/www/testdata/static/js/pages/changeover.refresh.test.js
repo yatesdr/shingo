@@ -76,7 +76,6 @@ function makeContext() {
         // refreshOnEvents) are not what this test drives.
         refreshOnEvents: () => 0,
         onSSE: () => () => {},
-        showNewBuildBanner: () => {},
         htmx: { trigger: () => {} },
         Date: { now: () => now },
         setTimeout: fakeSetTimeout,

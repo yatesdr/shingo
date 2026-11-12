@@ -1,12 +1,12 @@
 # SSE — edge-admin: Edge admin pages on the shared bus (shared/bus.js), through the hub's
-# refreshOnEvents and showNewBuildBanner (shingo-edge/www/static/js/shingoedge.js).
+# refreshOnEvents and its build-changed banner (shingo-edge/www/static/js/shingoedge.js).
 # One page per section, the subscriptions as the page module makes them; "#n" is the n-th
 # EventSource the page opened, "←" a frame the server sends on it. t= is the fake clock.
 
 ## Orders (orders.js), #orders-content as orders.html writes it
-the page loaded: the hub, no subscription yet
+the page loaded: the hub (its build-changed subscription), the page module not yet
     (nothing)
-refreshOnEvents("orders-content", onSSE); onSSE("build-changed", showNewBuildBanner)
+refreshOnEvents("orders-content", onSSE)
     t=0 open #1 /events?topics=order-completed%2Corder-failed%2Corder-update
     = refreshOnEvents returned 3
     #1 listens for: connected, heartbeat, order-completed, order-failed, order-update
@@ -67,7 +67,7 @@ click the banner's ×
     (nothing)
 
 ## Production (production.js): the partial's triggers first, then the page's own handlers
-refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); onSSE("core-nodes", nodes); onSSE("build-changed", showNewBuildBanner)
+refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); onSSE("core-nodes", nodes)
     t=0 open #1 /events?topics=core-nodes%2Ccounter-update%2Corder-failed%2Corder-update
     #1 listens for: connected, core-nodes, counter-update, heartbeat, order-failed, order-update
 #1 ← counter-update {"process_id":3,"delta":2}
@@ -77,13 +77,13 @@ refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); on
     t=0 handler nodes({"nodes":["LN-1"]}, <event>)
 
 ## Diagnostics (diagnostics.js): the debug feed only
-setSSEQuery({debug: 1}); onSSE("debug-log", row); onSSE("build-changed", showNewBuildBanner)
+setSSEQuery({debug: 1}); onSSE("debug-log", row)
     t=0 open #1 /events?topics=debug-log&debug=1
 
 ## pages that hold no stream
-Config, Processes, Replenishment, Kafka Direct: the hub alone, then 60 s
+Config, Processes, Replenishment, Kafka Direct: the hub alone (its build-changed subscription), then 60 s
     (nothing)
     = streams opened: 0
-Changeover with no process picked (no #changeover-content): changeover.js's guarded subscriptions
+Changeover with no process picked (no #changeover-content): refreshOnEvents("changeover-content", onSSE)
     (nothing)
     = streams opened: 0

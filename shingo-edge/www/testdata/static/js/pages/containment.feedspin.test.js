@@ -72,7 +72,6 @@ function makeContext() {
         toast: () => {},
         delegateActions: (_root, actions) => { state.actions = actions; },
         onSSE: (type, fn) => { state.sse.push({ type, fn }); return () => {}; },
-        showNewBuildBanner: () => {},
         fetch: async () => { state.fetches++; return { ok: true, text: async () => '' }; },
         setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
         clearInterval: () => {},
@@ -96,11 +95,10 @@ function makeContext() {
         // base: 1 interval at 5000 ms (F2: none)
         check('no interval is registered', t.intervals.length === 0, 0, t.intervals.length);
         // base: no SSE subscription (F2: one on /events with onContainment;
-        // since the bus, the containment type on the page's one stream, and
-        // the new-build banner beside it)
+        // since the bus, the containment type on the page's one stream; the
+        // new-build banner is the hub's)
         const types = t.state.sse.map((s) => s.type).join(',');
-        check('the page subscribes containment and build-changed on the bus', types === 'containment,build-changed',
-            'containment,build-changed', types);
+        check('the page subscribes containment on the bus', types === 'containment', 'containment', types);
         check('the containment subscription is a function',
             t.state.sse.length > 0 && typeof t.state.sse[0].fn === 'function', true, false);
         // base: the source polled /api/containment/state (F2: it does not)

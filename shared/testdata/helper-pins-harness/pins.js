@@ -920,9 +920,10 @@ async function coreHubBusPins() {
 //
 // What an Edge admin page does with the one bus (shared/bus.js) since both
 // createSSE copies and htmx-sse.js went (ruling 4): the hub loaded as
-// header.html loads it, the partial's element as its template writes it, then
-// the subscriptions the page's module makes, in its order. htmx is a stub
-// that notes each trigger it is asked for.
+// header.html loads it (it subscribes build-changed to the new-build banner,
+// which opens no stream), the partial's element as its template writes it,
+// then the subscriptions the page's module makes, in its order. htmx is a
+// stub that notes each trigger it is asked for.
 
 function edgeAdminPage(markup) {
     const r = makeRealm({ surface: 'edge' });
@@ -952,7 +953,7 @@ function edgeAdminTimeline(r, out) {
 async function edgeAdminBusPins() {
     const out = [
         '# SSE — edge-admin: Edge admin pages on the shared bus (shared/bus.js), through the hub\'s',
-        '# refreshOnEvents and showNewBuildBanner (shingo-edge/www/static/js/shingoedge.js).',
+        '# refreshOnEvents and its build-changed banner (shingo-edge/www/static/js/shingoedge.js).',
         '# One page per section, the subscriptions as the page module makes them; "#n" is the n-th',
         '# EventSource the page opened, "←" a frame the server sends on it. t= is the fake clock.',
         '',
@@ -961,10 +962,9 @@ async function edgeAdminBusPins() {
     {
         const { r, hub, bus } = edgeAdminPage([['orders-content', 'refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed']]);
         const step = edgeAdminTimeline(r, out);
-        await step('the page loaded: the hub, no subscription yet', async () => {});
-        await step('refreshOnEvents("orders-content", onSSE); onSSE("build-changed", showNewBuildBanner)', async () => {
+        await step('the page loaded: the hub (its build-changed subscription), the page module not yet', async () => {});
+        await step('refreshOnEvents("orders-content", onSSE)', async () => {
             const n = hub.refreshOnEvents('orders-content', bus.onSSE);
-            bus.onSSE('build-changed', hub.showNewBuildBanner);
             return 'refreshOnEvents returned ' + n;
         });
         const s1 = r.streams[0];
@@ -999,11 +999,10 @@ async function edgeAdminBusPins() {
     {
         const { r, hub, bus } = edgeAdminPage([['production-content', 'refreshProduction from:body, refreshMaterial from:body, sse:order-update throttle:5s, sse:order-failed, sse:counter-update throttle:10s']]);
         const step = edgeAdminTimeline(r, out);
-        await step('refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); onSSE("core-nodes", nodes); onSSE("build-changed", showNewBuildBanner)', async () => {
+        await step('refreshOnEvents("production-content", onSSE); onSSE("counter-update", chart); onSSE("core-nodes", nodes)', async () => {
             hub.refreshOnEvents('production-content', bus.onSSE);
             bus.onSSE('counter-update', handlerNote(r, 'chart'));
             bus.onSSE('core-nodes', handlerNote(r, 'nodes'));
-            bus.onSSE('build-changed', hub.showNewBuildBanner);
         });
         const s1 = r.streams[0];
         out.push('    #1 listens for: ' + s1.types().join(', '));
@@ -1016,10 +1015,9 @@ async function edgeAdminBusPins() {
     {
         const { r, hub, bus } = edgeAdminPage([]);
         const step = edgeAdminTimeline(r, out);
-        await step('setSSEQuery({debug: 1}); onSSE("debug-log", row); onSSE("build-changed", showNewBuildBanner)', async () => {
+        await step('setSSEQuery({debug: 1}); onSSE("debug-log", row)', async () => {
             bus.setSSEQuery({ debug: 1 });
             bus.onSSE('debug-log', handlerNote(r, 'row'));
-            bus.onSSE('build-changed', hub.showNewBuildBanner);
         });
     }
 
@@ -1028,13 +1026,13 @@ async function edgeAdminBusPins() {
     {
         const { r } = edgeAdminPage([]);
         const step = edgeAdminTimeline(r, out);
-        await step('Config, Processes, Replenishment, Kafka Direct: the hub alone, then 60 s', async () => { await r.advance(60000); return 'streams opened: ' + r.streams.length; });
+        await step('Config, Processes, Replenishment, Kafka Direct: the hub alone (its build-changed subscription), then 60 s', async () => { await r.advance(60000); return 'streams opened: ' + r.streams.length; });
     }
     {
         const { r, hub, bus } = edgeAdminPage([]);
         const step = edgeAdminTimeline(r, out);
-        await step('Changeover with no process picked (no #changeover-content): changeover.js\'s guarded subscriptions', async () => {
-            if (hub.refreshOnEvents('changeover-content', bus.onSSE)) bus.onSSE('build-changed', hub.showNewBuildBanner);
+        await step('Changeover with no process picked (no #changeover-content): refreshOnEvents("changeover-content", onSSE)', async () => {
+            hub.refreshOnEvents('changeover-content', bus.onSSE);
             await r.advance(60000);
             return 'streams opened: ' + r.streams.length;
         });

@@ -89,7 +89,7 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		// The page's own handlers; the order-update / order-failed /
 		// counter-update refreshes are refreshOnEvents', subscribed first
 		// (TestProductionRefresh_OneStream, shingoedge.refresh.test.js).
-		{"production.js bus handlers", strings.Join(handlers, ","), "counter-update,core-nodes,build-changed"},
+		{"production.js bus handlers", strings.Join(handlers, ","), "counter-update,core-nodes"},
 		// production.js called htmx.trigger itself; the hub's verb does now.
 		{"shingoedge.js refreshOnEvents calls htmx.trigger", strings.Contains(hub, "window.htmx.trigger(target, 'sse:' + type, data)"), true},
 		// Was true: Diagnostics opens /events?debug=1, on the bus now.

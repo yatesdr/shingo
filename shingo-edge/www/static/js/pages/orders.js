@@ -1,4 +1,4 @@
-import { api, navigateToProcessOrOrders, refreshOnEvents, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { api, navigateToProcessOrOrders, refreshOnEvents } from '/static/js/shingoedge.js';
 import { onSSE } from '/static/shared/bus.js';
 import { delegateActions } from '/static/shared/dom.js';
 import { confirm, prompt } from '/static/shared/layer.js';
@@ -6,8 +6,8 @@ import { toast } from '/static/shared/notice.js';
 
 // Order actions that need JSON bodies or confirm dialogs.
 // HX-Trigger-based refresh is htmx's; #orders-content's sse: triggers are
-// fired from the page's one stream (shared/bus.js), with the new-build banner.
-if (refreshOnEvents('orders-content', onSSE)) onSSE('build-changed', showNewBuildBanner);
+// fired from the page's one stream (shared/bus.js).
+refreshOnEvents('orders-content', onSSE);
 
 async function confirmDelivery(orderID, qty) {
     // qty arrives as a string from data-action="confirmDelivery:<id>:<qty>"

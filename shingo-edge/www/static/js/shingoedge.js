@@ -4,8 +4,8 @@
 // ES module, loaded by header.html on every Edge admin page before the page's
 // own module. A page imports each shared helper from the file that defines it
 // (/static/shared/dom.js, layer.js, notice.js, bus.js, …); this module exports
-// only what is the Edge's: api, the two bus verbs, the process selector
-// verbs, and the Processes page's modal pair until it moves.
+// only what is the Edge's: api, refreshOnEvents, the process selector verbs,
+// and the Processes page's modal pair until it moves.
 //
 // On load it:
 //   1. localizes <time data-utc=…> after every htmx swap, and once on
@@ -15,8 +15,11 @@
 //   4. puts every failed htmx request on the notice (shared/http.js's
 //      hookHtmxErrors): a partial refresh or an hx-post action that is
 //      refused, or never answered, used to keep the old content and say
-//      nothing.
-// It subscribes nothing on the bus and opens no stream (see the bus verbs).
+//      nothing;
+//   5. shows the new-build banner on the bus's build-changed. That is one of
+//      the bus's own frames, which opens no stream (shared/bus.js): a page
+//      that holds a stream for its own topics shows the banner on it, and a
+//      page that holds none still holds none.
 //
 // window.ShingoEdge carries toast for the one classic consumer,
 // templates/diagnostics.html's inline script.
@@ -30,6 +33,7 @@ import {
 } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { hookHtmxErrors, http } from '/static/shared/http.js';
+import { onSSE } from '/static/shared/bus.js';
 // Once per page, on the body every htmx event bubbles to. A module runs after
 // the document is parsed, so the body is there.
 hookHtmxErrors(document.body);
@@ -42,21 +46,21 @@ document.addEventListener('DOMContentLoaded', function() {
     installTableSort();
     installLiveDurations();
 });
+onSSE('build-changed', showNewBuildBanner);
 
 // --- the live bus on an Edge admin page ---
-// A page that holds a stream subscribes on shared/bus.js's one bus, in its
-// own module, beside its own topics. The bus opens its stream on the
-// microtask after a burst of subscriptions; this module runs before the
-// page's, so a subscription made here would open a stream before the page's
-// topics were known (the page's would then reopen it), and open one on a
-// page that holds none. So the two verbs below are called by the page.
+// A page that holds a stream subscribes its server topics on shared/bus.js's
+// one bus, in its own module. The bus opens its stream on the microtask after
+// a burst of subscriptions; this module runs before the page's, so a server
+// topic subscribed here would open the stream before the page's topics were
+// known, and the page's would reopen it. The bus's own frames open nothing,
+// so the banner below is subscribed here, once.
 
 // showNewBuildBanner is an Edge admin page's answer to the bus's
 // build-changed (ruling 4: an admin page shows the banner and the person
 // picks the moment; a kiosk reloads). The words and the Refresh are today's
-// refresh banner's; S5 sets the final ones. A page subscribes it beside its
-// topics: onSSE('build-changed', showNewBuildBanner).
-export function showNewBuildBanner() {
+// refresh banner's; S5 sets the final ones.
+function showNewBuildBanner() {
     banner('build', {
         text: 'A new version is available.',
         action: { label: 'Refresh', onClick: function() { location.reload(); } },
@@ -68,10 +72,10 @@ export function showNewBuildBanner() {
 // subscription, through the page's own onSSE, that calls htmx.trigger(the
 // element, 'sse:<type>', data). The hx-trigger keeps its list, throttles and
 // from: as the template writes them. htmx-sse.js did this from a second
-// stream it opened on the element. The page passes onSSE so that a page with
-// no stream does not load the bus for this module's sake. The element is
-// looked up again on each frame (a page that dropped it does nothing). It
-// returns how many types it subscribed.
+// stream it opened on the element. The page calls it, with its onSSE, beside
+// its other subscriptions, so the stream opens once with all of the page's
+// topics. The element is looked up again on each frame (a page that dropped
+// it does nothing). It returns how many types it subscribed.
 export function refreshOnEvents(id, onSSE) {
     var el = document.getElementById(id);
     if (!el) return 0;

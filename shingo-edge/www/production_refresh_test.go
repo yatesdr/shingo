@@ -86,11 +86,12 @@ func edgeAdminScripts(t *testing.T) map[string]string {
 //   - no Edge admin script opens an EventSource or defines createSSE;
 //   - every element whose hx-trigger names an sse: event is refreshed by its
 //     page's script through refreshOnEvents, on the page's bus;
-//   - the hub subscribes nothing (it runs before the page, so its
-//     subscription would open a stream ahead of the page's topics, or on a
-//     page that holds none);
-//   - a page that subscribes a server event shows the new-build banner on
-//     build-changed (ruling 4: admin pages show the banner, kiosks reload).
+//   - the hub subscribes no server topic (it runs before the page, so one
+//     would open the stream ahead of the page's topics), and subscribes
+//     build-changed to the new-build banner once (ruling 4: admin pages show
+//     the banner, kiosks reload); a bus frame opens no stream (shared/bus.js),
+//     so a page that holds none still holds none;
+//   - no page subscribes build-changed itself: the hub's is the one.
 func TestEdgeAdmin_OneBus(t *testing.T) {
 	t.Parallel()
 	if _, err := os.Stat(filepath.Join("static", "js", "htmx-sse.js")); err == nil {
@@ -146,17 +147,21 @@ func TestEdgeAdmin_OneBus(t *testing.T) {
 			}
 		}
 		if rel == "static/js/shingoedge.js" {
-			// refreshOnEvents subscribes through the onSSE its page passes.
-			if strings.Contains(js, "/static/shared/bus.js'") {
-				t.Errorf("shingoedge.js imports the bus; a page subscribes on it, beside its own topics, and a page with no stream loads none")
+			// refreshOnEvents subscribes through the onSSE its page passes;
+			// at import the hub subscribes the banner and nothing else.
+			if server > 0 {
+				t.Errorf("shingoedge.js subscribes a server topic; a page subscribes its own, so the stream opens once")
+			}
+			if n := len(regexp.MustCompile(`(?m)^onSSE\('build-changed', showNewBuildBanner\);$`).FindAllString(js, -1)); n != 1 {
+				t.Errorf("shingoedge.js subscribes build-changed to the new-build banner %d times at import, want 1", n)
 			}
 			return nil
 		}
+		if strings.Contains(js, "'build-changed'") {
+			t.Errorf("%s subscribes build-changed itself; the Edge hub's subscription shows the banner", rel)
+		}
 		if server > 0 || strings.Contains(js, "refreshOnEvents(") {
 			pages = append(pages, rel)
-			if !strings.Contains(js, "onSSE('build-changed', showNewBuildBanner)") {
-				t.Errorf("%s holds a stream and does not show the new-build banner (onSSE('build-changed', showNewBuildBanner))", rel)
-			}
 		}
 		return nil
 	})

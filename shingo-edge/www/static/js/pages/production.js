@@ -1,4 +1,4 @@
-import { api, navigateToProcess, refreshOnEvents, showNewBuildBanner } from '/static/js/shingoedge.js';
+import { api, navigateToProcess, refreshOnEvents } from '/static/js/shingoedge.js';
 import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, prompt, showModal } from '/static/shared/layer.js';
@@ -525,7 +525,8 @@ renderShiftChart();
 // The page's one stream (shared/bus.js). #production-content's hx-trigger
 // sse: events first (refreshOnEvents), so the content refresh fires before
 // the page's own handler for the same frame, as it did; then the shift
-// chart's counter, the manual-order node lists and the new-build banner.
+// chart's counter and the manual-order node lists. The new-build banner is
+// the hub's.
 refreshOnEvents('production-content', onSSE);
 onSSE('counter-update', function(data) {
     // When viewing "All Processes" (activeProcessID = 0), accept
@@ -564,7 +565,6 @@ onSSE('core-nodes', function(data) {
         sel.value = cur;
     });
 });
-onSSE('build-changed', showNewBuildBanner);
 
 // ─── Manual order ────────────────────────────────────────
 

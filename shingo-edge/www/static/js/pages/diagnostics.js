@@ -1,4 +1,3 @@
-import { showNewBuildBanner } from '/static/js/shingoedge.js';
 import { onSSE, setSSEQuery } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 
@@ -70,14 +69,13 @@ import { delegateActions, escapeHtml } from '/static/shared/dom.js';
     wrap.scrollTop = wrap.scrollHeight;
   }
 
-  // The page's one stream (shared/bus.js): live debug entries, and the
-  // new-build banner. debug-log reaches only a client that asks for it
-  // (?debug=1); this page is the one that renders it.
+  // The page's one stream (shared/bus.js): live debug entries. debug-log
+  // reaches only a client that asks for it (?debug=1); this page is the one
+  // that renders it.
   setSSEQuery({ debug: 1 });
   onSSE('debug-log', function(entry) {
     debugAppendRow(entry);
   });
-  onSSE('build-changed', showNewBuildBanner);
 
   // data-action wiring. The verbs are attached to window (for SSE
   // callbacks); delegated dispatch needs its own handler map so the
