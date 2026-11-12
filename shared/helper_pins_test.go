@@ -172,9 +172,7 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 // module that exist today, as "path name". Each is someone else's to remove.
 var sharedHelperCopies = map[string]string{
 	// The Edge hub's own copies, likewise.
-	"shingo-edge/www/static/js/shingoedge.js showModal": "Edge hub copy",
-	"shingo-edge/www/static/js/shingoedge.js hideModal": "Edge hub copy",
-	"shingo-edge/www/static/js/shingoedge.js api":       "the Edge hub's api: http.js's door, its refusal thrown as an Error for the pages that catch one",
+	"shingo-edge/www/static/js/shingoedge.js api": "the Edge hub's api: http.js's door, its refusal thrown as an Error for the pages that catch one",
 	// The station's own builder: it sets properties where dom.js's el sets
 	// attributes (operator-util.js's comment), and the station's touch layer is
 	// not extracted (brief v2 S2).

@@ -11,8 +11,8 @@ el                    -         -         dom.js
 debounce              -         -         dom.js
 delegateActions       -         -         dom.js
 installBackdropClose  -         -         utils.js
-showModal             -         own       utils.js
-hideModal             -         own       utils.js
+showModal             -         -         utils.js
+hideModal             -         -         utils.js
 confirm               -         -         utils.js
 prompt                -         -         utils.js
 uiConfirm             -         -         -

@@ -17,8 +17,7 @@
 // operator-flow.test.js loads them; the shared components the page imports
 // (layer.js, notice.js, http.js, picker.js and dom.js under them), each loaded
 // once into the page's realm with its imports bound, as a browser's module map
-// holds them (sharedLoader); and, while the page still takes them from the
-// Edge hub, shingoedge.js's showModal and hideModal, cut out of it whole.
+// holds them (sharedLoader).
 //
 // WHAT THE COMPONENTS BUILD IS A REAL TREE. They build with dom.js's el(), so
 // an element here holds either the markup the page wrote (a string, read by
@@ -669,19 +668,7 @@ async function open(opts) {
     };
     vm.createContext(ctx);
     vm.runInContext('var window = globalThis; var self = globalThis;', ctx);
-    let pageSrc = read(path.join(STATIC, 'js', 'pages', 'processes-desktop.js'));
-    // showModal / hideModal, while the page takes them from shingoedge.js,
-    // are its own two functions cut out of the module whole: the rest of it
-    // installs document listeners and opens an EventSource.
-    if (/^import\s*\{[^}]*\}\s*from\s*'\/static\/js\/shingoedge\.js';/m.test(pageSrc)) {
-        const se = read(path.join(STATIC, 'js', 'shingoedge.js'));
-        const cut = name => {
-            const m = new RegExp('^export function ' + name + '\\([\\s\\S]*?\\r?\\n\\}\\r?\\n', 'm').exec(se);
-            if (!m) throw new Error('shingoedge.js has no export function ' + name + '; the cut has drifted');
-            return m[0].replace(/^export /, '');
-        };
-        vm.runInContext(cut('showModal') + cut('hideModal'), ctx, { filename: 'shingoedge.js' });
-    }
+    const pageSrc = read(path.join(STATIC, 'js', 'pages', 'processes-desktop.js'));
     ctx.__shared = sharedLoader(ctx);
 
     // fetch: recorded, then answered by the caller. The answer is parsed by

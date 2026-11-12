@@ -101,40 +101,6 @@ function sseTriggerTypes(el) {
     });
 }
 
-// --- the Processes page's modal pair ---
-// processes-desktop.js still takes these two; every other Edge page takes
-// shared/layer.js's. They go when s2-processes moves that page to layer.js
-// (the Processes page pins, testdata/process-setup-harness/page-harness.js,
-// cut them out of this file until then). Kept as they were: they toggle
-// .active on .modal-overlay; hideModal clears the inputs unless
-// { preserveState: true }.
-export function showModal(id) {
-    var m = document.getElementById(id);
-    if (m) {
-        m.classList.add('active');
-        document.body.style.overflow = 'hidden';
-    }
-}
-
-export function hideModal(id, opts) {
-    var modal = document.getElementById(id);
-    if (!modal) return;
-    modal.classList.remove('active');
-    // Restore body scroll only if no other modal is still open.
-    if (!document.querySelector('.modal-overlay.active')) {
-        document.body.style.overflow = '';
-    }
-    if (opts && opts.preserveState) return;
-    var inputs = modal.querySelectorAll('input, select, textarea');
-    for (var i = 0; i < inputs.length; i++) {
-        var el = inputs[i];
-        if (el.type === 'hidden') continue;
-        if (el.type === 'checkbox' || el.type === 'radio') { el.checked = false; continue; }
-        if (el.tagName === 'SELECT') { el.selectedIndex = 0; continue; }
-        el.value = el.defaultValue || '';
-    }
-}
-
 // --- api: the HTTP door, for a page that catches a refusal ---
 // The pages call api.get / post / put / patch / del and catch what it
 // rejects. Behind the names is shared/http.js's door with its notice off:
