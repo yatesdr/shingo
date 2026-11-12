@@ -194,6 +194,36 @@ func Create(db *sql.DB, n *Node) error {
 		return fmt.Errorf("create node: %w", err)
 	}
 	n.ID = id
+	return flattenOffLane(db, id)
+}
+
+// flattenOffLaneSQL is the one rule for a depth directly under a group. Depth
+// is a slot's place in a LANE, front to back; a physical node directly under an
+// NGRP is a flat position, and its depth is 1 (plantspec's rule for a
+// position). It rewrites node $1 and its children, so a lane retyped as a group
+// takes its slots with it. Synthetic nodes keep theirs (a LANE's own depth
+// ranks the lane in its group). A node with no parent has no depth: ClearParent
+// and DeleteGroup clear it as they unparent.
+//
+// It exists because the depth outlived the lane. Moving a slot out of a lane
+// (the Nodes page drops it in the group's direct section with no position)
+// kept it, and so did deleting the group, which cleared the old depth property
+// and not the column. SPR's AMR Supermarket carried depths 1-9 for five months
+// after its lane went (2026-06-16), and storage ranks a flat group's spots by
+// depth (binresolver.candidateBetter), so the group filled in that fixed order.
+const flattenOffLaneSQL = `
+	UPDATE nodes c SET depth = 1, updated_at = NOW()
+	WHERE (c.id = $1 OR c.parent_id = $1)
+	  AND c.is_synthetic = false
+	  AND c.depth IS DISTINCT FROM 1 AND c.depth IS NOT NULL
+	  AND EXISTS (SELECT 1 FROM nodes p WHERE p.id = c.parent_id
+	              AND p.node_type_id = (SELECT id FROM node_types WHERE code = 'NGRP'))`
+
+// flattenOffLane applies flattenOffLaneSQL to node id and its children.
+func flattenOffLane(q Execer, id int64) error {
+	if _, err := q.Exec(flattenOffLaneSQL, id); err != nil {
+		return fmt.Errorf("flatten depth off lane for node %d: %w", id, err)
+	}
 	return nil
 }
 
@@ -228,6 +258,9 @@ func Update(db *sql.DB, n *Node) error {
 		return fmt.Errorf("update node: %w", err)
 	}
 	if err := cascadeEnabledToSlots(tx, n); err != nil {
+		return err
+	}
+	if err := flattenOffLane(tx, n.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -507,8 +540,10 @@ func SetParent(db *sql.DB, nodeID, parentID int64) error {
 	if err := requireMarkedParent(db, nodeID, &parentID); err != nil {
 		return err
 	}
-	_, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID)
-	return err
+	if _, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID); err != nil {
+		return err
+	}
+	return flattenOffLane(db, nodeID)
 }
 
 // SetDisplayName writes the node's person-readable name (domain.Node's doc
@@ -526,19 +561,19 @@ func ClearParent(db *sql.DB, nodeID int64) error {
 	if err := requireMarkedParent(db, nodeID, nil); err != nil {
 		return err
 	}
-	_, err := db.Exec(`UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, nodeID)
+	_, err := db.Exec(`UPDATE nodes SET parent_id=NULL, depth=NULL, updated_at=NOW() WHERE id=$1`, nodeID)
 	return err
 }
 
 // Reparent moves a node into a new parent (or removes it from a parent).
-// When adopting into a lane, it sets the depth based on position.
-// When orphaning, it clears depth and role properties.
+// When adopting into a lane, it sets the depth based on position; anywhere
+// else the node is a flat position (flattenOffLane). When orphaning, it clears
+// depth and role properties.
 func Reparent(db *sql.DB, nodeID int64, parentID *int64, position int) error {
 	if parentID == nil {
 		if err := ClearParent(db, nodeID); err != nil {
 			return err
 		}
-		db.Exec(`UPDATE nodes SET depth=NULL WHERE id=$1`, nodeID)
 		DeleteProperty(db, nodeID, "role")
 		return nil
 	}
@@ -546,7 +581,10 @@ func Reparent(db *sql.DB, nodeID int64, parentID *int64, position int) error {
 		return err
 	}
 	if position > 0 {
-		db.Exec(`UPDATE nodes SET depth=$1 WHERE id=$2`, position, nodeID)
+		if _, err := db.Exec(`UPDATE nodes SET depth=$1 WHERE id=$2`, position, nodeID); err != nil {
+			return err
+		}
+		return flattenOffLane(db, nodeID)
 	}
 	return nil
 }

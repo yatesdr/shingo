@@ -704,9 +704,13 @@ func GroupOf(db *sql.DB, nodeID int64) (*Node, error) {
 // geometry that LaneForNode's one-hop parent walk cannot see, so a misconfigured
 // scene is loud at startup rather than silently ungated (§8). Two smells:
 //
-//  1. A real (non-synthetic) node with a depth set whose parent is NOT a LANE —
-//     it is tiered like a lane slot but hangs off a group directly, so it never
-//     gets a mouth exclusion (the "NGRP-direct single-file" case).
+//  1. A real (non-synthetic) node with a depth other than 1 whose parent is
+//     NOT a LANE — it is tiered like a lane slot but hangs off a group
+//     directly, so it never gets a mouth exclusion (the "NGRP-direct
+//     single-file" case). Depth 1 is a flat position (plantspec's rule), and
+//     every node write keeps a depth directly under a group at 1
+//     (nodes.flattenOffLaneSQL, v177), so under a group only a row written
+//     another way can draw this.
 //  2. A LANE nested directly under another LANE — the one-hop walk stops at the
 //     inner lane and never reaches the outer, so the deeper slots stay ungated
 //     (the "deep-nested" case).
@@ -721,7 +725,7 @@ func AuditLaneGeometry(db *sql.DB) ([]string, error) {
 		FROM nodes n
 		JOIN nodes pn ON pn.id = n.parent_id
 		LEFT JOIN node_types pnt ON pnt.id = pn.node_type_id
-		WHERE n.depth IS NOT NULL
+		WHERE n.depth IS NOT NULL AND n.depth IS DISTINCT FROM 1
 		  AND n.is_synthetic = false
 		  AND COALESCE(pnt.code, '') <> $1
 		ORDER BY n.name`, protocol.NodeClassLANE)

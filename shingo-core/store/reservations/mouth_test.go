@@ -402,8 +402,9 @@ func TestLaneForNode(t *testing.T) {
 	}
 }
 
-// TestAuditLaneGeometry: a clean LANE+slots draws no warning; an NGRP-direct
-// tiered node and a lane nested under a lane each draw one.
+// TestAuditLaneGeometry: a clean LANE+slots and a flat position (depth 1 under a
+// group) draw no warning; an NGRP-direct tiered node and a lane nested under a
+// lane each draw one.
 func TestAuditLaneGeometry(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -421,16 +422,25 @@ func TestAuditLaneGeometry(t *testing.T) {
 		}
 	}
 
-	// NGRP-direct tiered node — a depth on a non-lane child.
+	// NGRP-direct tiered node — a depth above 1 on a non-lane child. The node
+	// writes keep it at 1 (nodes.flattenOffLaneSQL), so it is written the way a
+	// row from before v177 or from outside the store arrives: by hand.
 	ngrpType, _ := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
 	ngrp := &nodes.Node{Name: "NGRP-BAD", IsSynthetic: true, Enabled: true, NodeTypeID: &ngrpType.ID}
 	if err := db.CreateNode(ngrp); err != nil {
 		t.Fatalf("create ngrp: %v", err)
 	}
-	d0 := 0
-	tiered := &nodes.Node{Name: "NGRP-BAD-TIER", Enabled: true, ParentID: &ngrp.ID, Depth: &d0}
+	tiered := &nodes.Node{Name: "NGRP-BAD-TIER", Enabled: true, ParentID: &ngrp.ID}
 	if err := db.CreateNode(tiered); err != nil {
 		t.Fatalf("create tiered ngrp child: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE nodes SET depth = 3 WHERE id = $1`, tiered.ID); err != nil {
+		t.Fatalf("tier the ngrp child by hand: %v", err)
+	}
+	one := 1
+	flat := &nodes.Node{Name: "NGRP-FLAT", Enabled: true, ParentID: &ngrp.ID, Depth: &one}
+	if err := db.CreateNode(flat); err != nil {
+		t.Fatalf("create flat ngrp child: %v", err)
 	}
 
 	// Lane nested under a lane.
@@ -451,6 +461,9 @@ func TestAuditLaneGeometry(t *testing.T) {
 	}
 	var sawTier, sawNest bool
 	for _, w := range warnings {
+		if strings.Contains(w, "NGRP-FLAT") {
+			t.Errorf("a flat position (depth 1 under a group) was flagged: %q", w)
+		}
 		if strings.Contains(w, "NGRP-BAD-TIER") {
 			sawTier = true
 		}

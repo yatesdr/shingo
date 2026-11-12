@@ -4567,7 +4567,42 @@ func migrationList() []migration {
 		{176, "bin_loaders.no_clear_partials - a dedicated loader whose board never offers Clear partials and whose home clear is refused; false, as every loader is",
 			v176LoaderNoClearPartials,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "no_clear_partials") }},
+		{177, "a removed lane's depths: a physical node directly under a group stands at depth 1, one with no parent has none",
+			v177DepthOnlyInLanes,
+			func(q schema.Querier) bool {
+				var left bool
+				err := q.QueryRow(`SELECT EXISTS (` + v177OffLaneDepths + `)`).Scan(&left)
+				return err == nil && !left
+			}},
 	}
+}
+
+// v177OffLaneWhere is a physical node c holding a depth no lane gives it:
+// directly under a group at a depth other than 1, or with no parent at all.
+const v177OffLaneWhere = `c.is_synthetic = false AND c.depth IS NOT NULL
+	  AND (c.parent_id IS NULL
+	       OR (c.depth IS DISTINCT FROM 1
+	           AND EXISTS (SELECT 1 FROM nodes p JOIN node_types t ON t.id = p.node_type_id
+	                       WHERE p.id = c.parent_id AND t.code = 'NGRP')))`
+
+// v177OffLaneDepths selects those nodes.
+const v177OffLaneDepths = `SELECT 1 FROM nodes c WHERE ` + v177OffLaneWhere
+
+// v177DepthOnlyInLanes clears the depths a lane left behind, by the rules the
+// node writes hold now: a physical node directly under a group is a flat
+// position at depth 1 (nodes.flattenOffLaneSQL), a node with no parent has no
+// depth (ClearParent, DeleteGroup). SPR's AMR
+// Supermarket kept its lane's 1-9 after the lane went on 2026-06-16, and storage
+// ranks a flat group's spots by depth, so the group filled SMN_004 first, then
+// SMN_0012, then SMN_0013. Synthetic nodes keep theirs (a LANE's depth ranks
+// the lane). ROLLBACK is the previous binary; the old depths are in the
+// pre-deploy dump. Pin: TestMigrate_V177_DepthOnlyInLanes.
+func v177DepthOnlyInLanes(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE nodes c SET depth = CASE WHEN c.parent_id IS NULL THEN NULL ELSE 1 END, updated_at = NOW()
+		WHERE ` + v177OffLaneWhere); err != nil {
+		return fmt.Errorf("v177 depth only in lanes: %w", err)
+	}
+	return nil
 }
 
 // v176LoaderNoClearPartials adds bin_loaders.no_clear_partials, the "Clear

@@ -344,9 +344,11 @@ type storageCandidate struct {
 // to know which of the two they are looking at.
 //
 // The arm stays. It is correct, it is free, and it becomes live the day a spec
-// gives its lanes depths or a flat group varies them — which is a configuration
-// change, not a code change, so deleting the arm would silently change behaviour
-// on a plant nobody rebuilt.
+// gives its lanes depths — a configuration change, not a code change, so
+// deleting the arm would silently change behaviour on a plant nobody rebuilt. A
+// flat group's spots no longer vary: the store keeps a depth directly under a
+// group at 1 (nodes.flattenOffLaneSQL, Core v177). They did at SPR, where a removed
+// lane's 1-9 stayed on the AMR Supermarket and filled it in that order.
 func bestStorageCandidate(candidates []storageCandidate) *nodes.Node {
 	if len(candidates) == 0 {
 		return nil

@@ -111,7 +111,7 @@ func DeleteGroup(db *sql.DB, grpID int64) error {
 				return err
 			}
 		} else {
-			if err := exec("unparent physical node", `UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, d.id); err != nil {
+			if err := exec("unparent physical node", `UPDATE nodes SET parent_id=NULL, depth=NULL, updated_at=NOW() WHERE id=$1`, d.id); err != nil {
 				return err
 			}
 			if err := exec("clear physical node depth/role", `DELETE FROM node_properties WHERE node_id=$1 AND key IN ('depth','role')`, d.id); err != nil {
