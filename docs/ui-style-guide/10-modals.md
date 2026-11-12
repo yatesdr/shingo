@@ -26,7 +26,7 @@ theme-aware, no inline `style.display` toggling, no DOM race conditions.
 ```
 
 ```js
-import { showModal, hideModal } from '/static/shared/utils.js';
+import { showModal, hideModal } from '/static/shared/layer.js';
 showModal('my-modal');
 hideModal('my-modal');
 ```
@@ -37,8 +37,8 @@ hideModal('my-modal');
 |---|---|---|
 | Open | `showModal(id)` adds `.active` class | — |
 | Close | `hideModal(id)` removes `.active` class | — |
-| **Backdrop click** | **Does NOT close** (button-only dismissal — safer for data-input modals) | `data-backdrop-close` on the overlay (wired once per surface by `installBackdropClose`), or `showModal(id, { closeOnBackdrop: true })`, for info/confirm modals |
-| **Escape key** | Closes the topmost open modal (removes `.active`; the inputs are left as they are) | — |
+| **Backdrop click** | **Does NOT close** (button-only dismissal — safer for data-input modals) | `data-backdrop-close` on the overlay (read by `showModal` when it opens it; no install call), or `showModal(id, { closeOnBackdrop: true })`, for info/confirm modals |
+| **Escape key** | Closes the innermost open entry, asking first when it holds typed work (the layer, below); a page does not close its modals from its own Escape handler | — |
 | **Form state on close** | **Cleared** by `hideModal` (no stale data on reopen) | `hideModal(id, { preserveState: true })` for wizards / edit-flows |
 
 The pair of defaults (button-only-close + clear-on-close) work together:
@@ -105,8 +105,10 @@ above).
 
 `shared/layer.js` is the one overlay stack. Every sheet, modal, confirm,
 prompt and popover a page opens is an entry in it, innermost last, and one set
-of rules holds for all of them. Pages move onto it in wave C; until then the
-lifecycle table above is what `utils.js` and the hubs do.
+of rules holds for all of them. Both hubs' modal names are the layer's (wave
+C). A Core page keeps the state it holds beside a modal in the entry's
+`onClose`, which runs however the entry closed, and leaves Escape to the layer
+(`TestCorePagesLeaveEscapeToTheLayer`).
 
 | Behaviour | On the layer |
 |---|---|

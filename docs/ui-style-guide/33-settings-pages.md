@@ -99,7 +99,7 @@ stacks (label above control), the note and error lines lose their indent, and a
 
 ```js
 import { settingsPage, durationFromText, durationToText, collectList } from '/static/shared/settings.js';
-import { apiResult } from '/static/shared/utils.js';
+import { send } from '/static/shared/http.js';
 
 const page = settingsPage(document.getElementById('config'), {
     url: '/api/config',                 // the one save door, PUT
@@ -114,7 +114,7 @@ const page = settingsPage(document.getElementById('config'), {
         shifts: {                       // its own door: left out of the shared request
             label: 'shifts',
             read, write,
-            save: (d) => apiResult('PUT', '/api/shifts', d.rows).then((r) => r.body || { ok: r.ok }),
+            save: (d) => send('PUT', '/api/shifts', d.rows, { notice: false }).then((r) => r.body || { ok: r.ok, error: r.error }),
         },
     },
 });
@@ -124,9 +124,11 @@ const page = settingsPage(document.getElementById('config'), {
   re-checked after every input, change and click inside the root, and on
   `page.update()`.
 - **One shared request per save**: `{section: {...}}` for the dirty sections
-  that have no `save` of their own, each through its `body()`, sent with
-  `apiResult` (it never throws: `{ok, status, body}`). The answer is `{ok:
-  false, error, errors: {field: msg}}` or `{ok: true, applied, restart, failed}`.
+  that have no `save` of their own, each through its `body()`, sent through
+  the HTTP door (`shared/http.js`, it never throws) with its notice off: the
+  page draws the answer. The answer is `{ok: false, error, errors: {field:
+  msg}}` or `{ok: true, applied, restart, failed}`; a lapsed session is *Not
+  saved. Signed out*, never a save.
 - **A section with its own `save(d)`** (a Promise of `{ok, errors?, error?}`)
   is saved after the shared request, on its own. Each part stands alone: a
   section is clean again only if its part saved, and a partial outcome is said
