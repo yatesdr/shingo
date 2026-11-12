@@ -396,6 +396,8 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("cms-transaction", sseJSON(ev.Transactions))
 	}, engine.EventCMSTransaction)
 
+	// When Core first saw each alarm on each robot, for the fault alarm.
+	onsets := &alarmOnsets{}
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.RobotsUpdatedEvent]) {
 		ev := evt.Payload
 		type robotJSON struct {
@@ -419,7 +421,8 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			X               float64 `json:"x"`
 			Y               float64 `json:"y"`
 			Angle           float64 `json:"angle"`
-			// The order this robot is on. See RobotOrderLine — no alarms.
+			// The order this robot is on, and the alarm that began with its
+			// fault. See RobotOrderLine.
 			RobotOrderLine
 		}
 		// Once per broadcast, not once per robot — and not at all when nobody
@@ -430,6 +433,10 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		// zero receivers is already a no-op; this makes BUILDING the payload one
 		// too. "Receivers", not "clients" (LC8): a tab filtered to other topics
 		// (/events?topics=system-status) is connected but is never sent this.
+		// Every tick, receivers or not: an onset is only as good as the poll
+		// that saw it, and a tab opened after a fault must still be told
+		// which alarm began with it.
+		onsets.observe(ev.Robots, clock.Now().UTC())
 		var orderLines map[string]RobotOrderLine
 		if h.HasSubscriber("robot-update") {
 			orderLines = buildRobotOrderLines(eng.OrderService(), eng.AppConfig())
@@ -457,6 +464,9 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 				Y:               r.Y,
 				Angle:           r.Angle,
 				RobotOrderLine:  orderLines[r.VehicleID],
+			}
+			if line := out[i].RobotOrderLine; line.FaultSince != nil {
+				out[i].FaultAlarm = faultAlarm(r.Alarms, onsets.firstSeen(r.VehicleID), *line.FaultSince)
 			}
 		}
 		h.Broadcast("robot-update", sseJSON(out))

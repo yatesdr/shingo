@@ -106,7 +106,8 @@ function load() {
     // non-global strip leaves the second `import` in a script vm cannot parse.
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ mergeRobot: mergeRobot, isMoving: isMoving,' +
-        ' laneVisible: laneVisible, robots: robots, MOVE_LINGER_MS: MOVE_LINGER_MS });\n})();\n';
+        ' laneVisible: laneVisible, robots: robots, MOVE_LINGER_MS: MOVE_LINGER_MS,' +
+        ' alarmWords: alarmWords, STATUS_COLOR: STATUS_COLOR });\n})();\n';
     const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
     if (src === stripped) {
         throw new Error('dashboard-map.js no longer ends in the "})();" IIFE close this ' +
@@ -179,6 +180,26 @@ console.log('laneVisible');
     const lanes = Object.keys(m.robots).filter(function () { return m.laneVisible(false, false); });
     check('no lanes on the first frame after a reload', lanes.length === 0,
         'lanes for ' + JSON.stringify(lanes));
+})();
+
+// --- the fault alarm in a few words, and faulted in red ------------------
+
+console.log('alarmWords');
+
+(function alarmWordsReadAtAGlance() {
+    const m = load();
+    check('a code in the table: its words',
+        m.alarmWords({ code: 54231, desc: 'Caution: robot is blocked' }) === 'obstacle ahead');
+    check('the table fills a format argument',
+        m.alarmWords({ code: 52700, desc: '["Do not find path to {1}","CP68"]' }) === 'no path to CP68');
+    check('a code not in the table: the fleet’s own text',
+        m.alarmWords({ code: 59999, desc: 'diThread not running' }) === 'diThread not running');
+    const long = m.alarmWords({ code: 59998, desc: 'laser frequency : 0.000 is inconsistent with default frequency : 30.000, laser id : 0' });
+    check('long fleet text is shortened at a word', long.length <= 40 && long.endsWith('…'), JSON.stringify(long));
+    check('a format string not in the table is filled',
+        m.alarmWords({ code: 59997, desc: '["Accuracy error is too large(xy): {1}",0.3093002995165057]' }) === 'Accuracy error is too large(xy): 0.31');
+    check('no alarm: no words', m.alarmWords(null) === '');
+    check('faulted is drawn in blocked’s red', m.STATUS_COLOR.faulted === m.STATUS_COLOR.blocked);
 })();
 
 console.log(failures === 0 ? 'PASS' : failures + ' FAILURE(S)');

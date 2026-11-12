@@ -84,6 +84,9 @@ import {
     reshuffling: cssVar('--status-reshuffling-dot', '#df6fb4'),
     dispatched: cssVar('--status-dispatched-dot', '#4f9bff'),
     blocked: cssVar('--status-blocked-dot', '#f85149'),
+    // A faulted order reads as a blocked one to a person, so it is red too;
+    // without this entry a fault fell through to grey everywhere it is drawn.
+    faulted: cssVar('--status-blocked-dot', '#f85149'),
     acknowledged: cssVar('--status-pending-dot', '#8b95a5'),
     queued: cssVar('--status-queued-dot', '#7aa2f0'),
     pending: cssVar('--status-pending-dot', '#8b95a5'),
@@ -107,7 +110,9 @@ import {
   // question about the robot-state vocabulary (is paused structure or status?)
   // rather than about this deletion.
   var STATE_COLOR = {
-    ready: cssVar('--status-delivered-dot', '#3fb950'),
+    // Grey at rest (HOP, 2026-11-12): green is delivered's, and a robot
+    // with nothing to do is not news.
+    ready: cssVar('--map-robot-idle', '#8b949e'),
     busy: cssVar('--status-in-transit-dot', '#34c3e0'),
     paused: cssVar('--text-muted', '#8b949e'),
     error: cssVar('--status-blocked-dot', '#f85149'),
@@ -117,7 +122,8 @@ import {
   // hue, so an occupied ring reads as a filled socket and an empty ring as an
   // available bay. Amber belongs to charging (a robot state, unchanged by the
   // P13 palette work — staged is now teal in the unified status scheme).
-  var DOCK_COLOR = { charge: cssVar('--map-dock-charge', '#e3b341'), park: cssVar('--map-dock-park', '#d98c4a') };
+  // Charging is yellow; parked is the same grey as any robot at rest.
+  var DOCK_COLOR = { charge: cssVar('--map-dock-charge', '#e3b341'), park: cssVar('--map-robot-idle', '#8b949e') };
   var CHARGE_RING = cssVar('--map-bay-ring', '#3c4a5e');
   var PARK_RING = cssVar('--map-bay-ring', '#3c4a5e');
   // Active-node accent (P21): an order source/destination ("hot") node is marked
@@ -229,7 +235,7 @@ import {
   function robotBucket(r) {
     var ord = orderByRobot[r.id];
     if (ord) {
-      if (ord.status === 'blocked') return 'blocked';
+      if (ord.status === 'blocked' || ord.status === 'faulted') return 'blocked';
       if (ord.status === 'staged' || ord.status === 'queued' ||
           ord.status === 'acknowledged' || ord.status === 'pending') return 'staged';
       if (ord.status === 'delivered') return 'idle';
@@ -291,7 +297,10 @@ import {
       angle: a || 0,
       state: r.state || deriveState(r),
       charging: !!((r.charging !== undefined) ? r.charging : r.Charging),
-      station: r.station || r.CurrentStation || ''
+      station: r.station || r.CurrentStation || '',
+      // The alarm Core judged to have begun with this robot's fault (sse.go
+      // faultAlarm); never the robot's whole alarm list.
+      faultAlarm: r.fault_alarm || null
     };
   }
 
@@ -325,6 +334,20 @@ import {
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
   // dead-on their bay point, so proximity within half a typical edge length
   // is the test; an explicit charging flag (REST payload) wins outright.
+  // bayOccupied: a robot stands on the bay at (x, y), by dockOf's own distance.
+  // With no network to scale by there is no judging it, and every bay draws.
+  function bayOccupied(x, y) {
+    if (!(graphScale > 0)) return true;
+    var lim = Math.pow(graphScale * 0.5, 2);
+    for (var k in robots) {
+      var r = robots[k];
+      if (!isFinite(r.x) || !isFinite(r.y)) continue;
+      var dx = x - r.x, dy = y - r.y;
+      if (dx * dx + dy * dy <= lim) return true;
+    }
+    return false;
+  }
+
   function dockOf(r) {
     if (r.charging) return { kind: 'charge', x: r.x, y: r.y };
     if (!bays.length || !(graphScale > 0)) return null;
@@ -1304,6 +1327,11 @@ import {
       // Single dot — no ring.
       glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 1.0, fill: NODE_ACTION_COLOR });
       svg.appendChild(glyph);
+    } else if ((cls === 'ChargePoint' || cls === 'ParkPoint') && !hot && !bayOccupied(wx, wy)) {
+      // AN EMPTY BAY IS NOT DRAWN (HOP, 2026-11-12): a plant's rows of
+      // chargers and park spots were most of the marks on the map and said
+      // nothing until a robot stood on one. An occupied bay draws under its
+      // robot; a bay an order names draws as any hot node.
     } else if (cls === 'ChargePoint') {
       // Thin ring (charge stays identifiable) + faint bolt; smaller than before
       // so a row of chargers reads as a calm strip, not a noisy fence.
@@ -1702,11 +1730,101 @@ import {
     if (btn) btn.addEventListener('click', function () { mapKeyOpen = !mapKeyOpen; renderClassLegend(); });
   }
 
+  // ── the fault alarm, in a few words ─────────────────────────────────
+  //
+  // Core sends the one alarm that began with a robot's fault (sse.go
+  // faultAlarm), as the fleet words it: SEER's sentence, sometimes a format
+  // string with its arguments ('["Do not find path to {1}","CP68"]'). The map
+  // says it in a few words a person on the floor reads at a glance. The table
+  // is the codes HOP raised in the 30 days to 2026-11-12, by count; a code it
+  // does not hold is said as the fleet said it, shortened.
+  var ALARM_WORDS = {
+    50401: 'battery dead, shutting down',
+    52503: 'battery too low',
+    52200: 'blocked',
+    54231: 'obstacle ahead',
+    54004: 'e-stop pressed',
+    54025: 'motors off',
+    52313: 'wheel slip',
+    54313: 'wheel slip',
+    54901: 'can’t see the cart',
+    52952: 'can’t recognise the cart',
+    54020: 'lost position',
+    54019: 'few reflectors seen',
+    52600: 'position uncertain',
+    52101: 'laser fault',
+    52094: 'laser fault',
+    52102: 'laser fault',
+    52103: 'laser fault',
+    54040: 'laser fault',
+    52106: 'odometry lost',
+    52111: 'motor fault',
+    52135: 'motor fault',
+    52202: 'charging failed',
+    52702: 'no path',
+    52700: 'no path to {1}',
+    52958: 'controller fault'
+  };
+  var ALARM_TEXT_MAX = 40;
+
+  // seerArgs reads a fleet alarm's text: plain, or a format string and its
+  // arguments as a JSON array. Returns {text, args}.
+  function seerArgs(desc) {
+    var d = String(desc || '').trim();
+    if (d.charAt(0) === '[') {
+      try {
+        var a = JSON.parse(d);
+        if (Array.isArray(a) && typeof a[0] === 'string') return { text: a[0], args: a };
+      } catch (e) { /* not an array after all: plain text */ }
+    }
+    return { text: d, args: [] };
+  }
+
+  function fillArgs(fmt, args) {
+    return String(fmt).replace(/\{(\d+)\}/g, function (m, i) {
+      var v = args[Number(i)];
+      if (v === undefined) return m;
+      return typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(2) : String(v);
+    });
+  }
+
+  // alarmWords is a fault alarm in a few words, or '' for none.
+  function alarmWords(fa) {
+    if (!fa) return '';
+    var seer = seerArgs(fa.desc);
+    var words = ALARM_WORDS[fa.code];
+    if (words) return fillArgs(words, seer.args);
+    var text = fillArgs(seer.text, seer.args).replace(/[\s,;:.]+$/, '');
+    if (!text) return 'alarm ' + fa.code;
+    return text.length > ALARM_TEXT_MAX ? text.slice(0, ALARM_TEXT_MAX - 1).replace(/\s+\S*$/, '') + '…' : text;
+  }
+
   // ── status rail + activity feed ────────────────────────────────────
 
-  function pushFeedEvent(text, level) {
-    activityFeed.unshift({ text: text, level: level || 'info', ts: Date.now() });
+  function pushFeedEvent(text, level, extra) {
+    var e = Object.assign({ text: text, level: level || 'info', ts: Date.now() }, extra || {});
+    activityFeed.unshift(e);
     if (activityFeed.length > 30) activityFeed.length = 30;
+    return e;
+  }
+
+  // faultWordsFor: the few words for the alarm that began with this order's
+  // robot's fault, '' while Core has named none.
+  function faultWordsFor(o) {
+    var r = o && robots[o.robot_id];
+    return r ? alarmWords(r.faultAlarm) : '';
+  }
+
+  // A FAULT'S LINE GAINS ITS WORDS WHEN THEY ARRIVE. Core names the alarm a
+  // poll or two after the order faults, so a line pushed at the transition
+  // without them takes them the first time they are known.
+  function fillFaultWords() {
+    activityFeed.forEach(function (e) {
+      if (!e.faultOrder || e.worded) return;
+      var o = orders.find(function (x) { return String(x.order_id) === String(e.faultOrder); });
+      var words = faultWordsFor(o);
+      if (words) { e.text = e.base + ' · ' + words; e.worded = true; }
+    });
   }
 
   // Called with each fresh orders array BEFORE `orders` is updated, so we
@@ -1730,7 +1848,13 @@ import {
         } else if (st === 'delivered' || st === 'confirmed') {
           pushFeedEvent('Delivered to ' + (o.delivery_node || '?'));
         } else if (st === 'blocked' || st === 'faulted') {
-          pushFeedEvent((o.delivery_node || o.source_node || '?') + ' blocked', 'alert');
+          // Who, what, where, and why when Core knows: "AMR-12 faulted at
+          // PLN_04 · obstacle ahead".
+          var where = o.current_station || o.delivery_node || o.source_node || '';
+          var base = (o.robot_id || '?') + ' ' + st + (where ? ' at ' + where : '');
+          var words = faultWordsFor(o);
+          pushFeedEvent(base + (words ? ' · ' + words : ''), 'alert',
+            { faultOrder: o.order_id, base: base, worded: !!words });
         }
       }
     });
@@ -1742,18 +1866,20 @@ import {
     var activityEl = document.getElementById('rail-activity-list');
     if (!motionEl || !activityEl) return;
 
-    // ── In-motion list ────────────────────────────────────────────────
-    // `staged` is HELD, not moving: a robot parked at a wait point holding a
-    // bin (the jammed sim listed two of them here for nine hours). It stays on
-    // the map and in the legend's Staged count; it is not "in motion".
-    var INACTIVE = { delivered: true, confirmed: true, cancelled: true, staged: true };
+    // ── Active list ───────────────────────────────────────────────────
+    // EVERY ROBOT ON AN ORDER, staged ones included (HOP, 2026-11-12). A
+    // staged robot is parked at a wait point for a person to release it,
+    // which is the robot a person most needs to find on this list; it was
+    // left off "In motion" because it is not moving, and so it was nowhere.
+    var INACTIVE = { delivered: true, confirmed: true, cancelled: true };
     var active = orders.filter(function (o) { return !INACTIVE[o.status]; });
     active.sort(function (a, b) {
       function rank(o) {
         if (o.status === 'blocked' || o.status === 'faulted') return 0;
-        if (o.status === 'in_transit') return 1;
-        if (o.status === 'staged' || o.status === 'dispatched' || o.status === 'queued') return 2;
-        return 3;
+        if (o.status === 'staged') return 1;
+        if (o.status === 'in_transit') return 2;
+        if (o.status === 'dispatched' || o.status === 'queued') return 3;
+        return 4;
       }
       return rank(a) - rank(b);
     });
@@ -1765,7 +1891,7 @@ import {
       queued: 'queued', pending: 'pending', reshuffling: 'reshuffling'
     };
     if (!shown.length) {
-      motionEl.innerHTML = '<li class="rail-empty">Nothing in motion</li>';
+      motionEl.innerHTML = '<li class="rail-empty">Nothing active</li>';
     } else {
       motionEl.innerHTML = shown.map(function (o) {
         var color = STATUS_COLOR[o.status] || '#888';
@@ -1778,11 +1904,16 @@ import {
             ? '<span class="rail-row-node">' + escapeHtml(o.delivery_node) + '</span>'
             : '<span class="rail-row-node text-muted" title="no destination yet">—</span>') +
           '<span class="rail-row-status" style="color:' + color + '">' + escapeHtml(label) + '</span>' +
+          (function () {
+            var words = (o.status === 'blocked' || o.status === 'faulted') ? faultWordsFor(o) : '';
+            return words ? '<span class="rail-row-why" style="color:' + color + '">' + escapeHtml(words) + '</span>' : '';
+          })() +
           '</li>';
       }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : '');
     }
 
     // ── Activity feed ─────────────────────────────────────────────────
+    fillFaultWords();
     var now = Date.now();
     activityFeed = activityFeed.filter(function (e) { return (now - e.ts) < FEED_MAX_AGE_MS; });
     var showing = activityFeed.slice(0, FEED_MAX_ITEMS);

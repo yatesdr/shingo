@@ -80,6 +80,7 @@ type (
 	GoroutineRing    struct{}
 	DBWaitGauge      struct{}
 	ExpiredDropGauge struct{}
+	AlarmOnsets      struct{}
 	SSEHub           struct{}
 	SSEClient        struct{}
 
@@ -145,6 +146,7 @@ func (BuildInfo) Rank() int        { return 170 }
 func (GoroutineRing) Rank() int    { return 171 }
 func (DBWaitGauge) Rank() int      { return 172 }
 func (ExpiredDropGauge) Rank() int { return 173 }
+func (AlarmOnsets) Rank() int      { return 174 }
 func (SSEHub) Rank() int           { return 175 }
 func (SSEClient) Rank() int        { return 176 }
 
@@ -209,6 +211,7 @@ func (BuildInfo) Name() string        { return "www.buildInfo.mu" }
 func (GoroutineRing) Name() string    { return "www.goroutineRing.mu" }
 func (DBWaitGauge) Name() string      { return "www.dbWaitGauge.mu" }
 func (ExpiredDropGauge) Name() string { return "www.expiredDropGauge.mu" }
+func (AlarmOnsets) Name() string      { return "www.alarmOnsets.mu" }
 func (SSEHub) Name() string           { return "www.EventHub.mu" }
 func (SSEClient) Name() string        { return "www.sseClient.mu" }
 

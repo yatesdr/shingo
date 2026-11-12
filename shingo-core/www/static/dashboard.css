@@ -359,6 +359,16 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   flex-shrink: 0;
   margin-left: auto;
 }
+/* A blocked/faulted row's why ("obstacle ahead"), on its own line under the
+ * robot: the row wraps only for it. */
+.rail-row { flex-wrap: wrap; }
+.rail-row-why {
+  flex-basis: 100%;
+  padding-left: 0.1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: normal;
+}
 /* Activity feed lines */
 .rail-event {
   font-size: 0.95rem;
