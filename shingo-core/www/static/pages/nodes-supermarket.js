@@ -1,6 +1,7 @@
 import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { send } from '/static/shared/http.js';
 import { apiPost, enterSubmits } from '/static/app.js';
 import { openNodeModal } from '/static/pages/nodes-detail.js';
 
@@ -259,14 +260,18 @@ function onDropGrid(e) {
 // is not safely re-runnable, and the old optimistic DOM patching could leave
 // the moved node rendered in BOTH the source and destination lane until a
 // manual refresh. Reload so the view is rebuilt from server state — correct
-// and drift-free.
+// and drift-free. A refusal for live orders (409) names them: they are what
+// the engineer has to finish or cancel before the move.
 function reparentNode(nodeID, parentID, position) {
-  apiPost('/api/nodes/reparent', { node_id: nodeID, parent_id: parentID, position: position })
-  .then(function(data) {
-    if (data.error) { toast('Reparent failed: ' + data.error, 'error'); return; }
-    window.location.reload();
-  })
-  .catch(function(e) { toast('Reparent error: ' + e, 'error'); });
+  send('POST', '/api/nodes/reparent', { node_id: nodeID, parent_id: parentID, position: position }, { notice: false })
+  .then(function(res) {
+    if (res.ok && !(res.body && res.body.error)) { window.location.reload(); return; }
+    if (res.ok) { toast('Reparent failed: ' + res.body.error, 'error'); return; }
+    if (res.shown) return;
+    var ids = (res.body && Array.isArray(res.body.order_ids)) ? res.body.order_ids : [];
+    var orders = ids.length ? ' (order' + (ids.length === 1 ? ' ' : 's ') + ids.join(', ') + ')' : '';
+    toast('Reparent error: ' + res.error + orders, 'error');
+  });
 }
 
 function reorderLane(laneID, orderedIDs) {

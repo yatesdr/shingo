@@ -23,7 +23,7 @@
 == refusals: SPOT-9 into lane GRP-A-L1
 -- nodes.reparent.409: 409 "{\"error\":\"cannot reparent: 1 active order(s) reference group \\\"GRP-A\\\" as source\",\"order_ids\":[41]}"
   POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
-  toast error: Reparent error: cannot reparent: 1 active order(s) reference group "GRP-A" as source
+  toast error: Reparent error: cannot reparent: 1 active order(s) reference group "GRP-A" as source (order 41)
 -- nodes.reparent.400: 400 "{\"error\":\"node_id is required\"}"
   POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
   toast error: Reparent error: node_id is required
@@ -36,4 +36,3 @@
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/nodes/reparent {"node_id":9,"parent_id":2,"position":1}
   toast error: Reparent error: No answer from the server
-  The 409's order_ids are dropped: api() throws the error string only.

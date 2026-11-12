@@ -58,7 +58,7 @@ const HELPERS = [
     fnSource(appSrc, 'apiGet'),
     fnSource(appSrc, 'apiPost'),
 ].join('\n');
-const OWN = new Set(['apiGet', 'apiPost', 'escapeHtml', 'h']);
+const OWN = new Set(['apiGet', 'apiPost', 'escapeHtml', 'h', 'send']);
 
 // --- elements ---------------------------------------------------------------
 

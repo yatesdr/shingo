@@ -1004,7 +1004,6 @@ async function supermarketPins() {
         L.push('-- ' + refusalTitle(key));
         flush(L, t.net, t.rec);
     }
-    L.push('  The 409\'s order_ids are dropped: api() throws the error string only.');
     goldens['supermarket-page.txt'] = L.join('\n') + '\n';
 }
 
