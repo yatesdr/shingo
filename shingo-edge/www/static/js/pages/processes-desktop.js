@@ -525,8 +525,8 @@ function setupRows() {
     const ran = !!p.active_style_id || styles.some(st => st.last_run);
     const running = runningStyle(p);
     const names = list => list.slice(0, 3).join(' · ') + (list.length > 3 ? ' · +' + (list.length - 3) : '');
-    const counts = [[inRole('source'), 'source', 'sources'], [inRole('staging'), 'staging', 'staging'],
-        [inRole('destination'), 'destination', 'destinations']].filter(x => x[0]).map(x => x[0] + ' ' + (x[0] === 1 ? x[1] : x[2]));
+    const counts = [[inRole('source'), 'inbound'], [inRole('staging'), 'staging'],
+        [inRole('destination'), 'outbound']].filter(x => x[0]).map(x => x[0] + ' ' + x[1]);
     return [
         {
             key: 'positions', label: 'Positions', sub: 'the spots this process works',
@@ -3877,10 +3877,15 @@ function waypointNames() {
 // THREE PARTS, because the heading and the sentence under it are read in two
 // places now: as one line over a list of rows, and as a label and its sub-line
 // over the picker that adds to that role.
+//
+// THE WORDS ON SCREEN ARE INBOUND AND OUTBOUND, the keys stay source and
+// destination. The keys are the data's, the API's and every test's; the words
+// are what an engineer reads, and "Sources" beside "Destinations" read as two
+// unrelated lists rather than the two ends of one trip.
 const ROUTING_GROUPS = [
-    ['source', 'Sources', "a flow's inbound source"],
+    ['source', 'Inbound', "a flow's inbound source"],
     ['staging', 'Staging', "a flow's inbound or outbound staging"],
-    ['destination', 'Destinations', "a flow's outbound destination"],
+    ['destination', 'Outbound', "a flow's outbound destination"],
 ];
 
 function isPositionRow(name) {
@@ -7304,8 +7309,8 @@ function sheetMapField() {
     return '<div class="pd-sheetmapbox" id="pd-sheetmapbox" hidden>' +
         '<div class="pd-map pd-sheetmap" id="' + SHEET_MAP_ID + '"></div>' +
         '<p class="pd-note">The aisles Core knows, the names you have picked, and the two trips ' +
-        'the first of each role implies — a robot in from the first source, and back out to the ' +
-        'first destination. Nothing here is a control; the lists above are.</p></div>';
+        'the first of each role implies — a robot in from the first inbound name, and back out to the ' +
+        'first outbound one. Nothing here is a control; the lists above are.</p></div>';
 }
 
 // loadSheetMap reads the Edge's plant map for Add process opened on the list,

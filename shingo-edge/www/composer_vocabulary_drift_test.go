@@ -59,6 +59,31 @@ func TestComposerSurfacesSpellNoFieldWordOfTheirOwn(t *testing.T) {
 	}
 }
 
+// TestRoutingRolesReadInboundAndOutbound: the routing set's three roles read
+// Inbound, Staging and Outbound on the Processes page. Their keys stay source
+// and destination (data, API, tests); only the words changed, because
+// "Sources" beside "Destinations" read as two unrelated lists rather than the
+// two ends of one trip (HOP, 2026-11-12). The old words are refused as page
+// text so a new label does not bring them back.
+func TestRoutingRolesReadInboundAndOutbound(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
+	if err != nil {
+		t.Fatalf("read the Processes page: %v", err)
+	}
+	src := stripJSComments(string(body))
+	for _, w := range []string{"Sources", "Destinations", " sources ·", " destinations"} {
+		if strings.Contains(src, w) {
+			t.Errorf("processes-desktop.js spells %q: the routing roles read Inbound and Outbound on screen", w)
+		}
+	}
+	for _, w := range []string{"'Inbound'", "'Outbound'"} {
+		if !strings.Contains(src, w) {
+			t.Errorf("processes-desktop.js has no %s role label", w)
+		}
+	}
+}
+
 // TestFlowspecLabelsReachTheStation: the generated block the model reads
 // carries the labels, so fieldWord has something to look up.
 //
