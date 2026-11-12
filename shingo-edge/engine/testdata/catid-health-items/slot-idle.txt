@@ -1,5 +1,5 @@
 # the counted MES slot flat while slot 2 (CATID 1002) rises
-summary row: {"process_id":1,"name":"CELL","worst":"red","count":3,"headline":"The PLC counts on Prod_Counter_02 (CATID 1002); this process counts Prod_Counter_01, which has not moved"}
+summary row: {"process_id":1,"name":"CELL","worst":"red","count":3,"red":1,"amber":2,"headline":"The PLC counts on Prod_Counter_02 (CATID 1002); this process counts Prod_Counter_01, which has not moved"}
 items body:
 {
   "items": [

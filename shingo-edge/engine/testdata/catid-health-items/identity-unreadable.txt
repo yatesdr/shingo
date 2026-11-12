@@ -1,5 +1,5 @@
 # the identity's last good read a minute old
-summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"headline":"Part identity unreadable"}
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"red":0,"amber":1,"headline":"Part identity unreadable"}
 items body:
 {
   "items": [

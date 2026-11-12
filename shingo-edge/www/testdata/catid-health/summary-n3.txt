@@ -7,6 +7,8 @@ GET /api/catid-health
     "name": "CELL-HELD",
     "worst": "info",
     "count": 2,
+    "red": 0,
+    "amber": 0,
     "headline": "3 held on CATID 4002"
   },
   {
@@ -14,6 +16,8 @@ GET /api/catid-health
     "name": "CELL-IDENT",
     "worst": "red",
     "count": 7,
+    "red": 2,
+    "amber": 3,
     "headline": "CATID 3003 maps to no style"
   },
   {
@@ -21,6 +25,8 @@ GET /api/catid-health
     "name": "CELL-PAIR",
     "worst": "amber",
     "count": 1,
+    "red": 0,
+    "amber": 1,
     "headline": "PAIR-A names PAIR-B as its A/B partner; PAIR-B does not name it back"
   },
   {
@@ -28,6 +34,8 @@ GET /api/catid-health
     "name": "CELL-SHARED",
     "worst": "amber",
     "count": 1,
+    "red": 0,
+    "amber": 1,
     "headline": "CATID 2001 is in SHARED-ONE and SHARED-TWO"
   }
 ]

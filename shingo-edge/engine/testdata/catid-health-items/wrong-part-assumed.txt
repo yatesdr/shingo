@@ -1,5 +1,5 @@
 # the same with STYLE-B unpinned: 1002 taken as its part (decision 56), amber, the pin asked for
-summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":2,"headline":"The PLC is on 1002, taken as STYLE-B — STYLE-B's CATID is not pinned; pin it."}
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":2,"red":0,"amber":1,"headline":"The PLC is on 1002, taken as STYLE-B — STYLE-B's CATID is not pinned; pin it."}
 items body:
 {
   "items": [

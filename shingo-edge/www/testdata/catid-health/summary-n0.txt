@@ -7,6 +7,8 @@ GET /api/catid-health
     "name": "CELL-HELD",
     "worst": "info",
     "count": 2,
+    "red": 0,
+    "amber": 0,
     "headline": "3 held on CATID 4002"
   }
 ]

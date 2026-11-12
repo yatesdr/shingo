@@ -73,12 +73,17 @@ type CatidHealthAction struct {
 // catidActionStartChangeover is the wrong-part item's verb.
 const catidActionStartChangeover = "start_changeover"
 
-// CatidHealthSummary is one process's line on the homepage: its worst item.
+// CatidHealthSummary is one process's line on the Processes list: its worst
+// item, and how many of its items are red and amber. Red and Amber are what
+// the list's row count draws, so the list reads this one route and no
+// process's items (an info item needs no one now, and counts in Count only).
 type CatidHealthSummary struct {
 	ProcessID int64  `json:"process_id"`
 	Name      string `json:"name"`
 	Worst     string `json:"worst"`
 	Count     int    `json:"count"`
+	Red       int    `json:"red"`
+	Amber     int    `json:"amber"`
 	Headline  string `json:"headline"`
 }
 
@@ -151,8 +156,17 @@ func (e *Engine) CatidHealthSummary() ([]CatidHealthSummary, error) {
 		if err != nil || len(items) == 0 {
 			continue
 		}
-		out = append(out, CatidHealthSummary{ProcessID: p.ID, Name: p.Name, Worst: items[0].Severity,
-			Count: len(items), Headline: items[0].Headline})
+		row := CatidHealthSummary{ProcessID: p.ID, Name: p.Name, Worst: items[0].Severity,
+			Count: len(items), Headline: items[0].Headline}
+		for _, it := range items {
+			switch it.Severity {
+			case CatidHealthRed:
+				row.Red++
+			case CatidHealthAmber:
+				row.Amber++
+			}
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }

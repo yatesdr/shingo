@@ -1,5 +1,5 @@
 # slot 2 (CATID 1002) rising with the counted slot
-summary row: {"process_id":1,"name":"CELL","worst":"amber","count":3,"headline":"Part identity unreadable"}
+summary row: {"process_id":1,"name":"CELL","worst":"amber","count":3,"red":0,"amber":2,"headline":"Part identity unreadable"}
 items body:
 {
   "items": [

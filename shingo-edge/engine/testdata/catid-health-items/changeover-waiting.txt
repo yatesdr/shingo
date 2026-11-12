@@ -1,5 +1,5 @@
 # a changeover to STYLE-B open and the PLC already on its 1002
-summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"headline":"Changeover to STYLE-B waiting; the PLC is on its part 1002"}
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"red":0,"amber":1,"headline":"Changeover to STYLE-B waiting; the PLC is on its part 1002"}
 items body:
 {
   "items": [

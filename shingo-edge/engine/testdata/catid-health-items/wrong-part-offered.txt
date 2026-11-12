@@ -1,5 +1,5 @@
 # two strokes counted off-plan on 1002 (STYLE-B's pin), no changeover open: the one-tap offered
-summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":2,"headline":"The PLC is on 1002 (STYLE-B); PROD-STYLE is active. Start a changeover to STYLE-B — 2 strokes held at N-MIRROR."}
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":2,"red":0,"amber":1,"headline":"The PLC is on 1002 (STYLE-B); PROD-STYLE is active. Start a changeover to STYLE-B — 2 strokes held at N-MIRROR."}
 items body:
 {
   "items": [

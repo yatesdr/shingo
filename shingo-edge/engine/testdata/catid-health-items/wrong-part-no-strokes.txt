@@ -1,5 +1,5 @@
 # the PLC on STYLE-B's 1002 while PROD-STYLE (1001) runs, nothing counted on it
-summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"headline":"Wrong part: the PLC is on 1002; PROD-STYLE runs 1001"}
+summary row: {"process_id":1,"name":"PRODUCE-PROC","worst":"amber","count":1,"red":0,"amber":1,"headline":"Wrong part: the PLC is on 1002; PROD-STYLE runs 1001"}
 items body:
 {
   "items": [

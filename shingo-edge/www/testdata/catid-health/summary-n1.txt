@@ -7,6 +7,8 @@ GET /api/catid-health
     "name": "CELL-HELD",
     "worst": "info",
     "count": 2,
+    "red": 0,
+    "amber": 0,
     "headline": "3 held on CATID 4002"
   },
   {
@@ -14,6 +16,8 @@ GET /api/catid-health
     "name": "CELL-SHARED",
     "worst": "amber",
     "count": 1,
+    "red": 0,
+    "amber": 1,
     "headline": "CATID 2001 is in SHARED-ONE and SHARED-TWO"
   }
 ]
