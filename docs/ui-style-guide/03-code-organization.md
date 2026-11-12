@@ -42,21 +42,28 @@ run time.
 
 ### Static file serving
 
-Each consumer serves `shared.Files` under one prefix (`/static/shared/`):
+Both routers serve every static file from one handler, `shared/assets`
+(`staticAssets` in each binary's `www/static_assets.go`), built once at
+start-up: the binary's tree under `/static/` and `shared.Files` under
+`/static/shared/`. Each file answers at its plain URL, revalidated by ETag,
+and at its hashed URL, cached for good.
 
-```go
-import "shingo/shared"
-
-r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-    http.FileServer(http.FS(shared.Files))))
-```
-
-Templates reference the assets by that prefix:
+Templates name a stylesheet, icon or classic script by its hashed URL, and
+reach a module through the page's import map:
 
 ```html
-<link rel="stylesheet" href="/static/shared/tokens.css">
-<script type="module" src="/static/shared/dom.js"></script>
+<link rel="stylesheet" href="{{assetURL "/static/shared/tokens.css"}}">
+{{importMap "/static/app.js" "/static/pages/orders.js"}}
+<script type="module">import "/static/pages/orders.js";</script>
 ```
+
+The import map comes before the page's first module script and names every
+entry; it maps each module the page can reach, plain URL to hashed. An entry
+is an inline import of the plain URL, never a `src` tag, so a module is one
+URL whether the browser reads import maps or not. Core's pages fill the
+layout's `importmap` block; an Edge page ends with its map, the hub and its
+own entry. `static_asset_query_guard_test.go` and `page_static_set_test.go`
+in each binary hold every template to this.
 
 ### Adding to shared/
 
