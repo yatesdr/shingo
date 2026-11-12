@@ -128,21 +128,24 @@ test('the Quality Hold destination picker leaves lanes and members out', () => {
 });
 
 // The manual order panel, on its own page and on Production: an order's
-// pickup and delivery are where Core picks. The pickup never offers a member;
-// the delivery marks one and shows it only for a complex order, whose Core
-// Node is the cell's own position.
+// pickup and delivery are where Core picks. Each field's rule is the shared
+// node adapter's (shared/node-picker.js): the pickup greys a member, naming
+// its group; the delivery greys one except for a complex order, whose Core
+// Node is the cell's own position, and a member picked there is unpicked when
+// the type leaves complex. What each field then offers and greys is drawn by
+// TestEdgePagePickerPins (testdata/edge-pages/*-options.txt).
 for (const [name, src] of [['manual-order.js', MO], ['production.js', PROD]]) {
-    test(name + ': the pickup leaves members out', () => {
-        assert.ok(/if \(selID === 'mo-pickup' && n\.group\) return;/.test(src), name + ' offers members as a pickup');
+    test(name + ': the pickup greys members', () => {
+        assert.ok(/pickup: nodePicker\(document\.getElementById\('mo-pickup'\), nodes,\s*\{ rule: W\.any\(W\.robot, W\.member\) \}/.test(src),
+            name + ' offers members as a pickup');
     });
-    test(name + ': the delivery shows members for a complex order only', () => {
-        assert.ok(/if \(selID === 'mo-delivery' && n\.group\) opt\.dataset\.memberOf = n\.group;/.test(src),
-            name + ' does not mark a member in the delivery');
+    test(name + ': the delivery takes members for a complex order only', () => {
+        assert.ok(/orderType\(\) === 'complex' \? '' : W\.member\(n\)/.test(src), name + ' does not grey a member in the delivery');
         const start = src.indexOf('function updateOrderForm()');
         assert.ok(start >= 0, name + ': updateOrderForm not found');
         const body = src.slice(start, src.indexOf('\n}\n', start));
-        assert.ok(/option\[data-member-of\][\s\S]*o\.hidden = o\.disabled = t !== 'complex'/.test(body),
-            name + ': updateOrderForm does not hide the delivery\'s members outside a complex order');
+        assert.ok(/if \(t !== 'complex' && memberOf\[pickers\.delivery\.value\(\)\]\) pickers\.delivery\.set\(''\);/.test(body),
+            name + ': updateOrderForm keeps a member delivery outside a complex order');
     });
 }
 

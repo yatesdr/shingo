@@ -39,9 +39,11 @@ var updateEdgePagesGolden = flag.Bool("update-edge-pages-golden", false,
 //     synthetic plant below: node groups with members, a member whose bare
 //     name collides (kept qualified, as Engine.SetCoreNodes keeps it), a lane,
 //     plain nodes, _TRANSIT, a robot carrier node, a name carrying markup, and
-//     process nodes Core does not list. The SSE `core-nodes` rebuild is drawn
-//     too (census bug 8: it drops the group/lane tag and the "↳"). NodeInfo
-//     carries no disabled flag, so no option list can show one.
+//     process nodes Core does not list. The node fields are the shared node
+//     adapter's (shared/node-picker.js): each field's rows, and what it greys
+//     and why. An SSE `core-nodes` frame is drawn too (census bug 8 was its
+//     rebuild dropping the group/lane tag; the form now reads the list
+//     again). NodeInfo carries no disabled flag, so no field can grey one.
 //   - <page>-requests.txt: what each pick sends, method, url and body, and
 //     every answer its handler can give: the refusal ({"error"} from
 //     writeError), the 202 pending ask (writeAskPending), a 5xx, and a fetch
@@ -56,8 +58,7 @@ var updateEdgePagesGolden = flag.Bool("update-edge-pages-golden", false,
 // harness that boots each page under node, and what it stubs, is
 // testdata/edge-pages-harness/pins.js.
 //
-// The bugs pinned as they are, each named in its golden: the SSE rebuild's
-// lost tags (manual-order.js and production.js onCoreNodes), Kafka Direct's
+// The bugs pinned as they are, each named in its golden: Kafka Direct's
 // order.request with no payload_code field, and the Production "compatible with" picker
 // sending its first allowed part by default (production.js
 // openRequestEmptyModal).
@@ -225,7 +226,10 @@ func edgePageAnswers(t *testing.T, h *Handlers) map[string]edgePageAnswer {
 		panic(errors.New("pinned panic"))
 	})).ServeHTTP(panicked, httptest.NewRequest("POST", "/", nil))
 	return map[string]edgePageAnswer{
-		"catalog":         get("/api/payload-catalog", "/api/payload-catalog", h.apiListPayloadCatalog),
+		"catalog": get("/api/payload-catalog", "/api/payload-catalog", h.apiListPayloadCatalog),
+		// The node list the manual-order form reads again on an SSE core-nodes
+		// frame (the frame carries no groups).
+		"core-nodes":      get("/api/core-nodes", "/api/core-nodes", h.apiGetCoreNodes),
 		"manifest:PART-A": get("/api/payload/{code}/manifest", "/api/payload/PART-A/manifest", h.apiPayloadManifest),
 		"manifest:PART-B": get("/api/payload/{code}/manifest", "/api/payload/PART-B/manifest", h.apiPayloadManifest),
 		"pending":         answerOf(pending),

@@ -2,6 +2,7 @@ import { api, navigateToProcess, refreshOnEvents } from '/static/js/shingoedge.j
 import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm, hideModal, prompt, showModal } from '/static/shared/layer.js';
+import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
 import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
 
@@ -545,105 +546,68 @@ onSSE('counter-update', function(data) {
     _chartData.hourlyCounts[hour] += delta;
     renderShiftChart();
 });
-onSSE('core-nodes', function(data) {
-    var nodes = (data.nodes || []).map(function(n) {
-        if (typeof n === 'string') return n;
-        return n && n.name ? n.name : '';
-    }).filter(Boolean);
-    ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
-        var sel = document.getElementById(selID);
-        if (!sel) return;
-        var cur = sel.value;
-        Array.from(sel.options).forEach(function(o) {
-            if (o.dataset.source === 'core') o.remove();
+// Core's node list changed: the manual-order form's one list is read again,
+// and a picked node that is no longer on it is unpicked, as a select left on
+// no option sends none.
+onSSE('core-nodes', function() {
+    nodes.load(true).then(function(rows) {
+        var names = {};
+        (rows || []).forEach(function(n) { names[n.name] = true; });
+        Object.keys(pickers).forEach(function(k) {
+            if (pickers[k].value() && !names[pickers[k].value()]) pickers[k].set('');
         });
-        var ref = sel.options[1] || null;
-        nodes.sort().forEach(function(n) {
-            var opt = document.createElement('option');
-            opt.value = n;
-            opt.textContent = n;
-            opt.dataset.source = 'core';
-            sel.insertBefore(opt, ref);
-        });
-        sel.value = cur;
     });
 });
 
 // ─── Manual order ────────────────────────────────────────
 
-(function() {
-    var _pd = document.getElementById('page-data');
-    if (!_pd) return;
-    var edgeNodes = JSON.parse(_pd.dataset.nodes || '[]');
-    var coreNodesRaw = JSON.parse(_pd.dataset.coreNodes || '[]');
-    function coreNodeName(entry) {
-        if (!entry) return '';
-        if (typeof entry === 'string') return entry;
-        if (typeof entry.name === 'string') return entry.name;
-        if (typeof entry.node_id === 'string') return entry.node_id;
-        return '';
-    }
-    var coreType = {};
-    var coreGroup = {};
-    coreNodesRaw.forEach(function(e) {
-        var nm = coreNodeName(e);
-        if (nm && e && typeof e === 'object' && e.node_type) coreType[nm] = e.node_type;
-        if (nm && e && typeof e === 'object' && e.group) coreGroup[nm] = e.group;
-    });
-    var coreNodes = coreNodesRaw.map(coreNodeName).filter(Boolean);
-
+// THE FORM'S ONE NODE LIST (shared/node-picker.js), as the Manual order page
+// keeps it: Core's nodes as the page was rendered with them, read again from
+// /api/core-nodes on an SSE core-nodes frame (the frame names nodes and types,
+// not groups), and this Edge's process nodes Core does not list ("this Edge
+// only"). A process node's name is the note on its Core node.
+var _pd = document.getElementById('page-data').dataset;
+var edgeNodes = JSON.parse(_pd.nodes || '[]');
+// memberOf is each member of a node group, by name, to its group.
+var memberOf = {};
+function withEdgeNodes(core) {
     var seen = {};
-    var merged = [];
-    coreNodes.sort().forEach(function(n) {
-        seen[n] = true;
-        var edge = edgeNodes.find(function(e){ return e.id === n; });
-        merged.push({ id: n, desc: edge ? edge.desc : '', source: 'core', type: coreType[n] || '', group: coreGroup[n] || '' });
+    memberOf = {};
+    var rows = (core || []).filter(function(n) { return n && n.name; }).map(function(n) {
+        seen[n.name] = true;
+        if (n.group) memberOf[n.name] = n.group;
+        var edge = edgeNodes.find(function(e) { return e.id === n.name; });
+        return Object.assign({}, n, { desc: edge ? edge.desc : '' });
     });
     edgeNodes.forEach(function(e) {
-        if (!seen[e.id]) {
-            merged.push({ id: e.id, desc: e.desc, source: 'local', type: '' });
-        }
+        if (e.id && !seen[e.id]) { seen[e.id] = true; rows.push({ name: e.id, desc: e.desc, source: 'local' }); }
     });
+    return rows;
+}
+var nodes = nodeSource(function() { return api.get('/api/core-nodes').then(withEdgeNodes); },
+    withEdgeNodes(JSON.parse(_pd.coreNodes || '[]')));
 
-    function nodeOptionLabel(n) {
-        var t = (n.type || '').toUpperCase();
-        if (t === 'NGRP' || t === 'LANE') {
-            return n.id + '  \u00b7 ' + (t === 'LANE' ? 'lane' : 'group');
-        }
-        var label = (n.id.indexOf('.') !== -1) ? '\u00a0\u00a0\u21b3 ' + n.id : n.id;
-        if (n.desc) label += ' \u2014 ' + n.desc;
-        if (n.source === 'local') label += ' (local)';
-        return label;
-    }
+// A MEMBER OF A GROUP IS CORE'S TO PICK: an order's pickup and delivery name
+// the group (the API refuses a member). The delivery takes one only for a
+// complex order, whose Core Node is the cell's own position. No field takes a
+// robot.
+var W = nodeWhy;
+var pickers = {
+    pickup: nodePicker(document.getElementById('mo-pickup'), nodes,
+        { rule: W.any(W.robot, W.member) }, { placeholder: 'Source node' }),
+    delivery: nodePicker(document.getElementById('mo-delivery'), nodes,
+        { rule: W.any(W.robot, function(n) { return orderType() === 'complex' ? '' : W.member(n); }) },
+        { placeholder: 'Delivery node' }),
+    staging: nodePicker(document.getElementById('mo-staging'), nodes,
+        { rule: W.robot }, { placeholder: 'Staging node' }),
+};
 
-    ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
-        var sel = document.getElementById(selID);
-        if (!sel) return;
-        merged.forEach(function(n) {
-            // A MEMBER OF A GROUP IS CORE'S TO PICK: an order's pickup and
-            // delivery name the group (the API refuses a member). The delivery
-            // offers one only for a complex order, whose Core Node is the
-            // cell's own position (updateOrderForm).
-            if (selID === 'mo-pickup' && n.group) return;
-            var opt = document.createElement('option');
-            opt.value = n.id;
-            opt.dataset.source = n.source;
-            if (selID === 'mo-delivery' && n.group) opt.dataset.memberOf = n.group;
-            opt.textContent = nodeOptionLabel(n);
-            sel.appendChild(opt);
-        });
-    });
-})();
+function orderType() { return document.getElementById('mo-type').value; }
 
 function updateOrderForm() {
-    var t = document.getElementById('mo-type').value;
-    var deliv = document.getElementById('mo-delivery');
-    if (deliv) {
-        deliv.querySelectorAll('option[data-member-of]').forEach(function(o) {
-            o.hidden = o.disabled = t !== 'complex';
-        });
-        if (deliv.selectedOptions[0] && deliv.selectedOptions[0].disabled) deliv.selectedIndex = 0;
-    }
+    var t = orderType();
+    if (t !== 'complex' && memberOf[pickers.delivery.value()]) pickers.delivery.set('');
+    pickers.delivery.refresh();
     var showNode    = t !== 'move';
     var showPickup  = t === 'move';
     var showDeliv   = t === 'move' || t === 'retrieve' || t === 'complex';
@@ -658,9 +622,9 @@ function updateOrderForm() {
         (t === 'complex') ? 'Core Node' : 'Delivery Node';
 
     if (!showNode)    document.getElementById('mo-node').selectedIndex = 0;
-    if (!showPickup)  document.getElementById('mo-pickup').selectedIndex = 0;
-    if (!showDeliv)   document.getElementById('mo-delivery').selectedIndex = 0;
-    if (!showStaging) document.getElementById('mo-staging').selectedIndex = 0;
+    if (!showPickup)  pickers.pickup.set('');
+    if (!showDeliv)   pickers.delivery.set('');
+    if (!showStaging) pickers.staging.set('');
 
     autofillNodeDefaults();
 }
@@ -673,7 +637,7 @@ function autofillNodeDefaults() {
     if (!coreNode) return;
     var t = document.getElementById('mo-type').value;
     if (t === 'retrieve') {
-        document.getElementById('mo-delivery').value = coreNode;
+        pickers.delivery.set(coreNode);
     }
 }
 
@@ -683,8 +647,8 @@ async function createOrder() {
     var qty = parseInt(document.getElementById('mo-qty').value) || 1;
 
     if (t === 'complex') {
-        var stagingNode = document.getElementById('mo-staging').value;
-        var productionNode = document.getElementById('mo-delivery').value;
+        var stagingNode = pickers.staging.value();
+        var productionNode = pickers.delivery.value();
         if (!stagingNode || !productionNode) {
             toast('Staging and production nodes are required', 'error');
             return;
@@ -711,9 +675,9 @@ async function createOrder() {
     var body = {
         process_node_id: processNodeID || null,
         quantity: qty,
-        delivery_node: document.getElementById('mo-delivery').value,
-        source_node: document.getElementById('mo-pickup').value,
-        staging_node: document.getElementById('mo-staging').value || undefined
+        delivery_node: pickers.delivery.value(),
+        source_node: pickers.pickup.value(),
+        staging_node: pickers.staging.value() || undefined
     };
     try {
         // At a loader's window the order is Core's to make (the loader ask): a
@@ -728,9 +692,9 @@ async function createOrder() {
 function resetOrderForm() {
     document.getElementById('mo-node').selectedIndex = 0;
     document.getElementById('mo-qty').value = '1';
-    document.getElementById('mo-pickup').selectedIndex = 0;
-    document.getElementById('mo-delivery').selectedIndex = 0;
-    document.getElementById('mo-staging').selectedIndex = 0;
+    pickers.pickup.set('');
+    pickers.delivery.set('');
+    pickers.staging.set('');
 }
 
 async function syncNodes() {

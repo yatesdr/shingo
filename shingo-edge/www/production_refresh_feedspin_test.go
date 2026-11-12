@@ -94,7 +94,7 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		{"shingoedge.js refreshOnEvents calls htmx.trigger", strings.Contains(hub, "window.htmx.trigger(target, 'sse:' + type, data)"), true},
 		// Was true: Diagnostics opens /events?debug=1, on the bus now.
 		{"diagnostics.js asks the bus for debug-log", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "setSSEQuery({ debug: 1 });"), true},
-		{"manual-order.js subscribes core-nodes", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "onSSE('core-nodes', function(data) {"), true},
+		{"manual-order.js subscribes core-nodes", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "onSSE('core-nodes', function() {"), true},
 	}
 	for _, c := range cases {
 		if c.got != c.want {

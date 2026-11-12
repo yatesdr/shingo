@@ -14,7 +14,15 @@
 // escapeHtml; ask-act.js's postAct; and shingoedge.js's refreshOnEvents. Each
 // is read off its own file.
 //
+// The node and part adapters (shared/node-picker.js, part-picker.js) are real
+// too, read whole: each field's rows, rules and reasons are theirs.
+//
 // WHAT IS STUBBED, AND WHY EACH IS SAFE FOR THESE PINS.
+//   - The picker's shell (shared/picker.js createPicker): a fake that keeps
+//     the selection and draws nothing. The pins read the rows the adapter
+//     hands it, and pick(value) moves the selection as the shell would: a
+//     greyed row cannot be picked, a single pick replaces, onChange fires.
+//     The shell's own behaviour is its spec's (TestSharedComponentSpecs).
 //   - The DOM (dom.js): elements parsed from the markup, selects answering
 //     value / selectedIndex as a browser does.
 //   - toast: recorded as [kind, text]; the pins read what the page said.
@@ -85,6 +93,56 @@ const LAYER = 'var { showModal, hideModal } = (function () {\n'
     + block(SHARED_DOM, /export function el\(/, 'el') + '\n'
     + block(SHARED_DOM, /function appendChildren\(/, 'appendChildren') + '\n'
     + unModule(read(path.join(SHARED, 'layer.js'))) + '\nreturn { showModal, hideModal };\n})();';
+// The picker's shell, faked (see above): PICKERS is each one by its host's id.
+const FAKE_PICKER = `
+var PICKERS = {};
+function pickList(v) { return v === null || v === undefined || v === '' ? [] : (Array.isArray(v) ? v : [v]).map(String); }
+function createPicker(host, o) {
+    var listeners = {};
+    var st = { sel: pickList(o.selected) };
+    var input = { value: '', addEventListener: function (t, fn) { (listeners[t] = listeners[t] || []).push(fn); } };
+    function fire(t) { (listeners[t] || []).forEach(function (fn) { fn(); }); }
+    var p = {
+        el: host, input: input, opts: o, refreshes: 0, fire: fire,
+        value: function () { return o.multi ? st.sel.slice() : (st.sel[0] || ''); },
+        set: function (v) { st.sel = pickList(v); if (!o.multi) st.sel = st.sel.slice(0, 1); },
+        markClean: function () {}, refresh: function () { p.refreshes++; },
+        open: function () { fire('focus'); }, focus: function () { fire('focus'); }, close: function () {}, destroy: function () {},
+        rows: function () { var r = typeof o.rows === 'function' ? o.rows() : o.rows; return r === null || r === undefined ? null : r; },
+        // pick is a click on the row of that value: '' when taken, else why not.
+        pick: function (value) {
+            var all = [];
+            (p.rows() || []).forEach(function (r) { all.push(r); (r.members || []).forEach(function (m) { all.push(m); }); });
+            var r = all.find(function (x) { return String(x.value) === String(value); });
+            if (!r) return 'no row ' + value;
+            if (r.reason) return 'greyed: ' + r.reason;
+            var vals = (Array.isArray(r.values) ? r.values : [r.value]).map(String);
+            if (o.multi) {
+                var on = vals.every(function (v) { return st.sel.indexOf(v) >= 0; });
+                st.sel = on ? st.sel.filter(function (v) { return vals.indexOf(v) < 0; })
+                    : st.sel.concat(vals.filter(function (v) { return st.sel.indexOf(v) < 0; }));
+            } else {
+                st.sel = vals.slice(0, 1);
+            }
+            if (o.onChange) o.onChange(p.value(), p);
+            return '';
+        },
+    };
+    host.textContent = '';
+    PICKERS[host.id] = p;
+    return p;
+}
+`;
+// The adapters, whole, each in a function of its own; createPicker is the
+// fake above, and el is dom.js's.
+const ADAPTERS = 'var { nodeSource, nodePicker, nodeWhy, nodeRows, pickerSource, mountPicker } = (function () {\n'
+    + block(SHARED_DOM, /export function el\(/, 'el') + '\n'
+    + block(SHARED_DOM, /function appendChildren\(/, 'appendChildren') + '\n'
+    + unModule(read(path.join(SHARED, 'node-picker.js')))
+    + '\nreturn { nodeSource, nodePicker, nodeWhy, nodeRows, pickerSource, mountPicker };\n})();\n'
+    + 'var { partSource, partPicker, partChoices } = (function () {\n'
+    + unModule(read(path.join(SHARED, 'part-picker.js')))
+    + '\nreturn { partSource, partPicker, partChoices };\n})();';
 const HELPERS = [
     block(SHARED_DOM, /const HTML_ESCAPES = /, 'HTML_ESCAPES').replace(/^const /, 'var '),
     block(SHARED_DOM, /export function escapeHtml\(/, 'escapeHtml'),
@@ -96,6 +154,8 @@ const HELPERS = [
     block(EDGE, /export function refreshOnEvents\(/, 'refreshOnEvents'),
     block(EDGE, /function sseTriggerTypes\(/, 'sseTriggerTypes'),
     unModule(read(path.join(JS, 'ask-act.js'))),
+    FAKE_PICKER,
+    ADAPTERS,
 ].join('\n');
 
 // pageMarkup is the page's own markup: from <main> to its import map, which
@@ -111,6 +171,7 @@ function pageMarkup(html) {
 
 function routeOf(method, url) {
     if (method === 'GET' && url === '/api/payload-catalog') return A.catalog;
+    if (method === 'GET' && url === '/api/core-nodes') return A['core-nodes'];
     let m = /^\/api\/payload\/([^/]+)\/manifest$/.exec(url);
     if (method === 'GET' && m) return A['manifest:' + decodeURIComponent(m[1])];
     if (method === 'POST' && /^\/api\/orders\/(retrieve|move|complex)$/.test(url)) return A['order-ok'];
@@ -185,6 +246,7 @@ function shown(el) {
 // each option's value, label, the data-* it carries, and the selected one.
 function options(b, id, note) {
     const sel = b.doc.getElementById(id);
+    if (b.ctx.PICKERS[id]) return pickerLines(b, id, note);
     const lines = ['#' + id + ' (' + labelOf(sel) + ')' + (shown(sel) ? '' : ' [hidden]') + (note ? ' — ' + note : '') +
         ' selectedIndex=' + sel.selectedIndex];
     sel.options.forEach((o, i) => {
@@ -193,10 +255,31 @@ function options(b, id, note) {
     });
     return lines.join('\n');
 }
+// pickerLines is one picker as lines: its id, label, whether it shows and its
+// value, then each row the adapter handed it, members indented: value, label,
+// note, and why a greyed one cannot be picked.
+function pickerLines(b, id, note) {
+    const p = b.ctx.PICKERS[id];
+    const el = b.doc.getElementById(id);
+    const lines = ['#' + id + ' (' + labelOf(el) + ')' + (shown(el) ? '' : ' [hidden]') + (note ? ' — ' + note : '') +
+        ' picker value=' + show(p.value())];
+    const rows = p.rows();
+    if (rows === null) return lines.concat('  (not read: ' + show(p.opts.loading) + ')').join('\n');
+    const on = v => [].concat(p.value()).indexOf(String(v)) >= 0;
+    const one = (r, pad) => lines.push('  ' + (on(r.value) ? '*' : ' ') + pad + ' value=' + show(r.value) +
+        (r.label !== undefined && r.label !== r.value ? ' label=' + show(r.label) : '') +
+        (r.note ? ' note=' + show(r.note) : '') + (r.reason ? ' greyed=' + show(r.reason) : ''));
+    rows.forEach(r => { one(r, ''); (r.members || []).forEach(m => one(m, '   ')); });
+    return lines.join('\n');
+}
+function valueOf(b, id) {
+    const p = b.ctx.PICKERS[id];
+    return p ? p.value() : b.doc.getElementById(id).value;
+}
 function form(b, ids) {
     return ids.map(id => {
         const el = b.doc.getElementById(id);
-        return id + '=' + show(el.value) + (el.tagName === 'SELECT' || shown(el) ? '' : '[hidden]');
+        return id + '=' + show(valueOf(b, id)) + (el.tagName === 'SELECT' || b.ctx.PICKERS[id] || shown(el) ? '' : '[hidden]');
     }).join(' ');
 }
 function requests(b) {
@@ -218,6 +301,12 @@ function answerLine(a) {
 
 const MO = ['mo-type', 'mo-node', 'mo-qty', 'mo-pickup', 'mo-delivery', 'mo-staging'];
 function pick(b, id, value) {
+    const p = b.ctx.PICKERS[id];
+    if (p) {
+        const why = p.pick(value);
+        if (why) throw new Error(b.page + ': ' + id + ' cannot pick ' + value + ' (' + why + ')');
+        return;
+    }
     const el = b.doc.getElementById(id);
     el.value = value;
     if (el.value !== String(value)) throw new Error(b.page + ': ' + id + ' has no option ' + value);
@@ -225,10 +314,10 @@ function pick(b, id, value) {
     if (id === 'mo-node') b.rec.actions.autofillNodeDefaults.call(el);
 }
 
-function manualOrderOptions(page) {
+async function manualOrderOptions(page) {
     const b = boot(page);
     const lines = ['# ' + page + ': the manual-order form\'s node pickers at load (type Move)', ''];
-    MO.filter(id => b.doc.getElementById(id).tagName === 'SELECT').forEach(id => lines.push(options(b, id), ''));
+    MO.filter(id => b.doc.getElementById(id).tagName === 'SELECT' || b.ctx.PICKERS[id]).forEach(id => lines.push(options(b, id), ''));
     // Every type, for which pickers it shows and what each is called.
     ['retrieve', 'complex'].forEach(t => {
         pick(b, 'mo-type', t);
@@ -237,21 +326,27 @@ function manualOrderOptions(page) {
     });
     lines.push('');
 
-    // THE SSE REBUILD (census bug 8, pinned as is): a `core-nodes` frame
-    // re-adds Core's options by bare name, so the "· group"/"· lane" tag, the
-    // "↳" indent and a process node's description are gone after the first
-    // push; the "(local)" options stay where they were. The selection is kept
-    // by value.
+    // THE SSE FRAME (census bug 8 was its rebuild dropping the group/lane
+    // tag, the indent and the description, and offering members to the
+    // pickup): a `core-nodes` frame names nodes and types, not groups, so the
+    // form reads the node list again (/api/core-nodes) and every field draws
+    // from it as at load. The pick is kept while its node is on the list.
     const b2 = boot(page);
     pick(b2, 'mo-type', 'complex');
     pick(b2, 'mo-delivery', 'GRP-B.SLOT-A1');
     fireSSE(b2, 'core-nodes', IN.coreNodesEvent);
-    lines.push('# after an SSE core-nodes frame for the same plant (type Complex, Core Node had GRP-B.SLOT-A1 picked)', '');
+    await settle();
+    lines.push('# after an SSE core-nodes frame for the same plant (type Complex, Core Node had GRP-B.SLOT-A1 picked)', '',
+        'on the frame: ' + requests(b2).join(' '), '');
     ['mo-pickup', 'mo-delivery'].forEach(id => lines.push(options(b2, id), ''));
-    // A second frame without the picked node: the select is left on no option.
-    const fewer = { nodes: IN.coreNodesEvent.nodes.filter(n => n.name !== 'GRP-B.SLOT-A1') };
-    fireSSE(b2, 'core-nodes', fewer);
-    lines.push('# after a second frame without GRP-B.SLOT-A1 (the picked node)', '', options(b2, 'mo-delivery'), '');
+    // A second frame, the list now without the picked node: it is unpicked.
+    const without = JSON.parse(A['core-nodes'].body).filter(n => n.name !== 'GRP-B.SLOT-A1')
+        .map(n => Object.assign({}, n, n.members ? { members: n.members.filter(m => m !== 'GRP-B.SLOT-A1') } : {}));
+    b2.rec.next = [{ status: 200, body: JSON.stringify(without) }];
+    fireSSE(b2, 'core-nodes', { nodes: IN.coreNodesEvent.nodes.filter(n => n.name !== 'GRP-B.SLOT-A1') });
+    await settle();
+    lines.push('# after a second frame, the list without GRP-B.SLOT-A1 (the picked node)', '',
+        'on the frame: ' + requests(b2).join(' '), '', options(b2, 'mo-delivery'), '');
     out[page + '-options.txt'] = lines.join('\n');
 }
 
@@ -461,9 +556,9 @@ async function kafkaDirect() {
 }
 
 (async () => {
-    manualOrderOptions('manual-order');
+    await manualOrderOptions('manual-order');
     await manualOrderRequests('manual-order');
-    manualOrderOptions('production');
+    await manualOrderOptions('production');
     await manualOrderRequests('production');
     await productionPartPickers();
     await kafkaDirect();
