@@ -10,7 +10,7 @@
   GET /api/payloads
   GET /api/loader/list
 
-== refresh() re-reads /api/nodes, /api/payloads and /api/loader/list; called 17 times, from:
+== refresh() re-reads /api/nodes and /api/loader/list (the catalogue, /api/payloads, once a page); called 17 times, from:
   submitLoader, saveWindowCap, addLoaderQuota, setLoaderQuota, removeLoaderQuota, saveStationSetting, deleteStation, appendWindow, appendWindow, assignPlace, onBoxDrop, onBoxDrop, setMemberPayload, setMemberPayload, removeMember, savePayloads, init
 
 == armed: UNL-A Windows; the grid as decorated (assignReason via decorateGrid)
@@ -103,14 +103,12 @@
 -- UNL-A "Empties go to", tap the GRP-A header (one update, then refresh)
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   armed after: null
 -- UNL-A Windows, tap LINE-1 (set-home, reorder with it last, then refresh)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
   POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,8]}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   armed after: {"loaderID":20,"slot":"windows"}
 -- UNL-A Windows, tap _ROBOT:AMR-01 (dimmed: a tap does nothing)
@@ -123,13 +121,11 @@
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
   POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,9]}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
 -- drop the SPOT-9 tile on UNL-A's box, before GRP-A-L1-S1
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
   POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[9,3]}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
 -- drop the GRP-B header on UNL-A's box
   (no request)
@@ -137,7 +133,6 @@
 -- drop the SPOT-9 tile on "Empties go to"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"SPOT-9"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
 -- drop the GRP-A-L1 (lane) tile on "Empties go to"
   (no request)
@@ -154,64 +149,56 @@
 == C13: LDR-B's per-spot part picker (payloadSelect at rest, fillPayloadSelect on open)
   at rest, PART-C picked: <select class="loader-pc-sel has-payload" draggable="false"><option value="">+ payload</option><option value="PART-C" selected>PART-C</option></select>
   at rest, none picked:   <select class="loader-pc-sel" draggable="false"><option value="">+ payload</option></select>
-  opened (the whole catalog, /api/payloads order), value kept "PART-C":
+  opened (the whole catalog, in the part adapter order), value kept "PART-C":
     "" | + payload
-    "PART-B" | PART-B
     "PART-A" | PART-A
+    "PART-B" | PART-B
     "PART-C" | PART-C
 -- pick PART-A on GRP-B-N2
   POST /api/loader/set-home {"loader_id":21,"position_node_id":7,"payload_code":"PART-A","home_kind":"home","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
 
 == C14: UNL-A's parts (payloadChipsHtml): chips, then the whole-catalog checklist
   chips: PART-B
-    [x] PART-B
     [ ] PART-A
+    [x] PART-B
     [ ] PART-C
 -- tick PART-A, untick PART-B, Save parts
   POST /api/loader/set-payload {"loader_id":20,"payload_code":"PART-A","uop_threshold":0}
   POST /api/loader/remove-payload {"loader_id":20,"payload_code":"PART-B"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
 
 == refusals: UNL-A "Empties go to", tap GRP-A (assignPlace re-reads after a refusal too)
 -- loader.update.400: 400 "{\"error\":\"id and name are required\"}"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: id and name are required
 -- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: refused: the service's sentence
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error (sticky): Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: failed: the store's error
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: No answer from the server
 
@@ -219,20 +206,17 @@
 -- set-home loader.set-home.400: 400 "{\"error\":\"loader_id and position_node_id are required\"}"
   POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: loader_id and position_node_id are required
 -- set-home fetch rejects (TypeError: Failed to fetch)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: No answer from the server
 -- reorder-homes json.500: 500 "{\"error\":\"failed: the store's error\"}" (the window was added)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":8,"payload_code":"","home_kind":"home","uop_threshold":0}
   POST /api/loader/reorder-homes {"loader_id":20,"ordered_ids":[3,8]}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: failed: the store's error
 
@@ -240,13 +224,11 @@
 -- set-home loader.set-home.400: 400 "{\"error\":\"loader_id and position_node_id are required\"}"
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: loader_id and position_node_id are required
 -- set-home fetch rejects (TypeError: Failed to fetch)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: No answer from the server
 
@@ -254,7 +236,6 @@
 -- set-home json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
   POST /api/loader/set-home {"loader_id":21,"position_node_id":7,"payload_code":"PART-A","home_kind":"home","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: refused: the service's sentence
 
@@ -262,7 +243,6 @@
 -- set-payload loader.set-payload.400: 400 "{\"error\":\"loader_id and payload_code are required\"}"
   POST /api/loader/set-payload {"loader_id":20,"payload_code":"PART-A","uop_threshold":0}
   GET /api/nodes
-  GET /api/payloads
   GET /api/loader/list
   toast error: loader_id and payload_code are required
   Save parts button: "Save parts", enabled

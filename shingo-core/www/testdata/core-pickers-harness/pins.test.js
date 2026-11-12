@@ -793,7 +793,7 @@ async function loadersPins() {
     L.push('== page load (init)');
     flush(L, t.net, t.rec);
     const calls = refreshCallers();
-    L.push('', '== refresh() re-reads /api/nodes, /api/payloads and /api/loader/list; called ' + calls.length + ' times, from:');
+    L.push('', '== refresh() re-reads /api/nodes and /api/loader/list (the catalogue, /api/payloads, once a page); called ' + calls.length + ' times, from:');
     L.push('  ' + calls.join(', '));
 
     // --- C11: what each armed slot lights --------------------------------
@@ -879,7 +879,7 @@ async function loadersPins() {
     const s = D.makeEl('select');
     s.value = 'PART-C';
     t.p.ctx.fillPayloadSelect(s);
-    L.push('  opened (the whole catalog, /api/payloads order), value kept ' + JSON.stringify(s.value) + ':');
+    L.push('  opened (the whole catalog, in the part adapter order), value kept ' + JSON.stringify(s.value) + ':');
     D.optionLines(s.innerHTML, '    ').forEach((l) => L.push(l));
     t.p.ctx.setMemberPayload(21, '7', 'PART-A');
     await D.settle();

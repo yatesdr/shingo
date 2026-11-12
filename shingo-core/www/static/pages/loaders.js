@@ -3,6 +3,7 @@ import { confirm as uiConfirm, hideModal, layerDepth, showModal } from '/static/
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost, setText } from '/static/app.js';
 import { nodeWhy } from '/static/shared/node-picker.js';
+import { partChoices, partSource } from '/static/shared/part-picker.js';
 
 // Core-owned bin loaders ("stations"), drawn as boxes on the Nodes page.
 //
@@ -35,6 +36,15 @@ let nodesById = {};
 let nodeInfo = {}; // node id -> {id, name, parentName, synthetic, typeCode, enabled}
 let payloadCodes = [];
 let payloadOptionsHtml = ''; // the catalogue as <option>s, built once per refresh
+// THE PAGE'S ONE PART LIST (shared/part-picker.js): Core's catalogue, read on
+// the first refresh and kept, since no write on this page changes it; a failed
+// read is asked again on the next refresh. Its codes are the adapter's rows,
+// drawn in the boxes' own native shells (payloadSelect, payloadChipsHtml):
+// those sit inside a draggable tile on the plant grid, which would clip the
+// shared picker's popover list.
+const loaderParts = partSource(function () {
+  return apiGet('/api/payloads').then(function (pd) { return (pd && (pd.payloads || pd.data || pd)) || []; });
+});
 let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types}]
 let loadError = null; // why the last refresh failed, else null
 let draggingMemberNode = null;
@@ -1410,8 +1420,9 @@ function toggleWaitGroup(el) {
 
 async function refresh() {
   try {
-    const results = await Promise.all([apiGet('/api/nodes'), apiGet('/api/payloads'), apiGet('/api/loader/list')]);
-    const nd = results[0], pd = results[1], ld = results[2];
+    const results = await Promise.all([apiGet('/api/nodes'), loaderParts.load(), apiGet('/api/loader/list')]);
+    const nd = results[0], ld = results[2];
+    if (loaderParts.rows() === null) throw new Error(loaderParts.error());
     const nodes = (nd && (nd.nodes || nd.data || nd)) || [];
     nodesByName = {}; nodesById = {}; nodeInfo = {};
     (Array.isArray(nodes) ? nodes : []).forEach(function (n) {
@@ -1424,10 +1435,7 @@ async function refresh() {
         enabled: n.enabled !== false,
       };
     });
-    const ps = (pd && (pd.payloads || pd.data || pd)) || [];
-    payloadCodes = (Array.isArray(ps) ? ps : []).map(function (p) {
-      return p.code || p.Code || p.payload_code || p.PayloadCode || p;
-    }).filter(Boolean);
+    payloadCodes = partChoices(loaderParts.rows(), {}).map(function (r) { return r.value; });
     payloadOptionsHtml = buildPayloadOptions(payloadCodes);
     loaderData = (ld && ld.loaders) || [];
     loadError = null;
