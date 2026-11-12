@@ -135,7 +135,19 @@ onSSE("later", F) after closeSSEBus()
 
 ## the URL
 a second page: only stream frames subscribed: onSSE("connected", C)
-    t=0 open #1 /events
+    (nothing)
+a second page: only the bus's own frames (connected, disconnected, heartbeat, stream-gap, build-changed), then 60 s
+    t=60000 streams opened: 0
+a second page: onSSE("build-changed", BC) at import (a hub), then a page module, a microtask later, onSSE("a")
+    t=0 streams opened before the page: 0
+    t=0 open #1 /events?topics=a
+a second page: onSSE("a") and onSSE("connected"), stream up, a's subscription off, then the stream errors and 60 s pass
+    t=0 open #1 /events?topics=a
+    t=0 close #1
+a second page: onSSE("a"), stream up, its subscription off, the stream errors, then onSSE("b")
+    t=0 open #1 /events?topics=a
+    t=0 close #1
+    t=60000 open #2 /events?topics=b
 a second page: setSSEQuery({station:7, a:"x y"}) then onSSE("b"), onSSE("a")
     t=0 open #1 /events?topics=a%2Cb&a=x%20y&station=7
 a second page: onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")

@@ -29,6 +29,14 @@
 // (coalesced onto a microtask so a burst of page-load subscribes is one
 // reopen).
 //
+// NO SERVER TOPIC, NO STREAM. The bus's own frames (connected, disconnected,
+// heartbeat, stream-gap, build-changed) are never topics: they come on a
+// stream some section opened for a server type. A page that subscribes only
+// those opens nothing, and a stream that has lost its last server topic is
+// not reopened. A stream with no topics would be the unfiltered one (the
+// Edge's parseTopics reads no topics as every type): a hub's build-changed
+// subscription on a page that holds no stream used to open exactly that.
+//
 // On every (re)connect the bus dispatches a synthetic 'connected' event, so
 // sections can re-fetch their snapshot and close the gap of events missed
 // while disconnected (§13). A build-id mismatch dispatches the synthetic
@@ -204,7 +212,7 @@ function _busDrop(es) {
     _busDispatch('disconnected', null);
     const delay = _busReconnectDelay;
     _busReconnectDelay = Math.min(_busReconnectDelay * 2, 10000);
-    setTimeout(() => { if (!_busClosed && !_busES) _busConnect(); }, delay);
+    setTimeout(() => { if (!_busClosed && !_busES && _busDesiredTopics()) _busConnect(); }, delay);
 }
 
 function _busSync() {
@@ -213,7 +221,7 @@ function _busSync() {
     Promise.resolve().then(() => {
         _busSyncScheduled = false;
         if (_busClosed) return;
-        if (_busHandlers.size === 0) return;          // nothing to listen for yet
+        if (!_busDesiredTopics()) return;             // no server topic yet: nothing to open
         if (_busES && _busDesiredTopics() === _busTopics) return; // already correct
         if (_busES) { _busES.close(); _busES = null; }
         _busConnect();

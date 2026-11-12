@@ -61,6 +61,12 @@
 // names ("onfoo" listened for "oo"), the Edge hub's createSSE; sse.htmx-sse.txt,
 // htmx-sse.js. Edge admin's one stream is sse.edge-admin.txt.
 //
+// CHANGED BY A RULING (lead ruling 1 on S2-hubs-edge): sse.shared-bus.txt
+//   "only stream frames subscribed": the bus's own frames alone open nothing
+//   (they opened /events with no topics, every type); a stream whose last
+//   server topic was unsubscribed is not reopened when it drops (it reopened
+//   with no topics).
+//
 // FIXED SINCE (the golden shows the fixed behaviour):
 //   sse.shared-bus.txt "as #n opens (its watchdog armed): setSSEWatchdog(0)":
 //     0 disarms the watchdog already running, so the stream stays up; it
@@ -841,7 +847,18 @@ async function busPins() {
     out.push('');
     out.push('## the URL');
     for (const [label, fn] of [
+        // NO SERVER TOPIC, NO STREAM (lead ruling 1 on S2-hubs-edge): the
+        // bus's own frames alone open nothing; this case opened /events, the
+        // every-type stream.
         ['only stream frames subscribed: onSSE("connected", C)', (q) => q.bus.onSSE('connected', () => {})],
+        ['only the bus\'s own frames (connected, disconnected, heartbeat, stream-gap, build-changed), then 60 s',
+            async (q) => { ['connected', 'disconnected', 'heartbeat', 'stream-gap', 'build-changed'].forEach((t) => q.bus.onSSE(t, () => {})); await q.r.advance(60000); q.r.note('streams opened: ' + q.r.streams.length); }],
+        ['onSSE("build-changed", BC) at import (a hub), then a page module, a microtask later, onSSE("a")',
+            async (q) => { q.bus.onSSE('build-changed', () => {}); await q.r.advance(0); q.r.note('streams opened before the page: ' + q.r.streams.length); q.bus.onSSE('a', () => {}); }],
+        ['onSSE("a") and onSSE("connected"), stream up, a\'s subscription off, then the stream errors and 60 s pass',
+            async (q) => { const off = q.bus.onSSE('a', () => {}); q.bus.onSSE('connected', () => {}); await q.r.advance(0); off(); q.r.streams[0].fail(0); await q.r.advance(60000); }],
+        ['onSSE("a"), stream up, its subscription off, the stream errors, then onSSE("b")',
+            async (q) => { const off = q.bus.onSSE('a', () => {}); await q.r.advance(0); off(); q.r.streams[0].fail(0); await q.r.advance(60000); q.bus.onSSE('b', () => {}); }],
         ['setSSEQuery({station:7, a:"x y"}) then onSSE("b"), onSSE("a")', (q) => { q.bus.setSSEQuery({ station: 7, a: 'x y' }); q.bus.onSSE('b', () => {}); q.bus.onSSE('a', () => {}); }],
         ['onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.bus.onSSE('b', () => {}); }],
         ['onSSE("a"), stream up, then setSSEQuery({station:7}) and the stream errors', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.r.streams[0].fail(0); await q.r.advance(2000); }],
@@ -1162,6 +1179,92 @@ function htmxErrorShown() {
     return out;
 }
 
+// ═══ who opens a stream: every page that reaches the bus ══════════════════════
+//
+// A census of the shipped templates: for each page of Core and the Edge, the
+// module graph its <script type="module" src> tags reach (static imports and
+// export-from), and what those modules subscribe on shared/bus.js — server
+// topics by name, the bus's own frames, a call whose type is not a literal,
+// and the hub's refreshOnEvents('<id>', onSSE) read off the page's template
+// (each sse: name in that element's hx-trigger). A page opens a stream when it
+// subscribes a server topic (bus.js: "no server topic, no stream"); before
+// that rule, any subscription opened one. Read off the source, so a
+// subscription a page makes only on some condition is counted as made.
+
+const BUS_FRAMES = ['connected', 'disconnected', 'heartbeat', 'stream-gap', 'build-changed'];
+
+// busURLs: the module(s) that are the bus (main had it inside utils.js).
+function busUsersCensus(root, rule, busURLs) {
+    const isBus = (url) => (busURLs || ['/static/shared/bus.js']).indexOf(url) >= 0;
+    const trees = [
+        { name: 'core', dir: path.join(root, 'shingo-core', 'www'), shell: 'layout.html', inShell: (src) => /\{\{define "content"\}\}/.test(src) },
+        { name: 'edge', dir: path.join(root, 'shingo-edge', 'www'), shell: 'header.html', inShell: (src) => /\{\{template "header"/.test(src) },
+    ];
+    // Comments out, strings kept, in one pass: a "pages/*.js" in a line
+    // comment is not the start of a block comment.
+    const strip = (src) => src.replace(/(\/\*[\s\S]*?\*\/)|(\/\/[^\n]*)|('(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`)/g,
+        (m, block, line, str) => (str !== undefined ? str : ' '));
+    const out = [];
+    for (const tree of trees) {
+        const tdir = path.join(tree.dir, 'templates');
+        const shell = fs.readFileSync(path.join(tdir, tree.shell), 'utf8');
+        const fileOf = (url) => (url.indexOf('/static/shared/') === 0 ? path.join(root, 'shared', url.slice(15))
+            : path.join(tree.dir, 'static', url.slice(8)));
+        for (const t of fs.readdirSync(tdir).filter((f) => f.endsWith('.html') && f !== tree.shell && f !== 'footer.html').sort()) {
+            const page = fs.readFileSync(path.join(tdir, t), 'utf8');
+            const html = (tree.inShell(page) ? shell : '') + page;
+            const queue = [...html.matchAll(/<script\b[^>]*type="module"[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1].split('?')[0]);
+            const seen = new Set();
+            const topics = new Set();
+            const frames = new Set();
+            const dynamic = [];
+            let bus = false;
+            while (queue.length) {
+                const url = queue.shift();
+                if (seen.has(url)) continue;
+                seen.add(url);
+                if (isBus(url)) { bus = true; continue; }
+                const f = fileOf(url);
+                if (!fs.existsSync(f)) continue;
+                const code = strip(fs.readFileSync(f, 'utf8'));
+                for (const m of code.matchAll(/\b(?:import|export)\s*(?:\{[^}]*\}|\*\s*as\s+\w+)\s*from\s*['"]([^'"]+)['"]/g)) {
+                    queue.push(m[1][0] === '/' ? m[1] : path.posix.join(path.posix.dirname(url), m[1]));
+                }
+                for (const m of code.matchAll(/\bonSSE\(\s*(['"])([\w-]+)\1/g)) (BUS_FRAMES.indexOf(m[2]) >= 0 ? frames : topics).add(m[2]);
+                // The hub's own call is refreshOnEvents', read off the page below.
+                if (!/\/js\/shingoedge\.js$/.test(url)) {
+                    for (const m of code.matchAll(/\bonSSE\(\s*(?!['"])([^,)]+)/g)) dynamic.push(url.replace('/static/', '') + ': onSSE(' + m[1].trim() + ', …)');
+                }
+                for (const m of code.matchAll(/\brefreshOnEvents\(\s*['"]([\w-]+)['"]/g)) {
+                    const el = new RegExp('<[a-z]+\\b[^>]*\\bid="' + m[1] + '"[^>]*>', 's').exec(page);
+                    const trig = el && /hx-trigger="([^"]*)"/.exec(el[0]);
+                    (trig ? trig[1] : '').split(',').map((x) => x.trim().split(/\s+/)[0]).filter((x) => x.indexOf('sse:') === 0 && x.length > 4)
+                        .forEach((x) => topics.add(x.slice(4)));
+                }
+            }
+            if (!bus) { out.push(tree.name + ' ' + t + ': no bus'); continue; }
+            const opens = rule === 'any'
+                ? topics.size + frames.size + dynamic.length > 0
+                : topics.size > 0 || dynamic.length > 0;
+            out.push(tree.name + ' ' + t + ': ' + (opens ? 'opens a stream' : 'no stream')
+                + (topics.size ? '; topics ' + [...topics].sort().join(',') : '')
+                + (dynamic.length ? '; ' + dynamic.join('; ') : '')
+                + (frames.size ? '; bus frames ' + [...frames].sort().join(',') : ''));
+        }
+    }
+    return out;
+}
+
+function busUsersPins() {
+    return [
+        '# bus users — every Core and Edge page that reaches shared/bus.js, from the templates and the',
+        '# static import graph: what it subscribes, and whether it opens a stream. The rule is',
+        '# bus.js\'s: a server topic opens the stream, the bus\'s own frames (' + BUS_FRAMES.join(', ') + ') never do.',
+        '# A non-literal onSSE type is listed as it is written; the station\'s are its stationEvents keys.',
+        '',
+    ].concat(busUsersCensus(REPO, 'server'));
+}
+
 // ═══ hub census: which copy each surface hands a page ═══════════════════════
 
 function hubCensus() {
@@ -1234,7 +1337,7 @@ function sharedExporters() {
 
 // ═══ main ════════════════════════════════════════════════════════════════════
 
-module.exports = { modalPins, dialogPins, toastPins, apiPins };
+module.exports = { modalPins, dialogPins, toastPins, apiPins, busUsersCensus };
 
 if (require.main === module) (async function main() {
     golden('hubs.txt', hubCensus());
@@ -1248,6 +1351,7 @@ if (require.main === module) (async function main() {
     golden('sse.shared-bus.txt', await busPins());
     golden('sse.core-hub.txt', await coreHubBusPins());
     golden('sse.edge-admin.txt', await edgeAdminBusPins());
+    golden('bus-users.txt', busUsersPins());
     golden('htmx-errors.edge-admin.txt', htmxErrorPins().concat(htmxErrorShown()));
     process.stdout.write(JSON.stringify(goldens));
 })().catch((e) => {
