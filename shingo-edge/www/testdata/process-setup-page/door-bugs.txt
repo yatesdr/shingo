@@ -20,3 +20,9 @@ ok   the notice offers Sign in
 ok   no unhandled rejection
 ok   the status line is not left on "Creating…"
 ok   the page says "No answer from the server"
+
+## Apply wedge (processes-desktop.js:7895 + :5917): Save to 1 part gets no answer
+ok   no unhandled rejection
+ok   the status line is not left on "Saving…"
+ok   the sheet is open and its OK pressable
+ok   pressed again, it saves again

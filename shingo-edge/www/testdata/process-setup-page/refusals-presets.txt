@@ -127,16 +127,17 @@
     pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/flow/save  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
-    new text: #pd-scrim div.pd-warn: refused (500)
+    new text: #pd-scrim div.pd-warn: Server error (500)
     new text: #pd-scrim span.st: 0 saved, 1 to look at
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
     state: papply.status="0 saved, 1 to look at"
     unhandled rejection: none
     pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/flow/save  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets
+    new text: #pd-scrim div.pd-warn: No answer from the server
+    new text: #pd-scrim span.st: 0 saved, 1 to look at
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
-    state: papply.status="Saving…"
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
-    pressed again: nothing sent → sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 1 part" enabled
+    state: papply.status="0 saved, 1 to look at"
+    unhandled rejection: none
+    pressed again: POST /api/processes/1/flow/save · GET /api/processes/1/presets · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/processes/1/presets → sheet: closed

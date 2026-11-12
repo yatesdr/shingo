@@ -1070,6 +1070,19 @@ const DOOR_BUGS = [
         checks: [checks.noRejection, r => ['the status line is not left on "Creating…"', statusWords(r.page) !== 'Creating…', 'status ' + JSON.stringify(statusWords(r.page))],
             checks.says('No answer from the server')],
     },
+    {
+        title: 'Apply wedge (processes-desktop.js:7895 + :5917): Save to 1 part gets no answer',
+        spec: () => D.applySave, target: { method: 'POST', url: '/api/processes/1/flow/save', k: 0 }, answer: NO_ANSWER,
+        checks: [checks.noRejection,
+            r => ['the status line is not left on "Saving…"', statusWords(r.page) !== 'Saving…', 'status ' + JSON.stringify(statusWords(r.page))],
+            checks.okLive,
+            async r => {
+                const mark = r.page.mark();
+                await pressOK(r.page);
+                const again = r.page.since(mark).filter(c => /\/flow\/save$/.test(c.url));
+                return ['pressed again, it saves again', again.length > 0, 'pressed again: ' + (r.page.since(mark).map(lineOf).join(' · ') || 'nothing sent')];
+            }],
+    },
 ];
 async function pinDoorBugs() {
     T.setCurrent('door-bugs.txt');

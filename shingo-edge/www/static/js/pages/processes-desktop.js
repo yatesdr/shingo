@@ -27,13 +27,21 @@ import { showModal, hideModal } from '/static/js/shingoedge.js';
 // through send: it never throws, it answers {ok, status, body, error,
 // fieldErrors} with status 0 when nothing answered and 401 for a lapsed
 // session (ruling 3), and it puts a failure on the notice once. The page
-// still says a refusal where it is about (a sheet's status line, the bar),
-// so a refused write the engineer pressed reads there and on the notice;
-// only the automatic reads (the preview, the ten-second re-reads) pass
-// {notice: false}, since what they would say is drawn where they draw.
+// still says a refusal where it is about (a sheet's status line, the bar).
+//
+// WHICH CALLS KEEP THE NOTICE. A route behind the session does: its 401 is
+// the notice's sign-in link, which nothing on this page draws, so a refused
+// admin write reads in its sheet and on the notice. The flow routes and the
+// health and node reads are public (router.go), so no session lapses on them:
+// where the page draws their answer itself (the bar, an apply row, a status
+// line) they pass NO_NOTICE, and the stale 409 the apply loop retries is
+// not put up as a failure. The ten-second re-reads pass it too: a dead Edge
+// is the lost-connection banner's to say (brief S5), not a toast per tick.
+//
 // `cache: 'no-store'` went with the bare fetches: the Edge's JSON answers
 // carry no validator (writeJSON sets none), so the browser never held one.
 import { send } from '/static/shared/http.js';
+const NO_NOTICE = { notice: false };
 
 const M = () => window.ComposerModel;
 // Every request body this page sends is built in desktop-bodies.js, so a
@@ -2430,7 +2438,7 @@ async function saveFlow() {
         to_style_id: S.model.styleId, cells: M().toCells(S.model),
         fingerprint: pv.fingerprint || '',
         station_id: stationIDForSave(),
-    });
+    }, NO_NOTICE);
     const json = answerBody(res);
     // The decision is B().saveOutcome — every branch in one place, driven under
     // node by apply-loop.test.js. This function does the DOM.
@@ -7917,53 +7925,58 @@ async function runPresetApply() {
     drawPresetApply();
 
     let saved = 0, failed = 0;
-    for (const st of applyStyles()) {
-        // CANCEL STOPS THE LOOP. closeSheet sets S.papply to null and the
-        // modal's Cancel is live while this runs, so every read after an await
-        // was a TypeError waiting to happen — and the loop would have carried
-        // on writing parts into a modal that is gone, with no report of which
-        // ones landed. The engineer's cancel means stop.
-        if (!S.papply) return;
-        const row = S.papply.rows[st.id];
-        // THE SAME TEST THE BUTTON COUNTED (F1). Two answers to "can this row
-        // be saved" is one of them being wrong, and the wrong one here is a
-        // write the button did not promise.
-        if (!applyRowReady(row)) continue;
-        const res = await fetch('/api/processes/' + S.processID + '/flow/save', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(B().flowPresetApplySave(st.id, row.cells, row.fingerprint,
-                stationIDForSave(), { id: p.id, version: p.version })),
-        });
-        let j = await res.json().catch(() => ({}));
-        // What the response means for this row — B().applyOutcome, where the
-        // rule lives and is tested.
-        let out = B().applyOutcome(res.status, j, 1);
-        if (out.retry) {
-            // Re-preview THIS row first, so the modal ends up showing a diff
-            // that is true rather than one the save already disagreed with,
-            // and so the retry carries the fingerprint that preview returned.
-            row.result = { ok: false, text: out.text };
-            drawPresetApply();
-            await buildApplyRow(st.id);
-            if (!S.papply) return;   // cancelled while the preview was in flight
-            const fresh = S.papply.rows[st.id];
-            if (fresh && applyRowReady(fresh)) {
-                const again = await fetch('/api/processes/' + S.processID + '/flow/save', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(B().flowPresetApplySave(st.id, fresh.cells, fresh.fingerprint,
-                        stationIDForSave(), { id: p.id, version: p.version })),
-                });
-                j = await again.json().catch(() => ({}));
-                out = B().applyOutcome(again.status, j, 2);
-            } else {
-                out = { ok: false, text: out.text };
+    // THE RUN ENDS HOWEVER IT ENDS (P0 bug, :7895 + runSheet's :5917). A save
+    // that got no answer rejected out of this loop with S.papply.running still
+    // true: runSheet's finally gave the OK back and every press after that
+    // returned at the guard above, under "Saving…", sending nothing. The saves
+    // go through the door now, which does not throw, and the finally gives the
+    // run back whatever else might.
+    try {
+        for (const st of applyStyles()) {
+            // CANCEL STOPS THE LOOP. closeSheet sets S.papply to null and the
+            // modal's Cancel is live while this runs, so every read after an await
+            // was a TypeError waiting to happen — and the loop would have carried
+            // on writing parts into a modal that is gone, with no report of which
+            // ones landed. The engineer's cancel means stop.
+            if (!S.papply) return;
+            const row = S.papply.rows[st.id];
+            // THE SAME TEST THE BUTTON COUNTED (F1). Two answers to "can this row
+            // be saved" is one of them being wrong, and the wrong one here is a
+            // write the button did not promise.
+            if (!applyRowReady(row)) continue;
+            const res = await send('POST', '/api/processes/' + S.processID + '/flow/save',
+                B().flowPresetApplySave(st.id, row.cells, row.fingerprint, stationIDForSave(), { id: p.id, version: p.version }), NO_NOTICE);
+            // What the response means for this row — B().applyOutcome, where the
+            // rule lives and is tested.
+            let out = B().applyOutcome(res.status, answerBody(res), 1);
+            if (out.retry) {
+                // Re-preview THIS row first, so the modal ends up showing a diff
+                // that is true rather than one the save already disagreed with,
+                // and so the retry carries the fingerprint that preview returned.
+                row.result = { ok: false, text: out.text };
+                drawPresetApply();
+                await buildApplyRow(st.id);
+                if (!S.papply) return;   // cancelled while the preview was in flight
+                const fresh = S.papply.rows[st.id];
+                if (fresh && applyRowReady(fresh)) {
+                    const again = await send('POST', '/api/processes/' + S.processID + '/flow/save',
+                        B().flowPresetApplySave(st.id, fresh.cells, fresh.fingerprint, stationIDForSave(), { id: p.id, version: p.version }), NO_NOTICE);
+                    out = B().applyOutcome(again.status, answerBody(again), 2);
+                } else {
+                    out = { ok: false, text: out.text };
+                }
             }
+            if (!S.papply) return;
+            const target = S.papply.rows[st.id] || row;
+            target.result = { ok: !!out.ok, text: out.text };
+            if (out.ok) { saved++; } else { failed++; }
+            drawPresetApply();
         }
-        if (!S.papply) return;
-        const target = S.papply.rows[st.id] || row;
-        target.result = { ok: !!out.ok, text: out.text };
-        if (out.ok) { saved++; } else { failed++; }
-        drawPresetApply();
+    } finally {
+        if (S.papply && S.papply.running) {
+            S.papply.running = false;
+            S.papply.status = saved + ' saved' + (failed ? ', ' + failed + ' to look at' : '');
+        }
     }
     if (!S.papply) return;
     S.papply.running = false;
