@@ -288,8 +288,12 @@ console.log('the sections count history gave away render where they went (owner,
             && html.indexOf('2.') < html.indexOf('Z32'), html);
         check('sources: the first has no up, the last has no down', /data-index="0" data-delta="-1" disabled/.test(html)
             && /data-index="1" data-delta="1" disabled/.test(html) && !/data-index="0" data-delta="1" disabled/.test(html), html);
-        check('sources: the add row offers only what is not listed', html.includes('<option value="3">SM</option>')
-            && !html.includes('<option value="1">'), html);
+        // What the add row offers is the shared node picker's (a listed group
+        // greyed "already a source": core-pickers/kanban-page.txt); the row is
+        // here while a group is left to add, and gone when none is.
+        const full = vm.runInContext('sourceRowsHtml(' + JSON.stringify(groups) + ',' + JSON.stringify(groups) + ')', sctx);
+        check('sources: the add row is there while a group is left to add', html.includes('id="nf-kanban-add-source"')
+            && !full.includes('nf-kanban-add-source'), html);
         check('sources: one group at a time, nothing selects several', !/multiple|select.?all/i.test(html), html);
         const empty = vm.runInContext('sourceRowsHtml([],' + JSON.stringify(groups) + ')', sctx);
         check('sources: none says the keeper searches the plant', empty.includes('searches the plant'), empty);

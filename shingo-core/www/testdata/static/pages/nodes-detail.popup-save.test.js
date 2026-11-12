@@ -131,6 +131,19 @@ function deferred() {
     return { p, resolve, reject };
 }
 
+// nodeAdapter is the shared node adapter (shared/node-picker.js) as served,
+// over a shell that keeps only its value: these tests read the saves, and the
+// pickers' rows are core-pickers/kanban-page.txt's.
+function nodeAdapter() {
+    const src = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'node-picker.js'), 'utf8')
+        .replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
+    const shell = (host, o) => {
+        let v = o.selected == null ? '' : String(o.selected);
+        return { el: host, input: { addEventListener() {} }, value: () => v, set(x) { v = x == null ? '' : String(x); }, refresh() {}, destroy() {} };
+    };
+    return vm.runInNewContext('(function (createPicker, el) {\n' + src + '\nreturn { nodeSource, nodePicker, nodeWhy };\n})', {})(shell, () => ({}));
+}
+
 // run evaluates one page module in its own context, its imports taken from
 // lent and its exports left as the context's globals.
 function run(name, globals, lent) {
@@ -166,7 +179,7 @@ function load(gets, post) {
         posts.push({ url, body });
         return post ? post(url, body) : Promise.resolve({});
     };
-    const app = {
+    const app = Object.assign(nodeAdapter(), {
         escapeHtml: (s) => String(s == null ? '' : s),
         el() { return fakeEl(); },
         api() { return new Promise(() => {}); },
@@ -181,7 +194,7 @@ function load(gets, post) {
             return new Promise(() => {});
         },
         apiPost: answer,
-    };
+    });
     const globals = () => ({
         document: doc,
         console: { log() {}, warn() {}, error() {} },
