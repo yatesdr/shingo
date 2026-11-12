@@ -23,7 +23,8 @@ BUG  POS_A3 via:1 (LM_3 of LM_2 › LM_3): offers LM_2, already on the route
 ## F26 · a swap-mode change keeps what the new mode uses and says what it dropped
 ok   inbound staging STG_1 is kept (2-Robot Swap uses it)
 ok   outbound staging STG_2 is dropped (2-Robot Swap forbids it)
-BUG  the page says outbound staging STG_2 was dropped: nothing was said
+ok   the page says outbound staging STG_2 was dropped
+ok   the words: "2‑Robot Swap does not use Outbound staging STG_2: dropped from POS_A5."
 
 ## U3 · Auto reorder on the row: off on a new position of either role; Set turns it on at the point; Off turns it off
 ok   a new consume position reads off

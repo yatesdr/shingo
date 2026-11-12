@@ -134,6 +134,7 @@ const BUGS = [
                 ['outbound staging ' + before.parkOld + ' is dropped (2-Robot Swap forbids it)', !c.parkOld, 'it is ' + JSON.stringify(c.parkOld)],
                 ['the page says outbound staging ' + before.parkOld + ' was dropped', /outbound staging/i.test(said) && said.indexOf(before.parkOld) >= 0,
                     said ? 'it said ' + JSON.stringify(said) : 'nothing was said'],
+                ['the words: ' + JSON.stringify(said), true, ''],
             ];
         },
     },

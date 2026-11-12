@@ -42,6 +42,7 @@ import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal, con
 // `cache: 'no-store'` went with the bare fetches: the Edge's JSON answers
 // carry no validator (writeJSON sets none), so the browser never held one.
 import { send } from '/static/shared/http.js';
+import { toast } from '/static/shared/notice.js';
 const NO_NOTICE = { notice: false };
 
 const M = () => window.ComposerModel;
@@ -3283,10 +3284,40 @@ async function dropFromPartSet(code) {
 // onto the part set, setPart is the placement.
 function apply(action) {
     for (const a of (Array.isArray(action) ? action : [action])) {
+        const before = S.model;
         S.model = M().reduce(S.model, a);
+        if (a.type === 'setMode') sayDropped(a.node, before, S.model);
     }
     drawFlows();
     schedulePreview();
+}
+
+// MODE_FIELDS is the cell fields a swap-mode change can clear (the model's
+// clearForbidden), each with the claim field it is.
+const MODE_FIELDS = [['paired', 'paired_core_node'], ['secondPaired', 'second_paired_core_node'],
+    ['staging', 'inbound_staging'], ['parkOld', 'outbound_staging'], ['source', 'inbound_source'],
+    ['dest', 'outbound_destination'], ['partialDest', 'partial_destination'],
+    ['evacNodes', 'changeover_evac_nodes'], ['keyRoute', 'key_route']];
+
+// sayDropped says what a swap-mode change took off the position (F26): the
+// model keeps every value the new mode may carry and clears the ones it
+// forbids, and that clearing was silent. One line on the notice, the value
+// named, so an engineer who switches back knows what to put again.
+function sayDropped(node, before, after) {
+    const was = before.cells[node], now = after.cells[node];
+    if (!was || !now) return;
+    const gone = [];
+    for (const [k, field] of MODE_FIELDS) {
+        const v = Array.isArray(was[k]) ? was[k].join(' › ') : was[k];
+        const left = Array.isArray(now[k]) ? now[k].length : now[k];
+        if (v && !left) gone.push(W(field) + ' ' + v);
+    }
+    const a0 = M().advancedFor(before, node), a1 = M().advancedFor(after, node);
+    for (const k of Object.keys(a0)) {
+        if (advIsSet(k, { a: a0 }) && !advIsSet(k, { a: a1 })) gone.push(W(k));
+    }
+    if (!gone.length) return;
+    toast((M().modeLabels()[now.mode] || now.mode) + ' does not use ' + gone.join(', ') + ': dropped from ' + node + '.', 'info');
 }
 
 // ── D3 · Routing set on the map (SPEC §2 D3) ─────────────────────────────────
