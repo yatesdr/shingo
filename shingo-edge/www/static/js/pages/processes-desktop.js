@@ -185,10 +185,12 @@ function boot() {
     }, 10000);
     if (S.processID) openProcess(S.processID);
     else {
-        drawList();
         // #add=1 opens Add process over the list: a one-shot for the shots
-        // harness, which cannot press the button (see syncHash).
-        if ('add' in hashOpts()) openAddProcess();
+        // harness, which cannot press the button (see syncHash). Read before
+        // drawList, whose syncHash rewrites the address bar.
+        const add = 'add' in hashOpts();
+        drawList();
+        if (add) openAddProcess();
     }
 }
 
