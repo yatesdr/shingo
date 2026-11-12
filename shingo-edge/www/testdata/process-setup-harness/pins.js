@@ -749,6 +749,7 @@ const P0 = require('./p0-page.js');
         H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
         setCurrent: n => { CURRENT = n; }, SEEN,
     });
+    await require('./s4-table.js').run({ out, openPage, pickRow, pickChip });
     if (process.argv.includes('--sites')) {
         process.stdout.write(P0.sitesTable(SEEN));
         return;

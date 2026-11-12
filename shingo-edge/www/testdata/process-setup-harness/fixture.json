@@ -744,7 +744,8 @@
           "x": 8,
           "y": 12,
           "kind": "front",
-          "station_id": 11
+          "station_id": 11,
+          "curtain": true
         },
         {
           "core_node_name": "POS_A4",
