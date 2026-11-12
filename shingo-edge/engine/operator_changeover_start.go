@@ -604,7 +604,6 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// A program that settled before the changeover opened is cut over on this
 	// poke rather than never (the decision is not re-taken on a clock).
 	defer e.pokeCutover(processID)
-	defer e.catidHealthChanged(processID)
 	// The PLC's part as the changeover starts: the evidence a pin is later
 	// suggested from never suggests the value the cell was already on.
 	if v, ok := e.liveIdentity(processID); ok {

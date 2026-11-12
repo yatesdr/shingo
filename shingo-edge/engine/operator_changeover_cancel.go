@@ -114,7 +114,6 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// ones. Cancel-and-redirect then inserts a fresh changeover row, which
 	// correctly opens a NEW episode rather than continuing this one.
 	e.closeChangeoverEpisode(changeover.ID, protocol.CloseReasonCancelled, protocol.ClosedByNotification)
-	defer e.catidHealthChanged(processID)
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}

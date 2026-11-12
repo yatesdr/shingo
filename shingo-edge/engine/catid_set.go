@@ -317,7 +317,6 @@ func (e *Engine) AddStyleCATID(processID, styleID int64, v, by, evidence string)
 		return err
 	}
 	log.Printf("catid pin: style %s (%d) on process %d now %s — added %s by %s: %s", style.Name, styleID, processID, pin, v, by, evidence)
-	e.catidHealthChanged(processID)
 	e.pokeCutover(processID)
 	return nil
 }

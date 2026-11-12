@@ -572,7 +572,6 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 		}
 		cm.recordEndCATID(pv, st)
 		delete(cm.verify, processID)
-		cm.eng.catidHealthChanged(processID)
 		return
 	}
 	if now.Before(pv.deadline) {
@@ -596,7 +595,6 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 				ExpectedCATID: formatCATIDSet(set),
 				LiveCATID:     st.lastConfirmed,
 			}})
-			cm.eng.catidHealthChanged(processID)
 		}
 	}
 	delete(cm.verify, processID)
@@ -685,7 +683,6 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	if err := cm.eng.db.RecordPLCCATIDObservation(processID, st.plcName, st.lastConfirmed); err != nil {
 		log.Printf("plc-catid: record observation for process %d: %v", processID, err)
 	}
-	cm.eng.catidHealthChanged(processID)
 
 	// A value that names no part (no program, an unused slot) is neither a
 	// wrong part nor a change of part.
@@ -913,7 +910,6 @@ func (cm *catidMonitor) decideWithNoChangeover(proc *processes.Process, st *cati
 			(to.Pinned || to.Assumed) && st.raiseOnce() {
 			cm.eng.logFn("plc-catid: process %s: CATID %s counted, which only %s runs, with no changeover open — nothing moves; "+
 				"the health strip offers the changeover to %s", st.processName, v, to.Name, to.Name)
-			cm.eng.catidHealthChanged(proc.ID)
 		}
 	case countedSince(f, plc.TickHeld):
 		if domain.NormalizeChangeoverAutoArm(proc.ChangeoverAutoArm) == domain.ChangeoverAutoArmAuto &&

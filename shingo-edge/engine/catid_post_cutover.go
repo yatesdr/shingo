@@ -178,7 +178,6 @@ func (e *Engine) clearFlagOn(processID, coID int64) error {
 		e.Events.Emit(Event{Type: EventChangeoverVerifyCleared,
 			Payload: CATIDVerifyClearedEvent{ProcessID: processID, ChangeoverID: coID}})
 	}
-	e.catidHealthChanged(processID)
 	return nil
 }
 

@@ -299,7 +299,8 @@ func (h *Handlers) apiCatidHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiCatidHealthSummary returns one line per process with any health item:
-// its worst severity, its count and its worst item's headline.
+// its worst severity, its count, its red and amber counts (what the Processes
+// list's row draws) and its worst item's headline.
 func (h *Handlers) apiCatidHealthSummary(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.orchestration.CatidHealthSummary()
 	if err != nil {

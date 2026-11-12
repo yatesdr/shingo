@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"shingoedge/engine"
 )
 
 var updateCatidHealthPageGolden = flag.Bool("update-catid-health-page-golden", false,
@@ -66,36 +64,11 @@ func TestCatidHealthPagePins(t *testing.T) {
 		"-update-catid-health-page-golden")
 }
 
-// TestCatidHealthHint_FrameIsDurable pins the hint's server half as it is:
-// EventCATIDHealthChanged goes out as the SSE event "catid-health" with the
-// process's id, on the durable queue (www/sse.go SetupEngineListeners).
-func TestCatidHealthHint_FrameIsDurable(t *testing.T) {
-	t.Parallel()
-	if lossySSETopics["catid-health"] {
-		t.Error("catid-health is classified lossy")
-	}
-	hub := NewEventHub()
-	eng := &engine.Engine{Events: engine.NewEventBus()}
-	hub.SetupEngineListeners(eng)
-	eng.Events.Emit(engine.Event{Type: engine.EventCATIDHealthChanged,
-		Payload: engine.CATIDHealthChangedEvent{ProcessID: 7}})
-	select {
-	case evt := <-hub.broadcast:
-		data, err := json.Marshal(evt.Data)
-		if evt.Type != "catid-health" || err != nil || string(data) != `{"process_id":7}` {
-			t.Errorf("broadcast %q %s (%v), want catid-health {\"process_id\":7}", evt.Type, data, err)
-		}
-	default:
-		t.Error("no SSE event for EventCATIDHealthChanged")
-	}
-}
-
-// TestCatidHealthHint_NoEdgePageListens pins the hint's other half as it is
-// today, a gap: no Edge page or template listens for "catid-health". The
-// Processes page opens no stream (sse-hint.txt); the pages that do
-// (createSSE, onSSE, htmx sse triggers) name no handler for it. A listener
-// added later fails this and is listed, which is the point: the change that
-// adds it updates this pin.
+// TestCatidHealthHint_NoEdgePageListens: the "catid-health" SSE hint is gone
+// (the engine sends no such frame; the Processes list's 10 s refresh is its
+// clock, owner 2026-11-11: "we are good with 10s of delay"), so a page that
+// listens for it waits for nothing. No Edge page or template names it: a
+// createSSE handler key, an onSSE or station type string, an htmx trigger.
 func TestCatidHealthHint_NoEdgePageListens(t *testing.T) {
 	t.Parallel()
 	// The ways an Edge page subscribes to an SSE type: createSSE's handler

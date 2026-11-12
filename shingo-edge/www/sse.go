@@ -593,14 +593,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CATIDAutoCutoverEvent); ok {
 				sseEvt = SSEEvent{Type: "catid-auto-cutover", Data: p}
 			}
-		case engine.EventCATIDHealthChanged:
-			// A refresh hint for the part-identity health strip: the page
-			// refetches the process's items. Durable — the strip shows standing
-			// conditions, and a missed hint would leave one shown after it
-			// cleared until the next.
-			if p, ok := evt.Payload.(engine.CATIDHealthChangedEvent); ok {
-				sseEvt = SSEEvent{Type: "catid-health", Data: p}
-			}
 		case engine.EventChangeoverVerifyMismatch:
 			// Post-cutover verification: the press's part still disagrees with the
 			// style the cutover was set to. Push a refresh so the station fetches

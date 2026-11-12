@@ -66,15 +66,12 @@ func (e *Engine) holdCatidDraw(tick tickScope, nodeID int64, part string, qty in
 	if tick.kind == plc.TickOffPlan {
 		reason = holdReasonOffPlan
 	}
-	opened, err := e.db.HoldCatidDraw(tick.processID, tick.catid, nodeID, part, reason, int64(qty), clock.Now())
+	_, err := e.db.HoldCatidDraw(tick.processID, tick.catid, nodeID, part, reason, int64(qty), clock.Now())
 	if err != nil {
 		log.Printf("catid hold: process %d CATID %s node %d: %d not held: %v", tick.processID, tick.catid, nodeID, qty, err)
 		return
 	}
 	log.Printf("catid hold: process %d CATID %s node %d part %q: %d held (%s, %s)", tick.processID, tick.catid, nodeID, part, qty, reason, tick.source)
-	if opened {
-		e.catidHealthChanged(tick.processID)
-	}
 }
 
 // logNoCart logs a consume stroke with no cart of its part at the position
@@ -93,7 +90,6 @@ func (e *Engine) logNoCart(processID int64, catid string, node *processes.Node, 
 	if opened {
 		log.Printf("no cart: process %d CATID %q node %s: %d of part %q logged, no %s cart there (%s); the strokes after it join the row",
 			processID, catid, node.CoreNodeName, qty, part, part, source)
-		e.catidHealthChanged(processID)
 	}
 	return true, nil
 }
@@ -316,7 +312,6 @@ func (e *Engine) ChargeCatidHold(id int64, by string) error {
 	h.Qty = qty
 	n := e.chargeHold(&h, p.StyleID)
 	log.Printf("catid hold %d: charged by %s under style %s: %d of CATID %s at %d position(s)", id, by, p.StyleName, qty, h.CATID, n)
-	e.catidHealthChanged(h.ProcessID)
 	return nil
 }
 
@@ -338,6 +333,5 @@ func (e *Engine) WriteOffCatidHold(id int64, by string) error {
 		return ErrHoldResolved
 	}
 	log.Printf("catid hold %d: written off by %s: %d of CATID %s at node %d not charged", id, by, qty, h.CATID, h.ProcessNodeID)
-	e.catidHealthChanged(h.ProcessID)
 	return nil
 }

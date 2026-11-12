@@ -1,11 +1,12 @@
-// catid_health.go — the part-identity health strip.
+// catid_health.go — the part-identity health items.
 //
 // Every standing condition of a process's part identity, as items computed
 // from CURRENT state on each call: an item shows while its condition is true
 // and clears itself, so nothing here is driven by an event (an admin flip with
 // an unchanged CATID raises no event, and its wrong part must still show). The
-// homepage reads the per-process summary; the processes page lists the items.
-// EventCATIDHealthChanged is only a hint to refetch.
+// Processes list reads the per-process summary on its 10 s refresh; a
+// process's Settings tab lists its items. No event hints a refetch: the
+// refresh is the only reader's clock.
 
 package engine
 
@@ -85,18 +86,6 @@ type CatidHealthSummary struct {
 	Red       int    `json:"red"`
 	Amber     int    `json:"amber"`
 	Headline  string `json:"headline"`
-}
-
-// CATIDHealthChangedEvent hints that a process's health items may have moved.
-type CATIDHealthChangedEvent struct {
-	ProcessID int64 `json:"process_id"`
-}
-
-// catidHealthChanged emits the refresh hint for a process.
-func (e *Engine) catidHealthChanged(processID int64) {
-	if e.Events != nil {
-		e.Events.Emit(Event{Type: EventCATIDHealthChanged, Payload: CATIDHealthChangedEvent{ProcessID: processID}})
-	}
 }
 
 // CatidHealth returns the process's standing items, worst first.
