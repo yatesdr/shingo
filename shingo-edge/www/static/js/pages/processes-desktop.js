@@ -22,7 +22,7 @@ import {
 } from '/static/shared/scene-geom.js';
 // THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
 // this page puts up is an entry on it — see pageSheet, showSheet and showPop.
-import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal } from '/static/shared/layer.js';
+import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal, confirm as layerConfirm } from '/static/shared/layer.js';
 // THE ONE HTTP DOOR (style guide §17). Every request this page sends goes
 // through send: it never throws, it answers {ok, status, body, error,
 // fieldErrors} with status 0 when nothing answered and 401 for a lapsed
@@ -2492,16 +2492,27 @@ function picker(node, kind, inner, cls, title) {
 
 function drawBar() {
     if (!S.model) return;
-    const b = M().bar(S.model);
+    let b = M().bar(S.model);
     const bar = $('pd-bar');
     if (!bar) return;
+    // A RECIPE DRAFT IS NOT PREVIEWED, so the bar never says "Preview OK" over
+    // one: its required cells left empty are its findings (F5, F33), counted
+    // the way a style's bar counts the server's, and nothing left is "Ready
+    // to save".
+    const gaps = S.shapeDraft && b.tone !== 'blocked' && b.tone !== 'empty' ? draftGaps() : [];
+    if (gaps.length) {
+        b = { heading: gaps.length + ' to fix' + (gaps.length > 1 ? ' · showing the first' : ''),
+            detail: gaps[0].message, tone: 'blocked', node: gaps[0].node };
+    } else if (S.shapeDraft && b.tone === 'ok') {
+        b = Object.assign({}, b, { heading: 'Ready to save' });
+    }
     // THE PROBLEM LINE IS THE CONTROL. With fixIt gone there is no second
     // button on the bar; the first finding names a position, and the word
     // that names it takes you there — selected in the picture, its table row
     // scrolled into view. A finding with no position (an unplaced part) is
     // not clickable: there is nothing to take you to.
-    let target = null;
-    if (b.tone === 'blocked') {
+    let target = b.node || null;
+    if (b.tone === 'blocked' && !target) {
         for (const f of M().findings(S.model)) {
             if (f.node && S.model.cells[f.node]) { target = f.node; break; }
         }
@@ -2530,7 +2541,7 @@ function drawBar() {
     bar.innerHTML = '<div' + (target ? ' class="as-link" data-act="bar-goto" data-node="' + esc(target) + '"' : '') + '>' +
         head +
         '<div class="d">' + esc(detail) + '</div></div>' + doors +
-        '<div class="prov' + (dirty() ? ' dirty' : '') + '">' + esc(provText()) + '</div>';
+        '<div class="prov' + ((S.shapeDraft ? draftDirty() : dirty()) ? ' dirty' : '') + '">' + esc(provText()) + '</div>';
     const save = root().querySelector('[data-act="save"]');
     if (save) save.disabled = !dirty() || b.tone === 'blocked';
     // `Save as preset…` is the mirror image: enabled only on `No unsaved
@@ -2549,6 +2560,7 @@ function drawBar() {
 // The time it saved stays on the bar until the next edit makes it dirty
 // again, and only on the flow that was saved.
 function provText() {
+    if (S.shapeDraft) return draftDirty() ? 'Unsaved changes' : 'No unsaved changes';
     if (dirty()) return 'Unsaved changes';
     const s = S.flowSaved;
     return s && s.styleID === S.styleID ? 'Saved ' + s.at : 'No unsaved changes';
@@ -7846,7 +7858,50 @@ function startShapeDraft(shape, draft) {
     // refusal the server's last word on a save of them.
     S.shapeDraft = Object.assign({ groups: null, focus: null, hover: null, refusal: '' },
         draft, { back: back, fromTab: from });
+    S.shapeDraft.baseline = draftKey();
     drawFlows();
+}
+
+// A RECIPE DRAFT HAS ITS OWN "UNSAVED" (F5): its cells and its group cards as
+// it opened, so an untouched draft reads "No unsaved changes" and Back asks
+// only when there is something to lose (F4).
+function draftKey() {
+    return JSON.stringify([M().toCells(S.model), (S.shapeDraft && S.shapeDraft.groups) || null]);
+}
+function draftDirty() { return !!S.shapeDraft && !!S.model && draftKey() !== S.shapeDraft.baseline; }
+
+// draftHold puts the question before anything that leaves a changed recipe
+// draft (F4), and answers true when it asked. On Discard the act runs again,
+// the draft counted clean, so it leaves; Keep editing leaves it as it was.
+function draftHold(again) {
+    if (!draftDirty()) return false;
+    void layerConfirm('Discard this recipe draft?', { ok: 'Discard', cancel: 'Keep editing' }).then(yes => {
+        if (!yes || !S.shapeDraft) return;
+        S.shapeDraft.baseline = draftKey();
+        again();
+    });
+    return true;
+}
+
+// draftGaps is a recipe draft's required cells left empty, in table order
+// (F5, F33). A style's bar has the server's preview to say them; a recipe is
+// not previewed, so the page reads flowspec's own word for each field
+// (rowColumns' `required`, fieldRequired) — the same that draws the cell red.
+function draftGaps() {
+    const out = [];
+    for (const pos of S.model.positions) {
+        const n = pos.core_node_name, c = S.model.cells[n];
+        if (!c || !c.on || !c.mode) continue;
+        for (const col of ['partner', 'staging']) {
+            for (const chip of M().rowColumns(S.model, n, col)) {
+                if (chip.required && !chip.value) out.push({ node: n, message: n + ' · ' + chip.label + ' is required' });
+            }
+        }
+        for (const [field, key] of [['inbound_source', 'source'], ['outbound_destination', 'dest']]) {
+            if (!c[key] && M().fieldRequired(S.model, n, field)) out.push({ node: n, message: n + ' · ' + W(field) + ' is required' });
+        }
+    }
+    return out;
 }
 
 // leaveShapeDraft goes back to the Presets tab, with the style that was open
@@ -8494,7 +8549,7 @@ function onClick(e) {
     if (btn && btn.dataset.act === 'bar-goto' && btn.dataset.node) { gotoFinding(btn.dataset.node); return; }
     if (btn) {
         switch (btn.dataset.act) {
-            case 'list': drawList(); return;
+            case 'list': if (draftHold(drawList)) return; drawList(); return;
             case 'ch-pin': catidPin(btn.dataset.pid, btn.dataset.style, btn.dataset.catid, btn.dataset.name); return;
             case 'ch-pin-pick': {
                 const pick = root().querySelector('select[data-ch-pick="' + CSS.escape(btn.dataset.catid) + '"]');
@@ -8630,7 +8685,7 @@ function onClick(e) {
                     false);
                 return;
             }
-            case 'shape-cancel': void leaveShapeDraft(); return;
+            case 'shape-cancel': if (draftHold(() => void leaveShapeDraft())) return; void leaveShapeDraft(); return;
             // THE NAME IS THE ENGINEER'S (pick-a-part U2): the field opens
             // empty, never on the mode word — "Standard", "Tooling change".
             case 'shape-save': {
@@ -8649,8 +8704,13 @@ function onClick(e) {
             case 'glist-rm': dropGroupList(Number(btn.dataset.g), btn.dataset.node, btn.dataset.field, btn.dataset.v); return;
             case 'gadv': openGroupAdvanced(Number(btn.dataset.g)); return;
             case 'gfocus': pinGroup(Number(btn.dataset.g)); return;
-            case 'recipe-open': openRecipe(btn.dataset.preset); return;
-            case 'new-recipe': void openNewRecipe(); return;
+            case 'recipe-open': {
+                const id = btn.dataset.preset;
+                if (draftHold(() => openRecipe(id))) return;
+                openRecipe(id);
+                return;
+            }
+            case 'new-recipe': if (draftHold(() => void openNewRecipe())) return; void openNewRecipe(); return;
             case 'preset-name-cand': {
                 const c = candidateByKey(btn.dataset.cand);
                 if (c) openPresetNaming('Name this shape', c.suggested_name, { shapeKey: c.shape_key });
@@ -8701,7 +8761,12 @@ function onClick(e) {
         return;
     }
     if (openRow) { openProcess(Number(openRow.dataset.open)); return; }
-    if (styleRowEl && !btn) { selectStyle(Number(styleRowEl.dataset.style)); syncHash(); return; }
+    if (styleRowEl && !btn) {
+        const id = Number(styleRowEl.dataset.style);
+        const go = () => { selectStyle(id); syncHash(); };
+        if (!draftHold(go)) go();
+        return;
+    }
     // A group's row pins that spot on the picture; a second click lets go.
     const grow = e.target.closest && e.target.closest('[data-grow]');
     if (grow) { pinGroupRow(Number(grow.dataset.g), grow.dataset.grow); return; }

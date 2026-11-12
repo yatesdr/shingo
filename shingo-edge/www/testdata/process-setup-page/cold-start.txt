@@ -7,15 +7,18 @@ ok   its inbound source and destination come from the routing set
 ok   its inbound staging comes from the routing set too (STG_1, the first staging row)
 
 ## F5/F33: the recipe draft's bar, on a routing set with no staging row
-BUG  an untouched draft says "No unsaved changes": prov="Unsaved changes"
-BUG  a required cell left empty is "1 to fix" on the bar: bar="Preview OK · 0 orders Inbound source GRP_A · outbound destination DST_1 Unsaved changes"
-BUG  the bar never says "Preview OK" over a recipe draft: bar="Preview OK · 0 orders Inbound source GRP_A · outbound destination DST_1 Unsaved changes"
-BUG  Save recipe… is disabled while it is: Save recipe… enabled
+ok   an untouched draft says "No unsaved changes"
+ok   a required cell left empty is "1 to fix" on the bar
+ok   the bar never says "Preview OK" over a recipe draft
+ok   Save recipe… is disabled while it is
 ok   and the bar says "Unsaved changes" now
 
 ## F4: Back on a recipe draft
 ok   an untouched draft leaves without asking
-BUG  a changed draft asks before it is discarded: dialog=none, draft discarded
+ok   a changed draft asks before it is discarded
+#    asked: "Discard this recipe draft?" [Keep editing · Discard]
+ok   Keep editing keeps the draft and its row
+ok   Discard leaves the draft
 
 ## F3: the required inbound staging chip, with no staging row and no back position
 #    the popover: "required for 2‑Robot Swap 1 staging node found from your flows, switched off — STG_9. Turn it on in Settings › Routing"
