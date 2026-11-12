@@ -12,7 +12,9 @@
 // ONE OF EACH. A toast whose words and level are already up is not stacked a
 // second time: the old one goes and the new one starts its lifetime again. A
 // page whose background reads fail every ten seconds says so once, not once
-// per read.
+// per read. A STICKY ONE STAYS: the same words while a sticky toast says them
+// add nothing, so a page's own "Signed out" never replaces the door's, and its
+// Sign-in link stays on screen.
 //
 // THE BANNER is a line across the top of the page, one per key, that stays
 // until it is cleared or dismissed. It carries no words of its own: S5 puts
@@ -76,14 +78,18 @@ export function toast(message, level, opts) {
     const { stack } = parts();
     for (const old of Array.prototype.slice.call(stack.children)) {
         const was = live.get(old);
-        if (was && was.text === text && was.level === lvl) drop(old);
+        if (!was || was.text !== text || was.level !== lvl) continue;
+        // A sticky one already up says it, and stays with its action (the
+        // door's Sign-in link): the same words again add nothing.
+        if (was.sticky) return old;
+        drop(old);
     }
     const t = el('div', {
         className: 'notice-toast notice-toast--' + lvl + (o.sticky ? ' is-sticky' : ''),
         role: lvl === 'error' ? 'alert' : null,
         title: o.sticky ? 'Click to dismiss' : null,
     }, [el('span', { className: 'notice-text' }, text), action(o.action)]);
-    const note = { text, level: lvl, timer: null };
+    const note = { text, level: lvl, timer: null, sticky: !!o.sticky };
     live.set(t, note);
     if (o.sticky) t.addEventListener('click', () => drop(t));
     else note.timer = setTimeout(() => drop(t), LIFETIME_MS[lvl] || DEFAULT_LIFETIME_MS);

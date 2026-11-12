@@ -65,6 +65,28 @@ test('the same words at the same level are one toast, its lifetime restarted', a
     eq(await gone(f.r, t, 8000), 5000, 'the refreshed one lives its full 5 s');
 });
 
+// A lapsed session on a Core page: the door puts its sticky "Signed out" with
+// the Sign-in link on the notice, and the page then toasts the same words for
+// the hub api's rejection. The plain toast used to replace the sticky one, and
+// the link went with it (lead ruling: the sticky one stays).
+test('a toast with the words and level of a sticky one already up is not added; the sticky one stays, link and all', async () => {
+    const f = notice();
+    const s = f.N.toast('Signed out', 'error', { sticky: true, action: { label: 'Sign in', href: '/login?next=%2Fnodes' } });
+    const t = f.N.toast('Signed out', 'error');
+    const again = f.N.toast('Signed out', 'error', { sticky: true, action: { label: 'Sign in', href: '/login?next=%2Fnodes' } });
+    eq([f.stack().children.length, s.isConnected, t === s, again === s, f.r.clock.timers.length], [1, true, true, true, 0]);
+    await f.r.advance(60000);
+    eq([s.isConnected, !!s.querySelector('a.notice-action')], [true, true], 'after 60 s');
+});
+
+test('different words beside a sticky one are their own toast', async () => {
+    const f = notice();
+    f.N.toast('Signed out', 'error', { sticky: true });
+    f.N.toast('Save failed: Signed out', 'error');
+    f.N.toast('Signed out', 'warning');
+    eq(f.stack().children.map((t) => t.textContent), ['Signed out', 'Save failed: Signed out', 'Signed out']);
+});
+
 test('toasts stack in the order shown, under one region that is one child of body', async () => {
     const f = notice();
     f.N.toast('one');

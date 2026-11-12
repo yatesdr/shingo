@@ -19,7 +19,13 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const D = require('./dom.js');
+// The notice is the real shared/notice.js, in a realm of the helper pins'
+// harness (one per page): a page's toasts and the door's show on it under its
+// own rules (one of each; a sticky one stays), and each act records what it
+// left on screen.
+const { makeRealm } = require(path.join(__dirname, '..', '..', '..', '..', 'shared', 'testdata', 'helper-pins-harness', 'world.js'));
 
 const fx = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const goldens = {};
@@ -46,15 +52,30 @@ function refusalTitle(key) {
 }
 
 function newRec() {
-    return { toasts: [], confirms: [], modals: [], errors: [], timers: [], reloads: 0, confirmAnswer: true };
+    const realm = makeRealm({ surface: 'core' });
+    return {
+        toasts: [], confirms: [], modals: [], errors: [], timers: [], reloads: 0, confirmAnswer: true,
+        realm, notice: realm.load('/static/shared/notice.js'),
+    };
+}
+
+// noticeToasts takes the toasts off the notice as golden lines, then clears it,
+// so each act records only what it showed.
+function noticeToasts(rec) {
+    const stack = rec.realm.doc.querySelector('.notice-stack');
+    const out = [];
+    (stack ? stack.children.slice() : []).forEach((t) => {
+        const level = (/notice-toast--(\w+)/.exec(t.className) || [])[1] || 'info';
+        out.push('toast ' + level + (t.classList.contains('is-sticky') ? ' (sticky)' : '') + ': ' + D.normal(t.querySelector('.notice-text').textContent));
+        t.remove();
+    });
+    return out;
 }
 
 // lender lends a page's imports: the recording stubs, then `extra`.
 function lender(rec, doc, extra) {
     const stubs = {
-        toast(msg, level, opts) {
-            rec.toasts.push('toast ' + (level || 'info') + (opts && opts.sticky ? ' (sticky)' : '') + ': ' + D.normal(msg));
-        },
+        toast(msg, level, opts) { return rec.notice.toast(msg, level, opts); },
         uiConfirm(msg) { rec.confirms.push(msg); return Promise.resolve(rec.confirmAnswer); },
         uiPrompt() { return Promise.resolve(null); },
         showModal(id) { rec.modals.push('show ' + id); },
@@ -98,7 +119,7 @@ function flush(L, net, rec, pad) {
     if (!net.log.length) L.push(pad + '(no request)');
     net.log.forEach((r) => L.push(pad + D.requestLine(r)));
     rec.confirms.forEach((m) => L.push(pad + 'confirm: ' + JSON.stringify(m)));
-    rec.toasts.forEach((m) => L.push(pad + m));
+    noticeToasts(rec).forEach((m) => L.push(pad + m));
     rec.errors.forEach((m) => L.push(pad + m));
     rec.modals.forEach((m) => L.push(pad + 'modal: ' + m));
     if (rec.timers.length) L.push(pad + 'timers: ' + rec.timers.join(', ') + ' ms');
