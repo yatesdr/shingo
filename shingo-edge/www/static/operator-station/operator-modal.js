@@ -904,13 +904,18 @@ function cellCardAction(entry, claim, remaining) {
     if (claim.role === 'produce') {
         // remaining=0: operator brings an empty bin to the press.
         // /request-empty issues a retrieve order for an empty
-        // compatible with one of the allowed payloads.
-        const allowed = claim.allowed_payload_codes || (claim.payload_code ? [claim.payload_code] : []);
+        // compatible with one of the allowed payloads. An empty list falls
+        // back to the primary part as a null one does.
+        const listed = claim.allowed_payload_codes || [];
+        const allowed = listed.length ? listed : (claim.payload_code ? [claim.payload_code] : []);
         if (allowed.length === 0) {
             return null; // nothing configured to ask for
         }
+        // At a manual_swap claim no part is sent (ruling 1): Core chooses the
+        // empty from the loader's mix; the first allowed would pick a home.
+        const url = '/api/process-nodes/' + entry.node.id + '/request-empty';
         return { label: 'REQUEST EMPTY', cls: 'request', enabled: true,
-            action: '/api/process-nodes/' + entry.node.id + '/request-empty|' + allowed[0] };
+            action: claim.swap_mode === 'manual_swap' ? url : url + '|' + allowed[0] };
     }
     // RELEASE EMPTY and RELEASE PARTIAL removed from operator HMI;
     // backend endpoints stay for changeover/supervisor use.

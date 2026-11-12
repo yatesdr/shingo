@@ -1591,21 +1591,25 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
         runtime: { remaining_uop_cached: 0 }, active_claim: Object.assign({ role: 'produce', uop_capacity: 24 }, claim),
         orders: [], bin_state: NONE, swap_ready: false, releases_as_pair: false,
     });
+    // At a manual_swap claim the press names no part (ruling 1): Core chooses
+    // from the loader's mix, and the Edge names the member. The first allowed
+    // part would pick a dedicated home Core did not choose.
     const claimCases = [
-        ['manual_swap claim, one allowed', { swap_mode: 'manual_swap', payload_code: 'PART-A', allowed_payload_codes: ['PART-A'] },
-            ['/api/process-nodes/5/request-empty|PART-A'], { payload_code: 'PART-A' }],
-        ['manual_swap claim, three allowed (the first is sent)', { swap_mode: 'manual_swap', payload_code: 'PART-A', allowed_payload_codes: ['PART-B', 'PART-A', 'PART-C'] },
-            ['/api/process-nodes/5/request-empty|PART-B'], { payload_code: 'PART-B' }],
-        // The fallback to the primary part is taken for a null list (a nil
-        // slice on the wire) and NOT for an empty one: [] is truthy, so a claim
-        // whose list is [] offers nothing although it names a part (today).
-        ['manual_swap claim, a null list and a primary part (the fallback)', { swap_mode: 'manual_swap', payload_code: 'PART-C', allowed_payload_codes: null },
-            ['/api/process-nodes/5/request-empty|PART-C'], { payload_code: 'PART-C' }],
-        ['manual_swap claim, an empty list and a primary part (no fallback, today)', { swap_mode: 'manual_swap', payload_code: 'PART-C', allowed_payload_codes: [] },
-            [], null],
+        ['manual_swap claim, one allowed: no part sent', { swap_mode: 'manual_swap', payload_code: 'PART-A', allowed_payload_codes: ['PART-A'] },
+            ['/api/process-nodes/5/request-empty'], {}],
+        ['manual_swap claim, three allowed: no part sent', { swap_mode: 'manual_swap', payload_code: 'PART-A', allowed_payload_codes: ['PART-B', 'PART-A', 'PART-C'] },
+            ['/api/process-nodes/5/request-empty'], {}],
+        // The primary part stands in for a null list (a nil slice on the wire)
+        // and for an empty one alike: a claim that names a part offers the press.
+        ['manual_swap claim, a null list and a primary part', { swap_mode: 'manual_swap', payload_code: 'PART-C', allowed_payload_codes: null },
+            ['/api/process-nodes/5/request-empty'], {}],
+        ['manual_swap claim, an empty list and a primary part', { swap_mode: 'manual_swap', payload_code: 'PART-C', allowed_payload_codes: [] },
+            ['/api/process-nodes/5/request-empty'], {}],
         ['manual_swap claim, no part at all', { swap_mode: 'manual_swap', payload_code: '', allowed_payload_codes: [] }, [], null],
         ['swap-mode line, three allowed (the first is sent; RequestEmptyBin reads none)', { swap_mode: 'two_robot', payload_code: 'PART-A', allowed_payload_codes: ['PART-B', 'PART-A', 'PART-C'] },
             ['/api/process-nodes/5/request-empty|PART-B'], { payload_code: 'PART-B' }],
+        ['swap-mode line, an empty list and a primary part (the fallback)', { swap_mode: 'two_robot', payload_code: 'PART-C', allowed_payload_codes: [] },
+            ['/api/process-nodes/5/request-empty|PART-C'], { payload_code: 'PART-C' }],
     ];
     for (const [what, claim, acts, body] of claimCases) {
         setView([claimTile(claim)]);
