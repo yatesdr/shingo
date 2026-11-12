@@ -719,16 +719,16 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// order that is clearing the position it is waiting for.
 	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex || in.SwapMode == protocol.SwapModeSequential {
 		if in.PairedCoreNode != "" && in.PairedCoreNode == in.CoreNodeName {
-			add("paired_core_node", "Paired position must differ from this claim's own (Core Node)")
+			add("paired_core_node", "Paired core node must differ from this claim's own (Core Node)")
 		}
 	}
 	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 		if in.SecondPairedCoreNode != "" {
 			if in.SecondPairedCoreNode == in.CoreNodeName {
-				add("second_paired_core_node", "Third press position must differ from the front (Core Node)")
+				add("second_paired_core_node", "Second paired core node must differ from this claim's own (Core Node)")
 			}
 			if in.SecondPairedCoreNode == in.PairedCoreNode {
-				add("second_paired_core_node", "Third press position must differ from the back press node")
+				add("second_paired_core_node", "Second paired core node must differ from the paired core node")
 			}
 		}
 	}
@@ -844,11 +844,11 @@ var routingRequiredMessages = map[protocol.SwapMode]map[flowspec.Field]string{
 		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeTwoRobotPressIndex: {
-		flowspec.PairedCoreNode:      "a back press node",
+		flowspec.PairedCoreNode:      "a paired core node",
 		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeSequential: {
-		flowspec.PairedCoreNode:      "a paired position",
+		flowspec.PairedCoreNode:      "a paired core node",
 		flowspec.OutboundDestination: "an outbound destination",
 		flowspec.InboundSource:       "an inbound source",
 	},

@@ -2038,14 +2038,14 @@ async function mainAsync() {
         const { root } = loadPage({ flowspec: true, composer: c });
         await drain();
         await drain();
-        const want = '<tr class="paired"><td colspan="10">PLN_02 is on deck for PLN_01 · ' +
+        const want = '<tr class="paired"><td colspan="11">PLN_02 is paired core node for PLN_01 · ' +
             'PLN_04 is inbound staging for PLN_03 — no row of their own</td></tr>';
         if (root.innerHTML.indexOf(want) < 0) {
             throw new Error('the foot does not name each rowless position by its role:\n      got  ' +
                 ((root.innerHTML.match(/<tr class="paired">.*?<\/tr>/) || ['(no foot)'])[0]) + '\n      want ' + want);
         }
         checks++;
-        console.log('ok: the foot says which position is on deck and which is staging, for which row');
+        console.log('ok: the foot says which position is the paired core node and which is staging, for which row');
     }
 
     // ── a save says it saved, and the subtitle reads the draft ──────────────
@@ -2392,15 +2392,25 @@ async function mainAsync() {
         }
     });
 
-    await pin('a reorder point is the number alone, with no source tag', async () => {
-        const { scrim } = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer(),
-        });
+    // The reorder point lives on the row's Auto reorder cell (S4 U3).
+    const reorderPop = async () => {
+        const ctx = loadPage({ hash: '#style=1', flowspec: true, composer: advComposer() });
         await settle();
-        if (scrim.innerHTML.indexOf('data-adv="reorder_point"') < 0) throw new Error('setup: no reorder point row: ' + scrim.innerHTML);
-        if (scrim.innerHTML.indexOf('pd-src') >= 0) {
+        const b = makeElement('');
+        b.classList.add('pd-sel');
+        Object.assign(b.dataset, { act: 'pick', node: 'PLN_01', kind: 'reorder' });
+        ctx.main.appendChild(b);
+        bubble(b, 'click', ctx.doc);
+        if (ctx.pop.hidden !== false) throw new Error('a click on the Auto reorder chip did not open its popover');
+        return ctx.pop.innerHTML;
+    };
+
+    await pin('a reorder point is the number alone, with no source tag', async () => {
+        const html = await reorderPop();
+        if (html.indexOf('data-f="rp"') < 0) throw new Error('setup: no reorder point field: ' + html);
+        if (html.indexOf('pd-src') >= 0) {
             throw new Error('the reorder point still draws a source tag: ' +
-                (scrim.innerHTML.match(/<span class="pd-src[^>]*>[^<]*<\/span>/) || [''])[0]);
+                (html.match(/<span class="pd-src[^>]*>[^<]*<\/span>/) || [''])[0]);
         }
     });
 
@@ -2532,8 +2542,8 @@ async function mainAsync() {
     // picker (Generate variants went in pick-a-part U5).
     const openAdvPick = (scrim, doc) => click(scrim, doc, { advkind: 'pick', adv: 'changeover_carryover_disposition' });
     const dialogs = [
-        ['Advanced', openAdv, 'PLN_01 · Advanced', l => l.find('data-adv', 'reorder_point'), '40',
-            (scrim, doc) => click(scrim, doc, { advkind: 'toggle', adv: 'auto_reorder' })],
+        ['Advanced', openAdv, 'PLN_01 · Advanced', l => l.find('data-adv', 'lineside_soft_threshold'), '40',
+            (scrim, doc) => click(scrim, doc, { advkind: 'toggle', adv: 'auto_confirm' })],
     ];
     for (const [name, open, heading, field, typed, redraw] of dialogs) {
         await pin(name + ': Escape over typed input asks, and Keep editing keeps the value', async () => {
@@ -2576,7 +2586,7 @@ async function mainAsync() {
     // the first Escape closes only the picker — the dialog and
     // anything typed into it stay — and the second follows the dialog's rule.
     for (const [name, open, pick, field, typed] of [
-        ['Advanced', openAdv, openAdvPick, l => l.find('data-adv', 'reorder_point'), '40'],
+        ['Advanced', openAdv, openAdvPick, l => l.find('data-adv', 'lineside_soft_threshold'), '40'],
     ]) {
         for (const withTyping of [true, false]) {
             await pin(name + ': Escape closes its open picker first, then ' +

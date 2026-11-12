@@ -2138,17 +2138,16 @@ function usedPositions() {
 }
 
 // rowlessRoles says what each position without a row of its own is for, as
-// "PLN_04 is on deck for PLN_03" — one clause per row that sets it, in
+// "PLN_04 is paired core node for PLN_03" — one clause per row that sets it, in
 // position order. The foot said "paired above" for all of them, but a
 // position set as another row's inbound staging is staging, not paired. The
 // words are the picture card's own for that position (the model's cardLines:
-// "on deck for", "Inbound staging" over "for", "Outbound staging" over "for"),
-// run into one sentence; the third position of a press index takes its
-// field's name.
+// each field's name over "for"), run into one sentence (F27: one name per
+// field; it said "on deck for" under a "Paired core node" heading).
 function rowlessRoles(used) {
     const active = n => !!(S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode);
     const phrase = {
-        paired: 'on deck for',
+        paired: W('paired_core_node').toLowerCase() + ' for',
         secondPaired: M().fieldLabel(S.model, 'second_paired_core_node').toLowerCase() + ' for',
         staging: 'inbound staging for',
         parkOld: 'outbound staging for',

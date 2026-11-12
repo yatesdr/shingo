@@ -160,9 +160,9 @@ const (
 )
 
 // fieldLabels is the diagnostic wording for each field — the planner's
-// missingField.Name, which the operator sees in a NodeAction error. Mode-
-// specific wording ("back press node" for a press-index pair) belongs to the
-// reader that speaks it, not to the field.
+// missingField.Name, which the operator sees in a NodeAction error. One name
+// per field on every surface (F27): the editor's refusals say "a paired core
+// node" for a press index and a sequential alike.
 var fieldLabels = map[Field]string{
 	InboundStaging:                 "Inbound staging",
 	OutboundStaging:                "Outbound staging",
