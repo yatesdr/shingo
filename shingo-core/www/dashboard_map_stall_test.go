@@ -13,20 +13,15 @@ import (
 // loaders_flow_gating_test.go and sourcing_reload_triggers_test.go.
 //
 // TestDashboardMapStallJS runs the Node-based unit tests for the robot-map
-// dashboard's stall threshold. Skipped if `node` is not on PATH, matching the
-// other JS test wrappers.
+// dashboard's static route lane and the motion clock under it. Skipped if
+// `node` is not on PATH, matching the other JS test wrappers.
 //
-// The regression it guards: the frozen route lane keyed off isMoving, i.e.
-// MOVE_LINGER_MS, i.e. five seconds. Five seconds is the threshold that stops a
-// robot pivoting at a corner from blinking between chevron and disc — it is not
-// a stall threshold, and the module's own comment on MOVE_LINGER_MS says as
-// much ("bridges brief stops"). On a live floor, holding still for five seconds
-// is what a robot does at a traffic point, at a lift, during a jack cycle, and
-// while holding an order it has been assigned but not started. Every one of
-// those painted a full route line across the plant, so the drawing that should
-// have meant "this robot is stuck, go look" carried no information. The lane
-// now keys off STALL_MS, and a robot with no observed history is unknown rather
-// than stalled.
+// The regressions it guards: the lane was once drawn for any robot with an
+// order that held still for five seconds (MOVE_LINGER_MS, the chevron-flicker
+// threshold), then for one still past 45 s, which at HOP (2026-11-12) read as a
+// highlighted route to act on. A robot standing still now draws no lane at
+// all; the lane is drawn only for a blocked/faulted order or under
+// prefers-reduced-motion, and a freshly loaded fleet draws none.
 func TestDashboardMapStallJS(t *testing.T) {
 	nodePath, err := exec.LookPath("node")
 	if err != nil {

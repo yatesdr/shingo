@@ -301,27 +301,9 @@ import {
   // displaced more than a jitter threshold between updates, it's moving;
   // the state lingers briefly so turn pauses don't flicker disc/chevron.
   var MOVE_LINGER_MS = 5000; // bridges brief stops (turns, order-cancel pauses) without flickering to a disc
-  // STALL_MS is the SEPARATE threshold behind the frozen route lane. It is not
-  // MOVE_LINGER_MS and must never be collapsed back into it: five seconds of
-  // stillness is what stops the chevron from flickering to a disc mid-turn, and
-  // absence of movement for five seconds is not evidence that a robot is stuck.
-  // A traffic-point wait, a lift call, a jack cycle and an assigned-but-not-yet-
-  // started order all sit still for longer than that on a normal floor, and the
-  // lane drawn from MOVE_LINGER_MS painted a full route across the plant for
-  // every one of them. Tuned to 45s: long enough that routine waits pass
-  // unremarked, short enough that a real stall shows before the operator has
-  // walked to the cell.
-  var STALL_MS = 45000;
   function mergeRobot(rb) {
     var prev = robots[rb.id];
     rb.lastMoveAt = prev ? (prev.lastMoveAt || 0) : 0;
-    // firstSeenAt exists so "stalled" can tell no-movement from no-observation.
-    // lastMoveAt starts at 0 for a robot we have never watched move, and
-    // Date.now() - 0 is thirty-odd years — so a stall test written against
-    // lastMoveAt alone reports every robot as stalled on the first frame after a
-    // kiosk reload or an SSE reconnect. That is absence of data rendering as
-    // presence of a finding. The stall clock starts when we first see the robot.
-    rb.firstSeenAt = (prev && prev.firstSeenAt) ? prev.firstSeenAt : Date.now();
     if (prev && isFinite(prev.x) && isFinite(rb.x)) {
       var eps = (graphScale > 0) ? Math.max(graphScale * 0.02, 0.05) : 0.05;
       var dx = rb.x - prev.x, dy = rb.y - prev.y;
@@ -329,7 +311,7 @@ import {
     }
     robots[rb.id] = rb;
   }
-  // DELIBERATELY Date.now(), not serverNow. firstSeenAt / lastMoveAt / the
+  // DELIBERATELY Date.now(), not serverNow. lastMoveAt and the
   // activity feed's ts are stamped BY THIS BROWSER when a frame arrives, and
   // compared against this browser's clock. They measure how long since this tab
   // observed something, which is a real wall-time question about the SSE feed
@@ -338,13 +320,6 @@ import {
   // remove — pointed the other way.
   function isMoving(r) {
     return (Date.now() - (r.lastMoveAt || 0)) < MOVE_LINGER_MS;
-  }
-  // isStalled: this robot has been watched for long enough to say it has not
-  // moved in a while. Unknown (never observed) is NOT stalled.
-  function isStalled(r) {
-    var since = r.lastMoveAt || r.firstSeenAt || 0;
-    if (!since) return false;
-    return (Date.now() - since) >= STALL_MS;
   }
 
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
@@ -950,26 +925,20 @@ import {
     }));
   }
 
-  // laneVisible names the rule the frozen lane exists for, in one place so the
-  // threshold it keys off is checkable. Three reasons a route draws as a static
-  // line instead of a comet, and only the third is about motion:
-  //   • blocked/faulted     — the order is stopped; the lane says where it stopped.
-  //   • prefers-reduced-motion — comets are suppressed, so the lane IS the route.
-  //   • stalled on a calm floor — the robot has a job and has not moved in a while.
-  // The third one reads isStalled, NOT !isMoving. A robot pausing at a traffic
-  // point, waiting on a lift, or holding an assigned order it has not begun is
-  // still five seconds later and is not stalled; painting its whole route the
-  // moment the chevron settles is the bug this rule was rewritten to kill. A
-  // pause between MOVE_LINGER_MS and STALL_MS therefore draws no route at all,
-  // which is correct — the robot glyph and the lit destination node still say
-  // where the order is going.
-  function laneVisible(r, blocked, reduceMotion, calmOK) {
-    return blocked || reduceMotion || (isStalled(r) && calmOK);
+  // laneVisible: a working robot's route draws as a static lane only where a
+  // comet cannot carry it — the order is blocked/faulted (the lane says where it
+  // stopped), or prefers-reduced-motion suppresses comets (the lane IS the
+  // route). A robot that has simply stood still draws none, however long: the
+  // lane once drawn for a robot still past 45 s read as a highlighted route
+  // across the map and was removed (HOP, 2026-11-12). The robot glyph and the lit
+  // destination node still say where its order is going.
+  function laneVisible(blocked, reduceMotion) {
+    return blocked || reduceMotion;
   }
 
-  // Static lane (no flow): a stalled-mid-route robot freezes to a faint line. A
-  // blocked/faulted robot is signalled on the ROBOT glyph itself (robotColor → red
-  // error state), so its lane draws the SAME neutral frozen treatment — the old loud
+  // Static lane (no flow), drawn where laneVisible says. A blocked/faulted
+  // robot is signalled on the ROBOT glyph itself (robotColor → red error
+  // state), so its lane draws the SAME neutral frozen treatment — the old loud
   // red route line doubled the signal and was removed (2026-07).
   function drawStaticLane(svg, pts, color, robotR, opts) {
     svg.appendChild(svgEl('polyline', {
@@ -1426,10 +1395,9 @@ import {
     //    hollow/empty dots, carry legs solid/loaded, so loaded-vs-empty reads at
     //    a glance. The comet lives on a PERSISTENT overlay (syncCometLayer below)
     //    so it glides continuously instead of restarting each SSE tick.
-    //  • STALLED mid-route (or reduced-motion, or blocked/faulted) → a faint
-    //    STATIC lane, no flow (see laneVisible). Motion means motion: a
-    //    stationary robot never animates, and a brief pause draws nothing at
-    //    all — the lane is reserved for a robot that has stopped for real.
+    //  • Blocked/faulted, or reduced-motion → a faint STATIC lane, no flow (see
+    //    laneVisible). Motion means motion: a stationary robot never animates,
+    //    and a robot standing still draws no line at all.
     //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most;
     //    nothing is driving that leg yet.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -1491,7 +1459,7 @@ import {
         // A static lane only where it carries signal (see laneVisible). The block
         // itself is shown by the RED ROBOT glyph, so a blocked robot's lane draws NEUTRAL
         // grey (IDLE_MOVE_COLOR), not a loud red alert line.
-        if (laneVisible(r, blocked, reduceMotion, calmOK)) {
+        if (laneVisible(blocked, reduceMotion)) {
           drawStaticLane(svg, pts, blocked ? IDLE_MOVE_COLOR : color, robotR, { dimmed: dimmed });
         }
       }
