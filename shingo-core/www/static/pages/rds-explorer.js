@@ -1,4 +1,4 @@
-import { delegateActions, el } from '/static/shared/dom.js';
+import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 
@@ -499,7 +499,7 @@ function bbRenderBlocks() {
   var html = '';
   for (var i = 0; i < bbBlocks.length; i++) {
     html += '<div class="bb-row"><span class="bb-num">' + (i+1) + '</span><span class="bb-detail">' +
-      bbBlocks[i].block.blockId + ' &ndash; ' + bbBlocks[i].label +
+      escapeHtml(bbBlocks[i].block.blockId) + ' &ndash; ' + escapeHtml(bbBlocks[i].label) +
       '</span><button class="bb-rm" data-action="bbRemoveBlock:' + i + '" title="Remove">&times;</button></div>';
   }
   el.innerHTML = html;

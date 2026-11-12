@@ -6,8 +6,7 @@
   toast info: Location is required
 -- two blocks added: the rows drawn (bb-blocks)
   <span class="bb-detail">b1 &ndash; Load @ GRP-A-L1-S1</span>
-  <span class="bb-detail">b9 &ndash; JackLoad @ LM<b>7</b></span>
-  Pinned as is: the block id and the location go into the row unescaped (rds-explorer.js bbRenderBlocks).
+  <span class="bb-detail">b9 &ndash; JackLoad @ LM&lt;b&gt;7&lt;/b&gt;</span>
 -- Generate JSON (req-body):
   {
     "id": "T-1",

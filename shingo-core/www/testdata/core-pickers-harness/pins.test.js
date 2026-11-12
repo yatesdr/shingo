@@ -1038,7 +1038,6 @@ async function rdsPins() {
     p.run('bbAddBlock()');
     L.push('-- two blocks added: the rows drawn (bb-blocks)');
     (doc.getElementById('bb-blocks').innerHTML.match(/<span class="bb-detail">[\s\S]*?<\/span>/g) || []).forEach((r) => L.push('  ' + r));
-    L.push('  Pinned as is: the block id and the location go into the row unescaped (rds-explorer.js bbRenderBlocks).');
     val('bb-orderId', 'T-1'); val('bb-complete', 'true'); val('bb-priority', '0'); val('bb-vehicle', ''); val('bb-group', '');
     p.run('bbGenerate()');
     L.push('-- Generate JSON (req-body):');
