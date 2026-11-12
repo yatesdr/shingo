@@ -7,33 +7,33 @@
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    sheet: open "Add positions", status "the Edge refused it" (bad), OK "Add 1" enabled
+    sheet: open "Positions", status "the Edge refused it" (bad), OK "Add 1" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+    pressed again: PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    sheet: open "Add positions", status "Server error (500)" (bad), OK "Add 1" enabled
+    sheet: open "Positions", status "Server error (500)" (bad), OK "Add 1" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+    pressed again: PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    sheet: open "Add positions", status "No answer from the server" (bad), OK "Add 1" enabled
+    sheet: open "Positions", status "No answer from the server" (bad), OK "Add 1" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
+    pressed again: PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Add positions", no status, OK "Add 1" enabled
+    sheet: open "Positions", no status, OK "Add 1" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes → sheet: open "Add positions", status "This screen’s positions could not be read, so nothing was added." (bad), OK "Add 1" enabled
+    pressed again: PUT /api/operator-stations/11/claimed-nodes → sheet: open "Positions", no status, OK "Add 1" enabled
 
 ## Remove POS_A11: the sheet the impact read opens
 # writes, in order: POST /api/operator-stations/11/claimed-nodes/impact

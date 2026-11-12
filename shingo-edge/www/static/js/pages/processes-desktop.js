@@ -4327,12 +4327,18 @@ function onAdvClick(e) {
         if (lane || spot) { e.stopPropagation(); tapNewSpot(lane ? lane.dataset.staging : spot.dataset.pos); return; }
         if (act && act.dataset.act === 'nmove-rm') { e.stopPropagation(); undoNewMove(act.dataset.node); return; }
     }
-    // Add positions' screen chooser: which screen the ticked nodes go on.
+    // The positions editor's screen chooser: whose positions are ticked. The
+    // list is that screen's, as read when the sheet opened.
     if (act && act.dataset.act === 'pos-screen' && S.addPos) {
         e.stopPropagation();
         S.addPos.station = Number(act.dataset.station);
+        S.addPos.warnedFor = null;
+        const p = S.pickers[ADD_POSITIONS_PICKER];
+        if (p) p.sel = (S.addPos.lists[S.addPos.station] || []).slice();
         const seg = $('pd-posscreen');
         if (seg) seg.innerHTML = addPositionsScreens();
+        redrawPicker(ADD_POSITIONS_PICKER);
+        markAddPositions();
         return;
     }
     if (act && act.dataset.act === 'add-pickgroup') {
@@ -4643,6 +4649,79 @@ function positionNote(name, processID) {
 function sharedLoaderNode(name) {
     const n = (S.coreNodes || []).find(c => c.name === name);
     return !!(n && n.shared_loader);
+}
+
+// ── the one positions editor (F10, R4) ───────────────────────────────────────
+//
+// ONE EDITOR FOR A SCREEN'S POSITIONS, reached from Settings' Positions (and
+// the Setup tab's Positions row, through the same pos-add act) and from the
+// screen sheet: Core's plain nodes as a checklist, one box per node, the
+// screen's own ticked. A node another process holds is greyed with the reason
+// (SetNodes' own refusal, said before the save, not after it); one of this
+// process's positions on a sibling screen or on none says what ticking it does.
+// The write is the screen's whole list (claimed-nodes is a set-to), asked about
+// first when it takes a position off (positionRemovalsAsked). It replaced the
+// screen sheet's dropdown and Settings' add-only checklist, which offered the
+// same nodes under two sets of rules.
+//
+// stationOf() is the screen being edited (0: one not made yet); a sheet that
+// switches screens reads it again.
+function positionsPicker(key, pid, stationOf, selected, onChange) {
+    pickerInit(key, {
+        checklist: true,
+        selected: selected,
+        exclude: n => positionHeld(n, pid),
+        annotate: n => positionMove(n, pid, stationOf()),
+        onChange: onChange,
+    });
+}
+
+// positionScreen is the screen of process pid that claims name, from the
+// screens' claimed lists the page read, or null.
+function positionScreen(name, pid) {
+    return stationsOf(pid).find(st => (S.stationNodes[String(st.id)] || []).indexOf(name) >= 0) || null;
+}
+
+// positionHeld is why name cannot be a position of process pid: another
+// process holds it, and no Core loader shares it (shared_loader).
+function positionHeld(name, pid) {
+    if (positionScreen(name, pid)) return '';
+    const rows = (S.livePositions || []).filter(n => n.core_node_name === name);
+    if (rows.some(n => n.process_id === pid)) return '';
+    const other = rows[0];
+    return other && !sharedLoaderNode(name) ? 'on ' + other.process_name : '';
+}
+
+// positionMove is what ticking name does on screen stationID, when it is more
+// than adding it: it moves from a sibling screen, it adopts one of this
+// process's positions on no screen, or it shares a loader window.
+function positionMove(name, pid, stationID) {
+    const on = positionScreen(name, pid);
+    if (on) return on.id === stationID ? '' : 'on ' + on.name + ' · ticking moves it here';
+    const rows = (S.livePositions || []).filter(n => n.core_node_name === name);
+    if (rows.some(n => n.process_id === pid)) return 'on no screen yet';
+    const other = rows.find(n => n.process_id !== pid);
+    return other && sharedLoaderNode(name) ? 'loader window · also on ' + other.process_name : '';
+}
+
+// positionRemovalsAsked: A LIST THAT TAKES A POSITION OFF IS ASKED ABOUT
+// FIRST. Retiring a position leaves every recipe and style that names it
+// pointing at nothing, so before anything is written the editor asks the
+// server what still names the ones going (POST …/claimed-nodes/impact) and
+// shows the answer. A warning, not a refusal: a second Save of the same list
+// goes through (state.warnedFor). True: write it.
+async function positionRemovalsAsked(stationID, baseline, want, state) {
+    const key = JSON.stringify(want);
+    if (!baseline.some(n => want.indexOf(n) < 0) || state.warnedFor === key) return true;
+    const impact = await send('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact',
+        { nodes: want }, NO_NOTICE);
+    if (!impact.ok) { sheetStatus(said(impact), true); return false; }
+    if (bodyOf(impact).warning) {
+        state.warnedFor = key;
+        sheetStatus(bodyOf(impact).warning, false);
+        return false;
+    }
+    return true;
 }
 
 function curtainDirty() {
@@ -5000,28 +5079,37 @@ async function readStationNodes(stationID) {
 
 const ADD_POSITIONS_PICKER = 'addpos';
 
-// openAddPositions is the checklist sheet. `filter` pre-types the field (the
-// shots harness's ;addpos=<filter>).
+// openAddPositions is the positions editor on Settings: a screen's positions,
+// its own ticked. Every screen's list is read fresh first (a set-to written
+// over a stale list removes what the page had not seen), and a failed read
+// opens nothing. `filter` pre-types the field (the shots harness's
+// ;addpos=<filter>).
 async function openAddPositions(filter) {
     const screens = stationsOf(S.processID);
     if (!screens.length) return;
-    await Promise.all([loadCoreNodes(), loadLivePositions()]);
-    const pid = S.processID;
-    S.addPos = { station: screens[0].id };
-    pickerInit(ADD_POSITIONS_PICKER, {
-        checklist: true,
-        exclude: n => positionBlock(n, pid),
-        annotate: n => positionNote(n, pid),
-        onChange: markAddPositions,
+    const [, , ...lists] = await Promise.all([loadCoreNodes(), loadLivePositions(),
+        ...screens.map(st => readStationNodes(st.id))]);
+    if (lists.some(l => !l)) {
+        S.settingsError = 'A screen’s positions could not be read, so they cannot be changed yet. Try again.';
+        drawSettings();
+        return;
+    }
+    S.addPos = { station: screens[0].id, lists: {}, warnedFor: null };
+    screens.forEach((st, i) => {
+        S.addPos.lists[st.id] = lists[i];
+        S.stationNodes[String(st.id)] = lists[i].slice();
     });
+    positionsPicker(ADD_POSITIONS_PICKER, S.processID, () => (S.addPos ? S.addPos.station : 0),
+        lists[0], markAddPositions);
     S.pickers[ADD_POSITIONS_PICKER].q = filter || '';
     const which = screens.length > 1
-        ? '<div class="pd-fld"><label>Screen<small>the one the new positions go on</small></label>' +
+        ? '<div class="pd-fld"><label>Screen<small>the one whose positions these are</small></label>' +
             '<div class="v"><div class="pd-seg" id="pd-posscreen">' + addPositionsScreens() + '</div></div></div>'
         : '';
-    pageSheet('Add positions', 'tick each node to add' + (screens.length === 1 ? ' to ' + screens[0].name : ''),
-        which + pickerField(ADD_POSITIONS_PICKER, 'Nodes', 'a greyed node is a position already, here or on another process'),
-        'Add', submitAddPositions, false);
+    pageSheet('Positions', 'tick each node ' + (screens.length === 1 ? screens[0].name : 'the screen') +
+        ' works; untick one to take it off',
+        which + pickerField(ADD_POSITIONS_PICKER, 'Nodes', 'a greyed node is another process’s position'),
+        'Save', submitAddPositions, false);
 }
 
 function addPositionsScreens() {
@@ -5029,26 +5117,36 @@ function addPositionsScreens() {
         '" data-act="pos-screen" data-station="' + st.id + '">' + esc(st.name) + '</button>').join('');
 }
 
-// The confirm button counts what it will add.
+// The positions the editor would add and take off the screen it is on.
+function addPositionsChange() {
+    const was = (S.addPos && S.addPos.lists[S.addPos.station]) || [];
+    const want = pickerValue(ADD_POSITIONS_PICKER);
+    return { was: was, want: want, added: want.filter(n => was.indexOf(n) < 0), gone: was.filter(n => want.indexOf(n) < 0) };
+}
+
+// The confirm button counts what it will add, while that is all it does.
 function markAddPositions() {
     const ok = sheetEl().querySelector('[data-layer-ok]');
-    const n = pickerValue(ADD_POSITIONS_PICKER).length;
-    if (ok) ok.textContent = n ? 'Add ' + n : 'Add';
+    const c = addPositionsChange();
+    if (ok) ok.textContent = c.gone.length || !c.added.length ? 'Save' : 'Add ' + c.added.length;
 }
 
 async function submitAddPositions() {
-    const picked = pickerValue(ADD_POSITIONS_PICKER);
-    if (!picked.length) { sheetStatus('Tick a node to add.', true); return; }
+    const c = addPositionsChange();
+    if (!c.added.length && !c.gone.length) { sheetStatus('Tick a node to add.', true); return; }
     const stationID = S.addPos.station;
-    const current = await readStationNodes(stationID);
-    if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was added.', true); return; }
-    const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
-        B().stationNodes(current.concat(picked)), NO_NOTICE);
+    const want = B().stationNodes(c.want).nodes;
+    if (!(await positionRemovalsAsked(stationID, c.was, want, S.addPos))) return;
+    const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes', { nodes: want }, NO_NOTICE);
     if (!out.ok) { sheetStatus(said(out), true); return; }
+    const kept = Array.isArray(bodyOf(out).kept) ? bodyOf(out).kept : [];
     const st = stationsOf(S.processID).find(s => s.id === stationID);
+    const where = st ? st.name : 'the screen';
     closeSheet();
     await afterPositionsChanged(stationID);
-    S.settingsNotice = 'Added ' + picked.join(', ') + ' to ' + (st ? st.name : 'the screen') + '.';
+    S.settingsNotice = kept.length ? keptPositionsSentence(kept)
+        : [c.added.length ? 'Added ' + c.added.join(', ') + ' to ' + where + '.' : '',
+            c.gone.length ? 'Took ' + c.gone.join(', ') + ' off ' + where + '.' : ''].filter(Boolean).join(' ');
     drawSettings();
 }
 
@@ -5485,17 +5583,6 @@ async function reloadStations() {
     if (!res.ok) return;
     const rows = res.body;
     S.stations = Array.isArray(rows) ? rows : [];
-}
-
-// core_node_name -> process name for every live position of a process other
-// than the open one, read once when the screen sheet opens. A failed read
-// marks nothing: the save still refuses, it just cannot be warned of here.
-async function positionsOfOtherProcesses() {
-    const out = {};
-    for (const n of await loadLivePositions()) {
-        if (n.process_id !== S.processID && n.core_node_name) out[n.core_node_name] = n.process_name;
-    }
-    return out;
 }
 
 // The positions one screen claims, re-read from the server rather than assumed
@@ -6959,38 +7046,24 @@ function keptPositionsSentence(names) {
 async function openScreenSheet(stationID) {
     const st = stationsOf(S.processID).find(s => s.id === Number(stationID)) || {};
     const editing = !!st.id;
-    const [, onOther] = await Promise.all([
+    await Promise.all([
         editing ? refreshStationNodes(st.id) : null,
-        positionsOfOtherProcesses(),
+        loadLivePositions(),
     ]);
     const baseline = editing ? (S.stationNodes[String(st.id)] || []).slice() : [];
     // The list a removal warning was last shown for; Save on it again confirms.
-    let warnedFor = null;
-    const claimedElsewhere = {};
-    for (const other of stationsOf(S.processID)) {
-        if (other.id === st.id) continue;
-        for (const n of S.stationNodes[String(other.id)] || []) claimedElsewhere[n] = other.name;
-    }
-    pickerInit('positions', {
-        selected: baseline,
-        expandGroups: true,
-        // A position claimed by a sibling screen is NOT hidden and not refused:
-        // SetNodes moves it, deliberately, because one Core node has exactly one
-        // process_node row per process. The engineer is told whose it is before
-        // they take it.
-        exclude: () => '',
-        // A position of ANOTHER process is shown for the same reason, and the
-        // save refuses it: one Core node is a position of one process. A
-        // sibling's claim is named first, since that one the save will move.
-        annotate: n => (claimedElsewhere[n] ? 'claimed by ' + claimedElsewhere[n]
-            : onOther[n] ? 'on ' + onOther[n] : ''),
-    });
+    const warn = { warnedFor: null };
+    // THE ONE POSITIONS EDITOR (positionsPicker): a sibling screen's position
+    // is tickable and says ticking moves it (SetNodes moves it, deliberately:
+    // one Core node has one process_node row per process); another process's
+    // is greyed with its name, since the save refuses it.
+    positionsPicker('positions', S.processID, () => st.id || 0, baseline, null);
     pageSheet(editing ? 'Edit ' + st.name : 'Add operator screen',
         'the HMI an operator works this process from.',
         sheetField('Name', 'what the screen is called on the floor', 'name', st.name) +
         sheetField('Note', 'anything the next engineer should know about it', 'note', st.note) +
         pickerField('positions', 'Positions',
-            'the positions this screen claims — a flow can only use a position its screen owns'),
+            'the positions this screen claims — a flow can only use a position its screen owns; a greyed node is another process’s'),
         editing ? 'Save' : 'Add',
         async () => {
             // UNTOUCHED MEANS UNWRITTEN. claimed-nodes is a set-to, so sending
@@ -7001,17 +7074,7 @@ async function openScreenSheet(stationID) {
             const want = B().stationNodes(sheetValue('positions')).nodes;
             const same = want.length === baseline.length &&
                 want.every((n, i) => n === baseline[i]);
-            const key = JSON.stringify(want);
-            if (!same && baseline.some(n => want.indexOf(n) < 0) && warnedFor !== key) {
-                const impact = await send('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact',
-                    { nodes: want }, NO_NOTICE);
-                if (!impact.ok) { sheetStatus(said(impact), true); return; }
-                if (bodyOf(impact).warning) {
-                    warnedFor = key;
-                    sheetStatus(bodyOf(impact).warning, false);
-                    return;
-                }
-            }
+            if (!same && !(await positionRemovalsAsked(st.id, baseline, want, warn))) return;
             const wrote = await send(editing ? 'PUT' : 'POST',
                 editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
                 stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }), NO_NOTICE);

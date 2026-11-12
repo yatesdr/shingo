@@ -936,11 +936,12 @@ async function mainAsync() {
     // ── the screen sheet's picker names a position another process holds ────
     {
         // One position belongs to one process; the save refuses a second. The
-        // picker says so before the engineer tries: a name that is a live
-        // position of ANOTHER process reads "on <that process>", from one
-        // read of /api/process-nodes at sheet open. A sibling screen's claim
-        // on this process still reads "claimed by <screen>", and wins when a
-        // name is both. This process's own rows get no "on".
+        // positions editor (one checklist, R4) says so before the engineer
+        // tries: a name that is a live position of ANOTHER process is greyed
+        // "on <that process>", from one read of /api/process-nodes at sheet
+        // open. A sibling screen's claim on this process is tickable and says
+        // ticking moves it, and wins when a name is both. One of this
+        // process's positions on no screen says so.
         const opts = makeElement('');
         const input = makeElement('');
         const box = makeElement('npk-positions');
@@ -999,15 +1000,18 @@ async function mainAsync() {
             throw new Error('the sheet\'s other reads changed: ' + JSON.stringify(others));
         }
         for (const fn of (input.listeners.focus || [])) fn({ type: 'focus' });
+        // A row is a box: tickable (data-npkname) or greyed (disabled), its
+        // note or reason in <small>.
         const row = name => {
-            const m = opts.innerHTML.match(new RegExp('data-npkname="' + name + '">' + name +
-                '(?:<small>([^<]*)</small>)?</button>'));
+            const m = opts.innerHTML.match(new RegExp('<button class="([^"]*)"( disabled| data-npk="add" data-npkkey="positions" data-npkname="' +
+                name + '")><i class="box"></i>' + name + '(?:<small>([^<]*)</small>)?</button>'));
             if (!m) throw new Error('no picker row for ' + name + ': ' + opts.innerHTML.slice(0, 400));
-            return m[1] || '';
+            return (m[2] === ' disabled' ? 'greyed: ' : '') + (m[3] || '');
         };
         const got = {};
         for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']) got[n] = row(n);
-        const expect = { PLN_01: '', PLN_02: 'claimed by Screen B', PLN_03: 'on Press 2', PLN_04: '', PLN_05: '' };
+        const expect = { PLN_01: '', PLN_02: 'on Screen B · ticking moves it here', PLN_03: 'greyed: on Press 2',
+            PLN_04: 'on no screen yet', PLN_05: '' };
         if (JSON.stringify(got) !== JSON.stringify(expect)) {
             throw new Error('picker notes wrong: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(expect));
         }
@@ -3751,7 +3755,7 @@ async function settingsPositionsPins(h) {
     };
     const rowOf = (html, name) => (html.match(new RegExp('<button[^>]*>(?:<i class="box"></i>)?' + name + '(?:<small>[^<]*</small>)?</button>')) || [''])[0];
 
-    await pin('Settings lists each position under its screen, with its curtain switch and a Remove', async () => {
+    await pin('Settings lists each position under its screen, with its Change… (curtain, counted at) and a Remove', async () => {
         const ctx = page('#tab=settings');
         await settle();
         const html = ctx.root.innerHTML;
@@ -3767,21 +3771,25 @@ async function settingsPositionsPins(h) {
             throw new Error('PLN_005 is not under the press\'s screen, or ULN_002 not under the Unloader');
         }
         if (html.indexOf('data-act="pos-remove" data-node="PLN_005" data-station="18"') < 0) throw new Error('PLN_005\'s Remove does not name screen 18');
-        if (html.indexOf('data-act="cu-toggle" data-node="87"') < 0) throw new Error('PLN_005 has no curtain switch');
+        // One row per position (owner ruling 4): its curtain and counted-at
+        // are behind its Change….
+        if (html.indexOf('data-act="st-more" data-more="pos-87"') < 0) throw new Error('PLN_005 has no Change…');
+        if (html.indexOf('data-act="cu-toggle"') >= 0) throw new Error('a curtain switch is drawn before Change…');
         const loose = html.indexOf('<div class="pd-lbl pd-posscreen">On no screen</div>');
-        if (loose < unloader || html.indexOf('data-act="cu-toggle" data-node="89"') < loose) throw new Error('PLN_009 is not under On no screen');
+        if (loose < unloader || html.indexOf('data-act="st-more" data-more="pos-89"') < loose) throw new Error('PLN_009 is not under On no screen');
         if (html.indexOf('data-act="pos-remove" data-node="PLN_009"') >= 0) throw new Error('a position on no screen offers a Remove it cannot do');
     });
 
-    await pin('Add positions greys what is a position already, names whose, and offers a loader window', async () => {
+    await pin('the positions editor greys another process\'s position, ticks the screen\'s own, says what a move does, offers a loader window', async () => {
         const ctx = page('#tab=settings;addpos=');
         await settle();
         const s = ctx.sheet().el.innerHTML;
-        if (!ctx.sheet().open || s.indexOf('<h2>Add positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
+        if (!ctx.sheet().open || s.indexOf('<h2>Positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
         const want = {
             PLN_001: '<button class="off" disabled><i class="box"></i>PLN_001<small>on Press 4</small></button>',
-            PLN_005: '<button class="off" disabled><i class="box"></i>PLN_005<small>already on Press 6 Operator Screen</small></button>',
-            ULN_002: '<button class="off" disabled><i class="box"></i>ULN_002<small>already on Unloader</small></button>',
+            PLN_005: '<button class="on" data-npk="add" data-npkkey="addpos" data-npkname="PLN_005"><i class="box"></i>PLN_005</button>',
+            ULN_002: '<button class="" data-npk="add" data-npkkey="addpos" data-npkname="ULN_002"><i class="box"></i>ULN_002' +
+                '<small>on Unloader · ticking moves it here</small></button>',
         };
         for (const n of Object.keys(want)) {
             if (rowOf(s, n) !== want[n]) throw new Error(n + ' draws ' + JSON.stringify(rowOf(s, n)) + '\n      want ' + want[n]);
@@ -3843,15 +3851,14 @@ async function settingsPositionsPins(h) {
         }
     });
 
-    await pin('a screen list that cannot be read adds nothing', async () => {
+    await pin('a screen list that cannot be read opens no editor and writes nothing', async () => {
         const ctx = page('#tab=settings;addpos=', { readFails: true });
         await settle();
-        const status = wireSheet(ctx.scrim, '');
-        click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_005PAL' });
-        ctx.sheet().ok();
-        await settle();
-        if (ctx.writes.length) throw new Error('an add over an unread list was sent: ' + JSON.stringify(ctx.writes));
-        if (status.textContent.indexOf('could not be read, so nothing was added') < 0) throw new Error('the sheet says ' + JSON.stringify(status.textContent));
+        if (ctx.sheet().open) throw new Error('the editor opened over an unread list');
+        if (ctx.writes.length) throw new Error('a write was sent: ' + JSON.stringify(ctx.writes));
+        if (ctx.root.innerHTML.indexOf('positions could not be read, so they cannot be changed yet') < 0) {
+            throw new Error('Settings does not say why: ' + ctx.root.innerHTML.slice(0, 300));
+        }
     });
 
     await pin('Remove asks with what still names the position, then sends the list without it', async () => {
