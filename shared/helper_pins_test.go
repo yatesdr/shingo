@@ -171,11 +171,6 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 // sharedHelperCopies are the definitions of a shared name outside its shared
 // module that exist today, as "path name". Each is someone else's to remove.
 var sharedHelperCopies = map[string]string{
-	// The Core hub's own copies (pinned in testdata/helper-pins/hubs.txt as
-	// "own"), exported to Core's pages under the shared names.
-	"shingo-core/www/static/app.js el":       "Core hub copy",
-	"shingo-core/www/static/app.js debounce": "Core hub copy",
-	"shingo-core/www/static/app.js api":      "Core hub copy (a function, not utils.js's object)",
 	// The Edge hub's own copies, likewise.
 	"shingo-edge/www/static/js/shingoedge.js createSSE": "Edge hub copy",
 	"shingo-edge/www/static/js/shingoedge.js showModal": "Edge hub copy",

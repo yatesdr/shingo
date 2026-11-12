@@ -1,7 +1,7 @@
-# api — core-hub: the HTTP helpers of shingo-core/www/static/app.js
+# api — core-hub: the HTTP helpers of a Core page (shingo-core/www/static/app.js loaded; the components under Core's names)
 # a fresh page per call; "resolves"/"rejects" is the promise the page awaits.
 
-shape: api is a function (method, url, body); verbs apiGet apiPost apiPut apiDelete: apiGet function, apiPost function, apiPut function, apiDelete function; no non-throwing door
+shape: verbs apiGet apiPost apiPut apiDelete (app.js, over shared/http.js): apiGet function, apiPost function, apiPut function, apiDelete function; no non-throwing door
 
 ## the request each verb sends (answered 200 {})
 apiGet(url): /api/x "GET", headers {"Accept":"application/json"}, body none
@@ -9,8 +9,6 @@ apiPost(url, {a:1}): /api/x "POST", headers {"Accept":"application/json","Conten
 apiPost(url): /api/x "POST", headers {"Accept":"application/json","Content-Type":"application/json"}, body "{}"
 apiPut(url, {a:1}): /api/x "PUT", headers {"Accept":"application/json","Content-Type":"application/json"}, body "{\"a\":1}"
 apiDelete(url): /api/x "DELETE", headers {"Accept":"application/json"}, body none
-api("PATCH", url, {a:1}): /api/x "PATCH", headers {"Accept":"application/json","Content-Type":"application/json"}, body "{\"a\":1}"
-api("POST", url, null): /api/x "POST", headers {"Accept":"application/json"}, body none
 
 ## apiGet: every answer
 200 JSON object: resolves {"id":7,"name":"PRESS-1"}, no toast

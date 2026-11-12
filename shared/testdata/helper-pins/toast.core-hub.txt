@@ -1,4 +1,4 @@
-# toast — core-hub: toast of shingo-core/www/static/app.js
+# toast — core-hub: toast of a Core page (shingo-core/www/static/app.js loaded; the components under Core's names)
 # a fresh page per case; nothing in the page markup holds a toast container.
 
 toast("Saved", "success"): returns, and the DOM it writes: returns the toast element (same node)

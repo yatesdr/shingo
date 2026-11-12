@@ -1,4 +1,4 @@
-# modal — core-hub: showModal / hideModal of shingo-core/www/static/app.js
+# modal — core-hub: showModal / hideModal of a Core page (shingo-core/www/static/app.js loaded; the components under Core's names)
 # a fresh page per case: #m1 and #m2 are .modal-overlay (m1 holds a text input with
 # value attribute "dflt", a checkbox, a 3-option select, a textarea "area-dflt" and a
 # hidden input "keep"); #opener has focus before every case.

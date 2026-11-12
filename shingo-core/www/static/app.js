@@ -1,93 +1,28 @@
-// --- Shared utilities (Core admin) ---
+// app.js — Core admin's own page verbs, loaded by layout.html on every admin
+// page. The kiosk displays (dashboard display, map, node report, heartbeat)
+// have their own templates and do not load it.
 //
-// ES module. SPRINT 3 migrated every per-page script to explicit
-// `import { … } from '/static/app.js'`; SPRINT 4 promoted the
-// previously bare function declarations to inline `export function`
-// declarations and dropped the trailing `export { … }` block. The
-// canonical cross-surface helpers live in /static/shared/utils.js;
-// this file holds Core-specific helpers + SSE bootstrap.
+// ES module. What every Core page shares with the Edge lives in shared/, and a
+// page imports each helper from the file that defines it (style guide §17):
+// escapeHtml, h``, el, delegateActions, debounce from dom.js; the clock from
+// clock.js; the modals, confirm and prompt from layer.js (Core's pages call
+// confirm and prompt uiConfirm and uiPrompt); toast from notice.js; the live
+// bus from bus.js. This file re-exports none of them.
 //
-// HTML construction tools available across pages:
-//   h`...`            — tagged-template literal. Interpolated values are
-//                       HTML-escaped automatically; arrays are joined.
-//                       Use for innerHTML output sites; the safety is
-//                       structural, not discipline-based.
-//   el(tag, props,    — DOM-node builder. Use when the result needs
-//      children)        addEventListener wired during construction.
-//   <template>+clone  — for static skeletons reused per render.
-//   escapeHtml(s)     — last resort for legacy string concatenation.
-//                       Prefer h`` for new code.
+// What is left here is Core's own: the door verbs Core's pages were written
+// to (apiGet / apiPost / apiPut / apiDelete), a few page verbs (timeAgoHTML,
+// setText, openFromQuery, enterSubmits, the submit gates), and what every
+// admin page does at load: table sort, the bus subscription and its
+// new-build banner, the submit gate on document.body.
 
-import { delegateActions, escapeHtml, h } from '/static/shared/dom.js';
+import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { formatTime, timeAgo } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { onSSE } from '/static/shared/bus.js';
-import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
+import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput } from '/static/shared/layer.js';
 import { banner, toast } from '/static/shared/notice.js';
 import { send } from '/static/shared/http.js';
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
-// escapeHtml and h are the shared ones (one helper per job); pages keep
-// importing them from here.
-export { delegateActions, escapeHtml, h };
-
-// Debounce: delays execution until `ms` milliseconds after the last call.
-// Used to prevent SSE event bursts from saturating the browser main thread.
-export function debounce(fn, ms) {
-  var timer;
-  return function() {
-    var args = arguments;
-    var self = this;
-    clearTimeout(timer);
-    timer = setTimeout(function() { fn.apply(self, args); }, ms);
-  };
-}
-
-// Element builder. props: attributes (className, dataset, id, ...) and
-// event listeners (onclick, onchange) by camelCase name. children:
-// string, Node, or array of either.
-export function el(tag, props, children) {
-  var node = document.createElement(tag);
-  if (props) {
-    for (var key in props) {
-      if (!Object.prototype.hasOwnProperty.call(props, key)) continue;
-      var val = props[key];
-      if (key === 'className') {
-        node.className = val;
-      } else if (key === 'dataset') {
-        for (var dk in val) node.dataset[dk] = val[dk];
-      } else if (key.indexOf('on') === 0 && typeof val === 'function') {
-        node.addEventListener(key.substring(2).toLowerCase(), val);
-      } else if (key === 'style' && typeof val === 'object') {
-        for (var sk in val) node.style[sk] = val[sk];
-      } else if (val !== null && val !== undefined && val !== false) {
-        node.setAttribute(key, val);
-      }
-    }
-  }
-  if (children !== undefined && children !== null) {
-    var list = Array.isArray(children) ? children : [children];
-    for (var i = 0; i < list.length; i++) {
-      var c = list[i];
-      if (c === null || c === undefined || c === false) continue;
-      node.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
-    }
-  }
-  return node;
-}
-
-// The modals, confirm and prompt are the one overlay stack's (shared/layer.js,
-// style guide §10): Escape closes the innermost, the body's scroll lock is
-// counted, focus goes in and comes back, fields clear on hide, and a confirm
-// always resolves. A modal that opts in with data-backdrop-close closes on its
-// backdrop without an install call, so this file no longer calls
-// installBackdropClose (it and the layer would both answer one click).
-// Core's pages say uiConfirm / uiPrompt / uiConfirmWithInput.
-export { showModal, hideModal, uiConfirm, uiPrompt, uiConfirmWithInput };
-
-// toast is the one notice's (shared/notice.js, style guide §11): an error
-// lives 5 s, the rest 3.2 s, {sticky:true} until clicked, and the same words
-// at the same level are said once.
-export { toast };
 
 // The hub's door verbs keep the contract Core's pages were written to: they
 // resolve the answer's body and reject on anything else. Behind them is the
@@ -103,7 +38,7 @@ export { toast };
 // one prints the sentence alone. Its name is 'ApiError', so a page that shows
 // the door's sentence and a fallback for its own failures tells them apart
 // (where it used to ask whether the rejection was a string).
-export function api(method, url, body) {
+function apiRequest(method, url, body) {
   return send(method, url, body, { notice: false }).then(function(res) {
     if (res.ok) return res.body;
     throw apiError(res.error);
@@ -115,26 +50,10 @@ function apiError(sentence) {
   err.toString = function() { return this.message; };
   return err;
 }
-export function apiGet(url)        { return api('GET', url); }
-export function apiPost(url, body) { return api('POST', url, body || {}); }
-export function apiPut(url, body)  { return api('PUT',  url, body || {}); }
-export function apiDelete(url)     { return api('DELETE', url); }
-
-// --- Time formatting ---
-// formatDuration lives in shared/utils.js only (the twin of protocol.FormatDuration).
-// This file's own ladder printed "21m 3s" and "500ms" beside the shared "21m" and
-// "0 s"; it is deleted, not re-exported, so a page imports the one ladder by name.
-// formatTime moved to shared/utils.js (plant-timezone pinned). Pages import
-// it from '/static/shared/utils.js'; app.js keeps no date formatter of its
-// own — two copies of a clock is how the two-convention display bug happened.
-//
-// timeAgo went the same way, one step later and for the second half of the same
-// rule: it differenced a SERVER stamp against the BROWSER's Date.now(), and its
-// callers pass server stamps exclusively (last_counted_at, created_at,
-// updated_at). Re-exported rather than re-implemented so every existing
-// `import { timeAgo } from '/static/app.js'` keeps working and there is still
-// only one of it.
-export { timeAgo };
+export function apiGet(url)        { return apiRequest('GET', url); }
+export function apiPost(url, body) { return apiRequest('POST', url, body || {}); }
+export function apiPut(url, body)  { return apiRequest('PUT',  url, body || {}); }
+export function apiDelete(url)     { return apiRequest('DELETE', url); }
 
 // timeAgoHTML is a relative stamp ("1h ago") that carries the absolute plant
 // time in its title, so ten rows of "1h ago" can still be told apart. Returns
@@ -151,18 +70,11 @@ export function setText(id, v) {
   if (e) e.textContent = (v === null || v === undefined) ? '—' : v;
 }
 
-// Timestamp conversion: the formatTime/convertTimestamps pair that used to
-// live here was a byte-identical twin of shared/utils.js's. Deleted — pages
-// import from '/static/shared/utils.js', whose formatter is pinned to the
-// plant timezone (window.PLANT_TZ, inlined by layout.html). The server
-// already renders plant-local on first paint; there is no DOMContentLoaded
-// rewrite to do.
-
 // ─── SSE bus: the subscription every page has ───────────────────────────
 //
 // The shared onSSE bus (shared/bus.js) maintains ONE EventSource per tab,
 // handles reconnect/backoff, and dispatches 'build-changed' on a Core
-// redeploy, which the subscription below turns into the refresh banner — so
+// redeploy, which the subscription below turns into the new-build banner — so
 // this file no longer opens its own EventSource. app.js loads on
 // every page, and because the bus opens its connection on the first
 // subscription, subscribing here keeps build-id detection running on every
@@ -202,21 +114,6 @@ onSSE('build-changed', function() {
     action: { label: 'Refresh', onClick: function() { location.reload(); } },
   });
 });
-
-// ─── Auto-dispatching delegated click handler ─────────────────────────
-//
-// Same convention as shingo-edge/www/static/js/shingoedge.js — page
-// templates emit `data-action="verb"` / `data-action="verb:arg"` /
-// `data-action="verb:a:b"`; this listener resolves the closest
-// [data-action] ancestor, splits on `:`, looks up `window[verb]`, and
-// calls it with `(args..., el, evt)`.
-//
-// data-backdrop-close on a .modal-overlay closes the modal when the
-// overlay itself (not an inner .modal) is clicked.
-//
-// data-skip-on-checkbox="1" on a row tells the dispatcher to ignore
-// clicks originating inside a checkbox cell (lets row-click and per-
-// row checkbox actions coexist cleanly).
 
 // ─── Generic action handlers ───────────────────────────────────────────
 // Per-page scripts register these via delegateActions when they
@@ -258,7 +155,7 @@ export function openFromQuery(open) {
 // and targetFn is a verb in the page's click map (the one its Create
 // button names): a page module's functions are never on window, so the
 // target is looked up in the handler map delegateActions keeps on the
-// root (shared/utils.js, '__delegateActionsMap_' + sentinel; the click
+// root (shared/dom.js, '__delegateActionsMap_' + sentinel; the click
 // sentinel is 'delegated'). This helper calls it after preventDefault.
 export function enterSubmits(targetFnName, el, evt) {
   if (!evt || evt.key !== 'Enter') return;
@@ -340,7 +237,3 @@ export async function containmentForm(el, evt) {
 // remember to register confirmDeleteForm and most didn't, so destructive delete
 // forms (payloads, bin-types) submitted with no confirmation at all.
 delegateActions(document.body, { confirmDeleteForm, containmentForm }, { events: ['submit'] });
-
-// All exports above are declared inline (`export function …`). The
-// trailing `export { … }` block that used to live here was removed in
-// SPRINT 4 — every helper is now a top-level named export.

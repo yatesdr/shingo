@@ -76,14 +76,15 @@ function golden(name, lines) { goldens[name] = lines.join('\n').replace(/[ \t]+$
 
 const SURFACES = [
     {
-        name: 'core-hub', root: 'core', entry: '/static/app.js',
-        file: 'shingo-core/www/static/app.js',
+        name: 'core-hub', root: 'core', entry: 'shared/testdata/helper-pins-harness/core-page.js',
+        file: 'a Core page (shingo-core/www/static/app.js loaded; the components under Core\'s names)',
         pick: (m) => ({ showModal: m.showModal, hideModal: m.hideModal, confirm: m.uiConfirm, prompt: m.uiPrompt, toast: m.toast }),
         words: { confirm: 'uiConfirm', prompt: 'uiPrompt' },
-        // Its modals and dialogs are layer.js's, its toast notice.js's (wave C,
-        // s2-hubs-core). No Core file calls utils.js's installBackdropClose any
-        // more (the layer needs none), so a case's "page called
-        // installBackdropClose()" is the components' no-op here.
+        // Its modals and dialogs are layer.js's, its toast notice.js's, its door
+        // verbs app.js's (wave C, s2-hubs-core): core-page.js holds them as a
+        // Core page imports them. No Core file calls utils.js's
+        // installBackdropClose any more (the layer needs none), so a case's
+        // "page called installBackdropClose()" is the components' no-op here.
         sharedEntry: 'shared/testdata/components/surface.js',
         sel: { dialog: '.layer-scrim', toastBox: '.notice-stack', toast: '.notice-toast' },
     },
@@ -514,15 +515,13 @@ async function apiPins(surface) {
     const probe = page(surface);
     const doors = surface.doors ? surface.doors(probe) : {
         'core-hub': {
-            shape: () => 'api is a ' + typeof probe.m.api + ' (method, url, body); verbs apiGet apiPost apiPut apiDelete: ' + ['apiGet', 'apiPost', 'apiPut', 'apiDelete'].map((n) => n + ' ' + typeof probe.m[n]).join(', ') + '; no non-throwing door',
+            shape: () => 'verbs apiGet apiPost apiPut apiDelete (app.js, over shared/http.js): ' + ['apiGet', 'apiPost', 'apiPut', 'apiDelete'].map((n) => n + ' ' + typeof probe.m[n]).join(', ') + '; no non-throwing door',
             requests: [
                 ['apiGet(url)', (p) => p.m.apiGet('/api/x')],
                 ['apiPost(url, {a:1})', (p) => p.m.apiPost('/api/x', { a: 1 })],
                 ['apiPost(url)', (p) => p.m.apiPost('/api/x')],
                 ['apiPut(url, {a:1})', (p) => p.m.apiPut('/api/x', { a: 1 })],
                 ['apiDelete(url)', (p) => p.m.apiDelete('/api/x')],
-                ['api("PATCH", url, {a:1})', (p) => p.m.api('PATCH', '/api/x', { a: 1 })],
-                ['api("POST", url, null)', (p) => p.m.api('POST', '/api/x', null)],
             ],
             // The hub's rejection is an Error carrying the door's sentence (its
             // String() is that sentence), not the engine's words: keep it.

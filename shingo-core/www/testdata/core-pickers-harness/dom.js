@@ -5,7 +5,7 @@
 // lent by the pin, and the helpers every page's markup and requests go
 // through are the tree's own, evaluated inside the page's context, so a page's
 // fetch is the harness's and a refusal is unwrapped exactly as the page sees it:
-//   - api, apiGet, apiPost from static/app.js, and the HTTP door they answer
+//   - apiGet, apiPost from static/app.js, and the HTTP door they answer
 //     through (shared/http.js's send, its notice off): a refusal rejects an
 //     ApiError whose string is the door's sentence;
 //   - escapeHtml and h from shared/dom.js.
@@ -54,11 +54,11 @@ const HELPERS = [
     fnSource(sharedSrc, 'h'),
     'var send = (function () {\n' + httpSrc + '\nreturn send;\n})();',
     fnSource(appSrc, 'apiError'),
-    fnSource(appSrc, 'api'),
+    fnSource(appSrc, 'apiRequest'),
     fnSource(appSrc, 'apiGet'),
     fnSource(appSrc, 'apiPost'),
 ].join('\n');
-const OWN = new Set(['api', 'apiGet', 'apiPost', 'escapeHtml', 'h']);
+const OWN = new Set(['apiGet', 'apiPost', 'escapeHtml', 'h']);
 
 // --- elements ---------------------------------------------------------------
 
