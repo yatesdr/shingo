@@ -169,7 +169,7 @@ block({
 
 // Smoke (browser walk 2026-11-11): the list said "not wired" for a counter
 // with its PLC and tag set and switched off, where Setup and Settings say
-// "off".
+// "off"; and a screen Add process named after its process was said twice.
 block({
     title: 'smoke: a wired counter switched off reads "off" on the list, not "not wired"',
     open: () => ({ search: '', page: withPage(p => ({ processes: p.processes.map(x => x.id === 1 ? Object.assign({}, x, { counter_enabled: false }) : x) })) }),
@@ -178,6 +178,15 @@ block({
         const row = String(r.page.root.innerHTML).split('<tr').find(x => x.indexOf('<b>Press A</b>') >= 0) || '';
         const cell = (/<span class="pd-cnt[^"]*"><i><\/i>([^<]*)<\/span>/.exec(row) || ['', ''])[1];
         return ['Press A\'s counter cell: ' + JSON.stringify(cell), cell === 'off · PLC_A', 'said ' + JSON.stringify(cell)];
+    }],
+});
+block({
+    title: 'smoke: a screen named after its process is not said twice in the title',
+    open: () => ({ page: withPage(p => ({ stations: p.stations.map(s => s.id === 11 ? Object.assign({}, s, { name: 'Press A' }) : s) })) }),
+    act: async () => {},
+    checks: [r => {
+        const title = (/<div class="pd-crumb">[\s\S]*?<b>([^<]*)<\/b>/.exec(String(r.page.root.innerHTML)) || ['', ''])[1];
+        return ['the title: ' + JSON.stringify(title), title === 'Press A', 'said ' + JSON.stringify(title)];
     }],
 });
 

@@ -475,10 +475,14 @@ function appbar() {
     // word that returns them was drawn in the same value as the separator
     // beside it. Same ruling as the positions footer and the station card's
     // chips: if it is the way out, it looks like a button.
+    // A SCREEN NAMED AFTER ITS PROCESS IS NOT SAID TWICE. Add process names
+    // the screen after the process when its box is left blank, so every new
+    // process read "Weld Cell 13 · Weld Cell 13".
+    const screen = p && stationsOf(p.id)[0];
     return '<div class="pd-app">' +
         '<div class="pd-crumb"><button class="pd-back" data-act="list">‹ All processes</button>' +
         '<b>' + esc(p ? p.name : '') +
-        (p && stationsOf(p.id)[0] ? ' · ' + esc(stationsOf(p.id)[0].name) : '') + '</b></div>' +
+        (screen && screen.name !== p.name ? ' · ' + esc(screen.name) : '') + '</b></div>' +
         // NO ROUTING TAB. The routing set is REVIEWED, and review is Settings'
         // job — it sits there beside the gate it is the precondition for
         // (owner ruling 2026-09-16). Creation is the Add-process sheet's.
