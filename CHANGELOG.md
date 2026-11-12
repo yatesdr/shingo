@@ -27,6 +27,8 @@ Deploy: no migration.
 - Setup has a Parts row, and its rows say counts: "16 positions", "2 inbound · 1 outbound", "11 parts"
 - New style with no recipe picks its name from the process's parts, or takes a typed one-off name
 - Settings' routing map waits behind Show on map, fitted to the process, its marks in the bucket colours
+- Add a position leads the positions line in the accent, and a dashed Add a position row closes the table
+- A style opened from Setup's First style row goes back to Setup when saved, naming the next step
 
 ## v0.6.1 — 2026-11-12
 
