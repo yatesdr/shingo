@@ -34,7 +34,9 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	ordersJSON, _ := json.Marshal(orderSummaries)
-	coreNodesJSON, _ := json.Marshal(coreNodeNames)
+	// The node fields draw Core's nodes with their types and groups, as the
+	// manual-order form does (shared/node-picker.js).
+	_, coreNodesJSON := h.manualOrderNodes(nil)
 
 	data := map[string]any{
 		"Page":          "manual-message",
@@ -42,7 +44,7 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 		"Orders":        orders,
 		"CoreNodes":     coreNodeNames,
 		"OrdersJSON":    string(ordersJSON),
-		"CoreNodesJSON": string(coreNodesJSON),
+		"CoreNodesJSON": coreNodesJSON,
 	}
 
 	h.renderTemplate(w, r, "manual-message.html", data)

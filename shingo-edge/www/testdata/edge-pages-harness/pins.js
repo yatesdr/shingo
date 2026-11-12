@@ -500,9 +500,10 @@ async function productionPartPickers() {
 // ── Kafka Direct (census 44, bugs 9 and 10) ──────────────────────────────────
 
 // fieldsMarkup is #mm-fields' markup as the page wrote it, one form-group a
-// line. ESCAPED (census bug 9, fixed): renderField escapes node names, the
-// field values and the order uuid/type/status, so the name `NODE <b>&"'` and
-// the uuid `ab<b>&"'-0001` show as text.
+// line. ESCAPED (census bug 9, fixed): renderField escapes the field values
+// and the order uuid/type/status, so the uuid `ab<b>&"'-0001` shows as text.
+// The node fields are the node adapter's, which draws a name as text (the
+// rows after each form).
 function fieldsMarkup(b) {
     return b.doc.getElementById('mm-fields').innerHTML.split('<div class="form-group">').filter(Boolean)
         .map(s => '  <div class="form-group">' + s);
@@ -517,6 +518,7 @@ async function kafkaDirect() {
         type.value = t;
         b.rec.actions.updateMessageForm.call(type);
         L.push('## ' + t + ': #mm-fields markup', ...fieldsMarkup(b), '');
+        Object.keys(b.ctx.PICKERS).filter(id => b.doc.getElementById(id)).forEach(id => L.push(options(b, id), ''));
     }
     L.push('');
 
@@ -529,6 +531,7 @@ async function kafkaDirect() {
         ty.value = 'order.request';
         s.rec.actions.updateMessageForm.call(ty);
         picks.forEach(([id, v]) => {
+            if (s.ctx.PICKERS['mm-f-' + id]) { pick(s, 'mm-f-' + id, v); return; }
             const el = s.doc.getElementById('mm-f-' + id);
             if (el.type === 'checkbox') el.checked = v; else el.value = v;
             if (el.tagName === 'SELECT' && el.value !== v) throw new Error('mm-f-' + id + ' has no option ' + v);

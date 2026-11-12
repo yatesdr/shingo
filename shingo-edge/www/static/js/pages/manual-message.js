@@ -1,16 +1,18 @@
 import { api } from '/static/js/shingoedge.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
+import { nodePicker, nodeSource } from '/static/shared/node-picker.js';
 import { toast } from '/static/shared/notice.js';
 
 var _pd = document.getElementById('page-data').dataset;
 var _stationID = _pd.stationId;
 var _orders = JSON.parse(_pd.orders);
-var _coreNodes = JSON.parse(_pd.coreNodes).map(function(n) {
-    if (typeof n === 'string') return n;
-    if (n && typeof n.name === 'string') return n.name;
-    if (n && typeof n.node_id === 'string') return n.node_id;
-    return '';
-}).filter(Boolean);
+// The page's one node list (shared/node-picker.js), Core's names as the page
+// was rendered with them. Every node field draws from it, and takes any node:
+// this is a debug console that sends what it is told.
+var _coreNodes = JSON.parse(_pd.coreNodes);
+var _nodes = nodeSource(function() { return _coreNodes; }, _coreNodes);
+// The node fields of the form now drawn, by field id.
+var _nodePickers = {};
 
 var _fieldDefs = {
     'edge.register': [
@@ -53,9 +55,7 @@ function renderField(f) {
         f.options.forEach(function(o){ html += '<option value="'+esc(o)+'"'+(o===val?' selected':'')+'>'+esc(o)+'</option>'; });
         html += '</select>';
     } else if (f.type === 'nodeselect') {
-        html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option>';
-        _coreNodes.sort().forEach(function(n){ html += '<option value="'+esc(n)+'">'+esc(n)+'</option>'; });
-        html += '</select>';
+        html += '<div id="mm-f-' + f.id + '" data-node-field="' + f.id + '"></div>';
     } else if (f.type === 'orderselect') {
         html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option>';
         _orders.forEach(function(o){ html += '<option value="'+esc(o.uuid)+'">'+esc(o.uuid.substring(0,8))+'... ('+esc(o.type)+', '+esc(o.status)+')</option>'; });
@@ -74,11 +74,18 @@ function updateMessageForm() {
     var fields = _fieldDefs[type] || [];
     var container = document.getElementById('mm-fields');
     container.innerHTML = fields.map(renderField).join('');
+    _nodePickers = {};
+    fields.forEach(function(f) {
+        if (f.type !== 'nodeselect') return;
+        _nodePickers[f.id] = nodePicker(document.getElementById('mm-f-' + f.id), _nodes, {},
+            { placeholder: f.label, onChange: updatePreview });
+    });
     document.getElementById('mm-status').textContent = '';
     updatePreview();
 }
 
 function getFieldValue(id) {
+    if (_nodePickers[id]) return _nodePickers[id].value();
     var el = document.getElementById('mm-f-' + id);
     if (!el) return undefined;
     if (el.type === 'checkbox') return el.checked;
