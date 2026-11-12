@@ -3779,9 +3779,9 @@ async function settingsPositionsPins(h) {
     const page = (hash, o) => {
         o = o || {};
         const writes = [];
-        const host = pickerHost('npk-addpos');
+        const host = pickerHost('npk-procset');
         const ctx = loadPage({
-            allowSheet: true, hash: hash, extraIds: { 'npk-addpos': host },
+            allowSheet: true, hash: hash, extraIds: { 'npk-procset': host },
             processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
             stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }],
             stationNodes: { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
@@ -3829,10 +3829,10 @@ async function settingsPositionsPins(h) {
     });
 
     await pin('the positions editor greys another process\'s position, ticks the screen\'s own, says what a move does, offers a loader window', async () => {
-        const ctx = page('#tab=settings;addpos=');
+        const ctx = page('#tab=settings;edit=positions');
         await settle();
         const s = ctx.sheet().el.innerHTML;
-        if (!ctx.sheet().open || s.indexOf('<h2>Positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
+        if (!ctx.sheet().open || s.indexOf('<h2>Edit process</h2>') < 0) throw new Error(';edit=positions opened no sheet');
         // A row is the shell's: greyed (is-off) with its reason beside it, or
         // tickable, ticked (is-on) or not, with its note.
         const h = ctx.host;
@@ -3857,11 +3857,11 @@ async function settingsPositionsPins(h) {
         const pres = pk.filters(h).map(f => f.label);
         if (pres.join(' ') !== 'PLN SMN ULN') throw new Error('prefixes ' + JSON.stringify(pres));
         if (findIn(h, 'button').some(b => /^(all|none)$/i.test(b.textContent))) throw new Error('the checklist offers a tick-all');
-        if (s.indexOf('data-act="pos-screen" data-station="25"') < 0) throw new Error('two screens, and no chooser');
+        if (s.indexOf('data-act="set-screen" data-station="25"') < 0) throw new Error('two screens, and no chooser');
     });
 
     await pin('a prefix filters the checklist to its family and only filters', async () => {
-        const ctx = page('#tab=settings;addpos=PLN_');
+        const ctx = page('#tab=settings;edit=positions;q=PLN_');
         await settle();
         const h = ctx.host;
         if (!pk.row(h, 'PLN_005PAL') || pk.row(h, 'SMN_002')) throw new Error('PLN_ did not filter to PLN: ' + pk.rows(h).length + ' rows');
@@ -3874,26 +3874,26 @@ async function settingsPositionsPins(h) {
         if (ctx.writes.length) throw new Error('pressing prefixes ticked something: ' + JSON.stringify(ctx.writes));
     });
 
-    await pin('Add sends the screen\'s list as the server answers it, plus the ticked nodes', async () => {
-        const ctx = page('#tab=settings;addpos=');
+    await pin('Save sends the screen\'s list as the server answers it, plus the ticked nodes', async () => {
+        const ctx = page('#tab=settings;edit=positions');
         await settle();
         pk.pick(ctx.host, 'PLN_005PAL');
         pk.pick(ctx.host, 'PLN_006PAL');
         ctx.sheet().ok();
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
-        if (!put || put.url !== '/api/operator-stations/18/claimed-nodes') throw new Error('Add wrote ' + JSON.stringify(ctx.writes));
+        if (!put || put.url !== '/api/operator-stations/18/claimed-nodes') throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
         const want = '["PLN_005","PLN_006BCD","PLN_009BCD","PLN_005PAL","PLN_006PAL"]';
-        if (JSON.stringify(put.body.nodes) !== want) throw new Error('Add sent ' + JSON.stringify(put.body.nodes) + '\n      want ' + want);
+        if (JSON.stringify(put.body.nodes) !== want) throw new Error('Save sent ' + JSON.stringify(put.body.nodes) + '\n      want ' + want);
         if (ctx.sheet().open) throw new Error('the sheet is still open');
         const says = '<div class="pd-notice">Added PLN_005PAL, PLN_006PAL to Press 6 Operator Screen.</div>';
         if (ctx.root.innerHTML.indexOf(says) < 0) throw new Error('Settings does not say ' + says);
     });
 
     await pin('the screen chooser sends the ticks to the screen picked', async () => {
-        const ctx = page('#tab=settings;addpos=');
+        const ctx = page('#tab=settings;edit=positions');
         await settle();
-        click(ctx.scrim, ctx.doc, { act: 'pos-screen', station: '25' });
+        click(ctx.scrim, ctx.doc, { act: 'set-screen', station: '25' });
         pk.pick(ctx.host, 'SMN_002');
         ctx.sheet().ok();
         await settle();
@@ -3904,7 +3904,7 @@ async function settingsPositionsPins(h) {
     });
 
     await pin('a screen list that cannot be read opens no editor and writes nothing', async () => {
-        const ctx = page('#tab=settings;addpos=', { readFails: true });
+        const ctx = page('#tab=settings;edit=positions', { readFails: true });
         await settle();
         if (ctx.sheet().open) throw new Error('the editor opened over an unread list');
         if (ctx.writes.length) throw new Error('a write was sent: ' + JSON.stringify(ctx.writes));
