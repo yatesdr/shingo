@@ -1,8 +1,6 @@
-## Settings › Add positions: NEW_1 onto Screen A (the first screen)
-  1  GET /api/process-nodes
-  2  GET /api/operator-stations/11/claimed-nodes
-  3  GET /api/operator-stations/12/claimed-nodes
-  4  PUT /api/operator-stations/11/claimed-nodes
+## Settings › Positions bucket: tick NEW_1 onto Screen A (the first screen)
+  1  GET /api/operator-stations/11/claimed-nodes
+  2  PUT /api/operator-stations/11/claimed-nodes
        {
          "nodes": [
            "POS_A1",
@@ -19,9 +17,9 @@
            "NEW_1"
          ]
        }
-  5  GET /api/operator-stations/11/claimed-nodes
-  6  GET /api/processes/1/composer
-  7  GET /api/process-nodes
+  3  GET /api/operator-stations/11/claimed-nodes
+  4  GET /api/processes/1/composer
+  5  GET /api/process-nodes
 -- sheet closed
 
 ## Settings › POS_A11 › Remove (the impact is read before the sheet opens)

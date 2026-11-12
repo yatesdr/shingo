@@ -2125,14 +2125,17 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
     type('[data-f="name"]', NAME);
     type('[data-f="screen"]', NAME + ' Screen');
 
-    // ONE PICKER AT A TIME, which is the component's own rule: focusing a
-    // field closes the list that was open. So each pick is filter, wait for
-    // the row, click it.
-    const pick = async (key, node) => {
+    // THE POSITIONS AND THE ROUTING SET ARE ONE PICKER IN FOUR BUCKETS
+    // (setInit). So each pick is: open the bucket, filter, wait for the row,
+    // click it.
+    const pick = async (bucket, node) => {
         out.dataset.step = 'pick ' + node;
-        const box = sheet.querySelector('#npk-' + key);
-        if (!box) throw new Error('no picker #npk-' + key + ' on the sheet');
-        type('#npk-' + key + ' .picker-q', node);
+        const box = sheet.querySelector('#npk-procset');
+        if (!box) throw new Error('no set picker #npk-procset on the sheet');
+        const tab = sheet.querySelector('[data-act="set-bucket"][data-bucket="' + bucket + '"]');
+        if (!tab) throw new Error('the set picker has no ' + bucket + ' bucket');
+        tab.click();
+        type('#npk-procset .picker-q', node);
         const row = await until('the picker offers ' + node, () => {
             threw();
             const hit = [...box.querySelectorAll('.picker-row')].find(r => r.dataset.value === node);
@@ -2157,7 +2160,7 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
     // NO SOURCE IS A CASE, not a missing argument: a process created with an
     // empty routing set must come out with the flow-composer gate SHUT, and
     // that is only checkable by making one.
-    if (SOURCE) await pick('rs_source', SOURCE);
+    if (SOURCE) await pick('source', SOURCE);
 
     out.dataset.step = 'create';
     const ok = sheet.querySelector('[data-act="sheet-ok"]');

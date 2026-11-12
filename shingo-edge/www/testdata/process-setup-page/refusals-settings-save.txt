@@ -7,26 +7,28 @@
 ### PUT /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
+    new text: … and 50 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set
@@ -34,26 +36,28 @@
 ### PATCH /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
+    new text: … and 50 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set
@@ -61,26 +65,28 @@
 ### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
+    new text: … and 50 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set
@@ -88,26 +94,28 @@
 ### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
+    new text: … and 50 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set
@@ -115,26 +123,28 @@
 ### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-root p.pd-note: This process has no positions yet.
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
+    new text: … and 50 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set

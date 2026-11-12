@@ -364,6 +364,13 @@ function npk(page, host, key, name, how) {
     if (!row) throw new Error(key + ' draws no row ' + name);
     row.click();
 }
+// The positions and the routing set are one set picker (setInit): its four
+// buckets over one list. A bucket is opened by its button, then the name is
+// picked in the list as npk picks it.
+function setPick(page, host, key, bucket, name, how) {
+    page.click(host, { act: 'set-bucket', set: key, bucket: bucket }, host === 'scrim' ? { inside: ['.pd-modal'] } : undefined);
+    npk(page, host, key, name, how);
+}
 async function sheetOK(page) {
     page.click('scrim', { act: 'sheet-ok' });
     await page.settle();
@@ -465,11 +472,11 @@ const DRIVE = {
         page.type('screen', 'Screen N');
         page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
         pickRow(page, 'pd-advpop', 'data-grpopt', 3);
-        for (const n of ['NEW_1', 'NEW_2']) npk(page, 'scrim', 'positions', n);
-        npk(page, 'scrim', 'rs_source', 'SRC_2');
-        npk(page, 'scrim', 'rs_source', 'GRP_A');
-        npk(page, 'scrim', 'rs_staging', 'STG_9');
-        npk(page, 'scrim', 'rs_destination', 'DST_9');
+        for (const n of ['NEW_1', 'NEW_2']) setPick(page, 'scrim', 'procset', 'positions', n);
+        setPick(page, 'scrim', 'procset', 'source', 'SRC_2');
+        setPick(page, 'scrim', 'procset', 'source', 'GRP_A');
+        setPick(page, 'scrim', 'procset', 'staging', 'STG_9');
+        setPick(page, 'scrim', 'procset', 'destination', 'DST_9');
         npk(page, 'scrim', 'parts', 'PART-12');
         npk(page, 'scrim', 'parts', 'PART-1');
         await sheetOK(page);
@@ -529,10 +536,10 @@ const DRIVE = {
     partPopDrop: { setup: openPartPop, drive: async page => { partPopRow(page, 'drop', 'PART-11'); await page.settle(); } },
     partSettingsAdd: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-13'); await page.settle(); } },
     partSettingsDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-11', 'drop'); await page.settle(); } },
-    routingAddNew: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_source', 'SRC_2', 'add'); await page.settle(); } },
-    routingAdopt: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_destination', 'DST_9', 'add'); await page.settle(); } },
-    routingDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_staging', 'STG_3', 'drop'); await page.settle(); } },
-    routingToggleOff: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rs_staging', 'STG_1', 'add'); await page.settle(); } },
+    routingAddNew: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add'); await page.settle(); } },
+    routingAdopt: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'destination', 'DST_9', 'add'); await page.settle(); } },
+    routingDrop: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'staging', 'STG_3', 'drop'); await page.settle(); } },
+    routingToggleOff: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'staging', 'STG_1', 'add'); await page.settle(); } },
     routingAllOn: { hash: '#tab=settings', drive: async page => {
         page.click('root', { act: 'rs-all-on', role: 'staging' });
         await page.settle();
@@ -769,12 +776,12 @@ const P0 = require('./p0-page.js');
     await actRouting();
     await actRecipe();
     await P0.run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, typeSetting, decode, text,
         bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
     });
-    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
+    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
     await require('./cold-start.js').run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, sheetOK, pickRow, typeSetting, decode, text,
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, typeSetting, decode, text,
         setCurrent: n => { CURRENT = n; }, SEEN,
     });
     await require('./s4-table.js').run({ out, openPage, pickRow, pickChip });

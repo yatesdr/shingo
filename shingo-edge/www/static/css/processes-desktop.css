@@ -607,9 +607,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    own word. */
 .pd-addproc .pd-sec { padding: 6px 0 2px; }
 .pd-addproc .pd-sec .pd-lbl { margin-bottom: 4px; }
-.pd-addproc .pd-npk.check .picker-list { max-height: 150px; }
-.pd-addproc .pd-rs3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 2px 0 4px; }
-.pd-addproc .pd-rs3 label { display: block; font-size: 13px; margin-bottom: 4px; }
 
 /* ── D2 · the Advanced sheet ──────────────────────────────────────────────
    600 wide over a scrim, from the row's gear. It is the only place the twelve
@@ -1043,3 +1040,31 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
     color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
 }
+
+/* ── the set picker: four buckets over one checklist (setInit) ──────────────
+ * Each bucket has one colour, used the same way on its button, its tokens, the
+ * tags on rows already in it, and the map's marks (.mp-rt / .mp-pos): the
+ * page's text colour for positions (the map's squares are its neutral marks;
+ * --station is a white for dark surfaces only), Robot 1's for inbound, the
+ * accent for staging, Robot 2's for outbound. One list instead of four boxes
+ * gives it the height the four were sharing (F16): about nine 40 px rows. */
+.pd-set { --bk: var(--text); display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1) 0 var(--sp-2); }
+.pd-set.bk-source, .pd-setb.source, .picker-tag[data-tone="source"] { --bk: var(--robot-1); }
+.pd-set.bk-staging, .pd-setb.staging, .picker-tag[data-tone="staging"] { --bk: var(--accent); }
+.pd-set.bk-destination, .pd-setb.destination, .picker-tag[data-tone="destination"] { --bk: var(--robot-2); }
+.pd-setb.positions, .picker-tag[data-tone="positions"] { --bk: var(--text); }
+.pd-setbar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.pd-setb {
+    display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 40px; padding: 0 var(--sp-3);
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text);
+    font: inherit; cursor: pointer;
+}
+.pd-setb b { color: var(--text-muted); font-weight: var(--fw-bold); }
+.pd-setb.on { border-color: var(--bk); box-shadow: inset 0 -3px 0 var(--bk); }
+.pd-setb.on b { color: var(--text); }
+.pd-setb[disabled] { opacity: .5; cursor: not-allowed; }
+.pd-setdot { width: 10px; height: 10px; border-radius: 50%; background: var(--bk); }
+.pd-setlead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-height: 24px; }
+.pd-set .picker-chip { border-color: var(--bk); }
+.picker-tag[data-tone] { border-color: var(--bk); color: var(--text); }
+.pd-set .picker--open .picker-list { max-height: 380px; }

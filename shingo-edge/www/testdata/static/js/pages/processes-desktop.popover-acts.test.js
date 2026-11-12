@@ -2709,8 +2709,8 @@ async function mainAsync() {
         allowSheet: true, composer: mapComposer(map), hash: '#tab=settings',
         fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null),
     });
-    const routingHead = '<div class="pd-sect"><h2>Routing set</h2><span class="pd-dim">' +
-        'where this process may draw bins from, stage them, and send them</span>' +
+    const routingHead = '<div class="pd-sect"><h2>Positions and routing set</h2><span class="pd-dim">' +
+        'where this process works, and where it may draw bins from, stage them, and send them</span>' +
         '<span class="pd-wt">saved as you pick</span></div>';
     const noMapNote = '<p class="pd-note">No plant map on this Edge yet. Core sends it with the node ' +
         'list; until then the lists above are the whole routing set.</p>';
@@ -2719,9 +2719,9 @@ async function mainAsync() {
         const { root } = settingsPage(null);
         await settle();
         const h = root.innerHTML;
-        if (h.indexOf('<h2>Routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
+        if (h.indexOf('<h2>Positions and routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
         if (h.indexOf(routingHead) < 0) {
-            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
+            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Positions and routing set<\/h2>.*?<\/div>/) || [''])[0]));
         }
         if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
         if (h.indexOf(noMapNote) < 0) throw new Error('the no-map line does not read ' + JSON.stringify(noMapNote));
@@ -2733,15 +2733,18 @@ async function mainAsync() {
     await pin('taking a routing name out goes through and shows what it orphans', async () => {
         const warning = 'Removed DN_001. Recipes left without their destination (2): "A" and "B".';
         const sent = [];
-        const dest = pickerHost('npk-rs_destination');
+        const dest = pickerHost('npk-stset');
         const { root, doc } = loadPage({
-            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'npk-rs_destination': dest },
+            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'npk-stset': dest },
             fetch: (url, init) => {
                 if (init && init.method === 'DELETE') { sent.push(url); return okJSON({ status: 'ok', warning }); }
                 return url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null;
             },
         });
         await settle();
+        // The routing set is the set picker's Outbound bucket: opened, then
+        // the name's token dropped.
+        click(root, doc, { act: 'set-bucket', set: 'stset', bucket: 'destination' });
         pk.drop(dest, 'DN_001');
         await settle();
         if (sent[0] !== '/api/processes/1/routing-nodes/2') throw new Error('the removal sent ' + JSON.stringify(sent));
@@ -2756,7 +2759,7 @@ async function mainAsync() {
         await settle();
         const h = root.innerHTML;
         if (h.indexOf(routingHead) < 0) {
-            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
+            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Positions and routing set<\/h2>.*?<\/div>/) || [''])[0]));
         }
         if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
         if (h.indexOf('<div class="pd-map pd-rsmap">') < 0) throw new Error('the routing map frame is not drawn');
@@ -2766,7 +2769,7 @@ async function mainAsync() {
 
     const addProcessSheet = async map => {
         const hosts = {};
-        for (const k of ['positions', 'rs_source', 'rs_staging', 'rs_destination', 'parts']) hosts['npk-' + k] = pickerHost('npk-' + k);
+        for (const k of ['procset', 'parts']) hosts['npk-' + k] = pickerHost('npk-' + k);
         const { root, doc, sheet } = loadPage({ allowSheet: true, composer: mapComposer(map), extraIds: hosts });
         if (map) realGeometry();
         await settle();
@@ -2788,7 +2791,7 @@ async function mainAsync() {
     // on map on the routing set's heading, its frame hidden and undrawn.
     await pin('the Add process sheet with a plant map offers Show on map, the map hidden until pressed', async () => {
         const h = await addProcessSheet(plantMap());
-        if (h.indexOf('<div class="pd-lbl">The routing set<button type="button" class="pd-maptoggle" data-act="add-showmap"') < 0) {
+        if (h.indexOf('<div class="pd-lbl">Positions and routing set<button type="button" class="pd-maptoggle" data-act="add-showmap"') < 0) {
             throw new Error('Show on map is not on the routing set heading');
         }
         if (h.indexOf('aria-expanded="false">Show on map</button>') < 0) throw new Error('the toggle does not open closed');
@@ -2852,11 +2855,12 @@ async function mainAsync() {
         const h = await addProcessSheet(null);
         const parts = h.split('placeholder="find a part by name"').length - 1;
         const nodes = h.split('placeholder="find a node by name"').length - 1;
-        // The positions field is the checklist, whose field filters a list
-        // that is already open rather than finding into a closed one.
+        // The positions and the routing set are one checklist (the set
+        // picker), whose field filters a list that is already open rather
+        // than finding into a closed one.
         const check = h.split('placeholder="filter by name, or pick a prefix below"').length - 1;
-        if (parts !== 1 || nodes !== 3 || check !== 1) {
-            throw new Error('want 1 part, 3 node and 1 checklist placeholder, got ' + parts + ', ' + nodes + ' and ' + check);
+        if (parts !== 1 || nodes !== 0 || check !== 1) {
+            throw new Error('want 1 part, 0 node and 1 checklist placeholder, got ' + parts + ', ' + nodes + ' and ' + check);
         }
     });
 
@@ -3804,9 +3808,8 @@ async function settingsPositionsPins(h) {
         const ctx = page('#tab=settings');
         await settle();
         const html = ctx.root.innerHTML;
-        if (html.indexOf('<h2>Positions</h2>') < 0 || html.indexOf('data-act="pos-add"') < 0) {
-            throw new Error('Settings draws no Positions section with Add positions');
-        }
+        if (html.indexOf('<h2>Positions</h2>') < 0) throw new Error('Settings draws no Positions section');
+        if (html.indexOf('data-act="pos-add"') >= 0) throw new Error('Settings still draws Add positions: adding is the set picker’s Positions bucket');
         if (html.indexOf('<h2>Light curtain interlock</h2>') >= 0) throw new Error('the curtain section is still its own heading');
         const press = html.indexOf('<div class="pd-lbl pd-posscreen">Press 6 Operator Screen</div>');
         const unloader = html.indexOf('<div class="pd-lbl pd-posscreen">Unloader</div>');

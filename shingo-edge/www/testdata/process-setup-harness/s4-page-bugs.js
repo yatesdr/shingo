@@ -316,7 +316,7 @@ block({
         };
     },
     act: async page => {
-        T.npk(page, 'root', 'rs_source', 'SRC_2', 'add');
+        T.setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add');
         await page.settle();
         page.click('root', { tab: 'flows' });
         await page.settle();
@@ -331,7 +331,7 @@ block({
 block({
     title: 'P0 :3746: a refused routing-set add is drawn, not cleared by the re-read',
     open: () => ({ hash: '#tab=settings', answer: refuse('POST', '/api/processes/1/routing-nodes', REFUSED) }),
-    act: async page => { T.npk(page, 'root', 'rs_source', 'SRC_2', 'add'); await page.settle(); },
+    act: async page => { T.setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add'); await page.settle(); },
     checks: [r => ['the page says ' + JSON.stringify(MSG), onScreen(r.page, MSG), 'routingError ' + JSON.stringify(r.page.S.routingError)]],
 });
 block({

@@ -91,30 +91,25 @@ test('legExclusion: no node list yet refuses nothing', () => {
     assert.strictEqual(B.legExclusion(undefined, 'SUP-L1'), '');
 });
 
-// The text of each routing picker declaration, to the close of its options
-// object. The Add-process sheet declares its picker as
-// `pickerInit(routingPickerKey(…`; Settings declares its own in
-// routingPickersReady as `pickerInit(key, …`.
-function routingPickerSites() {
+// The routing rule of each set picker (setInit: the positions and the
+// routing set, one list in four buckets). The process sheet declares its rule
+// inline in `setInit(PROC_SET, {`; Settings' is the function stSetRule.
+function routingRuleSites() {
     const sites = [];
-    const declare = (at) => sites.push(PAGE.slice(at, PAGE.indexOf('});', at)));
-    const open = 'pickerInit(routingPickerKey(';
-    for (let at = PAGE.indexOf(open); at >= 0; at = PAGE.indexOf(open, at + open.length)) declare(at);
-    const ready = PAGE.indexOf('function routingPickersReady(');
-    assert.ok(ready >= 0, 'routingPickersReady not found');
-    const settings = PAGE.indexOf('pickerInit(key, {', ready);
-    assert.ok(settings >= 0 && settings < PAGE.indexOf('\n}\n', ready), 'the Settings routing picker not found');
-    declare(settings);
+    const sheet = PAGE.indexOf('setInit(PROC_SET, {');
+    assert.ok(sheet >= 0, 'the process sheet’s set picker not found');
+    sites.push(PAGE.slice(sheet, PAGE.indexOf('});', sheet)));
+    const st = PAGE.indexOf('function stSetRule(');
+    assert.ok(st >= 0, 'stSetRule not found');
+    sites.push(PAGE.slice(st, PAGE.indexOf('\n}\n', st)));
     return sites;
 }
 
-test('the two routing pickers each ask the rule in their role', () => {
-    const sites = routingPickerSites();
-    assert.strictEqual(sites.length, 2,
-        'expected the Settings and Add-process routing pickers; found ' + sites.length);
+test('the two set pickers each ask the leg rule in the bucket’s role', () => {
+    const sites = routingRuleSites();
     sites.forEach((s, i) => {
-        assert.ok(/exclude:[\s\S]*B\(\)\.legExclusion\(S\.coreNodes, n, g\[0\]\)/.test(s),
-            'routing picker #' + (i + 1) + ' does not ask legExclusion in its role:\n' + s);
+        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name), b\)/.test(s),
+            'set picker #' + (i + 1) + ' does not ask legExclusion in its bucket’s role:\n' + s);
     });
 });
 

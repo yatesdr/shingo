@@ -31,9 +31,9 @@ after: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet
 first press: PUT /api/styles/2 → sheet: open "Rename Style B", status "the Edge refused it" (bad), OK "Rename" enabled
 second press: PUT /api/styles/2 · POST /api/processes/1/flow/preview → sheet: closed
 
-## closeSheet: what it clears (Add positions on Settings)
-open Add positions, NEW_1 ticked: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; S.addPos set; pickers addpos, parts, rs_destination, rs_source, rs_staging
-after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; S.addPos null; pickers parts, rs_destination, rs_source, rs_staging (Settings' own pickers stay: their boxes are in #pd-root)
+## closeSheet: what it clears (Add process on Settings)
+open Add process, NEW_1 ticked: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; sets procset, stset; pickers parts, procset, stset
+after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; sets stset; pickers parts, stset (Settings’ own pickers stay: their boxes are in #pd-root)
 
 ## closeSheet: the apply modal's ticks go with it
 apply modal, Style B ticked: sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; S.papply rows 2

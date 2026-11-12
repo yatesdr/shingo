@@ -1340,6 +1340,11 @@ nav {
 .picker-box { flex: 0 0 auto; width: 18px; height: 18px; border: 2px solid var(--sub-4); border-radius: 4px; }
 .picker-row.is-on .picker-box { border-color: var(--accent-solid); background: var(--accent-solid); }
 .picker-note, .picker-why { color: var(--text-muted); font-size: var(--font-xs); }
+/* A row's tags: what else it already is. The page colours each tone. */
+.picker-tag {
+    flex: 0 0 auto; padding: 0 var(--sp-2); border: 1px solid var(--sub-4); border-radius: 999px;
+    color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
+}
 .picker-add { color: var(--accent); }
 .picker-add.is-busy { color: var(--text-muted); cursor: progress; }
 /* A write-through pick out with the caller (onPick), and its refusal. */

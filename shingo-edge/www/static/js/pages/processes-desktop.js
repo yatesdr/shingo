@@ -108,6 +108,8 @@ const S = {
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
     coreNodes: null,     // Core's node list as the Edge sent it (NODES' rows), null until read
     pickers: {},         // every open node picker, by key — see pickerInit
+    sets: {},            // every set picker's four buckets, by its picker's key — see setInit
+    stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
     addPos: null,        // the Add positions sheet's screen: {station}
     add: null,           // the Add-process sheet's own non-text draft: {groupID}
@@ -3576,13 +3578,10 @@ function pageMapScope() {
 // nothing has been written yet, and the whole point of the read-back is to show
 // the engineer what they have picked BEFORE it is.
 function sheetMapScope() {
-    const routing = [];
-    for (const g of ROUTING_GROUPS) {
-        for (const n of pickerValue(routingPickerKey(g[0]))) {
-            routing.push({ core_node_name: n, role: g[0], enabled: true });
-        }
-    }
-    return { positions: pickerValue('positions'), routing: routing };
+    return {
+        positions: setValue(PROC_SET, 'positions'),
+        routing: setRoutingRows(PROC_SET).map(r => Object.assign(r, { enabled: true })),
+    };
 }
 
 function fitRegion(m, scope) {
@@ -3892,6 +3891,160 @@ function isPositionRow(name) {
     return S.composer.cell.positions.some(p => p.core_node_name === name);
 }
 
+// ── one picker for the positions and the routing set (HOP, 2026-11-12) ──────
+//
+// FOUR BUCKETS OVER ONE LIST. Positions, Inbound, Staging and Outbound are four
+// questions about the same nodes, and they were four boxes that each picked a
+// different way: a checklist for positions, three name searches for the rest.
+// Now one checklist answers all four. The bucket chosen above it says what a
+// tick does, the bucket's names sit under it as removable tokens (the picker's
+// chips), and a row already in another bucket carries that bucket's tag. Each
+// bucket has one colour, the map's (.mp-rt): the station's for positions,
+// Robot 1's for inbound, the accent for staging, Robot 2's for outbound.
+//
+// THE RULES ARE THE BUCKETS', NOT THE LIST'S. A position is a plain node (a
+// group is its members, one box each); a routing role takes a group too. A
+// node is a position or a routing row, never both (ErrRoutingNodeIsPosition);
+// it may sit in several routing roles (a buffer is inbound and outbound); and
+// inside a role the order is the order picked, because the lowest sequence is
+// a new position's default.
+//
+// THE SAME COMPONENT IN BOTH PLACES. On the process sheet the buckets are a
+// draft its OK writes; on Settings each tick is written as it is made, as the
+// routing lists always were.
+const BUCKETS = [['positions', 'Positions', 'the spots this process works']].concat(ROUTING_GROUPS);
+
+// setInit declares a set picker under key (its picker's key too):
+//   sel      { bucket: names } it opens with
+//   active   the bucket open first (default Positions)
+//   has(bucket, name)   whether name is in bucket, for the tags (default: in sel)
+//   rule(bucket, name)  why the bucket may not take name, or ''
+//   note(bucket, name)  a quiet line on a name it may take
+//   moved(bucket)       after a draft tick moved bucket (a sheet's)
+//   write(bucket, name, on)  WRITE-THROUGH: a tick is this write, and the
+//                       host re-reads sel after it (Settings')
+//   lead(bucket)        HTML between the buckets and the list, or ''
+//   closed(bucket)      why the bucket cannot be opened, or ''
+function setInit(key, opts) {
+    const o = opts || {};
+    const sel = {};
+    for (const b of BUCKETS) sel[b[0]] = ((o.sel || {})[b[0]] || []).slice();
+    const set = {
+        active: o.active && sel[o.active] ? o.active : 'positions',
+        sel: sel,
+        base: JSON.parse(JSON.stringify(sel)),
+        has: o.has || ((b, n) => set.sel[b].indexOf(n) >= 0),
+        rule: o.rule || (() => ''),
+        note: o.note || (() => ''),
+        moved: o.moved || null,
+        write: o.write || null,
+        lead: o.lead || (() => ''),
+        closed: o.closed || (() => ''),
+    };
+    pickerInit(key, {
+        checklist: true,
+        selected: sel[set.active],
+        only: raw => set.active !== 'positions' || !isGroupRow(raw),
+        exclude: n => set.rule(set.active, n),
+        annotate: n => set.note(set.active, n),
+        tags: n => BUCKETS.filter(b => b[0] !== set.active && set.has(b[0], n)).map(b => ({ label: b[1], tone: b[0] })),
+        onChange: set.write ? null : () => setMoved(key),
+        onPick: set.write ? n => set.write(set.active, n, true) : undefined,
+        onDrop: set.write ? n => set.write(set.active, n, false) : undefined,
+    });
+    // After pickerInit, which drops whatever was under the key before.
+    S.sets[key] = set;
+    return set;
+}
+
+// setValue is one bucket's names as the set picker holds them.
+function setValue(key, bucket) {
+    const set = S.sets[key];
+    return set ? set.sel[bucket].slice() : [];
+}
+
+// setField is the component: the buckets, the open bucket's lead, and the
+// list (the picker draws the bucket's tokens above its search box).
+function setField(key) {
+    const set = S.sets[key];
+    return '<div class="pd-set bk-' + set.active + '" id="set-' + key + '"' + (setDirty(key) ? ' data-dirty' : '') + '>' +
+        '<div class="pd-setbar" role="tablist" id="setbar-' + key + '">' + setBar(key) + '</div>' +
+        '<div class="pd-setlead" id="setlead-' + key + '">' + setLead(key) + '</div>' +
+        pickerBox(key) + '</div>';
+}
+
+function setBar(key) {
+    const set = S.sets[key];
+    return BUCKETS.map(b => {
+        const closed = set.closed(b[0]);
+        const on = b[0] === set.active;
+        return '<button type="button" role="tab" class="pd-setb ' + b[0] + (on ? ' on' : '') + '" data-act="set-bucket"' +
+            ' data-set="' + key + '" data-bucket="' + b[0] + '" aria-selected="' + on + '"' +
+            (closed ? ' disabled title="' + esc(closed) + '"' : '') + '><i class="pd-setdot"></i>' + esc(b[1]) +
+            ' <b>' + (closed ? '–' : set.sel[b[0]].length) + '</b></button>';
+    }).join('');
+}
+
+function setLead(key) {
+    const set = S.sets[key];
+    const b = BUCKETS.find(x => x[0] === set.active);
+    return '<span class="pd-dim">' + esc(b[2]) + '</span>' + set.lead(set.active);
+}
+
+// A sheet's set holds work when any bucket moved from where it opened. A
+// write-through set never does: what is ticked there is already saved.
+function setDirty(key) {
+    const set = S.sets[key];
+    return !!set && !set.write && JSON.stringify(set.sel) !== JSON.stringify(set.base);
+}
+
+// drawSetChrome redraws what is around the list after its bucket or a count
+// moved: the buckets, the lead, the colour and the work mark. The list itself
+// is the picker's and keeps its search, its filter and its scroll.
+function drawSetChrome(key) {
+    const set = S.sets[key];
+    const box = $('set-' + key);
+    if (!set || !box) return;
+    box.className = 'pd-set bk-' + set.active;
+    if (setDirty(key)) box.setAttribute('data-dirty', ''); else box.removeAttribute('data-dirty');
+    const bar = $('setbar-' + key), lead = $('setlead-' + key);
+    if (bar) bar.innerHTML = setBar(key);
+    if (lead) lead.innerHTML = setLead(key);
+}
+
+// setBucket opens a bucket: the list's ticks become that bucket's names, and
+// its rules and tags apply.
+function setBucket(key, bucket) {
+    const set = S.sets[key];
+    const p = S.pickers[key];
+    if (!set || !p || !set.sel[bucket] || set.closed(bucket)) return;
+    set.active = bucket;
+    p.sel = set.sel[bucket].slice();
+    drawSetChrome(key);
+    if (p.ui) p.ui.set(p.sel, { was: set.write ? p.sel : set.base[bucket] });
+}
+
+// setMoved is a draft tick: the bucket takes the picker's selection, then the
+// host's rule for what that moves elsewhere.
+function setMoved(key) {
+    const set = S.sets[key];
+    const p = S.pickers[key];
+    if (!set || !p) return;
+    set.sel[set.active] = p.sel.slice();
+    if (set.moved) set.moved(set.active);
+    drawSetChrome(key);
+}
+
+// setRoutingRows is a set's routing buckets as rows, in the order material
+// meets them and, inside a role, the order picked.
+function setRoutingRows(key) {
+    const rows = [];
+    for (const g of ROUTING_GROUPS) {
+        for (const n of setValue(key, g[0])) rows.push({ core_node_name: n, role: g[0] });
+    }
+    return rows;
+}
+
 // WHAT BACKFILL MEANS, IN WORDS, ON THE ROW (owner ruling 2026-09-10, Q5).
 //
 // The row used to carry an origin PILL reading "backfill" and, when it was
@@ -3935,10 +4088,10 @@ function mapSubject() {
 // beside the gate it is the precondition for, and the map beside it is a
 // read-back rather than the only way in.
 //
-// THREE LISTS, NOT ONE, because composer-model's defaultRouting picks a cell's
-// source and destination by lowest sequence PER ROLE: source, staging and
-// destination are different questions and a single list of nodes could not
-// answer any of them.
+// THREE ROLES, NOT ONE SET OF NAMES, because composer-model's defaultRouting
+// picks a cell's source and destination by lowest sequence PER ROLE: source,
+// staging and destination are different questions. They are three buckets of
+// the one set picker (setInit), over one list of nodes, beside the positions.
 
 // MEMBERSHIP IS THE SWITCH (owner ruling 2026-09-16, second pass).
 //
@@ -3949,8 +4102,8 @@ function mapSubject() {
 // whether you meant it is a decision drawn twice. The whole-set on/off already
 // exists and is the flow-composer gate directly above this section.
 //
-// So each role is ONE picker box. The chips are the set. Picking a name puts
-// it in the role; the chip's × takes it out.
+// So each role is ONE bucket of the set picker. Its tokens are the set.
+// Ticking a name puts it in the role; the token's × or the untick takes it out.
 //
 // OUT MEANS DELETED, and it always works: what the removal orphans comes back
 // as a warning (setRoutingNode).
@@ -3981,41 +4134,141 @@ function alwaysAvailableStaging() {
         .map(pos => pos.core_node_name);
 }
 
-function routingPickersReady() {
-    for (const g of ROUTING_GROUPS) {
-        const key = routingPickerKey(g[0]);
-        // THE PICKER'S STATE BELONGS TO THE TAB, NOT TO A REDRAW. drawSettings
-        // runs on every switch flip and after every save, and re-initialising
-        // here would clear the half-typed filter under the engineer's hands.
-        // openProcess drops them when the process changes. The SELECTION is
-        // re-read from the server on every draw, because the server is what
-        // holds it — see routingRole.
-        if (S.pickers[key] && S.pickers[key].onPick) continue;
-        pickerInit(key, {
-            // WRITE-THROUGH, and the chips are the server's rows rather than a
-            // local selection: there is no Save on this section, so a pick
-            // that only changed page state would be a set the floor never got.
-            onPick: name => setRoutingNode(g[0], name, true),
-            onDrop: name => setRoutingNode(g[0], name, false),
-            exclude: n => (isPositionRow(n)
-                ? 'a position of this process — available to every flow on it already'
-                : B().legExclusion(S.coreNodes, n, g[0])),
-            // WHERE A NAME CAME FROM, AT THE MOMENT OF PICKING. A row the
-            // backfill found says so and how many live styles route through
-            // it, which is the whole of Q5's evidence line in the one place it
-            // is actually read.
-            annotate: n => {
-                const have = (S.routing || []).find(r => r.core_node_name === n && r.role === g[0]);
-                if (!have || have.enabled) return '';
-                if (have.origin === 'backfill') {
-                    const c = have.style_count || 0;
-                    return 'in your flows · ' + (ROLE_EVIDENCE[g[0]] || g[0]) +
-                        ' on ' + c + ' style' + (c === 1 ? '' : 's');
-                }
-                return 'was in this list, switched off';
-            },
-        });
+// Settings' set picker (setInit): this process's positions and its routing
+// set, written as each tick is made.
+const ST_SET = 'stset';
+
+// stSetReady declares Settings' set picker once per process and, on every
+// draw, takes its four buckets from where each lives: the routing rows as the
+// server holds them, and the positions of the screen the Positions bucket is
+// on as the page last read them. THE PICKER'S STATE BELONGS TO THE TAB, NOT TO
+// A REDRAW: drawSettings runs on every switch flip and after every write, and
+// re-declaring here would close the open bucket and clear the half-typed
+// filter under the engineer's hands. openProcess drops it when the process
+// changes. The names are re-read on every draw, because the server holds them.
+function stSetReady() {
+    const screens = stationsOf(S.processID);
+    if (!S.stSet || S.stSet.pid !== S.processID) {
+        S.stSet = { pid: S.processID, station: screens.length ? screens[0].id : 0, warnedFor: null };
     }
+    if (!screens.some(st => st.id === S.stSet.station)) S.stSet.station = screens.length ? screens[0].id : 0;
+    const sel = { positions: S.stSet.station ? (S.stationNodes[String(S.stSet.station)] || []).slice() : [] };
+    for (const g of ROUTING_GROUPS) sel[g[0]] = routingRowsFor(g[0]).map(r => r.core_node_name);
+    const set = S.sets[ST_SET];
+    if (set && S.pickers[ST_SET]) {
+        set.sel = sel;
+        set.base = JSON.parse(JSON.stringify(sel));
+        S.pickers[ST_SET].sel = sel[set.active].slice();
+        return;
+    }
+    setInit(ST_SET, {
+        sel: sel,
+        has: (b, n) => (b === 'positions' ? isPositionRow(n) : routingRowsFor(b).some(r => r.core_node_name === n)),
+        rule: stSetRule,
+        note: stSetNote,
+        write: (b, n, on) => (b === 'positions' ? setPositionNode(n, on) : setRoutingNode(b, n, on)),
+        lead: stSetLead,
+        // A SET THAT COULD NOT BE READ IS NOT AN EMPTY SET, and opening an
+        // empty role over a failed read invites an engineer to re-add names
+        // the process already has. See loadRouting.
+        closed: b => (b !== 'positions' && routingUnread() ? 'the routing set could not be read' : ''),
+    });
+}
+
+// stSetRule is why Settings' bucket b may not take name, or ''.
+//
+// A POSITION IS ONE SCREEN'S, so with no screen there is nothing to tick it
+// onto. A ROUTING NAME OF THIS PROCESS IS GREYED AS A POSITION here, where the
+// sheet takes it out of its roles instead: a tick on Settings is a write, and
+// one tick that deleted routing rows (each warning what it orphans) and then
+// claimed the node would be two decisions made by one box.
+function stSetRule(b, name) {
+    if (b !== 'positions') {
+        return isPositionRow(name)
+            ? 'a position of this process — available to every flow on it already'
+            : B().legExclusion(S.coreNodes, name, b);
+    }
+    if (!S.stSet.station) return 'add an operator screen first: a position belongs to one';
+    const roles = ROUTING_GROUPS.filter(g => routingRowsFor(g[0]).some(r => r.core_node_name === name)).map(g => g[1]);
+    if (roles.length) return 'in ' + roles.join(' and ') + ' — take it out there to make it a position';
+    return positionHeld(name, S.processID);
+}
+
+// stSetNote: what ticking a position does when it is more than adding it, and
+// where a routing name the backfill found came from — the whole of Q5's
+// evidence line, at the moment of picking.
+function stSetNote(b, name) {
+    if (b === 'positions') return positionMove(name, S.processID, S.stSet.station);
+    const have = (S.routing || []).find(r => r.core_node_name === name && r.role === b);
+    if (!have || have.enabled) return '';
+    if (have.origin === 'backfill') {
+        const c = have.style_count || 0;
+        return 'in your flows · ' + (ROLE_EVIDENCE[b] || b) + ' on ' + c + ' style' + (c === 1 ? '' : 's');
+    }
+    return 'was in this list, switched off';
+}
+
+// stSetLead is the line under the buckets: which screen the positions are, for
+// a process with more than one, and the staging role's back positions.
+function stSetLead(b) {
+    const screens = stationsOf(S.processID);
+    if (b === 'positions') {
+        if (!screens.length) {
+            return '<span class="pd-dim"> · a position belongs to an operator screen, and this process has none ' +
+                'yet: add one on the Operator screens tab</span>';
+        }
+        if (screens.length < 2) return '<span class="pd-dim"> · on ' + esc(screens[0].name) + '</span>';
+        return '<span class="pd-seg" id="pd-setscreen">' + screens.map(st => '<button class="' +
+            (st.id === S.stSet.station ? 'on' : '') + '" data-act="set-screen" data-station="' + st.id + '">' +
+            esc(st.name) + '</button>').join('') + '</span>';
+    }
+    if (b === 'staging') {
+        const backs = alwaysAvailableStaging();
+        if (backs.length) return '<span class="pd-dim"> · ' + esc(backs.join(', ')) + ' are back positions and always available</span>';
+    }
+    return '';
+}
+
+// setPositionNode puts name on the Positions bucket's screen, or takes it off.
+//
+// claimed-nodes IS A SET-TO, so the write is the screen's list as read just
+// now plus or minus the one name — never a list the page held, which a
+// failed refresh could have left stale (readStationNodes). A REMOVAL IS ASKED
+// ABOUT FIRST: what still names the position comes back as a notice, and the
+// same untick again goes through, as the positions sheet's second Save did.
+async function setPositionNode(name, on) {
+    const stationID = S.stSet.station;
+    if (!stationID) return;
+    S.settingsError = '';
+    S.settingsNotice = '';
+    const current = await readStationNodes(stationID);
+    if (!current) {
+        S.settingsError = 'This screen’s positions could not be read, so nothing was changed. Try again.';
+        drawSettings();
+        return;
+    }
+    const want = B().stationNodes(on ? current.concat(current.indexOf(name) < 0 ? [name] : [])
+        : current.filter(n => n !== name)).nodes;
+    if (!on && S.stSet.warnedFor !== name) {
+        const impact = await send('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact', { nodes: want }, NO_NOTICE);
+        if (!impact.ok) { S.settingsError = said(impact); drawSettings(); return; }
+        if (bodyOf(impact).warning) {
+            S.stSet.warnedFor = name;
+            S.settingsNotice = bodyOf(impact).warning + ' Untick ' + name + ' again to take it off.';
+            drawSettings();
+            return;
+        }
+    }
+    S.stSet.warnedFor = null;
+    const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes', { nodes: want }, NO_NOTICE);
+    if (!out.ok) { S.settingsError = said(out); drawSettings(); return; }
+    const kept = Array.isArray(bodyOf(out).kept) ? bodyOf(out).kept : [];
+    await afterPositionsChanged(stationID);
+    const st = stationsOf(S.processID).find(x => x.id === stationID);
+    const where = st ? st.name : 'the screen';
+    S.settingsNotice = kept.length ? keptPositionsSentence(kept)
+        : on ? 'Added ' + name + ' to ' + where + '.' : 'Took ' + name + ' off ' + where + '.';
+    drawSettings();
 }
 
 // switchedOffIn is the rows of a role the process HAS and has not switched on
@@ -4026,40 +4279,27 @@ function switchedOffIn(role) {
     return (S.routing || []).filter(r => r.role === role && !r.enabled);
 }
 
-function routingRole(g) {
-    const key = routingPickerKey(g[0]);
-    // The chips ARE the server's enabled rows. Re-read on every draw so a
-    // refusal or another session's change cannot leave a chip on screen that
-    // the set does not have.
-    if (S.pickers[key]) S.pickers[key].sel = routingRowsFor(g[0]).map(r => r.core_node_name);
-    let sub = g[2];
-    if (g[0] === 'staging') {
-        const backs = alwaysAvailableStaging();
-        if (backs.length) sub += ' · ' + backs.join(', ') + ' are back positions and always available';
-    }
-    // TURN ALL ON, PER ROLE (SYNTH §3 B6).
-    //
-    // The backfill landed derived names DISABLED until 2026-09-16, and nothing
-    // re-derives now (migration v25 runs once, only for a process with no
-    // rows): a row nobody switched on stays off forever, and the only way back
-    // is one PATCH per row by hand. The 4x2
-    // arrived with seven staging names in exactly that state — the composer's
-    // own card said so, by name — and there was nowhere on this screen to say
-    // yes to all seven.
-    //
-    // NAMED, NOT COUNTED, and the button carries the count because the sentence
-    // beside it carries the names: an engineer agreeing to seven wants to know
-    // it is seven of the names they are looking at.
+// allOffLine is one role's names the process has and has not switched on,
+// with the one button that switches them all on.
+//
+// TURN ALL ON, PER ROLE (SYNTH §3 B6). The backfill landed derived names
+// DISABLED until 2026-09-16, and nothing re-derives now (migration v25 runs
+// once, only for a process with no rows): a row nobody switched on stays off
+// forever, and the only way back is one PATCH per row by hand. The 4x2 arrived
+// with seven staging names in exactly that state — the composer's own card said
+// so, by name — and there was nowhere on this screen to say yes to all seven.
+//
+// NAMED, NOT COUNTED, and the button carries the count because the sentence
+// beside it carries the names: an engineer agreeing to seven wants to know it
+// is seven of the names they are looking at.
+function allOffLine(g) {
     const off = switchedOffIn(g[0]);
-    let all = '';
-    if (off.length) {
-        all = '<div class="pd-rs-alloff"><span class="pd-dim">' +
-            esc(off.length + ' ' + (off.length === 1 ? 'name' : 'names') +
-                ' found from your flows, switched off — ' + off.map(r => r.core_node_name).join(', ')) +
-            '</span><button class="pd-btn quiet" data-act="rs-all-on" data-role="' + esc(g[0]) + '">' +
-            'Turn all ' + off.length + ' on</button></div>';
-    }
-    return stBlock(g[1], sub, pickerBox(key) + all);
+    if (!off.length) return '';
+    return '<div class="pd-rs-alloff"><span class="pd-dim">' +
+        esc(g[1] + ': ' + off.length + ' ' + (off.length === 1 ? 'name' : 'names') +
+            ' found from your flows, switched off — ' + off.map(r => r.core_node_name).join(', ')) +
+        '</span><button class="pd-btn quiet" data-act="rs-all-on" data-role="' + esc(g[0]) + '">' +
+        'Turn all ' + off.length + ' on</button></div>';
 }
 
 // rsAllOn switches on every off row of one role.
@@ -4088,38 +4328,33 @@ async function rsAllOn(role) {
     await refreshProcess();
 }
 
-function routingSection() {
-    // A SET THAT COULD NOT BE READ IS NOT AN EMPTY SET, and drawing three
-    // empty roles over a failed read invites an engineer to re-add names the
-    // process already has. See loadRouting.
-    if (routingUnread()) {
-        return '<div class="pd-sect"><h2>Routing set</h2></div>' +
-            '<div class="pd-refusal">' + esc(S.routingError ||
-                'The routing set could not be read.') + '</div>';
-    }
-    routingPickersReady();
+function setSection() {
+    stSetReady();
     const way = waypointNames();
     const m = mapOf();
     // THE HEADING DESCRIBES THE SET, and the server's summary sentence does
     // not: it counts the rows a backfill derived, a true answer to a narrower
     // question, read above the whole set as though it described it.
-    return '<div class="pd-sect"><h2>Routing set</h2>' +
-        '<span class="pd-dim">where this process may draw bins from, stage them, and send them</span>' +
+    return '<div class="pd-sect"><h2>Positions and routing set</h2>' +
+        '<span class="pd-dim">where this process works, and where it may draw bins from, stage them, and send them</span>' +
         SAVED_AS_YOU_PICK + '</div>' +
-        ROUTING_GROUPS.map(routingRole).join('') +
+        (routingUnread() ? '<div class="pd-refusal">' + esc(S.routingError ||
+            'The routing set could not be read.') + '</div>' : '') +
+        setField(ST_SET) +
+        ROUTING_GROUPS.map(allOffLine).join('') +
         (way.length ? stBlock('Waypoints', 'from the map, on the shortest supply path — not editable',
             '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
-        (S.routingError ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
+        (S.routingError && !routingUnread() ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
         (S.routingWarning ? '<div class="pd-warn">' + esc(S.routingWarning) + '</div>' : '') +
-        '<p class="pd-note">A name in one of these lists is a place this process may route material ' +
-        'through, and operators are offered these and never the plant. There is nothing to switch ' +
+        '<p class="pd-note">A name in Inbound, Staging or Outbound is a place this process may route ' +
+        'material through, and operators are offered these and never the plant. There is nothing to switch ' +
         'on: a name in the list is set up. A recipe follows the one name in a role; with several, it ' +
         'keeps the one it was saved with. Taking one out warns what it leaves behind. Whether ' +
         'operators may change flows at all is the HMI setup row below.</p>' +
         // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
-        // press, and a click on a name flashes that name's chip. It is not an
-        // input: a click on a dot could only guess at the role, and the three
-        // lists above are the engineer saying it. With no map there is
+        // press, and a click on a name flashes that name's token. It is not an
+        // input: a click on a dot could only guess at the role, and the
+        // buckets above are the engineer saying it. With no map there is
         // nothing to read back, so there is no frame, zoom or caption either.
         (m ? routingMap(m) : '<p class="pd-note">No plant map on this Edge yet. Core sends it with the ' +
             'node list; until then the lists above are the whole routing set.</p>');
@@ -4173,7 +4408,7 @@ async function setRoutingNode(role, name, on) {
     drawSettings();
     // Back into the field the name was typed into: the engineer adding one
     // name is usually adding three.
-    const picked = S.pickers[routingPickerKey(role)];
+    const picked = S.pickers[ST_SET];
     if (picked && picked.ui) picked.ui.focus();
 }
 
@@ -4240,8 +4475,12 @@ async function loadRouting() {
 // behind the press — flashes nothing. The map is most of a plant this press
 // has no business in, and a sentence for every faint dot is noise.
 function flashRoutingRow(name) {
-    // The chip, because the chip is the set now — the rows this used to find
-    // went with the per-row switches.
+    // The token, because the token is the set now — the rows this used to
+    // find went with the per-row switches. A token is drawn for the open
+    // bucket only, so the first bucket that holds the name is opened.
+    const set = S.sets[ST_SET];
+    const holder = set && BUCKETS.map(b => b[0]).find(b => set.sel[b].indexOf(name) >= 0);
+    if (holder && holder !== set.active) setBucket(ST_SET, holder);
     const drop = root().querySelector('.picker-chip [data-drop="' + CSS.escape(name) + '"]');
     const chip = drop && drop.closest('.picker-chip');
     if (!chip) return;
@@ -4793,6 +5032,7 @@ function onAdvClick(e) {
         markAddPositions();
         return;
     }
+    if (act && act.dataset.act === 'set-bucket') { e.stopPropagation(); setBucket(act.dataset.set, act.dataset.bucket); return; }
     if (act && act.dataset.act === 'add-showmap') { e.stopPropagation(); toggleSheetMap(); return; }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
@@ -5462,7 +5702,8 @@ function countedAtName(n) {
 // ── Settings · Positions ─────────────────────────────────────────────────────
 //
 // Every position of the process, under the screen it is on, each with its
-// light-curtain switch and a Remove. Add positions opens the checklist.
+// light-curtain switch and a Remove. Adding one is the Positions bucket of the
+// set picker above (setSection).
 //
 // A POSITION BELONGS TO A SCREEN, not to the process alone (process_nodes
 // carries operator_station_id, and claimed-nodes is per screen), so the rows
@@ -5472,15 +5713,13 @@ function countedAtName(n) {
 function positionsSection() {
     const screens = stationsOf(S.processID);
     const head = '<div class="pd-sect"><h2>Positions</h2>' +
-        '<span class="pd-dim">the spots this process works, by the screen each is on</span>' + SAVED_AS_YOU_PICK +
-        '<span class="pd-spacer"></span>' +
-        (screens.length ? '<button class="pd-btn" data-act="pos-add">Add positions</button>' : '') + '</div>';
+        '<span class="pd-dim">each position’s light curtain and where it is counted, by the screen it is on</span></div>';
     if (!screens.length) {
         return head + '<p class="pd-note">A position belongs to an operator screen, and this process has ' +
-            'none yet. Add one on the Operator screens tab, then add its positions here.</p>';
+            'none yet. Add one on the Operator screens tab, then tick its positions above.</p>';
     }
     const nodes = S.curtainNodes || [];
-    if (!nodes.length) return head + '<p class="pd-note">This process has no positions yet.</p>';
+    if (!nodes.length) return head + '<p class="pd-note">This process has no positions yet: tick them in the Positions bucket above.</p>';
     const onScreen = id => nodes.filter(n => n.operator_station_id === id);
     const loose = nodes.filter(n => !screens.some(st => st.id === n.operator_station_id));
     return head + screens.filter(st => onScreen(st.id).length).map(st =>
@@ -5835,8 +6074,12 @@ function drawSettings() {
     // and map zoom threw the routing set and the map — both at the foot of a
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
+    // And the set picker's list keeps its own: every tick there is a write and
+    // a redraw, and a list that jumped back to its top on each would make an
+    // engineer scroll down to the next name every time.
+    const listAt = (() => { const l = $('npk-' + ST_SET); const b = l && l.querySelector('.picker-list'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        healthSection() + general + counter + positions + routingSection() + partsSect + more + danger +
+        healthSection() + general + counter + setSection() + positions + partsSect + more + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard"' + (settingsDirty() ? '' : ' disabled') + '>Discard</button>' +
@@ -5873,6 +6116,11 @@ function drawSettings() {
     if (wasAt) {
         const box = root().querySelector('.pd-sheet');
         if (box) box.scrollTop = wasAt;
+    }
+    if (listAt) {
+        const l = $('npk-' + ST_SET);
+        const b = l && l.querySelector('.picker-list');
+        if (b) b.scrollTop = listAt;
     }
 }
 
@@ -6195,6 +6443,11 @@ function loadCoreNodes() {
 //             the payload catalog rather than Core's node list
 //   checklist the list is always open, one box per node, with the name
 //             prefixes (PLN, SMN…) as filters over it — see checklistFilters
+//   only      raw row -> whether the list draws it at all (default for a
+//             checklist: no group, each node its own box); read on every
+//             draw, so a host may change it (a set picker's bucket)
+//   tags      name -> [{label, tone}], marks drawn after the name: what else
+//             the node already is
 function pickerInit(key, opts) {
     const o = opts || {};
     dropPicker(key);
@@ -6208,6 +6461,8 @@ function pickerInit(key, opts) {
         onDrop: o.onDrop || null,
         onChange: o.onChange || null,
         checklist: !!o.checklist,
+        only: o.only || null,
+        tags: o.tags || null,
         filters: 0, // the prefixes its checklist was drawn with
         ui: null,   // the adapter's picker drawn for it, while its host is in the page
     };
@@ -6219,6 +6474,7 @@ function dropPicker(key) {
     const p = S.pickers[key];
     if (p && p.ui) p.ui.destroy();
     delete S.pickers[key];
+    delete S.sets[key];
 }
 
 function pickerValue(key) {
@@ -6325,7 +6581,8 @@ function drawPicker(key) {
         : nodePicker(host, NODES, {
             rule: n => p.exclude(n.name),
             note: n => p.annotate(n.name),
-            only: p.checklist ? n => !isGroupRow(n.raw) : undefined,
+            tags: p.tags ? n => p.tags(n.name) : undefined,
+            only: p.only ? n => p.only(n.raw) : p.checklist ? n => !isGroupRow(n.raw) : undefined,
         }, shell);
     p.filters = shell.filters ? shell.filters.length : 0;
     // The query it had (a prefix the page opened it on) stays its query: a
@@ -7249,9 +7506,10 @@ async function addAndUse(node, field, name) {
 // exists is better off than one whose half-made press was cleaned up by a
 // guess. The status line names what landed and what did not.
 
-// The three routing pickers, by role. Keyed apart from the positions picker
-// because sheetValue reads a picker by its key.
-function routingPickerKey(role) { return 'rs_' + role; }
+// The process sheet's set picker: its positions and its routing set, one
+// list in four buckets (setInit). Keyed apart from Settings' (ST_SET) because
+// a sheet can open over Settings, and closing it drops its own.
+const PROC_SET = 'procset';
 
 // The part set's picker. Its own key for the same reason, and its own constant
 // because the Add-process sheet and Settings' "Parts this process runs" both
@@ -7372,43 +7630,31 @@ function openAddProcess() {
     // On the list, nothing of the last process's map comes with the sheet:
     // not its map, its travel graph or its zoom. The sheet reads the Edge's.
     if (!S.processID) { S.plantMap = null; S.graph = null; S.mapZoom = 1; }
-    const positions = () => pickerValue('positions');
-    // THE SAME CHECKLIST AS SETTINGS' ADD POSITIONS: one box per node, and a
-    // node another process holds is greyed with its name (process 0 is this
-    // one, not yet made). The holders are read after the sheet opens, and the
-    // list redraws when they land.
-    pickerInit('positions', {
-        checklist: true,
-        exclude: n => positionBlock(n, 0),
-        annotate: n => positionNote(n, 0),
-        onChange: () => {
+    const positions = () => setValue(PROC_SET, 'positions');
+    // ONE LIST, FOUR BUCKETS (setInit). As a position, a node another process
+    // holds is greyed with its name (process 0 is this one, not yet made); the
+    // holders are read after the sheet opens, and the list redraws when they
+    // land. In a routing role, a position of this process is greyed, and the
+    // other roles are not: a buffer is legitimately both inbound and outbound
+    // (domain/routing_set.go), and the bucket says which role.
+    setInit(PROC_SET, {
+        rule: (b, n) => (b === 'positions' ? positionBlock(n, 0)
+            : positions().indexOf(n) >= 0 ? 'a position of this process — available to every flow on it already'
+                : B().legExclusion(S.coreNodes, n, b)),
+        note: (b, n) => (b === 'positions' ? positionNote(n, 0) : ''),
+        moved: b => {
             // A name that has just become a position cannot also be a routing
             // row: process_routing_nodes refuses one (ErrRoutingNodeIsPosition)
             // because a node in both halves would be offered twice. So it
-            // leaves the role lists here, rather than sitting in one until the
+            // leaves the roles here, rather than sitting in one until the
             // server says so three writes later.
-            for (const g of ROUTING_GROUPS) {
-                const key = routingPickerKey(g[0]);
-                const p = S.pickers[key];
-                if (!p) continue;
-                p.sel = p.sel.filter(n => positions().indexOf(n) < 0);
-                redrawPicker(key);
+            if (b === 'positions') {
+                const set = S.sets[PROC_SET];
+                for (const g of ROUTING_GROUPS) set.sel[g[0]] = set.sel[g[0]].filter(n => positions().indexOf(n) < 0);
             }
             redrawSheetMap();
         },
     });
-    for (const g of ROUTING_GROUPS) {
-        pickerInit(routingPickerKey(g[0]), {
-            // A POSITION IS EXCLUDED; THE OTHER TWO ROLES ARE NOT. A buffer is
-            // legitimately both a source and a destination (domain/routing_set.go),
-            // and the engineer said which role by which list they put it in —
-            // so the three do not exclude each other.
-            exclude: n => (positions().indexOf(n) >= 0
-                ? 'a position of this process — available to every flow on it already'
-                : B().legExclusion(S.coreNodes, n, g[0])),
-            onChange: redrawSheetMap,
-        });
-    }
     // THE PART SET, AS THE FOURTH PICKER. A cell made here has no claims, so
     // nothing derives its parts and every part picker on both surfaces would
     // open empty — which is the bug this sheet is the first half of the fix
@@ -7417,9 +7663,9 @@ function openAddProcess() {
     pickerInit(PART_SET_PICKER, { source: 'payloads' });
 
     // ONE SCREEN AT 900 PX (F16): the screen's name sits with the process's,
-    // the three routing roles share a row, the positions checklist scrolls in
-    // its own box, the notes Settings carries are not repeated here, and the
-    // map read-back waits behind Show on map (U2).
+    // the positions and the routing set are one list in four buckets that
+    // scrolls in its own box, the notes Settings carries are not repeated
+    // here, and the map read-back waits behind Show on map (U2).
     const body = '<div class="pd-addproc">' +
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
         sheetField('Name', 'what this process is called here', 'name', '') +
@@ -7429,12 +7675,8 @@ function openAddProcess() {
         'Ungrouped<i class="car"></i></button></div></div>' +
         sheetField('Operator screen', 'its HMI · blank: named after the process', 'screen', '') +
 
-        '<div class="pd-sec"><div class="pd-lbl">Positions</div></div>' +
-        pickerField('positions', 'Positions', 'the spots this screen claims') +
-
-        '<div class="pd-sec"><div class="pd-lbl">The routing set' + sheetMapToggle() + '</div></div>' +
-        '<div class="pd-rs3">' + ROUTING_GROUPS.map(g => '<div><label>' + esc(g[1]) + '</label>' +
-            pickerBox(routingPickerKey(g[0])) + '</div>').join('') + '</div>' +
+        '<div class="pd-sec"><div class="pd-lbl">Positions and routing set' + sheetMapToggle() + '</div></div>' +
+        setField(PROC_SET) +
         '<div id="pd-addmapslot">' + sheetMapField() + '</div>' +
 
         '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
@@ -7442,7 +7684,7 @@ function openAddProcess() {
 
     pageSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false);
-    loadLivePositions().then(() => redrawPicker('positions'));
+    loadLivePositions().then(() => redrawPicker(PROC_SET));
     if (!S.processID) void loadSheetMap(S.add);
     // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the two
     // up-front checks clear this way: a refusal from the write chain is the
@@ -7496,7 +7738,7 @@ async function submitAddProcess() {
     }
     const stationID = chain.stationID;
 
-    const claimed = pickerValue('positions');
+    const claimed = setValue(PROC_SET, 'positions');
     if (claimed.length && !chain.claimed) {
         const nodes = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
             B().stationNodes(claimed), NO_NOTICE);
@@ -7515,12 +7757,7 @@ async function submitAddProcess() {
     // whole set goes in one body, validated whole before any of it is written,
     // and the ORDER inside each role is still the order the engineer picked —
     // the lowest sequence of a role is the default a new position opens on.
-    const routingRows = [];
-    for (const g of ROUTING_GROUPS) {
-        for (const node of pickerValue(routingPickerKey(g[0]))) {
-            routingRows.push({ core_node_name: node, role: g[0] });
-        }
-    }
+    const routingRows = setRoutingRows(PROC_SET);
     if (routingRows.length && !chain.routed) {
         const rows = await send('PUT', '/api/processes/' + processID + '/routing-nodes',
             B().routingSet(routingRows), NO_NOTICE);
@@ -8893,7 +9130,12 @@ function onClick(e) {
             }
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
-            case 'pos-add': void openAddPositions(''); return;
+            case 'set-bucket': setBucket(btn.dataset.set, btn.dataset.bucket); return;
+            case 'set-screen':
+                // The Positions bucket's screen: its ticks are that screen's.
+                if (S.stSet) { S.stSet.station = Number(btn.dataset.station); S.stSet.warnedFor = null; }
+                drawSettings();
+                return;
             case 'pos-remove': void openRemovePosition(btn.dataset.node, Number(btn.dataset.station)); return;
             case 'bind-loader': bindLoaderBoard(btn.dataset.loader); return;
             case 'screen-add': void openScreenSheet(0); return;

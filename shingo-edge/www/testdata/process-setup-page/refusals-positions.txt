@@ -2,38 +2,36 @@
 # answer; the requests that followed it; each run of text that appeared on the page (container,
 # innermost element); the sheet; the page's message state; any rejection the page left unhandled.
 
-## Add positions: NEW_1
+## Positions bucket: tick NEW_1
 # writes, in order: PUT /api/operator-stations/11/claimed-nodes
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    sheet: open "Positions", status "the Edge refused it" (bad), OK "Add 1" enabled
-    state: no message set
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
+    state: settingsError="the Edge refused it"
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    sheet: open "Positions", status "Server error (500)" (bad), OK "Add 1" enabled
-    state: no message set
+    new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
+    state: settingsError="Server error (500)"
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    sheet: open "Positions", status "No answer from the server" (bad), OK "Add 1" enabled
-    state: no message set
+    new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
+    state: settingsError="No answer from the server"
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    new text: … and 55 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Positions", no status, OK "Add 1" enabled
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11/claimed-nodes → sheet: open "Positions", no status, OK "Add 1" enabled
 
 ## Remove POS_A11: the sheet the impact read opens
 # writes, in order: POST /api/operator-stations/11/claimed-nodes/impact

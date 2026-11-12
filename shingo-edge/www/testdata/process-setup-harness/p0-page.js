@@ -455,11 +455,11 @@ Object.assign(D, {
     } },
 });
 Object.assign(D, {
+    // A position is ticked in Settings' set picker, in its Positions bucket:
+    // written as it is ticked, onto the screen's list as read just then.
     posAdd: { hash: '#tab=settings', drive: async page => {
-        page.click('root', rootButton(page, 'pos-add'));
+        T.setPick(page, 'root', 'stset', 'positions', 'NEW_1');
         await page.settle();
-        T.npk(page, 'scrim', 'addpos', 'NEW_1');
-        await pressOK(page);
     } },
     posRemoveAsk: { hash: '#tab=settings', drive: async page => {
         page.click('root', rootButton(page, 'pos-remove', { node: 'POS_A11' }));
@@ -572,7 +572,7 @@ async function pinRequests() {
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
-        ['Settings › Add positions: NEW_1 onto Screen A (the first screen)', D.posAdd],
+        ['Settings › Positions bucket: tick NEW_1 onto Screen A (the first screen)', D.posAdd],
         ['Settings › POS_A11 › Remove (the impact is read before the sheet opens)', D.posRemove],
         ['Operator screens › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
     ]);
@@ -717,7 +717,7 @@ async function pinRefusals() {
         specOf('Remove Station 1', D.scDelete, { again: true }),
     ]);
     await refusals('refusals-positions.txt', [
-        specOf('Add positions: NEW_1', D.posAdd, { again: true }),
+        specOf('Positions bucket: tick NEW_1', D.posAdd),
         specOf('Remove POS_A11: the sheet the impact read opens', D.posRemoveAsk),
         specOf('Remove POS_A11: the sheet\'s Remove', D.posRemove, { again: true, refuse: /^PUT / }),
         specOf('Make a screen for LDR_1', D.bindLoader),
@@ -875,17 +875,18 @@ async function pinSheetStack() {
     }
     {   // closeSheet clears
         const page = await open({ hash: '#tab=settings' });
-        page.click('root', rootButton(page, 'pos-add'));
+        page.click('root', { act: 'add-process' });
         await page.settle();
-        T.npk(page, 'scrim', 'addpos', 'NEW_1');
+        T.setPick(page, 'scrim', 'procset', 'positions', 'NEW_1');
         const S = page.S;
         const keys = () => Object.keys(S.pickers).sort().join(', ');
-        const rows = ['open Add positions, NEW_1 ticked: ' + stackFacts(page) + '; S.addPos ' + (S.addPos ? 'set' : 'null') + '; pickers ' + keys()];
+        const sets = () => Object.keys(S.sets).sort().join(', ');
+        const rows = ['open Add process, NEW_1 ticked: ' + stackFacts(page) + '; sets ' + sets() + '; pickers ' + keys()];
         page.click('scrim', { act: 'sheet-cancel' });
         await page.settle();
-        rows.push('after Cancel: ' + stackFacts(page) + '; S.addPos ' + (S.addPos ? 'set' : 'null') + '; pickers ' + keys() +
-            ' (Settings\' own pickers stay: their boxes are in #pd-root)');
-        block('closeSheet: what it clears (Add positions on Settings)', rows);
+        rows.push('after Cancel: ' + stackFacts(page) + '; sets ' + sets() + '; pickers ' + keys() +
+            ' (Settings’ own pickers stay: their boxes are in #pd-root)');
+        block('closeSheet: what it clears (Add process on Settings)', rows);
     }
     {
         const page = await open({ hash: '#tab=presets' });

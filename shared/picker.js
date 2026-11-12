@@ -6,7 +6,7 @@
 // which it replaced (S3): every node and part picker in the apps is this one.
 //
 // A ROW is { value, label, section?, note?, reason?, members?, values?,
-// search? }:
+// search?, tags? }:
 //   section  a heading drawn above the first row of each run of the same one
 //   note     a quiet line on a row that can be picked
 //   reason   why this row cannot be picked: it is drawn greyed with the
@@ -16,6 +16,9 @@
 //   values   what picking the row picks, when it is not [value] (a group that
 //            stands for its members); the row is on when all of them are
 //   search   more text the search box matches besides label and value
+//   tags     [{label, tone}]: short marks after the label, each in its tone's
+//            colour (the page's CSS colours [data-tone]) — what else the row
+//            already is, said where it is picked
 //
 // ONE LIST OPEN AT A TIME. A dropdown picker's list is a popover on the layer
 // (layer.js), so Escape and a press outside close it before the sheet under
@@ -69,9 +72,12 @@ let dropped = null;   // the picker whose dropdown list is open
 //                refusal, and the chips stay as they were with the reason
 //                beside them. One pick at a time; no timer.
 //
-// The picker: { el, input, value(), set(values, {clean}), markClean(),
+// The picker: { el, input, value(), set(values, {clean, was}), markClean(),
 // refresh(), open(), close(), focus(), destroy() }. value() is an array for a
-// multi-select and a string ('' for none) for a single one.
+// multi-select and a string ('' for none) for a single one. set's clean takes
+// the values as the new baseline a moved selection is measured against; was
+// names a baseline of its own (a host that swaps one picker between several
+// selections keeps each one's).
 export function createPicker(host, opts) {
     const o = opts || {};
     const id = 'picker-' + (++seq);
@@ -110,6 +116,7 @@ export function createPicker(host, opts) {
             st.sel = list(values);
             if (!multi) st.sel = st.sel.slice(0, 1);
             if (setOpts && setOpts.clean) st.was = st.sel.slice();
+            if (setOpts && setOpts.was) st.was = list(setOpts.was);
             draw();
         },
         markClean() { st.was = st.sel.slice(); dirty(); },
@@ -282,6 +289,7 @@ export function createPicker(host, opts) {
         }, [
             multi ? el('i', { className: 'picker-box', 'aria-hidden': 'true' }) : null,
             el('span', { className: 'picker-label' }, r.label === undefined ? String(r.value) : String(r.label)),
+            ...(r.tags || []).map((t) => el('span', { className: 'picker-tag', 'data-tone': t.tone || null }, String(t.label))),
             off ? el('small', { className: 'picker-why' }, String(r.reason))
                 : (r.note ? el('small', { className: 'picker-note' }, String(r.note)) : null),
         ]);

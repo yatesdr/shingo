@@ -202,6 +202,8 @@ function kindOf(n) {
 // field:
 //   rule(node)   why this field may not take the node, or '' (nodeWhy's pieces)
 //   note(node)   a quiet line on a node it may take
+//   tags(node)   [{label, tone}]: marks drawn after the name (the shell's row
+//                tags), whether or not the node may be taken
 //   value        'name' (default) or 'id'
 //   expand       picking a container picks the nodes under it (positions)
 //   sections     zone headings; default: on when any node has a zone
@@ -227,6 +229,8 @@ export function nodeRows(nodes, field) {
         };
         if (section !== undefined) row.section = section;
         if (why) row.reason = why;
+        const tags = f.tags ? f.tags(n) : null;
+        if (tags && tags.length) row.tags = tags;
         if (f.expand && n.kids.length) {
             row.values = under(n, 1, [], new Set()).filter((x) => !x.n.kids.length).map((x) => valueOf(x.n));
         }
