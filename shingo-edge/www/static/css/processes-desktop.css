@@ -711,11 +711,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* The map's marks. Structure recedes: every edge is one substrate stroke and
    the only saturated things are the two robot paths and the waypoints. */
 .mp-edge { stroke: var(--sub-1); stroke-width: 1; fill: none; }
-.mp-pos { fill: var(--surface); stroke: var(--sub-5); stroke-width: 1.2; }
-.mp-pos.on { stroke: var(--station); stroke-width: 1.5; }
+/* A position is the Positions bucket's colour, the page's text colour: the map
+   sits on the page's --bg in either theme, where --station's white would vanish
+   on a light page. A live one (a cell of the style on screen) is the heavier. */
+.mp-pos { fill: var(--surface); stroke: var(--text); stroke-width: 1.2; }
+.mp-pos.on { stroke: var(--text); stroke-width: 2.4; }
 .mp-post { font-size: 9px; font-weight: 600; fill: var(--text); }
-.mp-smn { fill: var(--station); }
-.mp-grp { fill: none; stroke: var(--station); stroke-width: 1; stroke-dasharray: 3 3; opacity: .6; }
+.mp-smn { fill: var(--sub-5); }
+.mp-grp { fill: none; stroke: var(--sub-5); stroke-width: 1; stroke-dasharray: 3 3; opacity: .6; }
 .mp-grpt { font-size: 10.5px; font-weight: 600; fill: var(--text); }
 .mp-route { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 /* Robot 1's path is wide and under; Robot 2's is thin and over, so a shared
@@ -738,7 +741,16 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .mp-rt.source.destination { fill: var(--robot-1); stroke: var(--robot-2); stroke-width: 2.5; }
 .mp-rtt { font-size: 9px; font-weight: 600; fill: var(--text); }
 .mp-rtr { font-size: 8.5px; font-weight: 600; fill: var(--text-muted); letter-spacing: .04em; }
+/* A group and its members take its role's colour, the set picker's bucket
+   colour, as a plain node's circle does; in two roles, the inbound hue. */
+.mp-grp.source { stroke: var(--robot-1); }
+.mp-grp.destination { stroke: var(--robot-2); }
 .mp-grp.staging { stroke: var(--accent); }
+.mp-grp.source.destination { stroke: var(--robot-1); }
+.mp-smn.source { fill: var(--robot-1); }
+.mp-smn.destination { fill: var(--robot-2); }
+.mp-smn.staging { fill: var(--accent); }
+.mp-smn.source.destination { fill: var(--robot-1); }
 .mp-key { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
 .mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
 
@@ -947,13 +959,18 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    The tab is gone: reviewing the set is Settings' job and it sits beside the
    gate it is the precondition for. Nothing here is a new shape — the rows are
    the node picker's, the label column is the settings field's, and the map is the
-   same .pd-map at a height instead of a flex share. */
+   same .pd-map at its drawing's aspect (900 x 340, the process sheet's) instead
+   of a flex share, drawn only behind Show on map. */
 /* .pd-sfld .v.col moved to shared/components.css (U1), grouped with .set-fld .v.col. */
 .pd-sfld .v.col .pd-npk { margin-top: 6px; }
 .pd-settings .pd-rsmap {
-    flex: none; height: 520px; margin: 10px 0 4px;
+    flex: none; width: 100%; aspect-ratio: 900 / 340; margin: 10px 0 4px;
     border: 1px solid var(--sub-2); border-radius: 12px;
 }
+/* The caption carries the buckets' key, each in its colour, then the subject. */
+.pd-rsmap .cap { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; right: 140px; }
+.mp-leg { display: inline-flex; align-items: center; gap: 4px; }
+.mp-leg i { width: 8px; height: 8px; border-radius: 50%; background: var(--bk); }
 
 /* THE SWITCHED-OFF ROWS OF A ROLE, AND THE ONE CONTROL THAT ANSWERS THEM ALL.
  * The backfill lands a derived name disabled and never runs again once the gate
@@ -975,12 +992,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
  * positions' prefixes on the routing set's heading, so the heading keeps its
  * height and Add process fits 900 px with a plant map (U2); shown, it is the
  * body's full width under the three roles. */
-.pd-addproc .pd-maptoggle {
+.pd-addproc .pd-maptoggle, .pd-settings .pd-maptoggle {
     margin-left: auto; padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
     background: none; color: var(--text-muted); font: inherit; font-size: var(--font-xs); font-weight: 400;
     line-height: inherit; letter-spacing: normal; text-transform: none; cursor: pointer;
 }
-.pd-addproc .pd-maptoggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.pd-addproc .pd-maptoggle[aria-expanded="true"], .pd-settings .pd-maptoggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 /* Where the toggle goes on the list until the plant map is read: no box of
    its own, so the toggle sits in the heading as if drawn there. */
 .pd-maptoggleslot { display: contents; }
@@ -1049,10 +1066,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
  * accent for staging, Robot 2's for outbound. One list instead of four boxes
  * gives it the height the four were sharing (F16): about nine 40 px rows. */
 .pd-set { --bk: var(--text); display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1) 0 var(--sp-2); }
-.pd-set.bk-source, .pd-setb.source, .picker-tag[data-tone="source"] { --bk: var(--robot-1); }
-.pd-set.bk-staging, .pd-setb.staging, .picker-tag[data-tone="staging"] { --bk: var(--accent); }
-.pd-set.bk-destination, .pd-setb.destination, .picker-tag[data-tone="destination"] { --bk: var(--robot-2); }
-.pd-setb.positions, .picker-tag[data-tone="positions"] { --bk: var(--text); }
+.pd-set.bk-source, .pd-setb.source, .picker-tag[data-tone="source"], .mp-leg.source { --bk: var(--robot-1); }
+.pd-set.bk-staging, .pd-setb.staging, .picker-tag[data-tone="staging"], .mp-leg.staging { --bk: var(--accent); }
+.pd-set.bk-destination, .pd-setb.destination, .picker-tag[data-tone="destination"], .mp-leg.destination { --bk: var(--robot-2); }
+.pd-setb.positions, .picker-tag[data-tone="positions"], .mp-leg.positions { --bk: var(--text); }
 .pd-setbar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .pd-setb {
     display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 40px; padding: 0 var(--sp-3);

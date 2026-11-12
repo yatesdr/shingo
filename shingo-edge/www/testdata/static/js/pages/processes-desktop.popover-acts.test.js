@@ -2753,17 +2753,32 @@ async function mainAsync() {
         }
     });
 
+    // THE MAP WAITS BEHIND SHOW ON MAP (HOP, 2026-11-12), as on the process
+    // sheet: the heading carries the toggle, closed, and no frame is drawn
+    // until it is pressed; then the map and its caption, and Hide map.
     await pin('the routing panel with a plant map draws the map and its caption', async () => {
-        const { root } = settingsPage(plantMap());
+        const { root, doc } = settingsPage(plantMap());
         realGeometry();
         await settle();
+        const shut = root.innerHTML;
+        if (shut.indexOf(routingHead.slice(0, -'</div>'.length) + '<span class="pd-spacer"></span><button type="button" ' +
+            'class="pd-maptoggle" data-act="st-showmap" aria-controls="pd-rsmapbox" aria-expanded="false">Show on map</button>') < 0) {
+            throw new Error('Show on map is not on the heading, closed');
+        }
+        if (shut.indexOf('class="pd-map pd-rsmap"') >= 0 || shut.indexOf('rs-zoom') >= 0) throw new Error('the map is drawn before Show on map');
+        click(root, doc, { act: 'st-showmap' });
         const h = root.innerHTML;
-        if (h.indexOf(routingHead) < 0) {
+        if (h.indexOf('aria-expanded="true">Hide map</button>') < 0) throw new Error('the toggle does not read Hide map once pressed');
+        if (h.indexOf(routingHead.slice(0, -'</div>'.length)) < 0) {
             throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Positions and routing set<\/h2>.*?<\/div>/) || [''])[0]));
         }
         if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
-        if (h.indexOf('<div class="pd-map pd-rsmap">') < 0) throw new Error('the routing map frame is not drawn');
+        if (h.indexOf('<div class="pd-map pd-rsmap" id="pd-rsmapbox">') < 0) throw new Error('the routing map frame is not drawn');
+        if (h.indexOf('<svg viewBox="0 0 900 340"') < 0) throw new Error('the map is not drawn at the sheet’s 900 x 340');
         if (h.indexOf('plant map from Core · revision 4') < 0) throw new Error('the map caption does not name the revision');
+        for (const b of ['positions', 'source', 'staging', 'destination']) {
+            if (h.indexOf('<span class="mp-leg ' + b + '"><i></i>') < 0) throw new Error('the caption has no ' + b + ' key');
+        }
         if (h.indexOf('No plant map on this Edge yet') >= 0) throw new Error('a page with a map says it has none');
     });
 

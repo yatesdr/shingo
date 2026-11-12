@@ -110,6 +110,7 @@ const S = {
     pickers: {},         // every open node picker, by key — see pickerInit
     sets: {},            // every set picker's four buckets, by its picker's key — see setInit
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
+    stMap: null,         // Settings' map shown or put away: {pid, shown} — see stMapShown
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
     add: null,           // the process sheet's own non-text draft: {groupID, map, edit, station, before}
     partPop: null,       // the open part popover: {node, q, note, catalogFailed}
@@ -3716,8 +3717,11 @@ function drawMap(w, h, scope) {
                 '" width="' + (x1 - x0) + '" height="' + (y1 - y0) + '" rx="8" data-mapname="' + esc(name) + '"/>' +
                 '<text class="mp-grpt" x="' + x0 + '" y="' + (y0 - 8) + '">' +
                 esc(name) + ' · ' + esc(word) + '</text>';
+            // A group's members carry its roles too, so they take the role's
+            // colour (the set picker's bucket colour), as its box does.
             for (const p of mem) {
-                s += '<rect class="mp-smn" x="' + (p[0] - 5) + '" y="' + (p[1] - 5) + '" width="10" height="10" rx="2"/>';
+                s += '<rect class="mp-smn ' + mine.join(' ') + '" x="' + (p[0] - 5) + '" y="' + (p[1] - 5) +
+                    '" width="10" height="10" rx="2"/>';
             }
             continue;
         }
@@ -3911,8 +3915,9 @@ function isPositionRow(name) {
 // Now one checklist answers all four. The bucket chosen above it says what a
 // tick does, the bucket's names sit under it as removable tokens (the picker's
 // chips), and a row already in another bucket carries that bucket's tag. Each
-// bucket has one colour, the map's (.mp-rt): the station's for positions,
-// Robot 1's for inbound, the accent for staging, Robot 2's for outbound.
+// bucket has one colour, the map's (.mp-pos, .mp-rt, .mp-grp): the page's text
+// colour for positions, Robot 1's for inbound, the accent for staging, Robot
+// 2's for outbound.
 //
 // THE RULES ARE THE BUCKETS', NOT THE LIST'S. A position is a plain node (a
 // group is its members, one box each); a routing role takes a group too. A
@@ -4340,16 +4345,32 @@ async function rsAllOn(role) {
     await refreshProcess();
 }
 
+// stMapShown: whether Settings' map is drawn. THE TOGGLE BELONGS TO THE TAB, so
+// a redraw (every tick here is one) keeps it, and to the process, so the next
+// process opens with its map put away.
+function stMapShown() {
+    if (!S.stMap || S.stMap.pid !== S.processID) S.stMap = { pid: S.processID, shown: false };
+    return S.stMap.shown;
+}
+
 function setSection() {
     stSetReady();
     const way = waypointNames();
     const m = mapOf();
+    const shown = !!m && stMapShown();
     // THE HEADING DESCRIBES THE SET, and the server's summary sentence does
     // not: it counts the rows a backfill derived, a true answer to a narrower
     // question, read above the whole set as though it described it.
     return '<div class="pd-sect"><h2>Positions and routing set</h2>' +
         '<span class="pd-dim">where this process works, and where it may draw bins from, stage them, and send them</span>' +
-        SAVED_AS_YOU_PICK + '</div>' +
+        SAVED_AS_YOU_PICK +
+        // THE MAP WAITS BEHIND SHOW ON MAP, as it does on the process sheet: a
+        // 520 px drawing of the plant under the buckets put the parts and
+        // everything after them a screen further down, for a read-back an
+        // engineer looks at now and then (HOP, 2026-11-12).
+        (m ? '<span class="pd-spacer"></span><button type="button" class="pd-maptoggle" data-act="st-showmap" ' +
+            'aria-controls="pd-rsmapbox" aria-expanded="' + shown + '">' + (shown ? 'Hide map' : 'Show on map') + '</button>' : '') +
+        '</div>' +
         (routingUnread() ? '<div class="pd-refusal">' + esc(S.routingError ||
             'The routing set could not be read.') + '</div>' : '') +
         setField(ST_SET) +
@@ -4364,20 +4385,32 @@ function setSection() {
         'keeps the one it was saved with. Taking one out warns what it leaves behind. Whether ' +
         'operators may change flows at all is the HMI setup row below.</p>' +
         // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
-        // press, and a click on a name flashes that name's token. It is not an
+        // process's own positions and routing names (pageMapScope, fitRegion),
+        // and a click on a name flashes that name's token. It is not an
         // input: a click on a dot could only guess at the role, and the
-        // buckets above are the engineer saying it. With no map there is
-        // nothing to read back, so there is no frame, zoom or caption either.
-        (m ? routingMap(m) : '<p class="pd-note">No plant map on this Edge yet. Core sends it with the ' +
-            'node list; until then the lists above are the whole routing set.</p>');
+        // buckets above are the engineer saying it. It is drawn only while
+        // shown. With no map there is nothing to read back, so there is no
+        // toggle, frame, zoom or caption either.
+        (!m ? '<p class="pd-note">No plant map on this Edge yet. Core sends it with the ' +
+            'node list; until then the lists above are the whole routing set.</p>'
+            : shown ? routingMap(m) : '');
 }
 
+// ROUTING_MAP_W x ROUTING_MAP_H is the Settings map's drawing: the process
+// sheet's read-back size (sheetMapSvg), so the two draw a press at one scale,
+// and 340 high so the map, shown, leaves the sections under it in reach on a
+// 900 px screen. The frame takes the drawing's aspect (.pd-rsmap).
+const ROUTING_MAP_W = 900;
+const ROUTING_MAP_H = 340;
+
+// The caption's key is the set picker's buckets, each in its colour (the
+// buckets' --bk), so a mark on the map and a token in the list read alike.
 function routingMap(m) {
-    return '<div class="pd-map pd-rsmap">' + drawMap(1040, 420) +
-        '<div class="cap">' + esc(mapSubject()) + ' · ' +
+    const key = BUCKETS.map(b => '<span class="mp-leg ' + b[0] + '"><i></i>' + esc(b[1]) + '</span>').join('');
+    return '<div class="pd-map pd-rsmap" id="pd-rsmapbox">' + drawMap(ROUTING_MAP_W, ROUTING_MAP_H) +
+        '<div class="cap">' + key + '<span>' + esc(mapSubject()) + ' · ' +
         esc('plant map from Core · revision ' + m.revision) +
-        ' · teal = Robot 1 supply path · indigo = Robot 2 return' +
-        ' · circles are the routing set, squares are this process\u2019s own positions</div>' +
+        ' · paths: Robot 1 supply, Robot 2 return</span></div>' +
         '<div class="zoom"><button data-act="rs-zoom" data-z="in">+</button>' +
         '<button data-act="rs-zoom" data-z="out">&minus;</button>' +
         '<button data-act="rs-zoom" data-z="home">&#8962;</button></div></div>';
@@ -9442,6 +9475,13 @@ function onClick(e) {
                 drawSettings();
                 return;
             }
+            // Show on map / Hide map: Settings' read-back drawn or put away.
+            // It opens at the fit (zoom 1), framing this process's names.
+            case 'st-showmap':
+                if (!stMapShown()) S.mapZoom = 1;
+                S.stMap.shown = !S.stMap.shown;
+                drawSettings();
+                return;
             case 'open-flows': openProcess(Number(btn.dataset.process)); return;
             case 'open-settings': openProcessAt(Number(btn.dataset.process), 'settings'); return;
             case 'rs-all-on': void rsAllOn(btn.dataset.role); return;
