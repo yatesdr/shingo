@@ -875,6 +875,10 @@ function styleRow(st, isRunning) {
 // and robot moves with no part; a style is a recipe with its parts on it. An
 // engineer builds a recipe here — open one to change it, or + New recipe —
 // and the styles under it are what the floor changes over to.
+//
+// A RECIPE IS OPTIONAL (owner ruling 5), so Recipes and + New recipe are not
+// drawn until the process has one: the first is made beside HMI setup
+// (hmiRecipes), or from a saved style's Save as recipe….
 function rail() {
     const p = process();
     const running = p ? p.active_style_id : 0;
@@ -885,16 +889,19 @@ function rail() {
     const run = all.find(s => s.id === running);
     const rest = all.filter(s => s.id !== running);
     const recipes = S.composer.presets || [];
-    return '<div class="pd-rail" id="pd-rail">' + searchBox('pd-railq', 'find a recipe, part, CATID or style') +
+    return '<div class="pd-rail" id="pd-rail">' + searchBox('pd-railq', recipes.length
+        ? 'find a recipe, part, CATID or style' : 'find a part, CATID or style') +
         '<div class="pd-rail-body" id="pd-rail-body">' +
-        '<div class="pd-grp pd-lbl">Recipes · ' + recipes.length + '</div>' +
-        recipes.map(recipeRow).join('') +
-        '<div class="pd-railadd"><button class="pd-btn" data-act="new-recipe">+ New recipe</button></div>' +
+        (recipes.length
+            ? '<div class="pd-grp pd-lbl">Recipes · ' + recipes.length + '</div>' +
+            recipes.map(recipeRow).join('') +
+            '<div class="pd-railadd"><button class="pd-btn" data-act="new-recipe">+ New recipe</button></div>'
+            : '') +
         '<div class="pd-grp pd-lbl">Styles · ' + all.length + '</div>' +
         (run ? styleRow(run, true) : '') +
         rest.map(s => styleRow(s, false)).join('') +
         '</div><div class="pd-railfoot"><button class="pd-btn" data-act="new-style">+ New style</button>' +
-        '<span class="pd-dim">parts on one of the recipes above</span></div></div>';
+        '<span class="pd-dim">a part this process runs</span></div></div>';
 }
 
 // One recipe in the rail: its name, its swap and its spots. The one open as a
@@ -1145,15 +1152,12 @@ function drawPicture(pass) {
 // The empty state says the one thing that is true — a press runs parts, and
 // this one has none yet — and points at the button that adds one, which is
 // already in the rail beside it.
+// STYLE FIRST (F2, owner ruling 5): a recipe is optional, so the empty state
+// asks for the first style and draws nothing about recipes.
 function noStyleYet() {
     return '<div class="pd-main"><div class="pd-head"><div class="t"><h1>No style yet</h1>' +
-        '<div class="sub">this process runs nothing until one of its parts has a style</div></div></div>' +
-        '<div class="pd-empty"><p>A recipe is the spots this process works, how each one swaps, and ' +
-        'where its bins come from and go; a style is a recipe with its parts on it. Build a recipe from ' +
-        '<b>+ New recipe</b> in the rail, then add the first style from <b>+ New style</b>.</p>' +
-        '<p class="pd-dim">Everything else about this process is edited from its tabs: its name, ' +
-        'group, counter and routing set in <b>Settings</b>, and the positions it works in ' +
-        '<b>Operator screens › Edit</b> — a position belongs to the screen that claims it.</p></div></div>';
+        '<div class="sub">name the first style, then draw its flow</div></div>' +
+        '<div class="act"><button class="pd-btn primary" data-act="new-style">+ New style</button></div></div></div>';
 }
 
 function main() {
@@ -1211,7 +1215,7 @@ function main() {
         // same reducer the HMI dispatches and the same diff the apply modal
         // draws. A second reducer would be a second answer to "what does this
         // shape do to this flow".
-        '<button class="pd-btn" data-act="use-preset">Use a recipe ▾</button>' +
+        ((S.composer.presets || []).length ? '<button class="pd-btn" data-act="use-preset">Use a recipe ▾</button>' : '') +
         '<button class="pd-btn primary" data-act="save" disabled>Save style</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
@@ -6460,7 +6464,7 @@ async function refreshProcess() {
 function openNewStyle(recipeID, sel) {
     const presets = S.composer.presets || [];
     const palette = S.composer.palette || [];
-    const recipeOpts = '<option value="">— none, I’ll name it and draw it —</option>' +
+    const recipeOpts = '<option value="">— none, draw it —</option>' +
         presets.map(p => '<option value="' + esc(p.id) + '"' + (String(p.id) === String(recipeID || '') ? ' selected' : '') +
             '>' + esc(p.name) + (p.where ? ' · ' + esc(p.where) : '') + '</option>').join('');
     const slotsHTML = id => {
@@ -6480,18 +6484,19 @@ function openNewStyle(recipeID, sel) {
                 'Parts this process runs.</p>');
     };
     S.newStyle = null;
-    pageSheet('New style', 'a part this process runs: pick the recipe, the part for each spot, and where the spots go.',
-        '<div class="pd-fld"><label>Recipe<small>the engineer-named shapes of this cell</small></label>' +
-        '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>' +
+    // STYLE FIRST (F2): the sheet opens on "draw it" — a name, then the flow
+    // on the Styles tab. "Start from a recipe" is there only when the process
+    // has one to start from.
+    pageSheet('New style', 'a part this process runs: name it, then draw its flow.',
+        (presets.length
+            ? '<div class="pd-fld"><label>Start from a recipe<small>optional: its spots, with a part on each</small></label>' +
+            '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>'
+            : '') +
         '<div id="pd-newslots"></div>' +
         '<div id="pd-newspots"></div>' +
-        '<div id="pd-newname">' + sheetField('Name', 'what this part is called here', 'name', '') + '</div>' +
-        sheetField('Expected CATID', 'what the PLC calls it — blank means the CATIDs come from its produced parts in ' +
-            'the catalog; a style that only consumes has none until one is confirmed from a changeover',
-            'catid', '') +
-        '<p class="pd-note">A confirmed change to the CATID is what arms a changeover cutover. Set one ' +
-        'only when the catalog’s is wrong for this part; it can be set later from the part’s own ' +
-        'row menu.</p>',
+        '<div id="pd-newname">' + sheetField('Name', 'the style’s name on the floor', 'name', '') + '</div>' +
+        sheetField('Expected CATID', 'what the PLC calls it · blank: from the catalog', 'catid', '') +
+        '<p class="pd-note">Set it only when the catalog’s is wrong; the style’s ⋯ menu changes it later.</p>',
         'Create', async () => {
             const recipe = sheetValue('recipe');
             if (recipe) { await mintNewStyle(recipe); return; }

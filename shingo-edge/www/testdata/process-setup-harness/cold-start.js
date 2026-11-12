@@ -188,6 +188,39 @@ async function bugHmiNoRecipe() {
     check('"Found in your flows" is beside it', /Found in your flows/.test(html), 'not on Settings');
 }
 
+// ── style first (F2): the rail, the header and New style, with and without a recipe ──
+async function pinStyleFirst() {
+    for (const [title, o] of [['Press A with Recipe One', undefined],
+        ['Press A with no recipe', pressA(c => { c.presets = []; })],
+        ['Press A with no style and no recipe', pressA(c => { c.presets = []; c.styles = []; })]]) {
+        L.push('', '## ' + title);
+        const page = await T.openPage(o);
+        const html = page.root.innerHTML;
+        const rail = (/<div class="pd-rail-body"[^>]*>([\s\S]*?)<\/div><div class="pd-railfoot">/.exec(html) || [])[1] || '';
+        const heads = [...rail.matchAll(/<div class="pd-grp pd-lbl">([^<]*)<\/div>/g)].map(m => m[1]);
+        L.push('rail headings: ' + JSON.stringify(heads) + ' · + New recipe ' +
+            (/data-act="new-recipe"/.test(rail) ? 'drawn' : 'not drawn'));
+        L.push('rail foot: ' + JSON.stringify(T.text((/<div class="pd-railfoot">([\s\S]*?)<\/div><\/div>/.exec(html) || [])[1] || '')));
+        const acts = [...html.matchAll(/<button class="pd-btn[^"]*" data-act="([^"]*)"[^>]*>([^<]*)</g)]
+            .filter(m => !/pd-railfoot|pd-railadd/.test(m[0])).map(m => m[2]);
+        L.push('main: ' + JSON.stringify(T.text((/<div class="pd-head">([\s\S]*?)<div class="act">/.exec(html) || [])[1] || '')) +
+            ' · buttons ' + JSON.stringify(acts));
+        page.click('root', { act: 'new-style' });
+        await page.settle();
+        const sheet = page.scrim;
+        const body = sheet.querySelector('.layer-body');
+        const labels = [...String(body ? body.innerHTML : '').matchAll(/<label>([^<]*)</g)].map(m => m[1]);
+        const head = sheet.querySelector('.layer-head');
+        L.push('New style: ' + JSON.stringify(head ? [...head.childNodes].map(n => n.textContent).join(' — ') : '') +
+            ' · fields ' + JSON.stringify(labels));
+        const chooser = page.byId('pd-newrecipe');
+        if (chooser) {
+            const first = (/<option value="([^"]*)"[^>]*>([^<]*)</.exec(chooser.innerHTML) || []);
+            L.push('  the chooser opens on ' + JSON.stringify(first[2] || '') + ' (value ' + JSON.stringify(first[1] || '') + ')');
+        }
+    }
+}
+
 async function run(t) {
     T = t;
     T.setCurrent('cold-start.txt');
@@ -198,6 +231,7 @@ async function run(t) {
     await bugDraftBack();
     await bugDeadEnd();
     await bugHmiNoRecipe();
+    await pinStyleFirst();
     T.out['cold-start.txt'] = L.join('\n') + '\n';
 }
 

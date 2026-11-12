@@ -26,3 +26,22 @@ BUG  the popover offers places from the plant to add and use: nothing to pick
 BUG  the HMI setup row says the process has no recipe: nothing says so
 BUG  and offers New recipe there: no New recipe on Settings
 BUG  "Found in your flows" is beside it: not on Settings
+
+## Press A with Recipe One
+rail headings: ["Recipes · 1","Styles · 2"] · + New recipe drawn
+rail foot: "+ New style a part this process runs"
+main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 10 positions · last run 11-10 running" · buttons ["+ New recipe","+ New style","Discard changes","Save as recipe…","Use a recipe ▾","Save style","+ Add a position"]
+New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Start from a recipe","Name","Expected CATID"]
+  the chooser opens on "— none, draw it —" (value "")
+
+## Press A with no recipe
+rail headings: ["Styles · 2"] · + New recipe not drawn
+rail foot: "+ New style a part this process runs"
+main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 10 positions · last run 11-10 running" · buttons ["+ New style","Discard changes","Save as recipe…","Save style","+ Add a position"]
+New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
+
+## Press A with no style and no recipe
+rail headings: ["Styles · 0"] · + New recipe not drawn
+rail foot: "+ New style a part this process runs"
+main: "No style yet name the first style, then draw its flow" · buttons ["+ New style","+ New style"]
+New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
