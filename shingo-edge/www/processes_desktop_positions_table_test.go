@@ -128,7 +128,7 @@ func fullSizeTableWidth(t *testing.T, css string) int {
 // roleChipNeed is what the Role cell needs for `consume ▾` whole, the wider of
 // its two words: the chip measured 79 px on the live sim at 1281 (label,
 // padding, gap, caret and border), plus the cell's 4 px padding each side.
-const roleChipNeed = 79 + 2*4
+const roleChipNeed = 79 + 2*3
 
 // The Role chip reads whole on every full-size desktop. At 7% it was 65 px at
 // 1281 and drew `co…`; the role is one word and the column exists to show it.

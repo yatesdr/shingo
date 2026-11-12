@@ -1955,13 +1955,17 @@ async function mainAsync() {
         if (root.innerHTML.indexOf(set) < 0) {
             throw new Error('a set staging chip does not read its value alone ("SLN_010"): ' + staging(root));
         }
+        // Under the STAGING heading the empty chip says the direction alone
+        // (S4 F18: the whole word was the part that showed, "Inbound stagi…");
+        // its title keeps the field's name.
+        const dir = word.replace(/ staging$/i, '');
         const empty = 'data-node="PLN_02" data-kind="col:staging:staging" title="' + word + ' not set">' +
-            '<span class="t"><span class="k">' + word + '</span> —</span>';
+            '<span class="t"><span class="k">' + dir + '</span> —</span>';
         if (root.innerHTML.indexOf(empty) < 0) {
-            throw new Error('an empty required staging chip does not read "' + word + ' —": ' + staging(root));
+            throw new Error('an empty required staging chip does not read "' + dir + ' —": ' + staging(root));
         }
         checks++;
-        console.log('ok: a set chip reads its value; an empty one reads its label and a dash');
+        console.log('ok: a set chip reads its value; an empty one reads its direction and a dash');
     }
 
     {

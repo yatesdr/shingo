@@ -313,7 +313,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-postbl table { width: 100%; border-collapse: collapse; }
 .pd-postbl th {
-    text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--sub-1);
+    text-align: left; padding: 8px 3px; border-bottom: 1px solid var(--sub-1);
     font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
 }
 /* THE HEADINGS STAY PUT WHILE THE ROWS SCROLL — .pd-poshead is what sticks.
@@ -322,7 +322,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    caption and read as the caption printed over the headings. The rule under
    them is a shadow because a collapsed border stays with the table. */
 .pd-postbl thead th { background: var(--bg); box-shadow: inset 0 -1px 0 var(--sub-1); }
-.pd-postbl td { padding: 5px 4px; border-bottom: 1px solid var(--sub-1); height: 32px; vertical-align: middle; }
+.pd-postbl td { padding: 5px 3px; border-bottom: 1px solid var(--sub-1); height: 32px; vertical-align: middle; }
 .pd-postbl tr.selrow td { background: var(--accent-wash, transparent); }
 .pd-postbl tr.selrow td:first-child { box-shadow: inset 3px 0 0 var(--accent-solid); }
 .pd-postbl td.pos { font-weight: 600; }
@@ -331,7 +331,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-postbl td .pd-gap { display: block; max-width: 22em; margin-top: 2px; color: var(--chip-ink-below); font-size: 11px; font-weight: 400; white-space: normal; }
 /* The position is a picker (where it may move) and a delete, on one line. */
 .pd-postbl td.pos .pd-posname { font-weight: 600; }
-.pd-postbl td.pos .pd-rmpos { margin-left: 4px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.pd-postbl td.pos .pd-rmpos { margin-left: 3px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .pd-postbl td.pos .pd-rmpos:hover { color: var(--danger); border-color: currentColor; }
 .pd-postbl tr.paired td { color: var(--text-muted); font-size: 12px; }
 
@@ -404,8 +404,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* The eleven add to 100. They have to be WRITTEN as eleven: leaving Advanced
    to "whatever is left" left it nothing, because the others already summed to
    100, and its badge then spilled 75 px past the table's right edge. A column
-   no row uses is not drawn (R2); the table shares its width out among the
-   rest. */
+   no row uses is not drawn (R2). The page then sets each column's share from
+   what its cells hold (fitPositionColumns, F18); these are the shares until
+   it has measured. */
 
 /* AND A CELL CLIPS. table-layout: fixed sets the table's width; it does not
    stop a nowrap chip from painting outside its cell, which is the other half
@@ -413,6 +414,20 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    and it ellipsises, with the full name still in its title (style guide: a
    chip never wraps). */
 .pd-postbl td, .pd-postbl th { overflow: hidden; }
+/* THE MEASURING PASS (fitPositionColumns, F18): for one layout the rows lie
+   at their content's width, chips whole, and the headings at their longest
+   word; the page reads each column's width off it and sets the shares. The
+   foot's sentence and a gap note wrap in the end, so they are not measured. */
+.pd-postbl table.pd-measure { table-layout: auto; width: max-content; min-width: 0; }
+.pd-postbl.pd-poshead table.pd-measure { width: min-content; }
+.pd-postbl table.pd-measure col { width: auto; }
+.pd-postbl table.pd-measure td, .pd-postbl table.pd-measure th { overflow: visible; }
+.pd-postbl table.pd-measure tr.paired, .pd-postbl table.pd-measure .pd-gap { display: none; }
+/* A KEY ROUTE WRAPS between its points: a route of two is wider than any
+   other cell, and one chip per line is still a chip that never wraps. It is
+   measured at its widest point. */
+.pd-postbl td.via { white-space: normal; }
+.pd-postbl table.pd-measure td.via { width: 1px; }
 /* A column header wraps rather than spills — ROBOT DRIVES VIA does not fit an
    8% column on one line, and a header painted over its neighbour is the same
    defect as a chip painted over one. */

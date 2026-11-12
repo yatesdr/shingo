@@ -929,6 +929,7 @@ function drawFlows() {
     const scrollers = [['.pd-main', 'scrollTop'], ['#pd-postbl', 'scrollLeft'], ['#pd-poshead', 'scrollLeft']];
     const wasAt = scrollers.map(([sel, axis]) => { const el = root().querySelector(sel); return el ? el[axis] : 0; });
     root().innerHTML = appbar() + '<div class="pd-page">' + rail() + main() + '</div>';
+    fitPositionColumns();
     drawPicture();
     drawBar();
     markRecipeState();
@@ -2287,21 +2288,27 @@ function tableColumns() {
             '<button class="pd-rmpos" data-act="rmpos" data-node="' + esc(n) + '" title="Take ' + esc(n) +
             ' off this flow">×</button><small>' + esc(rowWord(n)) + '</small>' },
         { col: 'c-role', head: 'Role', cell: (n, c) => roleCell(n, c.role) },
-        { col: 'c-mode', head: W('swap_mode'), cell: (n, c) => picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) },
+        // The mode's word alone in the row: its glyph is on the picture's card
+        // and in the menu, and in the row it cost a name its room (F18).
+        { col: 'c-mode', head: W('swap_mode'), cell: (n, c) => picker(n, 'mode', esc(M().modeLabels()[c.mode] || '')) },
         { col: 'c-part', head: 'Part', draftless: true,
             cell: (n, c) => picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') },
         { col: 'c-partner', head: W('paired_core_node'), uses: chips('partner'), cell: n => columnCell(n, 'partner') },
         { col: 'c-staging', head: 'Staging', uses: chips('staging'), cell: n => columnCell(n, 'staging') },
         { col: 'c-src', head: W('inbound_source'), uses: shows('inbound_source'),
             cell: (n, c) => fieldCell(n, 'source', 'inbound_source', c.source, '—') + routingGap(n, 'inbound_source', c.source) },
-        { col: 'c-via', head: W('key_route'), uses: shows('key_route'), cell: n => viaCell(n) },
+        { col: 'c-via', td: 'via', head: W('key_route'), uses: shows('key_route'), cell: n => viaCell(n) },
         { col: 'c-dst', head: W('outbound_destination'), uses: shows('outbound_destination'),
             cell: (n, c) => fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) },
         { col: 'c-reorder', head: W('auto_reorder'), draftless: true, uses: shows('auto_reorder'), cell: n => reorderCell(n) },
+        // Nothing set is the gear alone (its title says defaults): the word
+        // was the widest thing in a column that only has to say when
+        // something IS set.
         { col: 'c-adv', head: 'Advanced', draftless: true, cell: n => {
             const set = advancedCount(n);
-            return '<button class="pd-adv' + (set ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
-                gearSVG() + (set ? '<b>' + set + ' set</b>' : 'defaults') + '</button>';
+            return '<button class="pd-adv' + (set ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '"' +
+                (set ? '' : ' title="Advanced: defaults" aria-label="Advanced: defaults"') + '>' +
+                gearSVG() + (set ? '<b>' + set + ' set</b>' : '') + '</button>';
         } },
     ];
     return S.shapeDraft ? out.filter(col => !col.draftless) : out;
@@ -2419,7 +2426,11 @@ function columnCell(node, column) {
     // narrower than the value.
     const heading = COLUMN_HEADING()[column] || '';
     return chips.map(chip => {
-        const word = chip.label.toLowerCase() === heading.toLowerCase() ? '' : chip.label;
+        // `Second paired core node` under PAIRED CORE NODE is `Second`, and
+        // `Inbound staging` under STAGING is `Inbound` (F18: the long word
+        // was the part that showed, `Second paired core n…`).
+        const lw = chip.label.toLowerCase(), hw = heading.toLowerCase();
+        const word = lw === hw ? '' : (hw && lw.endsWith(' ' + hw) ? chip.label.slice(0, -hw.length - 1) : chip.label);
         const k = word ? '<span class="k">' + esc(word) + '</span> ' : '';
         const kind = 'col:' + column + ':' + chip.key;
         // THE VALUE IS WHAT THE ROW IS READ FOR. A set chip drew its word in
@@ -2480,8 +2491,9 @@ function reorderCell(node) {
 // (protocol.ClaimDemandLevel).
 const REORDER_WORDS = 'units in the bin when the next one is requested';
 
-// openReorderPop is the cell's popover: the point, Set (which turns Auto
-// reorder on at it) and Off. Each is a draft edit, saved with Save flow.
+// openReorderPop is the cell's popover: the point, Turn on (Set once it is
+// on), which writes the point and turns Auto reorder on at it, and Off. Each
+// is a draft edit, saved with Save style.
 function openReorderPop(btn, node) {
     const pop = $('pd-pop');
     if (!pop || !S.model) return;
@@ -2493,7 +2505,7 @@ function openReorderPop(btn, node) {
         '<label class="pd-lbl">' + esc(W('reorder_point')) + '</label>' +
         '<div class="pd-rprow"><input class="pd-inp" type="text" inputmode="numeric" data-f="rp" value="' +
             esc(a.reorder_point ? String(a.reorder_point) : '') + '" placeholder="—">' +
-        '<button class="pd-btn primary" data-rp="set">Set</button>' +
+        '<button class="pd-btn primary" data-rp="set">' + (a.auto_reorder ? 'Set' : 'Turn on') + '</button>' +
         (src ? '<span class="pd-src" title="' + esc(src[1]) + '">' + esc(src[0]) + '</span>' : '') + '</div>' +
         '<small>' + esc(REORDER_WORDS) + '</small>' +
         '<button data-rp="off" class="' + (a.auto_reorder ? '' : 'on') + '">' + esc(W('auto_reorder')) + ' off</button>' +
@@ -2543,6 +2555,52 @@ function setReorder(node, point, on) {
 function redrawPositionsTable() {
     const el = $('pd-posbox');
     if (el) el.outerHTML = positionsTable();
+    fitPositionColumns();
+}
+
+// fitPositionColumns sizes the table's columns to what they hold (F18, F28:
+// `WKB_…`, `Inbound stagi…`, `Sequential A…` at 1440). The shares in the CSS
+// were written for one set of names; a plant's group names are longer and
+// every chip past its share was cut. So the page measures: both tables laid
+// out at their content's width once (`pd-measure`: the rows' chips on one
+// line, the headings wrapped at their words), each column takes the wider of
+// its heading and its widest cell, and the shares are those widths. The
+// table's floor is their sum, so where the column is narrower than that the
+// rows' box scrolls sideways (its headings strip with it) instead of cutting
+// a name. Run after every draw of the table; a layout read, no timer.
+function fitPositionColumns() {
+    const box = $('pd-postbl'), head = $('pd-poshead');
+    const tables = [head, box].map(b => (b && b.querySelector ? b.querySelector('table') : null));
+    if (!tables[0] || !tables[1] || typeof tables[1].getBoundingClientRect !== 'function' || !box.clientWidth) return;
+    const rows = [head.querySelector('tr'), box.querySelector('tr[data-row]')];
+    if (!rows[0] || !rows[1]) return;
+    const cols = tables.map(t => [...t.querySelectorAll('col')]);
+    cols.forEach(list => list.forEach(c => { c.style.width = ''; }));
+    tables.forEach(t => { t.style.minWidth = ''; t.classList.add('pd-measure'); });
+    const need = [...rows[0].children].map((th, i) => {
+        const td = rows[1].children[i];
+        return Math.ceil(Math.max(th.getBoundingClientRect().width, td ? td.getBoundingClientRect().width : 0));
+    });
+    // The key route was measured at its widest point; where the column has
+    // room left, it takes up to its longest route on one line.
+    const via = [...rows[1].children].findIndex(td => td.classList.contains('via'));
+    let long = 0;
+    if (via >= 0) {
+        box.querySelectorAll('tr[data-row] td.via').forEach(td => {
+            const w = [...td.children].reduce((a, c) => a + c.getBoundingClientRect().width + 4, 8);
+            long = Math.max(long, Math.ceil(w));
+        });
+    }
+    tables.forEach(t => t.classList.remove('pd-measure'));
+    let total = need.reduce((a, b) => a + b, 0);
+    if (!total) return;
+    if (via >= 0 && long > need[via]) {
+        const more = Math.min(long - need[via], Math.max(0, box.clientWidth - total));
+        need[via] += more;
+        total += more;
+    }
+    cols.forEach(list => list.forEach((c, i) => { c.style.width = (need[i] / total * 100).toFixed(3) + '%'; }));
+    tables.forEach(t => { t.style.minWidth = total + 'px'; });
 }
 
 // syncPosHead carries the headings strip sideways with the rows. The strip
