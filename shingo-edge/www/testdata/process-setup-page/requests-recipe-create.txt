@@ -37,7 +37,7 @@
 
 ## Recipe One opened from the rail, then Set up groups
 -- sheet closed
--- groups ["Index Swap of POS_A1","2‑Robot Swap of POS_A3"]
+-- groups ["A of POS_A1","B of POS_A3"]
 
 ## Save recipe… with groups (saveGroupedRecipe), the name as it opens
   1  GET /api/core-nodes
@@ -67,7 +67,7 @@
          "groups": [
            {
              "of": "POS_A1",
-             "name": "Index Swap",
+             "name": "A",
              "spots": [
                {
                  "core_node_name": "POS_A1",
@@ -79,7 +79,7 @@
            },
            {
              "of": "POS_A3",
-             "name": "2‑Robot Swap",
+             "name": "B",
              "spots": [
                {
                  "core_node_name": "POS_A3",

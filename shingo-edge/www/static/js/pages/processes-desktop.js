@@ -1435,7 +1435,7 @@ function shapeDraftMain() {
 // the cards on the cells as the table changes them, so most of those
 // refusals cannot be reached from here.
 //
-// A GROUP'S ROUTING IS ITS ★ CELL'S (row 3): the card's In from and Out to
+// A GROUP'S ROUTING IS ITS ★ CELL'S (row 3): the card's Inbound source and Outbound destination
 // are that cell's own pickers, so a card and its table row cannot disagree.
 //
 // NOTHING IS GENERATED (row 5): a recipe without groups has none until an
@@ -1524,8 +1524,9 @@ function newGroup(head, name) {
 // groupNames pre-fills the cards' names. TWO PRODUCE SLOTS ARE LEFT HAND AND
 // RIGHT HAND, the left the one the picture draws further west (by relation,
 // the floor's own left; slot order when the cell is off the map). Any other
-// slot is named by its swap type, numbered where two share one. Every name is
-// the engineer's to change: the floor asks for each part by it.
+// slot is a letter, A, B, C in the cards' order: NOT ITS SWAP MODE (F32),
+// which named a part "2-Robot Swap". Every name is the engineer's to change:
+// the floor asks for each part by it.
 function groupNames(slots) {
     if (slots.length === 2 && slots.every(s => s.role === 'produce')) {
         const lay = M().relationLayout(cellFromModel(), {});
@@ -1533,9 +1534,7 @@ function groupNames(slots) {
         const a = col(slots[0].nodes[0]), b = col(slots[1].nodes[0]);
         return a !== null && b !== null && b < a ? ['Right Hand', 'Left Hand'] : ['Left Hand', 'Right Hand'];
     }
-    const word = s => M().modeLabels()[s.mode] || s.mode || 'Part';
-    return slots.map((s, i) => slots.filter(x => word(x) === word(s)).length > 1
-        ? word(s) + ' ' + (slots.slice(0, i + 1).filter(x => word(x) === word(s)).length) : word(s));
+    return slots.map((s, i) => (i < 26 ? String.fromCharCode(65 + i) : 'Group ' + (i + 1)));
 }
 
 // setUpGroups is the button: one card per slot, pre-filled, nothing saved.
@@ -1574,11 +1573,12 @@ function syncGroups() {
         out.push(g);
     }
     for (const h of free) {
+        // The first letter no card has, as groupNames names them (F32: never
+        // the swap mode).
         const taken = new Set(out.map(g => g.name));
-        const base = M().modeLabels()[(S.model.cells[h] || {}).mode] || 'Part';
-        let name = base;
-        for (let k = 2; taken.has(name); k++) name = base + ' ' + k;
-        out.push(newGroup(h, name));
+        let k = 0;
+        while (taken.has(k < 26 ? String.fromCharCode(65 + k) : 'Group ' + (k + 1))) k++;
+        out.push(newGroup(h, k < 26 ? String.fromCharCode(65 + k) : 'Group ' + (k + 1)));
     }
     for (const g of out) {
         g.spots = g.spots || [];
@@ -1834,9 +1834,10 @@ function groupCard(g, i) {
         '<th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         '<button class="pd-chip add" data-act="gspot-add" data-g="' + i + '">' + esc(sw.add) + '</button>' +
         '<div class="pd-lbl">Where bins come from and go</div><div class="pd-gkv">' +
-        '<span class="k">In from</span>' + picker(g.of, 'source', esc(star.source || '—'), star.source ? '' : 'bad',
+        // ONE NAME PER FIELD (F32): the claim's words, not "In from / Out to".
+        '<span class="k">' + esc(W('inbound_source')) + '</span>' + picker(g.of, 'source', esc(star.source || '—'), star.source ? '' : 'bad',
             W('inbound_source') + ' ' + (star.source || 'not set')) +
-        '<span class="k">Out to</span>' + picker(g.of, 'dest', esc(star.dest || '—'), star.dest ? '' : 'bad',
+        '<span class="k">' + esc(W('outbound_destination')) + '</span>' + picker(g.of, 'dest', esc(star.dest || '—'), star.dest ? '' : 'bad',
             W('outbound_destination') + ' ' + (star.dest || 'not set')) + '</div>' +
         '<div class="pd-lbl">Advanced</div><div class="pd-gadv"><span>' + esc(groupAdvSummary(g)) + '</span>' +
         '<button class="pd-btn" data-act="gadv" data-g="' + i + '">Edit…</button></div></div>';
@@ -2608,10 +2609,13 @@ function drawBar() {
             if (f.node && S.model.cells[f.node]) { target = f.node; break; }
         }
     }
-    // THE EMPTY SENTENCE IS PER SURFACE. The model's says "Tap a position",
-    // which is the HMI's door; on the desktop the picture never edits, and the
-    // ways in are the table's "+ Add a position" and the preset menu.
-    const detail = b.tone === 'empty' ? 'Add a position below, or use a preset' : b.detail;
+    // THE SENTENCE IS PER SURFACE (R3, F24). The model's says "Tap a
+    // position" / "Tap the position and pick …", which is the HMI's door; on
+    // the desktop the picture never edits, and the way in is the table's row
+    // or its "+ Add a position".
+    const detail = b.tone === 'empty' ? 'Add a position below' : String(b.detail || '')
+        .replace('Tap the position and pick a choreography.', 'Pick its ' + W('swap_mode').toLowerCase() + ' on its row.')
+        .replace('Tap the position and pick one.', 'Pick it on its row.');
     const head = '<div class="h' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>';
     // AN UNPLACED PART CARRIES ITS OWN DOOR OFF THE FLOW, as on the station's
     // strip. The part picker's take-off needs a position, and a part in the

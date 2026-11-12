@@ -190,6 +190,19 @@ const BUGS = [
             return out;
         },
     },
+    {
+        title: 'F24 · R3 · the desktop\'s bar never says "Tap the position" or "use a preset"',
+        run: async page => {
+            const M = page.pd('M')(), apply = page.pd('apply');
+            const bar = () => String((page.byId('pd-bar') || {}).innerHTML || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            const out = [];
+            apply({ type: 'addPosition', node: 'POS_A11' });
+            out.push(['a position with no swap mode: ' + JSON.stringify(bar()), !/Tap|choreography/.test(bar()), 'the HMI\'s words']);
+            apply({ type: 'setMode', node: 'POS_A11', mode: Object.keys(M.modeLabels())[1] });
+            out.push(['a position with no part: ' + JSON.stringify(bar()), !/Tap/.test(bar()), 'the HMI\'s words']);
+            return out;
+        },
+    },
 ];
 
 async function pinTableBugs() {

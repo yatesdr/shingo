@@ -1557,8 +1557,8 @@ async function mainAsync() {
         if (!/Nothing in the flow yet/.test(bar.innerHTML)) {
             throw new Error('setup: the bar should read empty here; bar: ' + bar.innerHTML.slice(0, 200));
         }
-        if (bar.innerHTML.indexOf('<div class="d">Add a position below, or use a preset</div>') < 0) {
-            throw new Error('the desktop\'s empty bar does not read "Add a position below, or use a preset"; bar: ' +
+        if (bar.innerHTML.indexOf('<div class="d">Add a position below</div>') < 0) {
+            throw new Error('the desktop\'s empty bar does not read "Add a position below"; bar: ' +
                 bar.innerHTML.slice(0, 300));
         }
         checks++;
