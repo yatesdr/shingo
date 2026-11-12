@@ -8,10 +8,10 @@ htmx.config written by: nothing
 hx-on attributes in: nothing
 
 ## who listens for an htmx error event
-htmx:responseError: nobody
-htmx:sendError: nobody
+htmx:responseError: shared/http.js
+htmx:sendError: shared/http.js
 htmx:sseError: nobody
-htmx:timeout: nobody
+htmx:timeout: shared/http.js
 htmx:swapError: nobody
 htmx:targetError: nobody
 htmx:onLoadError: nobody
@@ -26,5 +26,4 @@ shared/clock.js: htmx:afterSwap
 shared/clock.js: htmx:afterSwap
 
 ## so, on a partial refresh (hx-get) that answers 4xx/5xx, or never answers
-4xx/5xx: htmx does not swap (responseHandling [45].. swap:false error:true) and fires htmx:responseError; nothing on the page listens, so the panel keeps its old content and the operator is shown nothing.
-no answer: htmx fires htmx:sendError (and htmx:afterRequest); nothing on the page listens, so the same.
+a page listens for htmx:responseError or htmx:sendError: see above.

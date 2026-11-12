@@ -20,10 +20,13 @@ const SRC_DIR = path.join(__dirname, '..', '..');
 
 // sharedSource is the shared modules this test runs, as one script in import
 // order: each file's import lines dropped (a file before it declares those
-// names); the caller drops `export`.
+// names), an aliased binding (`send as httpSend`) kept as a var of the name;
+// the caller drops `export`.
 function sharedSource(files) {
     return files.map((f) => fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
-        .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gm, '')).join('\n');
+        .replace(/^import\s*\{([^}]*)\}\s*from\s*['"][^'"]+['"];?/gm, (_, names) => names.split(',')
+            .map((n) => n.trim().split(/\s+as\s+/)).filter((p) => p.length === 2)
+            .map((p) => 'var ' + p[1] + ' = ' + p[0] + ';').join(' '))).join('\n');
 }
 
 let passed = 0;
@@ -148,9 +151,11 @@ function mk(tag, cls, data, children) {
 }
 
 function loadUtils(fetchImpl) {
-    const src = sharedSource(['dom.js', 'utils.js', 'settings.js']);
+    // utils.js for apiResult, which pages still call; notice.js's toast and
+    // http.js's send are settings.js's own (notice.js after utils.js: one toast).
+    const src = sharedSource(['dom.js', 'utils.js', 'notice.js', 'http.js', 'settings.js']);
     const transformed = src
-        .replace(/export\s+function\s+/g, 'function ')
+        .replace(/export\s+(async\s+)?function\s+/g, '$1function ')
         .replace(/export\s+const\s+/g, 'const ');
     const body = mk('body');
     const toasts = [];
@@ -457,6 +462,80 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         eq(out.ok, false, 'a thrown own save is a failure');
         eq(throwing.isDirty(), true, 'and stays dirty');
         eq(throwing.state.refusal, 'Not saved. Offline', 'one part only: the plain refusal');
+    }
+
+    // ─── the default save door: http.js's send, the notice off ────────────
+    // Core's settings page (shingo-core/www/static/pages/config.js) and the
+    // Edge's (shingo-edge/www/static/js/pages/config.js) both save through
+    // settingsPage's default door, PUT /api/config. Each server's answers, as
+    // it writes them: Core configRefusal (handlers_config.go) and requireAuth's
+    // 401 (auth.go); the Edge's writeConfigRefusal (handlers_config_save.go)
+    // and its admin routes' 303 to /login, which fetch follows to the login
+    // page (router.go). A lapsed session is not a save (ruling 3).
+    {
+        const reply = (status, text, extra) => Object.assign({
+            ok: status >= 200 && status < 300, status, redirected: false, url: '',
+            headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? (extra && extra.type) || 'application/json' : null) },
+            text: () => Promise.resolve(text),
+        }, extra || {});
+        const saveWith = async (answer) => {
+            const sent = [];
+            const ctx = loadUtils((url, init) => {
+                sent.push({ url, method: init && init.method, headers: init && init.headers, body: init && init.body });
+                return typeof answer === 'function' ? answer() : Promise.resolve(answer);
+            });
+            const draft = { port: '8088' };
+            const portInput = mk('input', 'set-inp', { field: 'port' });
+            const portRow = mk('div', 'set-fld', null, [mk('label'), mk('div', 'v', null, [portInput])]);
+            const root = mk('div', 'set-page set-ui', null, [portRow]);
+            const page = ctx.settingsPage(root, {
+                url: '/api/config',
+                sections: { fleet: { read: () => ({ port: draft.port }), write: (v) => { draft.port = v.port; } } },
+            });
+            draft.port = '9090';
+            page.update();
+            const out = await page.save();
+            const toasts = ctx.document.body.querySelectorAll('.notice-toast').map((t) => t.textContent);
+            const errFor = root.querySelector('[data-err-for="port"]');
+            return { out, page, sent, toasts, fieldErr: errFor ? errFor.textContent : null };
+        };
+        const CONFIG_REFUSAL = '{"error":"Port must be a number.","errors":{"port":"Port must be a number."},"ok":false}\n';
+
+        let r = await saveWith(reply(200, '{"ok":true,"applied":["fleet"],"restart":[],"failed":[]}\n'));
+        eq(r.sent.length, 1, 'default door: one request');
+        eq(r.sent[0].method + ' ' + r.sent[0].url, 'PUT /api/config', 'default door: PUT to the page\'s URL');
+        eq(JSON.stringify(r.sent[0].headers), '{"Accept":"application/json","Content-Type":"application/json"}', 'default door: asks for JSON, sends JSON');
+        eq(r.sent[0].body, '{"fleet":{"port":"9090"}}', 'default door: the shared request');
+        eq(r.out.ok, true, 'default door: a 200 saves');
+        eq(r.page.isDirty(), false, 'default door: saved is clean');
+        eq(JSON.stringify(r.toasts), '["Saved"]', 'default door: "Saved" on the notice');
+
+        for (const [who, status] of [['Core configRefusal', 400], ['Edge writeConfigRefusal', 400]]) {
+            r = await saveWith(reply(status, CONFIG_REFUSAL));
+            eq(r.fieldErr, 'Port must be a number.', who + ': the field error under its row');
+            eq(r.page.state.refusal, 'Not saved. See the marked fields.', who + ': the refusal box');
+            eq(r.page.isDirty(), true, who + ': stays dirty');
+            eq(JSON.stringify(r.toasts), '[]', who + ': nothing on the notice (the page says it)');
+        }
+
+        r = await saveWith(reply(401, '{"error":"unauthorized"}\n'));
+        eq(r.page.state.refusal, 'Not saved. Signed out', 'Core lapsed session (401): Signed out');
+        eq(r.page.isDirty(), true, 'Core lapsed session: stays dirty');
+
+        r = await saveWith(reply(200, '<!DOCTYPE html><html><body><form action="/login">', {
+            redirected: true, url: 'http://edge.test/login?next=%2Fconfig', type: 'text/html; charset=utf-8',
+        }));
+        eq(r.out.ok, false, 'Edge lapsed session (303 to the login page): not a save');
+        eq(r.page.state.refusal, 'Not saved. Signed out', 'Edge lapsed session: Signed out');
+        eq(r.page.isDirty(), true, 'Edge lapsed session: stays dirty');
+        eq(JSON.stringify(r.toasts), '[]', 'Edge lapsed session: no "Saved"');
+
+        r = await saveWith(reply(502, '<html><body>Bad Gateway</body></html>', { type: 'text/html' }));
+        eq(r.page.state.refusal, 'Not saved. Server error (502)', 'a proxy\'s HTML page: a sentence, not its markup');
+
+        r = await saveWith(() => Promise.reject(new TypeError('Failed to fetch')));
+        eq(r.page.state.refusal, 'Not saved. No answer from the server', 'no answer: the door\'s sentence');
+        eq(r.page.isDirty(), true, 'no answer: stays dirty');
     }
 
     // ─── a page that drew its own bar keeps it ────────────────────────────

@@ -3,11 +3,12 @@
 // duration box both ways (durationFromText, durationToText), and collectList.
 //
 // ES module, served at /static/shared/settings.js; a settings page imports
-// each helper from here. Nothing runs at import. It takes el from dom.js, and
-// apiResult (its default save door) and toast from utils.js.
+// each helper from here. Nothing runs at import. It takes el from dom.js, its
+// default save door from http.js and "Saved" from notice.js.
 
 import { el } from '/static/shared/dom.js';
-import { apiResult, toast } from '/static/shared/utils.js';
+import { send as httpSend } from '/static/shared/http.js';
+import { toast } from '/static/shared/notice.js';
 
 // ─── Settings pages ──────────────────────────────────────────────────────
 //
@@ -42,6 +43,17 @@ function durationMs(text) {
     }
     if (at !== s.length) return null;
     return Math.round(total);
+}
+
+// saveThrough is settingsPage's default save door: the one HTTP door with its
+// notice off, because the page draws a refusal in its own box and under its
+// fields. It answers as settingsPage reads an answer, {ok, status, body}; a
+// failure that carried no JSON body (a lapsed session, a proxy's page, no
+// answer) is {error: <the door's sentence>}, as apiResult's {error: text} was.
+async function saveThrough(method, url, body) {
+    const res = await httpSend(method, url, body, { notice: false });
+    const parsed = res.body !== null && typeof res.body === 'object';
+    return { ok: res.ok, status: res.status, body: parsed || res.ok ? res.body : { error: res.error } };
 }
 
 function _trimNum(n) {
@@ -137,7 +149,7 @@ export function collectList(container, rowSelector, read) {
 //
 // A save validates every dirty section first; any error and nothing is sent.
 // Then it sends ONE shared request, {section: body(d)} for the dirty sections
-// without their own save, through apiResult, and reads the answer:
+// without their own save, through saveThrough (http.js), and reads the answer:
 // {ok, errors{field: msg}, error} on a refusal, {ok, applied, restart, failed}
 // on a save. Then each dirty section with its own save(d) is saved, in order.
 // Each part stands alone: a section is clean again only if its own part saved,
@@ -155,7 +167,7 @@ export function settingsPage(root, opts) {
     opts = opts || {};
     const sections = opts.sections || {};
     const names = Object.keys(sections);
-    const send = opts.send || apiResult;
+    const send = opts.send || saveThrough;
     const method = opts.method || 'PUT';
     const state = {
         baseline: {},
