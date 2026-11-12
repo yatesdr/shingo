@@ -66,4 +66,36 @@ const p = createPicker(host, {
 p.refresh();                           // after the adapter's list lands
 ```
 
+### The node and part adapters
+
+`shared/node-picker.js` and `shared/part-picker.js` put a page's nodes and
+parts on the shell. A page reads its list **once** (`nodeSource(read,
+initial)`, `partSource`): every field on the page draws from that one list, a
+list the page was rendered with is passed as `initial`, a list pushed to the
+page (an SSE frame) goes in with `set(list)`, and a failed read is said in the
+list and re-asked on the next open, never kept as an empty plant.
+
+- **No blanket rule.** Each field passes its own `rule(node)`, built from
+  `nodeWhy`'s pieces (`robot`, `disabled`, `lane`, `group`, `member`,
+  `synthetic`, `any(...)`), and the excluded node is drawn greyed with the
+  reason. The one node never offered is `_TRANSIT`.
+- **The plant's tree.** A container comes first in its zone with every node
+  under it indented, at any depth (two levels down reads `↳ name`); one with
+  no zone sits with the first node under it that has one. Names sort in
+  code-unit order, as Go's `sort.Strings` does.
+- **Parts.** `field.allowed` names the codes a field may take, in its order; a
+  code the catalog lacks is still offered by its code. `none` adds a first row
+  that picks no part.
+- **Forms.** `name` adds a hidden input that carries the pick, for a form the
+  browser posts.
+
+```js
+import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
+
+const nodes = nodeSource(() => apiGet('/api/nodes'));
+const dest = nodePicker(host, nodes, { rule: nodeWhy.any(nodeWhy.robot, nodeWhy.disabled) },
+    { placeholder: 'Delivery node' });
+dest.value();                          // the node's name ('' for none)
+```
+
 `TestSharedComponentSpecs` holds each rule.

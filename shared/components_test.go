@@ -27,7 +27,7 @@ func TestSharedComponentSpecs(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the component specs")
 	}
-	for _, name := range []string{"layer", "notice", "http", "picker"} {
+	for _, name := range []string{"layer", "notice", "http", "picker", "node-picker"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			out, err := exec.Command(nodePath, filepath.Join("testdata", "components", name+".test.js")).CombinedOutput()

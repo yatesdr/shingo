@@ -192,12 +192,19 @@ var sharedExportsNoImporter = map[string]string{
 	// The shared components, which no page imports until wave C swaps the
 	// hubs and the Processes page onto them.
 	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",
-	"picker.js createPicker":     "adopted in wave C (s2-processes), its adapters in S3",
 	// The banner primitive: S5's two banners are worded inside notice.js
 	// (showNewBuildBanner, showLostConnectionBanner), so the hubs and the
 	// station import those, and a page's own banner would use these.
 	"notice.js banner":      "the primitive under S5's two, read by testdata/components/notice.test.js",
 	"notice.js clearBanner": "the primitive under S5's two, read by testdata/components/notice.test.js",
+	// The node and part adapters (S3), until the pages adopt them.
+	"node-picker.js nodeSource":  "adopted by the Core and Edge pages (S3)",
+	"node-picker.js nodeWhy":     "adopted by the Core and Edge pages (S3)",
+	"node-picker.js nodeRows":    "the rows alone, read by testdata/components/node-picker.test.js",
+	"node-picker.js nodePicker":  "adopted by the Core and Edge pages (S3)",
+	"part-picker.js partSource":  "adopted by the Core and Edge pages (S3)",
+	"part-picker.js partChoices": "the rows alone, read by testdata/components/node-picker.test.js",
+	"part-picker.js partPicker":  "adopted by the Core and Edge pages (S3)",
 }
 
 var (
