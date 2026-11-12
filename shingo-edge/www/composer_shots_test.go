@@ -1240,11 +1240,15 @@ func TestComposerShots(t *testing.T) {
 	desktopShot("D4-operator-screens.png", d4)
 	desktopShot("D5-settings.png", d5)
 	desktopDOM("D4 operator screens", d4, `data-act="screen-add"`)
-	// Settings' Add positions checklist, whole and filtered to one family.
-	d5add := d5 + ";addpos="
-	desktopShot("D5-add-positions.png", d5add)
-	desktopShot("D5-add-positions-filtered.png", d5add+"PLN_")
-	desktopDOM("D5 add positions", d5add, `class="pd-npk check"`)
+	// Edit process (Setup's Change…): the process sheet filled in, at its
+	// Positions bucket, at Inbound, filtered to one family, and at the parts.
+	desktopShot("D0-add-process.png", "/processes#add")
+	d5edit := d5 + ";edit="
+	desktopShot("D5-edit-process.png", d5edit+"positions")
+	desktopShot("D5-edit-process-inbound.png", d5edit+"source")
+	desktopShot("D5-edit-process-filtered.png", d5edit+"positions;q=PLN_")
+	desktopShot("D5-edit-process-parts.png", d5edit+"parts")
+	desktopDOM("D5 edit process", d5edit+"positions", `class="pd-set bk-positions"`)
 
 	// ── EDITING A SCREEN'S NOTE DOES NOT DELETE ITS POSITIONS ───────────
 	//

@@ -183,7 +183,12 @@ function boot() {
         if (!S.processID) void refreshCatidHealth();
     }, 10000);
     if (S.processID) openProcess(S.processID);
-    else drawList();
+    else {
+        drawList();
+        // #add opens Add process over the list: a one-shot for the shots
+        // harness, which cannot press the button (see syncHash).
+        if ('add' in hashOpts()) openAddProcess();
+    }
 }
 
 // ── P0 · the list ────────────────────────────────────────────────────────────
@@ -816,7 +821,7 @@ function hashOpts() {
 // history entries, so back and forward stay the browser's, not this page's.
 // The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=,
 // ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=,
-// ;edit= with ;q=) are
+// ;edit= with ;q=, and the list's #add) are
 // consumed once and never re-minted: they exist so the shots harness can
 // reach a state without driving a mouse, and re-writing them would pin every
 // later click to a deep link nobody asked for.
