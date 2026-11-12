@@ -3831,6 +3831,11 @@ async function settingsPositionsPins(h) {
         for (const n of Object.keys(want)) {
             if (state(n) !== want[n]) throw new Error(n + ' draws ' + state(n) + '\n      want ' + want[n]);
         }
+        // R4: a held node is out of reach. Its row takes no click; the
+        // selection the sheet would save does not move.
+        const before = h.innerHTML;
+        pk.pick(h, 'PLN_001');
+        if (pk.on(h, 'PLN_001') || h.innerHTML !== before) throw new Error('a click on a held node ticked it: ' + state('PLN_001'));
         if (pk.off(h, 'SMN_001') || pk.side(h, 'SMN_001') !== 'loader window · also on Bin Loader') {
             throw new Error('the loader window is not offered with its note: ' + JSON.stringify(pk.side(h, 'SMN_001')));
         }
