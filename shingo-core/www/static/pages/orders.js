@@ -173,7 +173,7 @@ function openOrderModal(id, el, evt) {
   loading.classList.remove('hide');
   content.classList.add('hide');
   errEl.classList.add('hide');
-  showModal('order-modal-overlay');
+  showModal('order-modal-overlay', { onClose: orderModalClosed });
   syncModalURL(id);
 
   apiGet('/api/orders/enriched?id=' + id)
@@ -220,23 +220,18 @@ function syncModalURL(id) {
 }
 
 function closeOrderModal() {
-  _orderModalID = null;
   hideModal('order-modal-overlay');
-  syncModalURL(null);
+  orderModalClosed();
 }
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape' && _orderModalID) closeOrderModal();
-});
-
-// The backdrop dismiss is a CLOSE, not a hide. installBackdropClose strips the
-// overlay's `active` class for every modal that opts in, which is the whole job
-// for a stateless one — this modal also owns _orderModalID and the ?open=
-// parameter, and both have to come down with it.
-(function () {
-  var overlay = document.getElementById('order-modal-overlay');
-  if (overlay) overlay.addEventListener('backdropclose', function () { closeOrderModal(); });
-})();
+// orderModalClosed is the pop-up's close however it closed (×, Escape, the
+// backdrop, Discard; the layer calls it as the entry's onClose). Hiding is not
+// closing: this modal owns _orderModalID and the ?open= parameter, and both
+// come down with it, or a refresh reopens what was just dismissed.
+function orderModalClosed() {
+  _orderModalID = null;
+  syncModalURL(null);
+}
 
 // The label is NOT bold. It used to be, which inverted the hierarchy on
 // every field in the manifest: the caption "VENDOR ORDER" carried more

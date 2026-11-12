@@ -203,9 +203,8 @@ function refreshCleaningTab() {
   if (cleaningShown) loadCleaning();
 }
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeRobotModal();
-});
+// Escape closes the pop-up through the layer (shared/layer.js), innermost
+// first.
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions

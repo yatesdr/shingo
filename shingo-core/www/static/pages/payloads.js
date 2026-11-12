@@ -627,13 +627,15 @@ function openPayloadImport() {
 }
 
 function closePLImportModal() {
-  // Only the close that actually hid the modal triggers the pending
-  // reload — a backdrop-close already hid it, and a later Escape must
-  // not fire a surprise reload for a report the operator closed hours ago.
-  var overlay = document.getElementById('pl-import-modal');
-  var wasActive = overlay && overlay.classList.contains('active');
   hideModal('pl-import-modal');
-  if (wasActive && _importReloadPending) {
+}
+
+// plImportClosed is the results modal's close, however it closed (×, Escape,
+// the backdrop): the pending reload runs then, once. Only the close of the
+// open modal calls it (the layer's onClose), so closing one already shut
+// never fires a surprise reload for a report read hours ago.
+function plImportClosed() {
+  if (_importReloadPending) {
     _importReloadPending = false;
     window.location.reload();
   }
@@ -671,7 +673,7 @@ function showImportResults(data) {
     html += '</table>';
     host.innerHTML = html;
   }
-  showModal('pl-import-modal');
+  showModal('pl-import-modal', { onClose: plImportClosed });
 }
 
 function uploadPayloadImport(file) {
@@ -724,12 +726,9 @@ function filterPayloads() {
   });
 })();
 
-/* --- Keyboard shortcuts --- */
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    closePLCreateModal(); closePLEditModal(); closePLImportModal();
-  }
-});
+/* --- Keyboard --- */
+// Escape closes the innermost modal through the layer (shared/layer.js),
+// asking before it discards what was typed.
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions

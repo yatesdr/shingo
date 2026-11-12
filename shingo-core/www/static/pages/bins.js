@@ -148,7 +148,7 @@ function openBinDetail(id) {
       document.getElementById('bd-journal').innerHTML = '';
       drawBin(resp, null);
       showBinTab('overview');
-      showModal('bin-detail-modal');
+      showModal('bin-detail-modal', { onClose: binDetailClosed });
     })
     .catch(function(e) {
       console.error('openBinDetail', id, e);
@@ -158,6 +158,12 @@ function openBinDetail(id) {
 
 function closeBinDetail() {
   hideModal('bin-detail-modal');
+  binDetailClosed();
+}
+
+// binDetailClosed is the pop-up's close however it closed (×, Escape, the
+// backdrop, Discard): the bin it showed is no longer the open one.
+function binDetailClosed() {
   currentBinId = null;
   currentBinData = null;
   journalFresh = false;
@@ -877,18 +883,15 @@ function openCycleCount() {
   document.getElementById('cc-step1').classList.remove('hide');
   document.getElementById('cc-step2').classList.add('hide');
   document.getElementById('cc-step3').classList.add('hide');
-  showModal('cc-modal');
+  // A wizard closed any way (×, Escape, the backdrop, Discard) is closed for
+  // good: its bins, index and results do not outlive it.
+  showModal('cc-modal', { onClose: function() { ccState = newCCState(); } });
 }
 
 function closeCycleCount() {
   hideModal('cc-modal');
   ccState = newCCState();
 }
-
-// A wizard dismissed by its backdrop is closed too: without this its state
-// (bins, index, results) outlived the dismiss.
-var ccModalEl = document.getElementById('cc-modal');
-if (ccModalEl) ccModalEl.addEventListener('backdropclose', function() { ccState = newCCState(); });
 
 function ccStart() {
   var rows = document.querySelectorAll('#bin-table tbody tr');
@@ -1254,12 +1257,10 @@ async function confirmBinCreate(form, evt) {
 }
 
 // ===== KEYBOARD =====
+// Escape is the layer's (shared/layer.js): it closes the innermost pop-up and
+// asks before it discards what was typed; each pop-up's own state goes in its
+// onClose.
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    closeBinDetail();
-    closeBTCreateModal(); closeBTEditModal();
-    closeCreateBinModal(); closeCycleCount();
-  }
   // Cycle count shortcuts: only while the wizard is open on step 2. Step 2 is
   // hidden by class, not by style, so the old style test was always true and
   // every Enter, Tab and F on the page went to the wizard.

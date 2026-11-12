@@ -14,7 +14,7 @@
 // value it suggests saves only on Confirm there.
 
 import { debounce, delegateActions, escapeHtml } from '/static/shared/dom.js';
-import { hideModal, showModal } from '/static/shared/layer.js';
+import { hideModal, layerDepth, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
@@ -522,8 +522,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     const s = document.getElementById('inv-search');
     if (s) s.focus();
-  } else if (e.key === 'Escape') {
-    closeCalc();
+  } else if (e.key === 'Escape' && !e.defaultPrevented && !layerDepth()) {
+    // The calculator is a layer entry and Escape closes it there; the
+    // threshold pop-over is the page's own, so it closes here, and only
+    // when no entry of the layer is open above it (nor took this press:
+    // the layer prevents the default of the Escape it handles).
     if (thrPopOpen) toggleThrPop();
   }
 });

@@ -1,5 +1,5 @@
 import { delegateActions, h } from '/static/shared/dom.js';
-import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
+import { confirm as uiConfirm, hideModal, layerDepth, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost, setText } from '/static/app.js';
 
@@ -234,23 +234,23 @@ function openLoaderModal() {
   formState = blankForm();
   renderForm(formState);
   showErrors([]);
-  showModal('loader-modal');
+  showModal('loader-modal', { onClose: loaderCardClosed });
   const n = document.getElementById('loader-name');
   if (n && n.focus) n.focus();
 }
 
 // Closing discards the card (style guide: clear-on-close), whichever way it
-// was closed: ×, Cancel or Esc. The backdrop does not close it.
+// was closed: ×, Cancel or Escape (the layer's, which asks first when a field
+// was typed in). The backdrop does not close it.
 function closeLoaderModal() {
   hideModal('loader-modal');
+  loaderCardClosed();
+}
+
+function loaderCardClosed() {
   formState = blankForm();
   renderForm(formState);
   showErrors([]);
-}
-
-function modalOpen() {
-  const m = document.getElementById('loader-modal');
-  return !!(m && m.classList && m.classList.contains('active'));
 }
 
 async function submitLoader() {
@@ -1720,10 +1720,10 @@ delegateActions(document.body, { filterAssign }, { event: 'input' });
 
 document.addEventListener('click', onArmedClick, true);
 
-// Esc closes the create card when it is open, and otherwise stops adding.
+// Escape stops adding. The create card is a layer entry (shared/layer.js):
+// while it, or anything else of the layer, is open, Escape is the layer's.
 document.addEventListener('keydown', function (e) {
-  if (e.key !== 'Escape') return;
-  if (modalOpen()) { closeLoaderModal(); return; }
+  if (e.key !== 'Escape' || e.defaultPrevented || layerDepth()) return;
   if (armed) disarmSlot();
 });
 

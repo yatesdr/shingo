@@ -688,9 +688,10 @@ document.getElementById('req-method').addEventListener('change', function() {
   document.getElementById('req-body-section').style.display = this.value === 'POST' ? '' : 'none';
 });
 
+// Ctrl+Enter sends. Escape closes the info pop-up through the layer
+// (shared/layer.js), with its scroll lock and focus.
 document.addEventListener('keydown', function(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') sendRequest();
-  if (e.key === 'Escape') document.getElementById('info-overlay').classList.remove('active');
 });
 
 // ─── delegated event handlers ─────────────────────────

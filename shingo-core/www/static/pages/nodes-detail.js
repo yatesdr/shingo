@@ -615,9 +615,8 @@ delegateActions(document.body, {
     pickGatePoint
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeNodeModal(); }
-});
+// Escape closes the pop-up through the layer (shared/layer.js), innermost
+// first, asking before it discards what was typed.
 
 // ── Waiting points ─────────────────────────────────────────────────────────
 //

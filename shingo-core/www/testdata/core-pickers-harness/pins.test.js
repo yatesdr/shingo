@@ -61,6 +61,7 @@ function lender(rec, doc, extra) {
         hideModal(id) { rec.modals.push('hide ' + id); },
         delegateActions() {}, openFromQuery() {}, enterSubmits() {},
         debounce(fn) { return fn; },
+        layerDepth() { return 0; },
         el(tag) { return D.makeEl(tag); },
         setText(id, v) { doc.getElementById(id).textContent = (v === null || v === undefined) ? '—' : v; },
         timeAgoHTML() { return ''; },

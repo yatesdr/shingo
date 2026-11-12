@@ -483,7 +483,7 @@ delegateActions(document.body, {
   'close-modal': closeDrill,
 }, { events: ['click'] });
 
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrill(); });
+// Escape closes the drill through the layer (shared/layer.js), innermost first.
 
 // Live: refresh on order events, a burst being one reload after it settles; a
 // hidden tab reloads nothing and catches up once when shown; a light interval

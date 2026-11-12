@@ -67,14 +67,19 @@ function openLaneModal(groupId) {
   laneForm = { groupId: Number(groupId), name: '' };
   document.getElementById('lane-name').value = '';
   laneErrors([]);
-  showModal('lane-modal');
+  showModal('lane-modal', { onClose: laneModalClosed });
   document.getElementById('lane-name').focus();
 }
 
 // Closing discards what was typed (clear-on-close), whichever way it was
-// closed: ×, Cancel or Esc. The backdrop does not close it.
+// closed: ×, Cancel or Escape (the layer's, which asks first when the name was
+// typed). The backdrop does not close it.
 function closeLaneModal() {
   hideModal('lane-modal');
+  laneModalClosed();
+}
+
+function laneModalClosed() {
   laneForm = { groupId: 0, name: '' };
   document.getElementById('lane-name').value = '';
   laneErrors([]);
@@ -523,6 +528,5 @@ document.addEventListener('DOMContentLoaded', function() {
   initDragAndDrop();
 });
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeNgrpModal(); closeLaneModal(); }
-});
+// Escape closes either modal through the layer (shared/layer.js), innermost
+// first, asking before it discards what was typed.

@@ -94,6 +94,15 @@ function load(opts) {
     const posts = [];
     const toasts = [];
     const confirms = [];
+    // The open layer entries, innermost last (shared/layer.js's stack).
+    const layer = [];
+    const closeEntry = function (id, why) {
+        const e = els[id]; if (e) e.classList.remove('active');
+        const i = layer.findIndex(function (x) { return x.id === id; });
+        if (i < 0) return;
+        const entry = layer.splice(i, 1)[0];
+        if (entry.onClose) entry.onClose(why);
+    };
     // The page builds markup with shared/dom.js's h``; this is the
     // same helper with the same escape, quotes included.
     const esc = function (v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
@@ -131,10 +140,16 @@ function load(opts) {
         apiPost(url, body) { posts.push({ url: url, body: body }); return Promise.resolve(opts.post ? opts.post(url, body) : {}); },
         delegateActions() {},
         h: h,
-        // The hub's modal verbs, as far as this page reads them: the card is
-        // shown by its .active class.
-        showModal(id) { const e = els[id]; if (e) e.classList.add('active'); },
-        hideModal(id) { const e = els[id]; if (e) e.classList.remove('active'); },
+        // The layer's modal verbs, as far as this page reads them: the card is
+        // shown by its .active class, an open card is an entry, and a close of
+        // an open entry (hideModal, or the layer's Escape below) calls its
+        // onClose.
+        showModal(id, o) {
+            const e = els[id]; if (e) e.classList.add('active');
+            if (!layer.some(function (x) { return x.id === id; })) layer.push({ id: id, onClose: o && o.onClose });
+        },
+        hideModal(id) { closeEntry(id, 'close'); },
+        layerDepth() { return layer.length; },
         // app.js's setText: an absent value is the no-data dash.
         setText(id, v) { const e = els[id]; if (e) e.textContent = (v === null || v === undefined) ? '—' : v; },
         toast(msg, level) { toasts.push({ msg: msg, level: level }); },
@@ -145,7 +160,10 @@ function load(opts) {
         .replace(/^import[^;]+;\s*/mg, '');   // drop the ES imports; deps injected above
     vm.runInContext(src, ctxObj);
     return {
-        ctx: ctxObj, els: els, posts: posts, listeners: listeners, toasts: toasts, confirms: confirms,
+        ctx: ctxObj, els: els, posts: posts, listeners: listeners, toasts: toasts, confirms: confirms, layer: layer,
+        // layerEscape is the layer's Escape on an untouched entry: the
+        // innermost closes, and its onClose runs.
+        layerEscape() { if (layer.length) closeEntry(layer[layer.length - 1].id, 'escape'); },
         set(expr) { vm.runInContext(expr, ctxObj); },
         get(expr) { return vm.runInContext(expr, ctxObj); },
     };
@@ -312,16 +330,25 @@ await (async function cardThroughTheDom() {
     check('submit refused: the reason in the card, card still open',
         h4.els['loader-form-error'].textContent === 'name taken' && h4.els['loader-modal'].classList.contains('active'));
 
-    // Esc closes the card and clears it.
+    // Escape is the layer's while the card is open: the page's own keydown
+    // leaves it, and the layer's close runs the card's onClose, which clears it.
     const h5 = load();
     h5.ctx.openLoaderModal();
     h5.els['loader-name'].value = 'X';
     h5.ctx.pickStationRole('consume');
     const esc = h5.listeners.filter(function (l) { return l.type === 'keydown'; });
     esc.forEach(function (l) { l.fn({ key: 'Escape' }); });
-    check('Esc: closes the card and clears what was in it',
-        esc.length >= 1 && !h5.els['loader-modal'].classList.contains('active') &&
+    check('Escape with the card open: the page\'s own keydown leaves it to the layer',
+        esc.length >= 1 && h5.els['loader-modal'].classList.contains('active') && h5.layer.length === 1);
+    h5.layerEscape();
+    check('the layer\'s Escape: the card closes and its onClose clears what was in it',
+        !h5.els['loader-modal'].classList.contains('active') &&
         h5.els['loader-name'].value === '' && !h5.els['loader-role-consume'].classList.contains('is-selected'));
+
+    // With the layer empty, the page's Escape stops adding (h3 armed the new
+    // station's windows when its card closed).
+    h3.listeners.filter(function (l) { return l.type === 'keydown'; }).forEach(function (l) { l.fn({ key: 'Escape' }); });
+    check('Escape with nothing open: stops adding', h3.get('armed') === null);
 })();
 
 // --- frame 2: the box ----------------------------------------------------
