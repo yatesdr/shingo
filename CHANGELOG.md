@@ -16,6 +16,16 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- Every picker's rows are finger-sized, with a bigger tick box and a scrollbar wide enough to grab
+- Scrolling to the end of a picker's list no longer scrolls the page behind it
+- A picker's list ends with how many rows it has, or how many the search left of how many
+- A dropdown picker has a chevron, and a tap on its box opens the list on a touch panel
+- Settings' Discard is off while there is nothing to discard
+- Settings marks Positions, the routing set and Parts "saved as you pick"
+- The counter's PLC field says only PLCs set up in WarLink are listed, and where to add one
+
 ## v0.6.0 — 2026-11-12
 
 Deploy: Core v177; Core first, then the Edges.
