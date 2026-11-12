@@ -8817,7 +8817,7 @@ function onClick(e) {
     if (openRow) { openProcess(Number(openRow.dataset.open)); return; }
     if (styleRowEl && !btn) {
         const id = Number(styleRowEl.dataset.style);
-        const go = () => { selectStyle(id); syncHash(); };
+        const go = () => { S.tab = 'flows'; selectStyle(id); syncHash(); };
         if (!draftHold(go)) go();
         return;
     }
