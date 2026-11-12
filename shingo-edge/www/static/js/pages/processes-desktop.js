@@ -5756,7 +5756,7 @@ function loadCoreNodes() {
 // node groups first and nodes with no type last. Sorted on the type alone, ''
 // came first, so plain nodes led and groups trailed (census #4).
 function coreNodeRank(n) {
-    if (Array.isArray(n.members) && n.members.length || n.node_type === 'NGRP') return 0;
+    if ((Array.isArray(n.members) && n.members.length) || n.node_type === 'NGRP') return 0;
     return n.node_type ? 1 : 2;
 }
 function coreNodeList() {
