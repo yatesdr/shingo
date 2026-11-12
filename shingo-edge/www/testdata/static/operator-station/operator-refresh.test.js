@@ -367,6 +367,12 @@ served = pressView();
 ['../../../../shared/clock.js', '../../../../shared/bus.js'].forEach(loadModule);
 ctx.serverNow = () => now;
 ctx.formatClock = (iso) => String(iso);
+// notice.js's two lost-connection calls, recorded: the banner itself is held
+// by shared/testdata/components/notice.test.js, and this vm's one scope would
+// hand notice.js the station's own el (operator-util.js) in place of dom.js's.
+const bannerCalls = [];
+ctx.showLostConnectionBanner = (server, lastFrameAt) => { bannerCalls.push('show ' + server + ' ' + lastFrameAt); };
+ctx.clearLostConnectionBanner = () => { bannerCalls.push('clear'); };
 ['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
     'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js',
     'operator-release.js', 'operator-modal.js', 'operator-render.js',
@@ -705,16 +711,20 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     await settle();
 }
 
-// ── the event stream: the backoff's cap, the URL it reopens, no banner ───────
+// ── the event stream: the backoff's cap, the URL it reopens, the banners ─────
 //
-// What the station's stream does TODAY, before the shared-UI brief moves the
-// bus and puts a lost-connection banner on this screen (S5): pinned so that
-// change shows up here. The bus is shared/bus.js's; these are the station's
-// settings of it (operator.js: setSSEReloadOnBuild, setSSEQuery,
-// setSSEWatchdog).
+// The bus is shared/bus.js's; these are the station's settings of it
+// (operator.js: setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog). The
+// station shows notice.js's lost-connection banner from a drop to the next
+// connect, with the time of the stream's last frame, and no new-build banner:
+// it reloads (S5, ruling 4).
 {
     await settle();
     reloads = 0;
+    const lastFrameAt = now;
+    keepAlive();
+    await advance(5000);
+    bannerCalls.length = 0;
     const url = openStream().url;
     // A stream that keeps failing with no connect between: the wait doubles
     // from 1 s and stops at 10 s.
@@ -729,16 +739,19 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     eq(waits, [1000, 2000, 4000, 8000, 10000, 10000], 'a stream that keeps failing reconnects after 1, 2, 4, 8 s, then every 10 s');
     eq(openStream().url, url, 'every reconnect reopens the same URL: the station and the types it takes');
     eq(streams.filter(s => !s.closed).length, 1, 'and holds one stream open');
+    eq(bannerCalls, Array(6).fill('show edge ' + lastFrameAt),
+        'every drop, each failed reconnect included, puts up the lost-connection banner with the last frame\'s time');
     // The build the station first saw stays the one it compares against: every
     // frame naming another build reloads again, a frame naming the first does
     // not.
     openStream().emit('connected', { build: 'build-A' });
     eq(reloads, 0, 'a connect naming the first build seen: no reload');
+    eq(bannerCalls.slice(6), ['clear'], 'the connect takes the lost-connection banner down');
     openStream().emit('connected', { build: 'build-B' });
     openStream().emit('heartbeat', { build: 'build-B' });
     eq(reloads, 2, 'every frame naming another build reloads, the second as well as the first');
-    eq(body.descendants().some(n => n.id === 'shingo-refresh-banner'), false,
-        'a new build never shows the refresh banner on the station: it reloads');
+    eq([bannerCalls.filter(c => c !== 'clear').length, /showNewBuildBanner/.test(fs.readFileSync(path.join(SRC_DIR, 'operator.js'), 'utf8'))], [6, false],
+        'a new build puts up no banner on the station (it names no new-build banner): it reloads');
     reloads = 0;
     await settle();
 }

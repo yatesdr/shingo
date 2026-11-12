@@ -1,4 +1,4 @@
-# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus
+# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild sseStatus closeSSEBus
 # of shared/bus.js; it dispatches build-changed, and BC shows notice.js's "build" banner, as the
 # Core hub does (sse.core-hub.txt). One page (shared/bus.js, as the
 # operator station loads it), steps in order; a "second page" is a fresh one.
@@ -46,7 +46,7 @@ onSSE("build-changed", BC), BC showing notice.js's "build" banner
     the banner:
       div class="notice-banner notice-banner--info" role="status" data-banner="build"
         span class="notice-text"
-          "A new version is available."
+          "A new version is available"
         button class="notice-action" type="button" listens=click
           "Refresh"
         button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
@@ -164,3 +164,35 @@ a second page: window beforeunload with the stream up
 a second page: onSSE("a"), stream up, ← connected {"build":"b1"} then {"build":"b2"}, nothing subscribed to build-changed
     t=0 open #1 /events?topics=a
     t=0 refresh banner in the DOM: false
+
+## the link (sseStatus): live from a connected until the drop; lastFrameAt the browser time of the last frame
+a third page, nothing subscribed
+    (nothing)
+    = sseStatus() live false, lastFrameAt null
+onSSE("a"); onSSE("disconnected", D) where D reads sseStatus()
+    t=0 open #1 /events?topics=a
+    = sseStatus() live false, lastFrameAt null
+at t=1000 #1 ← connected {"build":"b1"}
+    (nothing)
+    = sseStatus() live true, lastFrameAt t=1000
+at t=6000 #1 ← a {}
+    (nothing)
+    = sseStatus() live true, lastFrameAt t=6000
+at t=9000 #1 error
+    t=9000 close #1
+    t=9000 D: sseStatus() live false, lastFrameAt t=6000
+    = sseStatus() live false, lastFrameAt t=6000
+the reconnect opens, and fails before any frame
+    t=10000 open #2 /events?topics=a
+    t=10000 close #2
+    t=10000 D: sseStatus() live false, lastFrameAt t=6000
+    = sseStatus() live false, lastFrameAt t=6000
+the next reconnect opens; ← heartbeat {"build":"b1"} before its connected
+    t=12000 open #3 /events?topics=a
+    = sseStatus() live false, lastFrameAt t=12000
+← connected {"build":"b1"}
+    (nothing)
+    = sseStatus() live true, lastFrameAt t=12000
+closeSSEBus()
+    t=12000 close #3
+    = sseStatus() live false, lastFrameAt t=12000

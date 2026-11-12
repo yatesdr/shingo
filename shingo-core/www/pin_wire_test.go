@@ -112,8 +112,9 @@ func TestPinWire_W1_CoreTestOrdersHideModalMapped(t *testing.T) {
 // re-arming the wait clocks after each swap and setting the strip's count
 // from the same answer. app.js (on every page) still subscribes to one
 // server topic, system-status: RM4 empties that handler's body and keeps the
-// subscription. Its other subscription, build-changed, is the bus's own
-// signal (a stream type, no topic) that it turns into the refresh banner.
+// subscription. Its other subscriptions are the bus's own frames (no topic):
+// build-changed, which it turns into the refresh banner, and disconnected and
+// connected, which put up and take down the lost-connection banner (S5).
 func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 	page := pinReadFile(t, "templates/dashboard.html")
 	if !strings.Contains(page, `src="/static/pages/dashboard-landing.js`) {
@@ -159,10 +160,11 @@ func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 	app := pinReadFile(t, "static/app.js")
 	subs := regexp.MustCompile(`onSSE\(\s*'([\w-]+)'`).FindAllStringSubmatch(app, -1)
 	var topics []string
-	banner := false
+	frames := map[string]bool{}
 	for _, s := range subs {
-		if s[1] == "build-changed" {
-			banner = true
+		switch s[1] {
+		case "build-changed", "connected", "disconnected", "heartbeat", "stream-gap":
+			frames[s[1]] = true
 			continue
 		}
 		topics = append(topics, s[1])
@@ -170,8 +172,11 @@ func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 	if len(topics) != 1 || topics[0] != "system-status" {
 		t.Errorf("app.js onSSE topics = %v, want exactly [system-status]", topics)
 	}
-	if !banner {
+	if !frames["build-changed"] {
 		t.Errorf("app.js no longer subscribes build-changed: a Core redeploy would show no refresh banner")
+	}
+	if !frames["disconnected"] || !frames["connected"] {
+		t.Errorf("app.js no longer subscribes disconnected and connected: a lost stream would show no lost-connection banner")
 	}
 }
 

@@ -23,7 +23,7 @@ refreshOnEvents("orders-content", onSSE)
     the banner:
       div class="notice-banner notice-banner--info" role="status" data-banner="build"
         span class="notice-text"
-          "A new version is available."
+          "A new version is available"
         button class="notice-action" type="button" listens=click
           "Refresh"
         button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
@@ -37,6 +37,7 @@ click the banner's ×
 #1 error
     t=0 close #1
     t=1000 open #2 /events?topics=order-completed%2Corder-failed%2Corder-update
+    t=1000 lost-connection banner: "Lost connection to this Edge · last answered 14:00"
     = #2 opened 1000 ms after #1 closed
 #2 error (no connected since the last error)
     t=1000 close #2
@@ -61,6 +62,7 @@ click the banner's ×
     #7 url /events?topics=order-completed%2Corder-failed%2Corder-update
 #7 ← connected {"build":"b2"}  (the new build, after the ×)
     t=35000 new-build banner shown
+    t=35000 lost-connection banner gone
 #7 ← connected {"build":"b2"} again, while the banner is up
     t=35000 banners: 1
 #orders-content leaves the page; #7 ← order-update {"id":2}

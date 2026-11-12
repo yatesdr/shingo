@@ -29,7 +29,8 @@ import {
 import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
 import { serverNow } from '/static/shared/clock.js';
-import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog } from '/static/shared/bus.js';
+import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog, sseStatus } from '/static/shared/bus.js';
+import { clearLostConnectionBanner, showLostConnectionBanner } from '/static/shared/notice.js';
 
 let refreshTimer = null;
 // Wall-clock deadline of the pending refreshTimer, so armRefresh can tell
@@ -628,10 +629,16 @@ Object.keys(stationEvents).forEach(function (type) { onSSE(type, stationEvents[t
 onSSE('connected', function () {
     scheduleRefresh();
     streamChanged(true);
+    clearLostConnectionBanner();
 });
 // The stream dropped, or its watchdog found it silent: the sign says the
-// server is not answering until it is back (the bus reconnects by itself).
-onSSE('disconnected', function () { streamChanged(false); });
+// server is not answering until it is back (the bus reconnects by itself),
+// and the notice's banner says when the Edge last answered (S5, ruling 4: the
+// station shows this banner and no new-build one; it reloads on a new build).
+onSSE('disconnected', function () {
+    streamChanged(false);
+    showLostConnectionBanner('edge', sseStatus().lastFrameAt);
+});
 // A frame the server queued never arrived (the heartbeat's number is ahead of
 // the last one seen): fetch what it would have said.
 onSSE('stream-gap', function () { scheduleRefresh(); });

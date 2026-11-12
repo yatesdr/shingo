@@ -3,43 +3,43 @@
 # bus.js's: a server topic opens the stream, the bus's own frames (connected, disconnected, heartbeat, stream-gap, build-changed) never do.
 # A non-literal onSSE type is listed as it is written; the station's are its stationEvents keys.
 
-core bins.html: opens a stream; topics bin-update,system-status; bus frames build-changed
-core config.html: opens a stream; topics system-status; bus frames build-changed
-core count-history.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected
-core cycle-time.html: opens a stream; topics system-status; bus frames build-changed
+core bins.html: opens a stream; topics bin-update,system-status; bus frames build-changed,connected,disconnected
+core config.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core count-history.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected,disconnected
+core cycle-time.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
 core dashboard-display.html: opens a stream; topics order-update; bus frames connected,disconnected
-core dashboard-frame.html: opens a stream; topics system-status; bus frames build-changed
+core dashboard-frame.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
 core dashboard-map.html: opens a stream; topics order-update,robot-update; bus frames connected,disconnected
 core dashboard-node-report.html: opens a stream; topics bin-update,node-update; bus frames connected,disconnected
-core dashboard.html: opens a stream; topics order-update,system-status; bus frames build-changed
-core demand-episode.html: opens a stream; topics system-status; bus frames build-changed
-core demand-episodes.html: opens a stream; topics system-status; bus frames build-changed
-core diagnostics.html: opens a stream; topics cms-transaction,debug-log,fire-alarm,system-status; bus frames build-changed
-core edges.html: opens a stream; topics system-status; bus frames build-changed
+core dashboard.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected,disconnected
+core demand-episode.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core demand-episodes.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core diagnostics.html: opens a stream; topics cms-transaction,debug-log,fire-alarm,system-status; bus frames build-changed,connected,disconnected
+core edges.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
 core heartbeat.html: opens a stream; topics cell-heartbeat; bus frames connected,disconnected
-core inventory.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected
-core login.html: opens a stream; topics system-status; bus frames build-changed
-core material-flags.html: opens a stream; topics system-status; bus frames build-changed
-core mission-detail.html: opens a stream; topics mission-event,order-update,system-status; bus frames build-changed
-core missions.html: opens a stream; topics cell-heartbeat,system-status; bus frames build-changed,connected
-core nodes.html: opens a stream; topics system-status; bus frames build-changed
-core orders.html: opens a stream; topics order-update,system-status; bus frames build-changed
-core orphans.html: opens a stream; topics system-status; bus frames build-changed
-core overview.html: opens a stream; topics order-update,robot-update,system-status; bus frames build-changed,connected
-core payloads.html: opens a stream; topics system-status; bus frames build-changed
-core rds_explorer.html: opens a stream; topics system-status; bus frames build-changed
-core robots.html: opens a stream; topics robot-update,system-status; bus frames build-changed
+core inventory.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected,disconnected
+core login.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core material-flags.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core mission-detail.html: opens a stream; topics mission-event,order-update,system-status; bus frames build-changed,connected,disconnected
+core missions.html: opens a stream; topics cell-heartbeat,system-status; bus frames build-changed,connected,disconnected
+core nodes.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core orders.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected,disconnected
+core orphans.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core overview.html: opens a stream; topics order-update,robot-update,system-status; bus frames build-changed,connected,disconnected
+core payloads.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core rds_explorer.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
+core robots.html: opens a stream; topics robot-update,system-status; bus frames build-changed,connected,disconnected
 core sourcing.html: opens a stream; topics bin-update,sourcing-update,system-status; bus frames build-changed,connected,disconnected
-core test-orders.html: opens a stream; topics order-update,system-status; bus frames build-changed
-edge changeover.html: opens a stream; topics changeover-update,order-failed,order-update; bus frames build-changed
-edge config.html: no stream; bus frames build-changed
-edge containment.html: opens a stream; topics containment; bus frames build-changed
-edge diagnostics.html: opens a stream; topics debug-log; bus frames build-changed
-edge login.html: no stream; bus frames build-changed
-edge manual-message.html: no stream; bus frames build-changed
-edge manual-order.html: opens a stream; topics core-nodes; bus frames build-changed
+core test-orders.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected,disconnected
+edge changeover.html: opens a stream; topics changeover-update,order-failed,order-update; bus frames build-changed,connected,disconnected
+edge config.html: no stream; bus frames build-changed,connected,disconnected
+edge containment.html: opens a stream; topics containment; bus frames build-changed,connected,disconnected
+edge diagnostics.html: opens a stream; topics debug-log; bus frames build-changed,connected,disconnected
+edge login.html: no stream; bus frames build-changed,connected,disconnected
+edge manual-message.html: no stream; bus frames build-changed,connected,disconnected
+edge manual-order.html: opens a stream; topics core-nodes; bus frames build-changed,connected,disconnected
 edge operator-display.html: opens a stream; operator-station/operator.js: onSSE(type, …); bus frames connected,disconnected,heartbeat,stream-gap
-edge orders.html: opens a stream; topics order-completed,order-failed,order-update; bus frames build-changed
-edge processes.html: no stream; bus frames build-changed
-edge production.html: opens a stream; topics core-nodes,counter-update,order-failed,order-update; bus frames build-changed
-edge replenishment.html: no stream; bus frames build-changed
+edge orders.html: opens a stream; topics order-completed,order-failed,order-update; bus frames build-changed,connected,disconnected
+edge processes.html: no stream; bus frames build-changed,connected,disconnected
+edge production.html: opens a stream; topics core-nodes,counter-update,order-failed,order-update; bus frames build-changed,connected,disconnected
+edge replenishment.html: no stream; bus frames build-changed,connected,disconnected

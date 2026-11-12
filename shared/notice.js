@@ -17,13 +17,20 @@
 // Sign-in link stays on screen.
 //
 // THE BANNER is a line across the top of the page, one per key, that stays
-// until it is cleared or dismissed. It carries no words of its own: S5 puts
-// "A new version is available" and "Lost connection to <Core|this Edge> ·
-// last answered <time>" on it, under two keys, and both can show at once.
+// until it is cleared or dismissed. banner() carries no words of its own.
+//
+// THE TWO BANNERS EVERY SURFACE SHOWS are worded here, once, for Core, Edge
+// admin and the station (S5): "A new version is available" with Refresh
+// (showNewBuildBanner, on the bus's build-changed; admin pages only, ruling
+// 4: a kiosk reloads instead), and "Lost connection to <Core|this Edge> ·
+// last answered <time>" (showLostConnectionBanner on the bus's disconnected,
+// clearLostConnectionBanner on its connected). They sit under two keys, and
+// both can show at once.
 //
 // NOTHING HAPPENS AT IMPORT: the region is made by the first toast or banner.
 
 import { el } from '/static/shared/dom.js';
+import { formatClock, formatTime, serverNow, simSpeed } from '/static/shared/clock.js';
 
 const LEVELS = ['info', 'success', 'warning', 'error'];
 const LIFETIME_MS = { error: 5000 };
@@ -140,4 +147,45 @@ export function clearBanner(key) {
     if (!b) return;
     banners.delete(key);
     b.remove();
+}
+
+// ─── the build and the link ─────────────────────────────────────────────────
+
+// showNewBuildBanner says the server runs a new build, with Refresh. The bus
+// dispatches build-changed on every frame that carries the new build, so a
+// banner that is up is left as it is: redrawing it would take the focus off
+// its Refresh. Dismissed, it comes back on the next such frame.
+export function showNewBuildBanner() {
+    const up = banners.get('build');
+    if (up && up.isConnected) return up;
+    return banner('build', {
+        text: 'A new version is available',
+        action: { label: 'Refresh', onClick: () => location.reload() },
+    });
+}
+
+const SERVER_NAMES = { core: 'Core', edge: 'this Edge' };
+
+// showLostConnectionBanner says the page's stream to server ('core' or
+// 'edge') dropped, and when it last answered: lastFrameAt is the browser time
+// of the stream's last frame (bus.js sseStatus), null when none came. The bus
+// says disconnected again on every reconnect attempt that fails, and each
+// redraws the words, so the banner needs no timer. It has no ×: the next
+// connect takes it down.
+export function showLostConnectionBanner(server, lastFrameAt) {
+    let text = 'Lost connection to ' + (SERVER_NAMES[server] || 'the server');
+    if (typeof lastFrameAt === 'number' && isFinite(lastFrameAt)) text += ' · last answered ' + answeredAt(lastFrameAt);
+    return banner('connection', { text, level: 'warning', dismiss: false });
+}
+
+// clearLostConnectionBanner takes it down: the stream is back.
+export function clearLostConnectionBanner() { clearBanner('connection'); }
+
+// answeredAt is the plant-local time of a browser instant, read on the
+// server's clock as the page's other times are (clock.js serverNow): the time
+// of day, or the date and time once it is 12 hours or more ago.
+function answeredAt(wallMs) {
+    const ago = Math.max(0, Date.now() - wallMs);
+    const at = serverNow() - ago * simSpeed();
+    return ago >= 12 * 3600 * 1000 ? formatTime(at) : formatClock(at);
 }

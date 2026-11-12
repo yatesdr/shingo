@@ -12,15 +12,17 @@
 // What is left here is Core's own: the door verbs Core's pages were written
 // to (apiGet / apiPost / apiPut / apiDelete), a few page verbs (timeAgoHTML,
 // setText, openFromQuery, enterSubmits, the submit gates), and what every
-// admin page does at load: table sort, the bus subscription and its
-// new-build banner, the submit gate on document.body.
+// admin page does at load: table sort, the bus subscription and its two
+// banners (a new build, a lost connection), the submit gate on document.body.
 
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { formatTime, timeAgo } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
-import { onSSE } from '/static/shared/bus.js';
+import { onSSE, sseStatus } from '/static/shared/bus.js';
 import { confirm as uiConfirm, confirmWithInput as uiConfirmWithInput } from '/static/shared/layer.js';
-import { banner, toast } from '/static/shared/notice.js';
+import {
+  clearLostConnectionBanner, showLostConnectionBanner, showNewBuildBanner, toast,
+} from '/static/shared/notice.js';
 import { send } from '/static/shared/http.js';
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 
@@ -98,23 +100,16 @@ export function setText(id, v) {
 onSSE('system-status', function() {});
 
 // The bus only says the build changed; a Core admin page shows the notice's
-// banner (ruling 4), in the words and with the Refresh the old refresh banner
-// had (S5 sets the final wording). A kiosk (the dashboards) sets
-// setSSEReloadOnBuild and never dispatches this. 'build-changed' is a stream
-// type, so it adds no topic and opens nothing.
-//
-// The bus dispatches it on every frame that carries the new build (each
-// heartbeat), so a banner that is up is left as it is: redrawing it would
-// take the focus off its Refresh. Dismissed, it comes back on the next frame,
-// as the old one did.
-var buildBanner = null;
-onSSE('build-changed', function() {
-  if (buildBanner && buildBanner.isConnected) return;
-  buildBanner = banner('build', {
-    text: 'A new version is available.',
-    action: { label: 'Refresh', onClick: function() { location.reload(); } },
-  });
-});
+// new-build banner (ruling 4). A kiosk (the dashboards) sets
+// setSSEReloadOnBuild and never dispatches this. The bus says when the
+// stream drops and when it is back; the page says so on the notice's
+// lost-connection banner, with the time Core last answered on it. All three
+// are the bus's own frames, so they add no topic and open nothing: the
+// banners ride the system-status stream above. The words are notice.js's,
+// the same on the Edge.
+onSSE('build-changed', showNewBuildBanner);
+onSSE('disconnected', function() { showLostConnectionBanner('core', sseStatus().lastFrameAt); });
+onSSE('connected', clearLostConnectionBanner);
 
 // ─── Generic action handlers ───────────────────────────────────────────
 // Per-page scripts register these via delegateActions when they

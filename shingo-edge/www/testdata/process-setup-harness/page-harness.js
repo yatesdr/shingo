@@ -150,8 +150,12 @@ function sharedLoader(ctx) {
         if (cache[file]) return cache[file];
         let src = read(path.join(SHARED, file));
         const names = [];
+        // An import from a shared file that is not run for real (notice.js's
+        // of clock.js) is blanked, as the page's own are: its names are the
+        // realm globals.
         src = src.replace(/^import\s*\{([^}]*)\}\s*from\s*'([^']+)';[ \t]*$/gm,
-            (m, list, from) => 'const ' + destructure(list) + ' = __shared(' + JSON.stringify(from) + ');' + blankLines(m));
+            (m, list, from) => (sharedFile(from) ? 'const ' + destructure(list) + ' = __shared(' + JSON.stringify(from) + ');' : '')
+                + blankLines(m));
         src = src.replace(/^export\s+(async\s+function|function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm,
             (m, kw, name) => { names.push(name); return kw + ' ' + name; });
         const fn = vm.runInContext('(function (__shared) {' + src + '\nreturn { ' + names.join(', ') + ' };\n})', ctx,

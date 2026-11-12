@@ -4,6 +4,7 @@
 'use strict';
 
 const { test, run, page, eq } = require('./spec.js');
+const { makeRealm } = require('../helper-pins-harness/world.js');
 
 function notice() {
     const p = page('notice.js');
@@ -151,6 +152,66 @@ test('a banner\'s × takes it down and tells the page; the next banner call puts
     eq([f.banners().children.length, dismissed], [0, 1]);
     f.N.banner('build', { text: 'A new version is available' });
     eq(f.banners().children.length, 1);
+});
+
+// ── S5's two banners, worded once for Core, Edge admin and the station ──────
+
+// at is 14:02:30 UTC on a fixed day; the page's clock starts there.
+const AT = Date.UTC(2026, 10, 11, 14, 2, 30);
+function clocked(opts) {
+    const r = makeRealm(Object.assign({ surface: 'edge', epoch: AT, plantTZ: 'UTC' }, opts || {}));
+    if (opts && opts.serverClock) r.window.SHINGO_CLOCK = opts.serverClock;
+    const N = r.load('/static/shared/notice.js');
+    return { r, N, banners: () => r.doc.querySelector('.notice-banners'), text: (k) => {
+        const b = r.doc.querySelector('[data-banner="' + k + '"]');
+        return b ? b.querySelector('.notice-text').textContent : null;
+    } };
+}
+
+test('showNewBuildBanner: the words and Refresh; up, it is left as it is; dismissed, the next call puts it back', async () => {
+    const f = clocked();
+    const a = f.N.showNewBuildBanner();
+    const b = f.N.showNewBuildBanner();
+    a.querySelector('.notice-action').click();
+    const shown = [a === b, f.text('build'), a.querySelector('.notice-action').textContent, f.r.reloads, a.className];
+    a.querySelector('.notice-dismiss').click();
+    const after = f.text('build');
+    f.N.showNewBuildBanner();
+    eq(shown.concat([after, f.text('build')]),
+        [true, 'A new version is available', 'Refresh', 1, 'notice-banner notice-banner--info', null, 'A new version is available']);
+});
+
+test('showLostConnectionBanner: Core or this Edge, the plant time of the last frame, a warning with no ×', async () => {
+    const f = clocked();
+    await f.r.advance(90000);
+    const b = f.N.showLostConnectionBanner('core', AT);
+    const core = [f.text('connection'), b.className, !!b.querySelector('.notice-dismiss'), !!b.querySelector('.notice-action')];
+    const again = f.N.showLostConnectionBanner('edge', AT + 60000);
+    eq(core.concat([again === b, f.text('connection'), f.banners().children.length]),
+        ['Lost connection to Core · last answered 14:02', 'notice-banner notice-banner--warning', false, false,
+            true, 'Lost connection to this Edge · last answered 14:03', 1]);
+});
+
+test('showLostConnectionBanner with no frame yet says no time; clearLostConnectionBanner leaves the build banner', async () => {
+    const f = clocked();
+    f.N.showNewBuildBanner();
+    f.N.showLostConnectionBanner('edge', null);
+    const both = [f.text('build'), f.text('connection')];
+    f.N.clearLostConnectionBanner();
+    f.N.clearLostConnectionBanner();
+    eq(both.concat([f.text('connection'), f.text('build')]),
+        ['A new version is available', 'Lost connection to this Edge', null, 'A new version is available']);
+});
+
+test('the time is the server\'s: a page painted 5 min behind the browser says the server\'s time; 12 h on, the date too', async () => {
+    const f = clocked({ serverClock: { now: new Date(AT - 300000).toISOString() } });
+    await f.r.advance(30000);
+    f.N.showLostConnectionBanner('core', AT + 10000);
+    const behind = f.text('connection');
+    await f.r.advance(12 * 3600 * 1000);
+    f.N.showLostConnectionBanner('core', AT + 10000);
+    eq([behind, f.text('connection')],
+        ['Lost connection to Core · last answered 13:57', 'Lost connection to Core · last answered Nov 11, 2026 13:57 UTC']);
 });
 
 test('banners sit above the toasts in one region: a toast never covers a banner', async () => {

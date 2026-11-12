@@ -73,6 +73,7 @@ func TestUtilsJSHasExports(t *testing.T) {
 			"export function setSSEQuery",
 			"export function setSSEWatchdog",
 			"export function setSSEReloadOnBuild",
+			"export function sseStatus",
 			"export function closeSSEBus",
 		},
 		"layer.js": {
@@ -87,6 +88,9 @@ func TestUtilsJSHasExports(t *testing.T) {
 			"export function toast",
 			"export function banner",
 			"export function clearBanner",
+			"export function showNewBuildBanner",
+			"export function showLostConnectionBanner",
+			"export function clearLostConnectionBanner",
 		},
 		"http.js": {
 			"export async function send",

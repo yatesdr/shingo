@@ -11,14 +11,16 @@ a Core page imports app.js
 #1 error
     t=0 close #1
     t=1000 open #2 /events?topics=system-status
+    t=1000 lost-connection banner: "Lost connection to Core · last answered 14:00"
     = #2 opened 1000 ms after #1 closed
 #2 ← connected {"build":"b2"}  (Core redeployed)
     t=1000 refresh banner shown
+    t=1000 lost-connection banner gone
     = "build" banners in the page: 1
     the banner:
       div class="notice-banner notice-banner--info" role="status" data-banner="build"
         span class="notice-text"
-          "A new version is available."
+          "A new version is available"
         button class="notice-action" type="button" listens=click
           "Refresh"
         button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
@@ -37,6 +39,23 @@ click its Refresh
 a page module subscribes onSSE("order-update") after the stream is up
     t=1000 close #2
     t=1000 open #3 /events?topics=order-update%2Csystem-status
+3 min on, #3 ← system-status {}, then 4 min of quiet (t=0 is 14:00 UTC, the plant zone)
+    (nothing)
+    = the last frame at t=181000
 #3 error: what the page shows while it is down
-    t=1000 close #3
-    = elements in the page before the drop 10, 10 ms into it 10
+    t=421000 close #3
+    t=421010 lost-connection banner: "Lost connection to Core · last answered 14:03"
+    = elements in the page before the drop 10, 10 ms into it 12
+    the lost-connection banner:
+      div class="notice-banner notice-banner--warning" role="status" data-banner="connection"
+        span class="notice-text"
+          "Lost connection to Core · last answered 14:03"
+the reconnect opens and fails before any frame, twice
+    t=422000 open #4 /events?topics=order-update%2Csystem-status
+    t=422000 close #4
+    t=424000 open #5 /events?topics=order-update%2Csystem-status
+    t=424000 close #5
+    = the same node: true; banners in the page: build, connection
+the reconnect opens; #6 ← connected {"build":"b2"}
+    t=428000 open #6 /events?topics=order-update%2Csystem-status
+    t=428000 lost-connection banner gone

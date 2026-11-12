@@ -63,13 +63,16 @@ func TestStationTemplate_NoComposerModelTag(t *testing.T) {
 // TestStationBoot_SharedFiles: the station's module graph reaches these shared
 // files and no others. Each is small and has a job the station does: the
 // server clock (clock.js), the one event stream (bus.js), the quote-safe
-// escape its renderers concatenate attributes with (esc.js). The touch layer
-// (toasts, press guard, touch sheets) is the station's own and is not
-// extracted, so a shared UI module here is a decision to make, not a
-// convenience: add it to the list with the reason.
+// escape its renderers concatenate attributes with (esc.js), and the notice's
+// lost-connection banner (notice.js, with the el it builds with, dom.js: S5,
+// ruling 4, one wording on every surface). The touch layer (toasts, press
+// guard, touch sheets) is the station's own and is not extracted, so a shared
+// UI module here is a decision to make, not a convenience: add it to the list
+// with the reason.
 func TestStationBoot_SharedFiles(t *testing.T) {
 	t.Parallel()
-	want := []string{"/static/shared/bus.js", "/static/shared/clock.js", "/static/shared/esc.js"}
+	want := []string{"/static/shared/bus.js", "/static/shared/clock.js", "/static/shared/dom.js",
+		"/static/shared/esc.js", "/static/shared/notice.js"}
 	reach := staticAssets().ImportMap(stationEntry)
 	if len(reach) == 0 {
 		t.Fatalf("the import closure of %s is empty: the handler no longer serves the entry", stationEntry)

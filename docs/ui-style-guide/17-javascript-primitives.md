@@ -80,6 +80,7 @@ two buses).
 |---|---|---|
 | `setSSEQuery` | function | setSSEQuery adds parameters to the stream's URL (the station board names its station, so the Edge marks its screen online on connect and heartbeat). |
 | `setSSEWatchdog` | function | setSSEWatchdog arms the no-frame watchdog: ms with no frame of any kind and the stream is treated as dead. |
+| `sseStatus` | function | sseStatus is the link as the bus last saw it: {live, lastFrameAt}, live while the stream is up, lastFrameAt the browser time (ms) of its last frame. |
 | `setSSEReloadOnBuild` | function | setSSEReloadOnBuild switches the bus's build-id-mismatch behavior from the 'build-changed' dispatch (admin pages show the refresh banner on it) to an immediate location.reload() (kiosk pages — no operator to dismiss; the right move is to adopt the new Core build). |
 | `onSSE` | function | — |
 | `closeSSEBus` | function | closeSSEBus — tear down the shared EventSource (page unload / tests). |
@@ -131,6 +132,9 @@ Modals, sheets, confirm, prompt and popovers ([Modals](10-modals.md)).
 | `toast` | function | toast shows one message and returns its element. |
 | `banner` | function | banner shows, or redraws in place, the banner under key, and returns its element. |
 | `clearBanner` | function | clearBanner takes the banner under key down; no banner is no error. |
+| `showNewBuildBanner` | function | showNewBuildBanner says the server runs a new build, with Refresh. |
+| `showLostConnectionBanner` | function | showLostConnectionBanner says the page's stream to server ('core' or 'edge') dropped, and when it last answered: lastFrameAt is the browser time of the stream's last frame (bus.js sseStatus), null when none came. |
+| `clearLostConnectionBanner` | function | clearLostConnectionBanner takes it down: the stream is back. |
 
 <!-- /generated -->
 

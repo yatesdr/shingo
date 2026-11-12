@@ -26,6 +26,7 @@ Deploy: no migration.
 - A save on an Edge that does not answer says so instead of nothing; Apply no longer sticks on "Saving…"
 - Edge admin pages share one event stream, asking only for their own events; a failed htmx refresh says so
 - A Core admin page shows the new-version banner on a redeploy; the dashboards and the station still reload
+- Core and Edge pages with live updates, and the station, say "Lost connection" with the time the server last answered, until it is back
 
 ## v0.4.0 — 2026-11-12
 

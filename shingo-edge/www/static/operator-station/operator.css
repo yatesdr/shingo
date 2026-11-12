@@ -1018,6 +1018,28 @@ body {
 .os-footer-badge.producing { background: #163826; color: var(--os-green-bright); }
 .os-footer-badge.changeover { background: #3d2810; color: var(--os-orange); }
 
+/* ===== The notice's banner (shared/notice.js) =====
+   The station shows one: "Lost connection to this Edge · last answered …",
+   from the stream's drop to its next connect (operator.js). This page links no
+   components.css, so the banner's rules are here, and they lay it over the
+   footer, which is words only: the header's buttons and stale sign and the
+   tiles stay in sight. It has no control, so a tap goes through it. */
+.notice-root {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: var(--z-toast);
+    pointer-events: none;
+}
+.notice-banner {
+    display: flex; align-items: center; justify-content: center;
+    min-height: var(--os-footer-h);
+    padding: 0 16px;
+    background: color-mix(in srgb, var(--warning) 22%, var(--os-footer-bg));
+    border-top: 2px solid var(--warning);
+    color: var(--os-text);
+    font-size: 16px;
+    font-weight: 600;
+}
+
 /* ===== Responsive: 7" screens (≤1024px wide) ===== */
 @media (max-width: 1024px) {
     :root {

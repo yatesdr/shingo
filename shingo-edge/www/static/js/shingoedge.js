@@ -16,15 +16,18 @@
 //      hookHtmxErrors): a partial refresh or an hx-post action that is
 //      refused, or never answered, used to keep the old content and say
 //      nothing;
-//   5. shows the new-build banner on the bus's build-changed. That is one of
-//      the bus's own frames, which opens no stream (shared/bus.js): a page
-//      that holds a stream for its own topics shows the banner on it, and a
-//      page that holds none still holds none.
+//   5. shows the new-build banner on the bus's build-changed, and the
+//      lost-connection banner from its disconnected to its next connected.
+//      Those are the bus's own frames, which open no stream (shared/bus.js):
+//      a page that holds a stream for its own topics shows the banners on
+//      it, and a page that holds none still holds none.
 //
 // window.ShingoEdge carries toast for the one classic consumer,
 // templates/diagnostics.html's inline script.
 
-import { banner, toast } from '/static/shared/notice.js';
+import {
+    clearLostConnectionBanner, showLostConnectionBanner, showNewBuildBanner, toast,
+} from '/static/shared/notice.js';
 import {
     installHtmxLiveDurations,
     installHtmxTimestampConversion,
@@ -33,7 +36,7 @@ import {
 } from '/static/shared/clock.js';
 import { installTableSort } from '/static/shared/list.js';
 import { hookHtmxErrors, http } from '/static/shared/http.js';
-import { onSSE } from '/static/shared/bus.js';
+import { onSSE, sseStatus } from '/static/shared/bus.js';
 // Once per page, on the body every htmx event bubbles to. A module runs after
 // the document is parsed, so the body is there.
 hookHtmxErrors(document.body);
@@ -47,6 +50,8 @@ document.addEventListener('DOMContentLoaded', function() {
     installLiveDurations();
 });
 onSSE('build-changed', showNewBuildBanner);
+onSSE('disconnected', function() { showLostConnectionBanner('edge', sseStatus().lastFrameAt); });
+onSSE('connected', clearLostConnectionBanner);
 
 // --- the live bus on an Edge admin page ---
 // A page that holds a stream subscribes its server topics on shared/bus.js's
@@ -54,18 +59,10 @@ onSSE('build-changed', showNewBuildBanner);
 // a burst of subscriptions; this module runs before the page's, so a server
 // topic subscribed here would open the stream before the page's topics were
 // known, and the page's would reopen it. The bus's own frames open nothing,
-// so the banner below is subscribed here, once.
-
-// showNewBuildBanner is an Edge admin page's answer to the bus's
-// build-changed (ruling 4: an admin page shows the banner and the person
-// picks the moment; a kiosk reloads). The words and the Refresh are today's
-// refresh banner's; S5 sets the final ones.
-function showNewBuildBanner() {
-    banner('build', {
-        text: 'A new version is available.',
-        action: { label: 'Refresh', onClick: function() { location.reload(); } },
-    });
-}
+// so the banners above are subscribed here, once. Their words are
+// notice.js's (the same on Core and the station): an admin page shows the
+// new-build banner and the person picks the moment (ruling 4; a kiosk
+// reloads).
 
 // refreshOnEvents fires an htmx partial's "sse:<type>" triggers from the
 // page's one bus stream: each sse: name in the element's hx-trigger becomes a

@@ -193,7 +193,11 @@ var sharedExportsNoImporter = map[string]string{
 	// hubs and the Processes page onto them.
 	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",
 	"picker.js createPicker":     "adopted in wave C (s2-processes), its adapters in S3",
-	"notice.js clearBanner":      "adopted in S5 (the lost-connection banner)",
+	// The banner primitive: S5's two banners are worded inside notice.js
+	// (showNewBuildBanner, showLostConnectionBanner), so the hubs and the
+	// station import those, and a page's own banner would use these.
+	"notice.js banner":      "the primitive under S5's two, read by testdata/components/notice.test.js",
+	"notice.js clearBanner": "the primitive under S5's two, read by testdata/components/notice.test.js",
 }
 
 var (

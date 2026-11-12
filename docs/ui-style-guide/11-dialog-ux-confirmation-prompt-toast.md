@@ -51,23 +51,34 @@ never covers a banner's button. Pages move onto it in wave C.
   HTTP door's **Sign in**) or `{ label, onClick }`.
 - **`banner(key, opts)`** is a line that stays until it is cleared or its ×
   is pressed: one per key, redrawn in place when shown again. It carries no
-  words of its own. The two it is for, both able to show at once:
+  words of its own.
+- **The two banners every surface shows** are worded in `notice.js`, once,
+  and both can show at once. Core's `app.js`, the Edge hub and the station
+  call them on the bus's own frames, so they ride a stream the page already
+  holds and open none:
 
 ```js
-import { banner, clearBanner } from '/static/shared/notice.js';
+import { onSSE, sseStatus } from '/static/shared/bus.js';
+import { clearLostConnectionBanner, showLostConnectionBanner, showNewBuildBanner }
+    from '/static/shared/notice.js';
 
-// A new build on an admin page (ruling 4: kiosks reload instead).
-banner('build', { text: 'A new version is available',
-    action: { label: 'Refresh', onClick: () => location.reload() } });
+// "A new version is available" + Refresh. Admin pages only (ruling 4: the
+// station and Core's dashboards reload instead).
+onSSE('build-changed', showNewBuildBanner);
 
-// The bus's disconnected signal; cleared on the next connect.
-banner('connection', { text: 'Lost connection to Core · last answered 14:02',
-    level: 'warning', dismiss: false });
-clearBanner('connection');
+// "Lost connection to Core · last answered 14:02" ('edge': "to this Edge"),
+// the plant time of the stream's last frame. No ×: the next connect clears it.
+onSSE('disconnected', () => showLostConnectionBanner('core', sseStatus().lastFrameAt));
+onSSE('connected', clearLostConnectionBanner);
 ```
 
+The bus says disconnected again on every reconnect attempt that fails, and
+each redraws the words, so the banner arms no timer. A last frame 12 hours or
+more ago shows its date too.
+
 `TestSharedComponentSpecs` holds both; `TestSharedComponentPins` runs the
-helper pins' toast cases on the notice.
+helper pins' toast cases on the notice; `sse.core-hub.txt` and
+`sse.edge-admin.txt` show them on a page.
 
 ### Save on change, ask before losing data
 

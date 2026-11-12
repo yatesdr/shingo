@@ -1,14 +1,15 @@
 // bus.js — the live bus, shared by Core and Edge: onSSE subscribes a handler
 // to an event type over ONE EventSource per tab; setSSEQuery, setSSEWatchdog
-// and setSSEReloadOnBuild set it up; closeSSEBus tears it down.
+// and setSSEReloadOnBuild set it up; sseStatus reads the link; closeSSEBus
+// tears it down.
 //
 // ES module, served at /static/shared/bus.js; a page imports each helper from
 // here, so a page has one bus. Nothing runs at import: the stream opens on the
 // first subscribe, and the close on tab unload is wired on the first connect.
 // It imports nothing, and no UI: a build change is the synthetic
 // 'build-changed' it dispatches, and the page that shows the new-build banner
-// subscribes to it (Core's app.js), so a kiosk that reloads instead
-// (setSSEReloadOnBuild) loads no banner code at all.
+// subscribes to it (the hubs, with notice.js's showNewBuildBanner), so a kiosk
+// that reloads instead (setSSEReloadOnBuild) shows no banner for it.
 
 // onSSE — single-connection, multi-subscriber SSE event bus.
 //
@@ -54,6 +55,12 @@
 // A WATCHDOG, when a page asks for one (setSSEWatchdog): no frame at all for
 // that long and the stream is treated as dead — closed, 'disconnected'
 // dispatched, reopened — rather than shown live because no error fired.
+//
+// THE LINK'S STATE (sseStatus): live from a connected frame until the stream
+// drops, and the browser time of the last frame any stream carried (null
+// before the first). The lost-connection banner reads it on 'disconnected',
+// which fires again on every reconnect attempt that fails; nothing polls it,
+// and the bus arms no timer for it.
 const _busHandlers = new Map(); // type -> Set<fn>
 let _busES = null;
 let _busTopics = null;          // topics the live ES was opened with
@@ -65,6 +72,8 @@ let _busQuery = '';             // extra query parameters (setSSEQuery)
 let _busLastSeq = 0;            // highest frame id seen on the live stream
 let _busWatchdogMs = 0;         // 0: no watchdog (setSSEWatchdog)
 let _busWatchdog = null;
+let _busLive = false;           // a connected frame since the last drop
+let _busLastFrameAt = null;     // Date.now() of the last frame, null before one
 
 // Frames the stream itself makes, or the bus makes locally: never requested
 // as a topic, never listened to as a server type.
@@ -92,6 +101,18 @@ export function setSSEQuery(params) {
 export function setSSEWatchdog(ms) {
     _busWatchdogMs = ms > 0 ? ms : 0;
     if (!_busWatchdogMs && _busWatchdog !== null) { clearTimeout(_busWatchdog); _busWatchdog = null; }
+}
+
+// _busFrame is a frame on es: the stream answered now, and its watchdog is fed.
+function _busFrame(es) {
+    _busLastFrameAt = Date.now();
+    _busFeedWatchdog(es);
+}
+
+// sseStatus is the link as the bus last saw it: {live, lastFrameAt}, live
+// while the stream is up, lastFrameAt the browser time (ms) of its last frame.
+export function sseStatus() {
+    return { live: _busLive, lastFrameAt: _busLastFrameAt };
 }
 
 function _busFeedWatchdog(es) {
@@ -175,14 +196,15 @@ function _busConnect() {
     _busFeedWatchdog(es);
     es.addEventListener('connected', (e) => {
         _busReconnectDelay = 1000;
-        _busFeedWatchdog(es);
+        _busFrame(es);
+        _busLive = true;
         const seq = _busFrameSeq(e);
         _busLastSeq = seq === null ? 0 : seq;
         _busCheckBuild(e);
         _busDispatch('connected', e);
     });
     es.addEventListener('heartbeat', (e) => {
-        _busFeedWatchdog(es);
+        _busFrame(es);
         _busCheckBuild(e);
         const seq = _busFrameSeq(e);
         if (seq !== null && seq > _busLastSeq) {
@@ -194,7 +216,7 @@ function _busConnect() {
     _busHandlers.forEach((_set, type) => {
         if (_busStreamTypes[type]) return;
         es.addEventListener(type, (ev) => {
-            _busFeedWatchdog(es);
+            _busFrame(es);
             _busNoteSeq(ev);
             _busDispatch(type, ev);
         });
@@ -207,6 +229,7 @@ function _busDrop(es) {
     es.close();
     if (_busES === es) _busES = null;
     if (_busWatchdog !== null) { clearTimeout(_busWatchdog); _busWatchdog = null; }
+    _busLive = false;
     // Synthetic 'disconnected' so subscribers can show an offline state
     // (the bus auto-reconnects below; a later 'connected' re-fires).
     _busDispatch('disconnected', null);
@@ -247,6 +270,7 @@ export function onSSE(type, handler) {
 // closeSSEBus — tear down the shared EventSource (page unload / tests).
 export function closeSSEBus() {
     _busClosed = true;
+    _busLive = false;
     if (_busWatchdog !== null) { clearTimeout(_busWatchdog); _busWatchdog = null; }
     if (_busES) { _busES.close(); _busES = null; }
 }

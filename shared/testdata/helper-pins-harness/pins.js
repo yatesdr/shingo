@@ -580,14 +580,32 @@ async function apiPins(surface) {
 // A timeline: each step, then what the page did (EventSource opened/closed,
 // handler calls, console errors, reloads, the refresh banner coming or going),
 // stamped with the fake clock, then any summary line the step returns.
+// PIN_EPOCH is the wall clock at t=0 on a realm whose page prints a time (the
+// lost-connection banner's "last answered"), with the plant zone UTC: t=0 is
+// 14:00.
+const PIN_EPOCH = Date.UTC(2026, 10, 11, 14, 0, 0);
+
+// bannerWatch notes, after a step, what it did to the notice's two banners:
+// the new-build one shown or gone (in the words given), the lost-connection
+// one shown, reworded or gone, with its words.
+function bannerWatch(r, shown, gone) {
+    const build = () => !!r.doc.querySelector('[data-banner="build"]');
+    const conn = () => { const b = r.doc.querySelector('[data-banner="connection"]'); return b ? b.textContent : null; };
+    const had = { build: build(), conn: conn() };
+    return () => {
+        if (build() !== had.build) r.note(build() ? shown : gone);
+        const c = conn();
+        if (c !== had.conn) r.note(c === null ? 'lost-connection banner gone' : 'lost-connection banner: ' + JSON.stringify(c));
+    };
+}
+
 function timeline(r, out) {
-    const banner = () => !!r.doc.querySelector('[data-banner="build"]');
     return async (label, fn) => {
         r.notes = [];
-        const had = banner();
+        const seen = bannerWatch(r, 'refresh banner shown', 'refresh banner gone');
         const extra = await fn();
         await r.advance(0);
-        if (banner() !== had) r.note(banner() ? 'refresh banner shown' : 'refresh banner gone');
+        seen();
         out.push(label);
         (r.notes.length ? r.notes : ['(nothing)']).forEach((n) => out.push('    ' + n));
         [].concat(extra === undefined ? [] : extra).forEach((x) => out.push('    = ' + x));
@@ -620,7 +638,7 @@ function handlerNote(r, label) {
 
 async function busPins() {
     const out = [
-        '# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus',
+        '# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild sseStatus closeSSEBus',
         '# of shared/bus.js; it dispatches build-changed, and BC shows notice.js\'s "build" banner, as the',
         '# Core hub does (sse.core-hub.txt). One page (shared/bus.js, as the',
         '# operator station loads it), steps in order; a "second page" is a fresh one.',
@@ -629,7 +647,7 @@ async function busPins() {
     // busPage is a page with the bus loaded beside notice.js, one instance of
     // each. The bus shows no banner: a page subscribes build-changed to show it.
     const busPage = () => {
-        const q = { r: makeRealm({ surface: 'core' }) };
+        const q = { r: makeRealm({ surface: 'core', epoch: PIN_EPOCH, plantTZ: 'UTC' }) };
         q.m = q.r.load('/static/shared/notice.js');
         q.bus = q.r.load('/static/shared/bus.js');
         return q;
@@ -666,7 +684,7 @@ async function busPins() {
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":10}', async () => s2.emit('heartbeat', { build: 'b1', seq: 10 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":12}', async () => s2.emit('heartbeat', { build: 'b1', seq: 12 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1"}  (no seq: Core)', async () => s2.emit('heartbeat', { build: 'b1' }));
-    const buildBanner = () => m.banner('build', { text: 'A new version is available.', action: { label: 'Refresh', onClick: () => r.window.location.reload() } });
+    const buildBanner = () => m.showNewBuildBanner();
     const shownBanner = () => r.doc.querySelector('[data-banner="build"]');
     await step('onSSE("build-changed", BC), BC showing notice.js\'s "build" banner', async () => {
         const note = handlerNote(r, 'BC');
@@ -744,6 +762,33 @@ async function busPins() {
         await timeline(q.r, qs)('a second page: ' + label, async () => { await fn(q); });
         out.push(...qs);
     }
+    out.push('');
+    out.push('## the link (sseStatus): live from a connected until the drop; lastFrameAt the browser time of the last frame');
+    {
+        const q = busPage();
+        const step = timeline(q.r, out);
+        const status = () => {
+            const s = q.bus.sseStatus();
+            return 'sseStatus() live ' + s.live + ', lastFrameAt ' + (s.lastFrameAt === null ? 'null' : 't=' + (s.lastFrameAt - PIN_EPOCH));
+        };
+        await step('a third page, nothing subscribed', async () => status());
+        await step('onSSE("a"); onSSE("disconnected", D) where D reads sseStatus()', async () => {
+            q.bus.onSSE('a', () => {});
+            q.bus.onSSE('disconnected', () => q.r.note('D: ' + status()));
+            await q.r.advance(0);
+            return status();
+        });
+        const s = q.r.lastStream();
+        await step('at t=1000 #' + s.n + ' ← connected {"build":"b1"}', async () => { await q.r.advance(1000); s.emit('connected', { build: 'b1' }); return status(); });
+        await step('at t=6000 #' + s.n + ' ← a {}', async () => { await q.r.advance(5000); s.emit('a', {}); return status(); });
+        await step('at t=9000 #' + s.n + ' error', async () => { await q.r.advance(3000); s.fail(0); return status(); });
+        await step('the reconnect opens, and fails before any frame', async () => { await waitForOpen(q.r, 70000); q.r.lastStream().fail(0); return status(); });
+        await step('the next reconnect opens; ← heartbeat {"build":"b1"} before its connected', async () => {
+            await waitForOpen(q.r, 70000); q.r.lastStream().emit('heartbeat', { build: 'b1' }); return status();
+        });
+        await step('← connected {"build":"b1"}', async () => { q.r.lastStream().emit('connected', { build: 'b1' }); return status(); });
+        await step('closeSSEBus()', async () => { q.bus.closeSSEBus(); return status(); });
+    }
     return out;
 }
 
@@ -753,7 +798,7 @@ async function coreHubBusPins() {
         '# (its onSSE("system-status") subscription keeps one stream open on every Core page).',
         '',
     ];
-    const r = makeRealm({ surface: 'core' });
+    const r = makeRealm({ surface: 'core', epoch: PIN_EPOCH, plantTZ: 'UTC' });
     const step = timeline(r, out);
     await step('a Core page imports app.js', async () => { r.load('/static/app.js'); });
     const bus = r.load('/static/shared/bus.js');
@@ -781,11 +826,36 @@ async function coreHubBusPins() {
     await step('#2 ← heartbeat {"build":"b2"} after Dismiss', async () => { s2.emit('heartbeat', { build: 'b2' }); await r.advance(0); return said(); });
     await step('click its Refresh', async () => { shown()[0].querySelector('.notice-action').click(); });
     await step('a page module subscribes onSSE("order-update") after the stream is up', async () => { bus.onSSE('order-update', () => {}); });
+    await step('3 min on, #' + r.lastStream().n + ' ← system-status {}, then 4 min of quiet (t=0 is 14:00 UTC, the plant zone)', async () => {
+        await r.advance(180000);
+        r.lastStream().emit('system-status', {});
+        const at = r.clock.now;
+        await r.advance(240000);
+        return 'the last frame at t=' + at;
+    });
     await step('#' + r.lastStream().n + ' error: what the page shows while it is down', async () => {
         const before = r.doc.querySelectorAll('*').length;
         r.lastStream().fail(0);
         await r.advance(10);
         return 'elements in the page before the drop ' + before + ', 10 ms into it ' + r.doc.querySelectorAll('*').length;
+    });
+    const lost = () => r.doc.querySelector('[data-banner="connection"]');
+    if (lost()) {
+        out.push('    the lost-connection banner:');
+        out.push(dump(lost(), '      '));
+    }
+    {
+        const held = lost();
+        await step('the reconnect opens and fails before any frame, twice', async () => {
+            await waitForOpen(r, 70000); r.lastStream().fail(0);
+            await waitForOpen(r, 70000); r.lastStream().fail(0);
+            return 'the same node: ' + (lost() === held) + '; banners in the page: '
+                + Array.from(r.doc.querySelectorAll('.notice-banner')).map((b) => b.getAttribute('data-banner')).join(', ');
+        });
+    }
+    await step('the reconnect opens; #' + (r.streams.length + 1) + ' ← connected {"build":"b2"}', async () => {
+        await waitForOpen(r, 70000);
+        r.lastStream().emit('connected', { build: 'b2' });
     });
     return out;
 }
@@ -800,7 +870,7 @@ async function coreHubBusPins() {
 // stub that notes each trigger it is asked for.
 
 function edgeAdminPage(markup) {
-    const r = makeRealm({ surface: 'edge' });
+    const r = makeRealm({ surface: 'edge', epoch: PIN_EPOCH, plantTZ: 'UTC' });
     r.window.htmx = { trigger(elt, name, data) { r.note('htmx.trigger(' + desc(elt, r) + ', ' + JSON.stringify(name) + ', ' + JSON.stringify(data) + ')'); } };
     (markup || []).forEach(([id, trig]) => r.doc.body.appendChild(mk(r, 'div', { id, 'hx-trigger': trig })));
     const hub = r.load('/static/js/shingoedge.js');
@@ -811,13 +881,12 @@ function edgeAdminPage(markup) {
 // edgeAdminTimeline is timeline() for these pages: the banner it watches is
 // the notice's new-build banner.
 function edgeAdminTimeline(r, out) {
-    const banner = () => r.doc.querySelector('.notice-banner');
     return async (label, fn) => {
         r.notes = [];
-        const had = !!banner();
+        const seen = bannerWatch(r, 'new-build banner shown', 'new-build banner gone');
         const extra = await fn();
         await r.advance(0);
-        if (!!banner() !== had) r.note(banner() ? 'new-build banner shown' : 'new-build banner gone');
+        seen();
         out.push(label);
         (r.notes.length ? r.notes : ['(nothing)']).forEach((n) => out.push('    ' + n));
         [].concat(extra === undefined ? [] : extra).forEach((x) => out.push('    = ' + x));

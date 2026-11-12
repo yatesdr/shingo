@@ -572,6 +572,16 @@ function makeRealm(opts) {
         URLSearchParams, AbortController,
     });
     realm.ctx = ctx;
+    // opts.epoch puts the page's wall clock on the fake one: Date.now() and a
+    // bare new Date() read epoch + the fake clock's now, so a time a page
+    // prints (the lost-connection banner's) is the same on every run.
+    if (opts.epoch !== undefined) {
+        vm.runInContext('(function (now) { const D = Date; globalThis.Date = class extends D {'
+            + ' constructor(...a) { if (a.length) super(...a); else super(now()); } static now() { return now(); } }; })', ctx)(
+            () => opts.epoch + clock.now);
+    }
+    // opts.plantTZ is the zone the server inlines as window.PLANT_TZ.
+    if (opts.plantTZ) win.PLANT_TZ = opts.plantTZ;
     // window is the page's global in a browser; the names a script reaches
     // through it (htmx-sse.js calls window.setTimeout) are the same objects.
     Object.assign(win, {
