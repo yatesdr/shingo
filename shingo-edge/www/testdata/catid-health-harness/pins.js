@@ -227,7 +227,9 @@ async function processPins() {
         '# pinned for their own sake.'];
     const pd = pageData(STAGE[3]);
     pd.activeProcessId = 4;
-    const page = await open({ page: pd, search: '?process=4', serve: server(SUMMARY[3], ITEMS) });
+    // #tab=flows: the fixture's process cannot run yet, so a bare open lands on
+    // Setup (U2), whose tab the 10 s tick does not re-read.
+    const page = await open({ page: pd, search: '?process=4', hash: '#tab=flows', serve: server(SUMMARY[3], ITEMS) });
     const health = c => /catid-health/.test(c.url);
     lines.push('', ...reqs('boot on Flows (health reads only)', page.since(0).filter(health)));
     let at = page.mark();

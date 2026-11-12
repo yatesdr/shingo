@@ -389,7 +389,9 @@ function loadPage(loadOpts) {
     const win = {
         innerWidth: 1280,
         innerHeight: 800,
-        location: { search: loadOpts.search || '?process=1', hash: loadOpts.hash || '' },
+        // #tab=flows by default: these pins drive the Styles tab, and a fixture
+        // process that cannot run yet would otherwise open on Setup (U2).
+        location: { search: loadOpts.search || '?process=1', hash: loadOpts.hash || '#tab=flows' },
         ComposerModel,
         addEventListener: () => {},
         // THE ADDRESS BAR IS UNDER TEST in the navigation pin: boot records
@@ -1605,7 +1607,7 @@ async function mainAsync() {
     });
 
     // A style with no rows has no choreography to borrow, so "+ Add a
-    // position" asks for one, then for the position: the first row comes from
+    // position" asks for the position, then how it swaps (U2, F6): the first row comes from
     // the desktop, not from a notice sending the engineer elsewhere. Nothing
     // here reads the routing set or the generator; the missing source and
     // destination are the row's to fill.
@@ -1622,15 +1624,15 @@ async function mainAsync() {
         add.dataset.act = 'add-position';
         main.appendChild(add);
         bubble(add, 'click', doc);
-        if (pop.hidden !== false || pop.innerHTML.indexOf('data-freemode="single_robot"') < 0) {
-            throw new Error('a style with no rows: "+ Add a position" offered no choreography to start from; pop ' +
+        if (pop.hidden !== false || !made['freepos=PLN_02']) {
+            throw new Error('a style with no rows: "+ Add a position" offered no position to start from; pop ' +
                 JSON.stringify(pop.innerHTML.slice(0, 160)));
         }
-        bubble(made['freemode=single_robot'], 'click', doc);
-        if (pop.hidden !== false || !made['freepos=PLN_02']) {
-            throw new Error('after the choreography, the free positions were not offered: ' + pop.innerHTML.slice(0, 200));
-        }
         bubble(made['freepos=PLN_02'], 'click', doc);
+        if (pop.hidden !== false || pop.innerHTML.indexOf('data-freemode="single_robot"') < 0 || !made['freemode=single_robot']) {
+            throw new Error('after the position, the choreographies were not offered: ' + pop.innerHTML.slice(0, 200));
+        }
+        bubble(made['freemode=single_robot'], 'click', doc);
         await drain();
         if (root.innerHTML.indexOf('data-row="PLN_02"') < 0) {
             throw new Error('a style with no rows did not gain PLN_02 as its first row');
@@ -1651,7 +1653,7 @@ async function mainAsync() {
             throw new Error('the bar does not flag the new row as work to finish: ' + bar.slice(0, 200));
         }
         checks++;
-        console.log('ok: a style with no rows gains its first row from "+ Add a position": a choreography, then a position');
+        console.log('ok: a style with no rows gains its first row from "+ Add a position": a position, then a choreography');
     }
 
     // ── + New recipe: an empty draft at once, the mode picked at its first row ─
@@ -1717,11 +1719,14 @@ async function mainAsync() {
             throw new Error('+ New recipe read more than the composer: ' + JSON.stringify(ctx.urls));
         }
         act('add-position');
+        if (pop.hidden !== false || !made['freepos=PLN_01']) {
+            throw new Error('the empty draft\'s first "+ Add a position" did not offer the positions: ' + pop.innerHTML.slice(0, 200));
+        }
+        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
         if (pop.hidden !== false || !made['freemode=two_robot']) {
-            throw new Error('the empty draft\'s first "+ Add a position" did not offer the modes: ' + pop.innerHTML.slice(0, 200));
+            throw new Error('the empty draft\'s first position did not then offer the modes: ' + pop.innerHTML.slice(0, 200));
         }
         bubble(made['freemode=two_robot'], 'click', ctx.doc);
-        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
         await drain();
         if (root.innerHTML.indexOf('data-row="PLN_01"') < 0 ||
             root.innerHTML.indexOf('<h1>New recipe · 2‑Robot Swap</h1>') < 0 ||
@@ -1769,9 +1774,10 @@ async function mainAsync() {
         act('new-recipe');
         for (let i = 0; i < 4; i++) await drain();
         act('add-position');
+        if (!made['freepos=PLN_01']) throw new Error('setup: the empty draft offered no positions');
+        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
         if (!made['freemode=two_robot']) throw new Error('setup: the empty draft offered no modes');
         bubble(made['freemode=two_robot'], 'click', ctx.doc);
-        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
         await drain();
         const row = root.innerHTML.slice(root.innerHTML.indexOf('data-row="PLN_01"'));
         const tr = row.slice(0, row.indexOf('</tr>'));
@@ -1792,13 +1798,14 @@ async function mainAsync() {
         act('new-recipe');
         for (let i = 0; i < 4; i++) await drain();
         act('add-position');
-        bubble(made['freemode=single_robot'], 'click', ctx.doc);
         bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        bubble(made['freemode=single_robot'], 'click', ctx.doc);
         await drain();
         act('rmpos', { node: 'PLN_01' });
         await drain();
         for (const k of Object.keys(made)) delete made[k];
         act('add-position');
+        if (made['freepos=PLN_01']) bubble(made['freepos=PLN_01'], 'click', ctx.doc);
         if (pop.hidden !== false || !made['freemode=two_robot']) {
             throw new Error('a draft emptied by its rows\' × did not offer the modes again: ' +
                 JSON.stringify(pop.innerHTML.slice(0, 200)));
@@ -1828,7 +1835,8 @@ async function mainAsync() {
         bubble(tab, 'click', doc);
         for (let i = 0; i < 4; i++) await drain();
         const page = root.innerHTML + pop.innerHTML;
-        if (!/<h2>Recipes<\/h2>/.test(page)) throw new Error('setup: the Recipes tab did not draw');
+        // The Recipes tab's click lands on HMI setup's recipes, on Settings (F36).
+        if (!/id="pd-hmirecipes"/.test(page)) throw new Error('setup: the recipes beside HMI setup did not draw');
         for (const gone of ['import-from', 'Import from', 'From another cell', 'Suggested', 'shape-draft',
             'start from a suggestion']) {
             if (page.indexOf(gone) >= 0) throw new Error('the Recipes tab still offers a recipe it did not build: ' + gone);
@@ -2816,11 +2824,12 @@ async function mainAsync() {
         if (/pure taxonomy/.test(add + root.innerHTML)) throw new Error('"pure taxonomy" is still drawn');
     });
 
-    await pin('the Add process routing note is one sentence', async () => {
+    // TO FIT ONE SCREEN AT 900 PX (U2, F16) the sheet carries no notes: the
+    // routing set's and the part set's sentences are Settings'.
+    await pin('the Add process sheet repeats no note Settings carries', async () => {
         const h = await addProcessSheet(null);
-        const want = '<p class="pd-note">Operators are offered only these places, never the whole plant.</p>';
-        if (h.indexOf(want) < 0) {
-            throw new Error('the routing note reads ' + JSON.stringify((h.match(/<p class="pd-note">A name.*?<\/p>/) || [''])[0]));
+        if (/<p class="pd-note">/.test(h)) {
+            throw new Error('the sheet draws a note: ' + JSON.stringify((h.match(/<p class="pd-note">.*?<\/p>/) || [''])[0]));
         }
     });
 
