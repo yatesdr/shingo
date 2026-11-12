@@ -39,7 +39,7 @@
 # writes, in order: DELETE /api/processes/1
 ### DELETE /api/processes/1  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Delete Press A?", status "the Edge refused it" (bad), OK "Delete Press A" enabled
     state: no message set
@@ -47,7 +47,7 @@
     pressed again: DELETE /api/processes/1 · GET /api/processes · GET /api/catid-health → sheet: closed
 ### DELETE /api/processes/1  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Delete Press A?", status "Server error (500)" (bad), OK "Delete Press A" enabled
     state: no message set
@@ -55,7 +55,7 @@
     pressed again: DELETE /api/processes/1 · GET /api/processes · GET /api/catid-health → sheet: closed
 ### DELETE /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Delete Press A?", status "No answer from the server" (bad), OK "Delete Press A" enabled
     state: no message set
@@ -63,7 +63,7 @@
     pressed again: DELETE /api/processes/1 · GET /api/processes · GET /api/catid-health → sheet: closed
 ### DELETE /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -76,7 +76,7 @@
 # writes, in order: POST /api/process-groups
 ### POST /api/process-groups  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Add group", status "the Edge refused it" (bad), OK "Add" enabled
     state: no message set
@@ -84,7 +84,7 @@
     pressed again: POST /api/process-groups · GET /api/process-groups · GET /api/catid-health → sheet: closed
 ### POST /api/process-groups  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Add group", status "Server error (500)" (bad), OK "Add" enabled
     state: no message set
@@ -92,7 +92,7 @@
     pressed again: POST /api/process-groups · GET /api/process-groups · GET /api/catid-health → sheet: closed
 ### POST /api/process-groups  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Add group", status "No answer from the server" (bad), OK "Add" enabled
     state: no message set
@@ -100,7 +100,7 @@
     pressed again: POST /api/process-groups · GET /api/process-groups · GET /api/catid-health → sheet: closed
 ### POST /api/process-groups  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses

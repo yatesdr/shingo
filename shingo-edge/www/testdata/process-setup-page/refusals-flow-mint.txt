@@ -6,7 +6,7 @@
 # writes, in order: POST /api/processes/1/flow/mint · PUT /api/styles/9
 ### POST /api/processes/1/flow/mint  ←  422 {"error"} (writeMintRefusal)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "New style", status "the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -14,7 +14,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/processes/1/flow/mint  ←  422 {"error", findings} (validation)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "New style", status "the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -22,7 +22,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/processes/1/flow/mint  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "New style", status "Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -30,7 +30,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/processes/1/flow/mint  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "New style", status "No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -38,7 +38,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/9  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Minted PART-1 PART-3, but its CATID did not save: the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: Minted PART-1 PART-3, but its CATID did not save: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "New style", status "Minted PART-1 PART-3, but its CATID did not save: the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -46,7 +46,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/9  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Minted PART-1 PART-3, but its CATID did not save: Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Minted PART-1 PART-3, but its CATID did not save: Server error (500)
     notice: error "Server error (500)"
     sheet: open "New style", status "Minted PART-1 PART-3, but its CATID did not save: Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -54,7 +54,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/9  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Minted PART-1 PART-3, but its CATID did not save: No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: Minted PART-1 PART-3, but its CATID did not save: No answer from the server
     notice: error "No answer from the server"
     sheet: open "New style", status "Minted PART-1 PART-3, but its CATID did not save: No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -62,7 +62,7 @@
     pressed again: POST /api/processes/1/flow/mint · PUT /api/styles/9 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/9  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Minted PART-1 PART-3, but its CATID did not save: Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Minted PART-1 PART-3, but its CATID did not save: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1

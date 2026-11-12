@@ -602,6 +602,20 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     display: flex; align-items: center; gap: 10px;
 }
 .pd-modal .mf .st { color: var(--text-muted); font-size: 12.5px; margin-right: auto; }
+/* THE LAYER'S SHELL IN THIS PAGE'S CARD. Every sheet but Advanced and the
+   apply modal (which draw .mh/.mb/.mf on #pd-scrim) is shared/layer.js's
+   openSheet: .layer-head, .layer-body, .layer-foot and .layer-status inside
+   .pd-modal. They take .mh/.mb/.mf's paddings and rules, so every sheet is one
+   card; the body's 24 px sides are the ones the width sum above counts. The
+   card keeps overflow visible, as .pd-modal had it: the sheet's own popover
+   (#pd-advpop) hangs off it. */
+.pd-modal.layer-card { padding: 0; overflow: visible; }
+.pd-modal .layer-head { padding: 20px 24px 12px; border-bottom: 1px solid var(--sub-1); }
+.pd-modal .layer-head h2 { font-size: 18px; font-weight: 600; }
+.pd-modal .layer-head p { margin: 4px 0 0; font-size: 12.5px; }
+.pd-modal .layer-body { margin: 0; padding: 6px 24px 10px; overflow: auto; }
+.pd-modal .layer-foot { padding: 14px 24px; border-top: 1px solid var(--sub-1); gap: 10px; }
+.pd-modal .layer-status { font-size: 12.5px; }
 .pd-sec { padding: 10px 0 4px; }
 .pd-sec .pd-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pd-sec .pd-lbl .cnt {

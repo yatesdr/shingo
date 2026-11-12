@@ -6,30 +6,30 @@
 # writes, in order: POST /api/processes/1/changeover/start
 ### POST /api/processes/1/changeover/start  ←  400 {"error"} (writeError)
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: The changeover to Style B did not start
-    new text: #pd-scrim p: the Edge refused it
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .layer-scrim h2: The changeover to Style B did not start
+    new text: .layer-scrim p: the Edge refused it
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "the Edge refused it"
     sheet: open "The changeover to Style B did not start", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/changeover/start  ←  500, no body (chi Recoverer)
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: The changeover to Style B did not start
-    new text: #pd-scrim p: Server error (500)
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .layer-scrim h2: The changeover to Style B did not start
+    new text: .layer-scrim p: Server error (500)
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "Server error (500)"
     sheet: open "The changeover to Style B did not start", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/changeover/start  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: The changeover to Style B did not start
-    new text: #pd-scrim p: No answer from the server
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .layer-scrim h2: The changeover to Style B did not start
+    new text: .layer-scrim p: No answer from the server
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "No answer from the server"
     sheet: open "The changeover to Style B did not start", no status, OK "Close" enabled
     state: no message set
@@ -39,7 +39,7 @@
 # writes, in order: POST /api/processes/1/styles/2/catid
 ### POST /api/processes/1/styles/2/catid  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Pin CATID CAT-Q to Style B?", status "the Edge refused it" (bad), OK "Pin" enabled
     state: no message set
@@ -47,7 +47,7 @@
     pressed again: POST /api/processes/1/styles/2/catid · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/styles/2/catid  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Pin CATID CAT-Q to Style B?", status "Server error (500)" (bad), OK "Pin" enabled
     state: no message set
@@ -55,7 +55,7 @@
     pressed again: POST /api/processes/1/styles/2/catid · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/styles/2/catid  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Pin CATID CAT-Q to Style B?", status "No answer from the server" (bad), OK "Pin" enabled
     state: no message set
@@ -63,7 +63,7 @@
     pressed again: POST /api/processes/1/styles/2/catid · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/styles/2/catid  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses
@@ -76,7 +76,7 @@
 # writes, in order: POST /api/processes/1/styles/1/catid
 ### POST /api/processes/1/styles/1/catid  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Pin CATID CAT-Q to Style A?", status "the Edge refused it" (bad), OK "Pin" enabled
     state: no message set
@@ -84,7 +84,7 @@
     pressed again: POST /api/processes/1/styles/1/catid · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/styles/1/catid  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Pin CATID CAT-Q to Style A?", status "Server error (500)" (bad), OK "Pin" enabled
     state: no message set
@@ -92,7 +92,7 @@
     pressed again: POST /api/processes/1/styles/1/catid · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/styles/1/catid  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Pin CATID CAT-Q to Style A?", status "No answer from the server" (bad), OK "Pin" enabled
     state: no message set
@@ -100,7 +100,7 @@
     pressed again: POST /api/processes/1/styles/1/catid · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/styles/1/catid  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses
@@ -113,7 +113,7 @@
 # writes, in order: POST /api/processes/1/counter
 ### POST /api/processes/1/counter  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Count MES.Slot2?", status "the Edge refused it" (bad), OK "Count" enabled
     state: no message set
@@ -121,7 +121,7 @@
     pressed again: POST /api/processes/1/counter · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/counter  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Count MES.Slot2?", status "Server error (500)" (bad), OK "Count" enabled
     state: no message set
@@ -129,7 +129,7 @@
     pressed again: POST /api/processes/1/counter · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/counter  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Count MES.Slot2?", status "No answer from the server" (bad), OK "Count" enabled
     state: no message set
@@ -137,7 +137,7 @@
     pressed again: POST /api/processes/1/counter · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/processes/1/counter  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses
@@ -150,42 +150,42 @@
 # writes, in order: POST /api/catid-holds/41/charge?mode=preview
 ### POST /api/catid-holds/41/charge?mode=preview  ←  400 {"error"} (writeError)
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: Charge this hold?
-    new text: #pd-scrim p: its preview could not be read: the Edge refused it. Nothing was charged.
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .layer-scrim h2: Charge this hold?
+    new text: .layer-scrim p: its preview could not be read: the Edge refused it. Nothing was charged.
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "the Edge refused it"
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/catid-holds/41/charge?mode=preview  ←  500, no body (chi Recoverer)
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: Charge this hold?
-    new text: #pd-scrim p: its preview could not be read: Server error (500). Nothing was charged.
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .layer-scrim h2: Charge this hold?
+    new text: .layer-scrim p: its preview could not be read: Server error (500). Nothing was charged.
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "Server error (500)"
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/catid-holds/41/charge?mode=preview  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: Charge this hold?
-    new text: #pd-scrim p: its preview could not be read: No answer from the server. Nothing was charged.
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .layer-scrim h2: Charge this hold?
+    new text: .layer-scrim p: its preview could not be read: No answer from the server. Nothing was charged.
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "No answer from the server"
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/catid-holds/41/charge?mode=preview  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/core-nodes
-    new text: #pd-scrim h2: Charge this hold?
-    new text: #pd-scrim p: its preview could not be read: Signed out. Nothing was charged.
-    new text: #pd-scrim button.pd-btn: Cancel
-    new text: #pd-scrim button.pd-btn.primary: Close
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .layer-scrim h2: Charge this hold?
+    new text: .layer-scrim p: its preview could not be read: Signed out. Nothing was charged.
+    new text: .layer-scrim button.btn: Cancel
+    new text: .layer-scrim button.btn.btn-primary: Close
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
@@ -195,7 +195,7 @@
 # writes, in order: POST /api/catid-holds/41/charge?mode=charge
 ### POST /api/catid-holds/41/charge?mode=charge  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Charge 12 on CATID CAT-Q?", status "the Edge refused it" (bad), OK "Charge" enabled
     state: no message set
@@ -203,7 +203,7 @@
     pressed again: POST /api/catid-holds/41/charge?mode=charge · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/catid-holds/41/charge?mode=charge  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Charge 12 on CATID CAT-Q?", status "Server error (500)" (bad), OK "Charge" enabled
     state: no message set
@@ -211,7 +211,7 @@
     pressed again: POST /api/catid-holds/41/charge?mode=charge · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/catid-holds/41/charge?mode=charge  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Charge 12 on CATID CAT-Q?", status "No answer from the server" (bad), OK "Charge" enabled
     state: no message set
@@ -219,7 +219,7 @@
     pressed again: POST /api/catid-holds/41/charge?mode=charge · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/catid-holds/41/charge?mode=charge  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses
@@ -232,7 +232,7 @@
 # writes, in order: POST /api/catid-holds/41/write-off
 ### POST /api/catid-holds/41/write-off  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Write off this hold?", status "the Edge refused it" (bad), OK "Write off" enabled
     state: no message set
@@ -240,7 +240,7 @@
     pressed again: POST /api/catid-holds/41/write-off · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/catid-holds/41/write-off  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Write off this hold?", status "Server error (500)" (bad), OK "Write off" enabled
     state: no message set
@@ -248,7 +248,7 @@
     pressed again: POST /api/catid-holds/41/write-off · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/catid-holds/41/write-off  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Write off this hold?", status "No answer from the server" (bad), OK "Write off" enabled
     state: no message set
@@ -256,7 +256,7 @@
     pressed again: POST /api/catid-holds/41/write-off · GET /api/catid-health · GET /api/processes/1/catid-health → sheet: closed
 ### POST /api/catid-holds/41/write-off  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses

@@ -6,7 +6,7 @@
 # writes, in order: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads
 ### POST /api/processes  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Add process", status "the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -14,7 +14,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### POST /api/processes  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Add process", status "Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -22,7 +22,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### POST /api/processes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Add process", status "No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -30,7 +30,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### POST /api/processes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -40,7 +40,7 @@
     pressed again: POST /api/processes → sheet: open "Add process", status "Signed out" (bad), OK "Create" enabled
 ### POST /api/operator-stations  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created. Its operator screen was refused: the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: The process was created. Its operator screen was refused: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Add process", status "The process was created. Its operator screen was refused: the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -48,7 +48,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### POST /api/operator-stations  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created. Its operator screen was refused: Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: The process was created. Its operator screen was refused: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Add process", status "The process was created. Its operator screen was refused: Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -56,7 +56,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### POST /api/operator-stations  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created. Its operator screen was refused: No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: The process was created. Its operator screen was refused: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Add process", status "The process was created. Its operator screen was refused: No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -64,7 +64,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### POST /api/operator-stations  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created. Its operator screen was refused: Signed out
+    new text: .layer-scrim span.layer-status.is-bad: The process was created. Its operator screen was refused: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -74,7 +74,7 @@
     pressed again: POST /api/processes → sheet: open "Add process", status "Signed out" (bad), OK "Create" enabled
 ### PUT /api/operator-stations/31/claimed-nodes  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added. Its positions was refused: the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added. Its positions was refused: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Add process", status "The process was created; its screen added. Its positions was refused: the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -82,7 +82,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/operator-stations/31/claimed-nodes  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added. Its positions was refused: Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added. Its positions was refused: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Add process", status "The process was created; its screen added. Its positions was refused: Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -90,7 +90,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/operator-stations/31/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added. Its positions was refused: No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added. Its positions was refused: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Add process", status "The process was created; its screen added. Its positions was refused: No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -98,7 +98,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/operator-stations/31/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added. Its positions was refused: Signed out
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added. Its positions was refused: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -108,7 +108,7 @@
     pressed again: POST /api/processes → sheet: open "Add process", status "Signed out" (bad), OK "Create" enabled
 ### PUT /api/processes/5/routing-nodes  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its routing set was refused: the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its routing set was refused: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its routing set was refused: the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -116,7 +116,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/processes/5/routing-nodes  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its routing set was refused: Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its routing set was refused: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its routing set was refused: Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -124,7 +124,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/processes/5/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its routing set was refused: No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its routing set was refused: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its routing set was refused: No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -132,7 +132,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/processes/5/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its routing set was refused: Signed out
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its routing set was refused: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -142,7 +142,7 @@
     pressed again: POST /api/processes → sheet: open "Add process", status "Signed out" (bad), OK "Create" enabled
 ### PUT /api/processes/5/payloads  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its part set was refused: the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its part set was refused: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its part set was refused: the Edge refused it" (bad), OK "Create" enabled
     state: no message set
@@ -150,7 +150,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/processes/5/payloads  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its part set was refused: Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its part set was refused: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its part set was refused: Server error (500)" (bad), OK "Create" enabled
     state: no message set
@@ -158,7 +158,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/processes/5/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its part set was refused: No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its part set was refused: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its part set was refused: No answer from the server" (bad), OK "Create" enabled
     state: no message set
@@ -166,7 +166,7 @@
     pressed again: POST /api/processes · POST /api/operator-stations · PUT /api/operator-stations/31/claimed-nodes · PUT /api/processes/5/routing-nodes · PUT /api/processes/5/payloads · GET /api/processes · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes/5/composer → sheet: closed
 ### PUT /api/processes/5/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): The process was created; its screen added; its positions claimed. Its part set was refused: Signed out
+    new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its part set was refused: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1

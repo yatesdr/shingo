@@ -186,14 +186,12 @@ var sharedHelperCopies = map[string]string{
 	"shingo-edge/www/static/js/pages/catid-health.js esc": "classic script's private escaper",
 	"shingo-edge/www/static/js/pages/station-card.js esc": "classic script's private escaper",
 	// The components' names (layer.js, notice.js) still defined where the
-	// pages take them today: utils.js's copies, which the hubs re-export, and
-	// the Processes page's own sheet shell.
+	// pages take them today: utils.js's copies, which the hubs re-export.
 	"shared/utils.js showModal": "adopted in wave C (s2-hubs): the hubs move to layer.js's",
 	"shared/utils.js hideModal": "adopted in wave C (s2-hubs): the hubs move to layer.js's",
 	"shared/utils.js confirm":   "adopted in wave C (s2-hubs): the hubs move to layer.js's",
 	"shared/utils.js prompt":    "adopted in wave C (s2-hubs): the hubs move to layer.js's",
 	"shared/utils.js toast":     "adopted in wave C (s2-hubs): the hubs move to notice.js's",
-	"shingo-edge/www/static/js/pages/processes-desktop.js openSheet": "adopted in wave C (s2-processes): the page moves to layer.js's",
 }
 
 // sharedExportsNoImporter are the exports no page imports, as "file name".
@@ -222,8 +220,6 @@ var sharedExportsNoImporter = map[string]string{
 	"clock.js renderLiveDurations": "one repaint, read by utils.livedurations.test.js",
 	// The shared components, which no page imports until wave C swaps the
 	// hubs and the Processes page onto them.
-	"layer.js openSheet":         "adopted in wave C (s2-processes)",
-	"layer.js closeLayer":        "adopted in wave C (s2-processes)",
 	"http.js REQUEST_TIMEOUT_MS": "the deadline, read by testdata/components/http.test.js",
 	"picker.js createPicker":     "adopted in wave C (s2-processes), its adapters in S3",
 	"notice.js clearBanner":      "adopted in S5 (the lost-connection banner)",

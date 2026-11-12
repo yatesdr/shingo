@@ -1,102 +1,105 @@
-# The sheet stack (openSheet / runSheet / closeSheet / onEscape / askBeforeDiscard / Advanced),
-# one act per block, each on a fresh page. "facts" is the scrim, body scroll lock and the page's
-# sheet state; "focus" is every element the page called focus() on during the act.
+# The sheet stack on shared/layer.js (pageSheet / runSheet / closeSheet / Escape / the discard question /
+# Advanced), one act per block, each on a fresh page. "facts" is the sheet, the layer's depth, body scroll
+# lock, the page's sheet state and the question; "focus" is every element focus() was called on during the act.
 
-## openSheet: the style menu's Rename sheet, then Cancel
-before: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null
-after Style B ⋯ › Rename: scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null
-modal: class "pd-modal" role="dialog" aria-modal="true" aria-label="Rename Style B"
+## pageSheet: the style menu's Rename sheet, then Cancel
+before: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
+after Style B ⋯ › Rename: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none
+modal: class "layer-card layer-sheet pd-modal" role="dialog" aria-modal="true" aria-label="Rename Style B"
 header: "Rename Style B", sub ""
 fields: name
-footer: status(st) · pd-btn [sheet-cancel] "Cancel" · pd-btn primary [sheet-ok] "Rename"
+footer: status(layer-status) · btn "Cancel" · btn btn-primary [data-layer-ok] "Rename"
 inner popover: #pd-advpop, hidden
-focus: none
-active element: none
+focus: input.pd-inp wide
+active element: set
 pd-pop hidden, pd-stpop absent, pd-advpop hidden
-after Cancel: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null
-focus: none (none returned to the ⋯ that opened it)
+after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
+focus: none
 
-## a click on the scrim outside the modal (pd-scrim carries no data-backdrop-close)
-after: scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null
+## the backdrop (ruling 2: the Processes sheets opt in)
+nothing typed, pressed and released on the backdrop: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
+pressed in the card, released on the backdrop: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none
+a typed name, pressed and released on the backdrop: sheet open (the layer's shell), #pd-scrim markup empty, layers 2, body overflow "hidden", S.sheet set, S.adv null, question "Discard the changes?" [Keep editing · Discard]
+Keep editing: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; name reads "Style B typed"
 
 ## runSheet: OK pressed twice before the first write answers
-between the presses: scrim active, markup drawn, body overflow "hidden", S.sheet running, S.adv null, S.escapeHold null, OK disabled
+between the presses: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none, OK disabled
 requests: PUT /api/styles/2 · POST /api/processes/1/flow/preview
-after: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null
+after: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
 
 ## runSheet: a refused run, then OK again
 first press: PUT /api/styles/2 → sheet: open "Rename Style B", status "the Edge refused it" (bad), OK "Rename" enabled
 second press: PUT /api/styles/2 · POST /api/processes/1/flow/preview → sheet: closed
 
 ## closeSheet: what it clears (Add positions on Settings)
-open Add positions, NEW_1 ticked: scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null; S.addPos set; pickers addpos, parts, rs_destination, rs_source, rs_staging
-after Cancel: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; S.addPos null; pickers parts, rs_destination, rs_source, rs_staging (Settings' own pickers stay: their boxes are in #pd-root)
+open Add positions, NEW_1 ticked: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; S.addPos set; pickers addpos, parts, rs_destination, rs_source, rs_staging
+after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; S.addPos null; pickers parts, rs_destination, rs_source, rs_staging (Settings' own pickers stay: their boxes are in #pd-root)
 
 ## closeSheet: the apply modal's ticks go with it
-apply modal, Style B ticked: scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null; S.papply rows 2
-after Cancel: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; S.papply null
+apply modal, Style B ticked: sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; S.papply rows 2
+after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; S.papply null
 reopened: nothing ticked
 
 ## closeSheet: New style's spots go with it
-New style, Recipe One picked: scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null; S.newStyle set
-after Cancel: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; S.newStyle null
+New style, Recipe One picked: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; S.newStyle set
+after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; S.newStyle null
 
 ## Escape: the page popover (#pd-pop) with no sheet
 style menu open: pd-pop open, pd-stpop absent, pd-advpop absent
-Escape → scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop absent
+Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## Escape: Settings' group list (#pd-stpop)
 Settings group list open: pd-pop absent, pd-stpop open, pd-advpop absent
-Escape → scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop absent, pd-stpop hidden, pd-advpop absent
+Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop absent, pd-stpop hidden, pd-advpop absent
 
 ## Escape: a popover in a sheet (#pd-advpop), then the sheet (nothing typed)
-Add process with its group list open: scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop open
-Escape → scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop hidden
-Escape → scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop absent
+Add process with its group list open: sheet open (the layer's shell), #pd-scrim markup empty, layers 2, body overflow "hidden", S.sheet set, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop open
+Escape → sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## Escape: Advanced's own picker, then Advanced (nothing typed)
-Advanced open on POS_A1: scrim active, markup drawn, body overflow "hidden", S.sheet null, S.adv set, S.escapeHold null
+Advanced open on POS_A1: sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
 modal: class "pd-modal" role="dialog" aria-modal="true" aria-label="POS_A1 Advanced"
 header: "POS_A1 · Advanced", sub "Style A · settings the flow doesn’t draw. They ride along with this position when the flow is saved from either screen."
 footer: status(st) · pd-btn [adv-cancel] "Cancel" · pd-btn primary [adv-apply] "Apply"
 its first picker (allowed_payload_codes) clicked: pd-pop hidden, pd-stpop absent, pd-advpop open
-Escape → scrim active, markup drawn, body overflow "hidden", S.sheet null, S.adv set, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop hidden
-Escape → scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop absent
+Escape → sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
-## askBeforeDiscard on Advanced: a typed number, Escape, Keep editing, Escape, Discard
+## the discard question on Advanced: a typed number, Escape, Escape, Escape, Keep editing, Escape, Discard
 typed 7 into reorder_point: S.adv.a.reorder_point=7
-Escape → sheet "Discard the changes?"; scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv set, S.escapeHold set; pd-pop hidden, pd-stpop absent, pd-advpop absent
-Escape again, with the question up: sheet "Discard the changes?" (only its buttons answer)
-Keep editing → sheet "POS_A1 · Advanced", reorder_point field reads "7", S.adv.a.reorder_point=7; scrim active, markup drawn, body overflow "hidden", S.sheet null, S.adv set, S.escapeHold null
-Escape → sheet "Discard the changes?"; scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv set, S.escapeHold set; pd-pop hidden, pd-stpop absent, pd-advpop absent
-Discard → scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null
+Escape → sheet "POS_A1 · Advanced"; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 2, body overflow "hidden", S.sheet null, S.adv set, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+Escape again, with the question up (Keep editing) → sheet "POS_A1 · Advanced", reorder_point field reads "7", S.adv.a.reorder_point=7; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
+Escape → sheet "POS_A1 · Advanced"; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 2, body overflow "hidden", S.sheet null, S.adv set, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+Keep editing → sheet "POS_A1 · Advanced", S.adv.a.reorder_point=7; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
+Escape → sheet "POS_A1 · Advanced"; sheet open (#pd-scrim), #pd-scrim markup drawn, layers 2, body overflow "hidden", S.sheet null, S.adv set, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+Discard → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
 
-## askBeforeDiscard on a sheet: a typed name, Escape, Keep editing, OK
-Escape → sheet "Discard the changes?"; scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold set; pd-pop hidden, pd-stpop absent, pd-advpop absent
-header: "Discard the changes?", sub "this sheet has typed work in it."
-footer: status(st) · pd-btn [sheet-cancel] "Keep editing" · pd-btn danger [escape-discard] "Discard"
-Keep editing → sheet "Rename Style B", name reads "Style B typed"; scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold null
-then OK (the held sheet's own run): PUT /api/styles/2 {"name":"Style B typed","description":"","process_id":1,"expected_catid":""}
+## the discard question on a sheet: a typed name, Escape, Keep editing, OK
+Escape → sheet "Rename Style B"; sheet open (the layer's shell), #pd-scrim markup empty, layers 2, body overflow "hidden", S.sheet set, S.adv null, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+question: "Discard the changes?", buttons "Keep editing" · "Discard"
+Keep editing → sheet "Rename Style B", name reads "Style B typed"; sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, S.adv null, question none
+then OK (the sheet's own run): PUT /api/styles/2 {"name":"Style B typed","description":"","process_id":1,"expected_catid":""}
 
-## askBeforeDiscard on a sheet: a typed name, Escape, Discard
-Escape → sheet "Discard the changes?"; scrim active, markup drawn, body overflow "hidden", S.sheet set, S.adv null, S.escapeHold set; pd-pop hidden, pd-stpop absent, pd-advpop absent
-Discard → scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; requests none
+## the discard question on a sheet: a typed name, Escape, Discard
+Escape → sheet "Rename Style B"; sheet open (the layer's shell), #pd-scrim markup empty, layers 2, body overflow "hidden", S.sheet set, S.adv null, question "Discard the changes?" [Keep editing · Discard]; pd-pop hidden, pd-stpop absent, pd-advpop hidden
+Discard → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; requests none
 
 ## Escape with no layer: a pinned recipe group lets go
 recipe group 0 pinned: S.shapeDraft.focus {"g":0}
-Escape → S.shapeDraft.focus null; scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop absent
+Escape → S.shapeDraft.focus null; sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## Escape with no layer: the selected position lets go (then nothing)
 row POS_A3 clicked: S.selected "POS_A3"
-Escape → S.selected null; scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop absent
-Escape → S.selected null; scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; pd-pop hidden, pd-stpop absent, pd-advpop absent
+Escape → S.selected null; sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
+Escape → S.selected null; sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## the Advanced sheet: open, Cancel, open, Apply
-open: scrim active, markup drawn, body overflow "hidden", S.sheet null, S.adv set, S.escapeHold null
-Cancel: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null
-reopened, Apply with nothing changed: scrim inactive, markup empty, body overflow "", S.sheet null, S.adv null, S.escapeHold null; dirty=true; requests POST /api/processes/1/flow/preview
+open: sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet null, S.adv set, question none
+Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none
+reopened, Apply with nothing changed: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, S.adv null, question none; dirty=true; requests POST /api/processes/1/flow/preview
 
 ## facts
-body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (showModal / hideModal; every block above)
-focus() calls the page made across every block above: 0 — nothing moves focus into a sheet, and nothing returns it on close
-Escape: one document keydown listener (boot, processes-desktop.js:138); the window listeners boot adds: error, unhandledrejection, resize, focus
+body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (the layer's counted lock; every block above)
+focus() calls across every block above: 27
+Escape: document keydown listeners per page, at most 2 (the page's own, for nothing open; the layer's, added with its first entry); the window listeners boot adds: error, unhandledrejection, resize, focus

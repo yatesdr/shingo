@@ -20,9 +20,9 @@ import { formatClock, formatTime } from '/static/shared/clock.js';
 import {
     makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
 } from '/static/shared/scene-geom.js';
-// The edge's own modal helpers. header.html loads shingoedge.js on every page,
-// so this import is already in the module map — see showSheet.
-import { showModal, hideModal } from '/static/js/shingoedge.js';
+// THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
+// this page puts up is an entry on it — see pageSheet, showSheet and showPop.
+import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal } from '/static/shared/layer.js';
 // THE ONE HTTP DOOR (style guide §17). Every request this page sends goes
 // through send: it never throws, it answers {ok, status, body, error,
 // fieldErrors} with status 0 when nothing answered and 401 for a lapsed
@@ -93,8 +93,7 @@ const S = {
     settingsNotice: '',   // a success, which is not a refusal and is not drawn as one
     notice: '',          // the same, on the Flows and Presets tabs: what the last write saved
     flowSaved: null,     // {styleID, at}: the last Save flow, which the bar names until the next edit
-    sheet: null,         // the open confirm/edit sheet: {run}
-    escapeHold: null,    // the sheet an Escape is holding: {sheet, html} — see onEscape
+    sheet: null,         // the open sheet: {handle} (its layer entry), and {run} for the apply modal's own OK
     mapZoom: 1,
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
@@ -154,8 +153,11 @@ function boot() {
     window.addEventListener('resize', () => { if (S.model && S.tab === 'flows') drawPicture(); });
     const scrim = $('pd-scrim');
     if (scrim) scrim.addEventListener('click', onAdvClick);
+    // The page's own Escape, for when nothing is open: while anything is,
+    // Escape is the layer's (it listens on the document after this one, so
+    // this sees the stack before the layer's close).
     document.addEventListener('keydown', e => {
-        if (e.key !== 'Escape') return;
+        if (e.key !== 'Escape' || layerDepth()) return;
         onEscape();
     });
     document.addEventListener('click', e => {
@@ -334,7 +336,7 @@ async function refreshCatidHealth() {
 // shows the Edge's refusal (a CATID another style runs, a cart of another
 // part) where it says it.
 function catidPin(pid, styleID, catid, name) {
-    openSheet('Pin CATID ' + catid + ' to ' + (name || 'style ' + styleID) + '?',
+    pageSheet('Pin CATID ' + catid + ' to ' + (name || 'style ' + styleID) + '?',
         'the style\'s CATIDs become its set plus this one.', '',
         'Pin', () => sheetSubmit('POST', '/api/processes/' + pid + '/styles/' + styleID + '/catid',
             { catid: catid, evidence: 'the health strip' }, refreshCatidHealth));
@@ -344,7 +346,7 @@ function catidPin(pid, styleID, catid, name) {
 // PLC counts on, through the counter edit (refused while a changeover is
 // open); its part identity follows to that slot's CATID.
 function catidRepoint(pid, tag) {
-    openSheet('Count ' + tag + '?',
+    pageSheet('Count ' + tag + '?',
         'the process counts on this slot from its next read, and its part identity follows to that slot’s CATID.', '',
         'Count', () => sheetSubmit('POST', '/api/processes/' + pid + '/counter', { tag_name: tag }, afterRepoint));
 }
@@ -370,14 +372,14 @@ async function catidCharge(holdID) {
     // otherwise looked dead.
     if (!res.ok || !p || !p.hold) {
         const why = res.ok ? 'it named no hold' : res.error;
-        openSheet('Charge this hold?', 'its preview could not be read: ' + why + '. Nothing was charged.', '',
+        pageSheet('Charge this hold?', 'its preview could not be read: ' + why + '. Nothing was charged.', '',
             'Close', closeSheet);
         return;
     }
     const rows = (p.rows || []).map(r => '<li>' + esc(r.node) + ': ' + esc(r.qty) + ' from ' +
         (r.bin_id ? 'cart ' + esc(r.bin_id) + ' (' + esc(r.carrier_part || 'part unknown') + ')' : 'no cart: its share stays held') +
         (r.wrong_part ? ' <b>(another part: its share stays held)</b>' : '') + '</li>').join('');
-    openSheet('Charge ' + p.hold.qty + ' on CATID ' + p.hold.catid + '?',
+    pageSheet('Charge ' + p.hold.qty + ' on CATID ' + p.hold.catid + '?',
         p.refusal ? p.refusal : 'charged under ' + p.style_name + ' to the carts below.',
         '<ul class="pd-note">' + rows + '</ul>',
         'Charge', () => sheetSubmit('POST', charge + '?mode=charge', {}, refreshCatidHealth));
@@ -392,14 +394,14 @@ async function catidStartChangeover(pid, styleID, name) {
     const out = await send('POST', '/api/processes/' + pid + '/changeover/start',
         { to_style_id: Number(styleID), called_by: 'engineer', notes: 'from the health strip: the PLC is on its part' });
     if (!out.ok) {
-        openSheet('The changeover to ' + (name || 'style ' + styleID) + ' did not start', out.error, '', 'Close', closeSheet);
+        pageSheet('The changeover to ' + (name || 'style ' + styleID) + ' did not start', out.error, '', 'Close', closeSheet);
         return;
     }
     await refreshCatidHealth();
 }
 
 function catidWriteOff(holdID) {
-    openSheet('Write off this hold?', 'nothing is charged; the hold is closed and logged.', '',
+    pageSheet('Write off this hold?', 'nothing is charged; the hold is closed and logged.', '',
         'Write off', () => sheetSubmit('POST', '/api/catid-holds/' + holdID + '/write-off', {}, refreshCatidHealth), true);
 }
 
@@ -1688,7 +1690,7 @@ function openGroupPick(btn, title, names, empty, pick) {
     pop.innerHTML = '<div class="pd-lbl">' + esc(title) + '</div>' + (names.length
         ? names.map((n, i) => '<button data-opt="' + i + '">' + esc(n) + '</button>').join('')
         : '<div class="none">' + esc(empty) + '</div>');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
     pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => {
         const n = names[Number(b.dataset.opt)];
@@ -2739,7 +2741,7 @@ function openPicker(btn) {
             (o.use ? '<span class="use"> · used by ' + esc(o.use) + '</span>' : '') +
             (o.where ? '<span class="use"> · ' + esc(o.where) + '</span>' : '') + '</button>').join('') +
         (note ? '<div class="none">' + esc(note) + '</div>' : '');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
     pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => {
         apply(opts[Number(b.dataset.opt)].action);
@@ -2747,20 +2749,28 @@ function openPicker(btn) {
     }));
 }
 
+// showPop puts a popover up as an entry on the layer, anchored to the control
+// that opened it: Escape closes it before anything under it, a press outside
+// it and its control closes it, and it closes with the sheet it was opened in.
+// However the layer closes it, closePop clears it.
+function showPop(pop, anchor) {
+    openLayer(pop, { kind: 'popover', anchor: anchor, focus: false, onClose: why => { if (why !== 'close') closePop(); } });
+}
+
 function closePop() {
     const pop = $('pd-pop');
-    if (pop) { pop.hidden = true; pop.innerHTML = ''; pop.classList.remove('pd-partpop'); }
+    if (pop) { closeLayer(pop); pop.hidden = true; pop.innerHTML = ''; pop.classList.remove('pd-partpop'); }
     S.partPop = null;
     // SETTINGS' GROUP LIST IS A POPOVER TOO. It draws into #pd-stpop and
     // nothing ever hid it: click Group, change your mind, click elsewhere, and
     // the list stayed open and then floated over the form as the sheet
     // scrolled, until a group was picked or the tab redrew.
     const stpop = $('pd-stpop');
-    if (stpop) { stpop.hidden = true; stpop.innerHTML = ''; }
+    if (stpop) { closeLayer(stpop); stpop.hidden = true; stpop.innerHTML = ''; }
     // AND SO IS THE DIALOGS' OWN. the Advanced sheet opens its pickers
     // into #pd-advpop, inside the scrim; Escape closes it before the dialog.
     const advpop = $('pd-advpop');
-    if (advpop) { advpop.hidden = true; advpop.innerHTML = ''; }
+    if (advpop) { closeLayer(advpop); advpop.hidden = true; advpop.innerHTML = ''; }
     // The placeholder that was clicked goes back to being a dash, unless the
     // pick gave it a value — `apply` redraws the whole tab and clears this
     // either way.
@@ -2788,7 +2798,7 @@ async function openPartPop(btn, node) {
         '<input class="pd-npkq pd-partq" type="text" autocomplete="off" ' +
         'placeholder="Find a part, or add one from Core’s catalog">' +
         '<div class="pd-partlist" id="pd-partlist"></div>';
-    pop.hidden = false;
+    showPop(pop, btn);
     drawPartList();
     placePopover(pop, btn, 300);
     const q = pop.querySelector('.pd-partq');
@@ -3964,8 +3974,8 @@ function openAdvanced(node) {
     S.adv = {
         node: node,
         a: a,
-        // The values the sheet opened with, for advNumber's data-was: see
-        // onEscape.
+        // The values the sheet opened with, for advNumber's data-was: the
+        // layer reads a redrawn field against it (typed work, layer.js).
         was: Object.assign({}, a),
         evacNodes: (c.evacNodes || []).slice(),
         evacDest: c.evacDest || '',
@@ -4148,7 +4158,7 @@ function drawAdvanced() {
         '<button class="pd-btn" data-act="adv-cancel">Cancel</button>' +
         '<button class="pd-btn primary" data-act="adv-apply">Apply</button></div>' +
         '<div class="pd-pop" id="pd-advpop" hidden></div></div>';
-    showSheet();
+    showSheet(undefined, advancedGone);
     bindAdvInputs();
     markRecipeState();
 }
@@ -4168,6 +4178,12 @@ function bindAdvInputs() {
 
 function closeAdvanced() {
     hideSheet();
+}
+
+// advancedGone is Advanced closing, however it closed: Cancel, Escape, the
+// backdrop, Discard on the layer's question. Its draft goes with it.
+function advancedGone() {
+    $('pd-scrim').innerHTML = '';
     S.adv = null;
     markRecipeState();
 }
@@ -4273,7 +4289,7 @@ function openAdvPicker(btn) {
     pop.innerHTML = opts.length
         ? opts.map((o, i) => '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + esc(o.label) + '</button>').join('')
         : '<div class="none">Nothing to choose here yet.</div>';
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
     pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', ev => {
         ev.stopPropagation();
@@ -4295,6 +4311,7 @@ function onAdvClick(e) {
     // handler and close it themselves.
     const spop = $('pd-advpop');
     if (spop && !spop.hidden && !(e.target.closest && e.target.closest('.pd-pop'))) {
+        closeLayer(spop);
         spop.hidden = true;
         spop.innerHTML = '';
     }
@@ -4357,40 +4374,15 @@ function onAdvClick(e) {
     }
     if (act && act.dataset.act === 'adv-cancel') { closeAdvanced(); return; }
     if (act && act.dataset.act === 'adv-apply') { applyAdvanced(); return; }
-    // The confirm/edit sheets share this scrim, so their two buttons answer here.
-    // While an Escape hold is up, Cancel is "Keep editing": the held sheet —
-    // markup, typed values and its own run — goes back exactly as it was. The
-    // values are re-applied to the restored markup, since innerHTML carried
-    // the OPENED sheet's attributes, not the typed properties.
-    if (act && act.dataset.act === 'sheet-cancel' && S.escapeHold) {
-        const hold = S.escapeHold;
-        S.escapeHold = null;
-        S.sheet = hold.sheet;
-        showSheet(hold.html);
-        for (const el of $('pd-scrim').querySelectorAll('[data-f]')) {
-            const name = (el.dataset && el.dataset.f) || el.getAttribute('data-f');
-            if (!(name in hold.fields)) continue;
-            if (el.type === 'checkbox') el.checked = hold.fields[name];
-            else el.value = hold.fields[name];
-        }
-        hold.rebind();
-        return;
-    }
-    if (act && act.dataset.act === 'escape-discard') {
-        const hold = S.escapeHold;
-        S.escapeHold = null;
-        if (!hold) { closeSheet(); return; }
-        S.sheet = hold.sheet;
-        hold.close();
-        return;
-    }
+    // The apply modal draws its own footer on #pd-scrim, so its two buttons
+    // answer here; every other sheet's are the layer's own.
     if (act && act.dataset.act === 'sheet-cancel') { closeSheet(); return; }
     if (act && act.dataset.act === 'sheet-ok') { runSheet(); return; }
     if (!S.adv) return;
     const f = e.target.closest && e.target.closest('[data-advkind]');
     if (!f) {
         const pop = $('pd-advpop');
-        if (pop && !(e.target.closest && e.target.closest('.pd-pop'))) { pop.hidden = true; pop.innerHTML = ''; }
+        if (pop && !(e.target.closest && e.target.closest('.pd-pop'))) { closeLayer(pop); pop.hidden = true; pop.innerHTML = ''; }
         return;
     }
     e.stopPropagation();
@@ -4782,7 +4774,7 @@ function saveStationPositions(id) {
     }
     const here = changes.filter(x => x.line_counter_id).map(x => name(x.id));
     const back = changes.filter(x => !x.line_counter_id).map(x => name(x.id));
-    openSheet('Save this station counter’s positions?',
+    pageSheet('Save this station counter’s positions?',
         (here.length ? 'Counted here: ' + here.join(', ') + '. ' : '') +
         (back.length ? 'Back to the production counter: ' + back.join(', ') + '.' : ''),
         '', 'Save', async () => {
@@ -4827,7 +4819,7 @@ function openStationCounter(id, bindNode) {
         '<span class="pd-combo" data-combo="tag" data-suggest="station" data-plcname="' + esc(p.counter_plc_name || '') + '">' +
         '<input class="pd-inp wide" id="' + inputID + '" value="' + esc(value) + '" autocomplete="off" spellcheck="false">' +
         '<div class="pd-pop pd-combo-list" data-combolist hidden></div></span>';
-    openSheet(id ? 'Edit station counter' : 'New station counter', window.StationCard.RULE,
+    pageSheet(id ? 'Edit station counter' : 'New station counter', window.StationCard.RULE,
         '<label class="pd-lbl">Label</label><input class="pd-inp wide" id="sc-label" value="' + esc(c.label) + '">' +
         '<label class="pd-lbl">Tag on ' + esc(p.counter_plc_name || '') + '</label>' + tagBox('sc-tag', c.tag_name) +
         '<label class="pd-lbl">Second tag (optional)</label>' + tagBox('sc-tag2', c.tag_name_2 || '') +
@@ -4847,7 +4839,7 @@ function openStationCounter(id, bindNode) {
             closeSheet();
             await afterStationChange();
         });
-    bindCombos($('pd-scrim'));
+    bindCombos(sheetEl());
 }
 
 async function afterStationChange() {
@@ -4981,7 +4973,7 @@ async function openAddPositions(filter) {
         ? '<div class="pd-fld"><label>Screen<small>the one the new positions go on</small></label>' +
             '<div class="v"><div class="pd-seg" id="pd-posscreen">' + addPositionsScreens() + '</div></div></div>'
         : '';
-    openSheet('Add positions', 'tick each node to add' + (screens.length === 1 ? ' to ' + screens[0].name : ''),
+    pageSheet('Add positions', 'tick each node to add' + (screens.length === 1 ? ' to ' + screens[0].name : ''),
         which + pickerField(ADD_POSITIONS_PICKER, 'Nodes', 'a greyed node is a position already, here or on another process'),
         'Add', submitAddPositions, false);
 }
@@ -4993,7 +4985,7 @@ function addPositionsScreens() {
 
 // The confirm button counts what it will add.
 function markAddPositions() {
-    const ok = $('pd-scrim').querySelector('[data-act="sheet-ok"]');
+    const ok = sheetEl().querySelector('[data-layer-ok]');
     const n = pickerValue(ADD_POSITIONS_PICKER).length;
     if (ok) ok.textContent = n ? 'Add ' + n : 'Add';
 }
@@ -5028,7 +5020,7 @@ async function openRemovePosition(name, stationID) {
         B().stationNodes(current.filter(n => n !== name)));
     const says = !impact.ok ? 'What still names it could not be read (' + impact.error + ').'
         : bodyOf(impact).warning || 'No recipe or style of this process names it.';
-    openSheet('Remove ' + name, 'from ' + st.name,
+    pageSheet('Remove ' + name, 'from ' + st.name,
         '<p class="pd-note">' + esc(says) + ' Removing it takes its tile off the screen.</p>',
         'Remove', () => submitRemovePosition(name, stationID, st.name), true);
 }
@@ -5259,7 +5251,7 @@ function bindCombos(container) {
                 ? matches.map(o => '<button data-comboopt="' + esc(o.name) + '">' + esc(o.name) +
                     '<span class="dim">' + esc(o.note) + '</span></button>').join('')
                 : '<div class="none">no match - the typed value is kept</div>';
-            list.hidden = false;
+            openLayer(list, { kind: 'popover', anchor: wrap, focus: false });
         };
         input.addEventListener('focus', async () => {
             opts = await load();
@@ -5269,12 +5261,12 @@ function bindCombos(container) {
             if (!opts) opts = await load();
             if (opts.length) render(opts);
         });
-        input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; }, 200));
+        input.addEventListener('blur', () => setTimeout(() => closeLayer(list), 200));
         // mousedown, not click: it fires before the blur's timeout and so
         // survives the close.
         list.addEventListener('mousedown', ev => {
             const b = ev.target.closest('[data-comboopt]');
-            list.hidden = true;
+            closeLayer(list);
             if (!b || !b.dataset.comboopt) return;
             ev.preventDefault();
             input.value = b.dataset.comboopt;
@@ -5420,32 +5412,42 @@ async function refreshStationNodes(stationID) {
 // this edge locks the body's scroll while it is open and this one did not, so
 // the page behind an open sheet scrolled under it.
 //
-// THE BASE'S HELPERS, NOT A COPY OF THEM. header.html loads shingoedge.js as a
-// module on every page, so importing showModal/hideModal here is free: no
-// request, no bytes, no second parse. That is the whole reason this can be a
-// thin layer rather than a re-implementation.
+// IT IS AN ENTRY ON THE ONE OVERLAY STACK (shared/layer.js). The two sheets
+// that draw their own whole markup here, Advanced and the apply modal, open it
+// with layer.js's showModal: Escape closes whatever is innermost, a backdrop
+// click is Escape (ruling 2: the Processes sheets opt in), typed work is
+// asked about first, the scroll lock is counted, and focus goes in and comes
+// back. Every other sheet is layer.js's own shell (pageSheet).
 //
-// preserveState: hideModal's default walks the modal's inputs and resets them,
+// preserveState: the layer's close resets a modal's fields to their markup,
 // which is for a static modal that will be shown again. This scrim's content
-// is rebuilt from scratch on every open and thrown away here, so the walk
+// is rebuilt from scratch on every open and thrown away on close, so the walk
 // would be work done on fields about to stop existing.
 //
 // ONE OPEN AND ONE CLOSE. There were four of the first and three of the
 // second — Advanced, the sheets and the apply modal each did their
 // own `scrim.hidden = false`, so a fix to what opening means had four places
-// to land in and reached whichever the author remembered.
-function showSheet(html) {
+// to land in and reached whichever the author remembered. showSheet returns
+// the scrim's layer handle; opening it again (a redraw) returns the same one.
+// onClose runs however it closed (Cancel, Escape, the backdrop, Discard).
+function showSheet(html, onClose) {
     const scrim = $('pd-scrim');
-    if (!scrim) return;
+    if (!scrim) return null;
     if (html !== undefined) scrim.innerHTML = html;
-    showModal('pd-scrim');
+    return showModal(scrim, { closeOnBackdrop: true, preserveState: true, onClose: onClose });
 }
 
 function hideSheet() {
     const scrim = $('pd-scrim');
     if (!scrim) return;
-    hideModal('pd-scrim', { preserveState: true });
+    hideModal(scrim, { preserveState: true });
     scrim.innerHTML = '';
+}
+
+// sheetEl is the element the open sheet lives in: its layer handle's, or
+// #pd-scrim. Every read of a sheet's fields goes through it.
+function sheetEl() {
+    return S.sheet && S.sheet.handle ? S.sheet.handle.el : $('pd-scrim');
 }
 
 // ── the node picker ──────────────────────────────────────────────────────────
@@ -5567,7 +5569,7 @@ function pickerBox(key) {
     const check = !!(p && p.checklist);
     return '<div class="pd-npk' + (check ? ' check' : '') + '" data-npkbox="' + key + '" id="npk-' + key + '">' +
         '<div class="chips" data-npkpart="chips">' + pickerChips(key) + '</div>' +
-        '<input class="pd-npkq" type="text" autocomplete="off" data-npkq="' + key +
+        '<input class="pd-npkq" type="text" autocomplete="off" data-scratch data-npkq="' + key +
         '" placeholder="' + (p && p.source === 'payloads' ? 'find a part by name'
             : check ? 'filter by name, or pick a prefix below' : 'find a node by name') + '">' +
         (check ? '<div class="pre" data-npkpart="pre">' + checklistPrefixes(key) + '</div>' : '') +
@@ -5858,68 +5860,81 @@ function onPickerClick(el) {
 
 // ── the sheets D4 and D5 open ────────────────────────────────────────────────
 //
-// One shell, the Advanced sheet's, because they are the same object: a small
-// modal over a scrim with a header, a body of labelled fields and two buttons.
-// A second modal shape would be a second set of paddings to keep in step.
-// One width, too: .pd-modal is sized in CSS from the label column and the
-// wide input that sheetField draws, so every field fits every sheet and no
-// sheet picks a width of its own.
+// ONE SHELL, THE LAYER'S (shared/layer.js openSheet, which is this page's
+// sheet shell moved): a card with a title, a body of labelled fields, a status
+// line, Cancel and OK. The card keeps .pd-modal, so every sheet is the one
+// width: .pd-modal is sized in CSS from the label column and the wide input
+// that sheetField draws, so every field fits every sheet and no sheet picks a
+// width of its own.
 //
-// #pd-advpop RIDES ON THE SHELL rather than on the sheets that want a popover.
+// WHAT THE LAYER ANSWERS FOR, and this page no longer does: one run per press
+// (OK is off while the run is out and back on in a finally, whatever the run
+// did, so a chain refused halfway is pressed again and a write that never
+// answers cannot hold "Saving…"); Escape innermost first, a popover before
+// its sheet; a backdrop click as Escape (ruling 2: these sheets opt in, and a
+// press that began in the card never closes it); asking before Escape or the
+// backdrop throws typed work away, the question being a confirm on the stack
+// whose Escape is Keep editing (and the sheet under it is never redrawn, so
+// keeping is keeping); the counted scroll lock; focus into the sheet and back
+// to what opened it.
+//
+// ONE SHEET AT A TIME, as the one scrim had it: a sheet opened over another
+// takes its place ('replaced') rather than stacking on it.
+//
+// #pd-advpop RIDES IN THE BODY rather than on the sheets that want a popover.
 // It is the Advanced sheet's answer to #pd-pop living inside #pd-root, which
 // the scrim covers; a list opened from a sheet against the page's popover
-// draws behind the modal. One per scrim, whichever sheet is open — and the
-// sheets that never open one pay an empty div.
-function openSheet(title, sub, body, confirm, run, danger) {
-    S.sheet = { run: run };
-    showSheet('<div class="pd-modal" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
-        '<div class="mh"><h2>' + esc(title) + '</h2>' + (sub ? '<p>' + esc(sub) + '</p>' : '') + '</div>' +
-        '<div class="mb">' + body + '</div>' +
-        '<div class="mf"><span class="st"></span>' +
-        '<button class="pd-btn" data-act="sheet-cancel">Cancel</button>' +
-        '<button class="pd-btn ' + (danger ? 'danger' : 'primary') + '" data-act="sheet-ok">' +
-        esc(confirm) + '</button></div>' +
-        '<div class="pd-pop" id="pd-advpop" hidden></div></div>');
+// draws behind the modal. One per sheet — and the sheets that never open one
+// pay an empty div.
+function pageSheet(title, sub, body, confirm, run, danger) {
+    if (S.sheet && S.sheet.handle) S.sheet.handle.close('replaced');
+    const h = openSheet({
+        title: title, sub: sub, ok: confirm, danger: !!danger,
+        body: body + '<div class="pd-pop" id="pd-advpop" hidden></div>',
+        cardClass: 'layer-card layer-sheet pd-modal',
+        backdrop: true,
+        run: () => run(),
+        onClose: why => sheetGone(h, why),
+    });
+    // The sheet's own controls (pickers, choosers, its popover's rows) answer
+    // in onAdvClick, as they did on #pd-scrim: the sheet is outside #pd-root.
+    h.el.addEventListener('click', onAdvClick);
+    S.sheet = { handle: h };
     bindPickers();
+    return h;
 }
 
 // sheetStatus is the sheet's one line of feedback, and every refusal on this
 // page reaches the engineer through it. It was written out by hand at three
 // call sites; a fourth (the Add-process chain, which reports a refusal midway
-// through a sequence of writes) made that a fourth copy.
+// through a sequence of writes) made that a fourth copy. It is the layer's.
 function sheetStatus(text, bad) {
-    const st = $('pd-scrim').querySelector('.mf .st');
-    if (!st) return;
-    st.textContent = text;
-    st.className = 'st' + (bad ? ' bad' : '');
+    if (S.sheet && S.sheet.handle) S.sheet.handle.status(text, bad);
 }
 
-// ONE RUN PER PRESS. sheet-ok re-invoked the sheet's action on every click,
-// so a double-click on Create started two interleaved write chains, and
-// pressing it again after a chain refused halfway re-ran it from the top —
-// which hits the UNIQUE constraint on processes.name and overwrites the status
-// line that was the only record of what had already been made.
-async function runSheet() {
-    if (!S.sheet || !S.sheet.run || S.sheet.running) return;
-    S.sheet.running = true;
-    const ok = $('pd-scrim').querySelector('[data-act="sheet-ok"]');
-    if (ok) ok.disabled = true;
-    try {
-        await S.sheet.run();
-    } finally {
-        if (S.sheet) S.sheet.running = false;
-        const btn = $('pd-scrim').querySelector('[data-act="sheet-ok"]');
-        if (btn) btn.disabled = false;
-    }
+// runSheet is OK on a sheet that draws its own footer (the apply modal, on
+// #pd-scrim): its run goes through the layer's one run per press too.
+function runSheet() {
+    const s = S.sheet;
+    if (s && s.handle && s.run) return s.handle.run(() => s.run());
+    return undefined;
 }
 
+// closeSheet is a deliberate close (Cancel, a write that landed): it never
+// asks. The clearing is sheetGone's, which runs however a sheet closed.
 function closeSheet() {
-    hideSheet();
+    if (S.sheet && S.sheet.handle) S.sheet.handle.close('close');
+    else sheetGone(null, 'close');
+}
+
+function sheetGone(h, why) {
+    if (h && S.sheet && S.sheet.handle !== h) return;   // a sheet already replaced
     S.sheet = null;
-    // A hold that outlives its sheet would answer the NEXT sheet's Cancel
-    // with the last one's markup, so it goes when the sheet does.
-    S.escapeHold = null;
-    // A PICKER'S STATE BELONGS TO THE RENDER THAT DREW IT. The scrim is empty
+    if (h && h.el === $('pd-scrim')) h.el.innerHTML = '';
+    // A sheet another took the place of leaves its page state to the one
+    // that replaced it, as the scrim's overwrite always did.
+    if (why === 'replaced') return;
+    // A PICKER'S STATE BELONGS TO THE RENDER THAT DREW IT. The sheet is gone
     // now, so every picker whose box went with it is dead state — and a dead
     // picker with a selection is what would put last time's nodes in front of
     // the engineer when this sheet is opened again. Settings' own pickers are
@@ -5934,88 +5949,16 @@ function closeSheet() {
     if (S.newStyle) { S.newStyle = null; markNewStyle(); }
 }
 
-// ── one Escape rule, innermost first ─────────────────────────────────────────
+// ── Escape with nothing open ─────────────────────────────────────────────────
 //
-// THE RULE THE PAGE HAD, PLUS THE DOOR IT FORGOT. The boot handler closed
-// Advanced, then the sheet — but the open popover outlived all
-// three arms, so Escape over a part menu closed the sheet under it and left
-// the menu floating. Innermost first, one order for every layer this page
-// stacks: popover, then Advanced, then the sheet.
-//
-// A SHEET ASKS BEFORE IT DISCARDS TYPED WORK, every sheet: the openSheet
-// layer, Advanced. An Escape on a sheet with nothing typed still
-// closes it — a sheet's Cancel is a click away and Escape has always meant
-// "back out". But a sheet the engineer has typed into is work, and work does
-// not vanish on a key that elsewhere only closes menus. A typed field is one
-// marked data-f, and the test is attribute-vs-property: the markup carries the
-// value the sheet OPENED with — value="…" / checked, or data-was="…" on
-// Advanced, which redraws itself from its own state and so
-// write a typed value back into value="…" — and the DOM property is what
-// typing moves, so a mismatch IS the edit: no dirty ledger to keep, no state
-// to drift. The question is drawn as its own sheet, so the typed work is
-// SNAPSHOTTED first and restored by the Cancel that opens the same sheet
-// again.
+// ESCAPE IS THE LAYER'S while anything is open on it: a popover, a sheet,
+// Advanced, the question. Innermost first, one per press. What is left for
+// the page is the outermost thing Escape can let go of, with nothing open
+// (layerDepth() is 0): a recipe group's row or tag pinned on the picture, else
+// the selected position.
 function onEscape() {
-    // THE INNERMOST POPOVER FIRST: the page's, Settings' group list, or the
-    // picker the Advanced sheet opened over itself.
-    if (['pd-pop', 'pd-stpop', 'pd-advpop'].some(id => { const p = $(id); return p && !p.hidden; })) {
-        closePop();
-        return;
-    }
-    // The question is up: only its own two buttons answer it.
-    if (S.escapeHold) return;
-    const layer = S.adv ? { close: closeAdvanced, rebind: bindAdvInputs }
-        : S.sheet ? { close: closeSheet, rebind: bindPickers } : null;
-    // The selection is the outermost thing Escape can let go of: only with no
-    // popover and no sheet open does it clear the selected position.
-    if (!layer) {
-        // So is a recipe group's row or tag pinned on the picture.
-        if (S.shapeDraft && S.shapeDraft.focus && S.tab === 'flows') { S.shapeDraft.focus = null; drawFlows(); return; }
-        if (S.selected && S.tab === 'flows') clearSelected();
-        return;
-    }
-    if (!askBeforeDiscard(layer)) layer.close();
-}
-
-function typedField(el) {
-    if (el.type === 'checkbox') return el.checked !== el.hasAttribute('checked');
-    const opened = el.hasAttribute('data-was') ? el.getAttribute('data-was') : el.getAttribute('value');
-    return (el.value || '') !== (opened || '');
-}
-
-// askBeforeDiscard puts the question up over the open sheet when it holds
-// typed work, and says whether it did.
-function askBeforeDiscard(layer) {
-    const scrim = $('pd-scrim');
-    if (!scrim) return false;
-    const els = [...scrim.querySelectorAll('[data-f]')];
-    if (!els.some(typedField)) return false;
-    // THE HOLD CARRIES THE VALUES, not just the markup: innerHTML serializes
-    // the attribute, typing lives in the property, so a markup-only snapshot
-    // would restore the sheet as it was OPENED and Keep editing would throw
-    // away the very work it says it keeps. The fields ride beside the html and
-    // are re-applied to the restored markup — the property is authoritative
-    // twice.
-    const fields = {};
-    for (const el of els) {
-        const name = (el.dataset && el.dataset.f) || el.getAttribute('data-f');
-        fields[name] = el.type === 'checkbox' ? el.checked : (el.value || '');
-    }
-    // THE HOLD IS THE WHOLE SHEET, not a summary of it: restoring the markup
-    // restores the sheet, its own state (S.sheet.run, S.adv) never
-    // left, and Keep editing binds the layer's own listeners again. Discard
-    // closes the layer the way its own Cancel does.
-    S.escapeHold = { sheet: S.sheet, html: scrim.innerHTML, fields: fields, close: layer.close, rebind: layer.rebind };
-    S.sheet = { run: () => {} };
-    showSheet('<div class="pd-modal" role="dialog" aria-modal="true" aria-label="Discard the changes?">' +
-        '<div class="mh"><h2>Discard the changes?</h2>' +
-        '<p>this sheet has typed work in it.</p></div>' +
-        '<div class="mb"><p class="pd-note">Closing now throws away what was typed into it. ' +
-        'Keep editing puts every field back exactly as it was.</p></div>' +
-        '<div class="mf"><span class="st"></span>' +
-        '<button class="pd-btn" data-act="sheet-cancel">Keep editing</button>' +
-        '<button class="pd-btn danger" data-act="escape-discard">Discard</button></div></div>');
-    return true;
+    if (S.shapeDraft && S.shapeDraft.focus && S.tab === 'flows') { S.shapeDraft.focus = null; drawFlows(); return; }
+    if (S.selected && S.tab === 'flows') clearSelected();
 }
 
 function sheetValue(name) {
@@ -6024,7 +5967,7 @@ function sheetValue(name) {
     // "what did the engineer put in this field" — which is how a sheet ends up
     // writing one thing and reporting another.
     if (S.pickers[name]) return pickerValue(name);
-    const el = $('pd-scrim').querySelector('[data-f="' + name + '"]');
+    const el = sheetEl().querySelector('[data-f="' + name + '"]');
     if (!el) return '';
     return el.type === 'checkbox' ? el.checked : el.value;
 }
@@ -6080,7 +6023,7 @@ function openStyleMenu(btn) {
     if (!pop) return;
     pop.innerHTML = STYLE_MENU.map(m => '<button data-act="style-' + m[0] + '" data-style="' + id + '"' +
         (m[0] === 'delete' ? ' class="bad"' : '') + '>' + esc(m[1]) + '</button>').join('');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
 }
 
@@ -6111,19 +6054,19 @@ function styleAction(act, id) {
     closePop();
     switch (act) {
         case 'rename':
-            openSheet('Rename ' + st.name, '', sheetField('Name', 'what this part is called here', 'name', st.name),
+            pageSheet('Rename ' + st.name, '', sheetField('Name', 'what this part is called here', 'name', st.name),
                 'Rename', () => sheetSubmit('PUT', '/api/styles/' + id,
                     styleBody(st, { name: sheetValue('name') }), refreshProcess));
             return;
         case 'catid':
-            openSheet('Expected CATID · ' + st.name,
+            pageSheet('Expected CATID · ' + st.name,
                 'what the PLC calls this part. A confirmed change to it is what arms a changeover cutover.',
                 sheetField('Expected CATID', catidBlankHint(id), 'catid', st.expected_catid),
                 'Save', () => sheetSubmit('PUT', '/api/styles/' + id,
                     styleBody(st, { expected_catid: sheetValue('catid') }), refreshProcess));
             return;
         case 'clone':
-            openSheet('Clone ' + st.name, 'a new style with the same flow, ready to be renamed.',
+            pageSheet('Clone ' + st.name, 'a new style with the same flow, ready to be renamed.',
                 sheetField('Name', '', 'name', st.name + ' copy'),
                 'Clone', () => {
                     const name = sheetValue('name');
@@ -6140,7 +6083,7 @@ function styleAction(act, id) {
             openRunningSheet(st, id);
             return;
         case 'delete':
-            openSheet('Delete ' + st.name + '?', 'its flow goes with it.',
+            pageSheet('Delete ' + st.name + '?', 'its flow goes with it.',
                 '<p class="pd-note">A style the process has run is part of its history. Deleting it removes ' +
                 'the flow an operator would pick, not what already ran.</p>',
                 'Delete', () => sheetSubmit('DELETE', '/api/styles/' + id, null, refreshProcess), true);
@@ -6173,7 +6116,7 @@ async function openRunningSheet(st, id) {
               ' as running ' + esc(how) + (waiting.length ? ', past: ' + esc(waiting.join('; ')) +
               '. Robots already moving finish their trips' : '') + '.</p>';
     }
-    openSheet('Mark ' + st.name + ' as running?',
+    pageSheet('Mark ' + st.name + ' as running?',
         "Robots may move within a minute for the new style's levels and kept spots.",
         inFlight + '<p class="pd-note">Use this when the plant changed parts without shingo. To change ' +
         'parts WITH shingo, start a changeover from the operator screen.</p>',
@@ -6249,7 +6192,7 @@ function openNewStyle(recipeID, sel) {
                 'Parts this process runs.</p>');
     };
     S.newStyle = null;
-    openSheet('New style', 'a part this process runs: pick the recipe, the part for each spot, and where the spots go.',
+    pageSheet('New style', 'a part this process runs: pick the recipe, the part for each spot, and where the spots go.',
         '<div class="pd-fld"><label>Recipe<small>the engineer-named shapes of this cell</small></label>' +
         '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>' +
         '<div id="pd-newslots"></div>' +
@@ -6472,7 +6415,7 @@ async function mintNewStyle(recipe) {
 // P0's "Add group". Taxonomy for the list and nothing else reads it, which the
 // sheet says so nobody goes looking for what it does.
 function openNewGroup() {
-    openSheet('Add group', 'how the process list is grouped. Nothing else reads it.',
+    pageSheet('Add group', 'how the process list is grouped. Nothing else reads it.',
         sheetField('Name', 'what this group of processes is called', 'name', '') +
         sheetField('Description', '', 'description', ''),
         'Add', async () => {
@@ -6539,7 +6482,7 @@ function openFreeModes(btn, free) {
     pop.innerHTML = '<div class="pd-lbl">Choreography for the first position</div>' +
         Object.keys(labels).map(m => '<button data-freemode="' + esc(m) + '">' + gl(m, 22, {}) +
             esc(labels[m]) + '</button>').join('');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
     // The click is stopped here: the position menu replaces this one, so the
     // button is gone from #pd-pop by the time the document's outside-click
@@ -6560,7 +6503,7 @@ function addFreeAs(btn, free, mode) {
     if (!pop) return;
     pop.innerHTML = '<div class="pd-lbl">Add a position</div>' +
         free.map(n => '<button data-freepos="' + esc(n) + '">' + esc(n) + '</button>').join('');
-    pop.hidden = false;
+    showPop(pop, btn);
     // The footer sits at the foot of the page, so this one always opens
     // upwards — placePopover reaches the same answer from the room it
     // measures, and caps the height so a press with many free positions still
@@ -6735,14 +6678,14 @@ function openAddProcess() {
         partSetField() +
         sheetMapField();
 
-    openSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
+    pageSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false);
     loadLivePositions().then(() => redrawPicker('positions'));
     // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the two
     // up-front checks clear this way: a refusal from the write chain is the
     // record of what was already made, and typing must not erase it.
     for (const f of ['name', 'screen']) {
-        const el = $('pd-scrim').querySelector('[data-f="' + f + '"]');
+        const el = sheetEl().querySelector('[data-f="' + f + '"]');
         if (el) el.addEventListener('input', () => {
             if (S.add && S.add.refused) { S.add.refused = false; sheetStatus('', false); }
         });
@@ -6914,7 +6857,7 @@ async function openScreenSheet(stationID) {
         annotate: n => (claimedElsewhere[n] ? 'claimed by ' + claimedElsewhere[n]
             : onOther[n] ? 'on ' + onOther[n] : ''),
     });
-    openSheet(editing ? 'Edit ' + st.name : 'Add operator screen',
+    pageSheet(editing ? 'Edit ' + st.name : 'Add operator screen',
         'the HMI an operator works this process from.',
         sheetField('Name', 'what the screen is called on the floor', 'name', st.name) +
         sheetField('Note', 'anything the next engineer should know about it', 'note', st.note) +
@@ -7012,10 +6955,11 @@ async function openContainmentPicker(btn) {
     })));
     pop.innerHTML = opts.map(o => '<button data-holdopt="' + esc(o.name) + '" class="' +
         (current === o.name ? 'on' : '') + '">' + esc(o.label) + '</button>').join('');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
     pop.querySelectorAll('[data-holdopt]').forEach(b => b.addEventListener('click', ev => {
         ev.stopPropagation();
+        closeLayer(pop);
         pop.hidden = true;
         pop.innerHTML = '';
         S.settings.quality_hold_destination = b.dataset.holdopt;
@@ -7030,10 +6974,11 @@ function openGroupPicker(btn, onPick) {    const inSheet = !!(btn.closest && btn
     const opts = [{ id: 0, name: 'Ungrouped' }].concat(S.groups);
     pop.innerHTML = opts.map(g => '<button data-grpopt="' + g.id + '" class="' +
         (current === g.id ? 'on' : '') + '">' + esc(g.name) + '</button>').join('');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
     pop.querySelectorAll('[data-grpopt]').forEach(b => b.addEventListener('click', ev => {
         ev.stopPropagation();
+        closeLayer(pop);
         pop.hidden = true;
         pop.innerHTML = '';
         const id = Number(b.dataset.grpopt);
@@ -7045,7 +6990,7 @@ function openGroupPicker(btn, onPick) {    const inSheet = !!(btn.closest && btn
 
 function openDeleteProcess() {
     const p = process() || {};
-    openSheet('Delete ' + p.name + '?', 'its styles, flows, routing set and screens go with it.',
+    pageSheet('Delete ' + p.name + '?', 'its styles, flows, routing set and screens go with it.',
         '<p class="pd-note">Type the name to confirm. Nothing about this is undoable from here.</p>' +
         sheetField('Process name', '', 'confirm', ''),
         'Delete ' + p.name, () => {
@@ -7319,7 +7264,7 @@ function openUsePreset(btn) {
             '<button data-act="use-preset-pick" data-preset="' + esc(p.id) + '">' +
             esc(p.name) + (p.where ? '<small>' + esc(p.where) + '</small>' : '') + '</button>').join('');
     }
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
 }
 
@@ -7352,7 +7297,7 @@ function usePreset(id) {
         ? diff.map(d => '<div class="pd-diffrow"><b>' + esc(d.node) + '</b> · ' + esc(d.label) +
             (d.whole ? '' : ': ' + esc(d.from) + ' → ' + esc(d.to)) + '</div>').join('')
         : '<p class="pd-note">This flow already has that shape — applying it changes nothing.</p>');
-    openSheet('Use “' + p.name + '” on this style?',
+    pageSheet('Use “' + p.name + '” on this style?',
         'the spots only — a recipe carries no parts, and the parts you have placed stay where they are.' +
             (Object.keys(moves).length ? ' Its spots are where this cell last ran it; change any in the table before you save.' : ''),
         lines, 'Apply to the draft', () => {
@@ -7428,7 +7373,7 @@ function openPresetMenu(btn) {
     if (!pop) return;
     pop.innerHTML = PRESET_MENU.map(m => '<button data-act="preset-' + m[0] + '" data-preset="' + id + '">' +
         esc(m[1]) + '</button>').join('');
-    pop.hidden = false;
+    showPop(pop, btn);
     placePopover(pop, btn);
 }
 
@@ -7455,7 +7400,7 @@ function suggestedPresetName() {
 // a preset IS, in the style guide's words, because "name this" on its own
 // invites an engineer to expect the parts to come along.
 function openPresetNaming(title, prefill, from) {
-    openSheet(title, '',
+    pageSheet(title, '',
         sheetField('Name', 'what this recipe is called on this process', 'name', prefill) +
         '<p class="pd-note">A recipe is the spots of a style — which positions, how they swap, ' +
         'where bins come from and go. Parts are never part of it.</p>',
@@ -7733,7 +7678,6 @@ function drawPresetApply() {
     const body = '<div class="pd-alist">' + applyStyles().map(applyRowHTML).join('') + '</div>';
     const scrim = $('pd-scrim');
     if (!scrim) return;
-    S.sheet = { run: runPresetApply };
     const label = ready.length ? 'Save to ' + ready.length + ' part' + (ready.length === 1 ? '' : 's')
         : 'Save to 0 parts';
     const anyPreviewed = ready.length > 0;
@@ -7751,7 +7695,10 @@ function drawPresetApply() {
         '<button class="pd-btn primary" data-act="sheet-ok"' +
         (anyPreviewed && !S.papply.running ? '' : ' disabled') + '>' + esc(label) +
         '</button></div></div>';
-    showSheet();
+    // The modal redraws itself whole on every tick and pick; the first draw
+    // puts the scrim on the layer and every later one gets the same entry.
+    const h = showSheet(undefined, why => sheetGone(h, why));
+    S.sheet = { run: runPresetApply, handle: h };
 }
 
 // Ticking a row PREVIEWS it. The diff is computed by the shared model from the
@@ -8072,7 +8019,7 @@ function onClick(e) {
             case 'sc-checklist-close': S.scOpen = 0; drawSettings(); return;
             case 'sc-delete': {
                 const id = Number(btn.dataset.sc);
-                openSheet('Remove this station counter?', 'its positions are counted by the production counter again', '',
+                pageSheet('Remove this station counter?', 'its positions are counted by the production counter again', '',
                     'Remove', () => sheetSubmit('DELETE', '/api/station-counters/' + id, undefined, afterStationChange), true);
                 return;
             }
@@ -8093,7 +8040,7 @@ function onClick(e) {
                 closePop();
                 const p = presetByID(Number(btn.dataset.preset));
                 if (!p) return;
-                openSheet('Archive ' + p.name + ' v' + (p.version || 1) + '?',
+                pageSheet('Archive ' + p.name + ' v' + (p.version || 1) + '?',
                     'it stops being offered; the parts that came from it keep saying so.',
                     '<p class="pd-note">Archiving hides this version from both screens. The parts ' +
                     'that were applied from it keep their provenance, because a claim points at it ' +
@@ -8109,7 +8056,7 @@ function onClick(e) {
                 // EVERY VERSION, and the modal says so: an engineer renaming
                 // v2 has to know v1 comes with it, because a lineage split
                 // across two names is two presets that mean one shape.
-                openSheet('Rename ' + p.name,
+                pageSheet('Rename ' + p.name,
                     'every version of this name is renamed; nothing else changes.',
                     sheetField('Name', 'what this shape is called on this process', 'name', p.name) +
                     '<p class="pd-note">A preset is named once and read for months. The shape, its ' +

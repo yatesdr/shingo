@@ -34,13 +34,16 @@
     </noscript>
 </div>
 
-{{/* The Advanced sheet (D2). Outside #pd-root on purpose: the page behind it
-     redraws on every picker, and a redraw must not take an open sheet away.
+{{/* The Advanced sheet (D2) and the apply modal, which draw their own whole
+     markup. Outside #pd-root on purpose: the page behind it redraws on every
+     picker, and a redraw must not take an open sheet away. Every other sheet
+     is shared/layer.js's own shell, built on the body.
 
      .modal-overlay is the edge's one backdrop, and .active is how every other
-     page on it says a modal is open — shingoedge.css draws it, showModal and
-     hideModal toggle it. This element used to carry a .pd-scrim rule that was
-     the same declarations under another name. */}}
+     page on it says a modal is open — shingoedge.css draws it, and layer.js's
+     showModal and hideModal toggle it as an entry on the one overlay stack.
+     This element used to carry a .pd-scrim rule that was the same
+     declarations under another name. */}}
 <div id="pd-scrim" class="modal-overlay"></div>
 
 <link rel="stylesheet" href="/static/operator-station/flow-picture.css">

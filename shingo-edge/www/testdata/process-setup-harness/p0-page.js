@@ -96,7 +96,9 @@ function sheetTitle(page) {
     const m = /<h2>([\s\S]*?)<\/h2>/.exec(page.scrim.innerHTML);
     return m ? T.decode(m[1].replace(/<[^>]*>/g, '')) : '';
 }
-function okButton(page) { return page.scrim.querySelector('[data-act="sheet-ok"]'); }
+// A sheet's OK: the layer's (data-layer-ok) on its own shell, the page's
+// sheet-ok on a sheet that draws its footer itself (the apply modal).
+function okButton(page) { return page.scrim.querySelector('[data-act="sheet-ok"]') || page.scrim.querySelector('[data-layer-ok]'); }
 // OK, as an engineer presses it: never when it is drawn disabled (a browser
 // sends no click to a disabled button).
 async function pressOK(page) {
@@ -109,7 +111,7 @@ async function pressOK(page) {
 }
 function sheetLine(page) {
     if (!page.sheetOpen()) return 'sheet: closed';
-    const st = page.scrim.querySelector('.mf .st');
+    const st = page.scrim.querySelector('[data-layer-status]') || page.scrim.querySelector('.mf .st');
     const ok = okButton(page);
     const label = ok ? (ok.textContent || T.text(ok.innerHTML)) : '';
     return 'sheet: open ' + JSON.stringify(sheetTitle(page)) +
@@ -730,14 +732,19 @@ async function pinRefusals() {
 
 // ── the sheet stack ──────────────────────────────────────────────────────
 //
-// The overlay layer the rework shares out: what opening, running, closing and
-// Escape do today, one act per block. Every block starts on a fresh page.
+// The overlay stack (shared/layer.js, which this page's own stack moved into):
+// what opening, running, closing and Escape do, one act per block. Every block
+// starts on a fresh page. A sheet is the layer's shell (pageSheet) or
+// #pd-scrim (Advanced and the apply modal, which draw their own markup); the
+// discard question is the layer's confirm, on the stack above the sheet.
 function stackFacts(page) {
-    const S = page.S;
-    return 'scrim ' + (page.sheetOpen() ? 'active' : 'inactive') + ', markup ' + (page.scrim.innerHTML ? 'drawn' : 'empty') +
+    const S = page.S, scrim = page.byId('pd-scrim');
+    const q = page.dialog();
+    return 'sheet ' + (page.sheetOpen() ? 'open (' + (page.scrim === scrim ? '#pd-scrim' : 'the layer\'s shell') + ')' : 'closed') +
+        ', #pd-scrim markup ' + (scrim.innerHTML ? 'drawn' : 'empty') + ', layers ' + page.pd('layerDepth')() +
         ', body overflow ' + JSON.stringify(page.doc.body.style.overflow || '') +
-        ', S.sheet ' + (S.sheet ? (S.sheet.running ? 'running' : 'set') : 'null') +
-        ', S.adv ' + (S.adv ? 'set' : 'null') + ', S.escapeHold ' + (S.escapeHold ? 'set' : 'null');
+        ', S.sheet ' + (S.sheet ? 'set' : 'null') + ', S.adv ' + (S.adv ? 'set' : 'null') +
+        ', question ' + (q ? JSON.stringify(q.text) + ' [' + q.buttons.join(' · ') + ']' : 'none');
 }
 function popFacts(page) {
     return ['pd-pop', 'pd-stpop', 'pd-advpop'].map(id => {
@@ -747,6 +754,7 @@ function popFacts(page) {
 }
 function modalShape(page) {
     const html = page.scrim.innerHTML;
+    if (page.scrim !== page.byId('pd-scrim')) return shellShape(page, html);
     const m = /<div class="pd-modal([^"]*)"([^>]*)>/.exec(html);
     const lines = [];
     lines.push('modal: class "pd-modal' + (m ? m[1] : '') + '"' + (m ? m[2].replace(/\s+/g, ' ') : ' (none)'));
@@ -759,14 +767,33 @@ function modalShape(page) {
     lines.push('inner popover: ' + (/id="pd-advpop"[^>]*\bhidden\b/.test(html) ? '#pd-advpop, hidden' : /id="pd-advpop"/.test(html) ? '#pd-advpop' : 'none'));
     return lines;
 }
+// The same lines for a sheet on the layer's own shell: its card, its head,
+// the fields its body draws, its footer (the status line, Cancel, OK).
+function shellShape(page, html) {
+    const host = page.scrim;
+    const card = host.querySelector('[role="dialog"]');
+    const head = host.querySelector('.layer-head');
+    const foot = host.querySelector('.layer-foot');
+    const sub = head && head.querySelector('p');
+    const attr = n => ' ' + n + '="' + (card.getAttribute(n) || '') + '"';
+    return [
+        'modal: class "' + card.className + '"' + attr('role') + attr('aria-modal') + attr('aria-label'),
+        'header: ' + JSON.stringify(sheetTitle(page)) + ', sub ' + JSON.stringify(sub ? sub.textContent : ''),
+        'fields: ' + ([...html.matchAll(/data-f="([^"]*)"/g)].map(x => x[1]).join(', ') || 'none'),
+        'footer: ' + foot.children.map(b => b.tagName === 'SPAN' ? 'status(' + b.className + ')'
+            : b.className + (b.hasAttribute('data-layer-ok') ? ' [data-layer-ok]' : '') + ' ' + JSON.stringify(b.textContent) +
+                (b.disabled ? ' disabled' : '')).join(' · '),
+        'inner popover: ' + (/id="pd-advpop"[^>]*\bhidden\b/.test(html) ? '#pd-advpop, hidden' : /id="pd-advpop"/.test(html) ? '#pd-advpop' : 'none'),
+    ];
+}
 async function pinSheetStack() {
     // Every page a block opens, for the facts at the foot.
     const pages = [];
     const open = async o => { const p = await T.openPage(o); pages.push(p); return p; };
     T.setCurrent('sheet-stack.txt');
-    const L = ['# The sheet stack (openSheet / runSheet / closeSheet / onEscape / askBeforeDiscard / Advanced),',
-        '# one act per block, each on a fresh page. "facts" is the scrim, body scroll lock and the page\'s',
-        '# sheet state; "focus" is every element the page called focus() on during the act.'];
+    const L = ['# The sheet stack on shared/layer.js (pageSheet / runSheet / closeSheet / Escape / the discard question /',
+        '# Advanced), one act per block, each on a fresh page. "facts" is the sheet, the layer\'s depth, body scroll',
+        '# lock, the page\'s sheet state and the question; "focus" is every element focus() was called on during the act.'];
     const block = (title, rows) => { L.push('', '## ' + title); for (const r of rows) L.push(r); };
     const focusSince = (page, n) => {
         const f = page.focused.slice(n);
@@ -788,15 +815,31 @@ async function pinSheetStack() {
         const f1 = page.focused.length;
         page.click('scrim', { act: 'sheet-cancel' });
         await page.settle();
-        rows.push('after Cancel: ' + stackFacts(page), focusSince(page, f1) + ' (none returned to the ⋯ that opened it)');
-        block('openSheet: the style menu\'s Rename sheet, then Cancel', rows);
+        rows.push('after Cancel: ' + stackFacts(page), focusSince(page, f1));
+        block('pageSheet: the style menu\'s Rename sheet, then Cancel', rows);
     }
-    {   // a click on the backdrop itself
-        const page = await open({ extra: STYLE_ROUTES });
+    {   // the backdrop (ruling 2): Escape for the innermost, opt-in, never a drag from the card
+        const rows = [];
+        let page = await open({ extra: STYLE_ROUTES });
         await openRename(page);
-        page.click('scrim', {});
+        page.pressBackdrop();
         await page.settle();
-        block('a click on the scrim outside the modal (pd-scrim carries no data-backdrop-close)', ['after: ' + stackFacts(page)]);
+        rows.push('nothing typed, pressed and released on the backdrop: ' + stackFacts(page));
+        page = await open({ extra: STYLE_ROUTES });
+        await openRename(page);
+        page.pressBackdrop(true);
+        await page.settle();
+        rows.push('pressed in the card, released on the backdrop: ' + stackFacts(page));
+        page = await open({ extra: STYLE_ROUTES });
+        await openRename(page);
+        page.type('name', 'Style B typed');
+        page.pressBackdrop();
+        await page.settle();
+        rows.push('a typed name, pressed and released on the backdrop: ' + stackFacts(page));
+        page.dialog().press('Keep editing');
+        await page.settle();
+        rows.push('Keep editing: ' + stackFacts(page) + '; name reads ' + JSON.stringify(page.pd('sheetValue')('name')));
+        block('the backdrop (ruling 2: the Processes sheets opt in)', rows);
     }
     {   // one run per press
         const page = await open({ extra: STYLE_ROUTES });
@@ -927,19 +970,23 @@ async function pinSheetStack() {
         page.fire(num, 'input');
         rows.push('typed 7 into ' + key + ': S.adv.a.' + key + '=' + page.S.adv.a[key]);
         await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
+        // Escape on the question is Keep editing: Escape closes the innermost
+        // entry, and the question is a confirm on the stack, which always
+        // resolves (S2-components lead decision 4).
         page.key('Escape');
         await page.settle();
-        rows.push('Escape again, with the question up: sheet ' + JSON.stringify(sheetTitle(page)) + ' (only its buttons answer)');
-        page.click('scrim', { act: 'sheet-cancel' });
-        await page.settle();
         const back = page.scrim.querySelectorAll('[data-advkind="number"]').find(e => e.dataset.adv === key);
-        rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', ' + key + ' field reads ' + JSON.stringify(back ? back.value : '(gone)') +
-            ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
+        rows.push('Escape again, with the question up (Keep editing) → sheet ' + JSON.stringify(sheetTitle(page)) + ', ' + key + ' field reads ' +
+            JSON.stringify(back ? back.value : '(gone)') + ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
         await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        page.click('scrim', { act: 'escape-discard' });
+        page.dialog().press('Keep editing');
+        await page.settle();
+        rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
+        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
+        page.dialog().press('Discard');
         await page.settle();
         rows.push('Discard → ' + stackFacts(page));
-        block('askBeforeDiscard on Advanced: a typed number, Escape, Keep editing, Escape, Discard', rows);
+        block('the discard question on Advanced: a typed number, Escape, Escape, Escape, Keep editing, Escape, Discard', rows);
     }
     {
         const page = await open({ extra: STYLE_ROUTES });
@@ -947,15 +994,16 @@ async function pinSheetStack() {
         await openRename(page);
         page.type('name', 'Style B typed');
         await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        rows.push(...modalShape(page).filter(l => /^(header|footer)/.test(l)));
-        page.click('scrim', { act: 'sheet-cancel' });
+        const q = page.dialog();
+        rows.push('question: ' + JSON.stringify(q.text) + ', buttons ' + q.buttons.map(b => JSON.stringify(b)).join(' · '));
+        page.dialog().press('Keep editing');
         await page.settle();
         rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', name reads ' + JSON.stringify(page.pd('sheetValue')('name')) + '; ' + stackFacts(page));
         const from = page.mark();
         await pressOK(page);
-        rows.push('then OK (the held sheet\'s own run): ' + page.since(from).filter(c => c.method !== 'GET' && !isPreview(c))
+        rows.push('then OK (the sheet\'s own run): ' + page.since(from).filter(c => c.method !== 'GET' && !isPreview(c))
             .map(c => lineOf(c) + ' ' + JSON.stringify(c.body)).join(' · '));
-        block('askBeforeDiscard on a sheet: a typed name, Escape, Keep editing, OK', rows);
+        block('the discard question on a sheet: a typed name, Escape, Keep editing, OK', rows);
     }
     {
         const page = await open({ extra: STYLE_ROUTES });
@@ -964,10 +1012,10 @@ async function pinSheetStack() {
         page.type('name', 'Style B typed');
         await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
         const from = page.mark();
-        page.click('scrim', { act: 'escape-discard' });
+        page.dialog().press('Discard');
         await page.settle();
         rows.push('Discard → ' + stackFacts(page) + '; requests ' + (page.since(from).length || 'none'));
-        block('askBeforeDiscard on a sheet: a typed name, Escape, Discard', rows);
+        block('the discard question on a sheet: a typed name, Escape, Discard', rows);
     }
     {
         const page = await open();
@@ -1008,14 +1056,15 @@ async function pinSheetStack() {
         block('the Advanced sheet: open, Cancel, open, Apply', rows);
     }
     // THE FACTS, MEASURED over every page the blocks above opened: the lock
-    // is showModal/hideModal's (shingoedge.js:129, :139), and focus is every
-    // focus() call the page made in them.
+    // is the layer's counted one, and focus is every focus() call made in them.
     const focusCalls = pages.reduce((n, p) => n + p.focused.length, 0);
+    const keydowns = pages.map(p => (p.doc.listeners.keydown || []).length);
     L.push('', '## facts',
-        'body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (showModal / hideModal; every block above)',
-        'focus() calls the page made across every block above: ' + focusCalls +
+        'body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (the layer\'s counted lock; every block above)',
+        'focus() calls across every block above: ' + focusCalls +
             (focusCalls ? '' : ' — nothing moves focus into a sheet, and nothing returns it on close'),
-        'Escape: one document keydown listener (boot, processes-desktop.js:138); the window listeners boot adds: ' +
+        'Escape: document keydown listeners per page, at most ' + Math.max(...keydowns) +
+            ' (the page\'s own, for nothing open; the layer\'s, added with its first entry); the window listeners boot adds: ' +
             ['error', 'unhandledrejection', 'resize', 'focus'].filter(t => T.lastPage.hasWindowListener(t)).join(', '));
     T.out['sheet-stack.txt'] = L.join('\n') + '\n';
 }

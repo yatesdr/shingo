@@ -58,6 +58,8 @@ function classList() {
         add: (...cs) => cs.forEach(c => set.add(c)),
         remove: (...cs) => cs.forEach(c => set.delete(c)),
         contains: c => set.has(c),
+        all: () => [...set],
+        clear: () => set.clear(),
     };
 }
 
@@ -100,6 +102,8 @@ function makeElement(id) {
         classList: classList(),
         children: [],
         parentNode: null,
+        // The page's statics and a pin's stand-ins are on the page.
+        isConnected: true,
         offsetParent: null,
         offsetWidth: 240,
         offsetHeight: 40,
@@ -118,6 +122,7 @@ function makeElement(id) {
             (this.listeners[type] = this.listeners[type] || []).push(fn);
         },
         appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
+        contains(x) { for (let n = x; n; n = n.parentNode) if (n === this) return true; return false; },
         querySelector: () => null,
         querySelectorAll: () => [],
         getBoundingClientRect: () => ({ left: 0, top: 0, right: 200, bottom: 24, width: 200, height: 24 }),
@@ -140,6 +145,8 @@ function bubble(target, type, doc) {
         propagationStopped: false,
         stopPropagation() { this.propagationStopped = true; },
         stopImmediatePropagation() { this.propagationStopped = true; },
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
     };
     const chain = [];
     for (let n = target; n; n = n.parentNode) chain.push(n);
@@ -151,17 +158,161 @@ function bubble(target, type, doc) {
     return ev;
 }
 
+// A key press of Escape on the document, as the page's and the layer's
+// keydown listeners read it.
+function escapeEvent() {
+    return { type: 'keydown', key: 'Escape', defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+}
+
+// ── what the shared components build ─────────────────────────────────────────
+//
+// The layer (shared/layer.js) builds its sheets and its question with dom.js's
+// el(): document.createElement, attributes, text, children. An element made
+// that way is a real little tree here (madeElement); the page's own markup
+// stays a string on the elements the page writes it into, as above.
+global.Node = function Node() {};
+function madeElement(tag) {
+    const el = makeElement('');
+    Object.setPrototypeOf(el, global.Node.prototype);
+    const attrs = {};
+    let text = '';
+    Object.assign(el, {
+        tagName: String(tag).toUpperCase(), _made: true, nodeType: 1, disabled: false, value: '', type: '',
+        getAttribute: n => (n in attrs ? attrs[n] : null),
+        hasAttribute: n => n in attrs,
+        removeAttribute(n) { delete attrs[n]; if (n.startsWith('data-')) delete el.dataset[attrName(n)]; },
+        setAttribute(n, v) {
+            v = String(v);
+            attrs[n] = v;
+            if (n === 'id') el.id = v;
+            else if (n === 'class') el.className = v;
+            else if (n === 'type') el.type = v;
+            else if (n === 'value') el.value = v;
+            else if (n.startsWith('data-')) el.dataset[attrName(n)] = v;
+        },
+        contains(x) { for (let n = x; n; n = n.parentNode) if (n === el) return true; return false; },
+        remove() { if (el.parentNode) { el.parentNode.children = el.parentNode.children.filter(c => c !== el); el.parentNode = null; } },
+        dispatchEvent(ev) { bubble(el, ev.type, global.document); return true; },
+        click() { if (!el.disabled) bubble(el, 'click', global.document); },
+        focus() {}, blur() {},
+        querySelector: sel => findIn(el, sel)[0] || null,
+        querySelectorAll: sel => findIn(el, sel),
+    });
+    Object.defineProperty(el, 'className', {
+        get: () => el.classList.all().join(' '),
+        set: v => { el.classList.clear(); for (const c of String(v || '').split(/\s+/).filter(Boolean)) el.classList.add(c); },
+    });
+    Object.defineProperty(el, 'textContent', {
+        get: () => (el.children.length ? el.children.map(c => c.textContent).join('') : text),
+        set: v => { el.children = []; text = String(v === null || v === undefined ? '' : v); },
+    });
+    Object.defineProperty(el, 'isConnected', {
+        get: () => { for (let n = el; n; n = n.parentNode) if (n._static) return true; return false; },
+    });
+    // Its markup is the string the page wrote into it (a sheet's body), or
+    // its built children's, so a pin reads a sheet's fields off the sheet.
+    let own = '';
+    Object.defineProperty(el, 'innerHTML', {
+        get: () => (el.children.length ? el.children.map(serializeMade).join('') : own),
+        set: v => { el.children = []; own = String(v); },
+    });
+    el.attrsOf = () => Object.assign({}, attrs);
+    return el;
+}
+// findIn answers a selector list over a built element's children, in order.
+function findIn(root, sel) {
+    const alts = String(sel).split(',').map(s => s.trim()).filter(Boolean);
+    const out = [];
+    const walk = n => {
+        for (const c of n.children) {
+            if (c.nodeType !== 1) continue;
+            if (alts.some(a => matchAttrs(c, a))) out.push(c);
+            walk(c);
+        }
+    };
+    walk(root);
+    return out;
+}
+// A compound selector against a built element's own attributes: tag, .class,
+// #id, [attr] and [attr="v"]; a combinator matches nothing.
+function matchAttrs(n, sel) {
+    if (/\s/.test(sel)) return false;
+    const parts = sel.match(/\.[\w-]+|#[\w-]+|\[[^\]]+\]|^[a-z][\w-]*/gi) || [];
+    return parts.length > 0 && parts.every(p => {
+        if (p[0] === '.') return n.classList.contains(p.slice(1));
+        if (p[0] === '#') return n.id === p.slice(1);
+        if (p[0] === '[') {
+            const m = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(p);
+            return !!m && n.hasAttribute(m[1]) && (m[2] === undefined || n.getAttribute(m[1]) === m[2]);
+        }
+        return n.tagName === p.toUpperCase();
+    });
+}
+// serializeMade writes a built node back as markup, its attributes and its
+// class as a browser's innerHTML would, so a pin reads a sheet the layer
+// built the way it read the page's.
+function serializeMade(n) {
+    if (n.nodeType === 3) return String(n.textContent).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (!n._made) return n.innerHTML || '';
+    const a = n.attrsOf();
+    if (n.className) a.class = n.className; else delete a.class;
+    if (n.disabled) a.disabled = ''; else delete a.disabled;
+    const tag = n.tagName.toLowerCase();
+    return '<' + tag + Object.keys(a).map(k => ' ' + k + '="' + String(a[k]).replace(/"/g, '&quot;') + '"').join('') + '>' + n.innerHTML + '</' + tag + '>';
+}
+function textNode(s) {
+    const t = { nodeType: 3, textContent: String(s), parentNode: null, children: [] };
+    Object.setPrototypeOf(t, global.Node.prototype);
+    return t;
+}
+// The open sheet the layer built on the body, innermost last, or null.
+function openSheetEl(doc) {
+    return doc.body.children.filter(c => c.classList && c.classList.contains('layer-scrim') && findIn(c, '[role="dialog"]').length).pop() || null;
+}
+// sheetParts is the open sheet, for a pin: its element (the layer's shell on
+// the body, else #pd-scrim, where Advanced and the apply modal draw), whether
+// one is open, its status line, and its OK pressed as an engineer presses it
+// (a disabled OK takes no click). A control a pin puts in the sheet goes in
+// el, so its click bubbles through the sheet's own listener (onAdvClick).
+function sheetParts(doc, scrim) {
+    const made = openSheetEl(doc);
+    const el = made || scrim;
+    return {
+        el: el,
+        open: !!made || scrim.classList.contains('active'),
+        status: made ? findIn(made, '[data-layer-status]')[0] : null,
+        ok() {
+            if (made) { findIn(made, '[data-layer-ok]')[0].click(); return; }
+            const save = makeElement('');
+            save.dataset.act = 'sheet-ok';
+            scrim.appendChild(save);
+            bubble(save, 'click', doc);
+        },
+    };
+}
+
 // ── the shared modules the page imports ──────────────────────────────────────
 //
-// loadShared runs shared/http.js as the page imports it, its own imports
-// bound to what the caller passes (notice.js's toast, here a recorder), and
-// returns its exports.
+// loadShared runs the shared modules the page imports as it imports them
+// (dom.js, layer.js, http.js), each one's imports bound to the ones loaded
+// before it; notice.js's toast is what the caller passes (here a recorder).
+// It returns every export.
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
 function loadShared(deps) {
-    const src = fs.readFileSync(path.join(SHARED_DIR, 'http.js'), 'utf8')
-        .replace(/^import\s*\{[^}]*\}\s*from\s*'[^']+';[ \t]*$/gm, '')
-        .replace(/^export\s+/gm, '');
-    return vm.runInThisContext('(function (toast) {' + src + '\nreturn { send, http };\n})', { filename: 'http.js' })(deps.toast);
+    const mods = { 'notice.js': { toast: deps.toast } };
+    for (const file of ['dom.js', 'layer.js', 'http.js']) {
+        const names = [];
+        const binds = [];
+        const src = fs.readFileSync(path.join(SHARED_DIR, file), 'utf8')
+            .replace(/^import\s*\{([^}]*)\}\s*from\s*'\/static\/shared\/([\w.-]+)';[ \t]*$/gm, (m, list, from) => {
+                binds.push('const {' + list + '} = __mods[' + JSON.stringify(from) + '];');
+                return '';
+            })
+            .replace(/^export\s+(async\s+function|function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm, (m, kw, name) => { names.push(name); return kw + ' ' + name; });
+        mods[file] = vm.runInThisContext('(function (__mods) {' + binds.join(' ') + src + '\nreturn { ' + names.join(', ') + ' };\n})',
+            { filename: file })(mods);
+    }
+    return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js']);
 }
 
 // ── the page, booted for real ────────────────────────────────────────────────
@@ -217,11 +368,19 @@ function loadPage(loadOpts) {
     };
     Object.assign(byId, loadOpts.extraIds || {});
 
+    for (const k of Object.keys(byId)) byId[k]._static = true;
+    const body = makeElement('');
+    body._static = true;
     const doc = {
         readyState: 'complete',
-        body: { classList: classList(), dataset: {} },
+        body: body,
+        activeElement: null,
         listeners: {},
-        getElementById: id => byId[id] || null,
+        // What the layer builds (its sheets, its question) is a real tree on
+        // the body; the page's own markup stays a string.
+        createElement: tag => madeElement(tag),
+        createTextNode: t => textNode(t),
+        getElementById: id => byId[id] || (typeof id === 'string' ? findIn(body, '#' + id)[0] || null : null),
         addEventListener(type, fn) { (doc.listeners[type] = doc.listeners[type] || []).push(fn); },
         querySelector: () => null,
         querySelectorAll: sel => (loadOpts.docQSA ? loadOpts.docQSA(sel) : []),
@@ -265,27 +424,40 @@ function loadPage(loadOpts) {
         cell: { positions: [{ core_node_name: 'PLN_01', kind: 'front', sequence: 1 }], groups: {} },
     };
 
-    const noopModal = () => { throw new Error('the scrim must not open in this pin'); };
-    // A deep link that opens the advanced sheet (#adv=) really does open one:
-    // shingoedge.js's .active toggle, minus the DOM it walks. Pins that never
-    // deep-link a sheet keep the thrower and fail loudly if a sheet opens.
-    const activeModal = id => {
-        const m = doc.getElementById(id);
-        if (m) m.classList.add('active');
-    };
-    const sheetOpener = loadOpts.allowSheet ? activeModal : noopModal;
-    // A pin that opens a sheet may also see it close: the .active toggle's
-    // other half, so "the sheet closed" is a class the pin can read.
-    const sheetCloser = loadOpts.allowSheet ? (id => {
-        const m = doc.getElementById(id);
-        if (m) m.classList.remove('active');
-    }) : noopModal;
     global.window = win;
     global.document = doc;
+    // THE ONE OVERLAY STACK, real (shared/layer.js), and the HTTP door: what
+    // the door would put on the notice is recorded on the window
+    // (win.notices), not drawn. A sheet opens on the layer: #pd-scrim for
+    // Advanced and the apply modal (.active, as every markup modal), the
+    // layer's own shell on the body for every other sheet (openSheetEl).
+    // Pins that never open a sheet keep a thrower and fail loudly if one
+    // opens.
+    win.notices = [];
+    const shared = loadShared({ toast: (message, level, o) => { win.notices.push({ message, level, opts: o }); } });
+    const noopModal = () => { throw new Error('the scrim must not open in this pin'); };
+    const guard = fn => (loadOpts.allowSheet ? fn : noopModal);
+    const layer = {
+        openLayer: shared.openLayer, closeLayer: shared.closeLayer, layerDepth: shared.layerDepth,
+        openSheet: guard(o => {
+            // A field a pin wired (wireSheet) is what the sheet answers for it.
+            const h = shared.openSheet(o);
+            const own = h.el.querySelector;
+            h.el.querySelector = sel => {
+                const wired = scrim._sheetFields || {};
+                const m = /^\[data-f="([^"]+)"\]$/.exec(sel);
+                return m && wired[m[1]] ? wired[m[1]] : own(sel);
+            };
+            scrim._lastSheetStatus = findIn(h.el, '[data-layer-status]')[0];
+            return h;
+        }),
+        showModal: guard(shared.showModal), hideModal: guard(shared.hideModal),
+    };
+    Object.assign(global, layer, { send: shared.send });
     // The sheets' writes build their bodies through the real body module.
     win.DesktopBodies = require(path.join(SRC_DIR, 'desktop-bodies.js'));
-    Object.assign(global, { esc, showModal: sheetOpener, hideModal: sheetCloser });
-    Object.assign(win, { esc, showModal: sheetOpener, hideModal: sheetCloser });
+    Object.assign(global, { esc });
+    Object.assign(win, { esc });
     // The plant-local time formats the page imports from shared/clock.js; the
     // imports are stripped, so the Settings tab's live words read these.
     Object.assign(global, { formatTime: ts => String(ts || ''), formatClock: ts => String(ts || '') });
@@ -307,11 +479,7 @@ function loadPage(loadOpts) {
         }
         return asRead({ ok: false, json: async () => ({}) });
     };
-    // The door itself, loaded as the page imports it; what it would put on
-    // the notice is recorded on the window (win.notices), not drawn.
-    win.notices = [];
-    const shared = loadShared({ toast: (message, level, o) => { win.notices.push({ message, level, opts: o }); } });
-    Object.assign(global, { send: shared.send });
+
     // schedulePreview must not fire: this pin is about the click, and a timer
     // landing mid-test would redraw the tab under it.
     global.setTimeout = () => 0;
@@ -355,8 +523,6 @@ function loadPage(loadOpts) {
         global.relationPlacement = flow.relationPlacement;
         global.moduleOf = flow.moduleOf;
     }
-    global.showModal = sheetOpener;
-    global.hideModal = sheetCloser;
 
     let src = fs.readFileSync(path.join(SRC_DIR, 'processes-desktop.js'), 'utf8');
     src = src.replace(/^import[\s\S]*?from\s+'[^']+';\s*$/gm, '');
@@ -366,7 +532,7 @@ function loadPage(loadOpts) {
     vm.runInThisContext('(function(){\n' + src + '\n})();',
         { filename: 'processes-desktop.js' });
 
-    return { root, pop, bar, main, doc, win, scrim };
+    return { root, pop, bar, main, doc, win, scrim, sheet: () => sheetParts(doc, scrim) };
 }
 
 // operator-flow.js in its own context, the way operator-flow.test.js loads
@@ -553,46 +719,38 @@ async function mainAsync() {
         console.log('ok: boot-only deep links (;adv=, ;part=) are consumed, never re-minted');
     }
 
-    // ── the Escape rule: popover first, sheet asks on typed work ────────────
+    // ── the Escape rule: the layer's, innermost first ───────────────────────
+    //
+    // Escape is shared/layer.js's while anything is open on it, innermost
+    // first; the page's own Escape acts only when nothing is (layerDepth() 0).
+    // What the question over typed work does is the layer's and the richer
+    // page harness's (testdata/process-setup-page/sheet-stack.txt); this pin
+    // holds the page's half: its popover and its sheet are entries on the
+    // stack, the popover first.
     {
-        const { pop, main, doc, scrim } = loadPage();
+        const { pop, main, doc, sheet } = loadPage({ allowSheet: true });
         await drain();
         await drain();
-        // The popover pins load the page with showModal throwing (the scrim
-        // must never open under them). This pin needs the REAL shape: toggle
-        // .active and clear on hide — shingoedge.js's, minus the DOM it walks.
-        const realShow = id => {
-            const m = doc.getElementById(id);
-            if (m) m.classList.add('active');
-        };
-        const realHide = (id, opts) => {
-            const m = doc.getElementById(id);
-            if (!m) return;
-            m.classList.remove('active');
-            if (opts && opts.preserveState) return;
-        };
-        global.showModal = realShow;
-        global.hideModal = realHide;
-        Object.assign(global.window, { showModal: realShow, hideModal: realHide });
         const escapeKey = () => {
-            for (const fn of (doc.listeners.keydown || [])) fn({ key: 'Escape' });
+            const ev = { type: 'keydown', key: 'Escape', defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+            for (const fn of (doc.listeners.keydown || []).slice()) fn(ev);
         };
         // POPOVER FIRST. With a popover open above no sheet at all, Escape
         // closes the popover — and must not need a sheet to exist to do it.
         const btn = addUsePresetButton(main);
         bubble(btn, 'click', doc);
         if (pop.hidden !== false) throw new Error('setup: the popover should be open here');
+        if (global.layerDepth() !== 1) throw new Error('the open popover is not an entry on the layer: depth ' + global.layerDepth());
         escapeKey();
         if (pop.hidden !== true) {
             throw new Error('Escape did not close the open popover; the popover arm is not first');
         }
+        if (global.layerDepth() !== 0) throw new Error('the closed popover is still on the layer');
         checks++;
-        console.log('ok: Escape closes the open popover first');
+        console.log('ok: Escape closes the open popover first, as an entry on the layer');
 
-        // THE SHEET ASKS. The Add-group sheet has two plain text fields and
-        // needs no fetch to open. Type into one, Escape: the question comes up
-        // INSTEAD of the close, and Keep editing puts the held sheet back —
-        // markup and typed value with it.
+        // THE SHEET IS AN ENTRY TOO. The Add-group sheet needs no fetch to
+        // open; Escape with nothing typed closes it.
         const addBtn = makeElement('');
         addBtn.dataset.act = 'add-group';
         addBtn.closest = function (sel) { return sel === '[data-act]' ? this : null; };
@@ -600,61 +758,15 @@ async function mainAsync() {
         bubble(addBtn, 'click', doc);
         await drain();
         await drain();
-        if (scrim.innerHTML.indexOf('data-f="name"') < 0) {
-            throw new Error('setup: the Add-group sheet should be open here; scrim: ' + scrim.innerHTML.slice(0, 200));
+        const el = sheet().el;
+        if (!el._made || el.innerHTML.indexOf('data-f="name"') < 0) {
+            throw new Error('setup: the Add-group sheet should be open on the layer here; sheet: ' + String(el.innerHTML).slice(0, 200));
         }
-        // Type: the input carries the markup's value attribute ("") and the
-        // typed property — attribute-vs-property IS the edit.
-        // The fake input records setAttribute the way a real one does, so the
-        // page's write-back into the markup is observable in the snapshot.
-        const nameInput = {
-            type: 'text', value: 'Presses west',
-            getAttribute(n) { return n === 'data-f' ? 'name' : ''; },
-            hasAttribute() { return false; },
-            checked: false,
-        };
-        const realQSA = scrim.querySelectorAll;
-        scrim.querySelectorAll = sel => (sel === '[data-f]' ? [nameInput] : (realQSA ? realQSA.call(scrim, sel) : []));
         escapeKey();
-        if (scrim.innerHTML.indexOf('Discard the changes?') < 0) {
-            throw new Error('Escape on a sheet with typed work closed or discarded it instead of asking; ' +
-                'scrim: ' + scrim.innerHTML.slice(0, 200));
-        }
-        if (scrim.innerHTML.indexOf('sheet-cancel') < 0) {
-            throw new Error('the ask sheet carries no Keep editing door');
-        }
-        // Keep editing restores the held sheet. The ask sheet's buttons live
-        // in the scrim, whose own click listener (onAdvClick) answers them —
-        // so the click bubbles through the scrim, not #pd-main. The typed
-        // value rides the hold as a property and is re-applied: read it back
-        // the way the page itself would, through the sheet's own accessor
-        // shape (the restored markup's input, found by data-f).
-        const keep = makeElement('');
-        keep.dataset.act = 'sheet-cancel';
-        keep.closest = function (sel) { return sel === '[data-act]' ? this : null; };
-        scrim.appendChild(keep);
-        // The restored markup's input: a real DOM re-derives it by parsing;
-        // the stub re-types the one field the sheet had. `value` is a setter
-        // recording what the page writes, which is the assertion.
-        const restored = {
-            type: 'text', _v: '', dataset: { f: 'name' },
-            getAttribute: () => 'name',
-            set value(v) { this._v = v; },
-            get value() { return this._v; },
-        };
-        scrim.querySelectorAll = sel => (sel === '[data-f]' ? [restored] : []);
-        bubble(keep, 'click', doc);
-        await drain();
-        await drain();
-        if (scrim.innerHTML.indexOf('data-f="name"') < 0) {
-            throw new Error('Keep editing did not put the held sheet back; scrim: ' +
-                scrim.innerHTML.slice(0, 200));
-        }
-        if (restored._v !== 'Presses west') {
-            throw new Error('Keep editing did not put the typed value back; got "' + restored._v + '"');
-        }
+        if (sheet().open) throw new Error('Escape on the Add-group sheet with nothing typed did not close it');
+        if (global.layerDepth() !== 0) throw new Error('the closed sheet is still on the layer: depth ' + global.layerDepth());
         checks++;
-        console.log('ok: Escape over a typed-in sheet asks, and Keep editing restores it');
+        console.log('ok: Escape closes a sheet with nothing typed, as an entry on the layer');
     }
 
     // ── the bar's problem line is the control ────────────────────────────────
@@ -916,11 +1028,10 @@ async function mainAsync() {
         box.dataset.npkbox = 'positions';
         box.querySelector = sel => (sel === '[data-npkq]' ? input
             : sel === '[data-npkpart="opts"]' ? opts : null);
-        const status = makeElement('');
         let sheetOpen = false;
         const puts = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
-        const { main, doc, scrim } = loadPage({
+        const { main, doc, sheet } = loadPage({
             allowSheet: true,
             stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
             stationNodes: { '10': ['PLN_01', 'PLN_02'] },
@@ -948,7 +1059,6 @@ async function mainAsync() {
                 return null;
             },
         });
-        scrim.querySelector = sel => (sel === '.mf .st' ? status : null);
         await drain();
         await drain();
         sheetOpen = true;
@@ -958,23 +1068,22 @@ async function mainAsync() {
         main.appendChild(edit);
         bubble(edit, 'click', doc);
         for (let i = 0; i < 6; i++) await drain();
-        if (!scrim.classList.contains('active')) throw new Error('setup: the screen sheet did not open');
+        const at = sheet();
+        if (!at.open) throw new Error('setup: the screen sheet did not open');
+        const status = at.status;
         // The engineer takes PLN_02 off the screen with its chip's ×.
         const drop = makeElement('');
         drop.dataset.npk = 'drop';
         drop.dataset.npkkey = 'positions';
         drop.dataset.npkname = 'PLN_02';
-        scrim.appendChild(drop);
+        at.el.appendChild(drop);
         bubble(drop, 'click', doc);
-        const save = makeElement('');
-        save.dataset.act = 'sheet-ok';
-        scrim.appendChild(save);
-        bubble(save, 'click', doc);
+        at.ok();
         for (let i = 0; i < 10; i++) await drain();
         if (puts.length !== 1 || JSON.stringify(puts[0]) !== JSON.stringify({ nodes: ['PLN_01'] })) {
             throw new Error('setup: the positions PUT was not sent as expected: ' + JSON.stringify(puts));
         }
-        return { open: scrim.classList.contains('active'), status };
+        return { open: sheet().open, status };
     }
 
     {
@@ -984,7 +1093,7 @@ async function mainAsync() {
         if (status.textContent !== want) {
             throw new Error('status line: got ' + JSON.stringify(status.textContent) + ', want ' + JSON.stringify(want));
         }
-        if (status.className !== 'st') {
+        if (/\bbad\b/.test(status.className)) {
             throw new Error('a kept position is not a refusal; status class was ' + JSON.stringify(status.className));
         }
         checks++;
@@ -1029,13 +1138,12 @@ async function mainAsync() {
         box.dataset.npkbox = 'positions';
         box.querySelector = sel => (sel === '[data-npkq]' ? input
             : sel === '[data-npkpart="opts"]' ? opts : null);
-        const status = makeElement('');
         let sheetOpen = false;
         const puts = [];
         let rowPuts = 0;
         const previews = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
-        const { main, doc, scrim } = loadPage({
+        const { main, doc, sheet } = loadPage({
             allowSheet: true,
             stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
             stationNodes: { '10': ['PLN_01', 'PLN_02'] },
@@ -1068,7 +1176,6 @@ async function mainAsync() {
                 return null;
             },
         });
-        scrim.querySelector = sel => (sel === '.mf .st' ? status : null);
         await drain();
         await drain();
         sheetOpen = true;
@@ -1078,22 +1185,21 @@ async function mainAsync() {
         main.appendChild(edit);
         bubble(edit, 'click', doc);
         for (let i = 0; i < 6; i++) await drain();
+        const at = sheet();
+        const status = at.status;
         const drop = makeElement('');
         drop.dataset.npk = 'drop';
         drop.dataset.npkkey = 'positions';
         drop.dataset.npkname = 'PLN_02';
-        scrim.appendChild(drop);
+        at.el.appendChild(drop);
         bubble(drop, 'click', doc);
         const after = [];
         for (let s = 0; s < saves; s++) {
-            const save = makeElement('');
-            save.dataset.act = 'sheet-ok';
-            scrim.appendChild(save);
-            bubble(save, 'click', doc);
+            sheet().ok();
             for (let i = 0; i < 10; i++) await drain();
             after.push({ puts: puts.length, rowPuts, status: status.textContent, cls: status.className });
         }
-        return { after, previews, open: scrim.classList.contains('active') };
+        return { after, previews, open: sheet().open };
     }
 
     {
@@ -1106,7 +1212,7 @@ async function mainAsync() {
         if (after[0].puts !== 0 || after[0].rowPuts !== 0 || after[0].status !== warning) {
             throw new Error('the first Save wrote before warning, or did not show the warning: ' + JSON.stringify(after[0]));
         }
-        if (after[0].cls !== 'st') {
+        if (/\bbad\b/.test(after[0].cls)) {
             throw new Error('the warning is not a refusal; status class was ' + JSON.stringify(after[0].cls));
         }
         if (after[1].puts !== 1 || after[1].rowPuts !== 1) {
@@ -1158,7 +1264,7 @@ async function mainAsync() {
                 : (rootQuery ? rootQuery.call(root, sel) : null));
         const selected = () => /class="selrow" data-row="PLN_01"/.test(root.innerHTML);
         const escapeKey = () => {
-            for (const fn of (ctx.doc.listeners.keydown || [])) fn({ key: 'Escape' });
+            { const ev = escapeEvent(); for (const fn of (ctx.doc.listeners.keydown || []).slice()) fn(ev); }
         };
         return Object.assign(ctx, { card, row, selected, escapeKey });
     }
@@ -1961,14 +2067,22 @@ async function mainAsync() {
         palette: ['PART-A'],
         cell: { positions: [{ core_node_name: 'PLN_01', kind: 'front', sequence: 1 }], groups: {} },
     });
-    // A sheet's text field and status line, as the page reads them off the scrim.
+    // A sheet's text field and status line, as the page reads them: the
+    // field off whichever sheet opens next (the layer's shell answers it
+    // through loadPage's openSheet, #pd-scrim through its querySelector), the
+    // status line the one that sheet shows (the layer's, else #pd-scrim's).
     function wireSheet(scrim, value) {
         const input = makeElement('');
         input.value = value;
         const status = makeElement('');
+        scrim._sheetFields = { name: input };
         scrim.querySelector = sel => (sel === '[data-f="name"]' ? input
             : sel === '.mf .st' ? status : null);
-        return status;
+        const now = () => scrim._lastSheetStatus || status;
+        return {
+            get textContent() { return now().textContent; },
+            get className() { return now().className; },
+        };
     }
     function click(parent, doc, data) {
         const b = makeElement('');
@@ -2054,7 +2168,7 @@ async function mainAsync() {
 
     await pin('Save as recipe names the recipe it saved and where it is', async () => {
         const posts = [];
-        const { root, main, doc, scrim } = loadPage({
+        const { root, main, doc, scrim, sheet } = loadPage({
             allowSheet: true, composer: savedComposer(),
             fetch: (url, init) => {
                 if (url === '/api/processes/1/presets' && init && init.method === 'POST') {
@@ -2066,19 +2180,19 @@ async function mainAsync() {
         });
         await settle();
         click(main, doc, { act: 'save-preset' });
-        if (!scrim.classList.contains('active')) throw new Error('setup: the naming sheet did not open');
+        if (!sheet().open) throw new Error('setup: the naming sheet did not open');
         wireSheet(scrim, 'Single up');
-        click(scrim, doc, { act: 'sheet-ok' });
+        sheet().ok();
         await settle();
         if (posts.length !== 1) throw new Error('setup: the preset was not posted once: ' + posts.length);
-        if (scrim.classList.contains('active')) throw new Error('the naming sheet is still open after the save');
+        if (sheet().open) throw new Error('the naming sheet is still open after the save');
         const want = '<div class="pd-notice">Saved recipe Single up. It is in the rail under Recipes.</div>';
         if (root.innerHTML.indexOf(want) < 0) throw new Error('the Flows tab drew no ' + want);
     });
 
     await pin('Clone names the style it saved', async () => {
         const posts = [];
-        const { root, main, doc, scrim } = loadPage({
+        const { root, main, doc, scrim, sheet } = loadPage({
             allowSheet: true, composer: savedComposer(),
             fetch: (url, init) => {
                 if (url === '/api/styles/1/clone' && init && init.method === 'POST') {
@@ -2090,9 +2204,9 @@ async function mainAsync() {
         });
         await settle();
         click(main, doc, { act: 'style-clone', style: '1' });
-        if (!scrim.classList.contains('active')) throw new Error('setup: the clone sheet did not open');
+        if (!sheet().open) throw new Error('setup: the clone sheet did not open');
         wireSheet(scrim, 'Style B');
-        click(scrim, doc, { act: 'sheet-ok' });
+        sheet().ok();
         await settle();
         if (posts.length !== 1) throw new Error('setup: the clone was not posted once: ' + posts.length);
         const want = '<div class="pd-notice">Saved Style B, a copy of Style A.</div>';
@@ -2366,8 +2480,8 @@ async function mainAsync() {
                 const dataset = {};
                 for (const k of Object.keys(attrs)) if (k.startsWith('data-')) dataset[attrName(k)] = attrs[k];
                 els.push({
-                    type: attrs.type || 'text', value: attrs.value || '', checked: 'checked' in attrs,
-                    attrs, dataset, listeners: {},
+                    tagName: 'INPUT', type: attrs.type || 'text', value: attrs.value || '', defaultValue: attrs.value || '',
+                    checked: 'checked' in attrs, attrs, dataset, listeners: {}, focus() {},
                     getAttribute: n => (n in attrs ? attrs[n] : null),
                     hasAttribute: n => n in attrs,
                     addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
@@ -2376,6 +2490,8 @@ async function mainAsync() {
             return els;
         };
         scrim.querySelectorAll = sel => {
+            // The layer's own read of a modal's fields (typed work).
+            if (sel === 'input, select, textarea') return parse().slice();
             const m = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(sel);
             if (!m) return [];
             return parse().filter(el => m[1] in el.attrs && (m[2] === undefined || el.attrs[m[1]] === m[2]));
@@ -2385,9 +2501,19 @@ async function mainAsync() {
             type(el, v) { el.value = v; for (const fn of (el.listeners.input || [])) fn({ target: el }); },
         };
     }
-    const escapeOn = doc => { for (const fn of (doc.listeners.keydown || [])) fn({ key: 'Escape' }); };
-    const asks = scrim => scrim.innerHTML.indexOf('<h2>Discard the changes?</h2>') >= 0 &&
-        scrim.innerHTML.indexOf('<button class="pd-btn" data-act="sheet-cancel">Keep editing</button>') >= 0;
+    const escapeOn = doc => { const ev = escapeEvent(); for (const fn of (doc.listeners.keydown || []).slice()) fn(ev); };
+    // THE QUESTION IS THE LAYER'S (shared/layer.js): a confirm on the stack
+    // above the dialog, built on the body, whose Escape is Keep editing; the
+    // dialog under it is never redrawn, so keeping is keeping.
+    const question = () => global.document.body.children.filter(c => c.classList && c.classList.contains('layer-scrim') &&
+        findIn(c, '[role="alertdialog"]').length).pop() || null;
+    const asks = () => { const q = question(); return !!q && q.innerHTML.indexOf('Discard the changes?') >= 0 &&
+        findIn(q, 'button').some(b => b.textContent === 'Keep editing'); };
+    const answer = word => {
+        const b = findIn(question(), 'button').find(x => x.textContent === word);
+        if (!b) throw new Error('the question has no ' + word);
+        b.click();
+    };
     // The dialogs' own popover. The page draws it hidden inside the dialog's
     // markup; the stub is the element $('pd-advpop') finds.
     const advpopStub = () => Object.assign(makeElement('pd-advpop'), { hidden: true });
@@ -2418,16 +2544,16 @@ async function mainAsync() {
             if (!el) throw new Error('setup: no typed field in ' + scrim.innerHTML.slice(0, 300));
             live.type(el, typed);
             escapeOn(doc);
-            if (!asks(scrim)) throw new Error('Escape did not ask; scrim: ' + scrim.innerHTML.slice(0, 300));
-            click(scrim, doc, { act: 'sheet-cancel' });
+            if (!asks()) throw new Error('Escape did not ask; scrim: ' + scrim.innerHTML.slice(0, 300));
+            answer('Keep editing');
             if (!scrim.classList.contains('active') || scrim.innerHTML.indexOf(heading) < 0) {
                 throw new Error('Keep editing did not put the dialog back; scrim: ' + scrim.innerHTML.slice(0, 300));
             }
             const back = field(live);
             if (!back || back.value !== typed) throw new Error('Keep editing lost the typed value: ' + (back && back.value));
             escapeOn(doc);
-            if (!asks(scrim)) throw new Error('a second Escape after Keep editing did not ask again');
-            click(scrim, doc, { act: 'escape-discard' });
+            if (!asks()) throw new Error('a second Escape after Keep editing did not ask again');
+            answer('Discard');
             if (scrim.classList.contains('active')) throw new Error('Discard did not close the dialog');
             escapeOn(doc);
         });
@@ -2437,12 +2563,12 @@ async function mainAsync() {
             redraw(scrim, doc);
             if (scrim.innerHTML.indexOf(heading) < 0) throw new Error('setup: the redraw closed the dialog');
             escapeOn(doc);
-            if (!asks(scrim)) throw new Error('Escape after a redraw did not ask; scrim: ' + scrim.innerHTML.slice(0, 300));
+            if (!asks()) throw new Error('Escape after a redraw did not ask; scrim: ' + scrim.innerHTML.slice(0, 300));
         });
         await pin(name + ': Escape with nothing typed closes it', async () => {
             const { scrim, doc } = await open();
             escapeOn(doc);
-            if (scrim.classList.contains('active') || asks(scrim)) throw new Error('a clean dialog did not close on Escape');
+            if (scrim.classList.contains('active') || asks()) throw new Error('a clean dialog did not close on Escape');
         });
     }
 
@@ -2466,13 +2592,13 @@ async function mainAsync() {
                 if (advpop.hidden !== false) throw new Error('setup: the picker did not open');
                 escapeOn(doc);
                 if (advpop.hidden !== true) throw new Error('the first Escape left the picker open');
-                if (!scrim.classList.contains('active') || scrim.innerHTML !== html || asks(scrim)) {
+                if (!scrim.classList.contains('active') || scrim.innerHTML !== html || asks()) {
                     throw new Error('the first Escape did more than close the picker; scrim: ' + scrim.innerHTML.slice(0, 200));
                 }
                 if (withTyping && field(live).value !== typed) throw new Error('the typed value did not stay');
                 escapeOn(doc);
                 if (withTyping) {
-                    if (!asks(scrim)) throw new Error('the second Escape did not ask over typed input');
+                    if (!asks()) throw new Error('the second Escape did not ask over typed input');
                 } else if (scrim.classList.contains('active')) {
                     throw new Error('the second Escape did not close the clean dialog');
                 }
@@ -2601,13 +2727,13 @@ async function mainAsync() {
     });
 
     const addProcessSheet = async map => {
-        const { root, doc, scrim } = loadPage({ allowSheet: true, composer: mapComposer(map) });
+        const { root, doc, sheet } = loadPage({ allowSheet: true, composer: mapComposer(map) });
         if (map) realGeometry();
         await settle();
         click(root, doc, { act: 'add-process' });
         await settle();
-        if (!scrim.classList.contains('active')) throw new Error('setup: the Add process sheet did not open');
-        return scrim.innerHTML;
+        if (!sheet().open) throw new Error('setup: the Add process sheet did not open');
+        return sheet().el.innerHTML;
     };
 
     await pin('the Add process sheet with no plant map has no "Where that is" section', async () => {
@@ -2709,13 +2835,13 @@ async function mainAsync() {
     });
 
     await pin('a refused name stops being reported once the engineer types', async () => {
-        const { root, doc, scrim } = loadPage({ allowSheet: true, composer: mapComposer(null) });
+        const { root, doc, scrim, sheet } = loadPage({ allowSheet: true, composer: mapComposer(null) });
         await settle();
         const status = wireSheet(scrim, '');
         const name = scrim.querySelector('[data-f="name"]');
         click(root, doc, { act: 'add-process' });
         await settle();
-        click(scrim, doc, { act: 'sheet-ok' });
+        sheet().ok();
         await settle();
         if (status.textContent !== 'A process needs a name.') {
             throw new Error('setup: the empty name was not refused, the line reads ' + JSON.stringify(status.textContent));
@@ -2724,7 +2850,7 @@ async function mainAsync() {
         name.parentNode = scrim;
         bubble(name, 'input', doc);
         if (status.textContent !== '') throw new Error('the refusal still reads ' + JSON.stringify(status.textContent));
-        if (status.className !== 'st') throw new Error('the line is still marked bad: ' + status.className);
+        if (/\bbad\b/.test(status.className)) throw new Error('the line is still marked bad: ' + status.className);
     });
 
     // THE STATE CELL IS DATA, TONED BY WHAT IS TRUE. The running style's name
@@ -3076,11 +3202,11 @@ async function recipeGroupPins(h) {
         setDest(ctx, 'PLN_007', 'ULN_005');
         await settle();
         click(ctx.main, ctx.doc, { act: 'shape-save' });
-        if (!ctx.scrim.classList.contains('active')) throw new Error('Save recipe… opened no naming sheet');
-        const named = /data-f="name" value="([^"]*)"/.exec(ctx.scrim.innerHTML);
+        if (!ctx.sheet().open) throw new Error('Save recipe… opened no naming sheet');
+        const named = /data-f="name" value="([^"]*)"/.exec(ctx.sheet().el.innerHTML);
         if (!named || named[1] !== 'Two spot press index') throw new Error('the naming sheet opens on ' + (named && named[1]));
         wireSheet(ctx.scrim, named[1]);
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         return ctx.posts.find(p => /\/presets$/.test(p.url));
     }
@@ -3209,10 +3335,10 @@ async function recipeGroupPins(h) {
         await settle();
         click(ctx.main, ctx.doc, { act: 'advanced', node: 'PLN_010' });
         const fg = () => fgOf(ctx.scrim);
-        if (ctx.scrim.innerHTML.indexOf('<h2>PLN_010 · Advanced</h2>') < 0) throw new Error('setup: the sheet is not PLN_010\'s');
+        if (ctx.sheet().el.innerHTML.indexOf('<h2>PLN_010 · Advanced</h2>') < 0) throw new Error('setup: the sheet is not PLN_010\'s');
         const off = 'Finished goods: strict_pack,partial_dest';
         if (fg() !== off) throw new Error('strict pack off: ' + fg() + '\n      want ' + off);
-        const home = plain(ctx.scrim.innerHTML.split('<div class="pd-fld">').find(f => f.indexOf('data-adv="partial_dest"') >= 0) || '');
+        const home = plain(ctx.sheet().el.innerHTML.split('<div class="pd-fld">').find(f => f.indexOf('data-adv="partial_dest"') >= 0) || '');
         if (home.indexOf('Partials go to') !== 0) throw new Error('the partial home is not named Partials go to: ' + home);
         for (const says of ['where full bins go, at its real count', 'a node group holds it there to be finished later', 'the unloader unloads it there']) {
             if (home.indexOf(says) < 0) throw new Error('the partial home\'s help does not say "' + says + '": ' + home);
@@ -3238,7 +3364,7 @@ async function recipeGroupPins(h) {
         await settle();
         click(g.main, g.doc, { act: 'shape-save' });
         wireSheet(g.scrim, 'Two spot press index');
-        click(g.scrim, g.doc, { act: 'sheet-ok' });
+        g.sheet().ok();
         await settle();
         const posted = g.posts.find(p => /\/presets$/.test(p.url));
         if (!posted) throw new Error('the save posted nothing');
@@ -3254,7 +3380,7 @@ async function recipeGroupPins(h) {
         click(ctx.main, ctx.doc, { act: 'groups-setup' });
         await settle();
         click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
-        const sheet = ctx.scrim.innerHTML;
+        const sheet = ctx.sheet().el.innerHTML;
         if (sheet.indexOf('<h2>Right Hand · Advanced</h2>') < 0) throw new Error('the sheet is not Right Hand\'s: ' + plain(sheet).slice(0, 200));
         for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'evac_dest', 'partial_dest']) {
             if (sheet.indexOf('data-adv="' + key + '"') >= 0) throw new Error('group scope draws ' + key + ', which a recipe may not say');
@@ -3274,7 +3400,7 @@ async function recipeGroupPins(h) {
         if (/data-act="advanced"/.test(ctx.root.innerHTML)) throw new Error('setup: a per-row gear is back');
         click(ctx.main, ctx.doc, { act: 'shape-save' });
         wireSheet(ctx.scrim, 'Two spot press index');
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
         if (!posted) throw new Error('the save posted nothing');
@@ -3309,7 +3435,7 @@ async function recipeGroupPins(h) {
         if (plain(right).indexOf('Robot 2 supplies') < 0) throw new Error('Right Hand\'s card says ' + plain(right));
         click(ctx.main, ctx.doc, { act: 'shape-save' });
         wireSheet(ctx.scrim, 'Two spot press index');
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
         if (!posted) throw new Error('the save posted nothing');
@@ -3330,7 +3456,7 @@ async function recipeGroupPins(h) {
             cells: [p6cell('PLN_006', 'PLN_005', 'ULN_002'), p6cell('PLN_007', 'PLN_008', 'ULN_005')], groups: groups,
         });
         if (posted.body !== JSON.stringify(want)) throw new Error('posted ' + posted.body + '\n      want   ' + JSON.stringify(want));
-        if (ctx.scrim.classList.contains('active')) throw new Error('the naming sheet is still open after the save');
+        if (ctx.sheet().open) throw new Error('the naming sheet is still open after the save');
     });
 
     await pin('a refused save says the server\'s words beside the cards', async () => {
@@ -3344,7 +3470,7 @@ async function recipeGroupPins(h) {
         if (g.indexOf('<div class="pd-refusal" id="pd-grefusal">' + says + '</div>') < 0) {
             throw new Error('the cards do not carry the refusal: ' + plain(g).slice(0, 300));
         }
-        if (!ctx.scrim.classList.contains('active')) throw new Error('the naming sheet closed over a refusal');
+        if (!ctx.sheet().open) throw new Error('the naming sheet closed over a refusal');
     });
 
     // THE PICTURE BY FOCUS (SYNTH row 18), its grid held by the groups' pairs
@@ -3499,24 +3625,26 @@ async function recipeGroupPins(h) {
         for (const id of ['pd-newrecipe', 'pd-newslots', 'pd-newname', 'pd-newspots']) ids[id] = makeElement(id);
         const ctx = p6Page(composer, { hash: hash, realPicture: true, extraIds: ids });
         const slot = (i, code) => Object.assign(makeElement(''), { value: code, type: 'select' });
-        const fields = { '[data-f="slot0"]': slot(0, 'SYN-P6-A'), '[data-f="slot1"]': slot(1, 'SYN-P6-B'),
-            '[data-f="recipe"]': Object.assign(makeElement(''), { value: '7' }), '[data-f="catid"]': Object.assign(makeElement(''), { value: '' }),
-            '.mf .st': makeElement('') };
-        ctx.scrim.querySelector = sel => fields[sel] || null;
+        // The sheet's fields, answered by the layer's sheet when it opens
+        // (loadPage's openSheet reads scrim._sheetFields); its status line is
+        // the one that sheet shows.
+        ctx.scrim._sheetFields = { slot0: slot(0, 'SYN-P6-A'), slot1: slot(1, 'SYN-P6-B'),
+            recipe: Object.assign(makeElement(''), { value: '7' }), catid: Object.assign(makeElement(''), { value: '' }) };
         const tap = node => {
             const box = makeElement('pd-nsvg');
-            ctx.scrim.appendChild(box);
+            ctx.sheet().el.appendChild(box);
             const c = makeElement('');
             c.dataset.pos = node;
             box.appendChild(c);
             bubble(c, 'click', ctx.doc);
         };
-        return Object.assign(ctx, { ids: ids, tap: tap, status: fields['.mf .st'] });
+        const status = { get textContent() { return ctx.scrim._lastSheetStatus ? ctx.scrim._lastSheetStatus.textContent : ''; } };
+        return Object.assign(ctx, { ids: ids, tap: tap, status: status });
     };
     await pin('New style asks where the spots go, opened where the cell last ran the recipe', async () => {
         const ctx = newStylePage(press6Composer(), '#newstyle=7');
         await settle();
-        if (!ctx.scrim.classList.contains('active')) throw new Error(';newstyle=7 opened no sheet');
+        if (!ctx.sheet().open) throw new Error(';newstyle=7 opened no sheet');
         const spots = ctx.ids['pd-newspots'].innerHTML;
         if (spots.indexOf('id="pd-nsvg"') < 0) throw new Error('the sheet draws no Spots picture: ' + plain(spots).slice(0, 200));
         if (plain(spots).indexOf('PLN_006 → PLN_010') < 0 || plain(spots).indexOf('PLN_007 → PLN_012') < 0) {
@@ -3537,7 +3665,7 @@ async function recipeGroupPins(h) {
     await pin('the New style mint sends the Spots step\'s moves as overrides, the station\'s bytes', async () => {
         const ctx = newStylePage(press6Composer(), '#newstyle=7');
         await settle();
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         const posted = ctx.posts.find(p => /\/flow\/mint$/.test(p.url));
         if (!posted) throw new Error('Create minted nothing: ' + ctx.status.textContent);
@@ -3552,8 +3680,8 @@ async function recipeGroupPins(h) {
         const ctx = p6Page(press6Composer(), { realPicture: true });
         await settle();
         click(ctx.main, ctx.doc, { act: 'use-preset-pick', preset: '7' });
-        if (!ctx.scrim.classList.contains('active')) throw new Error('Use a recipe opened no sheet');
-        if (ctx.scrim.innerHTML.indexOf('id="pd-usvg"') < 0) throw new Error('the Use sheet draws no picture');
+        if (!ctx.sheet().open) throw new Error('Use a recipe opened no sheet');
+        if (ctx.sheet().el.innerHTML.indexOf('id="pd-usvg"') < 0) throw new Error('the Use sheet draws no picture');
         const o = ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1] || {};
         if (o.relation !== true) throw new Error('the Use sheet\'s picture is not by relation');
         if (JSON.stringify((o.active || []).slice().sort()) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') {
@@ -3647,8 +3775,8 @@ async function settingsPositionsPins(h) {
     await pin('Add positions greys what is a position already, names whose, and offers a loader window', async () => {
         const ctx = page('#tab=settings;addpos=');
         await settle();
-        const s = ctx.scrim.innerHTML;
-        if (!ctx.scrim.classList.contains('active') || s.indexOf('<h2>Add positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
+        const s = ctx.sheet().el.innerHTML;
+        if (!ctx.sheet().open || s.indexOf('<h2>Add positions</h2>') < 0) throw new Error(';addpos= opened no sheet');
         const want = {
             PLN_001: '<button class="off" disabled><i class="box"></i>PLN_001<small>on Press 4</small></button>',
             PLN_005: '<button class="off" disabled><i class="box"></i>PLN_005<small>already on Press 6 Operator Screen</small></button>',
@@ -3674,13 +3802,13 @@ async function settingsPositionsPins(h) {
     await pin('a prefix filters the checklist to its family and only filters', async () => {
         const ctx = page('#tab=settings;addpos=PLN_');
         await settle();
-        const s = ctx.scrim.innerHTML;
+        const s = ctx.sheet().el.innerHTML;
         if (s.indexOf('PLN_005PAL') < 0 || s.indexOf('>SMN_002<') >= 0) throw new Error('PLN_ did not filter to PLN: ' + s.length);
         if (!/<button class="on" data-npk="prefix" data-npkkey="addpos" data-npkname="PLN">/.test(s)) throw new Error('PLN is not marked as the filter');
         click(ctx.scrim, ctx.doc, { npk: 'prefix', npkkey: 'addpos', npkname: 'PLN' });
         click(ctx.scrim, ctx.doc, { npk: 'prefix', npkkey: 'addpos', npkname: 'SMN' });
         wireSheet(ctx.scrim, '');
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         if (ctx.writes.length) throw new Error('pressing prefixes ticked something: ' + JSON.stringify(ctx.writes));
     });
@@ -3690,13 +3818,13 @@ async function settingsPositionsPins(h) {
         await settle();
         click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_005PAL' });
         click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_006PAL' });
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
         if (!put || put.url !== '/api/operator-stations/18/claimed-nodes') throw new Error('Add wrote ' + JSON.stringify(ctx.writes));
         const want = '["PLN_005","PLN_006BCD","PLN_009BCD","PLN_005PAL","PLN_006PAL"]';
         if (JSON.stringify(put.body.nodes) !== want) throw new Error('Add sent ' + JSON.stringify(put.body.nodes) + '\n      want ' + want);
-        if (ctx.scrim.classList.contains('active')) throw new Error('the sheet is still open');
+        if (ctx.sheet().open) throw new Error('the sheet is still open');
         const says = '<div class="pd-notice">Added PLN_005PAL, PLN_006PAL to Press 6 Operator Screen.</div>';
         if (ctx.root.innerHTML.indexOf(says) < 0) throw new Error('Settings does not say ' + says);
     });
@@ -3706,7 +3834,7 @@ async function settingsPositionsPins(h) {
         await settle();
         click(ctx.scrim, ctx.doc, { act: 'pos-screen', station: '25' });
         click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'SMN_002' });
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
         if (!put || put.url !== '/api/operator-stations/25/claimed-nodes' || JSON.stringify(put.body.nodes) !== '["ULN_002","SMN_002"]') {
@@ -3719,7 +3847,7 @@ async function settingsPositionsPins(h) {
         await settle();
         const status = wireSheet(ctx.scrim, '');
         click(ctx.scrim, ctx.doc, { npk: 'add', npkkey: 'addpos', npkname: 'PLN_005PAL' });
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         if (ctx.writes.length) throw new Error('an add over an unread list was sent: ' + JSON.stringify(ctx.writes));
         if (status.textContent.indexOf('could not be read, so nothing was added') < 0) throw new Error('the sheet says ' + JSON.stringify(status.textContent));
@@ -3733,11 +3861,11 @@ async function settingsPositionsPins(h) {
         await settle();
         const ask = ctx.writes.find(w => /\/impact$/.test(w.url));
         if (!ask || JSON.stringify(ask.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the impact ask was ' + JSON.stringify(ask));
-        if (ctx.scrim.innerHTML.indexOf('<h2>Remove PLN_005</h2>') < 0 || ctx.scrim.innerHTML.indexOf(says) < 0) {
-            throw new Error('the question does not carry the warning: ' + ctx.scrim.innerHTML.slice(0, 300));
+        if (ctx.sheet().el.innerHTML.indexOf('<h2>Remove PLN_005</h2>') < 0 || ctx.sheet().el.innerHTML.indexOf(says) < 0) {
+            throw new Error('the question does not carry the warning: ' + ctx.sheet().el.innerHTML.slice(0, 300));
         }
         if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('Remove wrote before it was confirmed');
-        click(ctx.scrim, ctx.doc, { act: 'sheet-ok' });
+        ctx.sheet().ok();
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
         if (!put || JSON.stringify(put.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('Remove sent ' + JSON.stringify(put));

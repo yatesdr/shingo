@@ -6,7 +6,7 @@
 # writes, in order: PATCH /api/processes/1/presets/7
 ### PATCH /api/processes/1/presets/7  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Rename Recipe One", status "the Edge refused it" (bad), OK "Rename" enabled
     state: no message set
@@ -14,7 +14,7 @@
     pressed again: PATCH /api/processes/1/presets/7 · GET /api/processes/1/presets → sheet: closed
 ### PATCH /api/processes/1/presets/7  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Rename Recipe One", status "Server error (500)" (bad), OK "Rename" enabled
     state: no message set
@@ -22,7 +22,7 @@
     pressed again: PATCH /api/processes/1/presets/7 · GET /api/processes/1/presets → sheet: closed
 ### PATCH /api/processes/1/presets/7  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Rename Recipe One", status "No answer from the server" (bad), OK "Rename" enabled
     state: no message set
@@ -30,7 +30,7 @@
     pressed again: PATCH /api/processes/1/presets/7 · GET /api/processes/1/presets → sheet: closed
 ### PATCH /api/processes/1/presets/7  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
@@ -43,7 +43,7 @@
 # writes, in order: POST /api/processes/1/presets/7/archive
 ### POST /api/processes/1/presets/7/archive  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): the Edge refused it
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: error "the Edge refused it"
     sheet: open "Archive Recipe One v1?", status "the Edge refused it" (bad), OK "Archive" enabled
     state: no message set
@@ -51,7 +51,7 @@
     pressed again: POST /api/processes/1/presets/7/archive · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets/7/archive  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Server error (500)
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: error "Server error (500)"
     sheet: open "Archive Recipe One v1?", status "Server error (500)" (bad), OK "Archive" enabled
     state: no message set
@@ -59,7 +59,7 @@
     pressed again: POST /api/processes/1/presets/7/archive · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets/7/archive  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): No answer from the server
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: error "No answer from the server"
     sheet: open "Archive Recipe One v1?", status "No answer from the server" (bad), OK "Archive" enabled
     state: no message set
@@ -67,7 +67,7 @@
     pressed again: POST /api/processes/1/presets/7/archive · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets/7/archive  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-scrim .mf .st (textContent): Signed out
+    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1

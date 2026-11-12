@@ -806,11 +806,15 @@ async function open(opts) {
                 press: word => { const b = buttons.find(x => x.textContent === word); if (!b) throw new Error('the dialog has no ' + word); b.click(); },
             };
         },
-        // pressBackdrop presses and releases on the open sheet's backdrop
-        // itself, outside its card: the press the layer reads (ruling 2).
-        pressBackdrop() {
+        // pressBackdrop releases on the open sheet's backdrop itself, outside
+        // its card, after a press there (ruling 2: that is Escape for the
+        // sheet) or, fromCard, a press inside the card (a drag out of a
+        // field, which closes nothing). The browser's click lands on the
+        // backdrop either way.
+        pressBackdrop(fromCard) {
             const host = sheetHost();
-            fire(host, makeEvent('mousedown'));
+            const card = host.querySelector('[role="dialog"]') || host.querySelector('.pd-modal') || host;
+            fire(fromCard ? card : host, makeEvent('mousedown'));
             fire(host, makeEvent('click'));
         },
         notices: h.notices,
@@ -859,7 +863,7 @@ async function open(opts) {
             if (host === 'scrim' && el._made && data && /^sheet-(ok|cancel)$/.test(data.act || '') &&
                 !el.querySelector('[data-act="' + data.act + '"]')) {
                 const b = data.act === 'sheet-ok' ? el.querySelector('[data-layer-ok]')
-                    : el.querySelectorAll('.layer-foot button').find(x => !x.hasAttribute('data-layer-ok'));
+                    : (el.querySelector('.layer-foot') || el).querySelectorAll('button').find(x => !x.hasAttribute('data-layer-ok'));
                 if (!b) throw new Error('the sheet has no ' + data.act + ' button');
                 b.click();
                 return target;
