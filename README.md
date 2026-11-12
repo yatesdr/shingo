@@ -80,6 +80,8 @@ sudo bash install-core.sh --tag vX.Y.Z    # on the Core server, first
 sudo bash install-edge.sh --tag vX.Y.Z    # then on each Edge
 ```
 
+Without `--tag` an installer sets the box's branch to origin's and builds that. A plant checkout is a build input, so local edits and commits origin does not have are saved under `~/shingo-backups/dirty-checkout-<time>/` and then discarded (run by hand it asks first). A box on a branch other than `main` still builds, with a warning on the run and its summary ([deploy/sync-checkout.sh](deploy/sync-checkout.sh)).
+
 First-time setup, configuration and the operator pages are in [shingo-core/README.md](shingo-core/README.md) and [shingo-edge/README.md](shingo-edge/README.md); what the Core installer puts on the host is in [shingo-core/deploy/README.md](shingo-core/deploy/README.md).
 
 ## Releases and versioning

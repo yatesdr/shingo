@@ -26,9 +26,11 @@ set -euo pipefail
 #   --tag <vX.Y.Z>, vX.Y.Z   Install that release: fetch the tags, check the
 #                            tag out (a detached HEAD), build it, and stamp the
 #                            binary's version with the tag. Without it the
-#                            installer pulls the branch it is on, as it always
-#                            has; on the detached HEAD a tag install leaves, it
-#                            stops and says so instead of pulling.
+#                            installer sets the branch it is on to origin's
+#                            (deploy/sync-checkout.sh: local edits and commits
+#                            are saved, then discarded; a branch other than
+#                            main is built with a warning); on the detached
+#                            HEAD a tag install leaves, it stops and says so.
 
 # Remember the invocation before the arg loop consumes it and before the `cd`
 # below, so the re-exec after `git pull` is faithful.
@@ -85,6 +87,11 @@ fi
 
 cd "$(dirname "$0")"
 REPO_ROOT="$(pwd)"
+
+# The checkout sync both installers share: the checkout is made to match origin,
+# local edits and commits saved first (deploy/sync-checkout.sh).
+# shellcheck source=deploy/sync-checkout.sh
+. "$REPO_ROOT/deploy/sync-checkout.sh"
 
 if ! id -u shingo >/dev/null 2>&1; then
     echo "==> Creating 'shingo' system user..."
@@ -265,9 +272,8 @@ if [ -z "${SHINGO_INSTALL_REEXEC:-}" ]; then
             echo "       release with --tag vX.Y.Z, or go back to the branch first: git checkout main"
             exit 1
         fi
-        echo "==> Pulling latest changes..."
-        git pull
-        fetched=pull
+        sync_checkout
+        fetched=sync
     fi
     self_after=$(sha256sum "$SELF" | cut -d' ' -f1)
     if [ "$self_before" != "$self_after" ]; then
@@ -1078,6 +1084,7 @@ echo " Binary:  /opt/shingo/shingoedge"
 echo " Config:  /etc/shingo/shingoedge.yaml"
 echo " DB:      /var/lib/shingo-edge/shingoedge.db"
 echo " Backup:  $BACKUP_PATH"
+sync_checkout_branch_line
 echo " Logs:    sudo journalctl -u shingo-edge -f"
 if [ "$MODE" = "FRESH" ]; then
     echo ""
