@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.6.4 — 2026-11-12
+
 Deploy: no migration.
 
 - A picker's list in a pop-up is no longer cut off by it: it opens above or below its box, wherever there is room
