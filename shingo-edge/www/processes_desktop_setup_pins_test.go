@@ -38,7 +38,9 @@ var updateProcessSetupPageGolden = flag.Bool("update-process-setup-page-golden",
 //     lapsed session's login page — with what the page then sent, showed,
 //     left open and left unhandled;
 //   - sheet-stack.txt: openSheet, runSheet, closeSheet, the Escape rule,
-//     the discard question and the Advanced sheet, with scroll lock and focus.
+//     the discard question and the Advanced sheet, with scroll lock and focus;
+//   - page-bugs.txt: the page's S4 bugs, one block each, "ok" or "BUG" per
+//     thing that must hold (s4-page-bugs.js).
 //
 // The harness and the synthetic plant are in testdata/process-setup-harness
 // (pins.js and p0-page.js say what each pin covers and how each act is
