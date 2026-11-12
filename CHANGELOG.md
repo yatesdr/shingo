@@ -19,6 +19,8 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration.
 
 - A picker's list in a pop-up is no longer cut off by it: it opens above or below its box, wherever there is room
+- Every robot at rest on the robot map is one solid disc of one size; a paused robot's fill is faded and an offline one dimmed
+- The robot map redraws as soon as a scroll-zoom stops, so robots and names no longer grow and shrink with the zoom
 
 ## v0.6.3 — 2026-11-12
 
