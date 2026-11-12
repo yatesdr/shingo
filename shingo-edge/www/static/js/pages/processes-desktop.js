@@ -7128,9 +7128,8 @@ function routingPickerKey(role) { return 'rs_' + role; }
 // name it.
 const PART_SET_PICKER = 'parts';
 
-// THE SAME WORDS IN BOTH PLACES. Making a cell (Add process) and changing one
-// (Settings) ask the same question about its parts; a sentence written twice
-// is a sentence that will be edited once.
+// What Settings says under the part set. Add process asks the same question
+// and leaves the sentence to Settings, to fit one screen (F16).
 const PART_SET_NOTE = 'The parts this process can run. A part used by a flow stays ' +
     'available until it is removed from that flow.';
 
@@ -7187,13 +7186,6 @@ function redrawSheetMap() {
     if (box) box.innerHTML = sheetMapSvg();
 }
 
-function partSetField() {
-    return '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
-        pickerField(PART_SET_PICKER, 'Parts this process runs',
-            'what a position may be given — the catalog is Core’s') +
-        '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
-}
-
 function openAddProcess() {
     S.add = { groupID: 0 };
     const positions = () => pickerValue('positions');
@@ -7240,25 +7232,28 @@ function openAddProcess() {
     // added later, and the flow composer's gate does not wait on this.
     pickerInit(PART_SET_PICKER, { source: 'payloads' });
 
-    const body =
+    // ONE SCREEN AT 900 PX (F16): the screen's name sits with the process's,
+    // the three routing roles share a row, the positions checklist scrolls in
+    // its own box, and the notes Settings carries are not repeated here.
+    const body = '<div class="pd-addproc">' +
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
         sheetField('Name', 'what this process is called here', 'name', '') +
         sheetField('Description', '', 'description', '') +
         '<div class="pd-fld"><label>Group<small>groups processes on the list</small></label>' +
         '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
         'Ungrouped<i class="car"></i></button></div></div>' +
+        sheetField('Operator screen', 'its HMI · blank: named after the process', 'screen', '') +
 
-        '<div class="pd-sec"><div class="pd-lbl">The operator screen</div></div>' +
-        sheetField('Screen name', 'what the screen is called on the floor', 'screen', '') +
-        pickerField('positions', 'Positions',
-            'the positions this screen claims — a flow can only use a position its screen owns') +
+        '<div class="pd-sec"><div class="pd-lbl">Positions</div></div>' +
+        pickerField('positions', 'Positions', 'the spots this screen claims') +
 
         '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
-        ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
-        '<p class="pd-note">Operators are offered only these places, never the whole plant.</p>' +
+        '<div class="pd-rs3">' + ROUTING_GROUPS.map(g => '<div><label>' + esc(g[1]) + '</label>' +
+            pickerBox(routingPickerKey(g[0])) + '</div>').join('') + '</div>' +
 
-        partSetField() +
-        sheetMapField();
+        '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
+        pickerField(PART_SET_PICKER, 'Parts this process runs', 'the catalog is Core’s') +
+        sheetMapField() + '</div>';
 
     pageSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false);
@@ -7272,19 +7267,19 @@ function openAddProcess() {
             if (S.add && S.add.refused) { S.add.refused = false; sheetStatus('', false); }
         });
     }
+    // The screen's name follows the process's until one is typed: the box
+    // shows it as its placeholder, and a blank box is created under it.
+    const nameBox = sheetEl().querySelector('[data-f="name"]');
+    const screenBox = sheetEl().querySelector('[data-f="screen"]');
+    if (nameBox && screenBox) nameBox.addEventListener('input', () => { screenBox.placeholder = nameBox.value.trim(); });
 }
 
 async function submitAddProcess() {
     const name = String(sheetValue('name') || '').trim();
     if (!name) { S.add.refused = true; sheetStatus('A process needs a name.', true); return; }
-    const screen = String(sheetValue('screen') || '').trim();
-    // A press with no HMI cannot be run by anybody, so the screen is required
-    // here rather than left to be noticed on D4 later.
-    if (!screen) {
-        S.add.refused = true;
-        sheetStatus('Name the operator screen — a process with no HMI cannot be run.', true);
-        return;
-    }
+    // A press with no HMI cannot be run by anybody, so a screen is always made
+    // with it: named as typed, or after the process (U2).
+    const screen = String(sheetValue('screen') || '').trim() || name;
     S.add.refused = false;
 
     sheetStatus('Creating…');

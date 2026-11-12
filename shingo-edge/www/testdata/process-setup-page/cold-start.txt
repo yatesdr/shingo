@@ -107,3 +107,9 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   style → tab setup, sheet "New style" · GET /api/core-nodes
   counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET …/presets, GET /api/core-nodes
   hmi → tab flows (a recipe draft) · GET …/composer
+
+## Add process
+  from Press A (this Edge has a map): sections ["The process","Positions","The routing set","The part set","Where that is"] · map block drawn
+  from Press A, an Edge with no map: sections ["The process","Positions","The routing set","The part set"] · map block not drawn
+ok   a screen name left blank is the process's name
+#    then it opens on setup · tabs ["Setup*","Styles","Operator screens","Settings"]

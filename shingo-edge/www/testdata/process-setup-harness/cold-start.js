@@ -291,6 +291,32 @@ async function pinSetup() {
     }
 }
 
+// ── the Add process sheet (U2): the screen's name, the map block ────────────
+async function pinAddProcess() {
+    L.push('', '## Add process');
+    for (const [title, o] of [['from Press A (this Edge has a map)', undefined],
+        ['from Press A, an Edge with no map', pressA(c => { c.map = null; })]]) {
+        const page = await T.openPage(o);
+        page.click('root', { act: 'add-process' });
+        await page.settle();
+        const body = page.scrim.querySelector('.layer-body');
+        const html = String(body ? body.innerHTML : '');
+        const secs = [...html.matchAll(/<div class="pd-sec"><div class="pd-lbl">([^<]*)</g)].map(m => m[1]);
+        L.push('  ' + title + ': sections ' + JSON.stringify(secs) + ' · map block ' +
+            (/pd-sheetmap/.test(html) ? 'drawn' : 'not drawn'));
+    }
+    const page = await T.openPage();
+    page.click('root', { act: 'add-process' });
+    await page.settle();
+    page.type('name', 'Press N');
+    const from = page.mark();
+    await T.sheetOK(page);
+    const st = page.since(from).find(c => c.method === 'POST' && /\/api\/operator-stations$/.test(c.url));
+    check('a screen name left blank is the process\'s name', !!st && st.body && st.body.name === 'Press N',
+        st ? 'screen ' + JSON.stringify(st.body && st.body.name) : 'no screen posted; status ' + JSON.stringify(page.status()));
+    L.push('#    then it opens on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
+}
+
 async function run(t) {
     T = t;
     T.setCurrent('cold-start.txt');
@@ -303,6 +329,7 @@ async function run(t) {
     await bugHmiNoRecipe();
     await pinStyleFirst();
     await pinSetup();
+    await pinAddProcess();
     T.out['cold-start.txt'] = L.join('\n') + '\n';
 }
 
