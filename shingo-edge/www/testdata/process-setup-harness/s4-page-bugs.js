@@ -349,7 +349,14 @@ resume('ruling 5: Add process, its positions refused, then pressed again', {
 resume('ruling 5: Counted at → New station counter, its binding refused, then pressed again', {
     open: { hash: '#tab=settings', extra: COUNTER_ROUTES, answer: refuse('PUT', '/api/process-nodes/202/counted-at', REFUSED) },
     drive: async page => {
-        const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === '202');
+        // Settings keeps a position's controls behind its "Change…" row
+        // (33-settings-pages.md rule 7): open it first.
+        const findSel = () => page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === '202');
+        if (!findSel()) {
+            const more = page.root.querySelectorAll('[data-act="st-more"]').find(el => el.dataset.more === 'pos-202');
+            if (more) { page.click('root', Object.assign({}, more.dataset)); await page.settle(); }
+        }
+        const sel = findSel();
         if (!sel) throw new Error('Settings draws no Counted at for 202');
         sel.value = 'new';
         page.fire(sel, 'change');
