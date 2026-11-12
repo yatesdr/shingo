@@ -22,6 +22,16 @@
 // it, and opening one picker's list closes another's. A picker made with
 // open: true (the positions checklist) keeps its list up and is not a layer.
 //
+// A DROPDOWN LOOKS LIKE ONE. Its search box carries a chevron, and a tap on the
+// box opens the list whether or not the box already has focus: on a touch
+// panel focus stays put after the list is closed, so a list that opened only
+// on focus could not be opened again without tapping somewhere else first.
+//
+// THE LIST SAYS HOW MUCH OF IT THERE IS. Its last line counts the rows: all of
+// them, or how many the search box left of how many there are, so a list cut
+// off by its own height reads as more to scroll and a filtered one says it is
+// filtered.
+//
 // THE SEARCH BOX IS NEVER REDRAWN: a keystroke redraws the rows and the chips,
 // never the field under the caret. It is marked data-scratch, so what is typed
 // into it is not work a sheet asks before discarding; a selection that moved
@@ -77,13 +87,18 @@ export function createPicker(host, opts) {
         'aria-autocomplete': 'list', 'aria-controls': id, 'aria-expanded': always ? 'true' : 'false',
         'data-scratch': '', placeholder: o.placeholder || null,
     });
+    // The box and, on a dropdown, its chevron: drawn over the box's right edge
+    // and not a target of its own, so a press on it is a press on the box.
+    const field = always ? input : el('div', { className: 'picker-field' }, [
+        input, el('i', { className: 'picker-car', 'aria-hidden': 'true' }),
+    ]);
     const filters = o.filters && o.filters.length ? el('div', { className: 'picker-filters' }) : null;
     const box = el('div', { className: 'picker-list', id, role: 'listbox', 'aria-multiselectable': multi ? 'true' : null });
     box.hidden = !always;
     // A write-through pick's refusal, beside the chips it left as they were.
     const refusal = o.onPick ? el('div', { className: 'picker-refused', role: 'status' }) : null;
     if (refusal) refusal.hidden = true;
-    for (const part of [chips, refusal, input, filters, box]) if (part) root.appendChild(part);
+    for (const part of [chips, refusal, field, filters, box]) if (part) root.appendChild(part);
     host.textContent = '';
     host.appendChild(root);
 
@@ -112,6 +127,7 @@ export function createPicker(host, opts) {
         drawRows();
     });
     input.addEventListener('focus', () => openList());
+    input.addEventListener('click', () => openList());
     input.addEventListener('keydown', (ev) => {
         if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
             ev.preventDefault();
@@ -217,6 +233,7 @@ export function createPicker(host, opts) {
         const seen = new Set(all.map((r) => String(r.value)));
         let section = null;
         let shown = 0;
+        let drawn = 0;
         for (const r of all.concat(st.extra.filter((x) => !seen.has(String(x.value))))) {
             const self = hits(r, q);
             const members = (r.members || []).filter((m) => self || hits(m, q));
@@ -228,6 +245,7 @@ export function createPicker(host, opts) {
             row(r, false);
             for (const m of members) row(m, true);
             shown++;
+            drawn += 1 + members.length;
         }
         if (o.add && q && !everyRow().some((r) => String(r.label === undefined ? r.value : r.label).toLowerCase() === q
             || String(r.value).toLowerCase() === q)) {
@@ -241,6 +259,11 @@ export function createPicker(host, opts) {
             shown++;
         }
         if (!shown) box.appendChild(el('div', { className: 'picker-none' }, o.empty ? o.empty(st.q.trim()) : 'Nothing matches'));
+        const total = everyRow().length;
+        if (total) {
+            box.appendChild(el('div', { className: 'picker-count', 'aria-hidden': 'true' },
+                drawn < total ? drawn + ' of ' + total : 'All ' + total));
+        }
         if (st.active >= st.keys.length) st.active = st.keys.length - 1;
         mark();
     }

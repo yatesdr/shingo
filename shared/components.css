@@ -1291,7 +1291,12 @@ nav {
  * The shell's own parts. A dropdown list hangs under its search box on the
  * dropdown rung; an always-open one (.picker--open, a checklist) sits in the
  * flow. A member row is indented under its group; an excluded row is greyed and
- * carries its reason. */
+ * carries its reason.
+ *
+ * SIZED FOR A FINGER: a row is a 40 px target with an 18 px tick box, the
+ * list's scrollbar is wide enough to grab, and reaching the end of the list
+ * does not scroll the page under it. Every picker in both apps is this shell,
+ * the operator station's included. */
 .picker { position: relative; display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 .picker-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .picker-chip {
@@ -1303,6 +1308,14 @@ nav {
     padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--bg); color: var(--text); font: inherit;
 }
+/* A dropdown's box and its chevron. The chevron takes no press: one on it lands
+ * on the box, which opens the list. */
+.picker-field { position: relative; display: flex; flex-direction: column; }
+.picker-field .picker-q { padding-right: var(--sp-6); }
+.picker-car {
+    position: absolute; top: 50%; right: var(--sp-3); width: 0; height: 0; margin-top: -2px; pointer-events: none;
+    border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid var(--text-muted);
+}
 .picker-filters { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .picker-filters button {
     padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
@@ -1310,18 +1323,21 @@ nav {
 }
 .picker-filters button.is-on { border-color: var(--accent); color: var(--accent); }
 .picker-list {
-    max-height: 18rem; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius);
+    max-height: 18rem; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface); box-shadow: var(--shadow-md);
 }
+.picker-list::-webkit-scrollbar { width: 14px; }
+.picker-list::-webkit-scrollbar-track { background: transparent; }
+.picker-list::-webkit-scrollbar-thumb { border: 3px solid var(--surface); border-radius: 999px; background: var(--sub-4); }
 .picker:not(.picker--open) .picker-list { position: absolute; top: 100%; left: 0; right: 0; z-index: var(--z-dropdown); margin-top: var(--sp-1); }
 .picker-list[hidden] { display: none; }
 .picker-sect { padding: var(--sp-2) var(--sp-2) var(--sp-1); color: var(--text-muted); font-size: var(--font-xs); text-transform: uppercase; }
-.picker-row, .picker-add { display: flex; align-items: baseline; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); cursor: pointer; }
+.picker-row, .picker-add { display: flex; align-items: center; gap: var(--sp-2); min-height: 40px; padding: var(--sp-1) var(--sp-3); cursor: pointer; }
 .picker-row--member { padding-left: var(--sp-6); }
 .picker-row.is-active, .picker-add.is-active { background: var(--bg); box-shadow: inset 2px 0 0 var(--accent); }
 .picker-row.is-on .picker-label { font-weight: var(--fw-bold); }
 .picker-row.is-off { color: var(--text-muted); cursor: default; }
-.picker-box { flex: 0 0 auto; width: 12px; height: 12px; border: 1px solid var(--sub-4); border-radius: 3px; }
+.picker-box { flex: 0 0 auto; width: 18px; height: 18px; border: 2px solid var(--sub-4); border-radius: 4px; }
 .picker-row.is-on .picker-box { border-color: var(--accent-solid); background: var(--accent-solid); }
 .picker-note, .picker-why { color: var(--text-muted); font-size: var(--font-xs); }
 .picker-add { color: var(--accent); }
@@ -1331,3 +1347,9 @@ nav {
 .picker-refused { color: var(--chip-ink-below); font-size: var(--font-sm); }
 .picker-refused[hidden] { display: none; }
 .picker-none { padding: var(--sp-2); color: var(--text-muted); font-size: var(--font-sm); }
+/* The list's last line: how many rows it has, or how many the search left. It
+ * stays at the foot of the list's box while the rows scroll under it. */
+.picker-count {
+    position: sticky; bottom: 0; padding: var(--sp-1) var(--sp-3); border-top: 1px solid var(--sub-2);
+    background: var(--surface); color: var(--text-muted); font-size: var(--font-xs); text-align: right;
+}
