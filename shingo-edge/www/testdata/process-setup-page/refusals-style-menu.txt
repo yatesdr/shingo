@@ -7,7 +7,6 @@
 ### PUT /api/styles/2  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Rename Style B", status "the Edge refused it" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
@@ -15,7 +14,6 @@
 ### PUT /api/styles/2  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Rename Style B", status "Server error (500)" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
@@ -23,28 +21,25 @@
 ### PUT /api/styles/2  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Rename Style B", status "No answer from the server" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/2  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Rename Style B", status "Signed out" (bad), OK "Rename" enabled
+    sheet: open "Rename Style B", no status, OK "Rename" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/2 → sheet: open "Rename Style B", status "Signed out" (bad), OK "Rename" enabled
+    pressed again: PUT /api/styles/2 → sheet: open "Rename Style B", no status, OK "Rename" enabled
 
 ## Expected CATID on Style A
 # writes, in order: PUT /api/styles/1
 ### PUT /api/styles/1  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Expected CATID · Style A", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
@@ -52,7 +47,6 @@
 ### PUT /api/styles/1  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Expected CATID · Style A", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
@@ -60,28 +54,25 @@
 ### PUT /api/styles/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Expected CATID · Style A", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Expected CATID · Style A", status "Signed out" (bad), OK "Save" enabled
+    sheet: open "Expected CATID · Style A", no status, OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/1 → sheet: open "Expected CATID · Style A", status "Signed out" (bad), OK "Save" enabled
+    pressed again: PUT /api/styles/1 → sheet: open "Expected CATID · Style A", no status, OK "Save" enabled
 
 ## Clone Style A
 # writes, in order: POST /api/styles/1/clone
 ### POST /api/styles/1/clone  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Clone Style A", status "the Edge refused it" (bad), OK "Clone" enabled
     state: no message set
     unhandled rejection: none
@@ -89,7 +80,6 @@
 ### POST /api/styles/1/clone  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Clone Style A", status "Server error (500)" (bad), OK "Clone" enabled
     state: no message set
     unhandled rejection: none
@@ -97,28 +87,25 @@
 ### POST /api/styles/1/clone  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Clone Style A", status "No answer from the server" (bad), OK "Clone" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/styles/1/clone  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Clone Style A", status "Signed out" (bad), OK "Clone" enabled
+    sheet: open "Clone Style A", no status, OK "Clone" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/styles/1/clone → sheet: open "Clone Style A", status "Signed out" (bad), OK "Clone" enabled
+    pressed again: POST /api/styles/1/clone → sheet: open "Clone Style A", no status, OK "Clone" enabled
 
 ## Mark Style B as running
 # writes, in order: PUT /api/processes/1/active-style
 ### PUT /api/processes/1/active-style  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Mark Style B as running?", status "the Edge refused it" (bad), OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
@@ -126,7 +113,6 @@
 ### PUT /api/processes/1/active-style  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Mark Style B as running?", status "Server error (500)" (bad), OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
@@ -134,28 +120,25 @@
 ### PUT /api/processes/1/active-style  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Mark Style B as running?", status "No answer from the server" (bad), OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
     pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/processes/1/active-style  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Mark Style B as running?", status "Signed out" (bad), OK "Mark as running" enabled
+    sheet: open "Mark Style B as running?", no status, OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/processes/1/active-style → sheet: open "Mark Style B as running?", status "Signed out" (bad), OK "Mark as running" enabled
+    pressed again: PUT /api/processes/1/active-style → sheet: open "Mark Style B as running?", no status, OK "Mark as running" enabled
 
 ## Delete Style B
 # writes, in order: DELETE /api/styles/2
 ### DELETE /api/styles/2  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Delete Style B?", status "the Edge refused it" (bad), OK "Delete" enabled
     state: no message set
     unhandled rejection: none
@@ -163,7 +146,6 @@
 ### DELETE /api/styles/2  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Delete Style B?", status "Server error (500)" (bad), OK "Delete" enabled
     state: no message set
     unhandled rejection: none
@@ -171,18 +153,16 @@
 ### DELETE /api/styles/2  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Delete Style B?", status "No answer from the server" (bad), OK "Delete" enabled
     state: no message set
     unhandled rejection: none
     pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### DELETE /api/styles/2  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Delete Style B?", status "Signed out" (bad), OK "Delete" enabled
+    sheet: open "Delete Style B?", no status, OK "Delete" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: DELETE /api/styles/2 → sheet: open "Delete Style B?", status "Signed out" (bad), OK "Delete" enabled
+    pressed again: DELETE /api/styles/2 → sheet: open "Delete Style B?", no status, OK "Delete" enabled

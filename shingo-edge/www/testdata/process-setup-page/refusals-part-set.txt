@@ -7,32 +7,28 @@
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-partlist div.none.pd-partnote: Could not add PART-12: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: partPop.note="Could not add PART-12: the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
     new text: #pd-partlist div.none.pd-partnote: Could not add PART-12: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: partPop.note="Could not add PART-12: Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: #pd-partlist div.none.pd-partnote: Could not add PART-12: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: partPop.note="Could not add PART-12: No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-partlist div.none.pd-partnote: Could not add PART-12: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: partPop.note="Could not add PART-12: Signed out"
+    state: no message set
     unhandled rejection: none
 
 ## Part popover: × PART-11 (on a fresh page)
@@ -40,32 +36,28 @@
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-partlist div.none.pd-partnote: Could not take PART-11 out: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: partPop.note="Could not take PART-11 out: the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
     new text: #pd-partlist div.none.pd-partnote: Could not take PART-11 out: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: partPop.note="Could not take PART-11 out: Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: #pd-partlist div.none.pd-partnote: Could not take PART-11 out: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: partPop.note="Could not take PART-11 out: No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-partlist div.none.pd-partnote: Could not take PART-11 out: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: partPop.note="Could not take PART-11 out: Signed out"
+    state: no message set
     unhandled rejection: none
 
 ## Settings › Parts: + PART-13
@@ -73,32 +65,28 @@
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none
 
 ## Settings › Parts: × PART-11
@@ -106,30 +94,26 @@
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none

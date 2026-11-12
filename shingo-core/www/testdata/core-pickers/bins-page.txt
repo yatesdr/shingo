@@ -55,6 +55,7 @@
   toast error: Error: refused: the service's sentence
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
+  toast error (sticky): Signed out
   toast error: Error: Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}

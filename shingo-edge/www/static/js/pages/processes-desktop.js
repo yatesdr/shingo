@@ -29,14 +29,15 @@ import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal } fr
 // session (ruling 3), and it puts a failure on the notice once. The page
 // still says a refusal where it is about (a sheet's status line, the bar).
 //
-// WHICH CALLS KEEP THE NOTICE. A route behind the session does: its 401 is
-// the notice's sign-in link, which nothing on this page draws, so a refused
-// admin write reads in its sheet and on the notice. The flow routes and the
-// health and node reads are public (router.go), so no session lapses on them:
-// where the page draws their answer itself (the bar, an apply row, a status
-// line) they pass NO_NOTICE, and the stale 409 the apply loop retries is
-// not put up as a failure. The ten-second re-reads pass it too: a dead Edge
-// is the lost-connection banner's to say (brief S5), not a toast per tick.
+// WHICH CALLS KEEP THE NOTICE. Every write, and every read whose refusal
+// the page draws itself (a sheet's status line, the bar, an apply row, the
+// Settings and Recipes refusal lines), passes NO_NOTICE: the refusal is said
+// once, where it is about, and the stale 409 the apply loop retries is not
+// put up as a failure. A 401 goes on the notice whatever the call said (only
+// the notice has Sign in), and the page draws nothing more for it (said).
+// The ten-second re-reads pass NO_NOTICE too: a dead Edge is the
+// lost-connection banner's to say (brief S5), not a toast per tick. A read
+// the page draws no reason for keeps the notice, which is then its one place.
 //
 // `cache: 'no-store'` went with the bare fetches: the Edge's JSON answers
 // carry no validator (writeJSON sets none), so the browser never held one.
@@ -367,12 +368,12 @@ async function afterRepoint() {
 
 async function catidCharge(holdID) {
     const charge = '/api/catid-holds/' + holdID + '/charge';
-    const res = await send('POST', charge + '?mode=preview', null);
+    const res = await send('POST', charge + '?mode=preview', null, NO_NOTICE);
     const p = res.ok ? res.body : null;
     // A preview that did not answer is said, not swallowed: the button
     // otherwise looked dead.
     if (!res.ok || !p || !p.hold) {
-        const why = res.ok ? 'it named no hold' : res.error;
+        const why = res.ok ? 'it named no hold' : said(res) || 'Signed out';
         pageSheet('Charge this hold?', 'its preview could not be read: ' + why + '. Nothing was charged.', '',
             'Close', closeSheet);
         return;
@@ -393,9 +394,9 @@ async function catidCharge(holdID) {
 // completes it. A refusal is shown in the sheet, by name.
 async function catidStartChangeover(pid, styleID, name) {
     const out = await send('POST', '/api/processes/' + pid + '/changeover/start',
-        { to_style_id: Number(styleID), called_by: 'engineer', notes: 'from the health strip: the PLC is on its part' });
+        { to_style_id: Number(styleID), called_by: 'engineer', notes: 'from the health strip: the PLC is on its part' }, NO_NOTICE);
     if (!out.ok) {
-        pageSheet('The changeover to ' + (name || 'style ' + styleID) + ' did not start', out.error, '', 'Close', closeSheet);
+        pageSheet('The changeover to ' + (name || 'style ' + styleID) + ' did not start', said(out), '', 'Close', closeSheet);
         return;
     }
     await refreshCatidHealth();
@@ -2948,7 +2949,7 @@ function partNote(text) {
 }
 
 async function writePartSet(codes) {
-    const out = await send('PUT', '/api/processes/' + S.processID + '/payloads', B().processPayloads(codes));
+    const out = await send('PUT', '/api/processes/' + S.processID + '/payloads', B().processPayloads(codes), NO_NOTICE);
     if (!out.ok) return out;
     S.partSet = codes.slice().sort();
     // The palette is the server's union with what saved flows run, so it is
@@ -2967,7 +2968,7 @@ async function writePartSet(codes) {
 async function addToPartSet(node, code) {
     if (!S.partSet) { partNote('This process’s part list could not be read, so it cannot be changed here. Reload the page.'); return; }
     const out = await writePartSet(S.partSet.indexOf(code) >= 0 ? S.partSet : S.partSet.concat([code]));
-    if (!out.ok) { partNote('Could not add ' + code + ': ' + out.error); return; }
+    if (!out.ok) { partNote(said(out, 'Could not add ' + code + ': ')); return; }
     closePop();
     apply([{ type: 'addPart', payloadCode: code }, { type: 'setPart', node: node, payloadCode: code }]);
 }
@@ -2987,7 +2988,7 @@ async function dropFromPartSet(code) {
         return;
     }
     const out = await writePartSet(S.partSet.filter(c => c !== code));
-    if (!out.ok) { partNote('Could not take ' + code + ' out: ' + out.error); return; }
+    if (!out.ok) { partNote(said(out, 'Could not take ' + code + ' out: ')); return; }
     // Still listed means a SAVED version of this flow runs it; the draft does
     // not, so it goes when this flow is saved.
     partNote((S.model.palette || []).indexOf(code) >= 0
@@ -3655,9 +3656,9 @@ async function rsAllOn(role) {
     if (!off.length) return;
     for (const r of off) {
         const out = await send('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + r.id,
-            B().routingEnable(true));
+            B().routingEnable(true), NO_NOTICE);
         if (!out.ok) {
-            S.routingError = 'Switching ' + r.core_node_name + ' on was refused: ' + out.error;
+            S.routingError = said(out, 'Switching ' + r.core_node_name + ' on was refused: ');
             await loadRouting();
             drawSettings();
             return;
@@ -3731,22 +3732,22 @@ async function setRoutingNode(role, name, on) {
     let out;
     if (!on) {
         if (!have) return;
-        out = await send('DELETE', '/api/processes/' + S.processID + '/routing-nodes/' + have.id, null);
+        out = await send('DELETE', '/api/processes/' + S.processID + '/routing-nodes/' + have.id, null, NO_NOTICE);
     } else if (have) {
         // Already a row — an old one the backfill left switched off. The PATCH
         // is the documented adopt path and the store stamps origin='engineer'
         // and the session user, so it keeps its created_at and its history
         // rather than minting a second record of the same decision.
         out = await send('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + have.id,
-            B().routingEnable(true));
+            B().routingEnable(true), NO_NOTICE);
     } else {
         // At the end of its role, so the first name added to a role stays the
         // one a new position defaults to (composer-model's defaultRouting
         // takes the lowest sequence).
         out = await send('POST', '/api/processes/' + S.processID + '/routing-nodes',
-            B().routingAdd(name, role, routingRowsFor(role).length));
+            B().routingAdd(name, role, routingRowsFor(role).length), NO_NOTICE);
     }
-    S.routingError = out.ok ? '' : out.error;
+    S.routingError = out.ok ? '' : said(out);
     S.routingWarning = out.ok ? (bodyOf(out).warning || '') : '';
     await loadRouting();
     drawSettings();
@@ -3758,7 +3759,7 @@ async function setRoutingNode(role, name, on) {
 }
 
 async function loadRouting() {
-    const res = await send('GET', '/api/processes/' + S.processID + '/routing-nodes');
+    const res = await send('GET', '/api/processes/' + S.processID + '/routing-nodes', undefined, NO_NOTICE);
     // A READ THAT FAILED IS NOT AN EMPTY SET. This swallowed !res.ok into {},
     // so a 500 or a dropped connection drew three roles of "nothing picked
     // yet", an empty summary and a map with only the press — indistinguishable
@@ -3769,8 +3770,8 @@ async function loadRouting() {
     // again.
     if (!res.ok) {
         // The server's own sentence when it gave one, else the door's.
-        const why = res.body ? res.error : 'Could not read this process’s routing set: ' + res.error + '.';
-        S.routingError = why + ' Nothing below is the set — it is what could not be read.';
+        const why = res.shown ? '' : res.body ? res.error : 'Could not read this process’s routing set: ' + res.error + '.';
+        S.routingError = (why ? why + ' ' : '') + 'Nothing below is the set — it is what could not be read.';
         S.routing = null;
         return;
     }
@@ -3869,7 +3870,7 @@ async function setPartSetMember(code, on) {
     if (!S.partSet) { S.settingsError = 'This process’s part list could not be read, so it cannot be changed here. Reload the page.'; drawSettings(); return; }
     const next = on ? [...new Set(S.partSet.concat([code]))] : S.partSet.filter(c => c !== code);
     const out = await writePartSet(next);
-    S.settingsError = out.ok ? '' : out.error;
+    S.settingsError = out.ok ? '' : said(out);
     if (out.ok && S.pickers[PART_SET_PICKER]) S.pickers[PART_SET_PICKER].sel = next.slice();
     drawSettings();
 }
@@ -4489,9 +4490,9 @@ function loaderGapRows() {
 // does. A refusal names the window Core does not have.
 async function bindLoaderBoard(key) {
     const out = await send('POST', '/api/loader-boards',
-        { loader_key: key, process_id: S.processID });
+        { loader_key: key, process_id: S.processID }, NO_NOTICE);
     if (!out.ok) {
-        S.settingsError = 'Could not make a screen for ' + key + ': ' + out.error;
+        S.settingsError = said(out, 'Could not make a screen for ' + key + ': ');
         S.settingsNotice = '';
     } else {
         S.settingsNotice = key + ' now has a screen on this process, with its windows bound to it.';
@@ -4780,9 +4781,9 @@ function saveStationPositions(id) {
         (back.length ? 'Back to the production counter: ' + back.join(', ') + '.' : ''),
         '', 'Save', async () => {
             for (const x of changes) {
-                const out = await send('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id });
+                const out = await send('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id }, NO_NOTICE);
                 if (!out.ok) {
-                    sheetStatus(name(x.id) + ': ' + out.error, true);
+                    sheetStatus(said(out, name(x.id) + ': '), true);
                     await afterStationChange();
                     return;
                 }
@@ -4828,11 +4829,11 @@ function openStationCounter(id, bindNode) {
         'Save', async () => {
             const body = { label: $('sc-label').value, tag_name: $('sc-tag').value, tag_name_2: $('sc-tag2').value };
             const url = id ? '/api/station-counters/' + id : '/api/processes/' + S.processID + '/station-counters';
-            const out = await send(id ? 'PUT' : 'POST', url, body);
-            if (!out.ok) { sheetStatus(out.error, true); return; }
+            const out = await send(id ? 'PUT' : 'POST', url, body, NO_NOTICE);
+            if (!out.ok) { sheetStatus(said(out), true); return; }
             if (!id && bindNode && bodyOf(out).id) {
-                const b = await send('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: bodyOf(out).id });
-                if (!b.ok) { sheetStatus(b.error, true); return; }
+                const b = await send('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: bodyOf(out).id }, NO_NOTICE);
+                if (!b.ok) { sheetStatus(said(b), true); return; }
             }
             // A new counter counts nothing yet: its checklist opens, its
             // countable positions ticked when it is the only one.
@@ -4858,8 +4859,8 @@ async function setCountedAt(nodeID, value) {
         return;
     }
     const out = await send('PUT', '/api/process-nodes/' + nodeID + '/counted-at',
-        { line_counter_id: value ? Number(value) : null });
-    S.settingsError = out.ok ? '' : out.error;
+        { line_counter_id: value ? Number(value) : null }, NO_NOTICE);
+    S.settingsError = out.ok ? '' : said(out);
     await afterStationChange();
 }
 
@@ -4998,8 +4999,8 @@ async function submitAddPositions() {
     const current = await readStationNodes(stationID);
     if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was added.', true); return; }
     const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
-        B().stationNodes(current.concat(picked)));
-    if (!out.ok) { sheetStatus(out.error, true); return; }
+        B().stationNodes(current.concat(picked)), NO_NOTICE);
+    if (!out.ok) { sheetStatus(said(out), true); return; }
     const st = stationsOf(S.processID).find(s => s.id === stationID);
     closeSheet();
     await afterPositionsChanged(stationID);
@@ -5018,8 +5019,8 @@ async function openRemovePosition(name, stationID) {
         return;
     }
     const impact = await send('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact',
-        B().stationNodes(current.filter(n => n !== name)));
-    const says = !impact.ok ? 'What still names it could not be read (' + impact.error + ').'
+        B().stationNodes(current.filter(n => n !== name)), NO_NOTICE);
+    const says = !impact.ok ? (impact.shown ? 'What still names it could not be read.' : 'What still names it could not be read (' + impact.error + ').')
         : bodyOf(impact).warning || 'No recipe or style of this process names it.';
     pageSheet('Remove ' + name, 'from ' + st.name,
         '<p class="pd-note">' + esc(says) + ' Removing it takes its tile off the screen.</p>',
@@ -5030,8 +5031,8 @@ async function submitRemovePosition(name, stationID, screenName) {
     const current = await readStationNodes(stationID);
     if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was removed.', true); return; }
     const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
-        B().stationNodes(current.filter(n => n !== name)));
-    if (!out.ok) { sheetStatus(out.error, true); return; }
+        B().stationNodes(current.filter(n => n !== name)), NO_NOTICE);
+    if (!out.ok) { sheetStatus(said(out), true); return; }
     const kept = Array.isArray(bodyOf(out).kept) ? bodyOf(out).kept : [];
     closeSheet();
     await afterPositionsChanged(stationID);
@@ -5299,25 +5300,30 @@ async function saveSettings() {
     // left the function after it had cleared both messages and before it drew,
     // so Save settings did nothing on screen. The writes and the re-reads
     // after them go through the door, and its sentence is the refusal.
-    const fail = out => { S.settingsError = out.error; };
+    // REFUSED IS ITS OWN FLAG, not an empty message: a lapsed session's 401
+    // is said on the notice and leaves settingsError empty, and it must stop
+    // the writes after it as any refusal does (ruling 3).
+    let refused = false;
+    const fail = out => { refused = true; S.settingsError = said(out); };
+    const stopped = () => refused || !!S.settingsError;
     S.settingsError = '';
     S.settingsNotice = '';
-    const res = await send('PUT', '/api/processes/' + S.processID, body);
+    const res = await send('PUT', '/api/processes/' + S.processID, body, NO_NOTICE);
     if (!res.ok) fail(res);
-    if (!S.settingsError && S.settings.flow_composer_enabled !== before.flow_composer_enabled) {
-        const g = await send('PATCH', '/api/processes/' + S.processID, B().processGate(S.settings.flow_composer_enabled));
+    if (!stopped() && S.settings.flow_composer_enabled !== before.flow_composer_enabled) {
+        const g = await send('PATCH', '/api/processes/' + S.processID, B().processGate(S.settings.flow_composer_enabled), NO_NOTICE);
         if (!g.ok) fail(g);
     }
     // QUALITY HOLD rides its own door too (the gate's pattern): the toggle
     // stamps/clears the containment route on the process's produce claims, so
     // it only fires when its two fields actually moved.
-    if (!S.settingsError && (S.settings.quality_hold_enabled !== before.quality_hold_enabled ||
+    if (!stopped() && (S.settings.quality_hold_enabled !== before.quality_hold_enabled ||
         S.settings.quality_hold_destination !== before.quality_hold_destination)) {
         if (S.settings.quality_hold_enabled && !S.settings.quality_hold_destination) {
             S.settingsError = 'Pick a containment destination before enabling the quality hold.';
         } else {
             const c = await send('POST', '/api/processes/' + S.processID + '/containment-setting',
-                B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination));
+                B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination), NO_NOTICE);
             if (!c.ok) fail(c);
         }
     }
@@ -5326,7 +5332,7 @@ async function saveSettings() {
     // An enabled node needs both pointers and a chosen release value - refused
     // here so the engineer fixes it before the round trip, and refused by the
     // server regardless.
-    if (!S.settingsError && curtainDirty()) {
+    if (!stopped() && curtainDirty()) {
         const was = curtainDraft();
         for (const n of (S.curtainNodes || [])) {
             const d = S.curtain[n.id];
@@ -5340,13 +5346,13 @@ async function saveSettings() {
                 break;
             }
             const cu = await send('POST', '/api/process-nodes/' + n.id + '/curtain-setting',
-                B().nodeCurtain(d.enabled, d.plc, d.tag, d.safe));
+                B().nodeCurtain(d.enabled, d.plc, d.tag, d.safe), NO_NOTICE);
             if (!cu.ok) { fail(cu); break; }
         }
     }
     // A refused curtain edit keeps its draft on screen, so the engineer fixes
     // the one field instead of re-entering the node.
-    const keepCurtain = S.settingsError ? S.curtain : null;
+    const keepCurtain = stopped() ? S.curtain : null;
     await loadCurtainNodes();
     if (keepCurtain) S.curtain = keepCurtain;
     S._tagCache = {};
@@ -5354,7 +5360,7 @@ async function saveSettings() {
     await loadStationVerdicts();
     await reloadProcesses();
     S.settings = settingsDraft();
-    if (!S.settingsError) S.settingsNotice = 'Saved.';
+    if (!stopped()) S.settingsNotice = 'Saved.';
     drawSettings();
 }
 
@@ -5997,11 +6003,20 @@ function bodyOf(out) {
     return out.body && typeof out.body === 'object' ? out.body : {};
 }
 
+// said is what the page draws in place for a refused answer: the door's
+// sentence after lead, or nothing when the door's notice showed it (shown).
+// A lapsed session's 401 always goes on the notice, which alone carries Sign
+// in (the wave C ruling): it is said once, there, and the sheet that was
+// refused stays open as it was.
+function said(out, lead) {
+    return out.shown ? '' : (lead || '') + out.error;
+}
+
 // A write that goes through a sheet, with the server's refusal shown BY NAME
 // rather than swallowed into "could not save".
 async function sheetSubmit(method, url, body, after) {
-    const out = await send(method, url, body);
-    if (!out.ok) { sheetStatus(out.error, true); return false; }
+    const out = await send(method, url, body, NO_NOTICE);
+    if (!out.ok) { sheetStatus(said(out), true); return false; }
     closeSheet();
     if (after) await after();
     return true;
@@ -6217,8 +6232,8 @@ function openNewStyle(recipeID, sel) {
             const name = String(sheetValue('name') || '').trim();
             if (!name) { sheetStatus('A part needs a name, or pick a recipe.', true); return; }
             const made = await send('POST', '/api/styles',
-                B().styleCreate(name, S.processID, sheetValue('catid')));
-            if (!made.ok) { sheetStatus(made.error, true); return; }
+                B().styleCreate(name, S.processID, sheetValue('catid')), NO_NOTICE);
+            if (!made.ok) { sheetStatus(said(made), true); return; }
             closeSheet();
             // Selected, because the reason to make one is to draw its flow.
             // refreshProcess keeps the id when the re-read still has it.
@@ -6405,13 +6420,13 @@ async function mintNewStyle(recipe) {
         picks.push({ code: code, node: moves[head] || head });
     }
     const made = await send('POST', '/api/processes/' + S.processID + '/flow/mint',
-        B().flowMint(recipe, picks, stationIDForSave(), moves));
-    if (!made.ok) { sheetStatus(made.error, true); return; }
+        B().flowMint(recipe, picks, stationIDForSave(), moves), NO_NOTICE);
+    if (!made.ok) { sheetStatus(said(made), true); return; }
     const catid = String(sheetValue('catid') || '').trim();
     if (catid) {
         const st = { id: bodyOf(made).style_id, name: bodyOf(made).style_name, process_id: S.processID };
-        const set = await send('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }));
-        if (!set.ok) { sheetStatus('Minted ' + st.name + ', but its CATID did not save: ' + set.error, true); return; }
+        const set = await send('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }), NO_NOTICE);
+        if (!set.ok) { sheetStatus('Minted ' + st.name + ', but its CATID did not save' + said(set, ': ') + '.', true); return; }
     }
     closeSheet();
     S.notice = (bodyOf(made).minted ? 'Minted ' : 'Already runs as ') + bodyOf(made).style_name + '.';
@@ -6429,8 +6444,8 @@ function openNewGroup() {
             const name = String(sheetValue('name') || '').trim();
             if (!name) { sheetStatus('A group needs a name.', true); return; }
             const made = await send('POST', '/api/process-groups',
-                B().processGroupCreate(name, sheetValue('description')));
-            if (!made.ok) { sheetStatus(made.error, true); return; }
+                B().processGroupCreate(name, sheetValue('description')), NO_NOTICE);
+            if (!made.ok) { sheetStatus(said(made), true); return; }
             closeSheet();
             const res = await send('GET', '/api/process-groups');
             if (res.ok && Array.isArray(res.body)) S.groups = res.body;
@@ -6714,26 +6729,26 @@ async function submitAddProcess() {
 
     sheetStatus('Creating…');
     const made = await send('POST', '/api/processes',
-        B().processCreate({ name: name, description: sheetValue('description'), group_id: S.add.groupID }));
-    if (!made.ok) { sheetStatus(made.error, true); return; }
+        B().processCreate({ name: name, description: sheetValue('description'), group_id: S.add.groupID }), NO_NOTICE);
+    if (!made.ok) { sheetStatus(said(made), true); return; }
     const processID = Number(bodyOf(made).id);
 
     // What already exists, so a refusal halfway through says so rather than
     // leaving the engineer to find out from the list.
     const done = ['The process was created'];
-    const stop = (what, why) => sheetStatus(done.join('; ') + '. ' + what + ' was refused: ' + why, true);
+    const stop = (what, out) => sheetStatus(done.join('; ') + '. ' + what + (out.shown ? ' was not written.' : ' was refused: ' + out.error), true);
 
     const st = await send('POST', '/api/operator-stations',
-        B().stationWrite(null, processID, false, { name: screen, note: '' }));
-    if (!st.ok) { stop('Its operator screen', st.error); return; }
+        B().stationWrite(null, processID, false, { name: screen, note: '' }), NO_NOTICE);
+    if (!st.ok) { stop('Its operator screen', st); return; }
     const stationID = Number(bodyOf(st).id);
     done.push('its screen added');
 
     const claimed = pickerValue('positions');
     if (claimed.length) {
         const nodes = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
-            B().stationNodes(claimed));
-        if (!nodes.ok) { stop('Its positions', nodes.error); return; }
+            B().stationNodes(claimed), NO_NOTICE);
+        if (!nodes.ok) { stop('Its positions', nodes); return; }
         done.push('its positions claimed');
     }
 
@@ -6755,8 +6770,8 @@ async function submitAddProcess() {
     }
     if (routingRows.length) {
         const rows = await send('PUT', '/api/processes/' + processID + '/routing-nodes',
-            B().routingSet(routingRows));
-        if (!rows.ok) { stop('Its routing set', rows.error); return; }
+            B().routingSet(routingRows), NO_NOTICE);
+        if (!rows.ok) { stop('Its routing set', rows); return; }
     }
     const routed = routingRows.length;
 
@@ -6766,8 +6781,8 @@ async function submitAddProcess() {
     const partSet = pickerValue(PART_SET_PICKER);
     if (partSet.length) {
         const parts = await send('PUT', '/api/processes/' + processID + '/payloads',
-            B().processPayloads(partSet));
-        if (!parts.ok) { stop('Its part set', parts.error); return; }
+            B().processPayloads(partSet), NO_NOTICE);
+        if (!parts.ok) { stop('Its part set', parts); return; }
         done.push('its part set written');
     }
 
@@ -6883,8 +6898,8 @@ async function openScreenSheet(stationID) {
             const key = JSON.stringify(want);
             if (!same && baseline.some(n => want.indexOf(n) < 0) && warnedFor !== key) {
                 const impact = await send('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact',
-                    { nodes: want });
-                if (!impact.ok) { sheetStatus(impact.error, true); return; }
+                    { nodes: want }, NO_NOTICE);
+                if (!impact.ok) { sheetStatus(said(impact), true); return; }
                 if (bodyOf(impact).warning) {
                     warnedFor = key;
                     sheetStatus(bodyOf(impact).warning, false);
@@ -6893,14 +6908,14 @@ async function openScreenSheet(stationID) {
             }
             const wrote = await send(editing ? 'PUT' : 'POST',
                 editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
-                stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }));
-            if (!wrote.ok) { sheetStatus(wrote.error, true); return; }
+                stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }), NO_NOTICE);
+            if (!wrote.ok) { sheetStatus(said(wrote), true); return; }
             const id = editing ? st.id : Number(bodyOf(wrote).id);
             if (!same) {
                 const nodes = await send('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
-                    { nodes: want });
+                    { nodes: want }, NO_NOTICE);
                 if (!nodes.ok) {
-                    sheetStatus('The screen was saved; its positions were refused: ' + nodes.error, true);
+                    sheetStatus('The screen was saved; its positions were ' + (nodes.shown ? 'not written.' : 'refused: ' + nodes.error), true);
                     await reloadStations();
                     return;
                 }
@@ -7019,9 +7034,9 @@ async function syncCatalog() {
     // ok and never refuses), so what can fail here is this Edge: no answer, a
     // lapsed session, a panic. The door's sentence says which; "(0). Core may
     // be unreachable" named the wrong machine.
-    const res = await send('POST', '/api/payload-catalog/sync', null);
+    const res = await send('POST', '/api/payload-catalog/sync', null, NO_NOTICE);
     if (!res.ok) {
-        S.settingsError = 'The catalog sync failed: ' + res.error + '.';
+        S.settingsError = said(res, 'The catalog sync failed: ') + (res.shown ? '' : '.');
     } else {
         S.settingsNotice = 'Catalog synced from Core.';
     }
@@ -7068,8 +7083,8 @@ async function openPresets() {
 // sign-in link, and no answer is the door's own sentence.
 async function loadPresets() {
     S.presets = S.presets || { view: null, error: '', expanded: 0 };
-    const res = await send('GET', '/api/processes/' + S.processID + '/presets');
-    if (!res.ok) { S.presets.error = res.error; return; }
+    const res = await send('GET', '/api/processes/' + S.processID + '/presets', undefined, NO_NOTICE);
+    if (!res.ok) { S.presets.error = said(res); return; }
     S.presets.view = res.body;
     S.presets.error = '';
 }
@@ -7450,10 +7465,10 @@ function openPresetNaming(title, prefill, from) {
 // is the answer to the save. The way back is the draft's own Back.
 async function saveGroupedRecipe(name, from) {
     const d = S.shapeDraft;
-    const out = await send('POST', '/api/processes/' + S.processID + '/presets', B().flowPresetCreate(name, from));
+    const out = await send('POST', '/api/processes/' + S.processID + '/presets', B().flowPresetCreate(name, from), NO_NOTICE);
     if (!out.ok) {
-        sheetStatus(out.error, true);
-        if (d && S.shapeDraft === d) { d.refusal = out.error; drawFlows(); }
+        sheetStatus(said(out), true);
+        if (d && S.shapeDraft === d) { d.refusal = said(out); drawFlows(); }
         return;
     }
     closeSheet();

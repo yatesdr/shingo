@@ -7,7 +7,6 @@
 ### POST /api/processes/1/presets  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Save Style A as a recipe", status "the Edge refused it" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
@@ -15,7 +14,6 @@
 ### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Save Style A as a recipe", status "Server error (500)" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
@@ -23,28 +21,25 @@
 ### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Save Style A as a recipe", status "No answer from the server" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/presets · GET /api/processes/1/presets → sheet: closed
 ### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Save Style A as a recipe", status "Signed out" (bad), OK "Save recipe" enabled
+    sheet: open "Save Style A as a recipe", no status, OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets → sheet: open "Save Style A as a recipe", status "Signed out" (bad), OK "Save recipe" enabled
+    pressed again: POST /api/processes/1/presets → sheet: open "Save Style A as a recipe", no status, OK "Save recipe" enabled
 
 ## Save recipe… on a new draft (cells)
 # writes, in order: POST /api/processes/1/presets
 ### POST /api/processes/1/presets  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Name this recipe", status "the Edge refused it" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
@@ -52,7 +47,6 @@
 ### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Name this recipe", status "Server error (500)" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
@@ -60,21 +54,19 @@
 ### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Name this recipe", status "No answer from the server" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Name this recipe", status "Signed out" (bad), OK "Save recipe" enabled
+    sheet: open "Name this recipe", no status, OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets → sheet: open "Name this recipe", status "Signed out" (bad), OK "Save recipe" enabled
+    pressed again: POST /api/processes/1/presets → sheet: open "Name this recipe", no status, OK "Save recipe" enabled
 
 ## Save recipe… with groups
 # writes, in order: POST /api/processes/1/presets
@@ -82,7 +74,6 @@
     then: nothing
     new text: #pd-root div#pd-grefusal.pd-refusal: the Edge refused it
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "Save recipe Recipe One", status "the Edge refused it" (bad), OK "Save recipe" enabled
     state: shapeDraft.refusal="the Edge refused it"
     unhandled rejection: none
@@ -91,7 +82,6 @@
     then: nothing
     new text: #pd-root div#pd-grefusal.pd-refusal: Server error (500)
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "Save recipe Recipe One", status "Server error (500)" (bad), OK "Save recipe" enabled
     state: shapeDraft.refusal="Server error (500)"
     unhandled rejection: none
@@ -100,19 +90,16 @@
     then: nothing
     new text: #pd-root div#pd-grefusal.pd-refusal: No answer from the server
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "Save recipe Recipe One", status "No answer from the server" (bad), OK "Save recipe" enabled
     state: shapeDraft.refusal="No answer from the server"
     unhandled rejection: none
     pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer · GET /api/processes/1/composer · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-root div#pd-grefusal.pd-refusal: Signed out
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Save recipe Recipe One", status "Signed out" (bad), OK "Save recipe" enabled
-    state: shapeDraft.refusal="Signed out"
+    sheet: open "Save recipe Recipe One", no status, OK "Save recipe" enabled
+    state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets → sheet: open "Save recipe Recipe One", status "Signed out" (bad), OK "Save recipe" enabled
+    pressed again: POST /api/processes/1/presets → sheet: open "Save recipe Recipe One", no status, OK "Save recipe" enabled

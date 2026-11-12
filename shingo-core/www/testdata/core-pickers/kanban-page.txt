@@ -71,6 +71,7 @@
   POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}
   POST /api/nodes/kanban/sources {"group_node_id":1,"source_node_ids":[5]}
   toast error (sticky): Signed out
+  toast error (sticky): Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}": saveKanban returns false
   POST /api/nodes/kanban/settings {"group_node_id":1,"strict_sourcing":false,"maintenance_station":"","overflow_destination":"GRP-GONE"}
   POST /api/nodes/kanban/supports {"group_node_id":1,"process_node_ids":[]}

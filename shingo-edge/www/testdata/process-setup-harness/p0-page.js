@@ -1161,6 +1161,19 @@ const DOOR_BUGS = [
         target: { method: 'GET', url: '/api/processes/1/presets', k: 0 }, answer: LAPSED,
         checks: [checks.says('Signed out'), checks.notSays('Could not reach this edge')],
     },
+    {
+        title: 'a lapsed session is said once, on the notice (the wave C ruling): Rename Style B lands on the login page',
+        spec: () => D.styleRename, target: { method: 'PUT', url: '/api/styles/2', k: 0 }, answer: LAPSED,
+        checks: [checks.signIn,
+            r => ['the notice says it once', r.page.notices.filter(n => n.text === 'Signed out').length === 1, 'notices: ' + JSON.stringify(r.page.notices)],
+            r => ['the sheet does not say it again', statusWords(r.page).indexOf('Signed out') < 0, 'status ' + JSON.stringify(statusWords(r.page))],
+            checks.okLive],
+    },
+    {
+        title: 'a lapsed session stops Save settings (ruling 3, with the 401 said on the notice): PUT /api/processes/1 lands on the login page',
+        spec: () => T.DRIVE.settingsSave, target: { method: 'PUT', url: '/api/processes/1', k: 0 }, answer: LAPSED,
+        checks: [checks.noWriteAfter, checks.notSays('Saved.'), checks.signIn],
+    },
 ];
 async function pinDoorBugs() {
     T.setCurrent('door-bugs.txt');

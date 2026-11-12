@@ -519,16 +519,16 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         }
 
         r = await saveWith(reply(401, '{"error":"unauthorized"}\n'));
-        eq(r.page.state.refusal, 'Not saved. Signed out', 'Core lapsed session (401): Signed out');
+        eq(r.page.state.refusal, 'Not saved.', 'Core lapsed session (401): the box adds nothing, the notice says Signed out');
         eq(r.page.isDirty(), true, 'Core lapsed session: stays dirty');
 
         r = await saveWith(reply(200, '<!DOCTYPE html><html><body><form action="/login">', {
             redirected: true, url: 'http://edge.test/login?next=%2Fconfig', type: 'text/html; charset=utf-8',
         }));
         eq(r.out.ok, false, 'Edge lapsed session (303 to the login page): not a save');
-        eq(r.page.state.refusal, 'Not saved. Signed out', 'Edge lapsed session: Signed out');
+        eq(r.page.state.refusal, 'Not saved.', 'Edge lapsed session: the box adds nothing');
         eq(r.page.isDirty(), true, 'Edge lapsed session: stays dirty');
-        eq(JSON.stringify(r.toasts), '[]', 'Edge lapsed session: no "Saved"');
+        eq(JSON.stringify(r.toasts), '["Signed outSign in"]', 'Edge lapsed session: no "Saved"; Signed out once, on the notice, with Sign in');
 
         r = await saveWith(reply(502, '<html><body>Bad Gateway</body></html>', { type: 'text/html' }));
         eq(r.page.state.refusal, 'Not saved. Server error (502)', 'a proxy\'s HTML page: a sentence, not its markup');

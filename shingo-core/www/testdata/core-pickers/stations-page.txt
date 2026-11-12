@@ -197,6 +197,7 @@
   GET /api/nodes
   GET /api/payloads
   GET /api/loader/list
+  toast error (sticky): Signed out
   toast error: Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
   POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"inbound_source":"GRP-B","outbound_dest":"GRP-A"}

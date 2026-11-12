@@ -113,6 +113,7 @@ staged payload after the load: read-out: "Select a source node."
   mo-status "refused: the service's sentence" color var(--danger); submit button enabled
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
   POST /api/orders/spot {"priority":0,"description":"","order_type":"move","source_node":"GRP-B-N1","delivery_node":"LINE-1"}
+  toast error (sticky): Signed out
   console.error submitManualOrder Signed out
   mo-status "Signed out" color var(--danger); submit button enabled
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"

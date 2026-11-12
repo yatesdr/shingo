@@ -69,7 +69,7 @@ test('cannot happen: a 204 or an empty 2xx rejects (app.js:253, shingoedge.js:34
 
 test('cannot happen: a 4xx whose body is JSON null throws a TypeError (app.js:249)', async () => {
     const f = door({ status: 400, body: 'null\n', headers: JSONCT });
-    eq(await f.H.http.get('/x'), { ok: false, status: 400, body: null, error: 'Refused (400)', fieldErrors: {} });
+    eq(await f.H.http.get('/x'), { ok: false, status: 400, body: null, error: 'Refused (400)', fieldErrors: {}, shown: true });
 });
 
 test('a refusal reads as the server wrote it: Edge {"error"}, Core configRefusal with its fields, kanbanHeld, http.Error text', async () => {
@@ -119,7 +119,7 @@ test('a failure is shown once, by the door; {notice:false} leaves it to the call
     await f.H.http.post('/x', {});
     await f.H.http.post('/x', {});
     const quiet = await f.H.http.post('/x', {}, { notice: false });
-    eq([f.toasts().length, quiet.error], [1, 'lane held']);
+    eq([f.toasts().length, quiet.error, quiet.shown], [1, 'lane held', undefined]);
     const g = door({ status: 200, body: '{}', headers: JSONCT });
     await g.H.http.get('/x');
     eq(g.toasts().length, 0, 'a success says nothing');
@@ -127,12 +127,23 @@ test('a failure is shown once, by the door; {notice:false} leaves it to the call
 
 // ── a lapsed session (ruling 3) ─────────────────────────────────────────────
 
+test('a 401 goes on the notice even with {notice:false}, once, and says shown (only the notice has Sign in)', async () => {
+    const f = door(LOGIN_PAGE);
+    const a = await f.H.http.put('/api/styles/2', { name: 'B' }, { notice: false });
+    const b = await f.H.http.put('/api/styles/2', { name: 'B' }, { notice: false });
+    const t = f.toasts();
+    eq([a.status, a.shown, b.shown, t.length, t[0].querySelector('a').textContent], [401, true, true, 1, 'Sign in']);
+    const g = door({ status: 401, body: '{"error":"unauthorized"}', headers: JSONCT });
+    const c = await g.H.http.get('/api/x', { notice: false });
+    eq([c.error, c.shown, g.toasts().length], ['Signed out', true, 1], 'a plain 401 too');
+});
+
 test('cannot happen: a lapsed session\'s login page reads as done (processes-desktop.js:6056)', async () => {
     const f = door(LOGIN_PAGE);
     f.r.window.location.pathname = '/processes';
     f.r.window.location.search = '?process=3';
     const out = await f.H.http.post('/api/processes', { name: 'P' });
-    eq(out, { ok: false, status: 401, body: null, error: 'Signed out', fieldErrors: {} });
+    eq(out, { ok: false, status: 401, body: null, error: 'Signed out', fieldErrors: {}, shown: true });
     const t = f.toasts();
     eq([t.length, t[0].querySelector('.notice-text').textContent, t[0].querySelector('a').getAttribute('href'), t[0].className],
         [1, 'Signed out', '/login?next=%2Fprocesses%3Fprocess%3D3', 'notice-toast notice-toast--error is-sticky']);

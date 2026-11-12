@@ -19,20 +19,20 @@ send("POST", url, null): /api/x "POST", headers {"Accept":"application/json"}, b
 200 empty body: resolves {"ok":true,"status":200,"body":null,"error":"","fieldErrors":{}}, no toast
 204 no content: resolves {"ok":true,"status":204,"body":null,"error":"","fieldErrors":{}}, no toast
 200 not JSON ("ok"): resolves {"ok":true,"status":200,"body":"ok\n","error":"","fieldErrors":{}}, no toast
-400 Edge writeError / Core jsonError {"error"}: resolves {"ok":false,"status":400,"body":{"error":"process not found"},"error":"process not found","fieldErrors":{}}, toasts 1
-400 Edge writeAdvisoryRefusal {"error","notice"}: resolves {"ok":false,"status":400,"body":{"error":"changeover already running","notice":true},"error":"changeover already running","fieldErrors":{}}, toasts 1
-409 Edge writeErrorWithExit {"error","exit"}: resolves {"ok":false,"status":409,"body":{"error":"lane held","exit":{"kind":"release","url":"/api/x/release","label":"Release"}},"error":"lane held","fieldErrors":{}}, toasts 1
-400 Core configRefusal {"error","errors","ok"}: resolves {"ok":false,"status":400,"body":{"error":"Port must be a number.","errors":{"port":"Port must be a number."},"ok":false},"error":"Port must be a number.","fieldErrors":{"port":"Port must be a number."}}, toasts 1
-409 Core kanbanHeld {"drain","error","needs_force"}: resolves {"ok":false,"status":409,"body":{"drain":[],"error":"position holds bins","needs_force":true},"error":"position holds bins","fieldErrors":{}}, toasts 1
-400 JSON {"error":""}: resolves {"ok":false,"status":400,"body":{"error":""},"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 JSON with no error key: resolves {"ok":false,"status":400,"body":{"needs_force":true},"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 JSON whose error is an object: resolves {"ok":false,"status":400,"body":{"error":{"code":7}},"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 JSON null: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 plain text (http.Error): resolves {"ok":false,"status":400,"body":null,"error":"invalid bin type","fieldErrors":{}}, toasts 1
-400 empty body: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{}}, toasts 1
-500 JSON {"error"}: resolves {"ok":false,"status":500,"body":{"error":"database not answering"},"error":"database not answering","fieldErrors":{}}, toasts 1
-502 HTML from a proxy: resolves {"ok":false,"status":502,"body":null,"error":"Server error (502)","fieldErrors":{}}, toasts 1
-no answer (fetch rejects TypeError "Failed to fetch"): resolves {"ok":false,"status":0,"body":null,"error":"No answer from the server","fieldErrors":{}}, toasts 1
+400 Edge writeError / Core jsonError {"error"}: resolves {"ok":false,"status":400,"body":{"error":"process not found"},"error":"process not found","fieldErrors":{},"shown":true}, toasts 1
+400 Edge writeAdvisoryRefusal {"error","notice"}: resolves {"ok":false,"status":400,"body":{"error":"changeover already running","notice":true},"error":"changeover already running","fieldErrors":{},"shown":true}, toasts 1
+409 Edge writeErrorWithExit {"error","exit"}: resolves {"ok":false,"status":409,"body":{"error":"lane held","exit":{"kind":"release","url":"/api/x/release","label":"Release"}},"error":"lane held","fieldErrors":{},"shown":true}, toasts 1
+400 Core configRefusal {"error","errors","ok"}: resolves {"ok":false,"status":400,"body":{"error":"Port must be a number.","errors":{"port":"Port must be a number."},"ok":false},"error":"Port must be a number.","fieldErrors":{"port":"Port must be a number."},"shown":true}, toasts 1
+409 Core kanbanHeld {"drain","error","needs_force"}: resolves {"ok":false,"status":409,"body":{"drain":[],"error":"position holds bins","needs_force":true},"error":"position holds bins","fieldErrors":{},"shown":true}, toasts 1
+400 JSON {"error":""}: resolves {"ok":false,"status":400,"body":{"error":""},"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 JSON with no error key: resolves {"ok":false,"status":400,"body":{"needs_force":true},"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 JSON whose error is an object: resolves {"ok":false,"status":400,"body":{"error":{"code":7}},"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 JSON null: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 plain text (http.Error): resolves {"ok":false,"status":400,"body":null,"error":"invalid bin type","fieldErrors":{},"shown":true}, toasts 1
+400 empty body: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+500 JSON {"error"}: resolves {"ok":false,"status":500,"body":{"error":"database not answering"},"error":"database not answering","fieldErrors":{},"shown":true}, toasts 1
+502 HTML from a proxy: resolves {"ok":false,"status":502,"body":null,"error":"Server error (502)","fieldErrors":{},"shown":true}, toasts 1
+no answer (fetch rejects TypeError "Failed to fetch"): resolves {"ok":false,"status":0,"body":null,"error":"No answer from the server","fieldErrors":{},"shown":true}, toasts 1
 
 ## http.post (the door that does not throw): every answer
 200 JSON object: resolves {"ok":true,"status":200,"body":{"id":7,"name":"PRESS-1"},"error":"","fieldErrors":{}}, no toast
@@ -40,20 +40,20 @@ no answer (fetch rejects TypeError "Failed to fetch"): resolves {"ok":false,"sta
 200 empty body: resolves {"ok":true,"status":200,"body":null,"error":"","fieldErrors":{}}, no toast
 204 no content: resolves {"ok":true,"status":204,"body":null,"error":"","fieldErrors":{}}, no toast
 200 not JSON ("ok"): resolves {"ok":true,"status":200,"body":"ok\n","error":"","fieldErrors":{}}, no toast
-400 Edge writeError / Core jsonError {"error"}: resolves {"ok":false,"status":400,"body":{"error":"process not found"},"error":"process not found","fieldErrors":{}}, toasts 1
-400 Edge writeAdvisoryRefusal {"error","notice"}: resolves {"ok":false,"status":400,"body":{"error":"changeover already running","notice":true},"error":"changeover already running","fieldErrors":{}}, toasts 1
-409 Edge writeErrorWithExit {"error","exit"}: resolves {"ok":false,"status":409,"body":{"error":"lane held","exit":{"kind":"release","url":"/api/x/release","label":"Release"}},"error":"lane held","fieldErrors":{}}, toasts 1
-400 Core configRefusal {"error","errors","ok"}: resolves {"ok":false,"status":400,"body":{"error":"Port must be a number.","errors":{"port":"Port must be a number."},"ok":false},"error":"Port must be a number.","fieldErrors":{"port":"Port must be a number."}}, toasts 1
-409 Core kanbanHeld {"drain","error","needs_force"}: resolves {"ok":false,"status":409,"body":{"drain":[],"error":"position holds bins","needs_force":true},"error":"position holds bins","fieldErrors":{}}, toasts 1
-400 JSON {"error":""}: resolves {"ok":false,"status":400,"body":{"error":""},"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 JSON with no error key: resolves {"ok":false,"status":400,"body":{"needs_force":true},"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 JSON whose error is an object: resolves {"ok":false,"status":400,"body":{"error":{"code":7}},"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 JSON null: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{}}, toasts 1
-400 plain text (http.Error): resolves {"ok":false,"status":400,"body":null,"error":"invalid bin type","fieldErrors":{}}, toasts 1
-400 empty body: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{}}, toasts 1
-500 JSON {"error"}: resolves {"ok":false,"status":500,"body":{"error":"database not answering"},"error":"database not answering","fieldErrors":{}}, toasts 1
-502 HTML from a proxy: resolves {"ok":false,"status":502,"body":null,"error":"Server error (502)","fieldErrors":{}}, toasts 1
-no answer (fetch rejects TypeError "Failed to fetch"): resolves {"ok":false,"status":0,"body":null,"error":"No answer from the server","fieldErrors":{}}, toasts 1
+400 Edge writeError / Core jsonError {"error"}: resolves {"ok":false,"status":400,"body":{"error":"process not found"},"error":"process not found","fieldErrors":{},"shown":true}, toasts 1
+400 Edge writeAdvisoryRefusal {"error","notice"}: resolves {"ok":false,"status":400,"body":{"error":"changeover already running","notice":true},"error":"changeover already running","fieldErrors":{},"shown":true}, toasts 1
+409 Edge writeErrorWithExit {"error","exit"}: resolves {"ok":false,"status":409,"body":{"error":"lane held","exit":{"kind":"release","url":"/api/x/release","label":"Release"}},"error":"lane held","fieldErrors":{},"shown":true}, toasts 1
+400 Core configRefusal {"error","errors","ok"}: resolves {"ok":false,"status":400,"body":{"error":"Port must be a number.","errors":{"port":"Port must be a number."},"ok":false},"error":"Port must be a number.","fieldErrors":{"port":"Port must be a number."},"shown":true}, toasts 1
+409 Core kanbanHeld {"drain","error","needs_force"}: resolves {"ok":false,"status":409,"body":{"drain":[],"error":"position holds bins","needs_force":true},"error":"position holds bins","fieldErrors":{},"shown":true}, toasts 1
+400 JSON {"error":""}: resolves {"ok":false,"status":400,"body":{"error":""},"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 JSON with no error key: resolves {"ok":false,"status":400,"body":{"needs_force":true},"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 JSON whose error is an object: resolves {"ok":false,"status":400,"body":{"error":{"code":7}},"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 JSON null: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+400 plain text (http.Error): resolves {"ok":false,"status":400,"body":null,"error":"invalid bin type","fieldErrors":{},"shown":true}, toasts 1
+400 empty body: resolves {"ok":false,"status":400,"body":null,"error":"Refused (400)","fieldErrors":{},"shown":true}, toasts 1
+500 JSON {"error"}: resolves {"ok":false,"status":500,"body":{"error":"database not answering"},"error":"database not answering","fieldErrors":{},"shown":true}, toasts 1
+502 HTML from a proxy: resolves {"ok":false,"status":502,"body":null,"error":"Server error (502)","fieldErrors":{},"shown":true}, toasts 1
+no answer (fetch rejects TypeError "Failed to fetch"): resolves {"ok":false,"status":0,"body":null,"error":"No answer from the server","fieldErrors":{},"shown":true}, toasts 1
 
 ## http.post {notice:false} (the door that does not throw): every answer
 200 JSON object: resolves {"ok":true,"status":200,"body":{"id":7,"name":"PRESS-1"},"error":"","fieldErrors":{}}, no toast

@@ -7,7 +7,6 @@
 ### POST /api/styles  ←  400 {"error"} (writeError)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: open "New style", status "the Edge refused it" (bad), OK "Create" enabled
     state: no message set
     unhandled rejection: none
@@ -15,7 +14,6 @@
 ### POST /api/styles  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    notice: error "Server error (500)"
     sheet: open "New style", status "Server error (500)" (bad), OK "Create" enabled
     state: no message set
     unhandled rejection: none
@@ -23,18 +21,16 @@
 ### POST /api/styles  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    notice: error "No answer from the server"
     sheet: open "New style", status "No answer from the server" (bad), OK "Create" enabled
     state: no message set
     unhandled rejection: none
     pressed again: POST /api/styles · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/styles  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "New style", status "Signed out" (bad), OK "Create" enabled
+    sheet: open "New style", no status, OK "Create" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/styles → sheet: open "New style", status "Signed out" (bad), OK "Create" enabled
+    pressed again: POST /api/styles → sheet: open "New style", no status, OK "Create" enabled

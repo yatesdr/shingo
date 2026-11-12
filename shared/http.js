@@ -16,12 +16,15 @@
 //   fieldErrors  {field: message}: Core's configRefusal `errors`, or a
 //                `field_errors` list of {field, message}; {} when none
 //
-// and, only when the caller's own signal aborted it, aborted: true.
+// and, only when the caller's own signal aborted it, aborted: true; and, when
+// the door put the failure on the notice itself, shown: true.
 //
 // A FAILURE IS SHOWN ONCE, HERE. The door puts the error on the notice, so a
 // page never has a write that fails with nothing on screen. A caller that
 // draws the error itself, beside the field it is about, passes
-// {notice: false} for that call.
+// {notice: false} for that call. A 401 is the exception: it always goes on
+// the notice, which alone carries the Sign in link, and the answer says
+// shown: true, so the caller draws nothing more for it.
 //
 // A LAPSED SESSION IS NOT A SUCCESS (ruling 3). The Edge's admin routes answer
 // an expired session with a 303 to /login, fetch follows it, and the page used
@@ -81,7 +84,13 @@ export async function send(method, url, body, opts) {
         if (timer !== null) clearTimeout(timer);
         if (caller) caller.removeEventListener('abort', pass);
     }
-    if (!out.ok && !out.aborted && o.notice !== false) say(out);
+    // A 401 goes on the notice whatever the caller asked: only the notice
+    // carries the Sign in link (the wave C ruling), so a page that draws its
+    // refusals in place draws nothing more for a shown answer.
+    if (!out.ok && !out.aborted && (o.notice !== false || out.status === 401)) {
+        say(out);
+        out.shown = true;
+    }
     return out;
 }
 

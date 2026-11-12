@@ -50,10 +50,12 @@ function durationMs(text) {
 // fields. It answers as settingsPage reads an answer, {ok, status, body}; a
 // failure that carried no JSON body (a lapsed session, a proxy's page, no
 // answer) is {error: <the door's sentence>}, as apiResult's {error: text} was.
+// A lapsed session's 401 is on the notice whatever this asks (only the notice
+// has Sign in), and shown says so: the box then adds nothing to "Not saved."
 async function saveThrough(method, url, body) {
     const res = await httpSend(method, url, body, { notice: false });
     const parsed = res.body !== null && typeof res.body === 'object';
-    return { ok: res.ok, status: res.status, body: parsed || res.ok ? res.body : { error: res.error } };
+    return { ok: res.ok, status: res.status, shown: !!res.shown, body: parsed || res.ok ? res.body : { error: res.error } };
 }
 
 function _trimNum(n) {
@@ -302,7 +304,7 @@ export function settingsPage(root, opts) {
                 if (!res || !res.ok || b.ok === false) {
                     const loose = showErrors(b.errors);
                     const placed = Object.keys(b.errors || {}).length - loose.length;
-                    parts.push({ label: 'Settings', ok: false, why: failureText(b, loose, placed, res ? res.status : 0) });
+                    parts.push({ label: 'Settings', ok: false, shown: !!(res && res.shown), why: failureText(b, loose, placed, res ? res.status : 0) });
                 } else {
                     shared.forEach((n) => { state.baseline[n] = JSON.stringify(drafts[n]); });
                     if (Array.isArray(b.restart)) state.restart = b.restart.slice();
@@ -340,7 +342,7 @@ export function settingsPage(root, opts) {
             if (!state.failed.length) toast('Saved', 'success');
         } else if (parts.length === 1) {
             const why = parts[0].why;
-            state.refusal = 'Not saved. ' + why.charAt(0).toUpperCase() + why.slice(1);
+            state.refusal = parts[0].shown ? 'Not saved.' : 'Not saved. ' + why.charAt(0).toUpperCase() + why.slice(1);
         } else {
             // A partial outcome, said plainly: "Settings saved; shifts failed: …".
             const line = parts.map((p) => p.label + (p.ok ? ' saved' : ' failed: ' + p.why.replace(/\.$/, ''))).join('; ');

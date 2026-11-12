@@ -38,3 +38,14 @@ ok   the page says "No answer from the server"
 ## the presets read (processes-desktop.js:7138): the Recipes tab's read lands on the login page
 ok   the page says "Signed out"
 ok   the page does not say "Could not reach this edge"
+
+## a lapsed session is said once, on the notice (the wave C ruling): Rename Style B lands on the login page
+ok   the notice offers Sign in
+ok   the notice says it once
+ok   the sheet does not say it again
+ok   the sheet is open and its OK pressable
+
+## a lapsed session stops Save settings (ruling 3, with the 401 said on the notice): PUT /api/processes/1 lands on the login page
+ok   no write follows it
+ok   the page does not say "Saved."
+ok   the notice offers Sign in

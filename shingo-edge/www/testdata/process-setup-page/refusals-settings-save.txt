@@ -11,7 +11,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -22,7 +21,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
@@ -33,7 +31,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
@@ -44,12 +41,11 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
@@ -58,7 +54,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -69,7 +64,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
@@ -80,7 +74,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
@@ -91,12 +84,11 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
@@ -105,7 +97,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -116,7 +107,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
@@ -127,7 +117,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
@@ -138,12 +127,11 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
@@ -152,7 +140,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -163,7 +150,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
@@ -174,7 +160,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
@@ -185,12 +170,11 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
@@ -199,7 +183,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
-    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -210,7 +193,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: Server error (500)
-    notice: error "Server error (500)"
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
@@ -221,7 +203,6 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: No answer from the server
-    notice: error "No answer from the server"
     sheet: closed
     state: settingsError="No answer from the server"
     unhandled rejection: none
@@ -232,10 +213,9 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
-    state: settingsError="Signed out"
+    state: no message set
     unhandled rejection: none
