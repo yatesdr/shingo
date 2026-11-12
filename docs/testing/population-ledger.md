@@ -1185,3 +1185,30 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### STALE — `TestTemplates_NoCacheBustQuery`
+- test: `TestTemplates_NoCacheBustQuery` · pkg `shingocore/www` · run `-run '^TestTemplates_NoCacheBustQuery$'` · `shingo-core/www/static_asset_query_guard_test.go:24` @ `7b695346` · tags `none`
+- code: STALE (templates name static files through the asset handler's `assetURL`, and a hashed file name is the one cache-bust form; "test(www): every page's import map covers what it reaches, in both browsers, inside a budget", c71e6b49)
+- assertion map: no template stamps a `?v=`/query on a /static URL → `TestTemplates_OnlyTheHandlersHashForm` (same file: a query is still refused, and the only versioned form allowed is the handler's own hash)
+- mutation: the old assertion against the new code, by reading: a template with `?v=1` still fails the new test; not run, the old body was replaced in place
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestTemplates_NoCacheBustQuery`
+- test: `TestTemplates_NoCacheBustQuery` · pkg `shingoedge/www` · run `-run '^TestTemplates_NoCacheBustQuery$'` · `shingo-edge/www/static_asset_query_guard_test.go:24` @ `7b695346` · tags `none`
+- code: STALE (as Core's: the asset handler's hashed file name is the one versioned form, c71e6b49)
+- assertion map: no template stamps a query on a /static URL → `TestTemplates_OnlyTheHandlersHashForm` (same file)
+- mutation: the old assertion against the new code, by reading: a template with `?v=1` still fails the new test; not run, the old body was replaced in place
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestReplenishmentPage_AMintedStyleReadsNotSet`
+- test: `TestReplenishmentPage_AMintedStyleReadsNotSet` · pkg `shingoedge/www` · run `-run '^TestReplenishmentPage_AMintedStyleReadsNotSet$'` · `shingo-edge/www/handlers_flow_mint_test.go:238` @ `7b695346` · tags `none`
+- code: STALE (reorder_point_source is deleted, and with it the "not set" badge; "refactor(edge): delete reorder_point_source; Edge v48 drops it from both claims tables", 617da174)
+- assertion map: a minted style's claims read "not set" → `TestReplenishmentPage_AMintedStyleReadsOff` (same file: its rows read reorder point 0, Auto reorder off, and offer Clear)
+- mutation: the old assertion against the new code, by reading: no badge exists to read; the rows' 0/off is what the badge's "not set" stood for
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
