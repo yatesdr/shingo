@@ -23,6 +23,14 @@ ok   the title: "Press A"
 ## smoke: Settings' Parts row is on the settings grid, as every other row is
 ok   the Parts row is a .pd-sfld
 
+## smoke: Add process on a fresh list reads the Edge's plant map as it opens
+ok   one composer read for the map
+ok   Show on map is on the routing set's heading
+
+## smoke: a process opened before lends Add process neither its map nor its zoom
+ok   the map read refused: no Show on map
+ok   the zoom is the sheet's own
+
 ## F21: #tab= edited in place switches the tab (FINDINGS F21)
 ok   each hash lands on its tab
 

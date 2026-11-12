@@ -984,6 +984,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     line-height: inherit; letter-spacing: normal; text-transform: none; cursor: pointer;
 }
 .pd-addproc .pd-maptoggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+/* Where the toggle goes on the list until the plant map is read: no box of
+   its own, so the toggle sits in the heading as if drawn there. */
+.pd-maptoggleslot { display: contents; }
 .pd-sheetmapbox { margin: 0 0 var(--sp-2); }
 .pd-sheetmap { max-width: 100%; }
 .pd-sheetmap svg { width: 100%; height: auto; display: block; }

@@ -103,6 +103,7 @@ const S = {
     sheet: null,         // the open sheet: {handle} (its layer entry), and {run} for the apply modal's own OK
     menuFrom: null,      // the control the open popover menu hangs off: a sheet a row opens returns focus there
     mapZoom: 1,
+    plantMap: null,      // the Edge's plant map on the list, for Add process: read when that sheet opens
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
     coreNodes: null,     // Core's node list as the Edge sent it (NODES' rows), null until read
@@ -3437,7 +3438,14 @@ function sayDropped(node, before, after) {
 const AISLE_FIT_PAD = 3;        // metres of plant left around the fitted region
 const LABEL_PAD = 56;           // screen px kept clear for the marks' labels
 
-function mapOf() { return (S.composer && S.composer.map) || null; }
+// mapOf is the open process's map, from its composer read. ON THE LIST it is
+// the one Add process read when it opened (S.plantMap): the composer the list
+// still holds is the last process opened, so the sheet's map — whether Show
+// on map was drawn at all — hung on where the engineer had been.
+function mapOf() {
+    if (!S.processID) return S.plantMap || null;
+    return (S.composer && S.composer.map) || null;
+}
 
 // The travel graph: adjacency over the cache's edges, weighted by the DRIVEN
 // length — the cubic's arc length on a bowed lane, not its chord, because a
@@ -7273,7 +7281,9 @@ const SHEET_MAP_ID = 'pd-sheetmap';
 // its height; shown, the map is the sheet's full width under the three roles
 // (it was drawn in the 230 px label column). It is drawn only while shown.
 function sheetMapToggle() {
-    if (!mapOf()) return '';
+    // On the list the map is read as the sheet opens (loadSheetMap): until it
+    // lands, the heading holds the place the toggle goes.
+    if (!mapOf()) return S.processID ? '' : '<span class="pd-maptoggleslot" id="pd-addmaptoggle"></span>';
     return '<button type="button" class="pd-maptoggle" data-act="add-showmap" aria-controls="pd-sheetmapbox" ' +
         'aria-expanded="false">Show on map</button>';
 }
@@ -7285,6 +7295,28 @@ function sheetMapField() {
         '<p class="pd-note">The aisles Core knows, the names you have picked, and the two trips ' +
         'the first of each role implies — a robot in from the first source, and back out to the ' +
         'first destination. Nothing here is a control; the lists above are.</p></div>';
+}
+
+// loadSheetMap reads the Edge's plant map for Add process opened on the list,
+// once, as the sheet opens; no timer and no re-read. THE MAP IS ONE PER EDGE
+// (composerMap is the same block in every process's composer read), so the
+// read the picture makes is made for the first process on the list and only
+// its map is kept. An Edge with no process yet has no read to make, and the
+// sheet says nothing about a map, as it does when Core has sent none. When it
+// lands on the same sheet, the toggle and the map's box go in place: the
+// sheet's fields are not rebuilt (the pickers hold a caret and ticks).
+async function loadSheetMap(add) {
+    const first = S.processes[0];
+    if (!first) return;
+    const res = await send('GET', '/api/processes/' + first.id + '/composer', null, NO_NOTICE);
+    if (S.add !== add || S.processID) return;
+    S.plantMap = (res.ok && (bodyOf(res) || {}).map) || null;
+    S.graph = null;
+    const toggle = document.getElementById('pd-addmaptoggle');
+    const slot = document.getElementById('pd-addmapslot');
+    if (!S.plantMap || !toggle || !slot) return;
+    toggle.innerHTML = sheetMapToggle();
+    slot.innerHTML = sheetMapField();
 }
 
 // toggleSheetMap is Show on map's press: the map shown and drawn, or hidden.
@@ -7321,6 +7353,9 @@ function redrawSheetMap() {
 function openAddProcess() {
     // map: the read-back shown (Show on map).
     S.add = { groupID: 0, map: false };
+    // On the list, nothing of the last process's map comes with the sheet:
+    // not its map, its travel graph or its zoom. The sheet reads the Edge's.
+    if (!S.processID) { S.plantMap = null; S.graph = null; S.mapZoom = 1; }
     const positions = () => pickerValue('positions');
     // THE SAME CHECKLIST AS SETTINGS' ADD POSITIONS: one box per node, and a
     // node another process holds is greyed with its name (process 0 is this
@@ -7384,7 +7419,7 @@ function openAddProcess() {
         '<div class="pd-sec"><div class="pd-lbl">The routing set' + sheetMapToggle() + '</div></div>' +
         '<div class="pd-rs3">' + ROUTING_GROUPS.map(g => '<div><label>' + esc(g[1]) + '</label>' +
             pickerBox(routingPickerKey(g[0])) + '</div>').join('') + '</div>' +
-        sheetMapField() +
+        '<div id="pd-addmapslot">' + sheetMapField() + '</div>' +
 
         '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
         pickerField(PART_SET_PICKER, 'Parts this process runs', 'the catalog is Core’s') + '</div>';
@@ -7392,6 +7427,7 @@ function openAddProcess() {
     pageSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false);
     loadLivePositions().then(() => redrawPicker('positions'));
+    if (!S.processID) void loadSheetMap(S.add);
     // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the two
     // up-front checks clear this way: a refusal from the write chain is the
     // record of what was already made, and typing must not erase it.

@@ -200,6 +200,38 @@ block({
     }],
 });
 
+// Smoke (browser walk 2026-11-11): Add process drew "Show on map" only after a
+// process had been opened in the same page load, from that process's composer
+// read the list still held. On a fresh list it had no map at all.
+const sheetToggle = page => !!page.scrim.querySelector('[data-act="add-showmap"]') ||
+    /data-act="add-showmap"/.test(String((page.byId('pd-addmaptoggle') || {}).innerHTML || ''));
+block({
+    title: 'smoke: Add process on a fresh list reads the Edge\'s plant map as it opens',
+    open: () => ({ search: '' }),
+    act: async page => { page.click('root', { act: 'add-process' }); await page.settle(); },
+    checks: [
+        r => ['one composer read for the map', r.calls.filter(c => c.method === 'GET' && /\/composer$/.test(c.url.split('?')[0])).length === 1,
+            r.calls.map(lineOf).join(' · ') || 'no request'],
+        r => ['Show on map is on the routing set\'s heading', sheetToggle(r.page), 'no toggle: the list holds no map'],
+    ],
+});
+block({
+    title: 'smoke: a process opened before lends Add process neither its map nor its zoom',
+    open: () => ({ answer: refuse('GET', '/api/processes/1/composer', { status: 500, body: { error: 'no' } }, 1) }),
+    act: async page => {
+        page.S.mapZoom = 2;
+        page.click('root', { act: 'list' });
+        await page.settle();
+        page.click('root', { act: 'add-process' });
+        await page.settle();
+        return { zoom: page.S.mapZoom };
+    },
+    checks: [
+        r => ['the map read refused: no Show on map', !sheetToggle(r.page), 'drawn from the last process\'s composer'],
+        r => ['the zoom is the sheet\'s own', r.zoom === 1, 'zoom ' + r.zoom + ' carried over'],
+    ],
+});
+
 // F21 — the address bar's #tab= edited in place (a hashchange, no load).
 block({
     title: 'F21: #tab= edited in place switches the tab (FINDINGS F21)',
