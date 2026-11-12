@@ -26,3 +26,7 @@ ok   no unhandled rejection
 ok   the status line is not left on "Saving…"
 ok   the sheet is open and its OK pressable
 ok   pressed again, it saves again
+
+## "Preview OK · null orders" (processes-desktop.js:2400): the flow edit's preview answers a 500 with no body
+ok   the page does not say "Preview OK · null orders"
+ok   the page says "Server error (500)"

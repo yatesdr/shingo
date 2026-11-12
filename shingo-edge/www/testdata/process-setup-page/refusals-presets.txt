@@ -92,13 +92,13 @@
     unhandled rejection: none
 ### POST /api/processes/1/flow/preview  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-scrim div.pd-warn: The server refused this preview (500).
+    new text: #pd-scrim div.pd-warn: Server error (500)
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 0 parts" disabled
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/flow/preview  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-scrim div.pd-warn: Could not reach this edge.
+    new text: #pd-scrim div.pd-warn: No answer from the server
     sheet: open "Apply Recipe One v1 to parts", no status, OK "Save to 0 parts" disabled
     state: no message set
     unhandled rejection: none

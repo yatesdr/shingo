@@ -2407,21 +2407,20 @@ async function runPreview() {
     // fingerprint under this one's id, which comes back 409 "the flow changed
     // since you previewed" on a flow nobody had changed.
     const forStyle = S.model.styleId;
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/flow/preview', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                to_style_id: S.model.styleId, cells: M().toCells(S.model),
-                taken_off: M().takenOff(S.model),
-            }),
-            signal: S.previewAbort.signal,
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!S.model || S.model.styleId !== forStyle) return;
-        S.model = M().applyPreview(S.model, json);
-    } catch (e) {
-        if (e && e.name === 'AbortError') return;
-    }
+    // A PREVIEW WITH NO BODY IS NOT AN EMPTY PREVIEW (P0 bug, :2400). A 500
+    // with no body read as {} through the .catch, and applyPreview took {} as
+    // a preview with no count: "Preview OK · null orders". The door's answer
+    // carries its sentence as the preview's error (answerBody), so the bar
+    // blocks on it; no answer at all says so the same way rather than keeping
+    // the last preview's words. The preview's own abort, when a newer edit
+    // replaced it, is `aborted` and draws nothing.
+    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview', {
+        to_style_id: S.model.styleId, cells: M().toCells(S.model),
+        taken_off: M().takenOff(S.model),
+    }, { notice: false, signal: S.previewAbort.signal });
+    if (res.aborted) return;
+    if (!S.model || S.model.styleId !== forStyle) return;
+    S.model = M().applyPreview(S.model, answerBody(res));
     drawBar();
     drawPicture();
 }
@@ -7875,42 +7874,37 @@ async function previewApplyRow(styleID) {
     // A PREVIEW STARTS CLEAN. A row that failed once and is previewed again
     // after a pick would otherwise keep the old refusal under a new answer.
     row.error = '';
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/flow/preview', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to_style_id: styleID, cells: row.cells }),
-        });
-        const j = await res.json().catch(() => ({}));
-        row.loading = false;
-        row.fingerprint = j.fingerprint || '';
-        // THE PREVIEW'S FINDINGS BELONG ON THE ROW, not on the save that comes
-        // after it. Measured on the HK fixture: applying `PLN_01 / PLN_04` to a
-        // part running `PLN_03 / PLN_06` lands two cells with no part on them,
-        // and the preview says so twice — `PLN_01 · Select a part`,
-        // `PLN_04 · Select a part` — while planning two real press-index
-        // swaps whose supply legs carry no payload_code at all. The modal drew
-        // `2 orders after the change` over `Save to 1 part`, and the engineer
-        // learned the rest from a 422 AFTER pressing it.
-        //
-        // A ROW WITH FINDINGS IS NOT SAVED (owner ruling F1, 2026-09-12).
-        // R8's "an apply that leaves parts unplaced saves" stands — it is the
-        // PART with no position that saves, and the row says so. What may not
-        // happen is the modal offering a save the server refuses, so a row
-        // still carrying a finding keeps its tick and stays out of the count
-        // (applyRowReady), and the question it can answer it asks.
-        row.findings = (j.findings || []).filter(f => f.core_node_name);
-        // NULL, NOT ZERO, when the body carried no count: a preview of the
-        // running style is not planned (R3) and a zero there would read as a
-        // changeover that moves nothing.
-        row.orders = typeof j.order_count === 'number' ? j.order_count : null;
-        // A refusal is shown BY NAME on the row it belongs to, and leaves the
-        // row ticked-but-unsavable rather than quietly unticking itself.
-        if (!res.ok || j.error) row.error = j.error || 'The server refused this preview (' + res.status + ').';
-        else if (!row.fingerprint) row.error = 'No fingerprint came back — nothing to save against.';
-    } catch (_) {
-        row.loading = false;
-        row.error = 'Could not reach this edge.';
-    }
+    // The row says its preview's refusal by name, the door's sentence when
+    // the server gave none (answerBody), so it passes NO_NOTICE.
+    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview',
+        { to_style_id: styleID, cells: row.cells }, NO_NOTICE);
+    const j = answerBody(res);
+    row.loading = false;
+    row.fingerprint = j.fingerprint || '';
+    // THE PREVIEW'S FINDINGS BELONG ON THE ROW, not on the save that comes
+    // after it. Measured on the HK fixture: applying `PLN_01 / PLN_04` to a
+    // part running `PLN_03 / PLN_06` lands two cells with no part on them,
+    // and the preview says so twice — `PLN_01 · Select a part`,
+    // `PLN_04 · Select a part` — while planning two real press-index
+    // swaps whose supply legs carry no payload_code at all. The modal drew
+    // `2 orders after the change` over `Save to 1 part`, and the engineer
+    // learned the rest from a 422 AFTER pressing it.
+    //
+    // A ROW WITH FINDINGS IS NOT SAVED (owner ruling F1, 2026-09-12).
+    // R8's "an apply that leaves parts unplaced saves" stands — it is the
+    // PART with no position that saves, and the row says so. What may not
+    // happen is the modal offering a save the server refuses, so a row
+    // still carrying a finding keeps its tick and stays out of the count
+    // (applyRowReady), and the question it can answer it asks.
+    row.findings = (j.findings || []).filter(f => f.core_node_name);
+    // NULL, NOT ZERO, when the body carried no count: a preview of the
+    // running style is not planned (R3) and a zero there would read as a
+    // changeover that moves nothing.
+    row.orders = typeof j.order_count === 'number' ? j.order_count : null;
+    // A refusal is shown BY NAME on the row it belongs to, and leaves the
+    // row ticked-but-unsavable rather than quietly unticking itself.
+    if (!res.ok || j.error) row.error = j.error || 'The server refused this preview (' + res.status + ').';
+    else if (!row.fingerprint) row.error = 'No fingerprint came back — nothing to save against.';
     drawPresetApply();
 }
 

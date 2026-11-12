@@ -21,14 +21,15 @@
     unhandled rejection: none
 ### POST /api/processes/1/flow/preview  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-bar div.h: Preview OK · null orders
-    new text: #pd-bar div.d: Inbound source GRP_A · SRC_1 · outbound destination DST_1 · DST_2 · ULD_1 · key route LM_1, LM_2, LM_3 · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
+    new text: #pd-bar div.h.bad: Server error (500)
+    new text: #pd-bar div.d: Check the flow, or ask an engineer if this needs Core. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/flow/preview  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
+    new text: #pd-bar div.h.bad: No answer from the server
+    new text: #pd-bar div.d: Check the flow, or ask an engineer if this needs Core. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
     sheet: closed
     state: no message set
     unhandled rejection: none

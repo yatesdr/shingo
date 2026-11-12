@@ -1083,6 +1083,12 @@ const DOOR_BUGS = [
                 return ['pressed again, it saves again', again.length > 0, 'pressed again: ' + (r.page.since(mark).map(lineOf).join(' · ') || 'nothing sent')];
             }],
     },
+    {
+        title: '"Preview OK · null orders" (processes-desktop.js:2400): the flow edit\'s preview answers a 500 with no body',
+        spec: () => Object.assign({ previews: true }, T.DRIVE.flowEdit), target: { method: 'POST', url: '/api/processes/1/flow/preview', k: 0 },
+        answer: BODILESS_500,
+        checks: [checks.notSays('Preview OK · null orders'), checks.says('Server error (500)')],
+    },
 ];
 async function pinDoorBugs() {
     T.setCurrent('door-bugs.txt');
