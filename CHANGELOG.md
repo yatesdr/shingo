@@ -16,6 +16,18 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- Positions, Inbound, Staging and Outbound are one picker: four buckets over one checklist, each in its own colour
+- A node already in another bucket is tagged with it; the open bucket's names are removable tokens
+- Settings picks positions and the routing set with the same picker, saved as each name is ticked
+- The routing roles read Inbound and Outbound on screen (Sources and Destinations before)
+- Setup's Change… opens Edit process, the Add process sheet filled in, at the row's section
+- Edit process saves only what changed, and stops at the first refusal saying what was saved
+- Setup has a Parts row, and its rows say counts: "16 positions", "2 inbound · 1 outbound", "11 parts"
+- New style with no recipe picks its name from the process's parts, or takes a typed one-off name
+- Settings' routing map waits behind Show on map, fitted to the process, its marks in the bucket colours
+
 ## v0.6.1 — 2026-11-12
 
 Deploy: no migration.
