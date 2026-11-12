@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.4.0 — 2026-11-12
+
 Deploy: Edge v47. Update Core and every Edge at a plant in one window.
 
 - Every order request can name the press it serves; Core stores it for plain orders as for multi-step ones
