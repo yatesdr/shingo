@@ -168,6 +168,7 @@ function boot() {
     // Scroll does not bubble, so the headings' sideways sync listens in the
     // capture phase on the document: it survives every redraw of the table.
     document.addEventListener('scroll', syncPosHead, true);
+    window.addEventListener('hashchange', onHashChange);
     window.addEventListener('focus', () => { void refreshRail(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshRail(); });
     setInterval(() => {
@@ -4787,8 +4788,13 @@ function stToggle(key) {
 
 // identityField is the part-identity tag: derived from the counter tag (the
 // default), typed over it, or none (the process has no identity tag).
+// OVERRIDE PRESSED IS OVERRIDE before a tag is typed (F20): the segment read
+// the mode off the tag alone, so it drew the tag box and kept Derive lit.
+// S.identityOverride is the draft it was pressed on, so a draft rebuilt from
+// the store (Discard, a save, another process) forgets it.
 function identityField() {
-    const mode = S.settings.identity_none ? 'none' : (S.settings.identity_tag_name ? 'override' : 'derive');
+    const mode = S.settings.identity_none ? 'none'
+        : (S.settings.identity_tag_name || S.identityOverride === S.settings ? 'override' : 'derive');
     const seg = [['derive', 'Derive'], ['override', 'Override'], ['none', 'None']].map(m =>
         '<button class="' + (mode === m[0] ? 'on' : '') + '" data-act="st-ident" data-mode="' + m[0] + '">' +
         esc(m[1]) + '</button>').join('');
@@ -4797,7 +4803,7 @@ function identityField() {
         : mode === 'derive' ? (derived ? 'reads ' + derived : 'the counter tag names no struct member to derive from')
             : 'the CATID tag this cell publishes';
     return stField('Part identity (CATID)', sub, '<div class="pd-seg">' + seg + '</div>') +
-        (mode === 'override' || S.identityOverride
+        (mode === 'override'
             ? stField('Identity tag', '', stCombo('identity_tag_name', 'identity', '[data-st="counter_plc_name"]', ''))
             : '');
 }
@@ -8130,6 +8136,36 @@ async function runPresetApply() {
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
     'gspot-add': 1, 'glist-add': 1 };
 
+// showTab is a tab's click, and the address bar's #tab= edited in place.
+function showTab(t) {
+    S.tab = t;
+    // A notice is about the tab it was written on, and this is another.
+    S.notice = '';
+    if (S.tab === 'flows') drawFlows();
+    else if (S.tab === 'screens') drawScreens();
+    else if (S.tab === 'presets') openPresets();
+    else if (S.tab === 'settings') openSettings();
+    syncHash();
+}
+
+// A #tab= (or #style=) EDITED IN THE ADDRESS BAR is a hashchange and no load,
+// and hashOpts is read only at boot, so the page stayed where it was (F21).
+// syncHash's replaceState fires no hashchange, so this runs only for an edit
+// or a pasted link. The boot-only one-shots are not re-run here.
+function onHashChange() {
+    if (!S.processID || !S.composer) return;
+    const h = hashOpts();
+    const t = h.tab || 'flows';
+    if (['flows', 'screens', 'settings', 'presets'].indexOf(t) < 0) return;
+    if (t === 'flows' && Number(h.style) && Number(h.style) !== S.styleID && composerStyle(Number(h.style))) {
+        S.tab = 'flows';
+        selectStyle(Number(h.style));
+        syncHash();
+        return;
+    }
+    if (t !== S.tab) showTab(t);
+}
+
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
     const tab = e.target.closest && e.target.closest('[data-tab]');
@@ -8223,7 +8259,7 @@ function onClick(e) {
             case 'st-ident': {
                 const mode = btn.dataset.mode;
                 S.settings.identity_none = mode === 'none';
-                S.identityOverride = mode === 'override';
+                S.identityOverride = mode === 'override' ? S.settings : null;
                 if (mode !== 'override') S.settings.identity_tag_name = '';
                 drawSettings();
                 return;
@@ -8351,17 +8387,7 @@ function onClick(e) {
     }
     const mapEl = e.target.closest && e.target.closest('[data-mapname]');
     if (mapEl && S.tab === 'settings') { flashRoutingRow(mapEl.dataset.mapname); return; }
-    if (tab) {
-        S.tab = tab.dataset.tab;
-        // A notice is about the tab it was written on, and this is another.
-        S.notice = '';
-        if (S.tab === 'flows') drawFlows();
-        else if (S.tab === 'screens') drawScreens();
-        else if (S.tab === 'presets') openPresets();
-        else if (S.tab === 'settings') openSettings();
-        syncHash();
-        return;
-    }
+    if (tab) { showTab(tab.dataset.tab); return; }
     // A preset row expands its member list; a second click closes it.
     const presetRowEl = e.target.closest && e.target.closest('[data-preset]');
     if (presetRowEl && !btn && S.tab === 'presets') {

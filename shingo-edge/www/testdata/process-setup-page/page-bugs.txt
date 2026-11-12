@@ -12,10 +12,10 @@ ok   no PUT /api/styles/2 is sent
 ok   the sheet stays open and says why
 
 ## F20: Part identity, Override pressed, lights Override (FINDINGS F20)
-BUG  Override is lit and Derive is not: lit: ["derive"]
+ok   Override is lit and Derive is not
 
 ## F21: #tab= edited in place switches the tab (FINDINGS F21)
-BUG  each hash lands on its tab: #tab=settings -> flows style 1 | #tab=screens -> flows style 1 | #style=2 -> flows style 1
+ok   each hash lands on its tab
 
 ## census #1: Containment destination on a failed node-list read says so
 BUG  the list does not open on "-- None --" alone: rows [""]
