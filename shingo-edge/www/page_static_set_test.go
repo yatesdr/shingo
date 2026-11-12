@@ -41,12 +41,12 @@ var edgePageBudgets = map[string]struct {
 	"containment.html":      {18, 62 << 10},  // 16, 57521
 	"diagnostics.html":      {16, 53 << 10},  // 14, 49031
 	"login.html":            {15, 51 << 10},  // 13, 47427
-	"manual-message.html":   {16, 54 << 10},  // 14, 49541
-	"manual-order.html":     {17, 56 << 10},  // 15, 51650
+	"manual-message.html":   {19, 73 << 10},  // 17, 67448 at s3-adapters: the shared picker and its adapters
+	"manual-order.html":     {20, 75 << 10},  // 18, 68974 at s3-adapters: the shared picker and its adapters
 	"operator-display.html": {27, 194 << 10}, // 25, 180258
 	"orders.html":           {18, 80 << 10},  // 16, 73607
 	"processes.html":        {32, 340 << 10}, // 30, 315704
-	"production.html":       {19, 88 << 10},  // 17, 81757
+	"production.html":       {22, 101 << 10}, // 20, 93782 at s3-adapters: the shared picker and its adapters
 	"replenishment.html":    {17, 60 << 10},  // 15, 55738
 }
 

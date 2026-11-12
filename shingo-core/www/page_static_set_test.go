@@ -35,7 +35,7 @@ var corePageBudgets = map[string]struct {
 }{
 	// measured 2026-11-11 at 810a435e (requests, bytes); the skeleton counts sim-speed-strip.js,
 	// which only a sim build loads
-	"bins.html":                  {22, 97 << 10},  // 20, 89587
+	"bins.html":                  {25, 110 << 10}, // 23, 102252 at s3-adapters: the shared picker and its adapters
 	"config.html":                {20, 83 << 10},  // 18, 76960
 	"count-history.html":         {20, 83 << 10},  // 18, 76713
 	"cycle-time.html":            {18, 72 << 10},  // 16, 66151
@@ -54,15 +54,15 @@ var corePageBudgets = map[string]struct {
 	"material-flags.html":        {18, 72 << 10},  // 16, 66151
 	"mission-detail.html":        {21, 84 << 10},  // 19, 77762
 	"missions.html":              {24, 174 << 10}, // 22, 161320
-	"nodes.html":                 {23, 137 << 10}, // 21, 126900
-	"orders.html":                {22, 97 << 10},  // 20, 89905
+	"nodes.html":                 {26, 151 << 10}, // 24, 140189 at s3-adapters: the shared picker and its adapters
+	"orders.html":                {25, 110 << 10}, // 23, 101651 at s3-adapters: the shared picker and its adapters
 	"orphans.html":               {18, 72 << 10},  // 16, 66151
 	"overview.html":              {32, 186 << 10}, // 30, 172290
 	"payloads.html":              {19, 83 << 10},  // 17, 76726
 	"rds_explorer.html":          {19, 85 << 10},  // 17, 78632
 	"robots.html":                {26, 117 << 10}, // 24, 108820
 	"sourcing.html":              {19, 78 << 10},  // 17, 72428
-	"test-orders.html":           {19, 78 << 10},  // 17, 71685
+	"test-orders.html":           {22, 91 << 10},  // 20, 84246 at s3-adapters: the shared picker and its adapters
 }
 
 func TestPages_StaticSetLoadsInEveryBrowser(t *testing.T) {
