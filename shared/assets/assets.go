@@ -444,6 +444,16 @@ func hashedURL(p, hash string) string {
 	return dir + strings.TrimSuffix(base, ext) + "." + hash + ext
 }
 
+// PlainURL is p without the hash URL put in its last segment, and whether it
+// had one: /static/a/x.<hash>.js is /static/a/x.js. Two URLs with one plain
+// form are one file, so a page that loads both holds two module instances.
+func PlainURL(p string) (string, bool) {
+	if plain, _, ok := splitHashed(p); ok {
+		return plain, true
+	}
+	return p, false
+}
+
 // splitHashed undoes hashedURL: the plain path and the hash, when p's last
 // segment carries one.
 func splitHashed(p string) (plain, hash string, ok bool) {

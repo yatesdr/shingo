@@ -123,8 +123,37 @@ func resolveSpecifier(from, s string) string {
 // (TestRealTrees_ImportScanAgreesWithALineReader compares it with a line
 // reader on every module both binaries serve).
 func scanImports(src []byte) []string {
-	lx := &jsLexer{src: src}
 	var specs []string
+	for _, s := range scanSpecs(src) {
+		specs = append(specs, s.text)
+	}
+	return specs
+}
+
+// ScanModuleImports splits a module's specifiers as a browser's load does:
+// static (import … from, import '…', export … from), fetched before the
+// module runs, and dynamic (import('…') of one literal), fetched when the
+// call runs. A page's boot is the static closure; the dynamic one is what
+// it can still reach. Specifiers are as written, unresolved.
+func ScanModuleImports(src []byte) (static, dynamic []string) {
+	for _, s := range scanSpecs(src) {
+		if s.dynamic {
+			dynamic = append(dynamic, s.text)
+		} else {
+			static = append(static, s.text)
+		}
+	}
+	return static, dynamic
+}
+
+type spec struct {
+	text    string
+	dynamic bool
+}
+
+func scanSpecs(src []byte) []spec {
+	lx := &jsLexer{src: src}
+	var specs []spec
 	var prev jsTok
 	for {
 		t := lx.next()
@@ -136,7 +165,9 @@ func scanImports(src []byte) []string {
 			case "import":
 				specs = append(specs, lx.importClause()...)
 			case "export":
-				specs = append(specs, lx.exportClause()...)
+				for _, s := range lx.exportClause() {
+					specs = append(specs, spec{text: s})
+				}
 			}
 		}
 		prev = t
@@ -145,11 +176,11 @@ func scanImports(src []byte) []string {
 }
 
 // importClause reads what follows `import`.
-func (lx *jsLexer) importClause() []string {
+func (lx *jsLexer) importClause() []spec {
 	t := lx.next()
 	switch {
 	case t.kind == tokString: // import 'x'
-		return []string{t.text}
+		return []spec{{text: t.text}}
 	case t.kind == tokPunct && t.text == "(": // import('x')
 		s := lx.next()
 		if s.kind != tokString {
@@ -157,7 +188,7 @@ func (lx *jsLexer) importClause() []string {
 			return nil
 		}
 		if c := lx.next(); c.kind == tokPunct && (c.text == ")" || c.text == ",") {
-			return []string{s.text}
+			return []spec{{text: s.text, dynamic: true}}
 		} else {
 			lx.unread(c)
 		}
@@ -166,7 +197,11 @@ func (lx *jsLexer) importClause() []string {
 		return nil
 	}
 	lx.unread(t)
-	return lx.fromClause()
+	var out []spec
+	for _, s := range lx.fromClause() {
+		out = append(out, spec{text: s})
+	}
+	return out
 }
 
 // exportClause reads what follows `export`: only `export * …` and

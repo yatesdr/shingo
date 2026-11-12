@@ -57,6 +57,19 @@ func TestScanImports(t *testing.T) {
 	}
 }
 
+// ScanModuleImports splits what scanImports reads: an import() is fetched when
+// it runs, so a page's boot does not count it.
+func TestScanModuleImports_SplitsStaticFromDynamic(t *testing.T) {
+	src := "import './1.js';\nexport * from './2.js';\nimport('./3.js');\nimport x from './4.js';"
+	static, dynamic := ScanModuleImports([]byte(src))
+	if want := []string{"./1.js", "./2.js", "./4.js"}; !reflect.DeepEqual(static, want) {
+		t.Errorf("static %q, want %q", static, want)
+	}
+	if want := []string{"./3.js"}; !reflect.DeepEqual(dynamic, want) {
+		t.Errorf("dynamic %q, want %q", dynamic, want)
+	}
+}
+
 func TestResolveSpecifier(t *testing.T) {
 	for _, c := range []struct{ from, spec, want string }{
 		{"/static/a/x.js", "./y.js", "/static/a/y.js"},
