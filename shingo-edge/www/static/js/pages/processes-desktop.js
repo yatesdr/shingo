@@ -230,7 +230,8 @@ function drawList() {
         // be found by name. The names are already on the page.
         const hay = stylesOf(p.id).map(s => s.name).join(' · ');
         return '<tr data-open="' + p.id + '" data-hay="' + esc(hay) + '">' +
-            '<td class="pn"><b>' + esc(p.name) + '</b><small>' + esc(st.length ? st[0].name : '—') + '</small></td>' +
+            '<td class="pn"><b>' + esc(p.name) + '</b><span id="pd-h-' + p.id + '">' + healthCount(p.id) + '</span>' +
+            '<small>' + esc(st.length ? st[0].name : '—') + '</small></td>' +
             '<td>' + esc(groupName(p.group_id) || '—') + '</td>' +
             '<td>' + (run ? '<span class="pd-runname">' + esc(run.name) + '</span>' : '<span class="pd-dim">—</span>') + '</td>' +
             '<td class="num">' + stylesOf(p.id).length + '</td>' +
@@ -299,18 +300,21 @@ function drawList() {
         '<div class="pd-gate">' + searchBox('pd-q', 'find a process, station or part') +
         '<button class="pd-btn" data-act="add-group">Add group</button>' +
         '<button class="pd-btn primary" data-act="add-process">Add process</button></div></div>' +
-        '<div id="pd-catid"></div>' +
         '<div class="pd-list" id="pd-list">' + body + '</div>';
     const q = $('pd-q');
     if (q) q.addEventListener('input', () => filterList(q.value));
     refreshCatidHealth();
 }
 
-// The part-identity health strip above the list: one block per process with a
-// red or amber condition (catid-health.js renders /api/catid-health). Advisory
-// — a failed read leaves the strip as it was. Refetched on the page's 10 s
-// refresh while the list is showing. On a process's Settings tab it re-reads
-// that process's items instead (its notes, and the slots row's words), so a
+// THE LIST CARRIES ONE COUNT PER PROCESS, NOT A STRIP (S4: the strip buried
+// the list at a plant). The count is the process's red and amber items, toned
+// by its worst (catid-health.js countHTML); an info item adds nothing. The
+// summary carries the counts, so a refresh of the list is ONE request
+// (/api/catid-health) and no process's items are read until it is opened: they
+// and their verbs are on its Settings tab (healthSection). Advisory: a failed
+// read leaves the counts as they were. Refetched on the page's 10 s refresh
+// while the list is showing. On a process's Settings tab it re-reads that
+// process's items instead (the health rows, and the slots row's words), so a
 // verb run from there redraws there.
 async function refreshCatidHealth() {
     if (S.processID && S.tab === 'settings') {
@@ -318,20 +322,22 @@ async function refreshCatidHealth() {
         drawSettings();
         return;
     }
-    const box = $('pd-catid');
-    const strip = window.CatidHealth;
-    if (!box || !strip) return;
-    try {
-        const res = await send('GET', '/api/catid-health', undefined, NO_NOTICE);
-        if (!res.ok) return;
-        const rows = res.body;
-        const items = {};
-        await Promise.all((rows || []).filter(strip.shows).map(async r => {
-            const one = await send('GET', '/api/processes/' + r.process_id + '/catid-health', undefined, NO_NOTICE);
-            if (one.ok) items[r.process_id] = (one.body || {}).items || [];
-        }));
-        box.innerHTML = strip.listHTML(rows, items);
-    } catch (e) { /* advisory */ }
+    if (S.processID) return;
+    const res = await send('GET', '/api/catid-health', undefined, NO_NOTICE);
+    if (!res.ok) return;
+    S.catidSummary = Array.isArray(res.body) ? res.body : [];
+    for (const p of S.processes) {
+        const box = $('pd-h-' + p.id);
+        if (box) box.innerHTML = healthCount(p.id);
+    }
+}
+
+// healthCount is one list row's count, from the last summary read ('' before
+// the first, and for a process with no red or amber item).
+function healthCount(pid) {
+    const h = window.CatidHealth;
+    const row = (S.catidSummary || []).find(r => r.process_id === pid);
+    return h && row ? h.countHTML(row) : '';
 }
 
 // The strip's verbs. Each asks first, in the page's one sheet, and the sheet
@@ -4716,24 +4722,30 @@ function hasPressIndexClaim() {
         (st.claims || []).some(c => c.swap_mode === 'two_robot_press_index'));
 }
 
-// notesField is the open process's info items (CatidHealth.notes): the
-// Processes list shows only red and amber, so a condition that needs no one
-// now (a hold to clear, an incoming style with no CATIDs) is said here, with
-// its verbs. A second counter of the same stroke is said on its slot's line
-// in the MES slots row instead, when that row has the slot.
-function notesField() {
-    const strip = window.CatidHealth;
-    if (!strip) return '';
+// healthSection is the open process's health items, worst first, each with its
+// verbs (CatidHealth.itemHTML, the one renderer): the red and amber ones the
+// list's count stands for, beside the info ones (a hold to clear, an incoming
+// style with no CATIDs) that need no one now. It heads the tab, so the count
+// that opened it lands on what it counted; the live words in its title are the
+// count (33-settings-pages.md rule 2). A second counter of the same stroke is
+// said on its slot's line in the MES slots row instead, when that row has the
+// slot. No items, no section.
+function healthSection() {
+    const h = window.CatidHealth;
+    if (!h) return '';
     const slotTags = new Set((S.countingSlots || []).map(s => s.tag));
-    const notes = strip.notes(S.catidItems || []).filter(it =>
+    const items = (S.catidItems || []).filter(it =>
         !(it.kind === 'counter_slot_lockstep' && it.data && slotTags.has(it.data.tag)));
-    if (!notes.length) return '';
-    return '<div class="pd-sfld pd-scl-fld"><label>Notes<small>standing conditions the process list leaves out</small></label>' +
-        '<div class="v col">' + notes.map(it => strip.itemHTML(S.processID, it)).join('') + '</div></div>';
+    if (!items.length) return '';
+    const need = items.filter(it => it.severity === 'red' || it.severity === 'amber').length;
+    return '<div class="pd-sect"><h2>Health</h2><span class="pd-cnt' + (need ? ' warn' : '') + '"><i></i>' +
+        (need ? need + ' to look at' : 'nothing needs anyone now') + '</span></div>' +
+        '<div class="pd-sfld pd-scl-fld"><label>Items<small>worst first; hover one for its detail</small></label>' +
+        '<div class="v col">' + items.map(it => h.itemHTML(S.processID, it)).join('') + '</div></div>';
 }
 
 // loadCatidItems reads the open process's health items, for the slots row's
-// words and the notes ([] on a failed read).
+// words and the health section ([] on a failed read).
 async function loadCatidItems() {
     const res = await send('GET', '/api/processes/' + S.processID + '/catid-health', undefined, NO_NOTICE);
     S.catidItems = res.ok ? ((res.body || {}).items || []) : [];
@@ -5079,7 +5091,7 @@ function drawSettings() {
             stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
         stField('Counting', 'off: this process isn’t counted', stToggle('counter_enabled')) +
         (hasPressIndexClaim() ? '<p class="pd-note">' + esc(PRESS_INDEX_COUNTING) + '</p>' : '') +
-        identityField() + (card ? card.countingHTML(view) : '') + notesField();
+        identityField() + (card ? card.countingHTML(view) : '');
 
     if (!S.curtain) S.curtain = curtainDraft();
     const positions = positionsSection();
@@ -5153,7 +5165,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
+        healthSection() + general + counter + positions + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +

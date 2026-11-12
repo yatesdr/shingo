@@ -1,18 +1,19 @@
-// catid-health.js — the part-identity health strip on the Processes page.
+// catid-health.js — a process's part-identity health items, on the Processes
+// page.
 //
 // The Edge computes every item from state on each read (engine/catid_health.go),
-// so the strip only renders what /api/catid-health (one line per process) and
-// /api/processes/{id}/catid-health (its items) answer; the Processes page
-// refetches on its 10 s refresh, which is what clears an item whose condition
-// ended with no hint (a read recovering, a window expiring). One block per
-// process with a red or amber item, toned by its worst one, each of those
-// items with the verbs that resolve it: pin an unmapped CATID to a style (the
-// suggestion, or a picked one), Charge or Write off a hold, count the slot the
-// PLC counts on, start the changeover a wrong part offers (its action). An
-// info item needs no one now (a second counter of the same stroke, a hold to
-// clear, an incoming style with no CATIDs): the list leaves it out, and the
-// process's Settings tab shows it with its verbs (notes). A classic script,
-// like desktop-bodies.js, so its Node test loads it as CommonJS.
+// so this only renders what the routes answer. Two places, one renderer each:
+//   - the Processes list: one count per process row (countHTML), from the
+//     summary alone (/api/catid-health carries each process's red and amber
+//     counts), so the list's 10 s refresh is one request. An info item needs
+//     no one now and adds nothing to the count;
+//   - the process's Settings tab: every item, worst first, with the verbs
+//     that resolve it (itemHTML): pin an unmapped CATID to a style (the
+//     suggestion, or a picked one), Charge or Write off a hold, count the slot
+//     the PLC counts on, start the changeover a wrong part offers (its action).
+// An item's detail (a PLC's read error among them) is its help, behind the
+// headline, never the row's words. A classic script, like desktop-bodies.js,
+// so its Node test loads it as CommonJS.
 (function () {
     'use strict';
 
@@ -23,17 +24,24 @@
 
     const TONE = { red: 'pd-ch-red', amber: 'pd-ch-amber', info: 'pd-ch-info' };
 
-    // LISTED: the severities the Processes list shows.
-    const LISTED = { red: true, amber: true };
+    // The list's count takes the shared chips' hues: red is an error, amber a
+    // caution (05-status-indicators.md, the chip floors).
+    const COUNT_TONE = { red: 'chip-err', amber: 'chip-warn' };
 
-    // listed(items): the items the list shows; notes(items): the rest, for the
-    // process's own page.
-    function listed(items) { return (items || []).filter(it => LISTED[it.severity]); }
-    function notes(items) { return (items || []).filter(it => !LISTED[it.severity]); }
+    // needing(row): how many of a summary row's items need someone (red and
+    // amber); an info item counts in row.count only.
+    function needing(row) { return row ? (Number(row.red) || 0) + (Number(row.amber) || 0) : 0; }
 
-    // shows(row): whether the list shows a process's summary row: its worst
-    // item is red or amber.
-    function shows(row) { return !!(row && LISTED[row.worst]); }
+    // countHTML is a list row's one count: the process's red and amber items,
+    // toned by its worst one, or '' when it has none. It opens the process's
+    // Settings, where the items and their verbs are.
+    function countHTML(row) {
+        const n = needing(row);
+        if (!n) return '';
+        const tone = Number(row.red) > 0 ? 'red' : 'amber';
+        return '<span class="chip ' + COUNT_TONE[tone] + ' pd-hcount" data-act="open-settings" data-process="' +
+            esc(row.process_id) + '" title="' + n + ' to look at, on Settings">' + n + '</span>';
+    }
 
     // actionsHTML: the verbs an item carries, as data-act buttons the page's
     // click handler runs.
@@ -73,34 +81,16 @@
         return '';
     }
 
+    // itemHTML is one item: its headline, toned by its severity, the detail
+    // behind it as its help, and its verbs.
     function itemHTML(pid, it) {
         const acts = actionsHTML(pid, it);
-        return '<div class="pd-ch-item ' + (TONE[it.severity] || TONE.info) + '"><span>' + esc(it.headline) +
-            (it.detail ? ' <span class="pd-dim">' + esc(it.detail) + '</span>' : '') + '</span>' +
+        return '<div class="pd-ch-item ' + (TONE[it.severity] || TONE.info) + '"><span' +
+            (it.detail ? ' title="' + esc(it.detail) + '"' : '') + '>' + esc(it.headline) + '</span>' +
             (acts ? '<span class="pd-ch-acts">' + acts + '</span>' : '') + '</div>';
     }
 
-    // listHTML renders the summary rows whose worst item is red or amber, each
-    // process with its red and amber items when itemsByProcess carries them
-    // (else its worst headline). Nothing to show is no strip.
-    function listHTML(rows, itemsByProcess) {
-        const shown = Array.isArray(rows) ? rows.filter(shows) : [];
-        if (shown.length === 0) return '';
-        const items = itemsByProcess || {};
-        return '<div class="pd-ch" role="list">' + shown.map(function (r) {
-            const its = Array.isArray(items[r.process_id]) ? listed(items[r.process_id]) : null;
-            const head = '<b class="pd-ch-name" data-open="' + esc(r.process_id) + '">' + esc(r.name) + '</b>';
-            if (!its || its.length === 0) {
-                const more = r.count > 1 ? ' <span class="pd-dim">and ' + (r.count - 1) + ' more</span>' : '';
-                return '<div class="pd-ch-row ' + (TONE[r.worst] || TONE.info) + '" role="listitem">' + head + ' ' +
-                    esc(r.headline) + more + '</div>';
-            }
-            return '<div class="pd-ch-row ' + (TONE[r.worst] || TONE.info) + '" role="listitem">' + head +
-                its.map(it => itemHTML(r.process_id, it)).join('') + '</div>';
-        }).join('') + '</div>';
-    }
-
-    const api = { listHTML, itemHTML, listed, notes, shows };
+    const api = { countHTML, itemHTML, needing };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (typeof window !== 'undefined') window.CatidHealth = api;
 })();

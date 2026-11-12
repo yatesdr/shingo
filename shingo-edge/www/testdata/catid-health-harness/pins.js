@@ -1,8 +1,9 @@
-// pins.js — the CATID health strip on the Processes page, as the page drives
-// it today: the requests one refresh of the list sends with N processes the
-// list shows, what the strip draws from them, what the 10 s refresh, window
-// focus and a process's own tabs read, and what the page does with the
-// "catid-health" SSE hint. Brief S4's "pin first" for the strip.
+// pins.js — the CATID health items on the Processes page: the requests one
+// refresh of the list sends with N processes that have a red or amber item,
+// the one count each row draws from them, what the 10 s refresh, window focus
+// and a process's own tabs read, and that the page opens no stream (the
+// "catid-health" SSE hint is gone). Brief S4's "pin first" for the strip, moved
+// with S4's change: the list shows no strip, one count per row, one request.
 //
 // Run by www/catid_health_page_pins_test.go (TestCatidHealthPagePins), which
 // compares what this prints against www/testdata/catid-health-page/*. It
@@ -127,13 +128,15 @@ function reqs(label, calls) {
     return [label + ': ' + calls.length + ' request' + (calls.length === 1 ? '' : 's')].concat(callLines(calls));
 }
 
-// The strip's markup, one element per line, so a golden diff names the row.
-function stripLines(page) {
-    const box = page.byId('pd-catid');
-    if (!box) return ['  (no #pd-catid on the page)'];
-    const html = box.innerHTML;
-    if (!html) return ['  (empty: no strip)'];
-    return splitMarkup(html);
+// The list's health counts: each process row's count box (#pd-h-<id>), as
+// drawn; and whether a strip is drawn anywhere (S4: none).
+function stripLines(page, ids, names) {
+    const out = ['  #pd-catid on the page: ' + (page.byId('pd-catid') ? 'yes' : 'no')];
+    for (const id of ids) {
+        const box = page.byId('pd-h-' + id);
+        out.push('  ' + (names || NAMES)[id] + ': ' + (!box ? '(no count box)' : box.innerHTML || '(no count)'));
+    }
+    return out;
 }
 
 function splitMarkup(html) {
@@ -149,11 +152,11 @@ function errors(page) {
 // ── the list: requests per refresh with N processes shown ───────────────────
 
 async function listPins() {
-    const lines = ['# The Processes list (no ?process=), its health strip fed the summary and items the routes serve',
-        '# (testdata/catid-health/). "shown" = summary rows whose worst item is red or amber (catid-health.js',
-        '# shows): the page reads the summary, then one items read per shown row, every boot of the list and',
-        '# every 10 s tick; info-only rows (CELL-HELD) are in the summary and read nothing more.'];
-    const strip = ['# What the strip (#pd-catid) draws from those answers, one element per line.'];
+    const lines = ['# The Processes list (no ?process=), its health counts fed the summary the route serves',
+        '# (testdata/catid-health/). "shown" = summary rows with a red or amber item: the page reads the summary',
+        '# alone, every boot of the list and every 10 s tick, and no process\'s items (S4: one request).'];
+    const strip = ['# What each list row draws from that answer (#pd-h-<id>): one count, red + amber, toned by the worst;',
+        '# no strip.'];
     const perTick = [];
     for (const n of [0, 1, 3]) {
         const summary = SUMMARY[n];
@@ -179,39 +182,37 @@ async function listPins() {
         lines.push(...reqs('visibilitychange to visible (refreshRail)', vis));
         lines.push(...errors(page));
         perTick.push('N = ' + n + ': ' + ticked.length + ' (1 summary + ' + (ticked.length - 1) + ' items reads)');
-        strip.push('', '## N = ' + n + ' shown', ...stripLines(page));
+        strip.push('', '## N = ' + n + ' shown', ...stripLines(page, STAGE[n]));
     }
     lines.push('', '## requests per 10 s tick of the list, by N shown', ...perTick.map(l => '  ' + l));
 
-    // One shown process's items read refused: its row falls back to the
-    // summary's headline and "and N more"; the summary read refused: the
-    // strip is left as it was (advisory).
-    {
-        const page = await open({ page: pageData(STAGE[3]), serve: server(SUMMARY[3], ITEMS, { '/api/processes/4/catid-health': 'boom' }) });
-        lines.push('', '## N = 3 shown, CELL-IDENT\'s items read answered 500');
-        lines.push(...reqs('boot', page.since(0)), ...errors(page));
-        strip.push('', '## N = 3 shown, CELL-IDENT\'s items read answered 500 (its row: the summary headline)', ...stripLines(page));
-    }
+    // The summary read refused: the counts are left as they were (advisory).
     {
         // refuse is read on every call, so filling it mid-run refuses from
         // the next request on.
         const refuse = {};
         const page = await open({ page: pageData(STAGE[3]), serve: server(SUMMARY[3], ITEMS, refuse) });
-        const before = page.byId('pd-catid').innerHTML;
+        const counts = () => STAGE[3].map(id => (page.byId('pd-h-' + id) || {}).innerHTML).join('|');
+        const before = counts();
         const at = page.mark();
         refuse['/api/catid-health'] = 'boom';
         await tick(page);
         lines.push('', '## N = 3 shown, then a tick whose summary read answers 500');
         lines.push(...reqs('the tick', page.since(at)), ...errors(page));
-        lines.push('  strip after: ' + (page.byId('pd-catid').innerHTML === before ? 'unchanged (advisory)' : 'CHANGED'));
+        lines.push('  counts after: ' + (counts() === before ? 'unchanged (advisory)' : 'CHANGED'));
     }
     // Item 5: two styles whose names differ by a trailing space.
     {
         const items = {};
         items[TWIN.items.url] = TWIN.items;
         const page = await open({ page: { processes: [{ id: 1, name: 'CELL-TWIN', group_id: 0 }] }, serve: server(TWIN.summary, items) });
-        strip.push('', '## item 5: CELL-TWIN, CATID 6001 in "TWIN" and "TWIN " (item5-*.txt)', ...stripLines(page),
-            '  text as drawn: ' + page.segments().filter(s => /6001/.test(s)).join(' | '));
+        strip.push('', '## item 5: CELL-TWIN, CATID 6001 in "TWIN" and "TWIN " (item5-*.txt): the list, then its Settings',
+            ...stripLines(page, [1], { 1: 'CELL-TWIN' }));
+        const pd = { processes: [{ id: 1, name: 'CELL-TWIN', group_id: 0 }], activeProcessId: 1 };
+        const open1 = await open({ page: pd, search: '?process=1', serve: server(TWIN.summary, items) });
+        open1.click('root', { tab: 'settings' });
+        await open1.settle();
+        strip.push('  Settings, text as drawn: ' + open1.segments().filter(s => /6001/.test(s)).join(' | '));
     }
     out['requests-list.txt'] = lines.join('\n') + '\n';
     out['strip.txt'] = strip.join('\n') + '\n';
@@ -245,11 +246,12 @@ async function processPins() {
     lines.push(...reqs('refreshCatidHealth on Settings (what a verb run there calls after; health reads only)',
         page.since(at).filter(health)));
     lines.push('  #pd-catid on the page: ' + (page.byId('pd-catid') ? 'yes' : 'no'));
-    // The Notes field as the Settings tab draws it (notesField, the page's own
-    // function): the info items the list leaves out, with their verbs.
-    const notes = String(page.pd('notesField')() || '');
-    lines.push('', '## the Settings tab\'s Notes (notesField: CatidHealth.notes, the info items the list leaves out)',
-        ...(notes ? splitMarkup(notes) : ['  (none)']));
+    // The health section as the Settings tab draws it (healthSection, the
+    // page's own function): every item, red and amber beside the info ones,
+    // worst first, with their verbs (S4 item 2, one renderer).
+    const healthHTML = String(page.pd('healthSection')() || '');
+    lines.push('', '## the Settings tab\'s Health (healthSection: every item, worst first, with its verbs)',
+        ...(healthHTML ? splitMarkup(healthHTML) : ['  (none)']));
     lines.push(...errors(page));
     out['requests-process.txt'] = lines.join('\n') + '\n';
 }
@@ -257,10 +259,10 @@ async function processPins() {
 // ── the SSE hint ────────────────────────────────────────────────────────────
 
 async function ssePins() {
-    const lines = ['# The "catid-health" SSE hint (www/sse.go, EventCATIDHealthChanged): what a frame makes the',
-        '# Processes page fetch. The page opens no /events stream of its own (it imports no createSSE or',
-        '# onSSE), so the hint has nothing to arrive on here: the strip moves only on the 10 s tick, a',
-        '# boot of the list, or a verb\'s own refresh.'];
+    const lines = ['# The "catid-health" SSE hint is gone (S4: the engine sends no such frame; the owner: "we are',
+        '# good with 10s of delay"). The Processes page opens no /events stream of its own (it imports no',
+        '# createSSE or onSSE): the counts move only on the 10 s tick, a boot of the list, or after a verb',
+        '# runs.'];
     for (const [label, opts] of [
         ['the list (N = 3 shown)', { page: pageData(STAGE[3]), serve: server(SUMMARY[3], ITEMS) }],
         ['a process open (?process=4)', Object.assign({ search: '?process=4', serve: server(SUMMARY[3], ITEMS) },

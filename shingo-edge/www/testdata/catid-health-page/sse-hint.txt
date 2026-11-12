@@ -1,7 +1,7 @@
-# The "catid-health" SSE hint (www/sse.go, EventCATIDHealthChanged): what a frame makes the
-# Processes page fetch. The page opens no /events stream of its own (it imports no createSSE or
-# onSSE), so the hint has nothing to arrive on here: the strip moves only on the 10 s tick, a
-# boot of the list, or a verb's own refresh.
+# The "catid-health" SSE hint is gone (S4: the engine sends no such frame; the owner: "we are
+# good with 10s of delay"). The Processes page opens no /events stream of its own (it imports no
+# createSSE or onSSE): the counts move only on the 10 s tick, a boot of the list, or after a verb
+# runs.
 
 ## the list (N = 3 shown)
   EventSource opened: 0

@@ -315,8 +315,9 @@ const route = (table) => (method, url) => {
 };
 const OK = () => ({ status: 'ok' });
 
-// The health strip: Press A with one item of each kind that carries a verb
-// (catid-health.js actionsHTML).
+// The health items: Press A with one item of each kind that carries a verb
+// (catid-health.js actionsHTML), drawn on its Settings tab (S4: the list shows
+// one count per row; the items and their verbs are inside the process).
 const CATID_ITEMS = [
     { kind: 'wrong_part', severity: 'red', headline: 'The PLC is on CAT-B', detail: 'no changeover is open',
         action: { kind: 'start_changeover', to_style_id: 2, to_style_name: 'Style B' } },
@@ -326,7 +327,7 @@ const CATID_ITEMS = [
     { kind: 'held', severity: 'red', headline: '12 held on CAT-Q', data: { hold_id: 41 } },
 ];
 const CATID_ROUTES = route([
-    ['GET', /^\/api\/catid-health$/, () => [{ process_id: 1, name: 'Press A', worst: 'red', count: 4, headline: 'The PLC is on CAT-B' }]],
+    ['GET', /^\/api\/catid-health$/, () => [{ process_id: 1, name: 'Press A', worst: 'red', count: 4, red: 2, amber: 2, headline: 'The PLC is on CAT-B' }]],
     ['GET', /^\/api\/processes\/1\/catid-health$/, () => ({ items: CATID_ITEMS })],
     ['POST', /^\/api\/catid-holds\/41\/charge\?mode=preview$/, () => ({
         hold: { qty: 12, catid: 'CAT-Q' }, style_name: 'Style B',
@@ -373,17 +374,18 @@ const withPage = change => Object.assign(JSON.parse(JSON.stringify(T.FX.page)), 
 // Clicked off the markup the page drew: the button's own dataset is what the
 // click carries, so a verb the page stops drawing is a pin that fails.
 const strip = (act, more) => async page => {
-    page.click('root', drawn(page, 'pd-catid', act, more));
+    page.click('root', drawn(page, 'pd-root', act, more));
     await page.settle();
 };
+const ON_SETTINGS = { hash: '#tab=settings', extra: CATID_ROUTES };
 const D = {
-    chStart: { search: '', extra: CATID_ROUTES, drive: strip('ch-start') },
-    chPin: { search: '', extra: CATID_ROUTES, drive: async page => { await strip('ch-pin')(page); await pressOK(page); } },
-    chPinPick: { search: '', extra: CATID_ROUTES, drive: async page => { await strip('ch-pin-pick')(page); await pressOK(page); } },
-    chChargeAsk: { search: '', extra: CATID_ROUTES, drive: strip('ch-charge') },
-    chRepoint: { search: '', extra: CATID_ROUTES, drive: async page => { await strip('ch-repoint')(page); await pressOK(page); } },
-    chCharge: { search: '', extra: CATID_ROUTES, drive: async page => { await strip('ch-charge')(page); await pressOK(page); } },
-    chWriteOff: { search: '', extra: CATID_ROUTES, drive: async page => { await strip('ch-writeoff')(page); await pressOK(page); } },
+    chStart: Object.assign({ drive: strip('ch-start') }, ON_SETTINGS),
+    chPin: Object.assign({ drive: async page => { await strip('ch-pin')(page); await pressOK(page); } }, ON_SETTINGS),
+    chPinPick: Object.assign({ drive: async page => { await strip('ch-pin-pick')(page); await pressOK(page); } }, ON_SETTINGS),
+    chChargeAsk: Object.assign({ drive: strip('ch-charge') }, ON_SETTINGS),
+    chRepoint: Object.assign({ drive: async page => { await strip('ch-repoint')(page); await pressOK(page); } }, ON_SETTINGS),
+    chCharge: Object.assign({ drive: async page => { await strip('ch-charge')(page); await pressOK(page); } }, ON_SETTINGS),
+    chWriteOff: Object.assign({ drive: async page => { await strip('ch-writeoff')(page); await pressOK(page); } }, ON_SETTINGS),
 };
 // The style row's ⋯, then one of its items, as the menu drew it.
 const styleMenu = (style, item, typed) => async page => {
@@ -542,14 +544,14 @@ function specOf(title, d, more) {
 
 async function pinRequests() {
     await requests('requests-catid-strip.txt', [
-        ['the list\'s health strip: Start changeover to Style B (one tap, no sheet)', D.chStart],
+        ['Settings\' Health: Start changeover to Style B (one tap, no sheet)', D.chStart],
         ['Pin to Style B (the suggestion), then the sheet\'s Pin', D.chPin],
         ['the chooser\'s Pin, on its first option (Style A), then the sheet\'s Pin', D.chPinPick],
         ['Count Slot2, then the sheet\'s Count', D.chRepoint],
         ['Charge: its preview, then the sheet\'s Charge', D.chCharge],
         ['Write off, then the sheet\'s Write off', D.chWriteOff],
-    ], ['The list (no ?process=), its health strip drawn from /api/catid-health: one process, one item of each',
-        'kind that carries a verb. Each act on a fresh list.']);
+    ], ['Press A\'s Settings tab, its Health section drawn from /api/processes/1/catid-health: one item of each',
+        'kind that carries a verb (S4: the items open inside the process). Each act on a fresh tab.']);
     await requests('requests-style-menu.txt', [
         ['Style B ⋯ › Rename: Style B2', D.styleRename],
         ['Style A ⋯ › Expected CATID: CAT-A2', D.styleCatid],

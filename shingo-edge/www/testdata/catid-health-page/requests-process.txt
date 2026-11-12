@@ -15,11 +15,24 @@ refreshCatidHealth on Settings (what a verb run there calls after; health reads 
   GET /api/processes/4/catid-health
   #pd-catid on the page: no
 
-## the Settings tab's Notes (notesField: CatidHealth.notes, the info items the list leaves out)
-  <div class="pd-sfld pd-scl-fld"><label>Notes<small>standing conditions the process list leaves out</small></label>
+## the Settings tab's Health (healthSection: every item, worst first, with its verbs)
+  <div class="pd-sect"><h2>Health</h2><span class="pd-cnt warn"><i></i>5 to look at</span></div>
+  <div class="pd-sfld pd-scl-fld"><label>Items<small>worst first; hover one for its detail</small></label>
   <div class="v col">
-  <div class="pd-ch-item pd-ch-info"><span>The incoming style IDENT-NEXT has no CATIDs <span class="pd-dim">the catalog cannot supply this one; confirm one from a changeover</span></span></div>
-  <div class="pd-ch-item pd-ch-info"><span>5 held on CATID 3003 <span class="pd-dim">the whole draw, 1 strokes over &lt;age&gt; (held)</span></span>
+  <div class="pd-ch-item pd-ch-red"><span title="seen 1 times, last &lt;now&gt;">CATID 3003 maps to no style</span>
+  <span class="pd-ch-acts">
+  <select class="pd-inp" data-ch-pick="3003"><option value="7">IDENT-NEXT</option><option value="8">IDENT-OLD</option><option value="6">IDENT-RUN</option></select>
+  <button class="pd-btn" data-act="ch-pin-pick" data-pid="4" data-catid="3003">Pin</button></span></div>
+  <div class="pd-ch-item pd-ch-red"><span title="This changeover was set to IDENT-RUN, but the process is reporting 3005 — please confirm.">Post-cutover check failed</span></div>
+  <div class="pd-ch-item pd-ch-amber"><span title="nothing reads MES_CELL.CATID_01 for this process; it is read from the next start">Part identity not monitored</span></div>
+  <div class="pd-ch-item pd-ch-amber"><span title="the catalog cannot supply this one; confirm one from a changeover">The running style IDENT-RUN has no CATIDs</span></div>
+  <div class="pd-ch-item pd-ch-amber"><span title="seen 1 times, last &lt;now&gt;; changeover #1 to IDENT-NEXT ended on 3004">CATID 3004 maps to no style</span>
+  <span class="pd-ch-acts">
+  <button class="pd-btn" data-act="ch-pin" data-pid="4" data-style="7" data-name="IDENT-NEXT" data-catid="3004">Pin to IDENT-NEXT</button>
+  <select class="pd-inp" data-ch-pick="3004"><option value="7">IDENT-NEXT</option><option value="8">IDENT-OLD</option><option value="6">IDENT-RUN</option></select>
+  <button class="pd-btn" data-act="ch-pin-pick" data-pid="4" data-catid="3004">Pin</button></span></div>
+  <div class="pd-ch-item pd-ch-info"><span title="the catalog cannot supply this one; confirm one from a changeover">The incoming style IDENT-NEXT has no CATIDs</span></div>
+  <div class="pd-ch-item pd-ch-info"><span title="the whole draw, 1 strokes over &lt;age&gt; (held)">5 held on CATID 3003</span>
   <span class="pd-ch-acts">
   <button class="pd-btn" data-act="ch-charge" data-hold="3">Charge</button>
   <button class="pd-btn" data-act="ch-writeoff" data-hold="3">Write off</button></span></div></div></div>

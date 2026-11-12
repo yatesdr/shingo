@@ -1,43 +1,26 @@
-# What the strip (#pd-catid) draws from those answers, one element per line.
+# What each list row draws from that answer (#pd-h-<id>): one count, red + amber, toned by the worst;
+# no strip.
 
 ## N = 0 shown
-  (empty: no strip)
+  #pd-catid on the page: no
+  CELL-QUIET: (no count)
+  CELL-HELD: (no count)
 
 ## N = 1 shown
-  <div class="pd-ch" role="list">
-  <div class="pd-ch-row pd-ch-amber" role="listitem"><b class="pd-ch-name" data-open="3">CELL-SHARED</b>
-  <div class="pd-ch-item pd-ch-amber"><span>CATID 2001 is in SHARED-ONE and SHARED-TWO <span class="pd-dim">the automatic cutover between them never fires on it</span></span></div></div></div>
+  #pd-catid on the page: no
+  CELL-QUIET: (no count)
+  CELL-HELD: (no count)
+  CELL-SHARED: <span class="chip chip-warn pd-hcount" data-act="open-settings" data-process="3" title="1 to look at, on Settings">1</span>
 
 ## N = 3 shown
-  <div class="pd-ch" role="list">
-  <div class="pd-ch-row pd-ch-red" role="listitem"><b class="pd-ch-name" data-open="4">CELL-IDENT</b>
-  <div class="pd-ch-item pd-ch-red"><span>CATID 3003 maps to no style <span class="pd-dim">seen 1 times, last &lt;now&gt;</span></span>
-  <span class="pd-ch-acts">
-  <select class="pd-inp" data-ch-pick="3003"><option value="7">IDENT-NEXT</option><option value="8">IDENT-OLD</option><option value="6">IDENT-RUN</option></select>
-  <button class="pd-btn" data-act="ch-pin-pick" data-pid="4" data-catid="3003">Pin</button></span></div>
-  <div class="pd-ch-item pd-ch-red"><span>Post-cutover check failed <span class="pd-dim">This changeover was set to IDENT-RUN, but the process is reporting 3005 — please confirm.</span></span></div>
-  <div class="pd-ch-item pd-ch-amber"><span>Part identity not monitored <span class="pd-dim">nothing reads MES_CELL.CATID_01 for this process; it is read from the next start</span></span></div>
-  <div class="pd-ch-item pd-ch-amber"><span>The running style IDENT-RUN has no CATIDs <span class="pd-dim">the catalog cannot supply this one; confirm one from a changeover</span></span></div>
-  <div class="pd-ch-item pd-ch-amber"><span>CATID 3004 maps to no style <span class="pd-dim">seen 1 times, last &lt;now&gt;; changeover #1 to IDENT-NEXT ended on 3004</span></span>
-  <span class="pd-ch-acts">
-  <button class="pd-btn" data-act="ch-pin" data-pid="4" data-style="7" data-name="IDENT-NEXT" data-catid="3004">Pin to IDENT-NEXT</button>
-  <select class="pd-inp" data-ch-pick="3004"><option value="7">IDENT-NEXT</option><option value="8">IDENT-OLD</option><option value="6">IDENT-RUN</option></select>
-  <button class="pd-btn" data-act="ch-pin-pick" data-pid="4" data-catid="3004">Pin</button></span></div></div>
-  <div class="pd-ch-row pd-ch-amber" role="listitem"><b class="pd-ch-name" data-open="5">CELL-PAIR</b>
-  <div class="pd-ch-item pd-ch-amber"><span>PAIR-A names PAIR-B as its A/B partner; PAIR-B does not name it back <span class="pd-dim">style PAIR-ONE: not a pair, so it has no fallthrough — set both sides to name each other</span></span></div></div>
-  <div class="pd-ch-row pd-ch-amber" role="listitem"><b class="pd-ch-name" data-open="3">CELL-SHARED</b>
-  <div class="pd-ch-item pd-ch-amber"><span>CATID 2001 is in SHARED-ONE and SHARED-TWO <span class="pd-dim">the automatic cutover between them never fires on it</span></span></div></div></div>
+  #pd-catid on the page: no
+  CELL-QUIET: (no count)
+  CELL-HELD: (no count)
+  CELL-SHARED: <span class="chip chip-warn pd-hcount" data-act="open-settings" data-process="3" title="1 to look at, on Settings">1</span>
+  CELL-IDENT: <span class="chip chip-err pd-hcount" data-act="open-settings" data-process="4" title="5 to look at, on Settings">5</span>
+  CELL-PAIR: <span class="chip chip-warn pd-hcount" data-act="open-settings" data-process="5" title="1 to look at, on Settings">1</span>
 
-## N = 3 shown, CELL-IDENT's items read answered 500 (its row: the summary headline)
-  <div class="pd-ch" role="list">
-  <div class="pd-ch-row pd-ch-red" role="listitem"><b class="pd-ch-name" data-open="4">CELL-IDENT</b> CATID 3003 maps to no style <span class="pd-dim">and 6 more</span></div>
-  <div class="pd-ch-row pd-ch-amber" role="listitem"><b class="pd-ch-name" data-open="5">CELL-PAIR</b>
-  <div class="pd-ch-item pd-ch-amber"><span>PAIR-A names PAIR-B as its A/B partner; PAIR-B does not name it back <span class="pd-dim">style PAIR-ONE: not a pair, so it has no fallthrough — set both sides to name each other</span></span></div></div>
-  <div class="pd-ch-row pd-ch-amber" role="listitem"><b class="pd-ch-name" data-open="3">CELL-SHARED</b>
-  <div class="pd-ch-item pd-ch-amber"><span>CATID 2001 is in SHARED-ONE and SHARED-TWO <span class="pd-dim">the automatic cutover between them never fires on it</span></span></div></div></div>
-
-## item 5: CELL-TWIN, CATID 6001 in "TWIN" and "TWIN " (item5-*.txt)
-  <div class="pd-ch" role="list">
-  <div class="pd-ch-row pd-ch-amber" role="listitem"><b class="pd-ch-name" data-open="1">CELL-TWIN</b>
-  <div class="pd-ch-item pd-ch-amber"><span>CATID 6001 is in TWIN and TWIN  <span class="pd-dim">the automatic cutover between them never fires on it</span></span></div></div></div>
-  text as drawn: #pd-catid span: CATID 6001 is in TWIN and TWIN
+## item 5: CELL-TWIN, CATID 6001 in "TWIN" and "TWIN " (item5-*.txt): the list, then its Settings
+  #pd-catid on the page: no
+  CELL-TWIN: <span class="chip chip-warn pd-hcount" data-act="open-settings" data-process="1" title="1 to look at, on Settings">1</span>
+  Settings, text as drawn: #pd-root span: CATID 6001 is in TWIN and TWIN

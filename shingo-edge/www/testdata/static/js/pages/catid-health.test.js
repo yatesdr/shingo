@@ -1,4 +1,5 @@
-// catid-health.test.js — the health strip's list renderer.
+// catid-health.test.js — the health items' renderers: the list's count, a
+// process's items.
 // Run by www/catid_health_list_test.go.
 'use strict';
 
@@ -23,98 +24,64 @@ function check(name, fn) {
     }
 }
 
-check('no rows is no strip', () => {
-    assert.strictEqual(H.listHTML([]), '');
-    assert.strictEqual(H.listHTML(null), '');
+check('a process with no red or amber item has no count', () => {
+    assert.strictEqual(H.countHTML(null), '');
+    assert.strictEqual(H.countHTML({ process_id: 4, worst: 'info', count: 2, red: 0, amber: 0 }), '', 'info adds nothing');
+    assert.strictEqual(H.needing({ process_id: 4, worst: 'info', count: 2, red: 0, amber: 0 }), 0);
 });
 
-check('a process with its items lists each with its verbs', () => {
-    const html = H.listHTML([{ process_id: 3, name: 'CELL-A', worst: 'red', count: 2, headline: 'x' }], {
-        3: [
-            { kind: 'held', severity: 'red', headline: '5 held on CATID 1007', detail: 'the whole draw',
-                data: { hold_id: 11, catid: '1007' } },
-            { kind: 'unmapped_catid', severity: 'amber', headline: 'CATID 1003 maps to no style',
-                data: { catid: '1003', suggestion: { style_id: 4, style_name: 'STYLE-B' },
-                    styles: [{ id: 4, name: 'STYLE-B' }, { id: 5, name: '<C>' }] } },
-        ],
-    });
-    assert.ok(html.indexOf('data-act="ch-charge" data-hold="11"') > 0, 'Charge on the hold');
-    assert.ok(html.indexOf('data-act="ch-writeoff" data-hold="11"') > 0, 'Write off on the hold');
-    assert.ok(html.indexOf('data-act="ch-pin" data-pid="3" data-style="4" data-name="STYLE-B" data-catid="1003"') > 0, 'the suggestion');
-    assert.ok(html.indexOf('Pin to STYLE-B') > 0, 'the suggestion names its style');
-    assert.ok(html.indexOf('data-act="ch-pin-pick"') > 0 && html.indexOf('&lt;C&gt;') > 0, 'the picker, escaped');
-    assert.ok(html.indexOf('data-open="3"') > 0, 'the name opens the process');
+check('the count is red plus amber, toned by the worst, and opens Settings', () => {
+    const red = H.countHTML({ process_id: 3, worst: 'red', count: 7, red: 2, amber: 3 });
+    assert.ok(red.indexOf('chip chip-err') > 0 && red.indexOf('>5</span>') > 0, red);
+    assert.ok(red.indexOf('data-act="open-settings" data-process="3"') > 0, 'it opens the process on Settings');
+    const amber = H.countHTML({ process_id: 5, worst: 'amber', count: 1, red: 0, amber: 1 });
+    assert.ok(amber.indexOf('chip chip-warn') > 0 && amber.indexOf('>1</span>') > 0, amber);
 });
 
-check('a slot the PLC counts on carries the click that counts it', () => {
-    const html = H.listHTML([{ process_id: 7, name: 'CELL-C', worst: 'red', count: 2, headline: 'x' }], {
-        7: [
-            { kind: 'counter_slot_idle', severity: 'red', headline: 'The PLC counts on Prod_Counter_02',
-                data: { tag: 'MES_Cell.Prod_Counter_02', slot: 2, catid: '1002' } },
-            { kind: 'counter_slot_lockstep', severity: 'info', headline: 'a second counter of the same stroke',
-                data: { tag: 'MES_Cell.Prod_Counter_03', slot: 3, catid: '1003' } },
-        ],
-    });
-    assert.ok(html.indexOf('data-act="ch-repoint" data-pid="7" data-tag="MES_Cell.Prod_Counter_02"') > 0, html);
-    assert.ok(html.indexOf('Count Prod_Counter_02') > 0, 'the button names the slot');
-    assert.strictEqual(html.split('data-act="ch-repoint"').length, 2, 'the lockstep line suggests nothing');
-    assert.ok(html.indexOf('a second counter of the same stroke') < 0, 'the lockstep line is info: not on the list');
+check('an item carries its verbs', () => {
+    const held = H.itemHTML(3, { kind: 'held', severity: 'info', headline: '5 held on CATID 1007', data: { hold_id: 11 } });
+    assert.ok(held.indexOf('pd-ch-info') > 0, held);
+    assert.ok(held.indexOf('data-act="ch-charge" data-hold="11"') > 0, 'Charge on the hold');
+    assert.ok(held.indexOf('data-act="ch-writeoff" data-hold="11"') > 0, 'Write off on the hold');
+    const unmapped = H.itemHTML(3, { kind: 'unmapped_catid', severity: 'amber', headline: 'CATID 1003 maps to no style',
+        data: { catid: '1003', suggestion: { style_id: 4, style_name: 'STYLE-B' },
+            styles: [{ id: 4, name: 'STYLE-B' }, { id: 5, name: '<C>' }] } });
+    assert.ok(unmapped.indexOf('data-act="ch-pin" data-pid="3" data-style="4" data-name="STYLE-B" data-catid="1003"') > 0, 'the suggestion');
+    assert.ok(unmapped.indexOf('Pin to STYLE-B') > 0, 'the suggestion names its style');
+    assert.ok(unmapped.indexOf('data-act="ch-pin-pick"') > 0 && unmapped.indexOf('&lt;C&gt;') > 0, 'the picker, escaped');
 });
 
-check('the list shows red and amber only; an info item is a note for the process page', () => {
-    const items = [
-        { kind: 'wrong_part', severity: 'red', headline: 'Wrong part: the PLC is on 1002' },
-        { kind: 'unmapped_catid', severity: 'amber', headline: 'CATID 1003 maps to no style', data: { catid: '1003' } },
-        { kind: 'held', severity: 'info', headline: '5 held on CATID 1007', data: { hold_id: 11 } },
-        { kind: 'counter_slot_lockstep', severity: 'info', headline: 'Prod_Counter_02 rises with Prod_Counter_01' },
-    ];
-    assert.deepStrictEqual(H.listed(items).map(it => it.severity), ['red', 'amber']);
-    assert.deepStrictEqual(H.notes(items).map(it => it.kind), ['held', 'counter_slot_lockstep']);
-    const html = H.listHTML([
-        { process_id: 3, name: 'CELL-A', worst: 'red', count: 4, headline: 'x' },
-        { process_id: 4, name: 'P400', worst: 'info', count: 1, headline: 'Prod_Counter_02 rises with Prod_Counter_01' },
-    ], { 3: items, 4: [items[3]] });
-    assert.ok(html.indexOf('Wrong part') > 0 && html.indexOf('maps to no style') > 0, 'red and amber listed');
-    assert.ok(html.indexOf('5 held') < 0 && html.indexOf('rises with') < 0, 'no info item listed: ' + html);
-    assert.ok(html.indexOf('data-open="4"') < 0, 'a process with only info items has no block');
-    assert.strictEqual(H.listHTML([{ process_id: 4, name: 'P400', worst: 'info', count: 1, headline: 'y' }]), '',
-        'only info anywhere: no strip');
-});
-
-check('an info item still carries its verbs where it is drawn', () => {
-    const html = H.itemHTML(3, { kind: 'held', severity: 'info', headline: '5 held on CATID 1007', data: { hold_id: 11 } });
-    assert.ok(html.indexOf('pd-ch-info') > 0 && html.indexOf('data-act="ch-charge" data-hold="11"') > 0, html);
+check('a slot the PLC counts on carries the click that counts it; its lockstep line suggests nothing', () => {
+    const idle = H.itemHTML(7, { kind: 'counter_slot_idle', severity: 'red', headline: 'The PLC counts on Prod_Counter_02',
+        data: { tag: 'MES_Cell.Prod_Counter_02', slot: 2, catid: '1002' } });
+    assert.ok(idle.indexOf('data-act="ch-repoint" data-pid="7" data-tag="MES_Cell.Prod_Counter_02"') > 0, idle);
+    assert.ok(idle.indexOf('Count Prod_Counter_02') > 0, 'the button names the slot');
+    const lock = H.itemHTML(7, { kind: 'counter_slot_lockstep', severity: 'info', headline: 'a second counter of the same stroke',
+        data: { tag: 'MES_Cell.Prod_Counter_03', slot: 3, catid: '1003' } });
+    assert.ok(lock.indexOf('data-act=') < 0, lock);
 });
 
 check('a wrong part with its changeover carries the one tap that starts it', () => {
-    const html = H.listHTML([{ process_id: 9, name: 'CELL-D', worst: 'red', count: 1, headline: 'x' }], {
-        9: [
-            { kind: 'wrong_part', severity: 'red',
-                headline: 'The PLC is on 1002 (ALT); RUN is active. Start a changeover to ALT — 6 strokes held at P4 and P5.',
-                detail: 'since 2026-11-07 10:00, 6 parts counted as ALT', data: { catid: '1002' },
-                action: { kind: 'start_changeover', to_style_id: 20, to_style_name: '<ALT>' } },
-            { kind: 'wrong_part', severity: 'amber', headline: 'Wrong part: the PLC is on 1007', data: { catid: '1007' } },
-        ],
-    });
+    const html = H.itemHTML(9, { kind: 'wrong_part', severity: 'red',
+        headline: 'The PLC is on 1002 (ALT); RUN is active. Start a changeover to ALT — 6 strokes held at P4 and P5.',
+        detail: 'since 2026-11-07 10:00, 6 parts counted as ALT', data: { catid: '1002' },
+        action: { kind: 'start_changeover', to_style_id: 20, to_style_name: '<ALT>' } });
     assert.ok(html.indexOf('data-act="ch-start" data-pid="9" data-style="20" data-name="&lt;ALT&gt;"') > 0, html);
     assert.ok(html.indexOf('Start changeover to &lt;ALT&gt;') > 0, 'the button names the style, escaped');
-    assert.strictEqual(html.split('data-act="ch-start"').length, 2, 'an item with no action offers nothing');
+    const plain = H.itemHTML(9, { kind: 'wrong_part', severity: 'amber', headline: 'Wrong part: the PLC is on 1007', data: { catid: '1007' } });
+    assert.ok(plain.indexOf('data-act=') < 0, 'an item with no action offers nothing');
 });
 
-check('one block per process, toned by its worst item', () => {
-    const html = H.listHTML([
-        { process_id: 3, name: 'CELL-A', worst: 'red', count: 3, headline: 'Wrong part: the PLC is on 1002' },
-        { process_id: 4, name: 'CELL-B', worst: 'amber', count: 1, headline: 'The running style STYLE-B has no CATIDs' },
-    ]);
-    assert.ok(html.indexOf('pd-ch-red') > 0 && html.indexOf('data-open="3"') > 0, 'the red block for process 3');
-    assert.ok(html.indexOf('and 2 more') > 0, 'the count past the headline');
-    assert.ok(html.indexOf('pd-ch-amber') > 0 && html.indexOf('more</span>', html.indexOf('CELL-B')) < 0,
-        'a single item says nothing more');
+check('the detail is behind the headline, never its words (a PLC read error among them)', () => {
+    const html = H.itemHTML(1, { kind: 'counter_unreadable', severity: 'red', headline: 'Production counter T unreadable',
+        detail: 'read T: <timeout> & "x"' });
+    assert.ok(html.indexOf('title="read T: &lt;timeout&gt; &amp; &quot;x&quot;">Production counter T unreadable</span>') > 0, html);
+    assert.strictEqual(html.split('timeout').length, 2, 'said once, in the title');
 });
 
-check('names and headlines are escaped', () => {
-    const html = H.listHTML([{ process_id: 1, name: '<b>X', worst: 'amber', count: 1, headline: 'a & "b"' }]);
-    assert.ok(html.indexOf('&lt;b&gt;X') > 0 && html.indexOf('a &amp; &quot;b&quot;') > 0, html);
+check('headlines are escaped', () => {
+    const html = H.itemHTML(1, { kind: 'shared_catid', severity: 'amber', headline: 'a & "b" <c>' });
+    assert.ok(html.indexOf('a &amp; &quot;b&quot; &lt;c&gt;') > 0, html);
 });
 
 if (failed) {

@@ -1,7 +1,6 @@
-# The Processes list (no ?process=), its health strip fed the summary and items the routes serve
-# (testdata/catid-health/). "shown" = summary rows whose worst item is red or amber (catid-health.js
-# shows): the page reads the summary, then one items read per shown row, every boot of the list and
-# every 10 s tick; info-only rows (CELL-HELD) are in the summary and read nothing more.
+# The Processes list (no ?process=), its health counts fed the summary the route serves
+# (testdata/catid-health/). "shown" = summary rows with a red or amber item: the page reads the summary
+# alone, every boot of the list and every 10 s tick, and no process's items (S4: one request).
 
 ## N = 0 shown (summary-n0.txt: 1 summary row, 0 shown)
 boot (drawList -> refreshCatidHealth): 1 request
@@ -14,28 +13,20 @@ visibilitychange to visible (refreshRail): 0 requests
   (none)
 
 ## N = 1 shown (summary-n1.txt: 2 summary rows, 1 shown)
-boot (drawList -> refreshCatidHealth): 2 requests
+boot (drawList -> refreshCatidHealth): 1 request
   GET /api/catid-health
-  GET /api/processes/3/catid-health
-10 s tick (refreshRail, then refreshCatidHealth: no process open): 2 requests
+10 s tick (refreshRail, then refreshCatidHealth: no process open): 1 request
   GET /api/catid-health
-  GET /api/processes/3/catid-health
 window focus (refreshRail: no process open): 0 requests
   (none)
 visibilitychange to visible (refreshRail): 0 requests
   (none)
 
 ## N = 3 shown (summary-n3.txt: 4 summary rows, 3 shown)
-boot (drawList -> refreshCatidHealth): 4 requests
+boot (drawList -> refreshCatidHealth): 1 request
   GET /api/catid-health
-  GET /api/processes/4/catid-health
-  GET /api/processes/5/catid-health
-  GET /api/processes/3/catid-health
-10 s tick (refreshRail, then refreshCatidHealth: no process open): 4 requests
+10 s tick (refreshRail, then refreshCatidHealth: no process open): 1 request
   GET /api/catid-health
-  GET /api/processes/4/catid-health
-  GET /api/processes/5/catid-health
-  GET /api/processes/3/catid-health
 window focus (refreshRail: no process open): 0 requests
   (none)
 visibilitychange to visible (refreshRail): 0 requests
@@ -43,17 +34,10 @@ visibilitychange to visible (refreshRail): 0 requests
 
 ## requests per 10 s tick of the list, by N shown
   N = 0: 1 (1 summary + 0 items reads)
-  N = 1: 2 (1 summary + 1 items reads)
-  N = 3: 4 (1 summary + 3 items reads)
-
-## N = 3 shown, CELL-IDENT's items read answered 500
-boot: 4 requests
-  GET /api/catid-health
-  GET /api/processes/4/catid-health
-  GET /api/processes/5/catid-health
-  GET /api/processes/3/catid-health
+  N = 1: 1 (1 summary + 0 items reads)
+  N = 3: 1 (1 summary + 0 items reads)
 
 ## N = 3 shown, then a tick whose summary read answers 500
 the tick: 1 request
   GET /api/catid-health
-  strip after: unchanged (advisory)
+  counts after: unchanged (advisory)

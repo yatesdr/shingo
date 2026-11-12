@@ -1,61 +1,52 @@
-# The list (no ?process=), its health strip drawn from /api/catid-health: one process, one item of each
-# kind that carries a verb. Each act on a fresh list.
-## the list's health strip: Start changeover to Style B (one tap, no sheet)
+# Press A's Settings tab, its Health section drawn from /api/processes/1/catid-health: one item of each
+# kind that carries a verb (S4: the items open inside the process). Each act on a fresh tab.
+## Settings' Health: Start changeover to Style B (one tap, no sheet)
   1  POST /api/processes/1/changeover/start
        {
          "to_style_id": 2,
          "called_by": "engineer",
          "notes": "from the health strip: the PLC is on its part"
        }
-  2  GET /api/catid-health
-  3  GET /api/processes/1/catid-health
+  2  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## Pin to Style B (the suggestion), then the sheet's Pin
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/styles/2/catid
+  1  POST /api/processes/1/styles/2/catid
        {
          "catid": "CAT-Q",
          "evidence": "the health strip"
        }
-  3  GET /api/catid-health
-  4  GET /api/processes/1/catid-health
+  2  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## the chooser's Pin, on its first option (Style A), then the sheet's Pin
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/styles/1/catid
+  1  POST /api/processes/1/styles/1/catid
        {
          "catid": "CAT-Q",
          "evidence": "the health strip"
        }
-  3  GET /api/catid-health
-  4  GET /api/processes/1/catid-health
+  2  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## Count Slot2, then the sheet's Count
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/counter
+  1  POST /api/processes/1/counter
        {
          "tag_name": "MES.Slot2"
        }
-  3  GET /api/catid-health
+  2  GET /api/processes
+  3  GET /api/processes/1/counting-slots
   4  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## Charge: its preview, then the sheet's Charge
   1  POST /api/catid-holds/41/charge?mode=preview
-  2  GET /api/core-nodes
-  3  POST /api/catid-holds/41/charge?mode=charge
+  2  POST /api/catid-holds/41/charge?mode=charge
        {}
-  4  GET /api/catid-health
-  5  GET /api/processes/1/catid-health
+  3  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## Write off, then the sheet's Write off
-  1  GET /api/core-nodes
-  2  POST /api/catid-holds/41/write-off
+  1  POST /api/catid-holds/41/write-off
        {}
-  3  GET /api/catid-health
-  4  GET /api/processes/1/catid-health
+  2  GET /api/processes/1/catid-health
 -- sheet closed
