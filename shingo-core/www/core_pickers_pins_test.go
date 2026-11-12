@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/sessions"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/service"
 )
@@ -359,7 +360,7 @@ func corePickerRefusals(t *testing.T) map[string]corePickerAnswer {
 
 	// The reparent guard writes its 409 inline (apiReparentNode, the
 	// order_ids answer); this is that shape, field for field.
-	reparent, _ := json.Marshal(map[string]any{
+	reparent := corePickerJSON(t, map[string]any{
 		"error":     fmt.Sprintf("cannot reparent: %d active order(s) reference group %q as source", 1, "GRP-A"),
 		"order_ids": []int64{41},
 	})
@@ -409,6 +410,15 @@ var (
 	corePickerNameRe = regexp.MustCompile(`<(?:input|select|textarea)[^>]*\bname="([^"]+)"`)
 )
 
+// corePickerJSON marshals a fixture for a page's data, failing the test on an
+// error rather than rendering the page from a nil.
+func corePickerJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	testutil.MustNoErr(t, err, "marshal a page fixture")
+	return b
+}
+
 func corePickerAttrs(s string) map[string]string {
 	out := map[string]string{}
 	for _, m := range corePickerAttrRe.FindAllStringSubmatch(s, -1) {
@@ -421,10 +431,10 @@ func corePickerAttrs(s string) map[string]string {
 // C1, the Create bin form's Node select, with the fields the form posts.
 func corePickerBinsTemplate(t *testing.T, fx corePickerFixtureData) string {
 	t.Helper()
-	nodesJSON, _ := json.Marshal(fx.Nodes)
-	payloadsJSON, _ := json.Marshal(fx.Payloads)
-	binTypesJSON, _ := json.Marshal(fx.BinTypes)
-	pbtJSON, _ := json.Marshal(fx.PayloadBinTypes)
+	nodesJSON := corePickerJSON(t, fx.Nodes)
+	payloadsJSON := corePickerJSON(t, fx.Payloads)
+	binTypesJSON := corePickerJSON(t, fx.BinTypes)
+	pbtJSON := corePickerJSON(t, fx.PayloadBinTypes)
 	page := renderPage(t, "bins.html", map[string]any{
 		"Page": "bins", "Bins": []binRow{}, "BinTypes": fx.BinTypes, "CarrierFamilies": []string{},
 		"Payloads": fx.Payloads, "BinHasNotes": map[int64]bool{},
@@ -463,8 +473,8 @@ func corePickerBinsTemplate(t *testing.T, fx corePickerFixtureData) string {
 // the page carries for them.
 func corePickerTestOrdersTemplate(t *testing.T, fx corePickerFixtureData) string {
 	t.Helper()
-	nodesJSON, _ := json.Marshal(fx.Nodes)
-	payloadsJSON, _ := json.Marshal(fx.Payloads)
+	nodesJSON := corePickerJSON(t, fx.Nodes)
+	payloadsJSON := corePickerJSON(t, fx.Payloads)
 	page := renderPage(t, "test-orders.html", map[string]any{
 		"Page": "test-orders", "NodesJSON": string(nodesJSON), "PayloadsJSON": string(payloadsJSON),
 	})
