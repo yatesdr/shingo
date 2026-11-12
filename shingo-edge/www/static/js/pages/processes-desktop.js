@@ -1208,6 +1208,21 @@ function stationCellOf(heads) {
 // hovering never re-flows the grid. At Press 6 PLN_005 feeds PLN_006 and
 // PLN_010, which stand in two rows, so it takes the middle one, as the mock
 // draws it. With no groups the picture's own claims decide, as before.
+// deskSentences is the picture's card words on the desktop (F27, R3): a pair's
+// card says its field's name over "for <row>", as the staging cards and the
+// table's heading do, where the model's words, the HMI's, say "on deck for"
+// on a press index and "paired with" on a sequential.
+function deskSentences(sentences) {
+    if (!sentences || !sentences.cardLines) return sentences;
+    const word = M().fieldLabel(S.model || { flowspec: window.FLOWSPEC || null }, 'paired_core_node');
+    for (const n of Object.keys(sentences.cardLines)) {
+        const lines = sentences.cardLines[n] || [];
+        const m = lines.length === 1 && /^(?:on deck for|paired with) (.+)$/.exec(lines[0]);
+        if (m) sentences.cardLines[n] = [word, 'for ' + m[1]];
+    }
+    return sentences;
+}
+
 function pictureOpts() {
     const o = (((S.composer && S.composer.presets) || []).length || S.shapeDraft) ? { relation: true } : {};
     const pairs = groupPairs();
@@ -1249,7 +1264,7 @@ function drawPicture(pass) {
     const o = Object.assign({
         selected: S.selected, findings: byNode, editable: true, frame: { w: w },
     }, pictureOpts(), gp ? gp.opts : {});
-    o.sentences = gp ? gp.sentences : sentencesFromModel(S.model, !!relationPlacement(cell, o));
+    o.sentences = gp ? gp.sentences : deskSentences(sentencesFromModel(S.model, !!relationPlacement(cell, o)));
     const markup = renderFlowPicture({ cell: cell, station: { name: p ? p.name : '' } }, o);
     const h = Math.round(o.height || PICTURE_H);
     // A RELATION GRID WIDER THAN THE COLUMN IS DRAWN WIDER, never shrunk: the
@@ -1746,7 +1761,7 @@ function groupPicture() {
         if (d.recipe && String(r.id) === String(d.recipe.id)) continue;
         for (const n of Object.keys(r.cells || {})) if (here.has(n) && !lines[n]) lines[n] = ['in ' + r.name];
     }
-    const sentences = sentencesFromModel(m, !!relationPlacement(cell, pictureOpts()));
+    const sentences = deskSentences(sentencesFromModel(m, !!relationPlacement(cell, pictureOpts())));
     if (sentences) sentences.cardLines = Object.assign({}, sentences.cardLines, lines);
     return { model: m, cell: cell, sentences: sentences, opts: { active: active, tags: tags, chevrons: chevrons } };
 }
@@ -6961,7 +6976,7 @@ function recipePicture(card, moves, o) {
         relation: true, frame: { w: o.w || SHEET_PIC_W }, editable: !!o.editable, pairs: pairs, tags: tags,
         active: [...new Set(placed.concat(o.lit || []))],
     };
-    opts.sentences = sentencesFromModel(model, !!relationPlacement(cell, opts));
+    opts.sentences = deskSentences(sentencesFromModel(model, !!relationPlacement(cell, opts)));
     if (o.selected) {
         opts.selected = moves[o.selected] || o.selected;
         opts.selectCard = true;

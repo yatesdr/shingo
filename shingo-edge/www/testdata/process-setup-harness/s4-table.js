@@ -194,6 +194,18 @@ const BUGS = [
         },
     },
     {
+        title: 'F27 · the desktop picture\'s pair cards say Paired core node, as the column does',
+        run: async page => {
+            const svg = () => String((page.byId('pd-svg') || {}).innerHTML || '');
+            const pics = svg().replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+            const word = page.pd('M')().fieldLabel(page.S.model, 'paired_core_node');
+            return [
+                ['no card says "on deck for" or "paired with"', !/on deck for|paired with/.test(pics), (/(on deck for|paired with) \S+/.exec(pics) || [''])[0]],
+                ['a pair card says "' + word + '"', pics.indexOf(word) >= 0, 'the picture: ' + pics.slice(0, 200)],
+            ];
+        },
+    },
+    {
         title: 'F24 · R3 · the desktop\'s bar never says "Tap the position" or "use a preset"',
         run: async page => {
             const M = page.pd('M')(), apply = page.pd('apply');
