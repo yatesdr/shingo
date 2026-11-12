@@ -25,6 +25,11 @@ var isAuth = document.getElementById('page-data').dataset.authenticated === 'tru
 // its answer has filled the whole form, then 'loaded', or 'failed'.
 var _detailOpen = 0;
 var _detailState = 'loading';
+// _detailLayer is the pop-up's entry on the overlay stack (layer.js). The
+// answer fills the form after it opened, so once it is in the form counts as
+// what was drawn: a backdrop click on a pop-up nobody typed in closes it
+// without asking to discard (markClean).
+var _detailLayer = null;
 var DETAIL_FAILED = "Could not load this node's saved settings. Nothing will be saved. Close and reopen.";
 var DETAIL_LOADING = "This node's saved settings are still loading. Nothing was saved; press Save again in a moment.";
 
@@ -136,7 +141,7 @@ export function openNodeModal(el, opts) {
     document.getElementById('ro-enabled').textContent = d.enabled === 'true' ? 'Yes' : 'No';
   }
 
-  showModal('node-modal');
+  _detailLayer = showModal('node-modal');
 }
 
 // opts is openNodeModal's (its focus is read when the group's waiting spots
@@ -216,6 +221,7 @@ function loadNodeDetail(nodeID, isSynthetic, opts, open) {
       });
       rememberAlgorithms();
       _detailState = 'loaded';
+      if (_detailLayer && _detailLayer.open) _detailLayer.markClean();
     })
     .catch(function(err) {
       if (open !== _detailOpen) return;

@@ -351,7 +351,7 @@ function loadRobotGroups() {
 // to load) is added as its own option so editing never silently drops it.
 function loadLoadSequences(selectId, selected) {
   var sel = document.getElementById(selectId);
-  if (!sel) return;
+  if (!sel) return Promise.resolve();
   function render(names) {
     sel.innerHTML = '<option value="">(normal load)</option>';
     var seen = false;
@@ -369,7 +369,7 @@ function loadLoadSequences(selectId, selected) {
     }
     if (!selected) sel.value = '';
   }
-  fetch('/api/payloads/templates/sequences')
+  return fetch('/api/payloads/templates/sequences')
     .then(function(r) { return r.json(); })
     .then(function(resp) {
       var data = (resp && resp.data) || resp || {};
@@ -503,7 +503,7 @@ function openEditPayloadModal(btn) {
   document.getElementById('ple-tote-layers').value = d.toteLayers || '';
   document.getElementById('ple-uop-per-tote').value = d.uopPerTote || '';
   refreshNearEmptyHint('ple');
-  loadLoadSequences('pl-edit-load-sequence', d.loadSequence || '');
+  loadLoadSequences('pl-edit-load-sequence', d.loadSequence || '').then(plEditFilled);
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   // Clear any stale bin-type selection synchronously so the modal opens with
   // nothing selected (matches the create modal); the async fetch below sets the
@@ -512,7 +512,7 @@ function openEditPayloadModal(btn) {
   setSelectedBinTypes('ple-bin-types', []);
   refreshToteHint('ple');
   loadRobotGroups();
-  showModal('pl-edit-modal');
+  plEditLayer = showModal('pl-edit-modal');
 
   fetch('/api/payloads/templates/manifest?id=' + plId)
     .then(function(r) {
@@ -530,6 +530,7 @@ function openEditPayloadModal(btn) {
         });
       }
       _pleLoaded.manifest = true;
+      plEditFilled();
     })
     .catch(function(err) {
       if (token !== _pleLoaded.token) return;
@@ -551,12 +552,22 @@ function openEditPayloadModal(btn) {
       setSelectedBinTypes('ple-bin-types', types.map(function(bt) { return Number(bt.id); }));
       refreshToteHint('ple');
       _pleLoaded.binTypes = true;
+      plEditFilled();
     })
     .catch(function(err) {
       if (token !== _pleLoaded.token) return;
       console.error('Bin types load failed:', err);
     });
 }
+// plEditLayer is the edit modal's entry on the overlay stack (layer.js). Its
+// parts, carrier types and load sequence arrive after it opened; each, once
+// drawn, counts as what the modal was drawn with, so a backdrop click on a
+// modal nobody typed in closes it without asking to discard (markClean).
+var plEditLayer = null;
+function plEditFilled() {
+  if (plEditLayer && plEditLayer.open) plEditLayer.markClean();
+}
+
 function closePLEditModal() {
   hideModal('pl-edit-modal');
 }
