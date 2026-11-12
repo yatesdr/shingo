@@ -29,6 +29,8 @@ Deploy: Edge v48.
 - Core and Edge pages with live updates, and the station, say "Lost connection" with the time the server last answered, until it is back
 - A reorder point is the number the engineer set: its source tag (legacy, manual, not set) is gone, and Replenishment's Revert to legacy is Clear
 - Re-applying a reorder point on Replenishment no longer makes an open preview stale
+- Every node and part field outside the Processes page (Orders, Bins, Test orders, a group's kanban, Manual order, Production, Kafka Direct) is one searchable picker: groups first with their nodes under them, `_TRANSIT` never offered, a robot, a disabled node or a part that does not fit shown greyed with why
+- A station's slot being filled on the Nodes page dims a robot, a disabled node and a synthetic one, and a failed node list on Orders is read again on the next open
 
 ## v0.4.0 — 2026-11-12
 
