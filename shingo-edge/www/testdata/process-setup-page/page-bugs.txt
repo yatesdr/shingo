@@ -18,14 +18,14 @@ ok   Override is lit and Derive is not
 ok   each hash lands on its tab
 
 ## census #1: Containment destination on a failed node-list read says so
-BUG  the list does not open on "-- None --" alone: rows [""]
-BUG  Settings says the node list was not read: settingsError ""
+ok   the list does not open on "-- None --" alone
+ok   Settings says the node list was not read
 
 ## census #2: Containment destination lists Core's nodes in the pickers' order
-BUG  the rows follow coreNodeList: rows ["Z_PLAIN","DST_7","GRP_Q","A_PLAIN"], list ["A_PLAIN","Z_PLAIN","GRP_Q","DST_7"]
+ok   the rows follow coreNodeList
 
 ## census #4: Core's nodes are offered groups first, nodes with no type last
-BUG  GRP_Q first, Z_PLAIN and A_PLAIN last: order ["A_PLAIN","Z_PLAIN","LANE_7","GRP_Q","DST_7"]
+ok   GRP_Q first, Z_PLAIN and A_PLAIN last
 
 ## census #3: a source added in Settings is offered on the Styles tab
 BUG  POS_A5's Inbound source offers SRC_2: offers ["GRP_A","SRC_1"]

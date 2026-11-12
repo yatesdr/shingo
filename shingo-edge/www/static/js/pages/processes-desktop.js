@@ -5702,9 +5702,16 @@ function loadCoreNodes() {
 }
 
 // Core answers from a map, so the order it sends is that map's iteration order.
-// Grouped by type and alphabetical inside it is the order a list is read in.
+// Grouped by type and alphabetical inside it is the order a list is read in:
+// node groups first and nodes with no type last. Sorted on the type alone, ''
+// came first, so plain nodes led and groups trailed (census #4).
+function coreNodeRank(n) {
+    if (Array.isArray(n.members) && n.members.length || n.node_type === 'NGRP') return 0;
+    return n.node_type ? 1 : 2;
+}
 function coreNodeList() {
     return (S.coreNodes || []).slice().sort((a, b) =>
+        coreNodeRank(a) - coreNodeRank(b) ||
         String(a.node_type || '').localeCompare(String(b.node_type || '')) ||
         String(a.name || '').localeCompare(String(b.name || '')));
 }
@@ -7161,17 +7168,20 @@ async function openScreenSheet(stationID) {
 // with none picked. The core node list loads lazily (the shared read all four
 // pickers use), so this is async where its sibling is not.
 async function openContainmentPicker(btn) {
-    try {
-        await loadCoreNodes();
-    } catch (e) {
-        S.settingsError = 'Could not load the node list: ' + ((e && e.message) || e);
+    // loadCoreNodes never rejects: a failed read leaves S.coreNodes null (the
+    // door's notice says why), and this opened on "-- None --" alone with
+    // nothing on the page (census #1).
+    await loadCoreNodes();
+    if (!S.coreNodes) {
+        S.settingsError = 'Could not read Core’s node list. Try again.';
         drawSettings();
         return;
     }
     const pop = $('pd-stpop');
     if (!pop) return;
     const current = S.settings.quality_hold_destination || '';
-    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).filter(n => !B().legExclusion(S.coreNodes, n.name, 'destination')).map(n => ({
+    // In the pickers' order, not Core's map order (census #2).
+    const opts = [{ name: '', label: '-- None --' }].concat(coreNodeList().filter(n => !B().legExclusion(S.coreNodes, n.name, 'destination')).map(n => ({
         name: n.name,
         label: n.name + (n.node_type === 'NGRP' ? ' (group)' : ''),
     })));
