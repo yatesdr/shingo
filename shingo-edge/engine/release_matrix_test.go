@@ -139,16 +139,6 @@ func orderClick(leg string, d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error { return h.eng.ReleaseOrderWithLineside(h.leg(leg), d) }
 }
 
-// sweepClickAs is the changeover's release of every node, its button naming
-// the decision it makes.
-func sweepClickAs(purpose release.Purpose, d ReleaseDisposition) func(h *relHarness) error {
-	return func(h *relHarness) error {
-		res, err := h.eng.ReleaseChangeoverWaitFor(h.processID, 0, purpose, d)
-		h.extra = append(h.extra, fmt.Sprintf("sweep released=%d pending=%d deferred=%d flip=%v", res.Released, res.Pending, res.Deferred, res.NeedsFlip))
-		return err
-	}
-}
-
 func sweepClick(d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		res, err := h.eng.ReleaseChangeoverWait(h.processID, d)
@@ -472,16 +462,16 @@ func releaseMatrixCells() []relCell {
 		{name: "d5/co two_robot/curtain live",
 			want: "ok | evac=staged supply=staged | rel=- | ingest=1 capred=0 | sweep released=0 pending=0 deferred=2 flip=[] | uop=0", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
-		{name: "d5/co pi tooling/evac staged",
-			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
+		{name: "d5/co pi tool change/leg staged at tooling done",
+			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | sweep released=1 pending=1 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "supply", S),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
-		{name: "d5/co pi tooling/node click",
-			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | node released=2 pending=0 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
+		{name: "d5/co pi tool change/node click",
+			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "supply", S),
 			act: nodeCOClick(dispNone), probe: probes(pUOP)},
 
 		// ── Door 6: the station button on a single-leg changeover node ────
 		{name: "d6/co pi marked/single leg",
-			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S),
+			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		{name: "d6/co carryover/round trip at its hold",
 			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S),
@@ -496,7 +486,7 @@ func releaseMatrixCells() []relCell {
 			want: "ok | supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, perPosition: true}, "supply", protocol.StatusDispatched),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		{name: "d6/co pi marked/single leg, curtain live",
-			want: "hold:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
+			want: "hold:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=0", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 
 		// ── G9: a changeover cart goes back with its parts, at every door ──

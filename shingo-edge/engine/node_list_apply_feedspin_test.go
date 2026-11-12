@@ -31,7 +31,7 @@ func applyNodeListReply(e *Engine, resp *protocol.NodeListResponse) {
 // pin's nodes, loaders and bin types.
 func feedspinDigest(t *testing.T) string {
 	t.Helper()
-	d, err := protocol.NodesDigest(feedspinNodes(), feedspinLoaders(), feedspinBinTypes(), nil)
+	d, err := protocol.NodesDigest(feedspinNodes(), feedspinLoaders(), feedspinBinTypes(), nil, false)
 	testutil.MustNoErr(t, err, "digest")
 	return d
 }

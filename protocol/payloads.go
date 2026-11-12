@@ -211,6 +211,19 @@ type OrderRequest struct {
 	SourceNode string `json:"source_node,omitempty"`
 	// Priority: higher is more urgent; 0 by default.
 	Priority int `json:"priority,omitempty"`
+	// ProcessNode is the press the order serves: the Core node name of the
+	// claim whose cell the order is for (a line node where the operator
+	// releases and confirms, and where the cell's active bin lives). It says
+	// for whom, not where: SourceNode is the first pickup and DeliveryNode the
+	// last dropoff, and on an index press's outside position or a supermarket
+	// pull neither is the press. Core keys every per-press reading on it: a
+	// strict kanban admits the presses it supports and fences the rest, the
+	// futility tuple, the history row's reference and the labels name it. The
+	// Edge authors it once, at creation; blank is an order for no press (a
+	// person's move, a loader's, an older Edge's), an outsider at every strict
+	// kanban. ComplexOrderRequest carries the same field under the same tag and
+	// meaning.
+	ProcessNode string `json:"process_node,omitempty"`
 	// RetrieveEmpty asks for an empty carrier rather than a full one. An older
 	// Edge's retrieve with this set is promoted to retrieve_empty at intake.
 	RetrieveEmpty bool `json:"retrieve_empty,omitempty"`
@@ -726,16 +739,6 @@ type ComplexOrderStep struct {
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.
-//
-// ProcessNode names the production node the order belongs to — the line
-// node where the operator releases / confirms and where the "active bin"
-// for manifest sync lives. Distinct from SourceNode (first pickup step,
-// fleet routing) and DeliveryNode (last dropoff). For swap orders that
-// pick up at InboundSource and drop at the line, SourceNode is the
-// supermarket but ProcessNode is the line; Core uses ProcessNode (when
-// non-empty) to pick the bin claimed at the line as the order's cart and
-// for the late-bind manifest fallback at release. Empty for orders without a
-// distinct line node — Core falls back to SourceNode behavior.
 type ComplexOrderRequest struct {
 	// OrderUUID is the order's id, a UUID v4 the edge generates.
 	OrderUUID string `json:"order_uuid"`
@@ -746,7 +749,12 @@ type ComplexOrderRequest struct {
 	// Quantity is the number of items or units asked for.
 	Quantity int64 `json:"quantity"`
 	// Priority: higher is more urgent; 0 by default.
-	Priority    int    `json:"priority,omitempty"`
+	Priority int `json:"priority,omitempty"`
+	// ProcessNode is OrderRequest.ProcessNode, the press the order serves:
+	// same tag, same meaning. A multi-step order's steps name its pickups and
+	// drops, and the press is what tells Core which of them is the line: it
+	// picks the bin claimed there as the order's cart and reads it for the
+	// late-bind manifest fallback at release.
 	ProcessNode string `json:"process_node,omitempty"`
 	// Steps are the order's steps, executed in sequence.
 	Steps []ComplexOrderStep `json:"steps"`
@@ -1091,9 +1099,16 @@ type NodeListResponse struct {
 	// counter: two Cores, or one Core restarted, answer the same scene with the
 	// same revision.
 	SceneRevision string `json:"scene_revision,omitempty"`
-	// Digest is the FeedNodes digest of Nodes, Loaders, PayloadBinTypes and Family
-	// as this reply carries them (NodesDigest), on every path that builds the
-	// reply. An Edge holding that digest already applies none of the four.
+	// PlantWide says Nodes is Core's plant-wide list: the station has no nodes of
+	// its own, so Core sent every root and every physical child of a node group.
+	// False for a station-scoped list (the station's own nodes) and from an older
+	// Core. The Edge refuses a name its list does not hold, in a role where Core
+	// picks, only from a plant-wide list: a station-scoped one leaves out names the
+	// station may still route to.
+	PlantWide bool `json:"plant_wide,omitempty"`
+	// Digest is the FeedNodes digest of Nodes, Loaders, PayloadBinTypes, Family
+	// and PlantWide as this reply carries them (NodesDigest), on every path that builds the
+	// reply. An Edge holding that digest already applies none of them.
 	// Absent from an older Core, whose replies apply as they always did.
 	Digest string `json:"digest,omitempty"`
 }

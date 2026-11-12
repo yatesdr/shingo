@@ -10,11 +10,8 @@ import (
 // deleted_process_claims_test.go — a deleted process's claims stop answering.
 //
 // Deleting a process soft-deleted its styles and left their claims live, so a
-// claim of a process that no longer exists was still a candidate for "where
-// does the carrier on this node belong" (ClaimForLinesidePayload, read by the
-// evacuation aim). SPR kept one at a staging spot. The delete now retires the
-// claims, and the lookup ignores claims of deleted styles, which covers rows a
-// delete left behind before this.
+// claim of a process that no longer exists was still read as live, and published
+// to Core with the plant's claims. The delete now retires the claims.
 
 func seedStagingClaim(t *testing.T, db *DB, name, node, payload string) (pid, sid, cid int64) {
 	t.Helper()
@@ -35,8 +32,8 @@ func TestDeleteProcess_RetiresItsClaims(t *testing.T) {
 	db := testDB(t)
 	pid, _, cid := seedStagingClaim(t, db, "P-Gone", "SLN_X", "PART-X")
 
-	if got, err := db.ClaimForLinesidePayload("SLN_X", "PART-X"); err != nil || got == nil {
-		t.Fatalf("precondition: the live claim answers (got %v, err %v)", got, err)
+	if live, err := processes.ListLiveClaimsByProcess(db.DB, pid); err != nil || len(live) != 1 {
+		t.Fatalf("precondition: the live claim answers (got %d, err %v)", len(live), err)
 	}
 	if err := db.DeleteProcess(pid); err != nil {
 		t.Fatalf("DeleteProcess: %v", err)
@@ -49,20 +46,7 @@ func TestDeleteProcess_RetiresItsClaims(t *testing.T) {
 	if retired == nil {
 		t.Errorf("claim %d of a deleted process is still live", cid)
 	}
-	if got, err := db.ClaimForLinesidePayload("SLN_X", "PART-X"); err != nil || got != nil {
-		t.Errorf("a deleted process's claim still answers where the carrier belongs: %+v (err %v)", got, err)
-	}
-}
-
-func TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	_, sid, _ := seedStagingClaim(t, db, "P-Orphan", "SLN_Y", "PART-Y")
-	// A row a delete left behind before claims were retired with their style.
-	if _, err := db.Exec(`UPDATE styles SET deleted_at = datetime('now') WHERE id=?`, sid); err != nil {
-		t.Fatalf("soft-delete style: %v", err)
-	}
-	if got, err := db.ClaimForLinesidePayload("SLN_Y", "PART-Y"); err != nil || got != nil {
-		t.Errorf("a claim of a deleted style answers where the carrier belongs: %+v (err %v)", got, err)
+	if live, err := processes.ListLiveClaimsByProcess(db.DB, pid); err != nil || len(live) != 0 {
+		t.Errorf("a deleted process's claims still read as live: %d (err %v)", len(live), err)
 	}
 }

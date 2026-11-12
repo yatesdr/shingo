@@ -168,9 +168,11 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// window, RequestFullBin and the unloader's U1 (fireUnloaderFulls, gone).
 	// Left: createRetrieveDirect (the API to a destination no loader owns), the
 	// changeover's two (createRetrieveFromSpec, StageNodeChangeoverMaterial),
-	// the press prime (createPrimes), the bare produce line's empty
-	// (applyProduceEmptyLine) and the keep-staged refill (refillSpot).
-	const want = 7
+	// the bare produce line's empty (applyProduceEmptyLine) and SEND BACK's pull.
+	//
+	// 6 since a carrier to a position other than the line has one maker
+	// (carrierToPosition): the press prime and the keep-staged refill.
+	const want = 6
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

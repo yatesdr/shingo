@@ -1,13 +1,18 @@
 package engine
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
+	"shingoedge/release"
 	"shingoedge/store/processes"
 )
 
@@ -29,13 +34,9 @@ import (
 // on different nodes.
 //
 // CLEARED MEANS NORMAL ROUTING. A marked position's bin goes wherever that cell's
-// bins ordinarily go — its unloader, its buffer, its market — and the leg the
-// pipeline already planned is left alone. `changeover_evac_destination` is an
-// OPTIONAL OVERRIDE for a cell that wants its clearance somewhere else, like a
-// different node group; empty is the default and empty means untouched. There
-// is no bay: the one-slot "tooling bay" in the demo fixture was built on the
-// wrong premise and produced robots dwelling on an occupied station with bins
-// nothing would ever take away.
+// bins ordinarily go — its unloader, its buffer, its market: the outgoing
+// claim's outbound — and the leg the pipeline already planned is left alone.
+// There is no destination of the tool change's own, and no bay.
 //
 // The three shapes below are the three ways a changeover can present that
 // rule. Before the decorator, the first two produced NO tooling behaviour at
@@ -134,8 +135,7 @@ func toolingTestPlanSeated(t *testing.T, from, to []processes.NodeClaim, binType
 	state func(string) NodeState, nodeNames ...string) changeover.Plan {
 	t.Helper()
 	diffs := DiffStyleClaims(from, to)
-	diffs = FanOutPressIndex(diffs, binTypes, state)
-	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	diffs = PlanPressPositions(diffs, binTypes, state)
 	diffs = ApplyNodeState(diffs, state)
 
 	nodes := make([]processes.Node, 0, len(nodeNames))
@@ -145,8 +145,8 @@ func toolingTestPlanSeated(t *testing.T, from, to []processes.NodeClaim, binType
 	return BuildChangeoverPlan(diffs, nodes, false, nil, planToolingChangeover(from, to))
 }
 
-// pressClaim builds a press-index claim. positions/evacDest belong on the OUTGOING
-// claim; inboundStaging on the INCOMING one.
+// pressClaim builds a press-index claim. Marks belong on the OUTGOING claim;
+// inboundStaging on the INCOMING one.
 func pressClaim(node, paired, payload string) processes.NodeClaim {
 	return processes.NodeClaim{
 		CoreNodeName:        node,
@@ -195,92 +195,29 @@ func TestToolingBeatsRelabel(t *testing.T) {
 	if !strings.Contains(got, "dropoff@MARKET") {
 		t.Errorf("marked position PRESS lost its ordinary clearance destination.\n"+
 			"steps = %s\n"+
-			"With no changeover_evac_destination set, a marked position is cleared by NORMAL "+
-			"ROUTING — wherever this cell's bins ordinarily go. The decorator does not own "+
-			"the outbound side unless an override says so.", got)
+			"A marked position is cleared by NORMAL ROUTING — wherever this cell's bins "+
+			"ordinarily go. The decorator does not own the outbound side.", got)
 	}
 
-	// THE POINT OF THE SHAPE: bin type does not disqualify the position from the
-	// HOLD. That is what "marked beats relabel" means now that clearance is
-	// normal routing — the bin-type fan-out relabels the diff, and the hold
-	// survives it.
+	// An UNMARKED position of the marked press is not part of the tool change:
+	// it gets its ordinary changeover, released by its own Ready press, and its
+	// carrier is not held for Tooling done. The engineer marks what must be clear.
 	unmarked := actionFor(t, plan, "PRESS_B")
 	ugot := allSteps(unmarked)
-	if !strings.Contains(ugot, "wait@IN-STAGE") {
-		t.Errorf("unmarked position PRESS_B delivers into a press mid tool-change.\n"+
+	if strings.Contains(ugot, "wait@IN-STAGE") || !strings.Contains(ugot, "wait@PRESS_B") {
+		t.Errorf("unmarked position PRESS_B is not its ordinary changeover.\n"+
 			"steps = %s\n"+
-			"EVERY inbound leg to the press holds — the press is down, marked position or not.", ugot)
+			"It opens with its own Ready wait and holds nothing for Tooling done.", ugot)
 	}
 
-	// And with no override, the OUTBOUND half of a marked position is
-	// indistinguishable from an unmarked one. That is by design: clearing a
-	// position is not a different journey, it is the same journey done now.
+	// The OUTBOUND half of a marked position is indistinguishable from an
+	// unmarked one. That is by design: clearing a position is not a different
+	// journey, it is the same journey done now.
 	if outboundOf(t, marked) != outboundOf(t, unmarked) {
 		t.Errorf("marked position PRESS clears to %q but unmarked PRESS_B to %q.\n"+
-			"With no override both are ordinary evacuations to the same place; a difference "+
-			"here means the decorator is still steering the outbound leg.",
+			"Both are ordinary evacuations to the same place; a difference here means the "+
+			"decorator is steering the outbound leg.",
 			outboundOf(t, marked), outboundOf(t, unmarked))
-	}
-}
-
-// TestToolingClearanceOverrideRedirectsOnlyMarkedPositions is the OTHER half of the
-// same rule, and it is the half a fixture must keep exercising: when a cell
-// names a clearance destination, its MARKED positions go there and nothing else
-// does.
-//
-// The override exists for a cell whose ordinary outbound is the wrong place to
-// put bins during a setup — "somewhere new, like a different node group". It is
-// not a bay, it is not special, and whatever it names gets ordinary capacity
-// behaviour, which is why the fixture points it at a group.
-func TestToolingClearanceOverrideRedirectsOnlyMarkedPositions(t *testing.T) {
-	t.Parallel()
-	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacNodes = []string{"PRESS"}
-	from.ChangeoverEvacDestination = "CLEARANCE-GROUP"
-
-	to := pressClaim("PRESS", "PRESS_B", "PART-B")
-	to.InboundStaging = "IN-STAGE"
-
-	binTypes := map[string]string{"PART-A": "BIG", "PART-B": "SMALL"}
-	plan := toolingTestPlan(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
-		binTypes, "PRESS", "PRESS_B")
-
-	marked := actionFor(t, plan, "PRESS")
-	if got := allSteps(marked); !strings.Contains(got, "dropoff@CLEARANCE-GROUP") {
-		t.Errorf("marked position PRESS ignored changeover_evac_destination.\nsteps = %s\n"+
-			"An override that does not redirect is an override that ships unexercised.", got)
-	}
-	unmarked := actionFor(t, plan, "PRESS_B")
-	if got := allSteps(unmarked); strings.Contains(got, "CLEARANCE-GROUP") {
-		t.Errorf("unmarked position PRESS_B was redirected to the clearance destination.\n"+
-			"steps = %s\nOnly MARKED positions are cleared; an unmarked position keeps whatever the "+
-			"normal machinery gives it.", got)
-	}
-}
-
-// TestToolingWithoutOverridePlansNoOutboundEdit pins the contract at the seam
-// rather than through a shape: with no override there is nothing for the
-// decorator to do on the outbound side, so it must not have an edit queued at
-// all. A pass that "redirects" every marked position to the destination the leg
-// already had is one config change away from redirecting it somewhere else.
-func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
-	t.Parallel()
-	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
-	to := pressClaim("PRESS", "PRESS_B", "PART-A")
-	to.InboundStaging = "IN-STAGE"
-
-	tc := planToolingChangeover([]processes.NodeClaim{from}, []processes.NodeClaim{to})
-	if !tc.active() {
-		t.Fatal("a marked press is a tooling changeover whether or not it overrides clearance")
-	}
-	if len(tc.evacDest) != 0 {
-		t.Errorf("planToolingChangeover queued outbound redirects %v with no override set.\n"+
-			"Empty changeover_evac_destination means the outbound leg is UNTOUCHED — not "+
-			"redirected to the value it already had.", tc.evacDest)
-	}
-	if len(tc.stageAt) == 0 {
-		t.Error("no staging hold planned — the hold is the half that is never optional")
 	}
 }
 
@@ -297,12 +234,14 @@ func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 //
 // THIS IS ALSO THE CROSS-MODE PIN. DiffStyleClaims produces only PLN_001(drop)
 // and PLN_005(add) — the two claim ROWS. The extension positions PLN_002(drop) and
-// PLN_006(add) exist solely because FanOutPressIndexCrossMode synthesizes them,
+// PLN_006(add) exist solely because PlanPressPositions synthesizes them,
 // verified by tracing the passes. So the assertions below on PLN_002 and
 // PLN_006 are assertions that the decorator correctly edits legs planned from
-// cross-mode's synthesized diffs — the one ordering interaction the two passes
-// have, and it is safe by construction: cross-mode makes diffs, the decorator
-// edits the plan those diffs produced, so neither can preempt the other.
+// its synthesized diffs — the one ordering interaction the two have, and it is
+// safe by construction: the press positions make diffs, the decorator edits
+// the plan those diffs produced, so neither can preempt the other. PLN_006 has
+// never had a carrier leave it, so it is an Add, not a swap that would lift
+// at a node nothing is known to stand on.
 func TestToolingAcrossDisjointNodes(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_001", "PLN_002", "PART-A")
@@ -334,10 +273,16 @@ func TestToolingAcrossDisjointNodes(t *testing.T) {
 		}
 	}
 
-	// Every new position stages and holds behind tooling-done.
+	// Every new position is a delivery, and it stages and holds behind
+	// tooling-done. Nothing is known to stand on either (no seat is read here),
+	// so neither lifts first: a lift at an empty node holds the order at Core.
 	for _, position := range []string{"PLN_005", "PLN_006"} {
 		a := actionFor(t, plan, position)
 		got := allSteps(a)
+		if a.Situation != string(SituationAdd) || strings.Contains(got, "pickup@"+position) {
+			t.Errorf("new position %s planned %s.\nsteps = %s\nA position only the incoming style uses "+
+				"is a delivery unless a bin is known to be bound there.", position, a.Situation, got)
+		}
 		if !strings.Contains(got, "wait@IN-STAGE") {
 			t.Errorf("new position %s takes delivery with no tooling hold.\nsteps = %s\n"+
 				"A human is inside the cell. Material must wait at inbound staging and move in "+
@@ -493,6 +438,26 @@ func TestRefuseToolingChangeoverWithoutStaging(t *testing.T) {
 	}
 }
 
+// The backstop is scoped by the marks, not by the mode: a marked single-robot
+// cell whose claims name no inbound staging (a row saved before the save's
+// rule) is refused at START; the marked claim's own staging is enough when the
+// incoming claim names none.
+func TestRefuseToolingChangeoverWithoutStaging_EveryMarkedMode(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{CoreNodeName: "CELL", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-A",
+		ChangeoverEvacNodes: []string{"CELL"}}
+	to := from
+	to.PayloadCode, to.ChangeoverEvacNodes = "PART-B", nil
+	err := refuseToolingChangeoverWithoutStaging([]processes.NodeClaim{from}, []processes.NodeClaim{to})
+	if err == nil || !strings.Contains(err.Error(), "CELL") || !strings.Contains(err.Error(), "inbound staging") {
+		t.Fatalf("a marked single-robot cell with no staging: %v, want a refusal naming CELL and inbound staging", err)
+	}
+	from.InboundStaging = "CELL-STAGE"
+	if err := refuseToolingChangeoverWithoutStaging([]processes.NodeClaim{from}, []processes.NodeClaim{to}); err != nil {
+		t.Errorf("the marked claim names its staging: refused %v", err)
+	}
+}
+
 // A changeover with no marked position is not a tooling changeover and is none of
 // this pass's business.
 func TestRefuseToolingChangeoverWithoutStaging_IgnoresUnmarkedPresses(t *testing.T) {
@@ -558,11 +523,12 @@ func TestPressIndex_ThePressSeatPullsForThePairsLife(t *testing.T) {
 	}
 }
 
-// TestPressIndex_ToolingEvacuateLeavesThePressPulling — a tooling evacuate on a
-// two_robot_press_index pair leaves the press seat pulling: the outgoing
-// style's ticks land on the bound bin while the evacuate is staged, and after
-// the evac's release (door 5) and the cutover the incoming style's ticks land
-// at the press (held for the carrier R2 is placing there).
+// TestPressIndex_ToolingEvacuateLeavesThePressPulling — a tool change on a
+// two_robot_press_index pair leaves the press seat pulling. START locks the
+// departing carrier's count (lockClearingCount, as a release does), so a tick
+// in the tool change is held for the next carrier rather than charged to the
+// one leaving, and after the leg's release (door 5) and the cutover the
+// incoming style's ticks land at the press.
 //
 // At the base the evacuate cleared the bit on the press seat and nothing on a
 // press-index pair ever set it again, so every produce tick at the press was
@@ -571,7 +537,7 @@ func TestPressIndex_ThePressSeatPullsForThePairsLife(t *testing.T) {
 func TestPressIndex_ToolingEvacuateLeavesThePressPulling(t *testing.T) {
 	t.Parallel()
 	h := newRelHarness(t)
-	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "supply", protocol.StatusStaged)(h)
 	co, err := h.db.GetActiveProcessChangeover(h.processID)
 	testutil.MustNoErr(t, err, "read changeover")
 	task, err := h.db.GetChangeoverNodeTaskByNode(co.ID, h.nodeID)
@@ -585,9 +551,10 @@ func TestPressIndex_ToolingEvacuateLeavesThePressPulling(t *testing.T) {
 		t.Fatal("press seat active_pull = false after the tooling evacuate, want true: a press-index pair has no parked side")
 	}
 	charSPTick(h.eng, h.processID, fromStyle, 2)
-	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != fxCount+2 || rt.PendingUOPDelta != 0 {
-		t.Errorf("after a tick at the evacuating press: count %d hold %d, want %d and 0: the bound bin takes it",
-			rt.RemainingUOPCached, rt.PendingUOPDelta, fxCount+2)
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != 0 || rt.PendingUOPDelta != 2 {
+		t.Errorf("after a tick at the press in its tool change: count %d hold %d, want 0 and 2: START "+
+			"locked the departing carrier's count, and the tick waits for the next one",
+			rt.RemainingUOPCached, rt.PendingUOPDelta)
 	}
 
 	testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the evacuate's legs")
@@ -782,5 +749,134 @@ func TestStrictPack_PressIndexPacksHoldsAndReplaysOntoTheNextBin(t *testing.T) {
 	seat(fmt.Sprintf("bin %d count 6 hold 0 of %q", next, ""))
 	if got, want := produceTicks(), []string{fmt.Sprintf("bin %d +6", next)}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("the replay emitted %v, want %v", got, want)
+	}
+}
+
+// TestToolChange_StartLocksTheDepartingCount: a tool change's clearing leg
+// lifts at START with no release in front of it, so START locks the produce
+// carrier's count as a release does (lockClearingCount): its ingest ships once,
+// with the seat's count, and the seat lets the carrier go. The leg's release at
+// Tooling done ships no second one. A consume position ships no count, as its
+// release ships none.
+func TestToolChange_StartLocksTheDepartingCount(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		role       protocol.ClaimRole
+		wantIngest int
+		wantSeat   int
+	}{
+		{protocol.ClaimRoleProduce, 1, 0},
+		{protocol.ClaimRoleConsume, 0, fxCount},
+	} {
+		h := newRelHarness(t)
+		coAt(coSpec{mode: protocol.SwapModeSingleRobot, role: c.role, tooling: true}, "supply", protocol.StatusStaged)(h)
+		ingest, _ := h.paperworkSinceMark()
+		if ingest != c.wantIngest {
+			t.Errorf("%s: %d ingest(s) shipped at START, want %d", c.role, ingest, c.wantIngest)
+		}
+		if got := remainingUOP(t, h.db, h.nodeID); got != c.wantSeat {
+			t.Errorf("%s: the seat counts %d after START, want %d", c.role, got, c.wantSeat)
+		}
+		h.mark()
+		testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the leg at Tooling done")
+		if again, _ := h.paperworkSinceMark(); again != 0 {
+			t.Errorf("%s: the release at Tooling done shipped %d more ingest(s), want none", c.role, again)
+		}
+	}
+}
+
+// TestToolChange_AMarkedDropClearsAtStart: a marked position the incoming style
+// does not use is the tool change's drop, cleared at START as the clearing leg
+// is: nothing waits in front of its lift but a live light curtain's wait, and
+// START locks the departing produce count. An unmarked drop still waits for
+// Ready, and START locks nothing for it.
+func TestToolChange_AMarkedDropClearsAtStart(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		spec       coSpec
+		wantSteps  string
+		wantIngest int
+		wantSeat   int
+	}{
+		{"marked", coSpec{mode: protocol.SwapModeSingleRobot, tooling: true, drop: true},
+			"pickup " + fxPress + ", dropoff " + fxOutDest, 1, 0},
+		{"marked, curtained", coSpec{mode: protocol.SwapModeSingleRobot, tooling: true, drop: true, curtained: true},
+			"wait " + fxPress + "(ready), pickup " + fxPress + ", dropoff " + fxOutDest, 1, 0},
+		{"unmarked", coSpec{mode: protocol.SwapModeSingleRobot, drop: true},
+			"wait " + fxPress + "(ready), pickup " + fxPress + ", dropoff " + fxOutDest, 0, fxCount},
+	} {
+		h := newRelHarness(t)
+		coAt(c.spec)(h)
+		raw, err := h.db.GetOrderStepsJSON(h.leg("evac"))
+		testutil.MustNoErr(t, err, c.name+": read the drop's steps")
+		var steps []protocol.ComplexOrderStep
+		testutil.MustNoErr(t, json.Unmarshal([]byte(raw), &steps), c.name+": decode the drop's steps")
+		if got := stepsString(steps); got != c.wantSteps {
+			t.Errorf("%s: the drop's leg is %q, want %q", c.name, got, c.wantSteps)
+		}
+		ingest, _ := h.paperworkSinceMark()
+		if ingest != c.wantIngest {
+			t.Errorf("%s: %d ingest(s) shipped at START, want %d", c.name, ingest, c.wantIngest)
+		}
+		if got := remainingUOP(t, h.db, h.nodeID); got != c.wantSeat {
+			t.Errorf("%s: the seat counts %d after START, want %d", c.name, got, c.wantSeat)
+		}
+	}
+}
+
+// TestToolChange_TheTileNamesTheDecisionOnEveryMode: the tile's RELEASE is
+// named from the purpose of the wait a leg is parked at (release_purposes;
+// changeoverReleaseAction draws RELEASE: TOOLING DONE from it), never from the
+// mode. A single-robot, a two-robot and a sequential cell standing at their
+// tool change's wait owe Tooling done, and a press marked at its front only
+// owes Ready at its unmarked back position, where its ordinary per-position
+// swap stands.
+func TestToolChange_TheTileNamesTheDecisionOnEveryMode(t *testing.T) {
+	t.Parallel()
+	tile := func(h *relHarness, nodeID int64) []domain.ReleasePurpose {
+		t.Helper()
+		view, err := h.eng.stationService.BuildView(context.Background(), h.stationID)
+		testutil.MustNoErr(t, err, "BuildView")
+		for i := range view.Nodes {
+			if view.Nodes[i].Node.ID == nodeID {
+				return view.Nodes[i].ReleasePurposes
+			}
+		}
+		t.Fatalf("no tile for node %d", nodeID)
+		return nil
+	}
+	toolingDone := []domain.ReleasePurpose{{Purpose: string(release.PurposeToolingDone), Ready: true}}
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot, protocol.SwapModeSequential} {
+		h := newRelHarness(t)
+		coAt(coSpec{mode: mode, tooling: true}, "supply", protocol.StatusStaged)(h)
+		h.coreStagesAt("supply", 0)
+		if got := tile(h, h.nodeID); !reflect.DeepEqual(got, toolingDone) {
+			t.Errorf("%s at its tool change's wait: the tile owes %+v, want %+v", mode, got, toolingDone)
+		}
+		// And the button's door releases it, whatever the mode.
+		testutil.MustNoErr(t, nodeCOClick(dispNone)(h), string(mode)+": the node's Tooling done")
+		if got := h.order("supply").Status; got != protocol.StatusInTransit {
+			t.Errorf("%s: the leg is %s after Tooling done, want in_transit", mode, got)
+		}
+	}
+
+	h := newRelHarness(t)
+	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, markedOnly: []string{fxPress}}, "supply", protocol.StatusStaged)(h)
+	co, err := h.db.GetActiveProcessChangeover(h.processID)
+	testutil.MustNoErr(t, err, "the changeover")
+	back, err := h.db.GetProcessNodeByCoreNodeName(fxPressB)
+	testutil.MustNoErr(t, err, "the back position's node")
+	task, err := h.db.GetChangeoverNodeTaskByNode(co.ID, back.ID)
+	testutil.MustNoErr(t, err, "the back position's task")
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("the unmarked back position has no order: a part-marked press must still plan it")
+	}
+	h.addLeg("back", *task.NextMaterialOrderID)
+	h.setStatus("back", protocol.StatusStaged)
+	h.coreStagesAt("back", 0)
+	ready := []domain.ReleasePurpose{{Purpose: string(release.PurposeReady), Ready: true}}
+	if got := tile(h, back.ID); !reflect.DeepEqual(got, ready) {
+		t.Errorf("the unmarked back position at its swap's wait: the tile owes %+v, want %+v", got, ready)
 	}
 }

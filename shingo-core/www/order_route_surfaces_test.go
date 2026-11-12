@@ -61,17 +61,15 @@ func TestOrderRouteRuleMatchesThePopup(t *testing.T) {
 			"left:UTN_014 ➜ next:UTN_013"},
 		{"unreadable steps", orders.Order{StepsJSON: `[{"action":`, SourceNode: "UTN_014", DeliveryNode: "UTN_013"},
 			"next:UTN_014 final:UTN_013"},
-		{"all three", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013"},
-			"next:UTN_014 remaining:+1 final:UTN_013"},
-		{"line repeats From", orders.Order{SourceNode: "UTN_014", ProcessNode: "UTN_014", DeliveryNode: "UTN_013"},
+		{"naming its press, which is no stop", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_013"},
 			"next:UTN_014 final:UTN_013"},
 		{"From not chosen", orders.Order{ProcessNode: "ALN_003", DeliveryNode: "UTN_013"},
-			"next:— remaining:+1 final:UTN_013"},
+			"next:— final:UTN_013"},
 		{"To not chosen", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003"},
-			"next:UTN_014 remaining:+1 final:—"},
+			"next:UTN_014 final:—"},
 		{"nothing chosen", orders.Order{}, "next:— final:—"},
 		{"round trip", orders.Order{SourceNode: "UTN_014", ProcessNode: "ALN_003", DeliveryNode: "UTN_014"},
-			"next:UTN_014 remaining:+1 final:UTN_014"},
+			"next:UTN_014 final:UTN_014"},
 	}
 
 	// The rule, as the server sends it to the scripts: the stops and the view.

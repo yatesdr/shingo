@@ -16,8 +16,41 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration.
+## v0.4.0 — 2026-11-12
 
+Deploy: Edge v47. Update Core and every Edge at a plant in one window.
+
+- Every order request can name the press it serves; Core stores it for plain orders as for multi-step ones
+- A plain empty for a press is served by a strict kanban that supports that press
+- A press's plain move of a contained part to finished goods goes to containment
+- An order with no steps draws its pickup and its drop, never the press as a stop between
+- Every plain order an Edge makes for a press names that press, SEND BACK's two included
+- The demo plant's press empties kanban is strict, so only the presses it supports draw from it
+- A tool change can mark positions on any line mode; unmarked positions swap as usual
+- A claim with marks names inbound staging: the new carrier waits there for Tooling done
+- A tool change clears its marked positions at START and indexes nothing onto the press
+- Clearing at START locks the departing count and waits at a live light curtain
+- A marked position the next style does not use is cleared at START too; an unmarked one still waits for Ready
+- A light curtain's release no longer releases Tooling done by itself
+- Evacuate on changeover is gone; a claim that had it on with no marks is logged (Edge v47)
+- A tool change clears to the cell's ordinary destination; its own clearance destination is gone, logged where set (Edge v47)
+- Which robot brings a press's next carrier is stored as Robot 1, 2 or 3 (Edge v47)
+- An index press can use Robot 3: a third trip brings the back its carrier when Robot 2 lifts it
+- The index press's mode is called Index Swap on every screen and in every refusal
+- A changeover onto a press position the old style never used delivers to it, where it planned a swap that waited for nothing
+- A carrier Core sends elsewhere at a release gets the lane and table-turn waits of where it now goes, so the route can finish
+- A partial home or a kanban with lanes is entered through its lane's gate
+- A parked loader return and a contained part with no wait before its drop go there with the robot's first instructions
+- Containment catches a press whose outbound is a group, and the full an index press's Robot 1 carries
+- A tool change's carry-over carrier always comes back to its position
+- A carrier of another part goes to its own part's outbound: Core decides from the bin, the Edge no longer guesses
+- Core stops guessing an order's press for a tops & bottoms pull and a cancelled cart's return (once every Edge names it)
+- An empty asked for no press, a loader's included, takes nothing from a strict kanban, wherever it searches (once every Edge names it)
+- Where Core picks (a claim's source and its outbound, containment and partial destinations, routing sets, recipes, an API order's source and drop), the Edge refuses a spot inside a node group: name the group, or a node in no group
+- There an Edge holding Core's plant-wide node list also refuses a name the list does not have, a slot inside a lane included; a station-scoped list refuses none for its absence
+- The pickers for those fields no longer offer a group's spots; staging and a cell's own positions still name the exact node
+- A contained part whose claim names a spot inside a group for containment waits, held, until the claim names the group; it never goes to finished goods
+- Core logs at start every claim leg that names a spot inside a group, and which are loader homes; the Edge logs the claims, routing rows and recipes the rule refuses when Core's node list changes
 - A cart that waits at a press's back position on its way to the line is cleared from that spot when the robot lifts it again: a changeover started later delivers an empty there, where it planned to collect a cart that was not there and waited on "no bins at node"
 - A robot's lift clears the spot it lifted from whichever order it belongs to, and only for the cart it lifted
 

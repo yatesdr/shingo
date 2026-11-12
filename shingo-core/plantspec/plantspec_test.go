@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"shingo/protocol"
 )
 
 // validPlant returns a minimal spec that passes Validate; tests mutate a copy
@@ -89,6 +91,20 @@ func TestValidate_CatchesProblems(t *testing.T) {
 		{"keep_staged_node that is the claim's own outbound staging", func(p *Plant) {
 			p.Claims[1].KeepStagedNode = p.Claims[1].OutboundStaging
 		}, "also names it as outbound_staging"},
+		// The Edge's save rules for who refills and for a tool change's marks,
+		// over a mode the old press-index-only arm never reached.
+		{"refill_by Robot 2 off a press-index cell", func(p *Plant) {
+			p.Claims[1].RefillBy = protocol.RefillByIndexRobot
+		}, "refill_by \"index_robot\" applies to two_robot_press_index only"},
+		{"refill_by that names no robot", func(p *Plant) {
+			p.Claims[1].RefillBy = "robot_9"
+		}, "refill_by \"robot_9\" is not a robot"},
+		{"marks with no inbound staging", func(p *Plant) {
+			p.Claims[2].ChangeoverEvacNodes = []string{"LINE1-IN"}
+		}, "changeover_evac_nodes needs inbound_staging"},
+		{"marks on a loader", func(p *Plant) {
+			p.Claims[0].ChangeoverEvacNodes = []string{"LOADER-1"}
+		}, "a manual_swap loader has no positions to clear"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +130,19 @@ func TestValidate_TwoRobotWithDestinationPasses(t *testing.T) {
 	p.Claims[1].OutboundDestination = "SM-A"
 	if err := p.Validate(); err != nil {
 		t.Fatalf("a complete two_robot claim was refused: %v", err)
+	}
+}
+
+// A tool change may mark the positions of any line mode a robot serves, given
+// inbound staging to hold the new carrier: here a single-robot press and a
+// sequential line.
+func TestValidate_MarksOnAnyLineModePass(t *testing.T) {
+	p := validPlant()
+	p.Claims[1].ChangeoverEvacNodes = []string{"PRESS-1"}
+	p.Claims[2].ChangeoverEvacNodes = []string{"LINE1-IN"}
+	p.Claims[2].InboundStaging = "STAGE-P1-IN"
+	if err := p.Validate(); err != nil {
+		t.Fatalf("marks on a single-robot press and a sequential line were refused: %v", err)
 	}
 }
 

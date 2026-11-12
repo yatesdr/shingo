@@ -918,3 +918,261 @@ No assertion read any of the twelve.
 - coverage Δ: 0 (a node-run JS test; it covers no Go statement)
 - citations rewritten: none (`git grep -n TestCountingBlock_EachLineLabelledInThreeGroups` over the five modules: this file only)
 - verified at: the commit that adds this row
+
+### STALE — `TestMarkedEvacNodes_IsNotPressShaped`
+- test: `TestMarkedEvacNodes_IsNotPressShaped` · pkg `shingoedge/domain` · run `-run '^TestMarkedEvacNodes_IsNotPressShaped$'` · `shingo-edge/domain/changeover_evac_nodes_test.go:59` @ `8e076d27` · tags `none`
+- code: STALE (marks are on every line mode now; the premise that a non-press claim could mark its paired name changed: a sequential claim's paired name is its partner's line, which the partner marks)
+- assertion map: a claim marking one of the several nodes it names gets that node back → `TestMarkedEvacNodes_EveryLineModeMarksItsOwnPositions` (each line mode marks its own positions; a sequential claim's mark of its partner's line is dropped, and refused at save by `TestValidateNodeClaim_EveryLineModeMarksItsPositions`)
+- mutation: none run for this row
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none (`git grep -n TestMarkedEvacNodes_IsNotPressShaped` over the five modules: this ledger only)
+- verified at: the commit that adds this row
+
+### STALE — `TestApplyProducePlan_PrimeAutoConfirmIsMerged`
+- test: `TestApplyProducePlan_PrimeAutoConfirmIsMerged` · pkg `shingoedge/engine` · run `-run '^TestApplyProducePlan_PrimeAutoConfirmIsMerged$'` · `shingo-edge/engine/produce_prime_test.go:492` @ `8e076d27` · tags `none`
+- code: STALE (a prime is confirmed by its placement now, whatever the claim and the plant say: "feat(edge): one maker for a carrier to a position other than the line")
+- assertion map: the matrix of claim × plant auto-confirm (false/false false, the rest true) → `TestApplyProducePlan_APrimeIsConfirmedByItsPlacement`, the same four rows, each now true
+- mutation: the old test against the new maker, before it was rewritten: `go test -count=1 -run '^TestApplyProducePlan_PrimeAutoConfirmIsMerged$' ./engine/` → `produce_prime_test.go:525: claim=false cfg=false: prime AutoConfirm = true, want false (claim || config)`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: `shingo-edge/engine/produce_prime_test.go` (the comment that pointed at it now points at its successor)
+- verified at: the commit that adds this row
+
+### DEAD — `TestBuildEvacuateChangeoverSteps_SingleRobot`
+- test: `TestBuildEvacuateChangeoverSteps_SingleRobot` · pkg `shingoedge/engine` · run `-run '^TestBuildEvacuateChangeoverSteps_SingleRobot$'` · `shingo-edge/engine/step_builders_test.go:88` @ `8e076d27` · tags `none`
+- code: DEAD (the evacuate builder and the `evacuate_on_changeover` switch it served are deleted; marks are the one tool change)
+- assertion map: the mode's evacuate shape (where the Tooling done wait sat, which leg fetched) → the one tool change every mode now takes, `TestToolChange_TheTable` (mode × layout × flip × part × carrier × marks: no set-down on a marked position before its leg's `tooling_done` wait, no leg moving a carrier between two positions of a marked cell, every position of a part-marked cell planned, no order ending on a wait, the wait written by the decorator alone) and the swap golden's `toolChange` rows. The per-mode evacuate shape itself is retired with the switch
+- mutation: none to run: the function the test called, `BuildEvacuateChangeoverSteps`, is deleted in "refactor(edge): one tool change; the evacuate builders and the old switch are gone", so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestBuildEvacuateChangeoverSteps_TwoRobot`
+- test: `TestBuildEvacuateChangeoverSteps_TwoRobot` · pkg `shingoedge/engine` · run `-run '^TestBuildEvacuateChangeoverSteps_TwoRobot$'` · `shingo-edge/engine/step_builders_test.go:206` @ `8e076d27` · tags `none`
+- code: DEAD (the evacuate builder and the `evacuate_on_changeover` switch it served are deleted; marks are the one tool change)
+- assertion map: the mode's evacuate shape (where the Tooling done wait sat, which leg fetched) → the one tool change every mode now takes, `TestToolChange_TheTable` (mode × layout × flip × part × carrier × marks: no set-down on a marked position before its leg's `tooling_done` wait, no leg moving a carrier between two positions of a marked cell, every position of a part-marked cell planned, no order ending on a wait, the wait written by the decorator alone) and the swap golden's `toolChange` rows. The per-mode evacuate shape itself is retired with the switch
+- mutation: none to run: the function the test called, `BuildEvacuateChangeoverSteps`, is deleted in "refactor(edge): one tool change; the evacuate builders and the old switch are gone", so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestBuildEvacuateChangeoverSteps_PressIndex_2Pos`
+- test: `TestBuildEvacuateChangeoverSteps_PressIndex_2Pos` · pkg `shingoedge/engine` · run `-run '^TestBuildEvacuateChangeoverSteps_PressIndex_2Pos$'` · `shingo-edge/engine/step_builders_test.go:356` @ `8e076d27` · tags `none`
+- code: DEAD (the evacuate builder and the `evacuate_on_changeover` switch it served are deleted; marks are the one tool change)
+- assertion map: the mode's evacuate shape (where the Tooling done wait sat, which leg fetched) → the one tool change every mode now takes, `TestToolChange_TheTable` (mode × layout × flip × part × carrier × marks: no set-down on a marked position before its leg's `tooling_done` wait, no leg moving a carrier between two positions of a marked cell, every position of a part-marked cell planned, no order ending on a wait, the wait written by the decorator alone) and the swap golden's `toolChange` rows. The per-mode evacuate shape itself is retired with the switch
+- mutation: none to run: the function the test called, `BuildEvacuateChangeoverSteps`, is deleted in "refactor(edge): one tool change; the evacuate builders and the old switch are gone", so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestBuildEvacuateChangeoverSteps_Sequential`
+- test: `TestBuildEvacuateChangeoverSteps_Sequential` · pkg `shingoedge/engine` · run `-run '^TestBuildEvacuateChangeoverSteps_Sequential$'` · `shingo-edge/engine/step_builders_test.go:599` @ `8e076d27` · tags `none`
+- code: DEAD (the evacuate builder and the `evacuate_on_changeover` switch it served are deleted; marks are the one tool change)
+- assertion map: the mode's evacuate shape (where the Tooling done wait sat, which leg fetched) → the one tool change every mode now takes, `TestToolChange_TheTable` (mode × layout × flip × part × carrier × marks: no set-down on a marked position before its leg's `tooling_done` wait, no leg moving a carrier between two positions of a marked cell, every position of a part-marked cell planned, no order ending on a wait, the wait written by the decorator alone) and the swap golden's `toolChange` rows. The per-mode evacuate shape itself is retired with the switch
+- mutation: none to run: the function the test called, `BuildEvacuateChangeoverSteps`, is deleted in "refactor(edge): one tool change; the evacuate builders and the old switch are gone", so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestBuildEvacuateChangeoverSteps_SequentialUnpaired_EmptyDispatch`
+- test: `TestBuildEvacuateChangeoverSteps_SequentialUnpaired_EmptyDispatch` · pkg `shingoedge/engine` · run `-run '^TestBuildEvacuateChangeoverSteps_SequentialUnpaired_EmptyDispatch$'` · `shingo-edge/engine/step_builders_test.go:663` @ `8e076d27` · tags `none`
+- code: DEAD (the evacuate builder and the `evacuate_on_changeover` switch it served are deleted; marks are the one tool change)
+- assertion map: the mode's evacuate shape (where the Tooling done wait sat, which leg fetched) → the one tool change every mode now takes, `TestToolChange_TheTable` (mode × layout × flip × part × carrier × marks: no set-down on a marked position before its leg's `tooling_done` wait, no leg moving a carrier between two positions of a marked cell, every position of a part-marked cell planned, no order ending on a wait, the wait written by the decorator alone) and the swap golden's `toolChange` rows. The per-mode evacuate shape itself is retired with the switch
+- mutation: none to run: the function the test called, `BuildEvacuateChangeoverSteps`, is deleted in "refactor(edge): one tool change; the evacuate builders and the old switch are gone", so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestBuildSequentialPerPositionEvacuate_StillCarriesAcrossABareWait`
+- test: `TestBuildSequentialPerPositionEvacuate_StillCarriesAcrossABareWait` · pkg `shingoedge/engine` · run `-run '^TestBuildSequentialPerPositionEvacuate_StillCarriesAcrossABareWait$'` · `shingo-edge/engine/changeover_position_builder_test.go:160` @ `8e076d27` · tags `none`
+- code: DEAD (`buildSequentialPerPositionEvacuate` is deleted with the switch; a sequential position's tool change is the one leg, `toolingPositionAction`)
+- assertion map: the sequential position's leg carrying its carrier across a bare wait → the tool change's leg on a sequential cell in `TestToolChange_TheTable`, and `TestSequentialChangeoverEvacuate_OnePositionGetsOneCarrier` (the leg brings its own carrier back and gets no backfill)
+- mutation: none to run: the builder is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange`
+- test: `TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange` · pkg `shingoedge/engine` · run `-run '^TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange$'` · `shingo-edge/engine/changeover_diff_test.go:344` @ `8e076d27` · tags `none`
+- code: DEAD (the `evacuate_on_changeover` field is deleted, and Edge v47 drops its column)
+- assertion map: a part change with the old switch on stays a Swap → nothing: the switch is gone; a part change at a marked position is `TestDiffStyleClaims_MarkedPositionsEvacuateAcrossAPayloadChange`
+- mutation: none to run: the field is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestPlanNodeAction_Drop_WithEvacuateMarker`
+- test: `TestPlanNodeAction_Drop_WithEvacuateMarker` · pkg `shingoedge/engine` · run `-run '^TestPlanNodeAction_Drop_WithEvacuateMarker$'` · `shingo-edge/engine/changeover_planner_test.go:116` @ `8e076d27` · tags `none`
+- code: DEAD (the Drop read the old switch for its cutover wait; it reads the marks now)
+- assertion map: a Drop whose cutover waits for the bin to leave → `TestPlanNodeAction_Drop_AtAMarkedNode` (the same wait, keyed on the node's mark)
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestPlanNodeAction_Evacuate_Sequential`
+- test: `TestPlanNodeAction_Evacuate_Sequential` · pkg `shingoedge/engine` · run `-run '^TestPlanNodeAction_Evacuate_Sequential$'` · `shingo-edge/engine/changeover_planner_test.go:394` @ `8e076d27` · tags `none`
+- code: DEAD (the sequential evacuate builder and its `evacuate_sequential` tag are deleted; the planner plans a sequential position's ordinary swap and the decorator gives a marked one the tool change's leg)
+- assertion map: one order for the position, its log tag → the tool change's leg on a sequential cell in `TestToolChange_TheTable`; the applier's log of every shape it creates, `TestLogChangeoverAction_EveryPlannedShapeSaysWhatItCreated`
+- mutation: none to run: the builder it planned through is deleted
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails`
+- test: `TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails` · pkg `shingocore/engine` · run `-run '^TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails$'` · `shingo-core/engine/tops_and_bottoms_pull_docker_test.go:136` @ `8e076d27` · tags `docker`
+- code: STALE (the find no longer looks a pull's press up from its outside: every Edge names the press, and intake is the one check, "refactor(core): the find looks no press up for a pull of tops & bottoms")
+- assertion map: a waiting pull whose press stops carrying the part is failed at the replay with intake's sentence → `TestTopsAndBottomsPull_AReplayAsksForNoPress`: the same plant and the same edit, and the replay now takes the tops & bottoms that lands (the pull names its press; the Edge's START cancels SEND BACK's orders at a style change). Intake's refusal of a pull to no fed press's outside stays pinned by `TestTopsAndBottomsPull_IntakeRefuses`.
+- mutation: the old test against the new find, before it was rewritten: `go test -count=1 -tags docker -run '^TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails$' ./engine/` → `tops_and_bottoms_pull_docker_test.go:150: the replay left the pull dispatched with "", want failed with "TBN-OUT is not the outside position of a press fed with TBN-PART"`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap`
+- test: `TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap` · pkg `shingoedge/engine` · run `-run '^TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionAsASwap$'` · `shingo-edge/engine/changeover_diff_test.go:866` @ `0ef21ca1` · tags `none`
+- code: STALE (a position only the incoming style uses is planned from its seat: an Add unless a bin is bound there, "fix(edge): one pass plans every press position, and a new one is a delivery")
+- assertion map: BACK, named only by the 3-position incoming claim, gets one diff → `TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_PlansTheNewPositionFromItsSeat` (still one diff, still nothing at MIDDLE); BACK is the Swap with the incoming claim as its from-claim → the same test with a bin bound on BACK (`SeatBin`); with no seat read BACK is now the Add of the incoming claim, by design.
+- mutation: the old assertions against the new pass, before the test was rewritten: `go test -count=1 -run '^TestZZOldBody$' ./engine/` → `BACK situation = "add", want SituationSwap`, `BACK FromClaim = <nil>, want the incoming claim's (the from-style didn't have this position)`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestValidateNodeClaim_EvacDestinationIsFreeForm`
+- test: `TestValidateNodeClaim_EvacDestinationIsFreeForm` · pkg `shingoedge/domain` · run `-run '^TestValidateNodeClaim_EvacDestinationIsFreeForm$'` · `shingo-edge/domain/claim_validation_test.go:220` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: a free-form clearance destination (node or group, blank) is never refused → nothing: the field is gone
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_IgnoresTheToolingDestination`
+- test: `TestResidentEvacDest_IgnoresTheToolingDestination` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_IgnoresTheToolingDestination$'` · `shingo-edge/engine/swap_evac_dest_fourth_door_test.go:96` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: the resident carrier's aim ignores the clearance override → nothing: there is no override to ignore
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestToolingChangeover_BlankDestinationMeansNormalRouting`
+- test: `TestToolingChangeover_BlankDestinationMeansNormalRouting` · pkg `shingoedge/engine` · run `-run '^TestToolingChangeover_BlankDestinationMeansNormalRouting$'` · `shingo-edge/engine/changeover_position_builder_test.go:99` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: with no override, nothing is redirected and the expanded leg is built against OutboundDestination → `TestToolingPositionAction_Shape` (the leg drops at the outgoing claim's outbound, MARKET) and `TestToolingBeatsRelabel`'s check that a marked position clears where an unmarked one does
+- mutation: none to run: the decorator's override map and the press's evacDest field are deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestToolingClearanceOverrideRedirectsOnlyMarkedPositions`
+- test: `TestToolingClearanceOverrideRedirectsOnlyMarkedPositions` · pkg `shingoedge/engine` · run `-run '^TestToolingClearanceOverrideRedirectsOnlyMarkedPositions$'` · `shingo-edge/engine/changeover_tooling_test.go:235` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: a marked position goes to the override and an unmarked one does not → nothing: the override is gone; a marked position's clearance is the ordinary one (`TestToolingPositionAction_Shape`)
+- mutation: none to run: the field the test set is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestToolingWithoutOverridePlansNoOutboundEdit`
+- test: `TestToolingWithoutOverridePlansNoOutboundEdit` · pkg `shingoedge/engine` · run `-run '^TestToolingWithoutOverridePlansNoOutboundEdit$'` · `shingo-edge/engine/changeover_tooling_test.go:266` @ `0ef21ca1` · tags `none`
+- code: DEAD (the tool change's own clearance destination, `changeover_evac_destination`, is deleted and Edge v47 drops its column; a marked position clears to the outgoing claim's ordinary destination)
+- assertion map: with no override no outbound edit is queued; the staging hold is planned → nothing for the first (there is no edit to queue); the hold, `TestToolingAcrossDisjointNodes` and `TestToolChange_TheTable`
+- mutation: none to run: the decorator's override map is deleted, so the test no longer compiles
+
+### DEAD — `TestWithResidentEvacDest`
+- test: `TestWithResidentEvacDest` · pkg `shingoedge/engine` · run `-run '^TestWithResidentEvacDest$'` · `shingo-edge/engine/swap_evac_dest_test.go:16` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: the copy that overrode one field of a claim → nothing: no claim is copied with another destination
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_ForeignResident_RoutesToResidentHome`
+- test: `TestResidentEvacDest_ForeignResident_RoutesToResidentHome` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_ForeignResident_RoutesToResidentHome$'` · `shingo-edge/engine/swap_evac_dest_test.go:119` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: a foreign carrier on the cell goes to its own home → `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands); the swap's evac leg is aimed at the requested claim's outbound → `TestRequest_AForeignCarrierIsAimedAtTheRequestedClaimsOutbound`
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_SameStyleResident_NoOverride`
+- test: `TestResidentEvacDest_SameStyleResident_NoOverride` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_SameStyleResident_NoOverride$'` · `shingo-edge/engine/swap_evac_dest_test.go:167` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: the requested style's carrier keeps the claim's outbound → `TestReleaseNodeWithClaim_SameStyleResidentIsUnchanged`; Core leaves a carrier of the drop's own part alone, `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands)
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_UnknownsFailOpen`
+- test: `TestResidentEvacDest_UnknownsFailOpen` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_UnknownsFailOpen$'` · `shingo-edge/engine/swap_evac_dest_test.go:194` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: an unread carrier keeps the claim's outbound → every leg keeps it now; Core asks only of a carrier whose part it holds (otherPartHome)
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestReleaseNodeWithClaim_RoutesTheResidentCarrierHome`
+- test: `TestReleaseNodeWithClaim_RoutesTheResidentCarrierHome` · pkg `shingoedge/engine` · run `-run '^TestReleaseNodeWithClaim_RoutesTheResidentCarrierHome$'` · `shingo-edge/engine/swap_evac_dest_fourth_door_test.go:20` @ `0ef21ca1` · tags `none`
+- code: STALE (the Material page's release is aimed at the claim's outbound and carries the carrier's own part; Core sends it home)
+- assertion map: the release of a foreign carrier goes to its own home → `TestReleaseNodeWithClaim_AimsAtTheClaimsOutbound` (the move is to the claim's outbound, carrying the carrier's part) and `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands)
+- mutation: the old assertion against the new code, by reading: the same fixture now answers the claim's outbound (the new test), not the resident's home; not run, the old body no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_PrefersTheCarriersOwnPayload`
+- test: `TestResidentEvacDest_PrefersTheCarriersOwnPayload` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_PrefersTheCarriersOwnPayload$'` · `shingo-edge/engine/lineside_payload_test.go:22` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: the carrier's own part, from Core, decides its home → `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands), which reads the bin itself
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_MatchingPayloadIsNoOverride`
+- test: `TestResidentEvacDest_MatchingPayloadIsNoOverride` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_MatchingPayloadIsNoOverride$'` · `shingo-edge/engine/lineside_payload_test.go:55` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: a carrier of the requested part keeps the claim's outbound → `TestReleaseNodeWithClaim_SameStyleResidentIsUnchanged`
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_NoRecordedPayloadFallsThrough`
+- test: `TestResidentEvacDest_NoRecordedPayloadFallsThrough` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_NoRecordedPayloadFallsThrough$'` · `shingo-edge/engine/lineside_payload_test.go:76` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: nothing recorded keeps the claim's outbound → every leg keeps it now
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestResidentEvacDest_AmbiguousPayloadDeclines`
+- test: `TestResidentEvacDest_AmbiguousPayloadDeclines` · pkg `shingoedge/engine` · run `-run '^TestResidentEvacDest_AmbiguousPayloadDeclines$'` · `shingo-edge/engine/lineside_payload_test.go:94` @ `0ef21ca1` · tags `none`
+- code: DEAD (the Edge's resident aim is deleted, "refactor(edge): the Edge aims every leg at its claim's outbound"; Core sends a carrier aimed at another part's outbound to its own claim's, at the lift)
+- assertion map: two claims for the part at the node: no override → Core's otherPartHome keeps the drop and warns when the claims for the part disagree
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome`
+- test: `TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome` · pkg `shingoedge/engine` · run `-run '^TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome$'` · `shingo-edge/engine/changeover_already_done_test.go:115` @ `0ef21ca1` · tags `none`
+- code: STALE (a changeover's Swap and Drop are aimed at the outgoing claim's outbound; Core sends a carrier of a third part to its own claim's)
+- assertion map: the old carrier of a third style goes to its own home → `TestChangeoverPlan_AimsTheOldCarrierAtTheOutgoingClaimsOutbound` (aimed at the outgoing claim's outbound) and `TestByContents_ACarrierOfAnotherPartGoesToItsOwnHome` (shingo-core dispatch: a swap leg at its release and the Material page's move send a full of another part to its own outbound; a drop no claim names stands)
+- mutation: the old assertion against the new code, by reading: the same fixture now answers the claim's outbound (the new test), not the resident's home; not run, the old body no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle`
+- test: `TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle` · pkg `shingoedge/store` · run `-run '^TestClaimForLinesidePayload_IgnoresAClaimOfADeletedStyle$'` · `shingo-edge/store/deleted_process_claims_test.go:57` @ `0ef21ca1` · tags `none`
+- code: DEAD (ClaimForLinesidePayload is deleted with the resident aim, its one reader)
+- assertion map: a deleted style's claim answers no lookup → Core's mirror is published from live claims of live styles (messaging/plant_claims_publisher.go reportFor); a deleted process's claims are retired, `TestDeleteProcess_RetiresItsClaims`
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

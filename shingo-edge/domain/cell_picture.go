@@ -3,6 +3,8 @@ package domain
 import (
 	"slices"
 	"sort"
+
+	"shingo/protocol"
 )
 
 // cell_picture.go — the data behind the station's read-only picture of its
@@ -165,6 +167,10 @@ type CellClaim struct {
 	// drawing that carries a name. It costs the poll nothing, because the poll
 	// no longer carries the picture.
 	KeyRoute []string `json:"key_route,omitempty"`
+	// RefillBy is who brings an index press's back its next carrier, blank for
+	// Robot 1 (the default). The board's lines and robots read it: without it a
+	// press set to Robot 2 or Robot 3 read "Robot 1 supplies" on the board.
+	RefillBy protocol.RefillBy `json:"refill_by,omitempty"`
 }
 
 // CellPictureInput is everything BuildCellPicture reads.
@@ -384,6 +390,9 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 				InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,
 				InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination,
 				KeyRoute: append([]string(nil), c.KeyRoute...),
+			}
+			if r := c.RefillBy.OrDefault(); r != protocol.RefillByClearingRobot {
+				cc.RefillBy = r
 			}
 			pos.Claim = cc
 		} else if p, ok := partners[n.CoreNodeName]; ok {

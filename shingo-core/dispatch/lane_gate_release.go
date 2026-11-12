@@ -672,7 +672,7 @@ type gateCandidate struct {
 	// that produced `node` and `retrieve` already knew it. The release needs it to
 	// patch the step it is actually speaking for: a swap has two dropoffs and a
 	// spliced plan two pickups, so "the last dropoff" and "the first pickup" name
-	// the wrong leg (see applyPlanNode).
+	// the wrong leg (see repoint).
 	//
 	// -1 for a dweller, and nothing reads it: there is no entry step to patch,
 	// which is the whole of what makes it a dweller. The release-time resolver
@@ -1252,13 +1252,24 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 		return at, "", nil
 	}
 
-	// applySourceNodeAtStep, not a raw source_node write: it patches the deferred
-	// pickup step in steps_json in the same breath, and that tail is exactly what the
-	// append is about to emit. A raw write would send the robot to the slot the bin
-	// left. The index is THIS order's lane entry, carried from the candidate walk —
-	// a spliced plan has an earlier pickup that belongs to another leg.
+	// repoint, not a raw source_node write: it moves the deferred pickup step in
+	// steps_json with the column, and that tail is exactly what the append is about
+	// to emit. A raw write would send the robot to the slot the bin left. The index
+	// is THIS order's lane entry, carried from the candidate walk — a spliced plan
+	// has an earlier pickup that belongs to another leg. The bin is in the same
+	// lane, so the rest of the route keeps its waits.
 	was := order.SourceNode
-	if err := applySourceNodeAtStep(d.db, order, at.Name, entryIndex); err != nil {
+	steps, ok := decodeSteps(order.StepsJSON)
+	if !ok {
+		err := fmt.Errorf("rebind pickup: order %d's plan does not read", order.ID)
+		return nil, causeForGateRebind(err), err
+	}
+	if entryIndex < 0 || entryIndex >= len(steps) {
+		err := fmt.Errorf("rebind pickup: order %d's entry step %d is outside its plan", order.ID, entryIndex)
+		return nil, causeForGateRebind(err), err
+	}
+	if _, err := d.repoint(order, steps, stepMove{at: entryIndex, action: protocol.ActionPickup, node: at.Name,
+		group: steps[entryIndex].Group}, &spliceFrom{at: entryIndex, inside: lane.ID}); err != nil {
 		return nil, causeForGateRebind(err), err
 	}
 	log.Printf("lane gate: retrieve %d re-bound at release %s → %s (lane %s, bin %d)",
@@ -1603,71 +1614,6 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 		freed = true
 	}
 	return freed, next
-}
-
-// gateLaterLaneEntries puts a lane wait in front of each step after entryIndex
-// that enters a lane the robot is not in, starting from inLane (where the chosen
-// drop now puts it). It is the splice's rule 2 (a wait per lane change) applied to
-// the rest of a plan whose entry lane moved at release: the plan was spliced for
-// the lane it pencilled, and a later step in that lane was "still in the lane"
-// then, so it carries no wait of its own. An existing lane wait is kept and moves
-// the robot into its lane. The order's rows move with the plan (moveCarts), as
-// the splice's do.
-func (d *Dispatcher) gateLaterLaneEntries(order *orders.Order, entryIndex int, inLane int64) error {
-	var steps []resolvedStep
-	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
-		return fmt.Errorf("gate later entries: parse steps for order %d: %w", order.ID, err)
-	}
-	out := append(make([]resolvedStep, 0, len(steps)+1), steps[:entryIndex+1]...)
-	moved := map[int]int{}
-	inside := inLane
-	for i := entryIndex + 1; i < len(steps); i++ {
-		s := steps[i]
-		if s.Action == protocol.ActionWait {
-			if s.WaitKind == WaitKindLane {
-				inside = s.WaitLane
-			}
-		} else if (s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff) && s.Node != "" {
-			lane, err := d.laneOfStep(s.Node)
-			if err != nil {
-				return fmt.Errorf("gate later entries: order %d step %d: %w", order.ID, i, err)
-			}
-			switch {
-			case lane == nil:
-				inside = 0
-			case lane.ID != inside:
-				t, gated, err := d.gateTargetForLane(lane)
-				if err != nil {
-					return err
-				}
-				if !gated {
-					return fmt.Errorf("gate later entries: %w: %s", nodes.ErrLaneUnmarked, lane.Name)
-				}
-				out = append(out, resolvedStep{Action: protocol.ActionWait, Node: t.pointFor(order.ID),
-					WaitKind: WaitKindLane, WaitLane: lane.ID, WaitGroup: groupIDOf(lane)})
-				inside = lane.ID
-			}
-		}
-		if len(out) != i {
-			moved[i] = len(out)
-		}
-		out = append(out, s)
-	}
-	if len(out) == len(steps) {
-		return nil
-	}
-	patched, err := json.Marshal(out)
-	if err != nil {
-		return fmt.Errorf("gate later entries: marshal steps for order %d: %w", order.ID, err)
-	}
-	if err := d.db.UpdateOrderStepsJSON(order.ID, string(patched)); err != nil {
-		return fmt.Errorf("gate later entries: persist steps for order %d: %w", order.ID, err)
-	}
-	order.StepsJSON = string(patched)
-	if _, err := d.moveCarts(order, moved); err != nil {
-		return fmt.Errorf("gate later entries: move the carts of order %d: %w", order.ID, err)
-	}
-	return nil
 }
 
 // laneOfStep is the lane a step's node stands in, or nil when it is not a lane

@@ -40,10 +40,19 @@ type pressIndexCell struct {
 	claimID   int64
 }
 
-// seedPressIndexCell builds a press-index cell. flipped sets IndexRobotSupplies
+// seedPressIndexCell builds a press-index cell. flipped sets refill_by Robot 2
 // — round 4 unit 1's choreography flip — so the same scenario can run both
 // shapes; role decides whether the press is filling bins or emptying them,
 // which is what makes the release disposition observable or not.
+// refillFor is the refill setting a scenario's flip names: Robot 2 (the index
+// robot) when flipped, Robot 1 otherwise.
+func refillFor(flipped bool) protocol.RefillBy {
+	if flipped {
+		return protocol.RefillByIndexRobot
+	}
+	return protocol.RefillByClearingRobot
+}
+
 func seedPressIndexCell(t *testing.T, edge *edgeharness.Edge, prefix string, role protocol.ClaimRole, flipped bool) pressIndexCell {
 	t.Helper()
 	processID, err := edge.DB.CreateProcess(prefix+"-PROC", "press index scenario", "", "", false)
@@ -74,7 +83,7 @@ func seedPressIndexCell(t *testing.T, edge *edgeharness.Edge, prefix string, rol
 		InboundSource:       prefix + "-MARKET-EMPTIES",
 		OutboundDestination: prefix + "-MARKET",
 		PairedCoreNode:      prefix + "-INDEX-B",
-		IndexRobotSupplies:  &flipped,
+		RefillBy:            domain.Ptr(refillFor(flipped)),
 	})
 	if err != nil {
 		t.Fatalf("upsert claim: %v", err)

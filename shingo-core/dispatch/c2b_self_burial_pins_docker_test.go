@@ -508,7 +508,8 @@ func widenedMidTrip(t *testing.T, d *Dispatcher, db *store.DB, o *orders.Order, 
 // CONVERTED WITH C2c (DESIGN-C2c §5.2, §9 P6): the widen arm is deleted, and the
 // same assertions are reached by the release's one chooser (ChooseDrop sets the
 // lanes of the plan's later pickups aside before the group's algorithm runs;
-// gateLaterLaneEntries gates the later entry, ruling 6). The names keep "Widened".
+// the re-plan of the rest of the route (repoint) gates the later entry, ruling 6). The names keep
+// "Widened".
 func TestC2bPin_AMidTripDropThatWouldWallItsOwnPickupIsWidened(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

@@ -111,7 +111,6 @@ type fingerprintClaim struct {
 	AllowedPayloadCodes            []string             `json:"allowed_payload_codes"`
 	AutoRequestPayload             string               `json:"auto_request_payload"`
 	KeepStagedNode                 string               `json:"keep_staged_node"`
-	EvacuateOnChangeover           bool                 `json:"evacuate_on_changeover"`
 	PairedCoreNode                 string               `json:"paired_core_node"`
 	AutoConfirm                    bool                 `json:"auto_confirm"`
 	Sequence                       int                  `json:"sequence"`
@@ -120,8 +119,7 @@ type fingerprintClaim struct {
 	ReuseCompatibleBins            bool                 `json:"reuse_compatible_bins"`
 	AutoPush                       bool                 `json:"auto_push"`
 	ChangeoverEvacNodes            []string             `json:"changeover_evac_nodes"`
-	ChangeoverEvacDestination      string               `json:"changeover_evac_destination"`
-	IndexRobotSupplies             bool                 `json:"index_robot_supplies"`
+	RefillBy                       protocol.RefillBy    `json:"refill_by"`
 	KeyRoute                       []string             `json:"key_route"`
 	ChangeoverCarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition"`
 	SourcePresetID                 *int64               `json:"source_preset_id"`
@@ -174,12 +172,12 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			CurtainRequired:        c.CurtainRequired,
 			StrictPack:             c.StrictPack,
 			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
-			KeepStagedNode: c.KeepStagedNode, EvacuateOnChangeover: c.EvacuateOnChangeover, PairedCoreNode: c.PairedCoreNode,
+			KeepStagedNode: c.KeepStagedNode, PairedCoreNode: c.PairedCoreNode,
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,
 			LinesideSoftThreshold: c.LinesideSoftThreshold, SecondPairedCoreNode: c.SecondPairedCoreNode,
 			ReuseCompatibleBins: c.ReuseCompatibleBins, AutoPush: c.AutoPush,
-			ChangeoverEvacNodes: cloneStrings(c.ChangeoverEvacNodes), ChangeoverEvacDestination: c.ChangeoverEvacDestination,
-			IndexRobotSupplies:             c.IndexRobotSupplies,
+			ChangeoverEvacNodes:            cloneStrings(c.ChangeoverEvacNodes),
+			RefillBy:                       c.RefillBy.OrDefault(),
 			KeyRoute:                       cloneStrings(c.KeyRoute),
 			ChangeoverCarryoverDisposition: c.ChangeoverCarryoverDisposition,
 			SourcePresetID:                 clonePtr(c.SourcePresetID), SourcePresetVersion: clonePtr(c.SourcePresetVersion),

@@ -207,7 +207,7 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 // two_robot assumption (leg A is the supply, leg B is the evac) and it is
 // INVERTED for two_robot_press_index, where R1 — the first leg — is the EVAC (it
 // clears the press) and R2 is the SUPPLY (it indexes the fresh bin on). The
-// IndexRobotSupplies flip does not change that: it moves the supermarket trip
+// RefillBy flip (Robot 2) does not change that: it moves the supermarket trip
 // between the legs, not the press pickup and dropoff.
 //
 // STILL POSITIONAL HERE, AND DELIBERATELY. This function resolves from runtime

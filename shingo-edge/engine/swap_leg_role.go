@@ -52,8 +52,8 @@ func (e *Engine) orderPlacesBinAtAny(o *orders.Order, nodes []string) bool {
 //	                                     pickup(IN) dropoff(N)
 //	  a round trip — it fetches the new style's carrier and sets it down on
 //	  the same position. true, and a backfill would be a SECOND carrier for
-//	  one slot. (buildSequentialPerPositionEvacuate has the same tail and is
-//	  covered by the same read.)
+//	  one slot. (A tool change's leg, toolingPositionAction, has the same
+//	  tail and is covered by the same read.)
 //
 // Asking the shape rather than "is a changeover running" is what keeps the two
 // answers from drifting: a builder that starts or stops refilling its own node
@@ -214,7 +214,7 @@ func (e *Engine) nodeStateAt(processID int64) func(coreNode string) NodeState {
 		if node := findNodeByCoreName(nodes, coreNode); node != nil {
 			if rt, err := e.db.GetProcessNodeRuntime(node.ID); err == nil && rt != nil {
 				st = NodeState{Part: string(rt.LinesidePayloadCode), PartKnown: rt.LinesidePayloadKnown,
-					Drain: drainOf(rt, wired), runtime: rt}
+					Drain: drainOf(rt, wired)}
 				switch {
 				case rt.ActiveBinID != nil:
 					st.Seat = SeatBin

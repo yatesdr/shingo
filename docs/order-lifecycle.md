@@ -408,9 +408,9 @@ pickup(source) → dropoff(B)`, R2 `wait(B) → pickup(B) → dropoff(A)`.
 Three-position layout adds `second_paired_core_node` as C: R1 backfills C, and
 R2 runs `wait(B) → pickup(B) → dropoff(A) → pickup(C) → dropoff(B)`. Both robots
 fire on operator release; the fleet manager handles cross-leg sequencing on
-shared nodes (`BuildTwoRobotPressIndexSwapSteps`). An `index_robot_supplies`
-flip moves the supermarket trip from R1 to R2 without moving the press pickup or
-dropoff.
+shared nodes (`BuildTwoRobotPressIndexSwapSteps`). The `refill_by` flip (Robot 2,
+`index_robot`) moves the supermarket trip from R1 to R2 without moving the press
+pickup or dropoff.
 
 **Single Robot** (`single_robot`) — One robot executes a **nine**-step sequence
 using both staging nodes: pickup from inbound source → drop at inbound staging →
@@ -495,9 +495,10 @@ destination blanks again at dispatch.
 - **Outbound staging**: old material parks here after removal (the single-robot
   shuffle's second hand).
 - **Outbound destination**: where outgoing bins are sent (e.g. empty bin
-  storage, wash area, or shipping). Overridden at dispatch by the *resident*
-  claim's value when the cell holds a style other than the one being requested
-  (`residentEvacDest`, `shingo-edge/engine/swap_evac_dest.go`).
+  storage, wash area, or shipping). Every leg is aimed at its claim's value; a
+  carrier of another part is sent to its own claim's outbound by Core, which
+  holds the bin, when it is lifted (`otherPartHome`,
+  `shingo-core/dispatch/place_by_contents.go`).
 
 ---
 
@@ -594,7 +595,7 @@ CONFIRM is the cycle's only receipt.
 it leaves no bin on `claim.CoreNodeName`. Exactly one receipt per cycle, every
 mode, both flip states. `confirmPolicy` derives each leg's
 `AutoConfirmA`/`AutoConfirmB` from that leg's steps, never from which robot it
-is: the `IndexRobotSupplies` flip moves the supermarket trip between R1 and R2,
+is: the `refill_by` flip moves the supermarket trip between R1 and R2,
 so a flag set by position would ask the operator to sign for a tote standing at
 the supermarket.
 

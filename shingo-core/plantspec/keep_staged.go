@@ -55,7 +55,7 @@ func (p *Plant) keepStagedFindings() []string {
 			{"core_node", c.CoreNode}, {"inbound_staging", c.InboundStaging}, {"outbound_staging", c.OutboundStaging},
 			{"paired_core_node", c.PairedCoreNode}, {"second_paired_core_node", c.SecondPairedCoreNode},
 			{"inbound_source", c.InboundSource}, {"outbound_destination", c.OutboundDestination},
-			{"changeover_evac_destination", c.ChangeoverEvacDestination}, {"keep_staged_node", c.KeepStagedNode},
+			{"keep_staged_node", c.KeepStagedNode},
 		} {
 			if cn[1] != "" {
 				r.cols = append(r.cols, cn)

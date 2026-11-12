@@ -409,8 +409,7 @@ type NodeClaim struct {
 	// keep-staged on, in every swap mode; blank is off. It may be the same node
 	// as InboundStaging (the robot waits under the spare) and is otherwise a
 	// node no other claim names (processes.CheckKeepStagedSpots).
-	KeepStagedNode       string `json:"keep_staged_node"`
-	EvacuateOnChangeover bool   `json:"evacuate_on_changeover"`
+	KeepStagedNode string `json:"keep_staged_node"`
 	// PairedCoreNode is ONE FIELD CARRYING TWO MEANINGS, and which one you are
 	// reading depends entirely on the swap mode:
 	//
@@ -450,21 +449,9 @@ type NodeClaim struct {
 	//
 	// Empty is the standing default and means what it has always meant: no node
 	// is marked, so nothing is cleared for a setup and the cell takes the
-	// ordinary choreography. Unmarked nodes stay put.
-	//
-	// The scalar EvacuateOnChangeover above remains the whole answer for a
-	// single-node consume/process node; this is the multi-node shape of the same
-	// question, which is why it lives beside it and not in a new struct.
+	// ordinary choreography. Unmarked nodes stay put. It is the whole answer on
+	// every line mode (ToolChangePositions).
 	ChangeoverEvacNodes []string `json:"changeover_evac_nodes,omitempty"`
-	// ChangeoverEvacDestination is where a tooling evacuation sends the bins
-	// it lifts off the press. Free-form: a node name or a group name, exactly
-	// like InboundSource — Core resolves either.
-	//
-	// Blank means today's behaviour: the evacuation falls back to
-	// OutboundDestination. There is deliberately no enum and no unloader
-	// special case; an unloader is reached by naming a group it projects over,
-	// which keeps this field ignorant of what is on the other end.
-	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
 	// ChangeoverCarryoverDisposition decides what happens to a marked position's
 	// bin when its part CARRIES OVER — the same payload on that position in both
 	// styles.
@@ -482,22 +469,23 @@ type NodeClaim struct {
 	// Blank reads as CarryoverReplace, so a row that predates the field
 	// behaves exactly as it did.
 	ChangeoverCarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	// IndexRobotSupplies flips which robot of a press-index pair fetches the
-	// replacement carrier.
+	// RefillBy is which robot of a press-index pair fetches the back position's
+	// replacement carrier (style_node_claims.refill_by).
 	//
-	// Unflipped (false, today): R1 evacuates the full tote AND fetches the
-	// replacement from InboundSource, dropping it on the back position; R2 just
-	// indexes the on-deck carrier forward onto the press.
+	// Robot 1 (clearing_robot, the default): R1 evacuates the full tote AND
+	// fetches the replacement from InboundSource, dropping it on the back
+	// position; R2 just indexes the on-deck carrier forward onto the press.
 	//
-	// Flipped (true): R1 does the evacuation and stops. R2 indexes forward and
-	// then goes for the replacement itself. One robot leaves the cell as soon
-	// as the press is clear; the other owns the whole refill.
+	// Robot 2 (index_robot): R1 does the evacuation and stops. R2 indexes
+	// forward and then goes for the replacement itself. One robot leaves the
+	// cell as soon as the press is clear; the other owns the whole refill.
 	//
 	// IT DESCRIBES HARDWARE, not a style. Which robot can reach the
 	// supermarket is a fact about the cell's layout and reach, so two styles on
 	// one press disagreeing about it is operator confusion rather than
-	// configuration — UpsertClaim warns on the drift.
-	IndexRobotSupplies bool `json:"index_robot_supplies"`
+	// configuration — UpsertClaim warns on the drift. Read it through
+	// IndexRobotFetches.
+	RefillBy protocol.RefillBy `json:"refill_by"`
 	// KeyRoute names map points a leg from this claim should be routed
 	// through, in order. It is SEER's keyRoute: per the vendor manual
 	// (RDSCore HTTP API 2026-04-30, setOrder field table) a robot-SELECTION
@@ -632,7 +620,7 @@ const SwapModePressPosition = flowspec.SwapModePressPosition
 // (PairedCoreNode, SecondPairedCoreNode) and the staging fields are zeroed
 // (a single position uses direct trips, no staging hop, no A/B partner).
 // Everything else — PayloadCode, InboundSource, OutboundDestination, Role,
-// UOPCapacity, EvacuateOnChangeover — is copied from the parent.
+// UOPCapacity, the tool-change marks — is copied from the parent.
 //
 // The synthesized claim keeps the PARENT's ID: per-position node tasks
 // reference that ID so wiring lookups resolve back to the real persisted
@@ -679,7 +667,7 @@ func SynthesizePositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim 
 // This is the ONE derivation. Three consumers need it and they must agree:
 //
 //   - the planner, which synthesizes the position claims to build the per-position
-//     orders (FanOutPressIndexDifferentBinType),
+//     orders (engine.PlanPressPositions),
 //   - the station view, which re-derives them so a fanned-out position renders as
 //     claimed rather than as an unclaimed node with no buttons,
 //   - the per-node changeover actions and the cutover gate, which have to be
@@ -756,8 +744,10 @@ func (c *NodeClaim) Positions() []string {
 // as though it were the front. Both derive from the same walk instead.
 //
 // THE SCOPE IS THE POINT, and it is why this is a second method rather than a
-// parameter. fanOutPositions wants the front as slot 0; FanOutPressIndexCrossMode
-// must NOT include it, because the front is already the diff's own node. A
+// parameter. A split cell's positions (Positions) want the front first; the
+// planner's walk of the positions no diff stands on (DependentPositions, behind
+// the mode gate) must NOT include it, because the front is already the diff's
+// own node. A
 // single function with an includeFront flag would put that difference at the
 // call sites as a boolean, which is where it was before it had a name.
 func (c *NodeClaim) ExtensionPositions() []string {
@@ -802,6 +792,29 @@ func (c *NodeClaim) DependentPositions() []string {
 // ask this would invent values the submitter did not send.
 func (in NodeClaimInput) Positions() []string {
 	return nonBlank(in.CoreNodeName, in.PairedCoreNode, in.SecondPairedCoreNode)
+}
+
+// ToolChangePositions is the positions a tool-change mark may name: every
+// position of a press-index cell, and the claim's own node on every other
+// mode. A sequential claim's paired name is its partner's line, which the
+// partner's own claim marks.
+func (c *NodeClaim) ToolChangePositions() []string {
+	if c.IsPressIndex() {
+		return c.Positions()
+	}
+	if c == nil {
+		return nil
+	}
+	return nonBlank(c.CoreNodeName)
+}
+
+// ToolChangePositions is the input-shape twin of NodeClaim.ToolChangePositions,
+// for validation.
+func (in NodeClaimInput) ToolChangePositions() []string {
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+		return in.Positions()
+	}
+	return nonBlank(in.CoreNodeName)
 }
 
 // nonBlank collects the non-empty names in order. Both geometry readers and
@@ -1204,78 +1217,32 @@ func MarkedEvacNodes(c *NodeClaim) []string {
 	}
 	var out []string
 	for _, node := range c.ChangeoverEvacNodes {
-		if claimOccupies(c, node) {
+		if slices.Contains(c.ToolChangePositions(), node) {
 			out = append(out, node)
 		}
 	}
 	return out
 }
 
-// StagedToolingChangeover reports whether this OUTGOING claim puts the cell
-// into the staged tooling-evacuation mode: a press-index cell with at least
-// one position marked as holding bins that block the tool change.
+// StagedToolingChangeover reports whether this OUTGOING claim puts its cell
+// into a tool change: it marks at least one of its positions as one that must
+// be clear. Any line mode a robot serves (ToolChangePositions); the save
+// refuses marks on a loader card.
 //
 // ── THE OUTGOING CLAIM OWNS THE ANSWER ────────────────────────────────────
 //
 // The question is "which bins are physically in the way of the tool change".
-// The bins on the press at that moment were put there by the OUTGOING setup
+// The bins on the cell at that moment were put there by the OUTGOING setup
 // and belong to the outgoing style; the incoming style has not placed
 // anything yet. So the claim that knows is the one being replaced.
-//
-// It also settles an inconsistency rather than adding one. The Drop branch of
-// the planner already reads fromClaim.EvacuateOnChangeover to decide whether
-// cutover waits for a bin to leave, while DiffStyleClaims read
-// to.EvacuateOnChangeover for the same concept — two readings of one flag,
-// three files apart. Both now read the outgoing claim.
-//
-// CONSEQUENCE, and it is a real one: a plant that set EvacuateOnChangeover on
-// the INCOMING style's claim and relied on the diff reading it will stop
-// evacuating. changeoverEvacConfigOnWrongSide below exists to make that
-// visible instead of silent.
 func StagedToolingChangeover(from *NodeClaim) bool {
-	if !from.IsPressIndex() {
-		return false
-	}
 	return len(MarkedEvacNodes(from)) > 0
 }
 
-// ChangeoverNeedsEvacuation reports whether this transition has to take bins
-// off the line before the tool can change, reading the OUTGOING claim per the
-// rule above. Either the whole-node scalar or a per-position selection says yes.
-func ChangeoverNeedsEvacuation(from *NodeClaim) bool {
-	if from == nil {
-		return false
-	}
-	return from.EvacuateOnChangeover || StagedToolingChangeover(from)
-}
-
-// EvacConfigOnWrongSide reports the case worth a log line: the INCOMING claim
-// asks for evacuation and the outgoing one does not, so this transition will
-// not evacuate where the old read would have.
-//
-// Not a refusal and not a fallback — a diagnostic. Honouring it would be a
-// second ownership rule, and the whole point of the decision above is that
-// there is one. Naming it is what turns "the config is on the wrong claim"
-// from a silent behaviour change into a line an engineer can act on.
-func EvacConfigOnWrongSide(from, to *NodeClaim) bool {
-	if from == nil || to == nil {
-		return false
-	}
-	return to.EvacuateOnChangeover && !ChangeoverNeedsEvacuation(from)
-}
-
-// EvacDestinationFor is where a tooling evacuation sends this claim's bins.
-// ChangeoverEvacDestination when set, else the ordinary OutboundDestination —
-// blank means "unchanged from today", which is the whole compatibility story
-// for the field.
-func EvacDestinationFor(c *NodeClaim) string {
-	if c == nil {
-		return ""
-	}
-	if c.ChangeoverEvacDestination != "" {
-		return c.ChangeoverEvacDestination
-	}
-	return c.OutboundDestination
+// MarksNode reports whether this claim marks node as a position its tool
+// change must clear (MarkedEvacNodes).
+func MarksNode(c *NodeClaim, node string) bool {
+	return node != "" && slices.Contains(MarkedEvacNodes(c), node)
 }
 
 // OptValue reads an absent-means-untouched field as the value its caller
@@ -1335,14 +1302,13 @@ type NodeClaimInput struct {
 	PackTolerancePct     int      `json:"pack_tolerance_pct"`
 	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
 	AutoRequestPayload   string   `json:"auto_request_payload"`
-	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
 	PairedCoreNode       string   `json:"paired_core_node"`
 	SecondPairedCoreNode string   `json:"second_paired_core_node"`
 	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.
 	// See the contract block below, and the same-named fields on NodeClaim for
 	// what each one means.
 	//
-	// The first version of this shipped only IndexRobotSupplies as a pointer,
+	// The first version of this shipped only the index-robot flag as a pointer,
 	// on the argument that the claim editor owns controls for the other five
 	// and therefore always has an opinion. The editor does. It is not the only
 	// writer: the replenishment admin page reads a claim, re-sends a subset,
@@ -1351,14 +1317,13 @@ type NodeClaimInput struct {
 	// am thinking of always fills this in" is not a property of a struct, and
 	// the pointer is what makes the class unrepresentable rather than fixing
 	// each caller as it is discovered.
-	ChangeoverEvacNodes       *[]string `json:"changeover_evac_nodes,omitempty"`
-	ChangeoverEvacDestination *string   `json:"changeover_evac_destination,omitempty"`
+	ChangeoverEvacNodes *[]string `json:"changeover_evac_nodes,omitempty"`
 	// ChangeoverCarryoverDisposition follows the same absent-means-untouched
 	// contract as every field here: nil leaves the stored value alone, which is
 	// what stops a partial update from silently resetting a cell's answer to
 	// the default.
 	ChangeoverCarryoverDisposition *CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	IndexRobotSupplies             *bool                 `json:"index_robot_supplies,omitempty"`
+	RefillBy                       *protocol.RefillBy    `json:"refill_by,omitempty"`
 	KeyRoute                       *[]string             `json:"key_route,omitempty"`
 	KeyTask                        *string               `json:"key_task,omitempty"`
 	AutoConfirm                    bool                  `json:"auto_confirm"`
@@ -1483,4 +1448,11 @@ type ProcessCounterEdit struct {
 	Enabled         bool
 	IdentityTagName string
 	IdentityNone    bool
+}
+
+// IndexRobotFetches reports whether the index robot (Robot 2) fetches this
+// press's replacement carrier, rather than the clearing robot (Robot 1, the
+// default and a blank).
+func (c *NodeClaim) IndexRobotFetches() bool {
+	return c != nil && c.RefillBy.OrDefault() == protocol.RefillByIndexRobot
 }

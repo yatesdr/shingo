@@ -127,7 +127,7 @@ func TestEngine_SetCoreNodesEmitsEvent(t *testing.T) {
 		{Name: "N1", NodeType: "cell"},
 		{Name: "N2", NodeType: "storage"},
 	}
-	eng.SetCoreNodes(in)
+	eng.SetCoreNodes(in, false)
 
 	if gotType != EventCoreNodesUpdated {
 		t.Errorf("event type = %v, want EventCoreNodesUpdated", gotType)

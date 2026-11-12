@@ -109,8 +109,7 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 	//
 	// active_claim_id ANSWERS "WHOSE" ONLY BECAUSE THE CHANGEOVER DELIVERY MOVES
 	// IT, and this comment used to claim more than that: "it names the claim the
-	// resident bin was stocked for". It does not, and swap_evac_dest.go carries
-	// the retraction of that exact sentence. It names the claim the node's
+	// resident bin was stocked for". It does not. It names the claim the node's
 	// process was on when the field was last written, and most writers derive
 	// that from the active style. What makes the comparison below meaningful is
 	// applyChangeoverRelease and applyStagedDelivery advancing it when the

@@ -36,7 +36,7 @@ func TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier(t *testing.T) {
 		t.Errorf("other searches ran: typed group %d, group %d, untyped plant-wide %d, FIFO %d; want none",
 			db.typedGroupCalls, db.groupEmptyCalls, db.globalEmptyCalls, db.fifoCalls)
 	}
-	if !reflect.DeepEqual(db.lastFence, bins.EmptyFence{OriginGroup: "KP-GROUP"}) {
+	if !reflect.DeepEqual(db.lastFence, bins.EmptyFence{OriginGroup: "KP-GROUP", Asking: true}) {
 		t.Errorf("fence = %+v, want the group it fills and no process", db.lastFence)
 	}
 	if db.episodeReads != 1 {
@@ -52,7 +52,7 @@ func TestKanbanPin_TheKeepersNeedReachesOnlyThePlantWideTier(t *testing.T) {
 		t.Errorf("with sources: outcome %v, typed plant-wide %d, typed group %d, group %d; want the one plant-wide search",
 			res.Outcome, db.typedGlobalCalls, db.typedGroupCalls, db.groupEmptyCalls)
 	}
-	if !reflect.DeepEqual(db.lastFence, bins.EmptyFence{OriginGroup: "KP-GROUP", Sources: []int64{41, 42}}) {
+	if !reflect.DeepEqual(db.lastFence, bins.EmptyFence{OriginGroup: "KP-GROUP", Sources: []int64{41, 42}, Asking: true}) {
 		t.Errorf("fence = %+v, want the group it fills and its sources in rank order", db.lastFence)
 	}
 	if db.episodeReads != 1 {

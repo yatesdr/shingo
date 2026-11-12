@@ -138,9 +138,12 @@ func (e *Engine) SendBack(nodeID int64) (*SendBackResult, error) {
 	if f.Outside == nil || f.Outside.BinID == 0 {
 		return nil, fmt.Errorf("%s: the cart on %s is not known to Core", node.Name, f.Paired)
 	}
+	// Both orders are made on the outside's row, whose claim lookup finds no
+	// claim (the press's claim is under the press's name), so each names the
+	// press it serves itself.
 	origin := ordermgr.NoDemand()
-	move, err := e.orderMgr.CreateMoveOrderForBin(&c.outside.ID, f.Paired, claim.OutboundDestination,
-		f.Outside.PayloadCode, f.Outside.BinID, origin)
+	move, err := e.orderMgr.CreateMoveOrderForBinServing(claim.CoreNodeName, &c.outside.ID, f.Paired,
+		claim.OutboundDestination, f.Outside.PayloadCode, f.Outside.BinID, origin)
 	if err != nil {
 		return nil, fmt.Errorf("send back %s: %w", f.Paired, err)
 	}
@@ -149,7 +152,7 @@ func (e *Engine) SendBack(nodeID int64) (*SendBackResult, error) {
 	// (the outside has no tile and no operator receives it).
 	pull, err := e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &c.outside.ID, Delivery: f.Paired,
 		Source: claim.InboundSource, Payload: claim.PayloadCode, Quantity: 1, Empty: true,
-		Want: protocol.TopsAndBottomsOnly, AutoConfirm: true, Origin: origin})
+		Want: protocol.TopsAndBottomsOnly, AutoConfirm: true, Origin: origin, Press: claim.CoreNodeName})
 	if err != nil {
 		return &SendBackResult{Move: move}, fmt.Errorf("tops & bottoms to %s: %w", f.Paired, err)
 	}

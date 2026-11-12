@@ -682,7 +682,7 @@ func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.
 // bindDwellTail writes the chosen destination onto the leg: the delivery_node
 // column and the dropoff step the append is about to emit.
 //
-// BOTH, IN ONE PLACE, for the reason applyDeliveryNodeAtStep exists — the column
+// BOTH, IN ONE PLACE, for the reason repoint writes both — the column
 // and the plan are two copies of one fact and a writer that moves only one of
 // them sends the robot somewhere the row does not name. This is the append
 // flavour of that writer: there is no step to patch yet, so it APPENDS one,

@@ -84,7 +84,7 @@ const S = {
     selected: null,      // the selected position, shared by the picture and the table
     picRows: {},         // node -> 'front' | 'back' | '', from pictureRows (never claim kind)
     openAs: '',          // the one dim cell currently drawn as a chip, because it was clicked
-    adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, evacDest}
+    adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, partialDest}
     routing: null,       // D3's rows — every one, the disabled backfills included
     routingError: '',    // the server's refusal, by name
     routingWarning: '',  // what the last removal orphans, by name
@@ -1267,7 +1267,7 @@ const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 // robot fetches the empty — is IN (2026-11-05): without it every style the
 // floor built from a recipe minted Robot 1.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
-    'evacuate_on_changeover', 'changeover_carryover_disposition', 'keep_staged_node', 'index_robot_supplies',
+    'changeover_carryover_disposition', 'keep_staged_node', 'refill_by',
     'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
@@ -1431,14 +1431,16 @@ function groupsBody(groups) {
 
 // recipeAdvanced is a group's Advanced as a recipe may say it: GROUP_ADV_KEYS
 // that carry a value, by domain.ClaimHas's rule (the carry-over's blank or
-// replace is no opinion), and only those flowspec draws for the ★ cell's mode
+// replace and the refill's Robot 1 are no opinion), and only those flowspec
+// draws for the ★ cell's mode
 // and role — the server refuses the others (D26).
 function recipeAdvanced(a, head) {
     const out = {};
     for (const key of GROUP_ADV_KEYS) {
         const v = a[key];
         const set = key === 'changeover_carryover_disposition' ? !!v && v !== 'replace'
-            : Array.isArray(v) ? v.length > 0 : Boolean(v);
+            : key === 'refill_by' ? !!v && v !== 'clearing_robot'
+                : Array.isArray(v) ? v.length > 0 : Boolean(v);
         if (!set) continue;
         if (head && S.model && S.model.cells[head] && !M().advancedShows(S.model, head, key)) continue;
         out[key] = v;
@@ -1662,7 +1664,7 @@ function groupAdvSummary(g) {
         const v = a[key];
         if (key === 'changeover_carryover_disposition') return W(key) + ' ' + (CARRYOVER[v] || v);
         // The sheet says it as a choice of robot, so the card does too.
-        if (key === 'index_robot_supplies') return 'Robot 2 supplies';
+        if (key === 'refill_by') return refillRobot(v) + ' supplies';
         if (typeof v === 'boolean') return W(key) + ' on';
         return W(key) + ' ' + v;
     });
@@ -2287,14 +2289,13 @@ function syncPosHead(e) {
 }
 
 // The row's `N set` badge. The model counts it, by domain.ClaimHas's rule, so
-// the badge and the server agree on what "set" means; the two evacuation
-// fields and the partial home are the cell's own and are counted here beside
-// them because the modal draws all eighteen in one sheet.
+// the badge and the server agree on what "set" means; the tool change's marks
+// and the partial home are the cell's own and are counted here beside them
+// because the modal draws them all in one sheet.
 function advancedCount(node) {
     const c = S.model.cells[node];
     let n = M().advancedSet(S.model, node).length;
     if ((c.evacNodes || []).length) n++;
-    if (c.evacDest) n++;
     if (c.partialDest) n++;
     return n;
 }
@@ -3580,7 +3581,7 @@ function routingPickersReady() {
             onDrop: name => setRoutingNode(g[0], name, false),
             exclude: n => (isPositionRow(n)
                 ? 'a position of this process — available to every flow on it already'
-                : B().laneExclusion(S.coreNodes, n)),
+                : B().legExclusion(S.coreNodes, n, g[0])),
             // WHERE A NAME CAME FROM, AT THE MOMENT OF PICKING. A row the
             // backfill found says so and how many live styles route through
             // it, which is the whole of Q5's evidence line in the one place it
@@ -3892,7 +3893,10 @@ async function setPartSetMember(code, on) {
 const ADV_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
     ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
-    ['Changeover specials', ['evacuate_on_changeover', 'evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
+    // ONE TOOL CHANGE: the marks are the whole of it on every line mode. The
+    // destination override and the carry-over disposition are the marks'
+    // options, drawn with them.
+    ['Changeover specials', ['evac_nodes', 'changeover_carryover_disposition']],
     // FINISHED GOODS: what a produce position's bin is counted to and where it
     // goes when it leaves short, in the order an engineer decides them — the
     // pack cap, the miscount tolerance (drawn only while the cap is on: it has
@@ -3900,7 +3904,7 @@ const ADV_SECTIONS = [
     // where 'Unfinished carriers' and 'Counting' were two (partials-stage2,
     // 2026-10-29). Offered on a produce position only (flowspec).
     ['Finished goods', ['strict_pack', 'pack_tolerance_pct', 'partial_dest']],
-    ['Press hardware', ['index_robot_supplies']],
+    ['Press hardware', ['refill_by']],
     // THE LIGHT CURTAIN'S STYLE TIE (pick-a-part U5). It had copy and a control
     // and no section, so nothing drew it: the claim had readers
     // (engine/release_load.go) and no UI writer.
@@ -3923,7 +3927,7 @@ const ADV_SECTIONS = [
 // DOES on this screen and have no equivalent anywhere else, so they stay; the
 // names come from flowspec like every other word.
 //
-// Two keys are the sheet's own (evac_nodes, evac_dest) because the sheet had
+// Two keys are the sheet's own (evac_nodes, partial_dest) because the sheet had
 // short names for them before the fields did; the field each one edits is
 // named here rather than guessed from the key.
 const ADV_COPY = {
@@ -3934,15 +3938,13 @@ const ADV_COPY = {
     auto_request_payload: ['auto_request_payload', 'which part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
     keep_staged_node: ['keep_staged_node', 'the node the full or empty comes from instead of the market; a spare is kept on it'],
-    evacuate_on_changeover: ['evacuate_on_changeover', 'clear this position before the new style'],
-    evac_nodes: ['changeover_evac_nodes', 'tooling change — which positions get cleared'],
-    evac_dest: ['changeover_evac_destination', ''],
+    evac_nodes: ['changeover_evac_nodes', 'which positions must be clear. The changeover pauses for Tooling done'],
     // What each kind of home does, because the picker cannot say it: the
     // routing row is a name. An unloader home unloads the bin; it does not
     // hold it for the line.
     partial_dest: ['partial_destination', 'where a bin released short goes: blank sends it where full bins go, at its real count; a node group holds it there to be finished later; the unloader unloads it there'],
     changeover_carryover_disposition: ['changeover_carryover_disposition', 'what happens to a part-full bin'],
-    index_robot_supplies: ['index_robot_supplies', 'the same for every part on this press'],
+    refill_by: ['refill_by', 'the same for every part on this press'],
     auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
     sequence: ['sequence', 'where this position sits on the loader board'],
     curtain_required: ['curtain_required', 'this part\'s full-bin releases wait for the node\'s light curtain - the bin leaving decides, so a part whose exit must not stop the conveyor leaves this off'],
@@ -3980,7 +3982,6 @@ function openAdvanced(node) {
         // layer reads a redrawn field against it (typed work, layer.js).
         was: Object.assign({}, a),
         evacNodes: (c.evacNodes || []).slice(),
-        evacDest: c.evacDest || '',
         partialDest: c.partialDest || '',
     };
     drawAdvanced();
@@ -4003,7 +4004,7 @@ function openGroupAdvanced(i) {
     }
     // The mint stamps a group's reorder point as typed by an engineer.
     if (a.reorder_point) a.reorder_point_source = 'manual';
-    S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], evacDest: '', partialDest: '' };
+    S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], partialDest: '' };
     drawAdvanced();
 }
 
@@ -4013,8 +4014,8 @@ function advShows(key) {
     // stays when the cap is switched off; nothing reads it then.
     if (key === 'pack_tolerance_pct' && !S.adv.a.strict_pack) return false;
     if (S.adv.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, S.adv.node, key);
-    if (key === 'evac_nodes' || key === 'evac_dest') {
-        return M().advancedShows(S.model, S.adv.node, 'evacuate_on_changeover');
+    if (key === 'evac_nodes') {
+        return M().advancedShows(S.model, S.adv.node, 'changeover_evac_nodes');
     }
     if (key === 'partial_dest') return M().advancedShows(S.model, S.adv.node, 'partial_destination');
     return M().advancedShows(S.model, S.adv.node, key);
@@ -4022,7 +4023,6 @@ function advShows(key) {
 
 function advValue(key) {
     if (key === 'evac_nodes') return S.adv.evacNodes;
-    if (key === 'evac_dest') return S.adv.evacDest;
     if (key === 'partial_dest') return S.adv.partialDest;
     return S.adv.a[key];
 }
@@ -4046,6 +4046,16 @@ function advNumber(key) {
         'data-adv="' + key + '" data-advkind="number" data-f="adv:' + key + '" ' +
         'data-was="' + esc(was ? String(was) : '') + '" value="' + esc(v ? String(v) : '') + '" placeholder="—">';
 }
+
+// REFILL_ROBOT is the refill setting's stored words (protocol.RefillBy) as the
+// screens say them; blank or unknown reads as Robot 1, the default.
+const REFILL_ROBOT = { clearing_robot: 'Robot 1', index_robot: 'Robot 2', own_robot: 'Robot 3' };
+const REFILL_NOTE = {
+    clearing_robot: 'Robot 2 indexes',
+    index_robot: 'Robot 1 evacuates and leaves',
+    own_robot: 'Robot 1 evacuates, Robot 2 indexes, and Robot 3 brings the back its carrier when Robot 2 lifts it',
+};
+function refillRobot(v) { return REFILL_ROBOT[v] || REFILL_ROBOT.clearing_robot; }
 
 function advPick(key, label, cls) {
     return '<button class="pd-sel' + (cls ? ' ' + cls : '') + '" data-adv="' + key +
@@ -4100,14 +4110,6 @@ function advField(key) {
                 : '<button class="pd-chip add" data-adv="evac_nodes" data-advkind="pick">+ pick positions</button>';
             break;
         }
-        case 'evac_dest': {
-            const v = S.adv.evacDest;
-            const fallback = S.model.cells[S.adv.node].dest || '—';
-            // The default is "wherever this position's outbound bins go",
-            // named by the field rather than by a second word for it.
-            control = advPick(key, v ? esc(v) : '<span class="k">' + esc(W('outbound_destination')) + ' ·</span> ' + esc(fallback), v ? '' : 'dflt');
-            break;
-        }
         case 'partial_dest': {
             const v = S.adv.partialDest;
             const fallback = S.model.cells[S.adv.node].dest || '';
@@ -4119,11 +4121,10 @@ function advField(key) {
             control = advPick(key, esc(CARRYOVER[v] || v), v === 'replace' ? 'dflt' : '');
             break;
         }
-        case 'index_robot_supplies': {
-            // A choice between two named robots, not a flag called "flipped".
-            const on = S.adv.a.index_robot_supplies;
-            control = advPick(key, on ? 'Robot 2' : 'Robot 1') +
-                '<span class="pd-note">' + (on ? 'Robot 1 evacuates and leaves' : 'Robot 2 indexes') + '</span>';
+        case 'refill_by': {
+            // A choice between three named robots, not a flag called "flipped".
+            const v = S.adv.a.refill_by;
+            control = advPick(key, refillRobot(v)) + '<span class="pd-note">' + esc(REFILL_NOTE[v] || REFILL_NOTE.clearing_robot) + '</span>';
             break;
         }
         default: control = advToggle(key);
@@ -4209,7 +4210,6 @@ function applyAdvanced() {
     const node = S.adv.node;
     let m = M().reduce(S.model, { type: 'setAdvanced', node: node, advanced: S.adv.a });
     m = M().reduce(m, { type: 'setEvacNodes', node: node, nodes: S.adv.evacNodes });
-    m = M().reduce(m, { type: 'setEvacDest', node: node, dest: S.adv.evacDest });
     m = M().reduce(m, { type: 'setPartialDest', node: node, dest: S.adv.partialDest });
     S.model = m;
     closeAdvanced();
@@ -4247,11 +4247,11 @@ function advOptions(key) {
                 label: CARRYOVER[k], on: (S.adv.a.changeover_carryover_disposition || 'replace') === k,
                 run: () => { S.adv.a.changeover_carryover_disposition = k; },
             }));
-        case 'index_robot_supplies':
-            return [
-                { label: 'Robot 1', on: !S.adv.a.index_robot_supplies, run: () => { S.adv.a.index_robot_supplies = false; } },
-                { label: 'Robot 2', on: !!S.adv.a.index_robot_supplies, run: () => { S.adv.a.index_robot_supplies = true; } },
-            ];
+        case 'refill_by':
+            return Object.keys(REFILL_ROBOT).map(k => ({
+                label: REFILL_ROBOT[k], on: refillRobot(S.adv.a.refill_by) === REFILL_ROBOT[k],
+                run: () => { S.adv.a.refill_by = k; },
+            }));
         case 'evac_nodes': {
             // THE CELL'S OWN POSITIONS, not the press's. changeover_evac_nodes
             // marks which of THIS cell's nodes are in the way of a setup.
@@ -4264,14 +4264,6 @@ function advOptions(key) {
                 },
             }));
         }
-        case 'evac_dest':
-            return [{
-                label: W('outbound_destination') + ' · ' + (c.dest || '—'), on: !S.adv.evacDest,
-                run: () => { S.adv.evacDest = ''; },
-            }].concat(routing.filter(r => r.role === 'destination').map(r => ({
-                label: r.label || r.core_node_name, on: S.adv.evacDest === r.core_node_name,
-                run: () => { S.adv.evacDest = r.core_node_name; },
-            })));
         case 'partial_dest':
             return [{
                 label: W('outbound_destination') + ' · ' + (c.dest || '—'), on: !S.adv.partialDest,
@@ -6669,7 +6661,7 @@ function openAddProcess() {
             // so the three do not exclude each other.
             exclude: n => (positions().indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
-                : B().laneExclusion(S.coreNodes, n)),
+                : B().legExclusion(S.coreNodes, n, g[0])),
             onChange: redrawSheetMap,
         });
     }
@@ -6971,7 +6963,7 @@ async function openContainmentPicker(btn) {
     const pop = $('pd-stpop');
     if (!pop) return;
     const current = S.settings.quality_hold_destination || '';
-    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).filter(n => !B().isLane(n)).map(n => ({
+    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).filter(n => !B().legExclusion(S.coreNodes, n.name, 'destination')).map(n => ({
         name: n.name,
         label: n.name + (n.node_type === 'NGRP' ? ' (group)' : ''),
     })));
@@ -7819,8 +7811,11 @@ async function previewApplyRow(styleID) {
     // PART with no position that saves, and the row says so. What may not
     // happen is the modal offering a save the server refuses, so a row
     // still carrying a finding keeps its tick and stays out of the count
-    // (applyRowReady), and the question it can answer it asks.
-    row.findings = (j.findings || []).filter(f => f.core_node_name);
+    // (applyRowReady), and the question it can answer it asks. A warning
+    // is not one: the server saves past it (a press whose styles disagree
+    // about which robot brings its next carrier), and the row's drawing
+    // shows it.
+    row.findings = (j.findings || []).filter(f => f.core_node_name && f.severity !== 'warning');
     // NULL, NOT ZERO, when the body carried no count: a preview of the
     // running style is not planned (R3) and a zero there would read as a
     // changeover that moves nothing.

@@ -18,8 +18,8 @@ import (
 // without the predicate answers with a claim the flow no longer has. Both
 // misses had the same shape: written before retirement landed, or written
 // against a sibling read that already had the filter, and neither had a test
-// that would notice. ClaimForLinesidePayload resolved "where does THIS bin
-// belong" off a retired row, and ListBackPositionNames captioned a position
+// that would notice. A lookup of "where does THIS bin belong" (since removed:
+// Core answers it) resolved it off a retired row, and ListBackPositionNames captioned a position
 // "back position" from a staging slot a save had dropped.
 //
 // live_reads_skip_retired_test.go proves the behaviour for the two

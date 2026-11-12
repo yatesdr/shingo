@@ -327,7 +327,7 @@ type returnSource struct {
 // and no finder reads it to source: a bin put where it allows but no claim
 // names is a bin no need will look for.
 func (e *Engine) returnSources(bin *bins.Bin, carrier *orders.Order) ([]returnSource, error) {
-	own := carrierProcessNodes(carrier, bin.ID)
+	own := ownProcessNodes(carrier)
 	if bin.PayloadCode != "" {
 		names, err := e.db.ReturnSourcesForPayload(bin.PayloadCode, own)
 		if err != nil {
@@ -365,14 +365,14 @@ func (e *Engine) returnSources(bin *bins.Bin, carrier *orders.Order) ([]returnSo
 // finder's tier 3 applies to a need naming that group (nodes.GroupFencesAsker).
 // DECLARED AND NOT FENCED: a place some claim declares, but that this process
 // may not draw from, is a place the next empty need from this process would be
-// turned away at. The asker is the order's process node, else the node the
-// cart was set down at or lifted from (carrierProcessNodes' first).
-func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order, binID int64) (bool, string) {
+// turned away at. The asker is the press the order names (ownProcessNodes);
+// an order that names none is an outsider.
+func (e *Engine) fencedFor(src *nodes.Node, carrier *orders.Order) (bool, string) {
 	if src == nil || src.NodeTypeCode != protocol.NodeClassNGRP {
 		return false, ""
 	}
 	asker := ""
-	if own := carrierProcessNodes(carrier, binID); len(own) > 0 {
+	if own := ownProcessNodes(carrier); len(own) > 0 {
 		asker = own[0]
 	}
 	fenced, err := e.db.GroupFencesAsker(src.ID, asker)
@@ -549,7 +549,7 @@ func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *ord
 	var refusals []string
 	for _, s := range srcs {
 		if bin.PayloadCode == "" {
-			if fenced, why := e.fencedFor(s.node, carrier, bin.ID); fenced {
+			if fenced, why := e.fencedFor(s.node, carrier); fenced {
 				refusals = append(refusals, s.name+": "+why)
 				continue
 			}
@@ -571,39 +571,16 @@ func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *ord
 		describeBinLoad(bin), strings.Join(refusals, "; "))
 }
 
-// carrierProcessNodes: the nodes that make a claim "the cancelled order's own"
-// for this cart. The order's process node when it carries one, then the cart's
-// OWN drop and pick nodes — from the order's rows for the cart (domain.StepNode
-// of their drop and pick steps), not the order's delivery and source nodes,
-// which for a swap are the other cart's: a swap sourced at the press lifted its
-// second cart from a supermarket slot, and that slot is where it came from.
-// Deduplicated, blanks dropped; a row with no steps (carried over from before
-// the rows existed) adds nothing.
-func carrierProcessNodes(o *orders.Order, binID int64) []string {
-	if o == nil {
+// ownProcessNodes: the nodes that make a claim "the cancelled order's own":
+// the press the order names (protocol.OrderRequest.ProcessNode), which every
+// Edge authors. An order that names none has no own claims, and its cart goes
+// where any claim declares it. The guess from the cart's own drop and pick
+// nodes, for an order from an Edge older than the field, is gone.
+func ownProcessNodes(o *orders.Order) []string {
+	if o == nil || o.ProcessNode == "" {
 		return nil
 	}
-	names := []string{o.ProcessNode}
-	for _, c := range o.Carts {
-		if c.BinID != binID {
-			continue
-		}
-		if c.DropStep != nil {
-			names = append(names, domain.StepNode(o, *c.DropStep))
-		}
-		if c.PickStep != nil {
-			names = append(names, domain.StepNode(o, *c.PickStep))
-		}
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, n := range names {
-		if n != "" && !seen[n] {
-			seen[n] = true
-			out = append(out, n)
-		}
-	}
-	return out
+	return []string{o.ProcessNode}
 }
 
 // cartPickNode is where o lifted the cart binID: the pick step of its newest row for that cart

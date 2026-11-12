@@ -254,7 +254,7 @@ func fixtureCells() []fixtureCell {
 				},
 				parts: []string{"SYN-HP-01", "SYN-HP-02", "SYN-HP-A", "SYN-HP-B"}},
 			recipeLines: []string{
-				"\"Two spot press index\": PLN_04←PLN_05, PLN_01←PLN_02 (2‑Robot Index, the decks feed the back-line spots)",
+				"\"Two spot press index\": PLN_04←PLN_05, PLN_01←PLN_02 (Index Swap, the decks feed the back-line spots)",
 				"\"Two spot swap\": PLN_06 staging at PLN_05, PLN_03 staging at PLN_02 (2‑Robot Swap); the running style is this one",
 			},
 			notes: []string{"PLN_02 and PLN_05 do two jobs: on deck under the index recipe, the staging lane under the swap — the same cell of the picture under both"},

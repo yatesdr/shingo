@@ -29,8 +29,8 @@ func TestInputFromClaimUngated_SpeaksNoGatedColumn(t *testing.T) {
 	c := NodeClaim{
 		StyleID: 7, CoreNodeName: "PLN_01", PayloadCode: "PIA26",
 		InboundSource: "SMN", OutboundDestination: "SMN_DST",
-		ChangeoverEvacNodes: []string{"PLN_02"}, ChangeoverEvacDestination: "SMN_EVAC",
-		ChangeoverCarryoverDisposition: CarryoverKeepLineside, IndexRobotSupplies: true,
+		ChangeoverEvacNodes:            []string{"PLN_02"},
+		ChangeoverCarryoverDisposition: CarryoverKeepLineside, RefillBy: refillFor(true),
 		KeyRoute: []string{"LM10"}, KeyTask: "load", KeepStagedNode: "SPOT-1",
 		ReorderPointSource: "manual", AutoReorder: true, Sequence: 4,
 	}
@@ -64,7 +64,7 @@ func TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn(t *testing.T) {
 		PayloadCode: "PIA26", ReorderPoint: 12, InboundStaging: "PLN_02",
 		OutboundStaging: "PLN_05", InboundSource: "SMN", OutboundDestination: "SMN_DST",
 		AllowedPayloadCodes: []string{"PIA26"}, AutoRequestPayload: "PIA26",
-		EvacuateOnChangeover: true, PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
+		PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
 		AutoConfirm: true, LinesideSoftThreshold: 3, ReuseCompatibleBins: true, AutoPush: true,
 		Source: ClaimSourceHMI, CalledBy: "Press 400",
 	}

@@ -66,9 +66,9 @@ type RecipeGroup struct {
 // source, which the mint writes. The keys are FlowAdvanced's, so the
 // desktop's Advanced sheet reads and writes one shape in either scope.
 //
-// THE PRESS HARDWARE IS HERE NOW (index_robot_supplies, 2026-11-05). It was
-// left out as "the cell's, the same for every part" — but a recipe IS one
-// cell's choreography, and leaving it out left the flag nowhere a minted
+// THE PRESS HARDWARE IS HERE NOW (refill_by, added as index_robot_supplies on
+// 2026-11-05). It was left out as "the cell's, the same for every part" — but a
+// recipe IS one cell's choreography, and leaving it out left the setting nowhere a minted
 // style could get it from: every style the floor built minted Robot 1 fetches
 // the empty. SPR Press 6 minted two that way on one day, against every
 // admin-built style on the press saying Robot 2, and the first swap of one ran
@@ -83,10 +83,9 @@ type RecipeAdvanced struct {
 	AutoReorder           bool                 `json:"auto_reorder,omitempty"`
 	LinesideSoftThreshold int                  `json:"lineside_soft_threshold,omitempty"`
 	AutoPush              bool                 `json:"auto_push,omitempty"`
-	EvacuateOnChangeover  bool                 `json:"evacuate_on_changeover,omitempty"`
 	CarryoverDisposition  CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
 	KeepStagedNode        string               `json:"keep_staged_node,omitempty"`
-	IndexRobotSupplies    bool                 `json:"index_robot_supplies,omitempty"`
+	RefillBy              protocol.RefillBy    `json:"refill_by,omitempty"`
 	AutoConfirm           bool                 `json:"auto_confirm,omitempty"`
 	CurtainRequired       bool                 `json:"curtain_required,omitempty"`
 	StrictPack            bool                 `json:"strict_pack,omitempty"`
@@ -218,8 +217,8 @@ func SlotGroups(slots []Slot, groups []RecipeGroup) []*RecipeGroup {
 func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.ReorderPoint, a.AutoReorder = g.ReorderPoint, g.AutoReorder
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
-	a.EvacuateOnChangeover, a.KeepStagedNode = g.EvacuateOnChangeover, g.KeepStagedNode
-	a.IndexRobotSupplies = g.IndexRobotSupplies
+	a.KeepStagedNode = g.KeepStagedNode
+	a.RefillBy = g.RefillBy
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
 	a.PackTolerancePct = g.PackTolerancePct
 	if g.CarryoverDisposition != "" {
@@ -403,8 +402,8 @@ func (c *groupCheck) fieldsTheModeTakes() error {
 					if word == "" {
 						word = string(star.SwapMode)
 					}
-					return refusef("%s lists %s as %s for %s, which a %s does not use",
-						g.Name, list[0], strings.ToLower(flowspec.Label(f.field)), s.CoreNodeName, word)
+					return refusef("%s lists %s as %s for %s, which %s does not use",
+						g.Name, list[0], strings.ToLower(flowspec.Label(f.field)), s.CoreNodeName, withArticle(word))
 				case f.cell(star) == "":
 					return refusef("%s lists %s for %s, and %s has none in the recipe — set one on %s's row first, or take it out",
 						g.Name, groupPlaceNoun(f.field, star.SwapMode), s.CoreNodeName, g.Of, g.Of)
@@ -450,12 +449,11 @@ var advancedFields = []struct {
 	{flowspec.AutoReorder, func(a RecipeAdvanced) bool { return a.AutoReorder }},
 	{flowspec.LinesideSoftThreshold, func(a RecipeAdvanced) bool { return a.LinesideSoftThreshold != 0 }},
 	{flowspec.AutoPush, func(a RecipeAdvanced) bool { return a.AutoPush }},
-	{flowspec.EvacuateOnChangeover, func(a RecipeAdvanced) bool { return a.EvacuateOnChangeover }},
 	{flowspec.ChangeoverCarryoverDisposition, func(a RecipeAdvanced) bool {
 		return a.CarryoverDisposition != "" && a.CarryoverDisposition != CarryoverReplace
 	}},
 	{flowspec.KeepStagedNode, func(a RecipeAdvanced) bool { return a.KeepStagedNode != "" }},
-	{flowspec.IndexRobotSupplies, func(a RecipeAdvanced) bool { return a.IndexRobotSupplies }},
+	{flowspec.RefillBy, func(a RecipeAdvanced) bool { return a.RefillBy.OrDefault() != protocol.RefillByClearingRobot }},
 	{flowspec.AutoConfirm, func(a RecipeAdvanced) bool { return a.AutoConfirm }},
 	{flowspec.CurtainRequired, func(a RecipeAdvanced) bool { return a.CurtainRequired }},
 	{flowspec.StrictPack, func(a RecipeAdvanced) bool { return a.StrictPack }},
@@ -478,8 +476,8 @@ func (c *groupCheck) advancedTheModeTakes() error {
 		row := flowspec.Steady(star.Role, star.SwapMode)
 		for _, f := range advancedFields {
 			if f.set(*g.Advanced) && row[f.field] == flowspec.Forbidden {
-				return refusef("%s's Advanced sets %s, which a %s %s spot does not use — clear it",
-					g.Name, strings.ToLower(flowspec.Label(f.field)), SwapModeWord(star.SwapMode), star.Role)
+				return refusef("%s's Advanced sets %s, which %s %s spot does not use — clear it",
+					g.Name, strings.ToLower(flowspec.Label(f.field)), withArticle(SwapModeWord(star.SwapMode)), star.Role)
 			}
 		}
 		if msg := PackToleranceRefusal(g.Advanced.PackTolerancePct); msg != "" {

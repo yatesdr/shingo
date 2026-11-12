@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/internal/nodetree"
 	"shingocore/store/reservations"
 )
 
@@ -681,6 +682,22 @@ func LaneForNode(db *sql.DB, nodeID int64) (*Node, error) {
 		return nil, nil
 	}
 	return parent, nil
+}
+
+// GroupOf returns the node group nodeID is a member of: its nearest NGRP
+// ancestor, so a lane slot's is its lane's group. nil when no ancestor is one.
+// The node itself is not asked: a group is not a member of itself.
+func GroupOf(db *sql.DB, nodeID int64) (*Node, error) {
+	row := db.QueryRow(nodetree.AncestorsOf(1)+`
+		SELECT `+SelectCols+` `+FromClause+`
+		JOIN ancestors a ON a.id = n.id
+		WHERE n.id <> $1 AND nt.code = $2
+		ORDER BY a.depth LIMIT 1`, nodeID, protocol.NodeClassNGRP)
+	n, err := ScanNode(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return n, err
 }
 
 // AuditLaneGeometry returns human-readable warnings about single-file lane

@@ -157,23 +157,51 @@ func TestTopsAndBottomsPull_TakesExactlyTopsAndBottoms(t *testing.T) {
 	}
 }
 
-// TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt: the pull's
-// asker is the fed press (the find sets it as the need's process node), so a
-// strict kanban that supports the press serves it; one that does
-// not support it is fenced.
+// TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt: SEND BACK's
+// pull names its press on the wire (protocol.OrderRequest.ProcessNode), and
+// that value is its asker: a strict kanban that supports the press serves it,
+// one that does not support it fences it. The find no longer looks the press
+// up from the outside.
 func TestTopsAndBottomsPull_AStrictGroupThatSupportsThePressServesIt(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	c := newTBPCell(t, db, "TBS")
 	tb := c.cart(t, c.toteID, "TBS-TB", intPtr(0), "", nil)
 	testdb.KanbanStrict(t, db, c.srcID, true)
+	sendBack := c.pull("tbs-1")
+	sendBack.ProcessNode = c.press
 
-	if res := c.find(t, c.pull("tbs-1")); res.Outcome != OutcomeWait || res.QueueCause != queueCauseOf(plan.CauseFinderGroupFenced) {
+	if res := c.find(t, sendBack); res.Outcome != OutcomeWait || res.QueueCause != queueCauseOf(plan.CauseFinderGroupFenced) {
 		t.Fatalf("a strict group that does not support the press: %v under %q, want fenced", res.Outcome, res.QueueCause)
 	}
 	c.exec(t, `INSERT INTO kanban_supports (kanban_node_id, process_node_id) VALUES ($1, $2)`, c.srcID, c.pressID)
-	if res := c.find(t, c.pull("tbs-1")); res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != tb {
+	if res := c.find(t, sendBack); res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != tb {
 		t.Fatalf("a strict group that supports the press: %v under %q, want bin %d", res.Outcome, res.QueueCause, tb)
+	}
+}
+
+// TestTopsAndBottomsPull_APullThatNamesItsPressIsAskedAsThatPress: a pull
+// that names its press is asked as that press, as every order is, and the
+// find looks no press up: with the cell's claim gone the named pull is still
+// served by the strict group that supports its press, and a pull that names
+// none is an outsider there and is fenced. It was refused by the press the
+// find looked up from the outside.
+func TestTopsAndBottomsPull_APullThatNamesItsPressIsAskedAsThatPress(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	c := newTBPCell(t, db, "TBN")
+	tb := c.cart(t, c.toteID, "TBN-TB", intPtr(0), "", nil)
+	testdb.KanbanStrict(t, db, c.srcID, true)
+	c.exec(t, `INSERT INTO kanban_supports (kanban_node_id, process_node_id) VALUES ($1, $2)`, c.srcID, c.pressID)
+	c.exec(t, `DELETE FROM style_claims WHERE core_node_name = $1`, c.press)
+
+	if res := c.find(t, c.pull("tbn-blank")); res.Outcome != OutcomeWait || res.QueueCause != queueCauseOf(plan.CauseFinderGroupFenced) {
+		t.Errorf("naming no press at a strict group: %v under %q (bin %+v), want fenced", res.Outcome, res.QueueCause, res.Bin)
+	}
+	named := c.pull("tbn-named")
+	named.ProcessNode = c.press
+	if res := c.find(t, named); res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != tb {
+		t.Fatalf("naming its press: %v under %q (bin %+v), want bin %d", res.Outcome, res.QueueCause, res.Bin, tb)
 	}
 }
 

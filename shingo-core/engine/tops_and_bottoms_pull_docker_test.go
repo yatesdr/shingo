@@ -29,6 +29,7 @@ type tbpPlant struct {
 	eng       *Engine
 	part, src string
 	outside   string
+	press     string
 	toteID    int64
 	slots     []*nodes.Node
 	used      int
@@ -37,7 +38,7 @@ type tbpPlant struct {
 func newTBPPlant(t *testing.T, prefix string) *tbpPlant {
 	t.Helper()
 	db := testDB(t)
-	p := &tbpPlant{db: db, part: prefix + "-PART", src: prefix + "-SRC", outside: prefix + "-OUT"}
+	p := &tbpPlant{db: db, part: prefix + "-PART", src: prefix + "-SRC", outside: prefix + "-OUT", press: prefix + "-PRESS"}
 	_, err := db.Exec(`INSERT INTO payloads (code, uop_capacity, tote_layers, uop_per_tote) VALUES ($1, 320, 5, 8)`, p.part)
 	testutil.MustNoErr(t, err, "the part")
 	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, totes_per_layer) VALUES ($1, 8) RETURNING id`,
@@ -80,10 +81,11 @@ func (p *tbpPlant) cart(t *testing.T, label string, totes int, payload string, u
 }
 
 // pull is SEND BACK's pull, as the Edge sends it.
+// pull is SEND BACK's pull as an Edge sends it, naming its press.
 func (p *tbpPlant) pull(uuid string) {
 	p.eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: uuid,
 		OrderType: protocol.OrderTypeRetrieve, RetrieveEmpty: true, Want: protocol.TopsAndBottomsOnly,
-		PayloadCode: p.part, SourceNode: p.src, DeliveryNode: p.outside, Quantity: 1})
+		PayloadCode: p.part, SourceNode: p.src, DeliveryNode: p.outside, Quantity: 1, ProcessNode: p.press})
 }
 
 // TestTopsAndBottomsPull_ADryPullReplayedWaitsForTopsAndBottoms: the pull is
@@ -129,11 +131,13 @@ func TestTopsAndBottomsPull_ADryPullReplayedWaitsForTopsAndBottoms(t *testing.T)
 	}
 }
 
-// TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails: the press stops
-// carrying the part while its pull waits. The scanner's replay asks for the
-// press again (no column carries it) and fails the order with the sentence
-// intake would have refused it with.
-func TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails(t *testing.T) {
+// TestTopsAndBottomsPull_AReplayAsksForNoPress: the press stops carrying the
+// part while its pull waits. The pull names its press, so the scanner's
+// replay looks no press up: it takes the tops & bottoms that lands. It looked
+// the press up from the outside on every find and failed the pull with
+// intake's sentence; intake is the one check now, and a style change on the
+// Edge cancels SEND BACK's orders at the changeover's START.
+func TestTopsAndBottomsPull_AReplayAsksForNoPress(t *testing.T) {
 	t.Parallel()
 	p := newTBPPlant(t, "TBN")
 	p.pull("tbn-pull")
@@ -142,12 +146,14 @@ func TestTopsAndBottomsPull_AReplayThatNoLongerResolvesFails(t *testing.T) {
 	}
 	_, err := p.db.Exec(`UPDATE style_claims SET payload_code = 'TBN-OTHER' WHERE core_node_name = 'TBN-PRESS'`)
 	testutil.MustNoErr(t, err, "the press stops carrying the part")
-	p.cart(t, "TBN-TB", 0, "", 0)
+	id := p.cart(t, "TBN-TB", 0, "", 0)
 	p.eng.RunFulfillmentScan()
 	o := testdb.RequireOrder(t, p.db, "tbn-pull")
-	want := p.outside + " is not the outside position of a press fed with " + p.part
-	if o.Status != protocol.StatusFailed || o.ErrorDetail != want {
-		t.Errorf("the replay left the pull %s with %q, want failed with %q", o.Status, o.ErrorDetail, want)
+	if o.Status != protocol.StatusDispatched && o.Status != protocol.StatusInTransit {
+		t.Fatalf("the replay left the pull %s with %q, want it dispatched to the tops & bottoms", o.Status, o.ErrorDetail)
+	}
+	if testdb.OnlyCart(t, o) == nil || *testdb.OnlyCart(t, o) != id {
+		t.Errorf("the pull took bin %v, want the tops & bottoms %d", testdb.OnlyCart(t, o), id)
 	}
 }
 

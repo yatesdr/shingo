@@ -235,7 +235,7 @@ func TestRequestCensus(t *testing.T) {
 		{consume, tr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
 		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
 		{consume, seq, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
-		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 2}},
 		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
 		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{legs: 2, toDeck: 1, trips: requestTrips, expected: 3}},
@@ -250,7 +250,7 @@ func TestRequestCensus(t *testing.T) {
 		{produce, tr, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
 		{produce, seq, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
 		{produce, seq, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
-		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
@@ -264,7 +264,7 @@ func TestRequestCensus(t *testing.T) {
 		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
 		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: requestTrips, expected: 2}},
 		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
-		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: requestTrips, expected: 2}},
 		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{legs: 2, toDeck: 1, trips: requestTrips, expected: 3}},
@@ -373,7 +373,7 @@ func TestRequestCensus_ConsumeHeadCoreDoesNotKnowReadsOccupied(t *testing.T) {
 	var calls atomic.Int32
 	bridgeCore(t, eng, censusStub(t, &calls).URL) // every node reads empty
 	holdPlaces(t, eng, occupiedAt())
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}}, false)
 
 	_, err := eng.RequestNodeMaterial(nodeID, 1)
 	testutil.MustNoErr(t, err, "material request")

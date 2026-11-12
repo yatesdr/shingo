@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
 
@@ -33,7 +34,7 @@ func goldenClaim(role protocol.ClaimRole, mode protocol.SwapMode, payload, secon
 		InboundStaging: "STG-IN", OutboundStaging: "STG-OUT",
 		InboundSource: "SRC", OutboundDestination: "DST",
 		PairedCoreNode: "PAIR-1", SecondPairedCoreNode: secondPaired,
-		IndexRobotSupplies: flip,
+		RefillBy: refillFor(flip),
 	}
 }
 
@@ -41,6 +42,8 @@ type goldenVariant struct {
 	name         string
 	secondPaired string
 	flip         bool
+	// robot3 sets the refill to Robot 3 (own_robot): neither leg fetches.
+	robot3 bool
 }
 
 func goldenVariants(mode protocol.SwapMode) []goldenVariant {
@@ -50,6 +53,7 @@ func goldenVariants(mode protocol.SwapMode) []goldenVariant {
 	return []goldenVariant{
 		{name: "2pos"}, {name: "3pos", secondPaired: "PAIR-2"},
 		{name: "2pos-flip", flip: true}, {name: "3pos-flip", secondPaired: "PAIR-2", flip: true},
+		{name: "2pos-robot3", robot3: true}, {name: "3pos-robot3", secondPaired: "PAIR-2", robot3: true},
 	}
 }
 
@@ -71,7 +75,25 @@ func renderChangeoverDispatch(d ChangeoverDispatch) map[string]any {
 
 func renderPlanActions(diffs []ChangeoverNodeDiff) []map[string]any {
 	nodes := []processes.Node{{ID: 1, Name: "LINE", CoreNodeName: "LINE", ProcessID: 1}}
-	plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
+	return renderActions(BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{}))
+}
+
+// renderToolChangePlan is a tool change from from to to, through the pipeline
+// planChangeover runs and the decorator (applyToolingChangeover): the
+// outgoing claim marks every position it may (ToolChangePositions).
+func renderToolChangePlan(from, to *processes.NodeClaim) []map[string]any {
+	f := *from
+	f.ChangeoverEvacNodes = f.ToolChangePositions()
+	fromClaims, toClaims := []processes.NodeClaim{f}, []processes.NodeClaim{*to}
+	diffs := PlanPressPositions(DiffStyleClaims(fromClaims, toClaims), nil, nil)
+	var nodes []processes.Node
+	for i, n := range f.ToolChangePositions() {
+		nodes = append(nodes, processes.Node{ID: int64(i + 1), Name: n, CoreNodeName: n, ProcessID: 1})
+	}
+	return renderActions(BuildChangeoverPlan(diffs, nodes, false, nil, planToolingChangeover(fromClaims, toClaims)))
+}
+
+func renderActions(plan changeover.Plan) []map[string]any {
 	var out []map[string]any
 	for _, a := range plan.Actions {
 		errText := ""
@@ -94,8 +116,15 @@ func buildSwapWireGolden(t *testing.T) map[string]any {
 		for _, mode := range protocol.ConfigurableSwapModes() {
 			for _, v := range goldenVariants(mode) {
 				key := fmt.Sprintf("%s/%s/%s", role, mode, v.name)
+				vc := func(payload string) *processes.NodeClaim {
+					c := goldenClaim(role, mode, payload, v.secondPaired, v.flip)
+					if v.robot3 {
+						c.RefillBy = protocol.RefillByOwnRobot
+					}
+					return c
+				}
 
-				claim := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
+				claim := vc("P-FROM")
 				disp, err := BuildSwapDispatch(node, claim)
 				entry := map[string]any{"BuildSwapDispatch": disp}
 				if err != nil {
@@ -103,21 +132,21 @@ func buildSwapWireGolden(t *testing.T) map[string]any {
 				}
 
 				for _, pay := range []struct{ name, to string }{{"samePayload", "P-FROM"}, {"newPayload", "P-TO"}} {
-					from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
-					to := goldenClaim(role, mode, pay.to, v.secondPaired, v.flip)
+					from := vc("P-FROM")
+					to := vc(pay.to)
 					entry["BuildSwapChangeoverSteps/"+pay.name] = renderChangeoverDispatch(
 						BuildSwapChangeoverSteps(from, to, "", ""))
-					entry["BuildEvacuateChangeoverSteps/"+pay.name] = renderChangeoverDispatch(
-						BuildEvacuateChangeoverSteps(from, to, "", ""))
 				}
 
-				from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
-				to := goldenClaim(role, mode, "P-TO", v.secondPaired, v.flip)
+				from := vc("P-FROM")
+				to := vc("P-TO")
 				entry["BuildChangeoverPlan"] = map[string]any{
-					"swap":     renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: from, ToClaim: to}}),
-					"evacuate": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationEvacuate, FromClaim: from, ToClaim: to}}),
-					"add":      renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationAdd, ToClaim: to}}),
-					"drop":     renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationDrop, FromClaim: from}}),
+					"swap": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: from, ToClaim: to}}),
+					"add":  renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationAdd, ToClaim: to}}),
+					"drop": renderPlanActions([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationDrop, FromClaim: from}}),
+					// A tool change: the decorator's rows, the only place a
+					// Tooling done wait is written.
+					"toolChange": renderToolChangePlan(from, to),
 				}
 				golden[key] = entry
 			}

@@ -803,10 +803,10 @@ func (f *Finder) Pick(need Need) Plan {
 			var b *bins.Bin
 			var err error
 			cause := CauseFinderPlantEmpty
-			// THE FENCE, on both arms. Zero for every need that names no process
-			// and carries no kanban origin, and then these render byte-for-byte
-			// the queries they were before MG3-1: sharing is the plant default and
-			// the only fenced zones are kanbans.
+			// THE FENCE, on both arms: the need is an ask, so a strict kanban
+			// that does not support its press (or any, when it names none) hides
+			// its empties. Sharing is the plant default and the only fenced
+			// zones are strict kanbans.
 			fence := f.emptyFenceFor(need)
 			switch len(wantTypes) {
 			case 0:

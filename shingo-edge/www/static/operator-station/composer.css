@@ -228,5 +228,6 @@
 .os-comp-trips td { padding: 8px 10px 8px 0; border-top: 1px solid var(--sub-1); white-space: nowrap; }
 .os-comp-trips td.r1 { color: var(--robot-1); }
 .os-comp-trips td.r2 { color: var(--robot-2); }
+.os-comp-trips td.r3 { color: var(--robot-3); }
 .os-comp-go .os-comp-bar { gap: 12px; }
 .os-comp-go .os-comp-bar .os-btn-quiet { border-color: var(--sub-3); }

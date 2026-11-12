@@ -25,7 +25,7 @@
 // ── vocabulary ───────────────────────────────────────────────────────────────
 // "Robot 1" / "Robot 2", never the short forms. SPEC §0.7.
 const MODES = {
-    two_robot_press_index: '2‑Robot Index',
+    two_robot_press_index: 'Index Swap',
     two_robot: '2‑Robot Swap',
     single_robot: '1‑Robot Swap',
     sequential: 'Sequential A/B',
@@ -63,7 +63,6 @@ const SHAPE_FIELDS = [
     { field: 'outbound_staging', of: c => c.parkOld || '' },
     { field: 'inbound_source', of: c => c.source || '' },
     { field: 'outbound_destination', of: c => c.dest || '' },
-    { field: 'changeover_evac_destination', of: c => c.evacDest || '' },
     { field: 'partial_destination', of: c => c.partialDest || '' },
     { field: 'changeover_evac_nodes', of: c => (c.evacNodes || []).join(',') },
     { field: 'key_route', of: c => (c.keyRoute || []).join(' › ') },
@@ -112,15 +111,20 @@ function fieldWord(state, field) {
 // characters a line.
 //
 // THE PRESS INDEX NAMES THE ROBOT THE SWAP WILL SEND (2026-11-05). It said
-// `Robot 1 supplies` whatever index_robot_supplies said, so a press set to
+// `Robot 1 supplies` whatever the refill setting said, so a press set to
 // Robot 2 read Robot 1 on every card, and a style minted Robot 1 by mistake
 // looked no different from one set that way on purpose. `a` is the cell's
 // Advanced as stored or drafted (cellAdvanced); absent reads as Robot 1, the
 // minted default.
 const CARDLINE = {
-    two_robot_press_index: (c, a) => (a && a.index_robot_supplies)
-        ? 'Robot 2 indexes · Robot 2 supplies ' + (c.paired || '?')
-        : 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
+    // THE REFILL GOES TO THE LAST POSITION, the back (a three-position
+    // press's third), as the builders set it down (composePressIndexPair).
+    two_robot_press_index: (c, a) => {
+        const back = c.secondPaired || c.paired || '?';
+        const r = refillRobotOf(a);
+        if (r === 1) return 'Robot 1 supplies ' + back + ' · Robot 2 indexes';
+        return 'Robot 2 indexes · Robot ' + r + ' supplies ' + back;
+    },
     two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
     single_robot: c => ((c.staging || c.parkOld)
         ? [c.staging && 'Robot 1 moves in', c.parkOld && 'Robot 1 clears old'].filter(Boolean).join(' · ')
@@ -191,7 +195,6 @@ const CELL_TO_FIELD = {
     parkOld: 'outbound_staging',
     source: 'inbound_source',
     dest: 'outbound_destination',
-    evacDest: 'changeover_evac_destination',
     partialDest: 'partial_destination',
     evacNodes: 'changeover_evac_nodes',
     keyRoute: 'key_route',
@@ -216,9 +219,8 @@ const ADVANCED_DEFAULTS = {
     auto_request_payload: '',
     auto_push: false,
     keep_staged_node: '',
-    evacuate_on_changeover: false,
     changeover_carryover_disposition: 'replace',
-    index_robot_supplies: false,
+    refill_by: 'clearing_robot',
     auto_confirm: false,
     // The light-curtain style tie: whether THIS style's full-bin releases at
     // this node wait for the node's curtain tag. The claim is the
@@ -251,7 +253,7 @@ const clone = v => JSON.parse(JSON.stringify(v));
 const blankCell = () => ({
     on: false, mode: null, part: null, source: '', dest: '',
     staging: '', parkOld: '', paired: '', secondPaired: '',
-    keyRoute: [], evacNodes: [], evacDest: '', partialDest: '', role: '',
+    keyRoute: [], evacNodes: [], partialDest: '', role: '',
     // null until an engineer opens the Advanced modal and presses Apply. It is
     // the same nil FlowCell.Advanced carries: untouched means Expand's
     // carry-through keeps the stored row's policy, and there is no way to say
@@ -328,7 +330,7 @@ function deriveRole(claims, processClaims, node) {
 // table to flowspec-data.js for every role and mode.
 const STAGING_FORBIDDEN = {
     two_robot: ['outbound_staging'],
-    sequential: ['inbound_staging', 'outbound_staging'],
+    sequential: ['outbound_staging'],
     simple: ['inbound_staging', 'outbound_staging'],
 };
 
@@ -436,6 +438,11 @@ function advancedSet(state, node, adv) {
         const v = a[key];
         if (key === 'changeover_carryover_disposition') {
             if (v && v !== 'replace') out.push(key);
+            continue;
+        }
+        // Robot 1 is the default, as blank-or-replace is above.
+        if (key === 'refill_by') {
+            if (v && v !== 'clearing_robot') out.push(key);
             continue;
         }
         if (key === 'reorder_point_source') continue;   // a stamp on the number, not a value of its own
@@ -640,7 +647,6 @@ function init(opts) {
         cell.secondPaired = c.second_paired_core_node || '';
         cell.keyRoute = (c.key_route || []).slice();
         cell.evacNodes = (c.changeover_evac_nodes || []).slice();
-        cell.evacDest = c.changeover_evac_destination || '';
         cell.partialDest = c.partial_destination || '';
         cell.role = c.role || cell.role;
     }
@@ -887,12 +893,11 @@ function reduce(state, action) {
 
         case 'select': s.selected = action.node || null; break;
 
-        // The two changeover fields the cell already carries, from the same
-        // sheet as the advanced block. They are HERE and not in it because the
-        // picture draws what they do — a marked position is a card the setup
-        // clears — and a field the picture draws is the cell's.
+        // The changeover marks the cell carries, from the same sheet as the
+        // advanced block. They are HERE and not in it because the picture
+        // draws what they do — a marked position is a card the setup clears —
+        // and a field the picture draws is the cell's.
         case 'setEvacNodes': if (cell) cell.evacNodes = (action.nodes || []).slice(); break;
-        case 'setEvacDest': if (cell) cell.evacDest = action.dest || ''; break;
         // Where this cell's carrier waits when it leaves unfinished (the
         // Advanced sheet's Unfinished carriers section). Blank = where a full goes.
         case 'setPartialDest': if (cell) cell.partialDest = action.dest || ''; break;
@@ -992,7 +997,6 @@ function toCells(state) {
             inbound_staging: c.staging,
             outbound_staging: c.parkOld,
             outbound_destination: c.dest,
-            changeover_evac_destination: c.evacDest,
             partial_destination: c.partialDest,
         };
         for (const k of Object.keys(optional)) {
@@ -1303,7 +1307,15 @@ function legFields(mode) {
 // per surface: a surface that guessed would eventually disagree with one that
 // derived.
 function usesTwoRobots(state) {
-    return activeCells(state).some(([, c]) => dockRobotsOf(c).out === 2);
+    return activeCells(state).some(([, c]) => c.mode === 'two_robot' || c.mode === 'two_robot_press_index');
+}
+
+// refillRobotOf is the robot an index press's Advanced says brings its back
+// the next carrier: 1, 2 or 3 (refill_by clearing_robot / index_robot /
+// own_robot); absent or unknown is Robot 1, the default.
+function refillRobotOf(a) {
+    const r = a && a.refill_by;
+    return r === 'index_robot' ? 2 : r === 'own_robot' ? 3 : 1;
 }
 
 // dockRobotsOf is ONE CELL'S answer to "which robot brings its new bin from
@@ -1312,14 +1324,17 @@ function usesTwoRobots(state) {
 // the single cell still clears with Robot 1: asking the flow (usesTwoRobots)
 // for that cell's out robot drew its move to the dock in Robot 2's colour.
 //
-// The two-robot choreographies are the ones whose old bin leaves on Robot 2:
-// two_robot pulls it while Robot 1 stages the new one, a press index carries
-// it out after indexing (its LEGS row is Robot 2's index). Every other mode,
-// and every inbound trip, is Robot 1's. usesTwoRobots reads this, so the flow's
-// sentence and each cell's colour cannot disagree.
-function dockRobotsOf(c) {
-    const two = c.mode === 'two_robot_press_index' || c.mode === 'two_robot';
-    return { in: 1, out: two ? 2 : 1 };
+// two_robot is the one choreography whose old bin leaves on Robot 2: it pulls
+// it while Robot 1 stages the new one. A PRESS INDEX'S FULL TOTE LEAVES ON
+// ROBOT 1, which lifts it off the front and takes it out (the builders,
+// composePressIndexPair); its Robot 2 only indexes, and this said Robot 2. A
+// press index's inbound trip is whoever its refill setting names (a, the
+// cell's Advanced: Robot 1, 2 or 3). Every other inbound trip is Robot 1's.
+function dockRobotsOf(c, a) {
+    return {
+        in: c.mode === 'two_robot_press_index' ? refillRobotOf(a) : 1,
+        out: c.mode === 'two_robot' ? 2 : 1,
+    };
 }
 
 // cellRobots is dockRobotsOf by position name, for the picture: null for a
@@ -1327,10 +1342,13 @@ function dockRobotsOf(c) {
 function cellRobots(state, node) {
     const c = state.cells[node];
     if (!c || !c.on || !c.mode) return null;
-    return dockRobotsOf(c);
+    return dockRobotsOf(c, cellAdvanced(state, node));
 }
 
 function robotWords(state) {
+    if (activeCells(state).some(([n, c]) => c.mode === 'two_robot_press_index' && refillRobotOf(cellAdvanced(state, n)) === 3)) {
+        return 'Robot 1, Robot 2 and Robot 3';
+    }
     return usesTwoRobots(state) ? 'Robot 1 and Robot 2' : 'Robot 1';
 }
 
@@ -1456,7 +1474,7 @@ function dockNotes(state) {
         // through it, and "SLN_010, SLN_010" read as two lanes of one name.
         const byRobot = new Map();
         for (const cell of act) {
-            const r = dockRobotsOf(cell[1])[dir];
+            const r = dockRobotsOf(cell[1], cellAdvanced(state, cell[0]))[dir];
             if (!byRobot.has(r)) byRobot.set(r, []);
             const t = targetOf(cell);
             if (byRobot.get(r).indexOf(t) < 0) byRobot.get(r).push(t);
@@ -2124,6 +2142,9 @@ function orderSentences(state) {
             if (!from || !to) continue;
             out.push({
                 robot: robot,
+                // role is what the order does, whatever robot number the row
+                // shows: a reader asking which orders take bins off asks this.
+                role: robot === 1 ? 'supply' : 'evac',
                 from: from,
                 to: to,
                 // The new bin is named by its part; the old one has no part to
@@ -2184,7 +2205,6 @@ function presetCells(preset) {
             parkOld: r.outbound_staging || r.parkOld || '',
             paired: r.paired_core_node || r.paired || '',
             secondPaired: r.second_paired_core_node || r.secondPaired || '',
-            evacDest: r.changeover_evac_destination || r.evacDest || '',
             partialDest: r.partial_destination || r.partialDest || '',
             evacNodes: (r.changeover_evac_nodes || r.evacNodes || []).slice(),
             keyRoute: (r.key_route || r.keyRoute || []).slice(),
@@ -2529,7 +2549,7 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 // thing they are about has always been CellPicture. The press-index mode keeps
 // its own words: that one really is about a press indexing.
 const PAIRED_NOTE = {
-    two_robot_press_index: 'No back position on this cell — a ' + MODES.two_robot_press_index +
+    two_robot_press_index: 'No back position on this cell — an ' + MODES.two_robot_press_index +
         ' pairs with one, and a position becomes a back position only when a flow names it. ' +
         'Pair this one from the desktop’s Flows, or pick another choreography.',
     sequential: 'Only one position on this cell — ' + MODES.sequential +

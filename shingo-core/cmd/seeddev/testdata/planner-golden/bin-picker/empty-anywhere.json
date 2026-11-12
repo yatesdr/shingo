@@ -6,7 +6,7 @@
   },
   "decision": {
     "outcome": "found",
-    "bin": "BIN-PEB-01",
-    "node": "PEB_001"
+    "bin": "BIN-MT-01",
+    "node": "UTN_001"
   }
 }

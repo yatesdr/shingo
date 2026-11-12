@@ -438,7 +438,7 @@ func TestRoutingNodes_DeleteNamesTheStylesStillRoutingThroughIt(t *testing.T) {
 }
 
 // TestRoutingNodes_DeriveFromClaims pins migration v25 (the one-time routing
-// backfill) on a synthetic process: five fields → three roles, backfill origin,
+// backfill) on a synthetic process: four fields → three roles, backfill origin,
 // enabled; a name that is a position is derived and then dropped; and a
 // process that already has rows is never re-derived.
 func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
@@ -450,7 +450,6 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 		PayloadCode: "RAW", PairedCoreNode: "PLN_04",
 		InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
 		InboundSource: "Supermarket Empty Totes", OutboundDestination: "Supermarket Area",
-		ChangeoverEvacDestination: domain.Ptr("Supermarket Area"),
 	}); err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}

@@ -69,7 +69,7 @@ func buildComingVectors(t *testing.T) []comingvectors.Case {
 						continue
 					}
 					claim := &processes.NodeClaim{CoreNodeName: "LINE", SwapMode: mode, Role: role,
-						IndexRobotSupplies: flipped, InboundSource: "IN", InboundStaging: "IN-STG",
+						RefillBy: refillFor(flipped), InboundSource: "IN", InboundStaging: "IN-STG",
 						OutboundStaging: "OUT-STG", OutboundDestination: "OUT", PayloadCode: "PART"}
 					if mode != protocol.SwapModeSingleRobot {
 						claim.PairedCoreNode, claim.SecondPairedCoreNode = "B", second

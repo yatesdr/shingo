@@ -348,6 +348,11 @@
    * is bringing has to read as the subject of the picture. */
   --robot-1: #22c9ae;
   --robot-2: #8a7bff;
+  /* Robot 3, the trip an index press's own robot makes to its back position
+   * (refill_by own_robot). Amber HERE IS A ROBOT, never a status: it is a
+   * stroke, a chevron or the words "Robot 3", never a fill, a badge, a button
+   * or a dot, and it always appears with its words (ui-style-guide 04). */
+  --robot-3: #f2b84b;
   --station: #f2f5f8;
   /* Node-class categorical colours (were CLASS_PALETTE in dashboard-map.js). */
   --map-class-1: #6cb0ff;

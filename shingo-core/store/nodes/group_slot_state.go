@@ -396,7 +396,7 @@ func (s *GroupSlotState) LaneBins(laneID int64) int {
 // slotID as armor (its row confirmed there, its claim on it), taking it from
 // any paper holder, and let go of leftID. final says the drop is the plan's
 // last, so its delivery_node now names slotID and no longer the slot it left
-// (patchChosenDrop's applyDeliveryNodeAtStep); an interior drop's delivery is
+// (patchChosenDrop's repoint); an interior drop's delivery is
 // the trip's end and does not move. No bin moved, so nothing else changes.
 func (s *GroupSlotState) NoteReleased(orderID, slotID, leftID int64, final bool) {
 	if final {

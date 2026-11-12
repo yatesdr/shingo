@@ -114,12 +114,10 @@ const (
 	LinesideSoftThreshold          Field = "lineside_soft_threshold"
 	Sequence                       Field = "sequence"
 	KeepStagedNode                 Field = "keep_staged_node"
-	EvacuateOnChangeover           Field = "evacuate_on_changeover"
 	ChangeoverEvacNodes            Field = "changeover_evac_nodes"
-	ChangeoverEvacDestination      Field = "changeover_evac_destination"
 	ChangeoverCarryoverDisposition Field = "changeover_carryover_disposition"
 	ReuseCompatibleBins            Field = "reuse_compatible_bins"
-	IndexRobotSupplies             Field = "index_robot_supplies"
+	RefillBy                       Field = "refill_by"
 	AutoConfirm                    Field = "auto_confirm"
 	AutoRequestPayload             Field = "auto_request_payload"
 	AutoPush                       Field = "auto_push"
@@ -184,12 +182,10 @@ var fieldLabels = map[Field]string{
 	LinesideSoftThreshold:          "Lineside soft threshold",
 	Sequence:                       "Board order",
 	KeepStagedNode:                 "Keep staged node",
-	EvacuateOnChangeover:           "Evacuate on changeover",
-	ChangeoverEvacNodes:            "Changeover evac nodes",
-	ChangeoverEvacDestination:      "Changeover evac destination",
+	ChangeoverEvacNodes:            "Tool change",
 	ChangeoverCarryoverDisposition: "Carry-over disposition",
 	ReuseCompatibleBins:            "Reuse compatible bins",
-	IndexRobotSupplies:             "Index robot supplies",
+	RefillBy:                       "Next carrier",
 	AutoConfirm:                    "Auto confirm",
 	AutoRequestPayload:             "Auto request part",
 	AutoPush:                       "Auto push",
@@ -210,9 +206,9 @@ var fieldOrder = []Field{
 	InboundStaging, OutboundStaging, PairedCoreNode, OutboundDestination, InboundSource,
 	SecondPairedCoreNode,
 	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
-	LinesideSoftThreshold, Sequence, KeepStagedNode, EvacuateOnChangeover,
-	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
-	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
+	LinesideSoftThreshold, Sequence, KeepStagedNode,
+	ChangeoverEvacNodes, ChangeoverCarryoverDisposition,
+	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
 	StrictPack, PackTolerancePct,
 }
@@ -304,18 +300,24 @@ func steadyBase() map[Field]Need {
 
 // noChoreography is the profile every mode WITHOUT press positions, an A/B
 // pair or a staging hop shares: the fields those choreographies drive are
-// cleared at save and refused where the server has a rule (marked positions
-// and the index-robot flip apply to a press-index cell only; a carry-over
-// disposition applies to marked positions only, so it is refused non-default
-// wherever marks are). Modes that use some of these override afterwards.
+// cleared at save and refused where the server has a rule (the index-robot
+// flip applies to a press-index cell only). Modes that use some of these
+// override afterwards. A tool change's marks are NOT here: every line mode a
+// robot serves may mark its positions (domain.ToolChangePositions), and only
+// the loader card and the retired simple row refuse them (toolChangeNone).
 func noChoreography(m map[Field]Need) {
 	m[PairedCoreNode] = Forbidden
 	m[SecondPairedCoreNode] = Forbidden
 	m[ReuseCompatibleBins] = Forbidden
-	m[IndexRobotSupplies] = Forbidden
+	m[RefillBy] = Forbidden
+	m[AutoPush] = Forbidden
+}
+
+// toolChangeNone refuses a tool change's marks, and the carry-over disposition
+// that applies to marked positions only, on a row no robot serves as a line.
+func toolChangeNone(m map[Field]Need) {
 	m[ChangeoverEvacNodes] = Forbidden
 	m[ChangeoverCarryoverDisposition] = Forbidden
-	m[AutoPush] = Forbidden
 }
 
 // steadyRows is Steady's table: one row per mode, role-neutral. The two
@@ -411,7 +413,10 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	sq[PairedCoreNode] = Required
 	sq[OutboundDestination] = Required
 	sq[InboundSource] = Required
-	sq[InboundStaging] = Forbidden
+	// Inbound staging is where a tool change holds the incoming carrier: Used,
+	// and Required by the save when the claim marks a position
+	// (ValidateNodeClaim).
+	sq[InboundStaging] = Used
 	sq[OutboundStaging] = Forbidden
 	sq[KeepStagedNode] = Used
 	rows[protocol.SwapModeSequential] = sq
@@ -426,6 +431,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	// HIDES the group; the stored value round-trips through the hidden input.
 	ms := steadyBase()
 	noChoreography(ms)
+	toolChangeNone(ms)
 	ms[OutboundDestination] = Required
 	ms[PayloadCode] = Forbidden
 	ms[KeyRoute] = Forbidden
@@ -437,7 +443,6 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
-		EvacuateOnChangeover, ChangeoverEvacDestination,
 		AutoConfirm, AutoRequestPayload,
 	} {
 		ms[f] = Unused
@@ -452,6 +457,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	// does not know at all — see Steady.
 	simple := steadyBase()
 	noChoreography(simple)
+	toolChangeNone(simple)
 	simple[PayloadCode] = Required
 	simple[InboundStaging] = Forbidden
 	simple[OutboundStaging] = Forbidden

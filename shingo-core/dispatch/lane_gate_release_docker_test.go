@@ -810,7 +810,7 @@ func destNodeFor(t *testing.T, db *store.DB, orderID, binID int64) string {
 // into a lane, and the ghost eviction was forced to evict an occupant Core's own
 // plan had made.
 //
-// Mutation: point applyDeliveryNodeAtStep back at a last-dropoff scan and the
+// Mutation: point patchChosenDrop back at a last-dropoff scan and the
 // index-5 assertion below fires — the empty is aimed at the lane slot again.
 func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 	t.Parallel()

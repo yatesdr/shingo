@@ -734,8 +734,8 @@ func cellsWithRobot(claims []processes.NodeClaim) []domain.FlowCell {
 	out := make([]domain.FlowCell, 0, len(claims))
 	for _, c := range claims {
 		cell := domain.Collapse(c)
-		if c.IndexRobotSupplies {
-			cell.Advanced = &domain.FlowAdvanced{IndexRobotSupplies: true}
+		if c.RefillBy.OrDefault() != protocol.RefillByClearingRobot {
+			cell.Advanced = &domain.FlowAdvanced{RefillBy: c.RefillBy}
 		}
 		out = append(out, cell)
 	}

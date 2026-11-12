@@ -26,7 +26,7 @@ func fullClaim(mode protocol.SwapMode, role protocol.ClaimRole) NodeClaim {
 		ID: 41, StyleID: 7, CoreNodeName: "PLN_01", Role: role, SwapMode: mode,
 		PayloadCode: "SYN-A-P002", PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
 		InboundSource: "Supermarket Empty Totes", InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
-		OutboundDestination: "Supermarket Area", ChangeoverEvacDestination: "Supermarket Area",
+		OutboundDestination: "Supermarket Area",
 		ChangeoverEvacNodes: []string{"PLN_01", "PLN_02"}, KeyRoute: []string{"LM314", "LM315"},
 		ReorderPointSource: "legacy", ChangeoverCarryoverDisposition: CarryoverReplace,
 		Sequence: 3, Source: ClaimSourceAdmin, CalledBy: "engineer",
@@ -137,7 +137,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	prior := fullClaim(protocol.SwapModeTwoRobot, protocol.ClaimRoleConsume)
 	prior.UOPCapacity, prior.ReorderPoint, prior.LinesideSoftThreshold = 1420, 100, 7
 	prior.AllowedPayloadCodes = []string{"P1", "P2"}
-	prior.AutoRequestPayload, prior.EvacuateOnChangeover, prior.AutoConfirm = "P1", true, true
+	prior.AutoRequestPayload, prior.AutoConfirm = "P1", true
 	prior.ReuseCompatibleBins, prior.AutoPush, prior.StrictPack, prior.PackTolerancePct = true, true, true, 10
 	cell := FlowCell{CoreNodeName: "PLN_01", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "NEW",
 		InboundStaging: "S", InboundSource: "SRC", OutboundDestination: "D", KeyRoute: []string{"LM1"}}
@@ -150,22 +150,19 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	// From the prior: the unconditional columns the cell has no field for.
 	if in.ReorderPoint != 100 || in.LinesideSoftThreshold != 7 ||
 		!reflect.DeepEqual(in.AllowedPayloadCodes, []string{"P1", "P2"}) || in.AutoRequestPayload != "P1" ||
-		!in.EvacuateOnChangeover || !in.AutoConfirm || !in.ReuseCompatibleBins || !in.AutoPush || !in.StrictPack || in.PackTolerancePct != 10 {
+		!in.AutoConfirm || !in.ReuseCompatibleBins || !in.AutoPush || !in.StrictPack || in.PackTolerancePct != 10 {
 		t.Errorf("unconditional columns not carried from the prior: %+v", in)
 	}
-	// Spoken: the three pointer-gated fields the cell carries.
+	// Spoken: the two pointer-gated fields the cell carries.
 	if in.KeyRoute == nil || !reflect.DeepEqual(*in.KeyRoute, []string{"LM1"}) {
 		t.Errorf("key_route not spoken: %v", in.KeyRoute)
 	}
 	if in.ChangeoverEvacNodes == nil || len(*in.ChangeoverEvacNodes) != 0 {
 		t.Errorf("changeover_evac_nodes must be spoken as empty for a cell that marks nothing: %v", in.ChangeoverEvacNodes)
 	}
-	if in.ChangeoverEvacDestination == nil || *in.ChangeoverEvacDestination != "" {
-		t.Errorf("changeover_evac_destination must be spoken as blank: %v", in.ChangeoverEvacDestination)
-	}
 	// Silent: the nine the composer never speaks about.
 	if in.ReorderPointSource != nil || in.AutoReorder != nil || in.KeepStagedNode != nil || in.Sequence != nil ||
-		in.IndexRobotSupplies != nil || in.ChangeoverCarryoverDisposition != nil || in.KeyTask != nil ||
+		in.RefillBy != nil || in.ChangeoverCarryoverDisposition != nil || in.KeyTask != nil ||
 		in.SourcePresetID != nil || in.SourcePresetVersion != nil {
 		t.Errorf("a pointer-gated column the composer does not author was spoken: %+v", in)
 	}
@@ -173,7 +170,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	// No prior: the INSERT defaults.
 	fresh := Expand(cell, nil, ClaimSourceHMI, "Press 400")
 	if fresh.ReorderPoint != 0 || fresh.AllowedPayloadCodes != nil || fresh.AutoRequestPayload != "" ||
-		fresh.EvacuateOnChangeover || fresh.AutoConfirm || fresh.LinesideSoftThreshold != 0 || fresh.ReuseCompatibleBins || fresh.AutoPush || fresh.StrictPack || fresh.PackTolerancePct != 0 {
+		fresh.AutoConfirm || fresh.LinesideSoftThreshold != 0 || fresh.ReuseCompatibleBins || fresh.AutoPush || fresh.StrictPack || fresh.PackTolerancePct != 0 {
 		t.Errorf("with no prior the unconditional columns must be the INSERT defaults: %+v", fresh)
 	}
 }
@@ -190,7 +187,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 func TestFlowExpand_EditsLandAndTheEngineersColumnsSurvive(t *testing.T) {
 	t.Parallel()
 	prior := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
-	prior.KeepStagedNode, prior.IndexRobotSupplies, prior.KeyTask = "SPOT-1", true, "load"
+	prior.KeepStagedNode, prior.RefillBy, prior.KeyTask = "SPOT-1", protocol.RefillByIndexRobot, "load"
 	prior.ReorderPoint, prior.ReorderPointSource, prior.AutoReorder = 60, "manual", true
 
 	cell := Collapse(prior)
@@ -206,12 +203,12 @@ func TestFlowExpand_EditsLandAndTheEngineersColumnsSurvive(t *testing.T) {
 	// only one of them puts a value on the input. Expand copies the
 	// unconditional columns from the prior (reorder_point below), and leaves
 	// the pointer-gated ones nil so updateClaim does not name them at all
-	// (keep_staged_node, index_robot_supplies, key_task, reorder_point_source,
+	// (keep_staged_node, refill_by, key_task, reorder_point_source,
 	// auto_reorder). MaterializeClaim models both.
 	got := MaterializeClaim(in, &prior)
-	if got.KeepStagedNode != "SPOT-1" || !got.IndexRobotSupplies || got.KeyTask != "load" {
-		t.Errorf("a changeover special did not survive the edit: keep_staged_node %q, index_robot_supplies %v, key_task %q",
-			got.KeepStagedNode, got.IndexRobotSupplies, got.KeyTask)
+	if got.KeepStagedNode != "SPOT-1" || !got.IndexRobotFetches() || got.KeyTask != "load" {
+		t.Errorf("a changeover special did not survive the edit: keep_staged_node %q, refill_by %v, key_task %q",
+			got.KeepStagedNode, got.RefillBy, got.KeyTask)
 	}
 	if got.ReorderPoint != 60 || got.ReorderPointSource != "manual" || !got.AutoReorder {
 		t.Errorf("the replenishment policy did not survive the edit: %d / %q / %v",
@@ -250,13 +247,13 @@ func TestFlowExpand_DegenerateAllowedListFollowsThePayload(t *testing.T) {
 func TestFlowInputFromClaim_IsTotal(t *testing.T) {
 	t.Parallel()
 	c := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
-	c.KeepStagedNode, c.AutoReorder, c.IndexRobotSupplies, c.KeyTask = "SPOT-1", true, true, "load"
+	c.KeepStagedNode, c.AutoReorder, c.RefillBy, c.KeyTask = "SPOT-1", true, protocol.RefillByIndexRobot, "load"
 	c.ReorderPointSource, c.ChangeoverCarryoverDisposition = "manual", CarryoverKeepLineside
 	pid, pv := int64(3), 2
 	c.SourcePresetID, c.SourcePresetVersion = &pid, &pv
 	in := InputFromClaim(c)
 	claimColumnsEqual(t, "InputFromClaim", MaterializeClaim(in, &c), c)
-	if in.KeepStagedNode == nil || in.AutoReorder == nil || in.IndexRobotSupplies == nil || in.KeyTask == nil ||
+	if in.KeepStagedNode == nil || in.AutoReorder == nil || in.RefillBy == nil || in.KeyTask == nil ||
 		in.ReorderPointSource == nil || in.ChangeoverCarryoverDisposition == nil || in.Sequence == nil ||
 		in.SourcePresetID == nil || in.SourcePresetVersion == nil {
 		t.Errorf("InputFromClaim left a pointer-gated column silent: %+v", in)

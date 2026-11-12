@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -237,9 +238,27 @@ func isRetrieve(t protocol.OrderType) bool {
 }
 
 // worksTheCell is orderWorksTheCell for the line a claim governs, with a
-// keep-staged claim's refills excused.
+// carrier coming to one of its other positions excused (comingToAnotherPosition).
+// Its two readers are the line's REQUEST gate (positionWorkedBy) and the level
+// sweep (sweepNodeLevel), so they excuse the same rows.
 func worksTheCell(o *domain.Order, c *processes.NodeClaim) bool {
-	return orderWorksTheCell(o) && !isSpotRefill(o, c)
+	return orderWorksTheCell(o) && !comingToAnotherPosition(o, c)
+}
+
+// comingToAnotherPosition reports whether o is a carrier coming to one of the
+// claim's positions other than its line: a plain order (a retrieve or a move)
+// bound for its keep-staged spot (isSpotRefill) or, on an index press, for a
+// position behind the front (a prime), that never lifts from the line. It
+// brings the line no bin. Read as working the cell, a prime to the back
+// refused the line's REQUEST with "a bin is already on its way" and silenced
+// its level sweep for the whole trip, while no bin was on its way to the line.
+func comingToAnotherPosition(o *domain.Order, c *processes.NodeClaim) bool {
+	if isSpotRefill(o, c) {
+		return true
+	}
+	return c != nil && o.SourceNode != c.CoreNodeName && o.DeliveryNode != "" &&
+		(isRetrieve(o.OrderType) || o.OrderType == protocol.OrderTypeMove) &&
+		slices.Contains(c.DependentPositions(), o.DeliveryNode)
 }
 
 // spotComing counts what is on its way to the spot from the line's rows: plain
@@ -339,14 +358,14 @@ func (e *Engine) readSpotAtRequest(node *processes.Node, claim *processes.NodeCl
 // the spot either way; the keeper refills it when it reads it bare (decideSpot).
 // takesComingSpare then asks whether that market swap should wait for a spare
 // already on its way instead.
-func requestClaim(claim, swapClaim *processes.NodeClaim, s spotAtRequest) (*processes.NodeClaim, bool) {
+func requestClaim(claim *processes.NodeClaim, s spotAtRequest) (*processes.NodeClaim, bool) {
 	if spotNode(claim) == "" {
-		return swapClaim, false
+		return claim, false
 	}
 	if s.takesSpare(claim) {
-		return swapClaim, true
+		return claim, true
 	}
-	return withoutSpot(swapClaim), false
+	return withoutSpot(claim), false
 }
 
 // rearmKeepStaged is a REQUEST re-arming its line's keeper: pressing REQUEST is
@@ -447,9 +466,7 @@ func (e *Engine) returnSpare(node *processes.Node, spot, source, carried string,
 func (e *Engine) refillSpot(node *processes.Node, c *processes.NodeClaim, n int, origin ordermgr.Origin) {
 	nodeID := node.ID
 	for i := 0; i < n; i++ {
-		if _, err := e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: spotNode(c),
-			Source: c.InboundSource, Payload: c.PayloadCode, Quantity: 1, Empty: carriesEmpty(c),
-			AutoConfirm: true, Origin: origin}); err != nil {
+		if _, err := e.carrierToPosition(nodeID, c, spotNode(c), 1, origin); err != nil {
 			e.logFn("keep-staged: node %s: refill %d/%d for %s: %v", node.Name, i+1, n, spotNode(c), err)
 		}
 	}

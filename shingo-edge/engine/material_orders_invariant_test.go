@@ -43,13 +43,13 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
 	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
 	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
-	// Flipped (IndexRobotSupplies): R1 evac-only, R2 indexes AND refills.
+	// Flipped (RefillBy (Robot 2)): R1 evac-only, R2 indexes AND refills.
 	// Every leg invariant applies to the new shapes unchanged — that is the
 	// point of running them through the same table rather than asserting the
 	// step lists somewhere else.
 	flipped := func(secondPaired string) *processes.NodeClaim {
 		c := claim(secondPaired)
-		c.IndexRobotSupplies = true
+		c.RefillBy = protocol.RefillByIndexRobot
 		return c
 	}
 	fl2R1, fl2R2 := BuildTwoRobotPressIndexSwapSteps(flipped(""))
@@ -140,7 +140,7 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 	// of thing that rides along in a move.
 	flipped2 := func(secondPaired string) *processes.NodeClaim {
 		c := claim(secondPaired)
-		c.IndexRobotSupplies = true
+		c.RefillBy = protocol.RefillByIndexRobot
 		return c
 	}
 	fl2R1b, fl2R2b := BuildTwoRobotPressIndexSwapSteps(flipped2(""))
@@ -152,7 +152,7 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
 	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
 	swapCO := BuildSwapChangeoverSteps(from, to, "PRESS-B", "PRESS")
-	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
+	toolCO := toolChangeLeg(from, to)
 
 	legs := map[string][]protocol.ComplexOrderStep{
 		"release":                      BuildReleaseSteps(claim("")),
@@ -174,8 +174,7 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 		"press_index 3-pos R2":         pi3R2,
 		"changeover swap A":            swapCO.StepsA,
 		"changeover swap B":            swapCO.StepsB,
-		"changeover evacuate A":        evacCO.StepsA,
-		"changeover evacuate B":        evacCO.StepsB,
+		"changeover tool change":       toolCO,
 	}
 	for name, steps := range keepStagedLegs(claim(""), from, to) {
 		legs[name] = steps
@@ -262,26 +261,25 @@ func TestEveryStagingDropoffIsDeclared(t *testing.T) {
 	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
 	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
 	swapCO := BuildSwapChangeoverSteps(from, to, "PRESS-B", "PRESS")
-	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
+	toolCO := toolChangeLeg(from, to)
 
 	legs := map[string][]protocol.ComplexOrderStep{
-		"release":               BuildReleaseSteps(claim("")),
-		"staged release":        BuildStagedReleaseSteps(claim("")),
-		"stage":                 BuildStageSteps(claim("")),
-		"staged deliver":        BuildStagedDeliverSteps(claim("")),
-		"single_robot":          BuildSingleSwapSteps(claim("")),
-		"sequential removal":    BuildSequentialRemovalSteps(claim("")),
-		"sequential backfill":   BuildSequentialBackfillSteps(claim("")),
-		"two_robot A":           twoRobotA,
-		"two_robot B":           twoRobotB,
-		"press_index 2-pos R1":  pi2R1,
-		"press_index 2-pos R2":  pi2R2,
-		"press_index 3-pos R1":  pi3R1,
-		"press_index 3-pos R2":  pi3R2,
-		"changeover swap A":     swapCO.StepsA,
-		"changeover swap B":     swapCO.StepsB,
-		"changeover evacuate A": evacCO.StepsA,
-		"changeover evacuate B": evacCO.StepsB,
+		"release":                BuildReleaseSteps(claim("")),
+		"staged release":         BuildStagedReleaseSteps(claim("")),
+		"stage":                  BuildStageSteps(claim("")),
+		"staged deliver":         BuildStagedDeliverSteps(claim("")),
+		"single_robot":           BuildSingleSwapSteps(claim("")),
+		"sequential removal":     BuildSequentialRemovalSteps(claim("")),
+		"sequential backfill":    BuildSequentialBackfillSteps(claim("")),
+		"two_robot A":            twoRobotA,
+		"two_robot B":            twoRobotB,
+		"press_index 2-pos R1":   pi2R1,
+		"press_index 2-pos R2":   pi2R2,
+		"press_index 3-pos R1":   pi3R1,
+		"press_index 3-pos R2":   pi3R2,
+		"changeover swap A":      swapCO.StepsA,
+		"changeover swap B":      swapCO.StepsB,
+		"changeover tool change": toolCO,
 	}
 	for name, steps := range keepStagedLegs(claim(""), from, to) {
 		legs[name] = steps
@@ -395,11 +393,11 @@ func assertIndexPickupsEmpty(t *testing.T, label string, steps []protocol.Comple
 // nothing.
 func TestSingleRobotChangeover_TheFetchNamesTheIncomingPart(t *testing.T) {
 	t.Parallel()
-	for _, tooling := range []bool{false, true} {
+	{
 		for _, c := range []struct{ to, want string }{{"P-TO", "P-TO"}, {"P-FROM", ""}} {
 			from := goldenClaim(protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, "P-FROM", "", false)
 			to := goldenClaim(protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, c.to, "", false)
-			d := buildSingleRobotChangeoverSwap(from, to, tooling)
+			d := buildSingleRobotChangeoverSwap(from, to)
 			var fetches, collects []protocol.ComplexOrderStep
 			for _, s := range d.StepsB {
 				switch {
@@ -410,10 +408,10 @@ func TestSingleRobotChangeover_TheFetchNamesTheIncomingPart(t *testing.T) {
 				}
 			}
 			if len(fetches) != 1 || fetches[0].PayloadCode != c.want || fetches[0].Empty {
-				t.Errorf("tooling=%v to=%s: fetches %+v, want one naming %q, not Empty", tooling, c.to, fetches, c.want)
+				t.Errorf("to=%s: fetches %+v, want one naming %q, not Empty", c.to, fetches, c.want)
 			}
 			if len(collects) != 1 || collects[0] != relayPickup(to) {
-				t.Errorf("tooling=%v to=%s: collects %+v, want the one relay %+v", tooling, c.to, collects, relayPickup(to))
+				t.Errorf("to=%s: collects %+v, want the one relay %+v", c.to, collects, relayPickup(to))
 			}
 		}
 	}
@@ -430,7 +428,7 @@ func keepStagedLegs(base, from, to *processes.NodeClaim) map[string][]protocol.C
 	ksTo.KeepStagedNode = ksTo.InboundStaging
 	a, b := BuildTwoRobotSwapSteps(&ks)
 	two := buildTwoRobotChangeoverSwap(from, &ksTo)
-	single := buildSingleRobotChangeoverSwap(from, &ksTo, true)
+	single := buildSingleRobotChangeoverSwap(from, &ksTo)
 	return map[string][]protocol.ComplexOrderStep{
 		"keep-staged two_robot A":                 a,
 		"keep-staged two_robot B":                 b,
@@ -439,4 +437,13 @@ func keepStagedLegs(base, from, to *processes.NodeClaim) map[string][]protocol.C
 		"keep-staged changeover two_robot evac":   two.Roles.evac.steps,
 		"keep-staged changeover single_robot B":   single.StepsB,
 	}
+}
+
+// toolChangeLeg is the tool change's one leg at from's node (toolingPositionAction),
+// held at inbound staging, for the builder walks.
+func toolChangeLeg(from, to *processes.NodeClaim) []protocol.ComplexOrderStep {
+	a := toolingPositionAction(toolingPress{from: from, to: to, positions: []string{from.CoreNodeName},
+		staging: "IN-STAGING"},
+		from.CoreNodeName, &processes.Node{ID: 1, Name: from.CoreNodeName, CoreNodeName: from.CoreNodeName})
+	return a.SupplyOrder.Complex.Steps
 }

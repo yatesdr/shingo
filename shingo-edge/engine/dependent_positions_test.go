@@ -150,11 +150,11 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		}
 	})
 
-	t.Run("FanOutPressIndexCrossMode (changeover.go): a press's positions on either side", func(t *testing.T) {
+	t.Run("PlanPressPositions (changeover.go): a press's positions on either side", func(t *testing.T) {
 		t.Parallel()
 		situations := func(diffs []ChangeoverNodeDiff) map[string]ChangeoverSituation {
 			out := map[string]ChangeoverSituation{}
-			for _, d := range FanOutPressIndexCrossMode(diffs, nil)[len(diffs):] {
+			for _, d := range PlanPressPositions(diffs, nil, nil)[len(diffs):] {
 				out[d.CoreNodeName] = d.Situation
 			}
 			return out
@@ -163,26 +163,29 @@ func TestDependentPositionSites_AnswerAsAtTheBase(t *testing.T) {
 		if len(got) != 2 || got["B"] != SituationDrop || got["C"] != SituationDrop {
 			t.Errorf("press → stale two_robot: %v, want B and C dropped", got)
 		}
-		// W4: an incoming-only position is the per-position Swap (an Add once
-		// ApplyNodeState reads it vacant); before W4 it was an Add here.
+		// An incoming-only position is an Add with no seat read: nothing says a
+		// bin stands there (a bound bin makes it the per-position Swap).
 		got = situations([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: stale, ToClaim: press2}})
-		if len(got) != 1 || got["B"] != SituationSwap {
-			t.Errorf("stale two_robot → press2: %v, want B planned as the Swap", got)
+		if len(got) != 1 || got["B"] != SituationAdd {
+			t.Errorf("stale two_robot → press2: %v, want B planned as the Add", got)
 		}
 		if got = situations([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap, FromClaim: stale, ToClaim: seq}}); len(got) != 0 {
 			t.Errorf("stale two_robot → sequential: %v, want nothing", got)
 		}
 	})
 
-	t.Run("pressIndexPositions (changeover_tooling.go): a press's whole geometry, or none", func(t *testing.T) {
+	t.Run("ToolChangePositions (domain): a press's whole geometry, every other mode its own node", func(t *testing.T) {
 		t.Parallel()
-		if got := pressIndexPositions(press3); !slices.Equal(got, []string{"LINE", "B", "C"}) {
+		if got := press3.ToolChangePositions(); !slices.Equal(got, []string{"LINE", "B", "C"}) {
 			t.Errorf("press3: %v", got)
 		}
-		for _, c := range []*processes.NodeClaim{stale, seq, nil} {
-			if got := pressIndexPositions(c); got != nil {
-				t.Errorf("%+v: %v, want nil", c, got)
+		for _, c := range []*processes.NodeClaim{stale, seq} {
+			if got := c.ToolChangePositions(); !slices.Equal(got, []string{c.CoreNodeName}) {
+				t.Errorf("%+v: %v, want its own node", c, got)
 			}
+		}
+		if got := (*processes.NodeClaim)(nil).ToolChangePositions(); got != nil {
+			t.Errorf("nil: %v, want nil", got)
 		}
 	})
 }
@@ -201,7 +204,7 @@ func TestRequestProduceSwap_ALegWithNoDeliveryNodeIsSeenComing(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 	seedRuntimeUOP(t, db, nodeID)
 
 	steps := []protocol.ComplexOrderStep{
@@ -247,7 +250,7 @@ func TestRequestProduceSwap_DoubleTapWhileR1TravelsIsRefused(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS", "INDEX-B"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 	seedRuntimeUOP(t, db, nodeID)
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
@@ -283,7 +286,7 @@ func TestDependentPositions_AreTheBuildersNonLinePositions(t *testing.T) {
 			for _, flipped := range []bool{false, true} {
 				for _, second := range []string{"", "C"} {
 					claim := &processes.NodeClaim{CoreNodeName: "LINE", SwapMode: mode, Role: role,
-						PairedCoreNode: "B", SecondPairedCoreNode: second, IndexRobotSupplies: flipped,
+						PairedCoreNode: "B", SecondPairedCoreNode: second, RefillBy: refillFor(flipped),
 						InboundSource: "IN", InboundStaging: "IN-STG", OutboundStaging: "OUT-STG",
 						OutboundDestination: "OUT", PayloadCode: "PART"}
 					d, err := buildSwapDispatch(node, claim)

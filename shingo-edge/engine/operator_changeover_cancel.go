@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {
@@ -77,6 +78,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		}
 	}
 	live, aborted := e.abortSpotOrdersNotFlown(spots)
+	e.abortCarriersComingBehindFronts(nodeTasks)
 
 	// The line's bin an aborted leg left parked on its way out, and the incoming
 	// bin its stage left waiting for it (changeover_cancel_park.go). A keep-staged
@@ -214,5 +216,54 @@ func applyReseat(e *Engine, a *protocol.EdgeAnswer) {
 	}
 	if err := e.carrierLeft(node.ID, node.CoreNodeName); err != nil {
 		log.Printf("changeover cancel: clear active bin for node %s: %v", node.Name, err)
+	}
+}
+
+// abortCarriersComingBehindFronts aborts, on each press the cancelled
+// changeover's tasks name, the plain orders not yet flown that bring a carrier
+// to a position behind its front (comingToAnotherPosition; a keep-staged spot's
+// are abortSpotOrdersNotFlown's). A follow-on the changeover's index lift made
+// (Robot 3) brings the incoming style's carrier, and the style that stays is
+// primed by its next REQUEST. One already moving is left to land, as START
+// leaves a moving prime; Core holds it while the position is occupied.
+func (e *Engine) abortCarriersComingBehindFronts(tasks []processes.NodeTask) {
+	seen := map[int64]bool{}
+	for _, task := range tasks {
+		if seen[task.ProcessNodeID] {
+			continue
+		}
+		seen[task.ProcessNodeID] = true
+		var claims []*processes.NodeClaim
+		for _, id := range []*int64{task.FromClaimID, task.ToClaimID} {
+			if id == nil {
+				continue
+			}
+			if c, err := e.db.GetStyleNodeClaim(*id); err == nil && c != nil && c.IsPressIndex() {
+				claims = append(claims, c)
+			}
+		}
+		if len(claims) == 0 {
+			continue
+		}
+		rows, err := e.db.ListActiveOrdersByProcessNode(task.ProcessNodeID)
+		if err != nil {
+			log.Printf("changeover cancel: list orders on node %d: %v", task.ProcessNodeID, err)
+			continue
+		}
+		for i := range rows {
+			o := &rows[i]
+			if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
+				continue
+			}
+			for _, c := range claims {
+				if comingToAnotherPosition(o, c) && !isSpotRefill(o, c) {
+					if err := e.orderMgr.AbortOrderWithReason(o.ID,
+						"changeover cancelled: the carrier coming to "+o.DeliveryNode+" was for the incoming style"); err != nil {
+						log.Printf("changeover cancel: abort order %d to %s: %v", o.ID, o.DeliveryNode, err)
+					}
+					break
+				}
+			}
+		}
 	}
 }

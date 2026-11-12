@@ -500,7 +500,11 @@ func (e *Engine) onStagedMessage(orderID int64, stationWait *int) {
 		return
 	}
 	in, _ := release.DecodeIntent(o.ReleaseIntent)
-	switch in.OnStaged(stationWait) {
+	var purpose release.Purpose
+	if facts, ferr := release.DecodeFacts(o.ReleaseFacts); ferr == nil && stationWait != nil {
+		purpose = facts.PurposeAt(*stationWait)
+	}
+	switch in.OnStaged(stationWait, purpose) {
 	case release.StageConsume:
 		if err := e.db.SetOrderReleaseIntent(orderID, ""); err != nil {
 			e.logRelease("order=%d: consume release intent: %v", orderID, err)

@@ -1,0 +1,32 @@
+{
+  "need": {
+    "delivery": "PLN_005",
+    "door": "edge wire intake",
+    "payload": "PANEL-A",
+    "source": "SYN_PRESS_EMPTIES",
+    "type": "retrieve_empty"
+  },
+  "decision": {
+    "events": [
+      "received"
+    ],
+    "fleet": null,
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve_empty",
+        "status": "queued",
+        "payload": "PANEL-A",
+        "source": "SYN_PRESS_EMPTIES",
+        "delivery": "PLN_005",
+        "queue_code": "waiting_for_material",
+        "queue_cause": "finder-group-fenced"
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.update status=queued"
+    ]
+  }
+}

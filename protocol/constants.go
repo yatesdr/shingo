@@ -49,11 +49,24 @@ const (
 // its own to answer for that spot. And a kanban holds empties, so a
 // full of a part can be taken from it but never put back. Core's loader save
 // and the Edge's claim save both say these, so they are spelled once here.
+//
+// Where Core picks (a source or a destination: a claim's legs other than
+// staging, a routing row, a recipe's routing, an order the API asks for, a
+// containment destination), a line names a node group or a node in no group,
+// never a member of one. Choosing the member is Core's job, by the group's
+// store and retrieve rules; a member named in its place is a destination the
+// lane gate and the group resolver move off, and a hold that matched the
+// member then misses the carrier. Core's node list never carries a slot inside
+// a lane, so a name the list does not hold is refused in those roles too. A
+// staging spot, a keep-staged spot and a cell's own positions name where
+// something is, and name the exact node.
 const (
 	MsgLaneIsNotASource      = "a lane is not a source; name its group"
 	MsgLaneIsNotADestination = "a lane is not a destination; name its group"
 	MsgLaneIsNotAStagingNode = "a lane is not a staging node; name the spot a robot waits at"
 	MsgFullsFromAKanban      = "an unloader's fulls cannot come from a kanban"
+	MsgMemberIsCoresToPick   = "a member of a node group is Core's to pick; name its group"
+	MsgNotInCoresNodeList    = "Core's node list has no node of that name (a slot inside a lane is never in it); name a node group, or a node in no group"
 )
 
 // AuditActorUI is the audit-trail actor recorded for web-UI-initiated actions

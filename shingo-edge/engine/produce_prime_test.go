@@ -341,12 +341,11 @@ func TestApplyProducePlan_ChainOnly(t *testing.T) {
 	if po.SourceNode != "MARKET-EMPTIES" {
 		t.Errorf("prime SourceNode = %q, want MARKET-EMPTIES", po.SourceNode)
 	}
-	// cfg.Web.AutoConfirm is true in testEngine and the seeded claim's own flag
-	// is false, so this arm only shows the merge is at least as permissive as
-	// the config. TestApplyProducePlan_PrimeAutoConfirmIsMerged below is what
-	// stops a hard-coded true passing: with BOTH inputs false it must be false.
+	// A prime is confirmed by its placement whatever the claim and the plant
+	// say (carrierToPosition); TestApplyProducePlan_APrimeIsConfirmedByItsPlacement
+	// holds that across every pair of the two settings.
 	if !po.AutoConfirm {
-		t.Errorf("prime AutoConfirm = false; want the merged claim||config signal")
+		t.Errorf("prime AutoConfirm = false; a prime is confirmed by its placement")
 	}
 	// order.origin_id on Edge is what CORE stamped back, so a freshly created
 	// row is correctly blank. The origin we pass travels on the OrderRequest
@@ -380,7 +379,7 @@ func TestRequestProduceSwap_PrimeThenSwapOnce(t *testing.T) {
 	eng := testEngine(t, db)
 	// Core reports the head occupied and INDEX-B vacant — the incident's shape.
 	holdPlaces(t, eng, occupiedAt("PRESS"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "first RequestProduceSwap")
@@ -421,7 +420,7 @@ func TestRequestProduceSwap_ColdPressPrimesInOneTap(t *testing.T) {
 
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}}, false)
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "the cold press's one tap")
@@ -447,7 +446,7 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 	eng := testEngine(t, db)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
 	// A non-empty node set that does NOT contain INDEX-B: that is evidence.
-	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}})
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}}, false)
 	// Parts on the press, so the cold-press guard cannot be what stops the
 	// prime — the unknown-node read has to be.
 	seedRuntimeUOP(t, db, nodeID)
@@ -485,21 +484,22 @@ func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 	}
 }
 
-// TestApplyProducePlan_PrimeAutoConfirmIsMerged pins the merge across the whole
-// matrix rather than at one point. Asserting only the config-true case is
-// exactly the leaning test that goes vacuous the day someone flips a default:
-// a hard-coded `true` satisfies it. The false/false row is the one that bites.
-func TestApplyProducePlan_PrimeAutoConfirmIsMerged(t *testing.T) {
+// TestApplyProducePlan_APrimeIsConfirmedByItsPlacement: a prime auto-confirms
+// across the whole matrix of the claim's and the plant's receipt settings
+// (carrierToPosition). It followed the merged signal, so the false/false row
+// left a delivered prime unconfirmed at a position with no operator, read as
+// still coming, and Core held the next pair on waiting_for_outside until its
+// sweep confirmed it.
+func TestApplyProducePlan_APrimeIsConfirmedByItsPlacement(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		claimAC, cfgAC bool
-		want           bool
 	}{
-		{"neither", false, false, false},
-		{"config_only", false, true, true},
-		{"claim_only", true, false, true},
-		{"both", true, true, true},
+		{"neither", false, false},
+		{"config_only", false, true},
+		{"claim_only", true, false},
+		{"both", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -521,9 +521,9 @@ func TestApplyProducePlan_PrimeAutoConfirmIsMerged(t *testing.T) {
 			if len(res.PrimeOrders) != 1 {
 				t.Fatalf("PrimeOrders = %+v, want one", res.PrimeOrders)
 			}
-			if got := res.PrimeOrders[0].AutoConfirm; got != tc.want {
-				t.Errorf("claim=%v cfg=%v: prime AutoConfirm = %v, want %v (claim || config)",
-					tc.claimAC, tc.cfgAC, got, tc.want)
+			if !res.PrimeOrders[0].AutoConfirm {
+				t.Errorf("claim=%v cfg=%v: the prime does not auto-confirm; no operator receives it",
+					tc.claimAC, tc.cfgAC)
 			}
 		})
 	}

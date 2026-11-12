@@ -178,7 +178,7 @@ func TestIsSupplyOrderInTwoRobotSwap_ClassifiesByPlacedBin(t *testing.T) {
 			db := testEngineDB(t)
 			nodeID, node, claim := seedSwapClaim(t, db, tc.mode, tc.secondPaired)
 			if tc.flipped {
-				claim.IndexRobotSupplies = true
+				claim.RefillBy = protocol.RefillByIndexRobot
 			}
 			eng := testEngine(t, db)
 

@@ -64,14 +64,17 @@
 .os-flow-picture .sc { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .os-flow-picture .sc.r1 { stroke: var(--robot-1); }
 .os-flow-picture .sc.r2 { stroke: var(--robot-2); }
+.os-flow-picture .sc.r3 { stroke: var(--robot-3); }
 .os-flow-picture .press { fill: none; stroke: var(--os-station, var(--station)); stroke-width: 3; stroke-linecap: round; opacity: .9; }
 .os-flow-picture .press.dim { opacity: .45; }
 .os-flow-picture .io { color: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .io.r1 { color: var(--robot-1); }
 .os-flow-picture .io.r2 { color: var(--robot-2); }
+.os-flow-picture .io.r3 { color: var(--robot-3); }
 .os-flow-picture .node .iot { font-size: 10px; fill: currentColor; letter-spacing: .04em; }
 .os-flow-picture .rw.r1 { fill: var(--robot-1); }
 .os-flow-picture .rw.r2 { fill: var(--robot-2); }
+.os-flow-picture .rw.r3 { fill: var(--robot-3); }
 .os-flow-picture .lg .lgt { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; font-weight: 600; }
 .os-flow-picture .stage .tagbg { fill: none; stroke: var(--sub-4); stroke-width: 1; }
 .os-flow-picture .stage .tag { fill: var(--os-text-muted, var(--text-muted)); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
@@ -97,6 +100,7 @@
    "Robot N" words take their own colours (.rw). */
 .os-flow-picture .dock text.s.r1 { fill: var(--robot-1); }
 .os-flow-picture .dock text.s.r2 { fill: var(--robot-2); }
+.os-flow-picture .dock text.s.r3 { fill: var(--robot-3); }
 /* A SELECTION IS THE MODULE'S, and it fades nothing: its card(s) and every
    slot it draws take the accent outline, and the rest of the picture stays as
    it was (the module reference, the hard-cases cell). The Spots step narrows
@@ -177,12 +181,16 @@
 .os-flow-picture .lmroute .lmline { fill: none; stroke-width: 1.4; stroke-dasharray: 4 4; opacity: .75; }
 .os-flow-picture .lmroute.r1 .lmline { stroke: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmline { stroke: var(--robot-2); }
+.os-flow-picture .lmroute.r3 .lmline { stroke: var(--robot-3); }
 .os-flow-picture .lmroute .lmdot { stroke-width: 1.4; }
 .os-flow-picture .lmroute.r1 .lmdot { fill: var(--robot-1); stroke: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmdot { fill: var(--robot-2); stroke: var(--robot-2); }
+/* Robot 3's amber is never a filled dot (ui-style-guide 04): a ring. */
+.os-flow-picture .lmroute.r3 .lmdot { fill: none; stroke: var(--robot-3); }
 .os-flow-picture .lmroute .lmlbl { font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 .os-flow-picture .lmroute.r1 .lmlbl { fill: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmlbl { fill: var(--robot-2); }
+.os-flow-picture .lmroute.r3 .lmlbl { fill: var(--robot-3); }
 /* "+N" takes a waypoint's row rather than a smaller line of its own, so a
    route too long for the frame is COUNTED in place rather than shortened. */
 .os-flow-picture .lmroute .lmmore { font-size: 11px; font-weight: 600; letter-spacing: .02em;
@@ -192,3 +200,4 @@
 .os-flow-picture .lmroute .lmvia { font-size: 10px; fill: var(--os-text-dim, var(--text-muted)); }
 .os-flow-picture .lmroute.r1 .lmtip { fill: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmtip { fill: var(--robot-2); }
+.os-flow-picture .lmroute.r3 .lmtip { fill: var(--robot-3); }

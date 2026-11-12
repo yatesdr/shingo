@@ -201,8 +201,11 @@ type Engine struct {
 	// "Group.Child" form Core qualifies group children with before
 	// SetCoreNodes strips it (see there). Rebuilt on every sync; read by the
 	// cell picture's dock strip. Guarded by coreNodesMu.
-	coreNodeGroups  map[string][]string
-	payloadBinTypes []protocol.PayloadBinTypeInfo
+	coreNodeGroups map[string][]string
+	// coreNodesPlantWide is whether coreNodes is Core's plant-wide list
+	// (protocol.NodeListResponse.PlantWide), set with it. Guarded by coreNodesMu.
+	coreNodesPlantWide bool
+	payloadBinTypes    []protocol.PayloadBinTypeInfo
 	// payloadBinTypesHeld is whether Core's catalog has arrived at all (an
 	// empty catalog included): the press-index changeover's gate.
 	payloadBinTypesHeld bool
@@ -419,6 +422,7 @@ func New(c Config) *Engine {
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
+	e.processService.SetCoreNodeKindsResolver(e.CoreNodeKinds)
 	e.styleService = service.NewStyleService(e.db)
 	e.styleService.OnKeepStagedSpotsCleared(e.spotsCleared)
 	e.shiftService = service.NewShiftService(e.db)
@@ -736,8 +740,9 @@ func (e *Engine) OrderService() *service.OrderService           { return e.order
 // strip of the cell picture lists a group's members from it. It is kept in
 // coreNodeGroups, rebuilt on every sync so a child that left its group leaves
 // the list, and the node map itself is unchanged.
-func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
+func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo, plantWide bool) {
 	e.coreNodesMu.Lock()
+	e.coreNodesPlantWide = plantWide
 	e.coreNodes = make(map[string]protocol.NodeInfo, len(nodes))
 	e.coreNodeGroups = make(map[string][]string)
 	normalized := make([]protocol.NodeInfo, 0, len(nodes))
@@ -801,6 +806,15 @@ func (e *Engine) CoreNodeGroups() map[string][]string {
 		cp[k] = append([]string(nil), v...)
 	}
 	return cp
+}
+
+// CoreNodeKinds is Core's node list reduced to what a leg's refusal reads
+// (domain.CoreNodeKindsOf): its lanes, kanbans, group members and names.
+func (e *Engine) CoreNodeKinds() domain.CoreNodeKinds {
+	e.coreNodesMu.RLock()
+	plantWide := e.coreNodesPlantWide
+	e.coreNodesMu.RUnlock()
+	return domain.CoreNodeKindsOf(e.CoreNodes(), e.CoreNodeGroups(), plantWide)
 }
 
 // CoreNodes returns a copy of the core node set.

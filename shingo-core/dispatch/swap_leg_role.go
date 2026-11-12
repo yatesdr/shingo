@@ -81,12 +81,12 @@ import (
 // Sequential needed no change and that is worth having checked: its removal leg
 // is a pure evac and its backfill a pure filler, so the two predicates already
 // agree about both. The press-index rows hold under BOTH sides of the
-// IndexRobotSupplies flip — the flip moves the supermarket fetch between the
+// refill_by flip (Robot 2) — the flip moves the supermarket fetch between the
 // legs, and neither the line pickup nor the line dropoff moves with it.
 //
-// CHANGEOVER — BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps. This is
+// CHANGEOVER — BuildSwapChangeoverSteps, and a tool change's legs. This is
 // where "simple" and "manual_swap" DO reach Core despite building nothing in
-// steady state: both switches route every unrecognised mode through the default
+// steady state: the switch routes every unrecognised mode through the default
 // arm into the single-robot shape.
 //
 //	single_robot | simple | manual_swap | unrecognised — the default arm,
@@ -109,10 +109,9 @@ import (
 //	                                                    T=false P=false  <- both
 //	sequential swap         buildSequentialPerPositionSwap: pickup(pos) AND
 //	                        dropoff(pos)                T=false P=false  <- both
-//	sequential evacuate     buildSequentialPerPositionEvacuate, via
-//	                        buildToolingEvacSteps       T=false P=false  <- both
-//	press tooling evac      the same helper via changeover_tooling.go, whose spec
-//	                        is complexSpecWithPayload(position, position, …) — so
+//	tool change, any mode   buildToolingEvacSteps via toolingPositionAction
+//	  (a marked position)   (changeover_tooling.go), whose spec is
+//	                        complexSpecWithPayload(position, position, …) — so
 //	                        pos IS the ProcessNode      T=false P=false  <- both
 //	tooling carry-over      pickup(position) → dropoff(staging) → wait →
 //	                        pickup(staging) → dropoff(position)

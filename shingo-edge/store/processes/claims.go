@@ -33,7 +33,7 @@ import (
 //   - "produce":   system delivers empty bins and removes filled ones
 //
 // (The legacy "changeover" role was removed during the UI consistency
-// refactor; changeovers are now driven by swap_mode + EvacuateOnChangeover.)
+// refactor; changeovers are now driven by swap_mode and the tool-change marks.)
 //
 // SwapMode controls the choreography:
 //   - "simple":      RETIRED as a configurable claim mode — UpsertClaim no
@@ -69,11 +69,11 @@ type (
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	` + capacity.SQL("style_node_claims") + `, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
-	keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_nodes, changeover_evac_destination,
-	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+	changeover_evac_nodes,
+	refill_by, key_route, key_task, changeover_carryover_disposition,
 	source, called_by, updated_at, retired_at, source_preset_id, source_preset_version`
 
 // liveClaims is the WHERE fragment for "claims that still drive anything":
@@ -92,11 +92,11 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&resolvedCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON, &c.AutoRequestPayload,
-		&c.KeepStagedNode, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
+		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacNodesJSON, &c.ChangeoverEvacDestination,
-		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition,
+		&evacNodesJSON,
+		&c.RefillBy, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition,
 		&c.Source, &c.CalledBy, &updatedAt, &retiredAt, &presetID, &presetVersion); err != nil {
 		return c, err
 	}
@@ -373,56 +373,6 @@ func GetClaim(db *sql.DB, id int64) (*NodeClaim, error) {
 	return &c, nil
 }
 
-// ClaimForLinesidePayload returns the claim at a node whose payload matches the
-// carrier standing there — the answer to "where does THIS bin belong", asked
-// without reference to which style the process is currently on.
-//
-// EXACTLY ONE MATCH, or nothing. A node several styles claim for the same
-// payload does not have one home for it, and guessing between them would put a
-// carrier somewhere plausible and wrong. Blank payload returns nothing: an
-// empty carrier's destination is not a payload question.
-//
-// LIVE CLAIMS ONLY. A retired row is a claim the flow no longer has, and a
-// composer save retires rows routinely — every replace_all that drops a
-// position does. Without the predicate a retired claim could be the "exactly
-// one match" that answers where a bin belongs, and the evacuation resolver
-// would send a carrier to a position the current flow does not use. Worse, a
-// live claim and its own retired predecessor at the same node would count as
-// two matches and the resolver would answer nothing at all.
-//
-// OF LIVE STYLES, like the list reads above. Deleting a process soft-deletes its
-// styles and keeps their claims for a restore (processes.Delete), so a deleted
-// process's claim at this node was still a candidate: it could be the one match
-// and aim a carrier at a dead process's destination, or make a second match and
-// silence the answer (SPR: a deleted process's claim at SLN_001).
-func ClaimForLinesidePayload(db *sql.DB, coreNodeName, payloadCode string) (*NodeClaim, error) {
-	if coreNodeName == "" || payloadCode == "" {
-		return nil, nil
-	}
-	rows, err := db.Query(`SELECT `+claimSelect+`
-		FROM style_node_claims WHERE core_node_name=? AND payload_code=?
-		AND style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL) AND`+liveClaims, coreNodeName, payloadCode)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var found []NodeClaim
-	for rows.Next() {
-		c, serr := scanNodeClaim(rows)
-		if serr != nil {
-			return nil, serr
-		}
-		found = append(found, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(found) != 1 {
-		return nil, nil
-	}
-	return &found[0], nil
-}
-
 // GetClaimByNode returns a claim by its (style_id, core_node_name) pair.
 func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, error) {
 	c, err := scanNodeClaim(db.QueryRow(`SELECT `+claimSelect+`
@@ -537,7 +487,7 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 //
 // kinds is Core's lane set as the engine holds it, and it is not optional: a
 // leg that names a lane is refused here, whichever door the write came
-// through (domain.CoreNodeKinds.RefuseLaneLegs). A caller with no node list
+// through (domain.CoreNodeKinds.RefuseLegs). A caller with no node list
 // passes the zero value, which refuses nothing, and says so by passing it.
 func UpsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64, error) {
 	id, _, err := upsertClaim(db, kinds, in)
@@ -647,10 +597,10 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// No leg names a lane. Asked of the input, before any statement: a claim
 	// that already names one is refused on its next write of any kind, until
 	// the leg is fixed.
-	if err := kinds.RefuseLaneLegs(in); err != nil {
+	if err := kinds.RefuseLegs(in); err != nil {
 		return 0, nil, err
 	}
-	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach
+	// RefillBy (which robot brings the next carrier) describes the CELL'S HARDWARE — which robot can reach
 	// the supermarket from that press. Two styles on one press disagreeing
 	// about it is not a configuration, it is an operator who edited one style
 	// and not the other, and the symptom is a press that choreographs
@@ -659,7 +609,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// A WARNING, NOT A REFUSAL, and the direction matters: refusing would make
 	// the flag unsettable, because changing a press with four styles means
 	// four saves and the first three would each be refused by the other three.
-	warnIndexRobotSuppliesDrift(db, in)
+	warnRefillByDrift(db, in)
 
 	var existingID int64
 	var priorSpot, priorSource string
@@ -697,7 +647,10 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 		sequence = maxSeq + 1
 	}
 	autoReorder := in.AutoReorder != nil && *in.AutoReorder
-	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
+	refillBy := protocol.RefillByClearingRobot
+	if in.RefillBy != nil {
+		refillBy = in.RefillBy.OrDefault()
+	}
 	keepStagedNode := domain.OptValue(in.KeepStagedNode)
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
@@ -712,20 +665,19 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
-		keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_nodes, changeover_evac_destination,
-		index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+		changeover_evac_nodes,
+		refill_by, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON, in.AutoRequestPayload,
-		keepStagedNode, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
+		keepStagedNode, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
-		domain.OptValue(in.ChangeoverEvacDestination),
-		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
+		refillBy, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
 		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition),
 		in.Source, in.CalledBy, in.SourcePresetID, in.SourcePresetVersion)
 	if err != nil {
@@ -833,8 +785,8 @@ func modeArmViolation(in NodeClaimInput) error {
 	return nil
 }
 
-// warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
-// same press disagreeing about which robot fetches the replacement.
+// warnRefillByDrift logs when this save would leave two styles on the same
+// press disagreeing about which robot brings the next carrier.
 //
 // Scoped to claims on the SAME core node in the same process, because that is
 // what "one press" means; two presses may legitimately differ.
@@ -842,46 +794,64 @@ func modeArmViolation(in NodeClaimInput) error {
 // Silent on a caller with no opinion (nil) — an import or the compare grid is
 // not asserting anything about the hardware and must not be reported as if it
 // were.
-func warnIndexRobotSuppliesDrift(db DBTX, in NodeClaimInput) {
-	if in.IndexRobotSupplies == nil || in.CoreNodeName == "" {
+func warnRefillByDrift(db DBTX, in NodeClaimInput) {
+	if in.RefillBy == nil || in.CoreNodeName == "" {
 		return
 	}
-	want := *in.IndexRobotSupplies
-	rows, err := db.Query(`
-		SELECT s.name, c.index_robot_supplies
-		FROM style_node_claims c
-		JOIN styles s ON s.id = c.style_id
-		WHERE c.core_node_name = ?
-		  AND c.style_id != ?
-		  AND s.deleted_at IS NULL
-		  AND c.retired_at IS NULL
-		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)`,
-		in.CoreNodeName, in.StyleID, in.StyleID)
+	want := in.RefillBy.OrDefault()
+	others, err := OtherStylesRefillBy(db, in.StyleID)
 	if err != nil {
 		// Cannot check is not a finding. Saying nothing is right here: the
 		// save proceeds either way and a warning we could not substantiate
 		// would be worse than none.
 		return
 	}
-	defer rows.Close()
 	var disagree []string
-	for rows.Next() {
-		var styleName string
-		var flag bool
-		if err := rows.Scan(&styleName, &flag); err != nil {
-			return
-		}
-		if flag != want {
-			disagree = append(disagree, styleName)
+	for _, o := range others[in.CoreNodeName] {
+		if o.RefillBy != want {
+			disagree = append(disagree, o.Style)
 		}
 	}
 	if len(disagree) > 0 {
-		log.Printf("claim %s: index_robot_supplies=%v disagrees with style(s) %s on the same process. "+
-			"This flag describes which robot can reach the supermarket — a fact about the cell, not "+
-			"about a style — so the process will choreograph differently depending on what it runs. "+
+		log.Printf("claim %s: refill_by=%s disagrees with style(s) %s on the same process. "+
+			"Which robot brings the next carrier is a fact about the cell, not about a style, "+
+			"so the process will choreograph differently depending on what it runs. "+
 			"Set it the same on every style for this node.",
 			in.CoreNodeName, want, strings.Join(disagree, ", "))
 	}
+}
+
+// OtherStylesRefillBy is, by core node, what every other live style of
+// styleID's process says about who brings the next carrier there, in
+// style-name order: one statement for the whole process, read by the save's
+// log line (warnRefillByDrift) and the editor's warning on a press whose
+// styles disagree (domain.RefillByDisagreementFinding).
+func OtherStylesRefillBy(db DBTX, styleID int64) (map[string][]domain.StyleRefillBy, error) {
+	rows, err := db.Query(`
+		SELECT c.core_node_name, s.name, c.refill_by
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE c.style_id != ?
+		  AND s.deleted_at IS NULL
+		  AND c.retired_at IS NULL
+		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)
+		ORDER BY s.name`,
+		styleID, styleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]domain.StyleRefillBy{}
+	for rows.Next() {
+		var node string
+		var v domain.StyleRefillBy
+		if err := rows.Scan(&node, &v.Style, &v.RefillBy); err != nil {
+			return nil, err
+		}
+		v.RefillBy = v.RefillBy.OrDefault()
+		out[node] = append(out[node], v)
+	}
+	return out, rows.Err()
 }
 
 func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
@@ -895,7 +865,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
 		`containment_destination=?`, `partial_destination=?`, `curtain_required=?`, `strict_pack=?`, `pack_tolerance_pct=?`,
-		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
+		`allowed_payload_codes=?`, `auto_request_payload=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 		`source=?`, `called_by=?`, `updated_at=datetime('now')`, `retired_at=NULL`,
@@ -904,7 +874,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
 		in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct,
-		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
+		allowedJSON, in.AutoRequestPayload,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		in.Source, in.CalledBy,
@@ -934,14 +904,11 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	if in.Sequence != nil {
 		sets, args = append(sets, `sequence=?`), append(args, *in.Sequence)
 	}
-	if in.IndexRobotSupplies != nil {
-		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
+	if in.RefillBy != nil {
+		sets, args = append(sets, `refill_by=?`), append(args, in.RefillBy.OrDefault())
 	}
 	if in.ChangeoverEvacNodes != nil {
 		sets, args = append(sets, `changeover_evac_nodes=?`), append(args, marshalEvacNodes(*in.ChangeoverEvacNodes))
-	}
-	if in.ChangeoverEvacDestination != nil {
-		sets, args = append(sets, `changeover_evac_destination=?`), append(args, *in.ChangeoverEvacDestination)
 	}
 	if in.ChangeoverCarryoverDisposition != nil {
 		sets, args = append(sets, `changeover_carryover_disposition=?`), append(args, string(*in.ChangeoverCarryoverDisposition))

@@ -50,6 +50,34 @@ func (db *DB) PartialHomeFor(coreNodeName, payloadCode string) (home string, amb
 	return home, false, rows.Err()
 }
 
+// ClaimOutboundsAt is where the claims at coreNodeName send their carriers: for
+// each part a claim at the node names, the distinct outbound_destinations its
+// claims give (any role, any style). A carrier lifted off that node goes where
+// the claim for its own part sends it; and a drop that is another part's
+// outbound there is one aimed by the claim the order was for, not by the
+// carrier (dispatch's by-contents choice, otherPartHome). One read for both.
+func (db *DB) ClaimOutboundsAt(coreNodeName string) (map[string][]string, error) {
+	if coreNodeName == "" {
+		return nil, nil
+	}
+	rows, err := db.DB.Query(`SELECT DISTINCT payload_code, outbound_destination FROM style_claims
+		WHERE core_node_name = $1 AND payload_code <> '' AND outbound_destination <> ''
+		ORDER BY payload_code, outbound_destination`, coreNodeName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var part, outbound string
+		if err := rows.Scan(&part, &outbound); err != nil {
+			return nil, err
+		}
+		out[part] = append(out[part], outbound)
+	}
+	return out, rows.Err()
+}
+
 // PartialHomesForPayload is every home a partial of payloadCode may wait in:
 // the partial_destination of each produce claim that makes it. A refill that
 // would fill a carrier of the part looks there first. Sorted, distinct.

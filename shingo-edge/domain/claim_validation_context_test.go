@@ -39,9 +39,6 @@ func contextFor(in NodeClaimInput) ClaimNodeContext {
 	names := []string{in.CoreNodeName, in.PairedCoreNode, in.SecondPairedCoreNode,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination}
 	names = append(names, OptValue(in.ChangeoverEvacNodes)...)
-	if d := OptValue(in.ChangeoverEvacDestination); d != "" {
-		names = append(names, d)
-	}
 	core := map[string]bool{}
 	for _, n := range names {
 		if n != "" {

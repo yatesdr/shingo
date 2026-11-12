@@ -411,16 +411,31 @@ func (p *Plant) Validate() error {
 					add("%s: second_paired_core_node %q must differ from the front and back positions", where, c.SecondPairedCoreNode)
 				}
 			}
-		default:
-			// The flip is press-index choreography; nothing else has two robots
-			// to swap between, and a spec that sets it on another mode is
-			// describing a cell that cannot exist. Marked evacuation positions are
-			// the same argument: a position is a press position.
-			if c.IndexRobotSupplies {
-				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
-			}
-			if len(c.ChangeoverEvacNodes) > 0 {
-				add("%s: changeover_evac_nodes applies to two_robot_press_index only", where)
+		}
+		// ── WHO BRINGS THE NEXT CARRIER ─────────────────────────────────────
+		//
+		// Robot 2 bringing it is press-index choreography; nothing else has
+		// two robots to swap between, and a spec that sets it on another mode
+		// describes a cell that cannot exist. Outside the mode switch, so it
+		// holds for every other mode. The Edge's ValidateNodeClaim refuses the
+		// same claim.
+		if c.RefillBy != "" && !c.RefillBy.Valid() {
+			add("%s: refill_by %q is not a robot that brings the next carrier (want one of %v)", where, c.RefillBy, protocol.RefillBys())
+		} else if c.RefillBy.OrDefault() != protocol.RefillByClearingRobot &&
+			protocol.SwapMode(c.SwapMode) != protocol.SwapModeTwoRobotPressIndex {
+			add("%s: refill_by %q applies to two_robot_press_index only", where, c.RefillBy)
+		}
+		// ── A TOOL CHANGE'S MARKS ───────────────────────────────────────────
+		//
+		// Every line mode a robot serves may mark positions; a manual_swap
+		// loader has none to clear. A tool change holds the incoming carrier at
+		// inbound staging until the operator's Tooling done, so a claim with
+		// marks names where. Both are the Edge's save rules.
+		if len(c.ChangeoverEvacNodes) > 0 {
+			if c.IsLoader() {
+				add("%s: changeover_evac_nodes applies to a line a robot serves; a manual_swap loader has no positions to clear", where)
+			} else if c.InboundStaging == "" {
+				add("%s: changeover_evac_nodes needs inbound_staging: a tool change holds the new carrier there until Tooling done", where)
 			}
 		}
 		// ── A MARKED NODE MUST BE ONE THIS CLAIM HOLDS ─────────────────────
@@ -444,10 +459,6 @@ func (p *Plant) Validate() error {
 				add("%s: changeover_evac_nodes lists %q more than once", where, node)
 			}
 			seenMark[node] = true
-		}
-		// An evacuation destination that names nothing sends the bins nowhere.
-		if c.ChangeoverEvacDestination != "" && !ref(c.ChangeoverEvacDestination) {
-			add("%s: unknown changeover_evac_destination %q", where, c.ChangeoverEvacDestination)
 		}
 		// ── KEY ROUTE ───────────────────────────────────────────────────────
 		//

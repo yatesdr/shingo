@@ -82,7 +82,7 @@ func (h *Handlers) apiUpsertRoutingNode(w http.ResponseWriter, r *http.Request) 
 		switch {
 		case errors.Is(err, service.ErrRoutingNodeIsPosition):
 			writeError(w, http.StatusConflict, err.Error())
-		case errors.Is(err, service.ErrInvalidRoutingRole), errors.Is(err, domain.ErrLaneLeg):
+		case errors.Is(err, service.ErrInvalidRoutingRole), errors.Is(err, domain.ErrRefusedLeg):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -130,7 +130,7 @@ func (h *Handlers) apiPatchRoutingNode(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		if errors.Is(err, domain.ErrLaneLeg) {
+		if errors.Is(err, domain.ErrRefusedLeg) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -222,7 +222,7 @@ func (h *Handlers) apiProcessComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such process")
 		return
 	}
-	data.DropLaneLegs(h.coreNodeKinds())
+	data.DropRefusedRows(h.coreNodeKinds())
 	writeJSON(w, data)
 }
 
@@ -254,6 +254,6 @@ func (h *Handlers) apiStationComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such process")
 		return
 	}
-	data.DropLaneLegs(h.coreNodeKinds())
+	data.DropRefusedRows(h.coreNodeKinds())
 	writeJSON(w, data)
 }

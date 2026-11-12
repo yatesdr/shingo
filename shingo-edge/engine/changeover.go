@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"slices"
 	"sort"
 
 	"shingo/protocol"
@@ -9,15 +10,16 @@ import (
 )
 
 // ChangeoverSituation classifies what needs to happen at a physical node
-// when transitioning between two styles.
-type ChangeoverSituation string
+// when transitioning between two styles: domain.Situation, decided by
+// domain.ChangeoverSituation for the planner and the readiness card alike.
+type ChangeoverSituation = domain.Situation
 
 const (
-	SituationUnchanged ChangeoverSituation = "unchanged" // same payload, no evacuation needed
-	SituationEvacuate  ChangeoverSituation = "evacuate"  // same payload, but evacuation required
-	SituationSwap      ChangeoverSituation = "swap"      // different payload — old out, new in
-	SituationDrop      ChangeoverSituation = "drop"      // old style uses node, new style doesn't
-	SituationAdd       ChangeoverSituation = "add"       // new style uses node, old style didn't
+	SituationUnchanged = domain.SituationUnchanged
+	SituationEvacuate  = domain.SituationEvacuate
+	SituationSwap      = domain.SituationSwap
+	SituationDrop      = domain.SituationDrop
+	SituationAdd       = domain.SituationAdd
 )
 
 // ChangeoverNodeDiff represents the material change needed at a single physical
@@ -36,7 +38,8 @@ type ChangeoverNodeDiff struct {
 }
 
 // DiffStyleClaims computes the material changes needed at each physical node
-// when transitioning from one style to another.
+// when transitioning from one style to another: one diff per node either style
+// claims, its situation domain.ChangeoverSituation's.
 func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNodeDiff {
 	fromMap := make(map[string]*processes.NodeClaim, len(fromClaims))
 	for i := range fromClaims {
@@ -69,63 +72,10 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 
 	var diffs []ChangeoverNodeDiff
 	for _, name := range names {
-		from := fromMap[name]
-		to := toMap[name]
-
-		var situation ChangeoverSituation
-		switch {
-		case from == nil && to != nil:
-			if to.PayloadCode == "__empty__" {
-				situation = SituationUnchanged // node was empty, stays empty
-			} else {
-				situation = SituationAdd
-			}
-		case from != nil && to == nil:
-			situation = SituationDrop
-		case to != nil && to.PayloadCode == "__empty__":
-			if from != nil && from.PayloadCode == "__empty__" {
-				situation = SituationUnchanged // both empty → nothing to do
-			} else {
-				situation = SituationDrop // explicitly clear the node
-			}
-		case from != nil && from.PayloadCode == "__empty__":
-			situation = SituationAdd // node was empty, now needs material
-		// A TOOLING EVACUATION IS NOT A PAYLOAD QUESTION.
-		//
-		// SituationEvacuate used to hang off the same-payload arm, which made
-		// it unreachable on the common case it exists for: a press whose
-		// tooling changes almost always changes what it makes, so the payloads
-		// differ, the switch fell to Swap, and the flag was inert. Marked
-		// positions now select it whatever the payloads do — the staged
-		// choreography subsumes the swap, since the incoming bins arrive
-		// through staging either way.
-		//
-		// Read off the OUTGOING claim; see domain.StagedToolingChangeover for
-		// why the outgoing setup owns the answer.
-		// ...unless every marked position is KEEPING its part. A press whose parts
-		// all carry over and whose cell said keep_lineside clears nothing: the
-		// tool change happens around bins that never move, which is precisely
-		// what the same-payload arm below already answers. Standing down here
-		// is cheaper and truer than planning an evacuation for a later pass to
-		// un-plan.
-		case domain.ToolingClearanceApplies(from, to):
-			situation = SituationEvacuate
-		case from.PayloadCode == to.PayloadCode && from.Role == to.Role:
-			// Same-payload, whole-node evacuation — the single-position shape.
-			// Also the outgoing claim now, where this read said `to`: one flag,
-			// one owner, and the planner's Drop branch already read it this way.
-			if from.EvacuateOnChangeover {
-				situation = SituationEvacuate
-			} else {
-				situation = SituationUnchanged
-			}
-		default:
-			situation = SituationSwap
-		}
-
+		from, to := fromMap[name], toMap[name]
 		diffs = append(diffs, ChangeoverNodeDiff{
 			CoreNodeName: name,
-			Situation:    situation,
+			Situation:    domain.ChangeoverSituation(from, to),
 			FromClaim:    from,
 			ToClaim:      to,
 		})
@@ -148,64 +98,80 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 // know it exists; the old comment here claimed it never would.
 const pressPositionSwapMode = domain.SwapModePressPosition
 
-// FanOutPressIndexDifferentBinType rewrites a press-index Swap/Evacuate
-// diff into one per-position diff whenever the from-claim's payload bin
-// type differs from the to-claim's. The press's index motion can't shift
-// bins of different geometries across positions, so each occupied/needed
-// position is independently evac+refill — no coordination across
-// positions, three robots fire in parallel because there are three
-// independent NodeActions.
+// PlanPressPositions is the one pass that decides every press position either
+// style names: outgoing or incoming, front or back, same mode or cross mode. A
+// press position is a node a press-index claim names (NodeClaim.Positions), and
+// each gets at most one diff, decided by one rule over its two claims
+// (pressPosition), the situation domain.ChangeoverSituation's over the position
+// claims:
 //
-// Each synthesized diff carries:
-//   - CoreNodeName: the per-position node name (front, paired, or
-//     second-paired, depending on which slot)
-//   - SwapMode: pressPositionSwapMode marker
-//   - PayloadCode / InboundSource / OutboundDestination: copied from
-//     the parent claim (assumption: same payload across positions
-//     during different-bin-type changeover; SME confirmed)
-//   - PairedCoreNode / SecondPairedCoreNode / InboundStaging /
-//     OutboundStaging: empty (per-position is a single slot, no
-//     staging hop, no A/B partner — these fields are press-index-
-//     specific and don't apply to a single position)
+//   - both styles use it: its marked tool-change treatment when the outgoing
+//     claim marks it; its own swap when the carrier type changes
+//     (binTypesDiffer); else, when the cell is planned position by position,
+//     its own situation (the same part is unchanged); else nothing, because
+//     the index handles it: the press's own swap indexes the position, or,
+//     across a front that moves, the incoming press indexes the carrier of its
+//     own type standing there;
+//   - only the outgoing style uses it: a drop;
+//   - only the incoming style uses it: an add, a plain delivery, unless its seat
+//     says a bin is bound there (SeatBin), when it is the per-position swap,
+//     both claims the incoming claim's: whatever stands there goes to the
+//     incoming claim's outbound and the new carrier comes.
 //
-// Position-count change handled implicitly via per-position
-// occupied/needed checks:
-//   - From-occupied AND to-needed → SituationSwap (or parent's
-//     Situation if it was Evacuate): full evac+refill
-//   - From-occupied, to-NOT-needed → SituationDrop: evac only
-//   - From-NOT-occupied, to-needed → SituationAdd: refill only
+// A cell is planned position by position (splitsPerPosition) when one diff
+// holds both styles' claims of the press and the press's own swap cannot carry
+// it: the carrier type changes, the outgoing claim marks positions (a tool
+// change never indexes), or a position the outgoing style stands on holds no
+// bin (vacantPositions, the answer REQUEST's planVacantLine reads). Otherwise
+// the diff stays whole, and every position a claim names that no diff stands on
+// (a press dropped, added, moved, resized or changed to another mode) is decided
+// by the same rule, appended in name order.
 //
-// binTypes is a map[payloadCode]binTypeCode pre-resolved at plan time.
-// nil/missing entries → comparator falls back to "same" → no fan-out,
-// parent diff stays untouched. The existing same-bin-type press-index
-// dispatch handles those.
-func FanOutPressIndexDifferentBinType(diffs []ChangeoverNodeDiff, binTypes map[string]string) []ChangeoverNodeDiff {
-	return FanOutPressIndex(diffs, binTypes, nil)
-}
-
-// FanOutPressIndex is the same-mode fan-out with the second reason to split a
-// press: a position holds no bin. The press's own swap indexes every position
-// as one motion, and its legs lift at each position before setting down, so
-// one vacant position stalls the whole swap at Core. REQUEST answers that with
-// planVacantLine (a plain delivery to each vacant position, no swap); the
-// changeover answers it the same way, from the same vacantPositions: split per
-// position, and ApplyNodeState, which runs after, turns each vacant position's
-// Swap into Add (just deliver) and leaves each held one a per-position swap.
+// AN UNKNOWN SEAT AT AN INCOMING-ONLY POSITION IS AN ADD. The Edge knows a
+// position is empty only once a departure was recorded there (SeatEmpty), and a
+// position no style has used yet has had none. A swap there lifts before it
+// sets down, and at Core a lift at a node with nothing on it holds the swap's
+// reserve with no limit (reserve-holding), which held a changeover's cutover
+// until its leg was aborted. A carrier standing there that the Edge does not
+// know of is Core's to see: the delivery's drop meets Core's capacity check for
+// the node.
 //
-// A Swap or a tooling Evacuate: a marked press with a vacant position splits
-// the same way, and ApplyNodeState gives the vacant position its refill alone
-// (the decorator still holds that carrier at staging until the tooling is
-// done). state nil (no node read) splits on bin type alone.
-func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, state func(coreNode string) NodeState) []ChangeoverNodeDiff {
+// ApplyNodeState, which runs next with the same seats, keeps the done rule and
+// the vacant-seat rule for a position an outgoing claim stands on. state nil
+// reads no seat: every seat unknown.
+func PlanPressPositions(diffs []ChangeoverNodeDiff, binTypes map[string]string, state func(coreNode string) NodeState) []ChangeoverNodeDiff {
+	seat := func(n string) Seat {
+		if state == nil {
+			return SeatUnknown
+		}
+		return state(n).Seat
+	}
 	out := make([]ChangeoverNodeDiff, 0, len(diffs))
 	for _, d := range diffs {
-		if !shouldFanOutPressIndex(d, binTypes) && !pressHasVacantPosition(d, state) {
+		switch {
+		case splitsPerPosition(d, binTypes, state):
+			for _, pos := range cellPositions(d.FromClaim, d.ToClaim) {
+				if pd, ok := pressPosition(pos, claimNaming(d.FromClaim, pos), claimNaming(d.ToClaim, pos), true,
+					binTypes, seat); ok {
+					out = append(out, pd)
+				}
+			}
+		case d.Situation == SituationAdd && d.FromClaim == nil && d.ToClaim.IsPressIndex() && seat(d.CoreNodeName) == SeatBin:
+			// The incoming press's own front, which no outgoing claim stands
+			// on: DiffStyleClaims made it the Add, and a bin bound there makes
+			// it the swap, as at every incoming-only position.
+			out = append(out, incomingSwap(d.ToClaim, d.CoreNodeName))
+		default:
 			out = append(out, d)
-			continue
 		}
-		out = append(out, fanOutPositions(d)...)
 	}
-	return out
+	return append(out, unplannedPositions(out, diffs, binTypes, seat)...)
+}
+
+// splitsPerPosition reports whether a diff's cell is planned position by
+// position rather than by the press's own swap (PlanPressPositions).
+func splitsPerPosition(d ChangeoverNodeDiff, binTypes map[string]string, state func(coreNode string) NodeState) bool {
+	return shouldFanOutPressIndex(d, binTypes) || pressHasVacantPosition(d, state)
 }
 
 // pressHasVacantPosition reports whether a press-index Swap's or tooling
@@ -268,7 +234,9 @@ func binTypesDiffer(from, to *processes.NodeClaim, binTypes map[string]string) b
 // The sequential skip has the opposite exposure. It has no such gate, and acting
 // on unknown means SKIPPING a side — not swapping a carrier that may be wrong.
 // So it demands a positive answer: no catalog, no skip, build both orders. The
-// degraded direction is one redundant carrier swap, never a wrong one.
+// degraded direction is a redundant carrier swap, which is still a swap: on a
+// parked side whose seat is unknown and that turns out empty, its lift holds at
+// Core (see ApplyNodeState's done rule).
 func binTypesKnownSame(from, to *processes.NodeClaim, binTypes map[string]string) bool {
 	if from == nil || to == nil {
 		return false
@@ -341,8 +309,11 @@ func sequentialParkedSideReuses(
 }
 
 // shouldFanOutPressIndex reports whether the diff is a press-index
-// changeover whose bin types differ between from and to. Only those
-// expand into per-position diffs.
+// changeover that is planned position by position: its bin types differ
+// between from and to, or it is a tool change (the outgoing claim marks a
+// position). A tool change never indexes: each marked position is cleared on
+// its own and each unmarked one gets its own ordinary changeover, so the
+// whole-cell index pair is never built for a marked press.
 func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bool {
 	if d.Situation != SituationSwap && d.Situation != SituationEvacuate {
 		return false
@@ -353,78 +324,72 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 	if !d.FromClaim.IsPressIndex() {
 		return false
 	}
-	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes)
+	return binTypesDiffer(d.FromClaim, d.ToClaim, binTypes) || domain.StagedToolingChangeover(d.FromClaim)
 }
 
-// fanOutPositions expands one press-index diff into up to three
-// per-position diffs (front, paired, second-paired) based on which
-// positions are occupied in from and needed in to.
-func fanOutPositions(parent ChangeoverNodeDiff) []ChangeoverNodeDiff {
-	from := parent.FromClaim
-	to := parent.ToClaim
-	// Press-index physical layout: the from-claim's geometry fields
-	// define which positions exist (front always; paired iff
-	// PairedCoreNode set; second-paired iff SecondPairedCoreNode set).
-	// The to-claim may or may not claim each position.
-	type slot struct {
-		fromName string // empty when from-style doesn't occupy this position
-		toName   string // empty when to-style doesn't claim this position
+// cellPositions is every position a split cell's two claims name, the outgoing
+// claim's first (front, paired, second paired), then those only the incoming
+// claim names, in its order.
+func cellPositions(from, to *processes.NodeClaim) []string {
+	out := from.Positions()
+	for _, pos := range to.Positions() {
+		if !slices.Contains(out, pos) {
+			out = append(out, pos)
+		}
 	}
-	slots := []slot{
-		{fromName: from.CoreNodeName, toName: to.CoreNodeName},
-		{fromName: from.PairedCoreNode, toName: to.PairedCoreNode},
-		{fromName: from.SecondPairedCoreNode, toName: to.SecondPairedCoreNode},
-	}
+	return out
+}
 
-	var diffs []ChangeoverNodeDiff
-	for _, s := range slots {
-		if s.fromName == "" && s.toName == "" {
-			continue
-		}
-		// Use the position's own node name as the synthesized
-		// CoreNodeName. When from has it but to doesn't, use from's
-		// name; vice versa for to-only.
-		coreNodeName := s.fromName
-		if coreNodeName == "" {
-			coreNodeName = s.toName
-		}
-		switch {
-		case s.fromName != "" && s.toName != "":
-			// Full per-position swap (both sides occupy).
-			diffs = append(diffs, ChangeoverNodeDiff{
-				CoreNodeName: coreNodeName,
-				Situation:    parent.Situation,
-				FromClaim:    synthesizePressPositionClaim(from, coreNodeName),
-				ToClaim:      synthesizePressPositionClaim(to, coreNodeName),
-			})
-		case s.fromName != "" && s.toName == "":
-			// Evac only — from-style had this position, to-style
-			// doesn't claim it. SituationDrop emits a release order
-			// (pickup CoreNodeName → dropoff OutboundDestination)
-			// via the existing planner branch, which is exactly the
-			// per-position evac-only choreography.
-			diffs = append(diffs, ChangeoverNodeDiff{
-				CoreNodeName: coreNodeName,
-				Situation:    SituationDrop,
-				FromClaim:    synthesizePressPositionClaim(from, coreNodeName),
-				ToClaim:      nil,
-			})
-		case s.fromName == "" && s.toName != "":
-			// Refill only — to-style claims this position, from
-			// didn't have it. SituationAdd routes to
-			// planFallbackStagingAction. Synthesized to-claim has
-			// InboundStaging empty, so the fallback emits a Retrieve
-			// order delivering directly to the position node — the
-			// per-position refill-only choreography.
-			diffs = append(diffs, ChangeoverNodeDiff{
-				CoreNodeName: coreNodeName,
-				Situation:    SituationAdd,
-				FromClaim:    nil,
-				ToClaim:      synthesizePressPositionClaim(to, coreNodeName),
-			})
-		}
+// claimNaming is c when it names pos among its positions, else nil.
+func claimNaming(c *processes.NodeClaim, pos string) *processes.NodeClaim {
+	if slices.Contains(c.Positions(), pos) {
+		return c
 	}
-	return diffs
+	return nil
+}
+
+// pressPosition is PlanPressPositions' one rule for one press position: from
+// and to are the outgoing and incoming claims that name it, nil for a style
+// that does not, and split says the cell is planned position by position. ok
+// false plans nothing there: the index handles it, or, on a cell that is not
+// split, the claims leave it unchanged.
+func pressPosition(pos string, from, to *processes.NodeClaim, split bool, binTypes map[string]string,
+	seat func(string) Seat) (ChangeoverNodeDiff, bool) {
+	pf, pt := synthesizePressPositionClaim(from, pos), synthesizePressPositionClaim(to, pos)
+	var d ChangeoverNodeDiff
+	switch {
+	case from != nil && to != nil:
+		switch {
+		case split || domain.MarksNode(from, pos):
+			d = ChangeoverNodeDiff{CoreNodeName: pos, Situation: domain.ChangeoverSituation(pf, pt), FromClaim: pf, ToClaim: pt}
+		case binTypesDiffer(from, to, binTypes):
+			d = ChangeoverNodeDiff{CoreNodeName: pos, Situation: SituationSwap, FromClaim: pf, ToClaim: pt}
+		default:
+			return ChangeoverNodeDiff{}, false // the index handles it
+		}
+	case from != nil:
+		d = ChangeoverNodeDiff{CoreNodeName: pos, Situation: domain.ChangeoverSituation(pf, nil), FromClaim: pf}
+	case to != nil:
+		d = ChangeoverNodeDiff{CoreNodeName: pos, Situation: domain.ChangeoverSituation(nil, pt), ToClaim: pt}
+		if d.Situation == SituationAdd && seat(pos) == SeatBin {
+			d = incomingSwap(to, pos)
+		}
+	default:
+		return ChangeoverNodeDiff{}, false
+	}
+	if !split && d.Situation == SituationUnchanged {
+		return ChangeoverNodeDiff{}, false
+	}
+	return d, true
+}
+
+// incomingSwap is the per-position swap at a position only the incoming style
+// uses, with a bin bound there: both claims the incoming claim's at pos
+// (buildPressIndexPerPositionSwap builds nothing for a nil from-claim), so the
+// bound carrier goes to the incoming claim's outbound and the new one comes.
+func incomingSwap(to *processes.NodeClaim, pos string) ChangeoverNodeDiff {
+	return ChangeoverNodeDiff{CoreNodeName: pos, Situation: SituationSwap,
+		FromClaim: synthesizePressPositionClaim(to, pos), ToClaim: synthesizePressPositionClaim(to, pos)}
 }
 
 // synthesizePressPositionClaim is the planner's local name for
@@ -435,169 +400,48 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 	return domain.SynthesizePositionClaim(parent, coreNodeName)
 }
 
-// FanOutPressIndexCrossMode emits per-position Drop or Swap diffs for
-// press-index positions that aren't covered by any existing diff after
-// the same-mode different-bin-type fan-out has run. Handles the cases
-// the same-mode fan-out doesn't:
-//
-//   - Cross-mode: from-claim is press-index, to-claim is some other
-//     SwapMode (single_robot, two_robot, sequential). The shared
-//     CoreNodeName diff (front position) gets handled normally; the
-//     middle/back positions only appear on the press-index claim's
-//     PairedCoreNode/SecondPairedCoreNode fields and would otherwise
-//     leave bins on the press unmoved.
-//   - Mirror cross-mode: to-claim is press-index, from-claim is not.
-//     Synthesize a per-position Swap for each extension position the
-//     incoming style claims, its from-claim synthesized from the incoming
-//     claim (buildPressIndexPerPositionSwap builds nothing for a nil
-//     from-claim): whatever stands there leaves, and the new style's carrier
-//     comes. ApplyNodeState, which runs next with the same seats, turns a
-//     vacant one into an Add; an unknown seat stays the Swap. Never an Add
-//     onto a position nobody read: that set a carrier down on whatever stood
-//     there.
-//   - Same-mode position-count delta with same bin types: both sides
-//     are press-index, bin types match (so the same-mode fan-out
-//     didn't fire), but position counts differ (e.g. 3-pos to 2-pos).
-//     Synthesize Drop for the dropped position; the added position is
-//     planned as the mirror case's.
-//   - Shared extension position across a FRONT-NODE MOVE, different bin
-//     types: both styles are press-index and both name the same back
-//     position, but their front nodes differ (PLN_01 → PLN_03, both paired
-//     to PLN_02). No CoreNodeName is shared, so DiffStyleClaims emits
-//     Drop + Add and the same-mode fan-out — which needs Swap/Evacuate
-//     and both claims on ONE diff — never fires. posMap is the only
-//     place the two sides of that position meet. Synthesize a per-
-//     position Swap so it gets evac+refill. (HK #27, 2026-07-16.)
-//
-// Runs AFTER FanOutPressIndexDifferentBinType. This pass only acts on
-// positions NOT in the existing diff list (after the same-mode
-// expansion), so there's no precedence conflict — the same-mode pass
-// always wins for any position it touches; this pass picks up the
-// leftovers.
-//
-// Synthesized diffs route through the existing SituationDrop,
-// SituationAdd and SituationSwap branches in planNodeAction. Drop and
-// Add don't read SwapMode (the per-position claim's SwapMode =
-// press_position is cosmetic there): Drop calls BuildReleaseSteps using
-// OutboundDestination, and Core moots it at a vacant position (dispatch
-// reserveMoot); Add, which ApplyNodeState makes of a vacant Swap, calls
-// planFallbackStagingAction which uses InboundSource (and InboundStaging
-// if set; synthesized claims clear InboundStaging so the direct-Retrieve
-// fallback fires, delivering to the position node directly). Swap DOES
-// read it, routing to buildPressIndexPerPositionSwap — the single-order
-// evac+refill.
-//
-// Diff list ordering: appended after the input diffs in stable order
-// (sorted by position name) so test assertions are deterministic and
-// log output is predictable.
-func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]string) []ChangeoverNodeDiff {
-	covered := make(map[string]struct{}, len(diffs))
-	for _, d := range diffs {
-		covered[d.CoreNodeName] = struct{}{}
+// unplannedPositions is PlanPressPositions' rule over every position a press
+// claim names beyond its own node (DependentPositions) that no planned diff
+// stands on: the extension positions of a press dropped, added, resized, moved
+// to another front or changed to another mode, which DiffStyleClaims, keyed on
+// each claim's own node, never sees. It is the only place the two sides of a
+// back shared across a front that moves meet (Hopkinsville #27, 2026-07-16: the
+// tote-to-knockdown changeover stranded both back positions when nothing
+// planned them). In name order, so a plan built twice reads the same.
+func unplannedPositions(planned, diffs []ChangeoverNodeDiff, binTypes map[string]string, seat func(string) Seat) []ChangeoverNodeDiff {
+	covered := make(map[string]bool, len(planned))
+	for _, d := range planned {
+		covered[d.CoreNodeName] = true
 	}
-
-	// posState tracks, for each press-index extension position, which
-	// side(s) reference it and the parent claim that owns it.
-	type posState struct {
-		fromClaim *processes.NodeClaim
-		toClaim   *processes.NodeClaim
-	}
-	posMap := make(map[string]*posState)
-	noteFrom := func(name string, claim *processes.NodeClaim) {
-		if name == "" {
-			return
-		}
-		s := posMap[name]
-		if s == nil {
-			s = &posState{}
-			posMap[name] = s
-		}
-		s.fromClaim = claim
-	}
-	noteTo := func(name string, claim *processes.NodeClaim) {
-		if name == "" {
-			return
-		}
-		s := posMap[name]
-		if s == nil {
-			s = &posState{}
-			posMap[name] = s
-		}
-		s.toClaim = claim
-	}
+	from, to := map[string]*processes.NodeClaim{}, map[string]*processes.NodeClaim{}
 	for i := range diffs {
-		d := &diffs[i]
-		for _, pos := range d.FromClaim.DependentPositions() {
-			noteFrom(pos, d.FromClaim)
+		for _, pos := range diffs[i].FromClaim.DependentPositions() {
+			from[pos] = diffs[i].FromClaim
 		}
-		for _, pos := range d.ToClaim.DependentPositions() {
-			noteTo(pos, d.ToClaim)
+		for _, pos := range diffs[i].ToClaim.DependentPositions() {
+			to[pos] = diffs[i].ToClaim
 		}
 	}
-
-	// Sort positions for stable iteration / test determinism.
-	names := make([]string, 0, len(posMap))
-	for name := range posMap {
-		names = append(names, name)
+	names := make([]string, 0, len(from)+len(to))
+	for pos := range from {
+		names = append(names, pos)
+	}
+	for pos := range to {
+		if from[pos] == nil {
+			names = append(names, pos)
+		}
 	}
 	sort.Strings(names)
-
-	added := make([]ChangeoverNodeDiff, 0, len(names))
+	var out []ChangeoverNodeDiff
 	for _, pos := range names {
-		if _, alreadyCovered := covered[pos]; alreadyCovered {
+		if covered[pos] {
 			continue
 		}
-		s := posMap[pos]
-		switch {
-		case s.fromClaim != nil && s.toClaim != nil:
-			// Both styles' press-index extension fields reference this
-			// position.
-			//
-			// Same bin type: the position stays in place and its bin is
-			// handled by the press's index motion at the front-position
-			// swap. Nothing to do.
-			//
-			// Different bin type: the position needs its own evac+refill —
-			// the index can't shift geometries. It is NOT safe to assume the
-			// same-mode fan-out already covered it: that pass only fires on
-			// Swap/Evacuate, and a changeover that MOVES the front node
-			// between styles (PLN_01 → PLN_03, both paired to PLN_02) diffs
-			// as Drop + Add, so no single diff ever holds both sides of this
-			// position. THIS pass is the only place the two sides meet, via
-			// posMap. Hopkinsville 2026-07-16 (changeover #27, tote →
-			// knockdown) stranded both back positions on exactly that assumption.
-			if !binTypesDiffer(s.fromClaim, s.toClaim, binTypes) {
-				continue
-			}
-			added = append(added, ChangeoverNodeDiff{
-				CoreNodeName: pos,
-				Situation:    SituationSwap,
-				FromClaim:    synthesizePressPositionClaim(s.fromClaim, pos),
-				ToClaim:      synthesizePressPositionClaim(s.toClaim, pos),
-			})
-		case s.fromClaim != nil:
-			// From-side has it; nobody on the to-side claims it.
-			// Synthesize Drop — bin leaves to OutboundDestination.
-			added = append(added, ChangeoverNodeDiff{
-				CoreNodeName: pos,
-				Situation:    SituationDrop,
-				FromClaim:    synthesizePressPositionClaim(s.fromClaim, pos),
-			})
-		case s.toClaim != nil:
-			// To-side wants it; from-side didn't have it, so nothing says
-			// what stands there. The per-position Swap, its from-claim the
-			// incoming claim's: whatever stands there goes to the incoming
-			// claim's outbound and the new carrier comes. ApplyNodeState turns
-			// it into an Add (a plain delivery) when the seat is vacant.
-			added = append(added, ChangeoverNodeDiff{
-				CoreNodeName: pos,
-				Situation:    SituationSwap,
-				FromClaim:    synthesizePressPositionClaim(s.toClaim, pos),
-				ToClaim:      synthesizePressPositionClaim(s.toClaim, pos),
-			})
+		if d, ok := pressPosition(pos, from[pos], to[pos], false, binTypes, seat); ok {
+			out = append(out, d)
 		}
 	}
-	return append(diffs, added...)
+	return out
 }
 
 // DrainState is what the runtime can say about the bin at a position, and it
@@ -703,9 +547,6 @@ type NodeState struct {
 	Part      string
 	PartKnown bool
 	Drain     DrainState
-	// runtime is the row the rest was read from, for the old carrier's aim
-	// (residentEvacDest), which asks of the same row.
-	runtime *processes.RuntimeState
 }
 
 // ApplyNodeState plans each changing node from what stands on it. Two rules,
@@ -715,9 +556,11 @@ type NodeState struct {
 //     SituationAdd. A swap's legs lift the node's bin before they set the new
 //     one down, and a leg that lifts at an empty node waits at Core for a bin
 //     that is not coming (the allocator holds it, with no limit). There is
-//     nothing to take away, so the new style's bin is simply brought. The same
-//     holds for ONE press position's tooling Evacuate (the fan-out's
-//     per-position diff): its clearance lifts first too, and an empty
+//     nothing to take away, so the new style's bin is simply brought. A
+//     position no outgoing claim stands on never reaches this rule as a Swap
+//     with an empty seat: PlanPressPositions planned it from its seat already.
+//     The same holds for ONE press position's tooling Evacuate (a split
+//     press's per-position diff): its clearance lifts first too, and an empty
 //     position is already clear (SEND BACK dry, then START, left the outside so:
 //     the press tranche's sim, 2026-10-23). The tooling decorator holds the
 //     Add's carrier at staging until the tooling is done, as it holds every
@@ -737,16 +580,20 @@ type NodeState struct {
 //     empty, and an empty is not the new style's more than the old one's.
 //   - ONE POSITION. A claim with paired positions (sequential A/B, an unsplit
 //     indexing press) is decided for the cell, and one node's carrier says
-//     nothing about the others; those plan exactly as before. A press the
-//     fan-out split is one-position claims, each judged by its own seat.
-//   - KNOWN, AND NOT DRAINED. An unknown carrier plans the swap (one redundant
-//     trip, never a wrong one). A drained consume carrier is a starved line,
-//     the same ruling as the reuse shortcut's.
+//     nothing about the others; those plan exactly as before. A split press
+//     is one-position claims, each judged by its own seat.
+//   - KNOWN, AND NOT DRAINED. An unknown carrier plans the swap. That is not
+//     free: on a node that turns out to be empty, the swap's lift finds no bin
+//     at Core and the order holds its reserve there with no limit
+//     (reserve-holding) until someone clears it, holding the changeover's
+//     cutover with it. It is kept because a done node wrongly left Unchanged
+//     would keep the old part on the line. A drained consume carrier is a
+//     starved line, the same ruling as the reuse shortcut's.
 //
 // Evacuate is the tooling choreography, whose clearance does not depend on
 // what the carrier is: the done rule never touches it, and a whole press's
-// Evacuate is left as it is (the fan-out has already split one with a vacant
-// position). A nil state changes nothing.
+// Evacuate is left as it is (PlanPressPositions has already split one with a
+// vacant position). A nil state changes nothing.
 func ApplyNodeState(diffs []ChangeoverNodeDiff, state func(coreNodeName string) NodeState) []ChangeoverNodeDiff {
 	if state == nil {
 		return diffs

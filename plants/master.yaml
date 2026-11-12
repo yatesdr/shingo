@@ -395,17 +395,11 @@ zones:
       - {name: PEB_011, depth: 1}
       - {name: PEB_012, depth: 1}
 
-  # ── Changeover clearance zone — the OPTIONAL OVERRIDE, demonstrated honestly ──
+  # ── SYN_CLEAR: a small laned group of its own ──
   #
-  # A cell whose ordinary outbound is the wrong place to put material during a
-  # setup can name somewhere else in changeover_evac_destination. It is a
-  # DESTINATION like any other, so this is a node group with lanes, not a
-  # dedicated station: if it fills, ordinary store-slot behaviour applies and
-  # the order waits for a slot instead of a robot parking on an occupied spot.
-  #
-  # PRESS-1-MOVED points at it (see claims). PRESS-1-RUN deliberately does NOT —
-  # the default path is normal routing, and the fixture has to exercise the
-  # default, or the thing everyone actually gets is the thing nothing covers.
+  # One lane of two slots, which the planner golden stores into and fills (a
+  # store into a lane; a move queued to a full group). No claim names it: a tool
+  # change clears to the cell's ordinary destination.
   - name: SYN_CLEAR
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -1031,9 +1025,7 @@ stations:
   # sim showed what that costs: a two-position press sends TWO bins, the bay holds
   # one, nothing ever empties it, and robots dwell on it holding bins
   # ("HOLDING at TBN_001 — a robot cannot place onto an occupied position").
-  # The clearance OVERRIDE demo is now SYN_CLEAR, a node group — see
-  # PRESS-1-MOVED's claim — so what an override names gets ordinary capacity
-  # behaviour instead of being a special place with special rules.
+  # A tool change has no destination of its own: it clears to the cell's.
   - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage (incoming style waits here)
   # Where a CARRIED-OVER bin waits out the setup. A part common to both styles
   # does not have to make a round trip through the supermarket to get out of the
@@ -1514,6 +1506,10 @@ styles:
   # common to both styles and the carry-over disposition is the only thing that
   # decides what happens to those bins.
   - {name: PRESS-1-RETOOL, process: PRESS-1,    payload: PANEL-A}
+  # ROBOT 3. The same press with its back refilled by a third trip of its own:
+  # neither robot of the pair goes to the market, and Robot 2's lift of the
+  # back orders it its next empty (refill_by own_robot).
+  - {name: PRESS-1-R3,     process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
   # SEQUENTIAL A/B WITH A CHANGEOVER. PRESS-2 had one style, so the only
   # sequential choreography the sim ever exercised was the steady-state swap —
@@ -1666,13 +1662,11 @@ claims:
     # the fan-out produce two diffs, which is the shape a single mark cannot
     # distinguish from no fan-out at all.
     #
-    # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
+    # The OUTGOING claim owns the decision — the tool change reads the
     # from-side — so these live here and not on -ALT.
     changeover_evac_nodes: [PLN_001, PLN_002]
-    # NO changeover_evac_destination, and that is the scenario: the marked positions
-    # are cleared BY NORMAL ROUTING, to outbound_destination like any other
-    # press bin. This is the default path and the one every plant gets unless it
-    # says otherwise, so it is the one the fixture must exercise.
+    # The marked positions are cleared BY NORMAL ROUTING, to outbound_destination
+    # like any other press bin: a tool change has no destination of its own.
     #
     # It is also an INCOMING style — PRESS-1-MOVED changes over back to it — so
     # it names the stage its own returning bins wait at.
@@ -1707,23 +1701,41 @@ claims:
     uop_capacity: 30
     auto_reorder: true
     paired_core_node: PLN_002
-    # THE FLIP, ON THE ALTERNATE STYLE ONLY, and that is deliberate on two
+    # THE FLIP (Robot 2 brings the next carrier), ON THE ALTERNATE STYLE ONLY,
+    # and that is deliberate on two
     # counts. It gives a scenario both choreographies on one press — run
     # PRESS-1-RUN for the unflipped shape, changeover to PRESS-1-ALT for the
     # flipped one, no second cell to configure — and it is the exact
     # cross-style disagreement UpsertClaim WARNS about, so a sim run also
     # exercises the warning on a press that really does have two styles.
     #
-    # It is a warning and not a refusal because the flag describes hardware:
+    # It is a warning and not a refusal because the setting describes hardware:
     # a real plant sets it the same on every style of a press. A sim is the
     # one place setting it differently is useful.
-    index_robot_supplies: true
+    refill_by: index_robot
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
     # The incoming style's bins WAIT here while the tool is changed.
-    # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
+    # refuseToolingChangeoverWithoutStaging refuses to arm a staged tooling
     # changeover without one, by name — so this is what makes the -RUN → -ALT
     # changeover armable at all now that -RUN marks positions.
+    inbound_staging: SLN_014
+
+  # PRESS-1 WITH ROBOT 3: the part -RUN makes, the back refilled by a trip of
+  # the press's own, made when Robot 2 lifts it. No third rig: a changeover
+  # from -RUN (a tool change, so it names the stage -RUN's marks hold at) or
+  # from -ALT, and its steady swaps, exercise the follow-on.
+  - core_node: PLN_001
+    style: PRESS-1-R3
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    refill_by: own_robot
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
 
   # PRESS-1 RE-TOOLED IN PLACE. Same nodes, same part, new tooling — the
@@ -1750,14 +1762,10 @@ claims:
   # marked for clearance and leave the style entirely (Drops), PLN_005/PLN_006
   # arrive with no outgoing bin to remove (Adds).
   #
-  # In THAT direction the outgoing claim (PRESS-1-RUN) owns the marks and names
-  # no override, so the disjoint shape runs on normal routing.
-  #
-  # AND THIS CLAIM IS THE OVERRIDE DEMO, in the other direction. Changing back
-  # (PRESS-1-MOVED -> PRESS-1-RUN) makes THIS the outgoing claim, so its marks
-  # and its changeover_evac_destination are the ones that count — and it sends
-  # its cleared bins to SYN_CLEAR instead of to the market. One fixture, both
-  # halves of the rule: default routing one way, override the other.
+  # In THAT direction the outgoing claim (PRESS-1-RUN) owns the marks; changing
+  # back (PRESS-1-MOVED -> PRESS-1-RUN) makes THIS the outgoing claim, so its
+  # marks count. Both directions clear to the market, the cells' ordinary
+  # destination.
   - core_node: PLN_005
     style: PRESS-1-MOVED
     role: produce
@@ -1770,10 +1778,6 @@ claims:
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
     changeover_evac_nodes: [PLN_005, PLN_006]
-    # THE OVERRIDE, and the only one in this plant. A node group, not a station:
-    # whatever an override names is an ordinary destination and gets ordinary
-    # capacity behaviour.
-    changeover_evac_destination: SYN_CLEAR
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003
@@ -1864,6 +1868,12 @@ claims:
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_001
     outbound_staging: SLN_011
+    # A TOOL CHANGE ON A TWO-ROBOT CELL. Changing over from this style clears
+    # ALN_001 at START (one robot, no Ready press), holds the PANEL-C cart at
+    # SLN_001 (this claim's inbound staging) until the operator's Tooling done,
+    # then sets it down. ALN_002 is not marked: its part carries over, so it is
+    # left as it stands. The press's marks above are the index-press case.
+    changeover_evac_nodes: [ALN_001]
   - core_node: ALN_002
     style: WELD-1-RUN
     role: produce
@@ -2485,6 +2495,7 @@ reporting_points:
   # that produces without counting is a group that drains with nothing recording
   # why. Same PLC, same tag: it is the same physical counter on the same machine.
   - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-ALT}
+  - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-R3}
   - {plc_name: PRESS-2, tag_name: PRESS-2_COUNTER, node: PLN_003, style: PRESS-2-RUN}
   - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-RUN}
   - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-ALT}
@@ -2612,9 +2623,12 @@ cell_configs:
 kanbans:
 
   # ══ [demo] the press empties, first: the demo tests read kanbans[0] ══════════════════════════
+  # STRICT: an empty asked for a press this kanban supports is served from it, and any other
+  # asker is fenced ("group fenced"). Every Edge order names its press (process_node), so the
+  # two presses it supports are admitted; a Core that does not read the field fences them too.
   - group: SYN_PRESS_EMPTIES
     station: edge1.line1
-    strict: false
+    strict: true
     levels:
       - {bin_type: STANDARD, want: 4}
       - {bin_type: STANDARD-SM, want: 2}

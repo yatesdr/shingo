@@ -120,7 +120,7 @@ function txt(cls, x, y, text, px, size, weight, anchor) {
     const shown = fit(text, px, size, weight, cls === 'nm');
     let body = esc(shown[0]);
     if (cls === 'ln') {
-        for (let r = 1; r <= 2; r++) {
+        for (let r = 1; r <= 3; r++) {
             body = body.split('Robot ' + r).join('<tspan class="rw r' + r + '">Robot ' + r + '</tspan>');
         }
     }
@@ -730,7 +730,7 @@ function dockLine(label, groups, budget) {
         used += seg.length;
     }
     let body = esc(out);
-    for (let r = 1; r <= 2; r++) {
+    for (let r = 1; r <= 3; r++) {
         body = body.split('Robot ' + r).join('<tspan class="rw r' + r + '">Robot ' + r + '</tspan>');
     }
     return body;
@@ -786,6 +786,10 @@ export function sentencesFromView(view, relation) {
             { core_node_name: p.core_node_name }, p.claim)),
         groups: cell.groups || {},
         routing: [],
+        // The board's only Advanced: who brings an index press's back its
+        // next carrier, carried on the view's claim (domain.CellClaim.RefillBy).
+        advanced: Object.fromEntries(cell.positions.filter(p => p.claim && p.claim.refill_by)
+            .map(p => [p.core_node_name, { refill_by: p.claim.refill_by }])),
     });
     return sentencesFromModel(state, relation);
 }
@@ -1008,7 +1012,7 @@ function relSlot(x, y, name, caption, o) {
 // width; renderFlowPicture puts the legend over it and the dock under it.
 //
 // THE CHOREOGRAPHY IS THE CLAIMS', AND ITS ROBOTS THE MODEL'S. Which cards
-// carry which moves (SYNTH row 19): a 2-Robot Index's on-deck card Robot 1 up
+// carry which moves (SYNTH row 19): an Index Swap's on-deck card Robot 1 up
 // and Robot 2 toward its press spot, the press card one Robot 2 from the
 // deck's side, a third Robot 1 up and Robot 2 toward the deck; a 2-Robot
 // Swap's lane Robot 1 up and its spot Robot 1 from the lane's side; a 1-Robot
@@ -1266,7 +1270,7 @@ function legendOf(sentences, width) {
     for (const g of [...(sentences.dock.inGroups || []), ...(sentences.dock.outGroups || [])]) {
         if (g.robot) robots.add(g.robot);
     }
-    for (const L of (sentences.legs || [])) robots.add(L.robot === 2 ? 2 : 1);
+    for (const L of (sentences.legs || [])) robots.add(L.robot === 2 || L.robot === 3 ? L.robot : 1);
     let lg = '', lx = width - FIT;
     for (const r of [...robots].sort((a, b) => b - a)) {
         lx -= 76;

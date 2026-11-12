@@ -68,13 +68,21 @@ func TestWithCurtainWaits(t *testing.T) {
 // drops it and asks for a press (Q8).
 func TestCreationIntentStandsThroughItsWaits(t *testing.T) {
 	t.Parallel()
-	in := &release.Intent{StationWait: 0, Origin: release.OriginCreation, Standing: true, System: true, SentAt: "x"}
+	in := &release.Intent{StationWait: 0, Purpose: release.PurposeReady, Origin: release.OriginCreation,
+		Standing: true, System: true, SentAt: "x"}
 	next := 1
-	if got := in.OnStaged(&next); got != release.StageAdvance {
-		t.Errorf("a standing intent staged at its next wait: %v, want StageAdvance", got)
+	if got := in.OnStaged(&next, release.PurposeReady); got != release.StageAdvance {
+		t.Errorf("a standing intent staged at its next curtain wait: %v, want StageAdvance", got)
 	}
-	op := &release.Intent{StationWait: 0, SentAt: "x"}
-	if got := op.OnStaged(&next); got != release.StageConsume {
+	// A tool change's clearing leg at a curtained position: the creation's
+	// intent rode the curtain wait, and the leg's next wait is Tooling done.
+	// That decision is the operator's: the intent is consumed there, never
+	// carried onto it to release it with no Tooling done press.
+	if got := in.OnStaged(&next, release.PurposeToolingDone); got != release.StageConsume {
+		t.Errorf("a standing intent staged at a Tooling done wait: %v, want StageConsume", got)
+	}
+	op := &release.Intent{StationWait: 0, Purpose: release.PurposeReady, SentAt: "x"}
+	if got := op.OnStaged(&next, release.PurposeReady); got != release.StageConsume {
 		t.Errorf("an operator's press staged at its next wait: %v, want StageConsume", got)
 	}
 }

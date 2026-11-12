@@ -414,7 +414,7 @@ func TestPairRule_ASupplyDiggingForItsBinHoldsItsEvac(t *testing.T) {
 // TestPairRule_PressIndexPivotingLegHoldsItsPartner is census 1 on press-index
 // shapes, run twice because the flip moves the supermarket trip between the
 // legs: unflipped, R1 fetches the replacement and is the leg that digs; flipped
-// (IndexRobotSupplies), R2 does. R1 is created first, as a steady-state swap
+// (refill_by Robot 2), R2 does. R1 is created first, as a steady-state swap
 // creates it, so it leads the pass either way — which means the pivot lands on
 // the leader in one case and on the second leg in the other.
 //

@@ -40,6 +40,10 @@ type Need struct {
 	PayloadCode string
 	OriginID    string
 	OriginClass string
+	// ProcessNode is the press the order serves (orders.process_node;
+	// protocol.OrderRequest.ProcessNode), as its station named it, for every
+	// kind of order: "" for an order for no press.
+	ProcessNode string
 	// Projects names the station the order projects to, and what it projects
 	// there is its material notices alone: order.delivered and bin_picked_up,
 	// which bind the bin at a node that station's Edge models. A stage-2 pull
@@ -140,14 +144,14 @@ type Leg struct {
 }
 
 // ComplexSpec is the part of a coordinated order's row only complex intake
-// states: the process it serves and the claim's SEER routing hints, kept
-// because dispatch happens later (domain.Order.KeyRoute). There is no
-// coordinated flag: a need with a ComplexSpec is coordinated. Its swap sibling
-// is the need's (Need.Sibling), as a home clear's trade leg's is.
+// states: the claim's SEER routing hints, kept because dispatch happens later
+// (domain.Order.KeyRoute). The press it serves is every order's
+// (Need.ProcessNode). There is no coordinated flag: a need with a ComplexSpec
+// is coordinated. Its swap sibling is the need's (Need.Sibling), as a home
+// clear's trade leg's is.
 type ComplexSpec struct {
-	ProcessNode string
-	KeyRoute    []string
-	KeyTask     string
+	KeyRoute []string
+	KeyTask  string
 }
 
 // Actor is who asked for an order. A person is authoritative over another
@@ -187,6 +191,7 @@ func row(need Need, p plan.Plan) *orders.Order {
 		SkipAutoConfirm:  need.SkipAutoConfirm,
 		OriginID:         need.OriginID,
 		OriginClass:      need.OriginClass,
+		ProcessNode:      need.ProcessNode,
 		SourceIntent:     need.SourceIntent,
 		StationUnaware:   !need.StationKnows,
 		ProjectsTo:       need.Projects,
@@ -201,7 +206,7 @@ func row(need Need, p plan.Plan) *orders.Order {
 	}
 	if c := need.Complex; c != nil {
 		o.Coordinated = true
-		o.ProcessNode, o.KeyRoute, o.KeyTask = c.ProcessNode, c.KeyRoute, c.KeyTask
+		o.KeyRoute, o.KeyTask = c.KeyRoute, c.KeyTask
 	}
 	// held is the cart the order is born holding (a dig leg's bin, a named
 	// cart), 0 for none.

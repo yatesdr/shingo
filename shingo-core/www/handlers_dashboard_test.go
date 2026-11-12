@@ -155,9 +155,10 @@ func TestHandleDashboard_ActiveOrderRow(t *testing.T) {
 	row := body[start:]
 	row = row[:strings.Index(row, "</tr>")]
 
-	// In transit with no block finished: the arrow before the origin, the line
-	// the +1 between the origin and the final (domain.RouteView).
-	if got, want := routeText(row), "› UTN_014 › +1 › UTN_013"; got != want {
+	// In transit with no block finished: the arrow before the origin. With no
+	// steps the route is its pickup and its drop; the press the order serves is
+	// no stop, where it drew a +1 between them (domain.RouteView).
+	if got, want := routeText(row), "› UTN_014 › UTN_013"; got != want {
 		t.Errorf("route = %q, want %q", got, want)
 	}
 	if strings.Count(visibleText(row), "SHIM") != 1 {

@@ -76,14 +76,17 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 			c.PairedCoreNode = ""
 			c.ChangeoverEvacNodes = Ptr([]string{"INDEX-B"})
 		}, "changeover_evac_nodes"},
-		{"nodes marked on a single-node claim", func(c *NodeClaimInput) {
+		{"a single-node claim marking a node it does not hold", func(c *NodeClaimInput) {
 			c.SwapMode = SwapModeForTest
 			c.InboundStaging = "IN"
-			c.ChangeoverEvacNodes = Ptr([]string{"PRESS"})
+			c.ChangeoverEvacNodes = Ptr([]string{"INDEX-B"})
 		}, "changeover_evac_nodes"},
 		{"a node belonging to nobody", func(c *NodeClaimInput) {
 			c.ChangeoverEvacNodes = Ptr([]string{"middle-ish"})
 		}, "changeover_evac_nodes"},
+		{"a tool change with no inbound staging", func(c *NodeClaimInput) {
+			c.ChangeoverEvacNodes = Ptr([]string{"PRESS"})
+		}, "inbound_staging"},
 
 		{"press-index without back position", func(c *NodeClaimInput) { c.PairedCoreNode = "" }, "paired_core_node"},
 		{"press-index without outbound", func(c *NodeClaimInput) { c.OutboundDestination = "" }, "outbound_destination"},
@@ -185,6 +188,7 @@ func TestValidateNodeClaim_MarkedNodesMustBeThisClaimsNodes(t *testing.T) {
 	} {
 		c := validClaim()
 		c.SecondPairedCoreNode = "INDEX-C"
+		c.InboundStaging = "IN-STAGE" // a claim with marks names where the new carrier waits
 		c.ChangeoverEvacNodes = &marked
 		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
 			t.Errorf("nodes %v are all this claim's own; findings = %+v", marked, got)
@@ -211,19 +215,6 @@ func TestValidateNodeClaim_MarkedNodeNotOnThisClaimIsRefused(t *testing.T) {
 		}
 		if !findingOnField(findings, "changeover_evac_nodes") {
 			t.Errorf("the refusal does not name the field: %+v", findings)
-		}
-	}
-}
-
-// A free-form evac destination is never refused — node OR group, and blank is
-// the ordinary default.
-func TestValidateNodeClaim_EvacDestinationIsFreeForm(t *testing.T) {
-	t.Parallel()
-	for _, dest := range []string{"", "TOOLING-BAY", "SMG_01", "some.group.name"} {
-		c := validClaim()
-		c.ChangeoverEvacDestination = &dest
-		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
-			t.Errorf("evac destination %q must be accepted; findings = %+v", dest, got)
 		}
 	}
 }
@@ -362,6 +353,7 @@ func TestValidateNodeClaim_OutboundStagingCarryoverNeedsAStagingNode(t *testing.
 	c.PairedCoreNode = "INDEX-B"
 	c.ChangeoverEvacNodes = &marked
 	c.ChangeoverCarryoverDisposition = &disp
+	c.InboundStaging = "IN-STAGE"
 	c.OutboundStaging = ""
 	findings := ValidateNodeClaim(c, ClaimNodeContext{})
 	if !HasErrors(findings) {
@@ -491,7 +483,7 @@ func errorFieldSet(findings []FieldError) []string {
 // StrictSteadyModes in the commit that gives the server the rule.
 var serverEnforcedForbids = map[flowspec.Field]bool{
 	flowspec.ChangeoverEvacNodes:            true,
-	flowspec.IndexRobotSupplies:             true,
+	flowspec.RefillBy:                       true,
 	flowspec.KeyRoute:                       true,
 	flowspec.ChangeoverCarryoverDisposition: true,
 	flowspec.KeepStagedNode:                 true,
@@ -735,4 +727,43 @@ func TestValidateNodeClaim_PackToleranceIsZeroToTwenty(t *testing.T) {
 			t.Errorf("pct %d (strict %v): refused = %v, want %v", c.pct, c.strict, got, c.refused)
 		}
 	}
+}
+
+// TestValidateNodeClaim_EveryLineModeMarksItsPositions: a tool change marks a
+// line's positions on every mode a robot serves, and the save takes it; a
+// loader card has no positions to clear and is refused.
+func TestValidateNodeClaim_EveryLineModeMarksItsPositions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode    protocol.SwapMode
+		paired  string
+		refused bool
+	}{
+		{protocol.SwapModeSingleRobot, "", false},
+		{protocol.SwapModeTwoRobot, "", false},
+		{protocol.SwapModeSequential, "PARTNER", false},
+		{protocol.SwapModeTwoRobotPressIndex, "INDEX-B", false},
+		{protocol.SwapModeManualSwap, "", true},
+	} {
+		c := validClaim()
+		c.SwapMode, c.PairedCoreNode = tc.mode, tc.paired
+		c.InboundStaging, c.OutboundStaging = "IN", "OUT"
+		if tc.mode == protocol.SwapModeTwoRobot || tc.mode == protocol.SwapModeSequential {
+			c.OutboundStaging = ""
+		}
+		c.ChangeoverEvacNodes = Ptr([]string{"PRESS"})
+		got := hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "changeover_evac_nodes")
+		if got != tc.refused {
+			t.Errorf("%s marking its node: refused=%v, want %v", tc.mode, got, tc.refused)
+		}
+	}
+}
+
+// refillFor is the refill setting a test's flip names: Robot 2 (the index
+// robot) when flipped, Robot 1 otherwise.
+func refillFor(flipped bool) protocol.RefillBy {
+	if flipped {
+		return protocol.RefillByIndexRobot
+	}
+	return protocol.RefillByClearingRobot
 }

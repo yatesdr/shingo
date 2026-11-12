@@ -1609,7 +1609,7 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "D4", "D4")
-	flip := true
+	indexRobot := protocol.RefillByIndexRobot
 	refused := []struct {
 		name  string
 		in    processes.NodeClaimInput
@@ -1629,8 +1629,8 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 		{
 			name: "single_robot_index_robot_flip",
 			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SR-FLIP", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL",
-				InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD", IndexRobotSupplies: &flip},
-			field: flowspec.IndexRobotSupplies,
+				InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD", RefillBy: &indexRobot},
+			field: flowspec.RefillBy,
 		},
 		{
 			name: "single_robot_paired_node",
@@ -1681,8 +1681,9 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 // used to share a name across packages, which reads like one test duplicated and
 // is two halves: that one pins what the TABLE says, this one pins what the STORE
 // does about it. flowspec.Steady requires a paired position, a
-// destination and a source for a sequential claim and forbids staging on one;
-// the API refuses accordingly; the store accepts. The measurement behind the
+// destination and a source for a sequential claim; the API refuses
+// accordingly; the store accepts. (Inbound staging is Used on sequential since
+// a tool change holds the incoming carrier there.) The measurement behind the
 // hold is on domain.StrictSteadyModes. Each case MUST GO RED when the store
 // gains the arm — that commit flips it into TestUpsertClaim_EnforcesFlowspec.
 func TestStoreStillAcceptsWhatFlowspecRefuses(t *testing.T) {
@@ -1692,13 +1693,8 @@ func TestStoreStillAcceptsWhatFlowspecRefuses(t *testing.T) {
 	if flowspec.Steady(protocol.ClaimRoleConsume, protocol.SwapModeSequential)[flowspec.PairedCoreNode] != flowspec.Required {
 		t.Fatal("table changed under the pin: sequential no longer requires a paired position")
 	}
-	if flowspec.Steady(protocol.ClaimRoleConsume, protocol.SwapModeSequential)[flowspec.InboundStaging] != flowspec.Forbidden {
-		t.Fatal("table changed under the pin: sequential no longer forbids inbound staging")
-	}
 	for _, in := range []processes.NodeClaimInput{
 		{StyleID: sid, CoreNodeName: "SQ-BLANK", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL"},
-		{StyleID: sid, CoreNodeName: "SQ-STAGE", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL",
-			PairedCoreNode: "B", OutboundDestination: "OD", InboundSource: "SRC", InboundStaging: "IN"},
 	} {
 		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Errorf("D4 (sequential) resolved at the store: %s refused (%v) — flip this case in the commit that did it", in.CoreNodeName, err)

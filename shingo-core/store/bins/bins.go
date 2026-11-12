@@ -265,8 +265,9 @@ func (a *emptyQueryArgs) add(v any) int {
 //
 // SHARING IS THE PLANT DEFAULT. Derek's plant-wide empty sharing stays exactly
 // as it is for everyone; the ONLY fenced zones are kanbans with
-// kanbans.strict on. A blank EmptyFence fences nothing, which is what every
-// caller that has no order in hand keeps getting.
+// kanbans.strict on. The zero EmptyFence fences nothing, which is what every
+// read with no order in hand keeps getting; an order's ask says so (Asking),
+// and is an outsider at every strict kanban that does not support its press.
 type EmptyFence struct {
 	// ProcessNode is the asker's process node NAME — the identity the supports
 	// table is keyed on. Blank means "supported nowhere", which is the correct
@@ -283,12 +284,20 @@ type EmptyFence struct {
 	// by nobody and reachable either way (FencedNodesCTE). The scoped tiers never read
 	// it: only the plant-wide finders do, and only a keeper's fence carries it.
 	Sources []int64
+	// Asking: an order's ask is behind the find. The finder's fence always says
+	// so (plan.Finder.emptyFenceFor); a read with no order in hand never does.
+	// An ask is fenced with a blank ProcessNode too: one that names no press is
+	// an outsider at every strict kanban, the answer it gets when it names the
+	// group (nodes.GroupFencesAsker). A keeper's top-off was fenced already, by
+	// the group it fills, so this changes nothing it finds.
+	Asking bool
 }
 
 // Empty reports whether this fence excludes nothing, so a caller can skip
-// rendering the CTE entirely rather than run a walk over an empty root set.
+// rendering the CTE entirely rather than run a walk over an empty root set: a
+// read with no order in hand. An ask is never empty, a press named or not.
 func (f EmptyFence) Empty() bool {
-	return f.ProcessNode == "" && f.OriginGroup == "" && len(f.Sources) == 0
+	return !f.Asking && f.ProcessNode == "" && f.OriginGroup == "" && len(f.Sources) == 0
 }
 
 // fenceArms renders the fence for one plant-wide find: the CTE that goes in front
@@ -1770,9 +1779,10 @@ func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupN
 //
 // AND IT IS WHY THE FENCE HAD TO BE ADDITIVE. Phase 3 does not narrow this arm;
 // it adds one exception to it — kanbans with strict on —
-// and everything else keeps sharing exactly as before. A blank EmptyFence
-// renders neither the CTE nor the arm, so an unfenced plant runs Derek's query
-// unchanged, byte for byte.
+// and everything else keeps sharing exactly as before. A read with no order
+// in hand (the zero EmptyFence) renders neither the CTE nor the arm, and runs
+// Derek's query unchanged, byte for byte; an ask renders them, and in a plant
+// with no strict kanban they hide nothing.
 //
 // The level keeper is this preference's first deliberate user: its top-off asks
 // pass the destination group's zone, so a carrier near the group it is filling

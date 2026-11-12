@@ -24,13 +24,13 @@ func TestKanbanPin_NodeInfoKanbanOnTheEdge(t *testing.T) {
 	for _, n := range nodes {
 		known[n.Name] = n
 	}
-	kinds := CoreNodeKindsOf(known)
+	kinds := CoreNodeKindsOf(known, nil, false)
 	for name, want := range map[string]bool{"KEPT": true, "Parent.KEPT": true, "PLAIN": false, "UNKNOWN": false} {
 		if got := kinds.IsKanban(name); got != want {
 			t.Errorf("IsKanban(%q) = %v, want %v", name, got, want)
 		}
 	}
-	if kept := CoreNodeKindsOf(nil); kept.IsKanban("KEPT") {
+	if kept := CoreNodeKindsOf(nil, nil, false); kept.IsKanban("KEPT") {
 		t.Error("no node list heard yet must refuse nothing")
 	}
 

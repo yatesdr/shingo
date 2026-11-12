@@ -220,12 +220,22 @@ func (d *Dispatcher) holdRelease(env *protocol.Envelope, order *orders.Order, p 
 	// The count is final now, as on a release that goes at once: the carrier
 	// the segment lifts off the line goes where it goes by what it holds
 	// (place_by_contents.go), and the held segment appends from the re-pointed
-	// plan. The re-point moves a drop off the line, never the held drop onto it,
-	// so the holds' step indexes stand, and so does the wait's.
+	// plan. A re-point plans the rest of the route again (repoint), which can
+	// add or take away waits after the released one, so the holds are read
+	// again from the new plan rather than carried over by index.
 	if d.placeByContentsAtRelease(order, steps, order.WaitIndex) {
 		if again, ok := decodeSteps(order.StepsJSON); ok {
 			steps = again
+			holds, turn = d.vacateHoldsAtRelease(order, steps), d.turnHoldAtRelease(order, steps)
 		}
+	}
+	if len(holds) == 0 && !turn {
+		// The new route holds nothing: the release goes now, as one that was
+		// never held does.
+		segment, moreWaits, blockOffset := splitSegment(steps, order.WaitIndex)
+		d.patchRedirectSegments(segment, order, moreWaits)
+		d.dispatchFleetRelease(env, order, segment, moreWaits, blockOffset)
+		return
 	}
 	d.markHeld(env, order, steps, holds, turn)
 }

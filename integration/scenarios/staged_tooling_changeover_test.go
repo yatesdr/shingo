@@ -2,7 +2,7 @@
 //
 // A press-index cell whose OUTGOING claim marks which NODES hold bins that block
 // the tooling change. Marked nodes are evacuated to the
-// tooling destination; the incoming style's bins travel to the staging node
+// outgoing claim's ordinary destination; the incoming style's bins travel to the staging node
 // and WAIT there; tooling-done is an ordinary production release that moves
 // them into the line positions.
 //
@@ -10,8 +10,8 @@
 //  1. every MARKED position gets its own task and order — one robot per position,
 //     because six orders cannot live on one NodeAction;
 //  2. an UNMARKED position gets nothing — the stated default is that it stays put;
-//  3. each position's steps evacuate to ChangeoverEvacDestination, not to
-//     OutboundDestination;
+//  3. each position's steps evacuate to the outgoing claim's
+//     OutboundDestination: a tool change has no destination of its own;
 //  4. the incoming bin waits AT the staging node, not on the press apron;
 //  5. tooling-done releases them exactly like a production release;
 //  6. arming without InboundStaging is refused, naming the cell and the field.
@@ -88,16 +88,15 @@ func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stage
 		t.Fatalf("set active style: %v", err)
 	}
 
-	// The OUTGOING claim carries the position selection and the tooling
-	// destination — the outgoing setup put the blocking bins there.
+	// The OUTGOING claim carries the position selection — the outgoing setup put
+	// the blocking bins there — and its ordinary outbound is where they clear to.
 	from := processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PLN-ST-A",
 		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobotPressIndex,
 		PayloadCode: "ST-OLD", UOPCapacity: 100,
 		PairedCoreNode: "PLN-ST-B", SecondPairedCoreNode: "PLN-ST-C",
 		InboundSource: "ST-SRC", OutboundDestination: "ST-MARKET",
-		ChangeoverEvacNodes:       domain.Ptr(markedNodes),
-		ChangeoverEvacDestination: domain.Ptr("ST-TOOLING-BAY"),
+		ChangeoverEvacNodes: domain.Ptr(markedNodes),
 	}
 	to := processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PLN-ST-A",
@@ -173,12 +172,9 @@ func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
 			}
 		}
 		joined := strings.Join(trace, " ")
-		if !strings.Contains(joined, "dropoff@ST-TOOLING-BAY") {
-			t.Errorf("%s: evacuated to the wrong place — ChangeoverEvacDestination must win over "+
-				"OutboundDestination.\n  steps: %s", marked, joined)
-		}
-		if strings.Contains(joined, "dropoff@ST-MARKET") {
-			t.Errorf("%s: still routing to OutboundDestination.\n  steps: %s", marked, joined)
+		if !strings.Contains(joined, "dropoff@ST-MARKET") {
+			t.Errorf("%s: evacuated to the wrong place — a marked position clears to the outgoing "+
+				"claim's OutboundDestination.\n  steps: %s", marked, joined)
 		}
 		if !sawStagedWait {
 			t.Errorf("%s: the incoming bin does not wait at the staging node — a robot parked on "+

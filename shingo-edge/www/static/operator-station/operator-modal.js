@@ -596,16 +596,15 @@ export function renderModal(entry) {
     // TOOL CHANGE clickable when no tool change is actually required.
     //
     // Marker logic:
-    //   - situation='evacuate': by construction the to-claim has
-    //     EvacuateOnChangeover=true (that's what makes a swap into an
-    //     evacuate per changeover.go:91). Always show.
-    //   - situation='drop' + from-claim has EvacuateOnChangeover=true: the
-    //     operator marked this node for tool-change-style evacuation
-    //     (piece-1 fix keeps the task at empty_requested until pickup).
+    //   - situation='evacuate': a tool change at this node (the outgoing
+    //     claim marks it; domain.ChangeoverSituation). Always show.
+    //   - situation='drop' + the from-claim marks this node for a tool change
+    //     (the planner keeps the task at empty_requested until pickup).
     //   - Otherwise: hide. The simple top-region RELEASE covers the case.
+    const marks = (claim && claim.changeover_evac_nodes) || [];
     const needsToolChangeFlow = task && (
         task.situation === 'evacuate' ||
-        (task.situation === 'drop' && claim && claim.evacuate_on_changeover)
+        (task.situation === 'drop' && marks.indexOf(entry.node.core_node_name) >= 0)
     );
     if (task && needsToolChangeFlow) {
         const view = getView();

@@ -229,7 +229,7 @@ func TestSplice_TwoGatedLanesGetOneWaitEach(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: b0.Name},
 		{Action: protocol.ActionDropoff, Node: line.Name},
 	}
-	spliced, target, gated, err := d.spliceLaneWait(plan, 0)
+	spliced, target, gated, err := d.spliceLaneWait(plan, 0, spliceFrom{})
 	if err != nil {
 		t.Fatalf("a swap picking in one marked lane and dropping in another is an ordinary request "+
 			"and must splice: %v", err)
@@ -298,7 +298,7 @@ func TestSplice_SameGatedLaneTwiceIsFine(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: s1.Name},
 		{Action: protocol.ActionDropoff, Node: line.Name},
 	}
-	out, target, gated, err := d.spliceLaneWait(plan, 0)
+	out, target, gated, err := d.spliceLaneWait(plan, 0, spliceFrom{})
 	if err != nil {
 		t.Fatalf("two touches of the SAME lane were refused: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestSplice_RefusesAnUnresolvedStepBeforeTheEntry(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: s0.Name},
 		{Action: protocol.ActionDropoff, Node: line.Name},
 	}
-	if _, _, _, err := d.spliceLaneWait(plan, 0); err == nil {
+	if _, _, _, err := d.spliceLaneWait(plan, 0, spliceFrom{}); err == nil {
 		t.Fatal("a plan with an unresolved step BEFORE its gated entry was spliced. That blank may " +
 			"itself be the lane entry once it resolves, in which case the wait is in the wrong place")
 	}
@@ -344,7 +344,7 @@ func TestSplice_RefusesAnUnresolvedStepBeforeTheEntry(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: s0.Name},
 		{Action: protocol.ActionDropoff}, // deferred, but after the entry
 	}
-	if _, _, gated, err := d.spliceLaneWait(ok, 0); err != nil || !gated {
+	if _, _, gated, err := d.spliceLaneWait(ok, 0, spliceFrom{}); err != nil || !gated {
 		t.Errorf("a blank AFTER the gated entry refused the splice (gated=%v err=%v)", gated, err)
 	}
 }

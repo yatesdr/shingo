@@ -38,8 +38,7 @@ func planPress(state func(string) NodeState) map[string]ChangeoverSituation {
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
 	diffs := []ChangeoverNodeDiff{{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to}}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T1"} // one carrier: no bin-type split
-	diffs = FanOutPressIndex(diffs, binTypes, state)
-	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	diffs = PlanPressPositions(diffs, binTypes, state)
 	diffs = ApplyNodeState(diffs, state)
 	out := map[string]ChangeoverSituation{}
 	for _, d := range diffs {
@@ -88,7 +87,7 @@ func TestChangeoverPress_BarePositionGetsNoLift(t *testing.T) {
 	state := seatsAt("BACK")
 	diffs := []ChangeoverNodeDiff{{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &from, ToClaim: &to}}
 	binTypes := map[string]string{"PART-A": "T1", "PART-B": "T1"}
-	diffs = ApplyNodeState(FanOutPressIndexCrossMode(FanOutPressIndex(diffs, binTypes, state), binTypes), state)
+	diffs = ApplyNodeState(PlanPressPositions(diffs, binTypes, state), state)
 	nodes := []processes.Node{{ID: 1, Name: "FRONT", CoreNodeName: "FRONT"},
 		{ID: 2, Name: "MIDDLE", CoreNodeName: "MIDDLE"}, {ID: 3, Name: "BACK", CoreNodeName: "BACK"}}
 	plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
@@ -120,20 +119,27 @@ func TestChangeoverPress_BarePositionGetsNoLift(t *testing.T) {
 // the index leg's on-deck pickup naming no part, the fallback never fetches a
 // second carrier for a changeover's own Add, in any mode.
 //
-// A seat that cannot say builds no Add: the press's own swap, whose index leg
-// lifts the on-deck and whose partner's refill is the pair's own (never waited
-// on), so the fallback fetches at most the one carrier the index needs.
+// An on-deck both presses name, whose seat cannot say, builds no Add: the
+// press's own swap carries it, whose index leg lifts the on-deck and whose
+// partner's refill is the pair's own (never waited on), so the fallback fetches
+// at most the one carrier the index needs. An on-deck only the incoming press
+// names is brought its carrier whatever its seat says short of a bin bound
+// there (PlanPressPositions): nothing lifts at it, so nothing waits at Core on
+// a lift at a node with nothing on it.
 func TestChangeoverPress_AVacantOnDeckIsBroughtACarrierCoreSeesComing(t *testing.T) {
 	t.Parallel()
 	type shape struct {
 		name    string
 		from    func(role protocol.ClaimRole, flip bool, second string) processes.NodeClaim
 		carrier map[string]string
+		// cross: the outgoing style is not a press, so the on-deck positions
+		// are the incoming press's alone.
+		cross bool
 	}
 	press := func(part string) func(protocol.ClaimRole, bool, string) processes.NodeClaim {
 		return func(role protocol.ClaimRole, flip bool, second string) processes.NodeClaim {
 			c := pressClaim("PRESS", "DECK", part)
-			c.Role, c.IndexRobotSupplies, c.SecondPairedCoreNode = role, flip, second
+			c.Role, c.RefillBy, c.SecondPairedCoreNode = role, refillFor(flip), second
 			return c
 		}
 	}
@@ -152,11 +158,11 @@ func TestChangeoverPress_AVacantOnDeckIsBroughtACarrierCoreSeesComing(t *testing
 	same := map[string]string{"PART-A": "T1", "PART-B": "T1"}
 	other := map[string]string{"PART-A": "T1", "PART-B": "T2"}
 	shapes := []shape{
-		{"press to press, one carrier", press("PART-A"), same},
-		{"press to press, another carrier", press("PART-A"), other},
-		{"press to press, tooling", tooling, same},
-		{"two_robot to press", crossFrom(protocol.SwapModeTwoRobot), same},
-		{"single_robot to press", crossFrom(protocol.SwapModeSingleRobot), same},
+		{"press to press, one carrier", press("PART-A"), same, false},
+		{"press to press, another carrier", press("PART-A"), other, false},
+		{"press to press, tooling", tooling, same, false},
+		{"two_robot to press", crossFrom(protocol.SwapModeTwoRobot), same, true},
+		{"single_robot to press", crossFrom(protocol.SwapModeSingleRobot), same, true},
 	}
 	for _, sh := range shapes {
 		for _, role := range []protocol.ClaimRole{protocol.ClaimRoleProduce, protocol.ClaimRoleConsume} {
@@ -177,7 +183,11 @@ func TestChangeoverPress_AVacantOnDeckIsBroughtACarrierCoreSeesComing(t *testing
 						}
 						plan := toolingTestPlanSeated(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
 							sh.carrier, seats(seat), append([]string{"PRESS"}, deps...)...)
-						assertVacantOnDeckBrought(t, fmt.Sprintf("%s/vacant=%v", name, vacant), plan, deps, vacant)
+						brought := vacant
+						if sh.cross {
+							brought = deps
+						}
+						assertVacantOnDeckBrought(t, fmt.Sprintf("%s/vacant=%v", name, vacant), plan, deps, brought)
 					}
 				}
 			}
@@ -200,10 +210,11 @@ func vacantSets(deps []string) [][]string {
 	return out
 }
 
-// assertVacantOnDeckBrought says, of a changeover plan, that each vacant
-// dependent position has an order Core reads as coming to it that is no leg
-// lifting from it, and that nothing lifts from it; with no vacant position (a
-// seat that cannot say), that no plain order is brought to any of them.
+// assertVacantOnDeckBrought says, of a changeover plan, that each dependent
+// position in vacant (those to be brought a carrier) has an order Core reads as
+// coming to it that is no leg lifting from it, and that nothing lifts from it;
+// with none to bring (a seat that cannot say on a press both styles run), that
+// no plain order is brought to any of them.
 func assertVacantOnDeckBrought(t *testing.T, name string, plan changeover.Plan, deps, vacant []string) {
 	t.Helper()
 	type row struct {

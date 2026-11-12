@@ -9,7 +9,7 @@ import (
 
 // THE FLIP STOPPED AT THE CHANGEOVER BOUNDARY.
 //
-// IndexRobotSupplies moves the supermarket trip between the two robots, and
+// RefillBy (Robot 2) moves the supermarket trip between the two robots, and
 // BuildTwoRobotPressIndexSwapSteps reads it. buildPressIndexChangeoverSwap never
 // did. So a press configured with the flip ran R2-supplies all shift and then
 // inverted the two robots' roles the moment a changeover started — same cell,
@@ -34,7 +34,7 @@ func TestPressIndexChangeover_HonoursTheFlip(t *testing.T) {
 				PayloadCode:   "PART-B",
 			}
 
-			flipped := buildPressIndexChangeoverSwap(flipClaim("consume", tc.secondPaired, true), to, false)
+			flipped := buildPressIndexChangeoverSwap(flipClaim("consume", tc.secondPaired, true), to)
 			r1 := legTrace(flipped.Roles.evac.steps)
 			r2 := legTrace(flipped.Roles.supply.steps)
 
@@ -50,7 +50,7 @@ func TestPressIndexChangeover_HonoursTheFlip(t *testing.T) {
 					tc.backPosition, r2)
 			}
 
-			unflipped := buildPressIndexChangeoverSwap(flipClaim("consume", tc.secondPaired, false), to, false)
+			unflipped := buildPressIndexChangeoverSwap(flipClaim("consume", tc.secondPaired, false), to)
 			u1 := legTrace(unflipped.Roles.evac.steps)
 			u2 := legTrace(unflipped.Roles.supply.steps)
 			if !strings.Contains(u1, "pickup@MARKET-EMPTIES") {

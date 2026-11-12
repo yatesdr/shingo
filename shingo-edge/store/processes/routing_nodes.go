@@ -154,7 +154,7 @@ func isLivePosition(db *sql.DB, processID int64, name string) (bool, error) {
 // only writer that says otherwise, and it does not come through here.
 //
 // kinds is Core's lane set, and a row naming a lane is refused in every role
-// (domain.CoreNodeKinds.RefuseLaneRow): the composer offers these rows on a
+// (domain.CoreNodeKinds.RefuseRoutingRow): the composer offers these rows on a
 // claim's legs, and no leg may name a lane.
 func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInput) (int64, error) {
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
@@ -164,7 +164,7 @@ func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInp
 	if !domain.IsRoutingRole(in.Role) {
 		return 0, fmt.Errorf("%w: %q", ErrInvalidRoutingRole, in.Role)
 	}
-	if err := kinds.RefuseLaneRow(in.Role, in.CoreNodeName); err != nil {
+	if err := kinds.RefuseRoutingRow(in.Role, in.CoreNodeName); err != nil {
 		return 0, err
 	}
 	if in.Origin == "" {
@@ -214,13 +214,14 @@ func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInp
 //
 // The row must belong to processID.
 //
-// SWITCHING A LANE ON IS REFUSED. A row naming a lane can be in the table from
-// before the saves refused one, or from migration v25, which does not filter
-// lanes; once switched off it stays off. The check reads the row first (one
-// SELECT), only when switching on with a lane known; switching off is never
+// SWITCHING ON A ROW THE LEG RULE REFUSES IS REFUSED. A row naming a lane, or
+// a member of a group as a source or a destination, can be in the table from
+// before the saves refused one, or from migration v25, which filters nothing;
+// once switched off it stays off. The check reads the row first (one SELECT),
+// only when switching on with a node list heard; switching off is never
 // refused.
 func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id int64, enabled bool, calledBy string) error {
-	if enabled && len(kinds.Lanes) > 0 {
+	if enabled && !kinds.Empty() {
 		var name, role string
 		switch err := db.QueryRow(`SELECT core_node_name, role FROM process_routing_nodes
 			WHERE id = ? AND process_id = ?`, id, processID).Scan(&name, &role); {
@@ -229,7 +230,7 @@ func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id
 		case err != nil:
 			return err
 		}
-		if err := kinds.RefuseLaneRow(role, name); err != nil {
+		if err := kinds.RefuseRoutingRow(role, name); err != nil {
 			return err
 		}
 	}
@@ -257,7 +258,7 @@ func routingFieldMatch(role string) string {
 	case domain.RoutingRoleStaging:
 		return `(TRIM(c.inbound_staging) = ?1 OR TRIM(c.outbound_staging) = ?1)`
 	default:
-		return `(TRIM(c.outbound_destination) = ?1 OR TRIM(c.changeover_evac_destination) = ?1)`
+		return `TRIM(c.outbound_destination) = ?1`
 	}
 }
 

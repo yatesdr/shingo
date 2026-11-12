@@ -46,6 +46,11 @@ type FlowPresetInput struct {
 	Name      string
 	FlowJSON  string
 	CreatedBy string
+	// Kinds is Core's node list as a leg's refusal reads it (CoreNodeKindsOf):
+	// a recipe's source or destination naming a member of a group, or a name
+	// the list does not hold, is refused as a claim's would be. Empty refuses
+	// nothing.
+	Kinds CoreNodeKinds
 }
 
 // ErrFlowPresetHasPayload refuses a preset whose cell carries a part. A
@@ -104,10 +109,50 @@ var presetNodeFields = []struct {
 	{"second_paired_core_node", func(c FlowCell) []string { return []string{c.SecondPairedCoreNode} }},
 	{"inbound_source", func(c FlowCell) []string { return []string{c.InboundSource} }},
 	{"outbound_destination", func(c FlowCell) []string { return []string{c.OutboundDestination} }},
-	{"changeover_evac_destination", func(c FlowCell) []string { return []string{c.ChangeoverEvacDestination} }},
 	{"inbound_staging", func(c FlowCell) []string { return []string{c.InboundStaging} }},
 	{"outbound_staging", func(c FlowCell) []string { return []string{c.OutboundStaging} }},
 	{"changeover_evac_nodes", func(c FlowCell) []string { return c.ChangeoverEvacNodes }},
+}
+
+// presetPickLegs are a recipe cell's legs where Core picks, with the role each
+// is offered in. Its staging legs and positions name the exact node, and its
+// evacuation list names positions (presetNodeFields has every node field).
+var presetPickLegs = []struct {
+	key, role string
+	node      func(FlowCell) string
+}{
+	{"inbound_source", RoutingRoleSource, func(c FlowCell) string { return c.InboundSource }},
+	{"outbound_destination", RoutingRoleDestination, func(c FlowCell) string { return c.OutboundDestination }},
+	{"partial_destination", RoutingRoleDestination, func(c FlowCell) string { return c.PartialDestination }},
+}
+
+// PresetLegRefusal is one recipe leg LegRefusal refuses: the cell (1-based),
+// the field, the node and the sentence.
+type PresetLegRefusal struct {
+	Cell                 int
+	Field, Node, Message string
+}
+
+// RefusedPresetLegs is every leg of the cells where Core picks that LegRefusal
+// refuses, in cell then field order. The preset save refuses on the first;
+// the Edge's report of saved setups lists them all.
+func RefusedPresetLegs(cells []FlowCell, kinds CoreNodeKinds) []PresetLegRefusal {
+	if kinds.Empty() {
+		return nil
+	}
+	var out []PresetLegRefusal
+	for i, c := range cells {
+		for _, leg := range presetPickLegs {
+			name := strings.TrimSpace(leg.node(c))
+			if name == "" || isRecipeMarker(name) {
+				continue
+			}
+			if msg := kinds.LegRefusal(leg.role, name); msg != "" {
+				out = append(out, PresetLegRefusal{Cell: i + 1, Field: leg.key, Node: name, Message: msg})
+			}
+		}
+	}
+	return out
 }
 
 // StaleNode is one node a recipe names that the process does not have: the
@@ -155,7 +200,7 @@ func StaleSentence(recipe string, s StaleNode) string {
 	gone := "which is no longer a position here"
 	var says string
 	switch s.Field {
-	case "outbound_destination", "changeover_evac_destination":
+	case "outbound_destination":
 		says = "sends " + cell + " to " + s.Node
 	case "inbound_source":
 		says, gone = "fills "+cell+" from "+s.Node, "which is no longer in this process's routing set"
@@ -196,7 +241,7 @@ func RoutingSetOf(positions []Node, routing []RoutingNode) map[string]bool {
 // — the store resolves allowed and calls this. Every cell's payload is checked
 // before any cell's nodes, and the cells before the recipe's groups
 // (ValidateRecipeGroups, which a recipe with none passes).
-func ValidateFlowPreset(flowJSON string, allowed map[string]bool) error {
+func ValidateFlowPreset(flowJSON string, allowed map[string]bool, kinds CoreNodeKinds) error {
 	var flow struct {
 		Cells []map[string]json.RawMessage `json:"cells"`
 	}
@@ -227,6 +272,10 @@ func ValidateFlowPreset(flowJSON string, allowed map[string]bool) error {
 	if stale := StaleNodes(cells, allowed); len(stale) > 0 {
 		s := stale[0]
 		return fmt.Errorf("%s: %s %q %w", label(s.Cell-1), s.Field, s.Node, ErrFlowPresetUnknownNode)
+	}
+	if refused := RefusedPresetLegs(cells, kinds); len(refused) > 0 {
+		r := refused[0]
+		return &LegError{Field: r.Field, Message: label(r.Cell-1) + ": " + r.Message}
 	}
 	for i, c := range cells {
 		if msg := missingRouting(c); msg != "" {

@@ -23,7 +23,7 @@ func TestPreviewFlow_RefusesALaneLegAndFullsFromAnEmptiesGroup(t *testing.T) {
 		{Name: "FLOW-SUP", NodeType: protocol.NodeClassNGRP},
 		{Name: "FLOW-SUP.FLOW-LANE", NodeType: protocol.NodeClassLANE},
 		{Name: "FLOW-EMPTIES", NodeType: protocol.NodeClassNGRP, Kanban: true},
-	})
+	}, false)
 
 	cells := cellsOf(t, db, toStyleID)
 	for i := range cells {

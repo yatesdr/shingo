@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine"
 )
 
@@ -159,6 +160,9 @@ func (h *Handlers) apiPullFromMarket(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.refusePicked(w, pickedNode{domain.RoutingRoleSource, req.SourceCoreName}) {
 		return
 	}
 	if err := h.orchestration.PullFromMarket(id, req.SourceCoreName); err != nil {

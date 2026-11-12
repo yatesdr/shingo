@@ -47,6 +47,7 @@ main.container { max-width: none; }
     --os-station: var(--text-strong);
     --os-robot-1: var(--robot-1);
     --os-robot-2: var(--robot-2);
+    --os-robot-3: var(--robot-3);
     --os-sub-3: var(--sub-3);
     --os-sub-4: var(--sub-4);
     --os-sub-5: var(--sub-5);
@@ -685,6 +686,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    aisle shows both instead of one hiding the other. */
 .mp-route.r1 { stroke: var(--robot-1); stroke-width: 7; opacity: .55; }
 .mp-route.r2 { stroke: var(--robot-2); stroke-width: 2.5; }
+.mp-route.r3 { stroke: var(--robot-3); stroke-width: 2.5; }
 /* THE ROUTING SET'S OWN MARKS. A plain routing node used to be drawn nowhere
    at all — only NGRP groups got a box — so a press whose whole set is plain
    nodes had a map of its own positions and nothing else. A circle, because the

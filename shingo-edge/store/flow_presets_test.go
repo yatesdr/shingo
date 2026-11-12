@@ -171,7 +171,6 @@ func TestFlowPreset_RefusesANodeOutsidePositionsAndRoutingSet(t *testing.T) {
 		{"second_paired_core_node", "PLN_99"},
 		{"inbound_source", "SMN_BUF_100"},
 		{"outbound_destination", "Somewhere Else"},
-		{"changeover_evac_destination", "ULN_002"},
 	} {
 		flow := `{"cells":[{"core_node_name":"PLN_01","` + tc.field + `":"` + tc.name + `"}]}`
 		_, err := db.CreateFlowPreset(domain.FlowPresetInput{ProcessID: pid, Name: "bad " + tc.field, FlowJSON: flow})

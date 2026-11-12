@@ -275,10 +275,10 @@ func RestoreStyle(db *sql.DB, id int64) error {
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
-	keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-	changeover_evac_nodes, changeover_evac_destination,
-	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+	changeover_evac_nodes,
+	refill_by, key_route, key_task, changeover_carryover_disposition,
 	source_preset_id, source_preset_version`
 
 // notLoaderClaim is the WHERE fragment the style copy (cloneStyleTx) selects
@@ -306,7 +306,7 @@ const notLoaderClaim = ` swap_mode != '` + string(protocol.SwapModeManualSwap) +
 // source and caller. Returns the new style id. Used by CloneStyle.
 //
 // A copied claim that names a lane on any leg refuses the clone, naming the
-// source style, the claim's node and the leg (refuseStoredLaneLegs). The
+// source style, the claim's node and the leg (refuseStoredLegs). The
 // source is fixed first; nothing is cleared on the way through.
 func cloneStyleTx(tx *sql.Tx, kinds domain.CoreNodeKinds, src *Style, name, description, source, calledBy string) (int64, error) {
 	res, err := tx.Exec(
@@ -332,7 +332,7 @@ func cloneStyleTx(tx *sql.Tx, kinds domain.CoreNodeKinds, src *Style, name, desc
 	if err != nil {
 		return 0, err
 	}
-	if err := refuseStoredLaneLegs(tx, kinds, newID, fmt.Sprintf("style %q", src.Name)); err != nil {
+	if err := refuseStoredLegs(tx, kinds, newID, fmt.Sprintf("style %q", src.Name)); err != nil {
 		return 0, err
 	}
 	return newID, nil
@@ -372,7 +372,7 @@ func CloneStyle(db *sql.DB, kinds domain.CoreNodeKinds, srcID int64, name, descr
 }
 
 // copiedClaim is the slice of a freshly copied claim row the clone's lane
-// refusal reads (readCopiedClaims, refuseCopiedLaneLegs). The copy-to override
+// refusal reads (readCopiedClaims, refuseCopiedLegs). The copy-to override
 // layer that also rewrote it went in pick-a-part U6.
 type copiedClaim struct {
 	node                               string
@@ -381,7 +381,7 @@ type copiedClaim struct {
 	allowed                            []string
 	inboundSource, outboundDestination string
 	inboundStaging, outboundStaging    string
-	evacDestination, containment       string
+	containment                        string
 	partial                            string
 	paired, second                     string
 	keepStagedNode                     string
@@ -391,37 +391,37 @@ type copiedClaim struct {
 func (c *copiedClaim) legs() NodeClaimInput {
 	return NodeClaimInput{
 		InboundSource: c.inboundSource, OutboundDestination: c.outboundDestination,
-		ChangeoverEvacDestination: &c.evacDestination, ContainmentDestination: c.containment,
-		PartialDestination: c.partial,
-		InboundStaging:     c.inboundStaging, OutboundStaging: c.outboundStaging,
+		ContainmentDestination: c.containment,
+		PartialDestination:     c.partial,
+		InboundStaging:         c.inboundStaging, OutboundStaging: c.outboundStaging,
 		KeepStagedNode: &c.keepStagedNode,
 	}
 }
 
-// refuseStoredLaneLegs reads one style's live claims as this transaction has
-// written them and refuses the first leg that names a lane. One SELECT, and
-// none when no lane is known (empty kinds refuse nothing).
-func refuseStoredLaneLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, from string) error {
-	if len(kinds.Lanes) == 0 {
+// refuseStoredLegs reads one style's live claims as this transaction has
+// written them and refuses the first leg the leg rule refuses. One SELECT, and
+// none when no node list is heard (empty kinds refuse nothing).
+func refuseStoredLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, from string) error {
+	if kinds.Empty() {
 		return nil
 	}
 	rows, err := readCopiedClaims(tx, styleID)
 	if err != nil {
 		return fmt.Errorf("read copied claims for the lane check: %w", err)
 	}
-	return refuseCopiedLaneLegs(kinds, rows, from)
+	return refuseCopiedLegs(kinds, rows, from)
 }
 
-// refuseCopiedLaneLegs refuses the first copied claim, by node name, with a
-// leg naming a lane: "<from>, claim at <node>: <leg>: <sentence>".
-func refuseCopiedLaneLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedClaim, from string) error {
+// refuseCopiedLegs refuses the first copied claim, by node name, with a
+// refused leg: "<from>, claim at <node>: <leg>: <sentence>".
+func refuseCopiedLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedClaim, from string) error {
 	nodes := make([]string, 0, len(rows))
 	for node := range rows {
 		nodes = append(nodes, node)
 	}
 	slices.Sort(nodes)
 	for _, node := range nodes {
-		if err := kinds.RefuseLaneLegs(rows[node].legs()); err != nil {
+		if err := kinds.RefuseLegs(rows[node].legs()); err != nil {
 			return fmt.Errorf("%s, claim at %s: %w", from, node, err)
 		}
 	}
@@ -435,7 +435,7 @@ func refuseCopiedLaneLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedCla
 func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, error) {
 	gr, err := tx.Query(`SELECT core_node_name, swap_mode, payload_code, allowed_payload_codes,
 		inbound_source, outbound_destination, inbound_staging, outbound_staging,
-		changeover_evac_destination, containment_destination, partial_destination,
+		containment_destination, partial_destination,
 		paired_core_node, second_paired_core_node, keep_staged_node FROM style_node_claims WHERE style_id = ? AND`+liveClaims, targetID)
 	if err != nil {
 		return nil, err
@@ -447,7 +447,7 @@ func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, erro
 		var allowed string
 		if err := gr.Scan(&c.node, &c.swapMode, &c.payload, &allowed, &c.inboundSource,
 			&c.outboundDestination, &c.inboundStaging, &c.outboundStaging,
-			&c.evacDestination, &c.containment, &c.partial, &c.paired, &c.second, &c.keepStagedNode); err != nil {
+			&c.containment, &c.partial, &c.paired, &c.second, &c.keepStagedNode); err != nil {
 			return nil, err
 		}
 		var allowedList []string

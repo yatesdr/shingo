@@ -108,6 +108,12 @@ type QueueParams struct {
 	// partner's intake, or the end of its dig — so each gets its own sentence.
 	SiblingStatus protocol.Status
 
+	// MemberOf is the node group a contained part's containment destination
+	// (Destination) is a member of: the claim names a spot the group picks
+	// among, and the order waits for the claim to name the group. Set only with
+	// CauseContainmentMember.
+	MemberOf string
+
 	// Group is the node group whose contents (not whose slots) the order is
 	// short of — the supermarket that has no bin of the payload, NOT the
 	// lineside delivery node. Naming the delivery node here is the F1 defect:
@@ -395,6 +401,12 @@ func slotSentence(p QueueParams) string {
 	}
 	if p.Family != "" {
 		return fmt.Sprintf("No slot of %s admits a cart of %s — waiting for one to leave", p.Destination, p.Family)
+	}
+	// A CONTAINMENT DESTINATION INSIDE A GROUP names the group to set instead:
+	// the claim is the thing to fix, not the floor.
+	if p.MemberOf != "" {
+		return fmt.Sprintf("Contained %s is held: its claim's containment names %s, a spot inside %s — set it to %s",
+			p.Payload, p.Destination, p.MemberOf, p.MemberOf)
 	}
 	// AT LEVEL IS NOT OUT OF ROOM, and it gets its own sentence for the reason
 	// QueueParams.AtLevel gives: the positions are free.

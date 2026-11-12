@@ -50,6 +50,10 @@ type RetrieveSpec struct {
 	// Origin is REQUIRED. There is no unattributed twin of this any more — see
 	// the Origin type, and see specimen (c) for what the twin cost.
 	Origin Origin
+	// Press is the press the order serves, named by a maker whose Process is
+	// not the press's own row (an index press's outside position); blank reads
+	// it from Process's claim (pressOf).
+	Press string
 }
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the
@@ -58,7 +62,12 @@ type RetrieveSpec struct {
 // retrieve_empty); the want rides both as stated.
 func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
-	payloadDesc, payloadCode := m.lookupPayloadMeta(s.Process, s.Payload)
+	claim := m.resolveClaimForNode(s.Process)
+	payloadDesc, payloadCode := m.payloadMetaOf(claim, s.Payload)
+	press := s.Press
+	if press == "" {
+		press = pressOf(claim)
+	}
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
 		s.Process, s.Empty,
@@ -78,13 +87,14 @@ func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 		Quantity:        s.Quantity,
 		DeliveryNode:    s.Delivery,
 		SourceNode:      s.Source,
+		ProcessNode:     press,
 		SkipAutoConfirm: s.SkipAutoConfirm,
 		OriginID:        s.Origin.ID,
 		OriginClass:     s.Origin.Class,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s want=%q", TypeRetrieve, orderID, orderUUID, s.Delivery, s.Want)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s press=%s want=%q", TypeRetrieve, orderID, orderUUID, s.Delivery, press, s.Want)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, s.Process)
 
 	return m.db.GetOrder(orderID)
@@ -96,7 +106,7 @@ func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 // operator station is wired up to confirm manually.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, false, namedBin{}, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, false, namedBin{}, "", origin)
 }
 
 // CreateMoveOrderWithPayloadCode is CreateMoveOrder with an explicit payload
@@ -110,7 +120,7 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 // no-payload-code fallback in operator-render.js / operator-modal.js.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, namedBin{}, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, namedBin{}, "", origin)
 }
 
 // CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
@@ -127,7 +137,7 @@ func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity 
 // with the incoming style's part. Empty still backfills, for callers with no
 // better answer.
 func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, remainingUOP *int, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, false, namedBin{}, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, false, namedBin{}, "", origin)
 }
 
 // CreateMoveOrderCarrying moves the carrier standing on sourceNode and names
@@ -142,7 +152,7 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // it may land. So this one says exactly what the bin is. Auto-confirmed: no
 // operator receives a carrier going back to where it came from.
 func (m *Manager) CreateMoveOrderCarrying(processNodeID *int64, sourceNode, deliveryNode, carried string, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{}, origin)
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{}, "", origin)
 }
 
 // CreateMoveOrderForBin is CreateMoveOrderCarrying for one bin: binID is Core's
@@ -152,7 +162,14 @@ func (m *Manager) CreateMoveOrderCarrying(processNodeID *int64, sourceNode, deli
 // move decided from a read of what stands on the source, which must not carry
 // away whatever lands there after.
 func (m *Manager) CreateMoveOrderForBin(processNodeID *int64, sourceNode, deliveryNode, carried string, binID int64, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{id: binID}, origin)
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{id: binID}, "", origin)
+}
+
+// CreateMoveOrderForBinServing is CreateMoveOrderForBin made against a row
+// that is not the press's own (an index press's outside position, SEND BACK's
+// cart), naming the press it serves (protocol.OrderRequest.ProcessNode).
+func (m *Manager) CreateMoveOrderForBinServing(press string, processNodeID *int64, sourceNode, deliveryNode, carried string, binID int64, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, namedBin{id: binID}, press, origin)
 }
 
 // namedBin is the bin a move names and the hold it asks for: id 0 names none
@@ -169,7 +186,7 @@ type namedBin struct {
 // bin is not there ("not at that source"), lifts it and no other, and ends the
 // move skipped once it has left.
 func (m *Manager) CreateMoveOrderWithPayloadCodeForBin(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, binID int64, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, namedBin{id: binID}, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, namedBin{id: binID}, "", origin)
 }
 
 // CreateHoldMoveOrder is the move that takes one bin to quality containment and asks
@@ -177,14 +194,14 @@ func (m *Manager) CreateMoveOrderWithPayloadCodeForBin(processNodeID *int64, qua
 // sets its hold marker attributed to heldBy and births the move in one
 // transaction, or refuses all three (protocol.OrderRequest.QualityHoldBy).
 func (m *Manager) CreateHoldMoveOrder(processNodeID *int64, sourceNode, deliveryNode, payloadCode string, binID int64, heldBy string, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, payloadCode, nil, true, false, namedBin{id: binID, holdBy: heldBy}, origin)
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, payloadCode, nil, true, false, namedBin{id: binID, holdBy: heldBy}, "", origin)
 }
 
 // CreateMoveOrderCarryingTo is CreateMoveOrderCarrying for a carrier delivered
 // to a line: the line's own confirm policy applies, since an operator may be
 // there to receive it.
 func (m *Manager) CreateMoveOrderCarryingTo(processNodeID *int64, sourceNode, deliveryNode, carried string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, autoConfirm, true, namedBin{}, origin)
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, autoConfirm, true, namedBin{}, "", origin)
 }
 
 // createMoveOrder is the one body behind every move variant.
@@ -197,16 +214,22 @@ func (m *Manager) CreateMoveOrderCarryingTo(processNodeID *int64, sourceNode, de
 // carried says payloadCode is the carrier's own and is not back-filled when
 // blank (CreateMoveOrderCarrying). bin names the one bin the move is for, none
 // when zero (CreateMoveOrderForBin), and the hold it asks for (CreateHoldMoveOrder).
+// press is the press the move serves; blank reads it from processNodeID's
+// claim (pressOf).
 func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 	sourceNode, deliveryNode, payloadCode string, remainingUOP *int,
-	autoConfirm, carried bool, bin namedBin, origin Origin) (*orders.Order, error) {
+	autoConfirm, carried bool, bin namedBin, press string, origin Origin) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
+	claim := m.resolveClaimForNode(processNodeID)
 	var payloadDesc string
 	if carried {
 		payloadDesc = m.payloadDesc(payloadCode)
 	} else {
-		payloadDesc, payloadCode = m.lookupPayloadMeta(processNodeID, payloadCode)
+		payloadDesc, payloadCode = m.payloadMetaOf(claim, payloadCode)
+	}
+	if press == "" {
+		press = pressOf(claim)
 	}
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
@@ -234,6 +257,7 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 		Quantity:      quantity,
 		DeliveryNode:  deliveryNode,
 		SourceNode:    sourceNode,
+		ProcessNode:   press,
 		RemainingUOP:  remainingUOP,
 		OriginID:      origin.ID,
 		OriginClass:   origin.Class,
@@ -242,8 +266,8 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s payload=%s remainingUOP=%v bin=%d hold=%q origin=%s",
-		TypeMove, orderID, orderUUID, sourceNode, deliveryNode, payloadCode, remainingUOP, bin.id, bin.holdBy, origin.ID)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s payload=%s remainingUOP=%v bin=%d hold=%q press=%s origin=%s",
+		TypeMove, orderID, orderUUID, sourceNode, deliveryNode, payloadCode, remainingUOP, bin.id, bin.holdBy, press, origin.ID)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }

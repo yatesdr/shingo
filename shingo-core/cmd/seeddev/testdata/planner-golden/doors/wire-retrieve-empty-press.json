@@ -3,6 +3,7 @@
     "delivery": "PLN_005",
     "door": "edge wire intake",
     "payload": "PANEL-A",
+    "process_node": "PLN_005",
     "source": "SYN_PRESS_EMPTIES",
     "type": "retrieve_empty"
   },

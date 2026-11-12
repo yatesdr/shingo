@@ -178,6 +178,12 @@ func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
 	return nodes.LaneForNode(db.DB, nodeID)
 }
 
+// GroupOf returns the node group nodeID is a member of (its nearest NGRP
+// ancestor; a lane slot's is its lane's group), or nil when it is in none.
+func (db *DB) GroupOf(nodeID int64) (*nodes.Node, error) {
+	return nodes.GroupOf(db.DB, nodeID)
+}
+
 // AuditLaneGeometry returns startup warnings about single-file lane geometry the
 // one-hop parent walk cannot see (§8).
 func (db *DB) AuditLaneGeometry() ([]string, error) {

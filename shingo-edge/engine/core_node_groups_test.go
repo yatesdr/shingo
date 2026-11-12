@@ -25,7 +25,7 @@ func TestSetCoreNodes_RetainsGroupMembership(t *testing.T) {
 		{Name: "Supermarket Empty Totes.SMN_06", NodeType: "SMN"},
 		{Name: "Supermarket Area.SMN_01", NodeType: "SMN"},
 		{Name: "PLN_01", NodeType: "PLN"},
-	})
+	}, false)
 	groups := e.CoreNodeGroups()
 	for _, m := range groups {
 		sort.Strings(m)
@@ -44,7 +44,7 @@ func TestSetCoreNodes_RetainsGroupMembership(t *testing.T) {
 	// A later sync without SMN_06 drops it from the group.
 	e.SetCoreNodes([]protocol.NodeInfo{
 		{Name: "Supermarket Empty Totes.SMN_05", NodeType: "SMN"},
-	})
+	}, false)
 	if got := e.CoreNodeGroups()["Supermarket Empty Totes"]; !reflect.DeepEqual(got, []string{"SMN_05"}) {
 		t.Errorf("after a resync the group is %v, want [SMN_05] — membership is rebuilt, not accumulated", got)
 	}

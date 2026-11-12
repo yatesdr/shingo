@@ -127,7 +127,31 @@ func (m *Manager) lookupRouting(processNodeID *int64) (keyRoute []string) {
 }
 
 func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {
-	claim := m.resolveClaimForNode(processNodeID)
+	return m.payloadMetaOf(m.resolveClaimForNode(processNodeID), payloadCode)
+}
+
+// pressOf is the press an order made for claim's node serves
+// (protocol.OrderRequest.ProcessNode): the claim's Core node, the value every
+// maker of a multi-step order hands createComplexOrder. Blank with no claim,
+// and for a loader's: a loader's order names no press. A maker whose process
+// node is not the press's own row (an index press's outside position) names
+// the press itself.
+func pressOf(claim *processes.NodeClaim) string {
+	if claim == nil || claim.IsLoaderNode() {
+		return ""
+	}
+	return claim.CoreNodeName
+}
+
+// PressOf is pressOf for the claim that governs processNodeID now (the one the
+// payload is read from): the press an order made for that node serves, for a
+// door that builds its own multi-step order (the HTTP API's).
+func (m *Manager) PressOf(processNodeID *int64) string {
+	return pressOf(m.resolveClaimForNode(processNodeID))
+}
+
+// payloadMetaOf is lookupPayloadMeta over a claim already resolved.
+func (m *Manager) payloadMetaOf(claim *processes.NodeClaim, payloadCode string) (desc, code string) {
 	if claim == nil {
 		return "", payloadCode
 	}

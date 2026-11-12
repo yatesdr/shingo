@@ -207,8 +207,9 @@ func positionWorkedBy(node *processes.Node, claim *processes.NodeClaim, rows []d
 	// here rather than in the query keeps the SQL one shape for every caller
 	// and keeps the predicate in one place — see leg_departure.go.
 	//
-	// A KEEP-STAGED REFILL IS EXCUSED (isSpotRefill): a plain order bound for the
-	// claim's inbound staging that never touches the line. It is attributed to
+	// A CARRIER COMING TO ANOTHER POSITION IS EXCUSED (comingToAnotherPosition):
+	// a plain order bound for the claim's keep-staged spot or an index press's
+	// position behind the front, that never touches the line. It is attributed to
 	// the line and never departs, so read as working the cell it would refuse this
 	// downgrade with "a bin is already on its way" for the whole trip, and with a
 	// dry market for ever, while no bin is on its way to the line at all.

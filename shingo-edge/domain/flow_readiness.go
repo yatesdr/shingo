@@ -32,8 +32,9 @@ type NodeFinding struct {
 // composer. No caller yet; the composer's preview calls it, the desktop
 // renderer calls it.
 //
-// MATCHING MIRRORS engine.DiffStyleClaims without importing it: claims pair by
-// CoreNodeName across the union of both sides. A node on one side only is an
+// MATCHING IS THE PLANNER'S: claims pair by CoreNodeName across the union of
+// both sides, as engine.DiffStyleClaims pairs them, and the situation is the
+// planner's one decision (ChangeoverSituation). A node on one side only is an
 // add or a drop, and the planner consults no field registry for those, so
 // they produce no finding here either. A pair whose payload and role are
 // unchanged and that evacuates nothing builds no orders, so it produces none
@@ -102,26 +103,14 @@ func ValidateFlowChangeoverReadiness(from, to []NodeClaim) []NodeFinding {
 	return out
 }
 
-// changeoverBuildsOrders mirrors the arms of engine.DiffStyleClaims that lead
-// to a swap or an evacuation — the two situations for which the planner
-// consults the field registry. Everything else (an add, a drop, an unchanged
-// node, a node empty on both sides) builds no per-mode order and so cannot be
-// unready in the sense this validator measures.
+// changeoverBuildsOrders: the situations for which the planner consults the
+// field registry, a swap and an evacuation (ChangeoverSituation, the planner's
+// own decision). Everything else (an add, a drop, an unchanged node, a node
+// empty on both sides) builds no per-mode order and so cannot be unready in the
+// sense this validator measures.
 func changeoverBuildsOrders(from, to *NodeClaim) bool {
-	if from == nil || to == nil {
-		return false // add or drop: no registry consulted
-	}
-	const empty = "__empty__"
-	if to.PayloadCode == empty || from.PayloadCode == empty {
-		return false // explicit clear, or a node that was empty: drop / add
-	}
-	if ToolingClearanceApplies(from, to) {
-		return true // staged tooling evacuation, whatever the payloads do
-	}
-	if from.PayloadCode == to.PayloadCode && from.Role == to.Role {
-		return from.EvacuateOnChangeover // same part: only a whole-node evacuation builds orders
-	}
-	return true // swap
+	s := ChangeoverSituation(from, to)
+	return s == SituationSwap || s == SituationEvacuate
 }
 
 // ValidateFlowPartsPlaced answers a question the per-cell validator cannot:

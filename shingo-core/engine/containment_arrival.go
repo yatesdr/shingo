@@ -16,12 +16,16 @@ import "shingocore/store/nodes"
 // of "a bin that is contained" carry the same marker and read the same to
 // everything downstream.
 //
-// CALLED AFTER ApplyArrival at both arrival sites (the delivery path and
-// the completion safety net). Deliberately NOT called on the multi-bin
-// junction path: the divert's scope check requires the final dropoff to be
-// the claim's FG outbound, and a multi-bin order is a supply leg to a
-// consuming process node - it never diverts, so its arrivals are never
-// containment arrivals.
+// CALLED AFTER every arrival: the delivery path and the completion safety
+// net (a cart set down last), and the intermediate store (a cart set down at
+// an interior drop, handleStoreBlockCompleted). The divert moves the drop of
+// the carrier the order lifts at its press, which is not always the plan's
+// last: an index press's Robot 1 takes the full to containment and goes on
+// to fill the back position, so the full lands at an interior drop, and the
+// finished path, which skips a cart already at its drop, never sees it. The
+// stamp asks of every arrival whether the bin's part is contained and the
+// node is its containment destination, so an arrival anywhere else is a
+// no-op.
 //
 // Failures log and return; the arrival itself has already committed and
 // must not be unwound by a stamping problem. A missed stamp is the bug

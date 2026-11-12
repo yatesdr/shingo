@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
@@ -16,16 +18,21 @@ import (
 )
 
 // place_by_contents.go — choosing a lifted carrier's drop by what it holds
-// (dropByContents): the partial arm, then the keeper arm.
+// (dropByContents): the other-part arm, then the partial arm, then the keeper
+// arm.
 //
 // A carrier leaves a line full, empty, or UNFINISHED: its part set, its count
-// above 0 and below the part's capacity. A full goes where the claim sends it;
-// so does an unfinished one, unless the claim names a partial home
-// (partial_destination), where it waits to be called back and finished. An
-// EMPTY lifted off a line position goes to a kanban that is short of
-// it, when one supporting that position is: the keeper wins over the
-// planned drop. Core owns the count, so Core decides: the Edge authors the
-// route and never reads the count to choose a drop.
+// above 0 and below the part's capacity. A full goes where the claim for its
+// part at that node sends it: the order's claim's outbound for the order's
+// part, another claim's for another part. So does an unfinished one, unless
+// the claim names a partial home (partial_destination), where it waits to be
+// called back and finished. An EMPTY lifted off a line position goes to a
+// kanban supporting that position whenever a slot of it takes the cart: the
+// keeper wins over the planned drop. Core holds the bin and owns the count, so
+// Core decides: the Edge authors the route with the claim's ordinary
+// destinations and never reads the carrier to choose a drop. A carrier set
+// down at the node it was lifted from (a round trip to staging and back) has
+// not left, and keeps its drop.
 //
 // ── WHEN ──────────────────────────────────────────────────────────────────
 // At the moment the count is final and before the drop reaches the fleet:
@@ -120,25 +127,119 @@ func liftOff(steps []resolvedStep, node string, from, to int) int {
 }
 
 // dropByContents is the one by-contents choice, every door's: where carrier b,
-// lifted off liftNode and planned to current, goes by what it holds. The
-// partial arm first (partialHome: an unfinished carrier to its claim's partial
-// home), then the keeper arm (kanbanSlot: an empty off a line position
-// to a kanban short of it). "" keeps the planned drop, and nothing
-// stalls for want of either. why is the reason, for the door's log. count is
-// the carrier's final count: the bin's at a release, the operator's at a move
-// that declares one.
+// lifted off liftNode and planned to current, goes by what it holds.
+//
+//   - A carrier set down at the node it was lifted from has not left (a
+//     carry-over round trip, out to staging and back): its drop is its own.
+//   - The other-part arm first (otherPartHome): a carrier aimed at another
+//     part's outbound goes where its own part's claim at liftNode sends it.
+//     That is the planned drop the arms after it ask about.
+//   - Then the partial arm (partialHome: an unfinished carrier to its claim's
+//     partial home), then the keeper arm (kanbanSlot: an empty off a line
+//     position to a kanban that takes it).
+//
+// "" keeps the planned drop, and nothing stalls for want of any of them. why
+// is the reason, for the door's log. count is the carrier's final count: the
+// bin's at a release, the operator's at a move that declares one. asked is the
+// planned drop as the order asked for it (authoredDrop): the group a slot was
+// resolved from, else current.
 func dropByContents(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, count int,
-	liftNode, current string, stated binresolver.BinTypeStatement) (target, why string) {
-	if b == nil {
+	liftNode, current, asked string, stated binresolver.BinTypeStatement) (target, why string) {
+	if b == nil || current == liftNode {
 		return "", ""
 	}
-	if t := partialHome(db, pure, order, b, count, liftNode, current, stated); t != "" {
+	planned, plannedWhy := current, ""
+	if t, w := otherPartHome(db, pure, order, b, liftNode, asked, stated); t != "" {
+		planned, plannedWhy = t, w
+	}
+	if t := partialHome(db, pure, order, b, count, liftNode, planned, stated); t != "" {
 		return t, fmt.Sprintf("leaves %s unfinished (%d of %s) — to its partial home", liftNode, count, b.PayloadCode)
 	}
-	if t := kanbanSlot(db, pure, order, b, liftNode, current); t != "" {
+	if t := kanbanSlot(db, pure, order, b, liftNode, planned); t != "" {
 		return t, fmt.Sprintf("leaves %s empty — to its kanban,", liftNode)
 	}
+	if planned != current {
+		return planned, plannedWhy
+	}
 	return "", ""
+}
+
+// otherPartHome is the other-part arm: where a carrier aimed at another part's
+// outbound goes, the outbound of the claim at liftNode for the carrier's own
+// part, a concrete node as named, a group's free slot for this carrier.
+//
+// KEYED ON THE CARRIER AND THE DROP, NOT THE ORDER'S PART. The Edge aims every
+// leg at the outbound of the claim the leg is for, and a cell left holding
+// another style's carrier (a changeover leg cancelled, a carrier set down by
+// hand) would send it to that claim's outbound, where it blocks the part that
+// lives there. An order's part does not say which carrier it lifts: a swap's
+// legs carry the requested claim's, the Material page's release the
+// carrier's own. The drop does: asked is another part's outbound at this node
+// and not the carrier's own, so the claim the order was for aimed it. A drop
+// that is nobody's outbound (SEND BACK's kanban, a staging spot, a partial
+// home, containment) was chosen for the carrier and is left alone.
+//
+// "" when the carrier holds no part, its part's claim sends it where it is
+// aimed already (two parts may share an outbound), or the drop is no other
+// part's outbound; and, said in the log, when no claim at the node names its
+// part, the claims for it disagree, or its home has no room.
+func otherPartHome(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.Bin, liftNode, asked string,
+	stated binresolver.BinTypeStatement) (target, why string) {
+	if b.PayloadCode == "" || asked == "" {
+		return "", ""
+	}
+	routes, err := db.ClaimOutboundsAt(liftNode)
+	if err != nil {
+		log.Printf("dispatch: claim outbounds at %s failed — order %d keeps its drop: %v", liftNode, order.ID, err)
+		return "", ""
+	}
+	own := routes[b.PayloadCode]
+	if slices.Contains(own, asked) {
+		return "", ""
+	}
+	aimedFor := ""
+	for part, outs := range routes {
+		if part != b.PayloadCode && slices.Contains(outs, asked) {
+			aimedFor = part
+			break
+		}
+	}
+	if aimedFor == "" {
+		return "", ""
+	}
+	switch len(own) {
+	case 0:
+		log.Printf("WARN: order %d lifts %s off %s, aimed at %s (the outbound for %s), and no claim at %s names %s "+
+			"— it keeps its drop", order.ID, b.PayloadCode, liftNode, asked, aimedFor, liftNode, b.PayloadCode)
+		return "", ""
+	case 1:
+	default:
+		log.Printf("WARN: order %d lifts %s off %s, aimed at %s (the outbound for %s), and the claims at %s disagree "+
+			"on where %s goes (%s) — it keeps its drop. Fix the claims: one node and part, one outbound.",
+			order.ID, b.PayloadCode, liftNode, asked, aimedFor, liftNode, b.PayloadCode, strings.Join(own, ", "))
+		return "", ""
+	}
+	home := own[0]
+	why = fmt.Sprintf("holds %s, not %s — to its own claim's outbound,", b.PayloadCode, aimedFor)
+	node, err := db.GetNodeByDotName(home)
+	if err != nil || node == nil {
+		log.Printf("WARN: the outbound %q of %s at %s does not resolve to a node — order %d keeps its drop",
+			home, b.PayloadCode, liftNode, order.ID)
+		return "", ""
+	}
+	if node.NodeTypeCode != protocol.NodeClassNGRP {
+		return node.Name, why
+	}
+	if pure == nil {
+		return "", ""
+	}
+	res, err := pure.StoreDestination(node, b.PayloadCode, stated, digAskerFor(order))
+	if err != nil || res == nil || res.Node == nil {
+		log.Printf("dispatch: %s has no room for bin %d of %s — order %d keeps its drop: %v",
+			home, b.ID, b.PayloadCode, order.ID, err)
+		return "", ""
+	}
+	return res.Node.Name, why
 }
 
 // partialHome is the partial arm: where an unfinished carrier of the claim at
@@ -208,24 +309,26 @@ func partialHome(db *store.DB, pure *plan.Planner, order *orders.Order, b *bins.
 }
 
 // kanbanSlot is the keeper arm: where an empty lifted off a line
-// position goes when a kanban supporting that position wants it,
-// "" when none does. The keeper is absolute where it wants the carrier and
+// position goes when a kanban supporting that position takes it,
+// "" when none does. The keeper is absolute where it takes the carrier and
 // the door knows what the carrier is.
 //
 //   - The carrier is empty (no part) and not bare; the lift node is a line
 //     position (IsLinePosition): never a move off a loader window, a storage
 //     node or a group.
-//   - A tote cart goes only as its own height, by its carrier state: tops &
-//     bottoms to a group short of its tops & bottoms row; an empty at whole
-//     layers to a group short of that wanted height (or, where the group wants
-//     no heights of the type, short of the type); a leftover or an unverified
-//     cart keeps the planned drop, where the unloader's card decides. A tote
-//     cart lifted off a fed press's outside (IsFedOutside) always keeps the
-//     planned drop: its count is exact only at its lift, after every door.
-//   - Any other empty goes to a group short of its type (the keeper's Short).
-//   - Of the groups that want it, the largest gap first, ties by name, the
-//     first with a slot that admits the cart (StoreDestination, the cart
-//     stated).
+//   - A tote cart goes only as tops & bottoms or an empty at whole layers, by
+//     its carrier state; a leftover or an unverified cart keeps the planned
+//     drop, where the unloader's card decides. A tote cart lifted off a fed
+//     press's outside (IsFedOutside) always keeps the planned drop: its count
+//     is exact only at its lift, after every door.
+//   - The cart is of the supporting kanban's loop (a cart off a position it
+//     supports, nodes.KanbanDoor.Loop), so it lands in the kanban whenever a
+//     slot admits it, whatever the level says (plan.Planner.ChoosePush; the
+//     group resolver asks no level of a loop cart). With no slot free, it goes
+//     to the first of the kanban's sources short of its type; with none, it
+//     keeps the planned drop.
+//   - Kanbans supporting the position are asked in the order
+//     KanbansSupporting reads them, the first with a slot taking the cart.
 //
 // Reads, only for an empty off a line position: the line-position read, the
 // fed-outside read for a tote cart, the supporting groups; per supporting
@@ -300,8 +403,10 @@ func containedAt(db *store.DB, lineNode, payloadCode string) (bool, error) {
 // placeByContentsAtRelease re-points, in the order's stored plan, the drop of
 // the carrier the segment released at waitIndex lifts off the order's line to
 // where it goes by what it holds (dropByContents), moving the order's slot
-// hold with it. It reports whether the plan changed; the caller re-reads the
-// plan and splits its segment again.
+// hold with it. The plan is spliced and the robot stands at the released wait,
+// so the rest of the route is planned again from there (repoint): the waits
+// spliced for the old drop do not survive it. It reports whether the plan
+// changed; the caller re-reads the plan and splits its segment again.
 func (d *Dispatcher) placeByContentsAtRelease(order *orders.Order, steps []resolvedStep, waitIndex int) bool {
 	line := order.ProcessNode
 	if line == "" {
@@ -321,11 +426,76 @@ func (d *Dispatcher) placeByContentsAtRelease(order *orders.Order, steps []resol
 		return false
 	}
 	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, steps[f].Node,
-		d.carriedType(order, f))
+		authoredDrop(steps[f]), d.carriedType(order, f))
 	if target == "" || target == steps[f].Node {
 		return false
 	}
-	return d.repointDrop(order, steps, f, b, target, why)
+	return d.repointAtRelease(order, steps, from, f, b, target, why)
+}
+
+// repointAtRelease moves step f's drop to target at a release: the slot hold
+// first (refused, nothing moves), then the plan and the rest of the route
+// (repoint, from the released wait), then the old drop's hold goes. A route
+// the splice refuses keeps the planned drop and gives the new hold back. why
+// is the caller's reason (dropByContents), said in the log.
+func (d *Dispatcher) repointAtRelease(order *orders.Order, steps []resolvedStep, from, f int, b *bins.Bin, target, why string) bool {
+	was := steps[f].Node
+	tn, err := d.db.GetNodeByDotName(target)
+	if err != nil || tn == nil {
+		return false
+	}
+	if err := d.db.ReserveSlot(tn.ID, order.ID); err != nil {
+		log.Printf("dispatch: slot %s is held — order %d keeps its drop at %s: %v", target, order.ID, was, err)
+		return false
+	}
+	if err := d.db.ConfirmSlotClaim(tn.ID, order.ID, nil); err != nil {
+		d.giveBackSlot(tn, order.ID)
+		log.Printf("dispatch: slot %s refused the claim — order %d keeps its drop at %s: %v", target, order.ID, was, err)
+		return false
+	}
+	inside, err := d.laneAt(steps, from)
+	if err == nil {
+		_, err = d.repoint(order, steps, stepMove{at: f, action: protocol.ActionDropoff, node: target},
+			&spliceFrom{at: from, inside: inside})
+	}
+	if err != nil {
+		d.giveBackSlot(tn, order.ID)
+		log.Printf("dispatch: order %d keeps its drop at %s (bin %d %s %s): %v", order.ID, was, b.ID, why, target, err)
+		return false
+	}
+	if fn, err := d.db.GetNodeByDotName(was); err == nil && fn != nil {
+		if err := d.db.ReleaseSlotClaim(fn.ID, order.ID); err != nil {
+			log.Printf("dispatch: release order %d's hold on %s after the re-point: %v", order.ID, was, err)
+		}
+	}
+	log.Printf("dispatch: order %d: bin %d %s %s instead of %s", order.ID, b.ID, why, target, was)
+	return true
+}
+
+// giveBackSlot drops the hold a refused re-point took on n: the claim, and
+// the reservation with it (ReleaseSlotClaim takes both).
+func (d *Dispatcher) giveBackSlot(n *nodes.Node, orderID int64) {
+	if err := d.db.ReleaseSlotClaim(n.ID, orderID); err != nil {
+		log.Printf("dispatch: slot %s: give back order %d's hold after a refused re-point: %v", n.Name, orderID, err)
+	}
+}
+
+// laneAt is the gated lane the robot is in when it reaches step from: the
+// lane of the wait it stands at in front of it (steps[from-1]), 0 for a wait
+// at a node in no lane (a line, a staging spot) or at none.
+func (d *Dispatcher) laneAt(steps []resolvedStep, from int) (int64, error) {
+	if from <= 0 || from > len(steps) {
+		return 0, nil
+	}
+	w := steps[from-1]
+	if w.Action == protocol.ActionWait && w.WaitKind == WaitKindLane {
+		return w.WaitLane, nil
+	}
+	lane, err := d.laneOfStep(w.Node)
+	if err != nil || lane == nil {
+		return 0, err
+	}
+	return lane.ID, nil
 }
 
 // placeByContentsAtReserve is the door for a lift with no wait ahead of it (the
@@ -368,7 +538,8 @@ func (d *Dispatcher) placeByContentsAtReserve(order *orders.Order, plan *Complex
 		return
 	}
 	from := steps[f].Node
-	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, from, binresolver.KnownCarrier(b))
+	target, why := dropByContents(d.db, d.planner.pure, order, b, b.UOPRemaining, line, from, authoredDrop(steps[f]),
+		binresolver.KnownCarrier(b))
 	if target == "" || target == from {
 		return
 	}
@@ -437,51 +608,6 @@ func (d *Dispatcher) binStandingAt(node string) *bins.Bin {
 	return bs[0]
 }
 
-// repointDrop moves step f's drop to target: the slot hold first (refused,
-// nothing moves), then the plan, the delivery node when f is the plan's last
-// drop, and the carrier's junction row. why is the caller's reason
-// (dropByContents), said in the log.
-func (d *Dispatcher) repointDrop(order *orders.Order, steps []resolvedStep, f int, b *bins.Bin, target, why string) bool {
-	from := steps[f].Node
-	tn, err := d.db.GetNodeByDotName(target)
-	if err != nil || tn == nil {
-		return false
-	}
-	if err := d.db.ReserveSlot(tn.ID, order.ID); err != nil {
-		log.Printf("dispatch: slot %s is held — order %d keeps its drop at %s: %v", target, order.ID, from, err)
-		return false
-	}
-	if err := d.db.ConfirmSlotClaim(tn.ID, order.ID, nil); err != nil {
-		if rErr := d.db.ReleaseSlotReservation(tn.ID, order.ID); rErr != nil {
-			log.Printf("dispatch: slot %s: release after a refused claim: %v", target, rErr)
-		}
-		log.Printf("dispatch: slot %s refused the claim — order %d keeps its drop at %s: %v", target, order.ID, from, err)
-		return false
-	}
-	if fn, err := d.db.GetNodeByDotName(from); err == nil && fn != nil {
-		if err := d.db.ReleaseSlotClaim(fn.ID, order.ID); err != nil {
-			log.Printf("dispatch: release order %d's hold on %s after the re-point: %v", order.ID, from, err)
-		}
-	}
-	last := true
-	for i := f + 1; i < len(steps); i++ {
-		if steps[i].Action == protocol.ActionDropoff {
-			last = false
-			break
-		}
-	}
-	if last {
-		if err := applyDeliveryNodeAtStep(d.db, order, target, f); err != nil {
-			log.Printf("dispatch: re-point order %d → %s: %v", order.ID, target, err)
-			return false
-		}
-	} else {
-		applyPlanNode(d.db, order, target, f, protocol.ActionDropoff)
-	}
-	log.Printf("dispatch: order %d: bin %d %s %s instead of %s", order.ID, b.ID, why, target, from)
-	return true
-}
-
 // placeByContentsMove is the plain move's door, after the pick: a move off a
 // line goes where its carrier goes by what it holds (dropByContents), by the
 // count the operator declared on it (the Material page's release, the manual
@@ -498,7 +624,8 @@ func (s *PlanningService) placeByContentsMove(order *orders.Order, pick SourceRe
 	if order.RemainingUOP != nil {
 		count = *order.RemainingUOP
 	}
-	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, binresolver.KnownCarrier(b))
+	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, order.DeliveryNode,
+		binresolver.KnownCarrier(b))
 	if target == "" || target == order.DeliveryNode {
 		return nil
 	}
@@ -528,7 +655,8 @@ func (s *PlanningService) byContentsDrop(order *orders.Order, b *bins.Bin) (*nod
 	if order.RemainingUOP != nil {
 		count = *order.RemainingUOP
 	}
-	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, binresolver.KnownCarrier(b))
+	target, why := dropByContents(s.db, s.pure, order, b, count, order.SourceNode, order.DeliveryNode, order.DeliveryNode,
+		binresolver.KnownCarrier(b))
 	if target == "" || target == order.DeliveryNode {
 		return nil, ""
 	}

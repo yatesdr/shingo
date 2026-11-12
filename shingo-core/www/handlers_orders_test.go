@@ -486,8 +486,9 @@ func routeText(row string) string {
 
 // U4: the route strip in place of the UUID column, the payload printed once,
 // and Created with seconds (rows share a minute). An order in transit that has
-// finished no block is on its way to its origin: the arrow before it, the line
-// the +1 between the origin (next) and the final.
+// finished no block is on its way to its origin: the arrow before it. An order
+// with no steps draws its pickup and its drop; the press it serves (ALN_003)
+// is no stop, where it drew a +1 between them (domain.RouteView).
 func TestOrdersBoard_RowColumns(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -510,7 +511,7 @@ func TestOrdersBoard_RowColumns(t *testing.T) {
 	if strings.Contains(row, "pin-uuid-7f3a") {
 		t.Error("the row still prints the edge UUID")
 	}
-	if got, want := routeText(row), "› UTN_014 › +1 › UTN_013"; got != want {
+	if got, want := routeText(row), "› UTN_014 › UTN_013"; got != want {
 		t.Errorf("route = %q, want %q", got, want)
 	}
 	if strings.Count(visibleText(row), "SHIM") != 1 {

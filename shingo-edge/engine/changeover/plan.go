@@ -71,6 +71,16 @@ type NodeAction struct {
 	NextState    domain.NodeTaskState // node-task state to set on success
 	LogTag       string               // short tag used in success log line
 	Err          error                // pre-flight validation failure (planning-time)
+	// ClearsAtStart: the action's leg that lifts the node's carrier has no
+	// release in front of it and goes at START: the supply order of a tool
+	// change's clearing leg, the evac order of a marked drop. START is then
+	// the operator's press: the applier locks the departing produce count
+	// there, as a Ready press's release does elsewhere.
+	ClearsAtStart bool
+	// FollowOns is how many orders the action's legs leave to be made after a
+	// lift: one per position of the incoming claim they lift from and set
+	// nothing down on. Counted by OrderCount.
+	FollowOns int `json:",omitempty"`
 }
 
 // Plan is the full set of per-node actions for a changeover.
@@ -104,6 +114,7 @@ func (p Plan) OrderCount() int {
 		if a.EvacOrder != nil {
 			n++
 		}
+		n += a.FollowOns
 	}
 	return n
 }

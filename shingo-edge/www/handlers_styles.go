@@ -352,17 +352,17 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int64{"id": newID})
 }
 
-// coreNodeKinds is Core's lane and kanban sets as the engine holds
-// them, for a store write that refuses a lane on a leg. Empty before the first
-// node list, which refuses nothing.
+// coreNodeKinds is Core's node list reduced to what a leg's refusal reads (its
+// lanes, kanbans, group members and names), for a store write that refuses a
+// leg. Empty before the first node list, which refuses nothing.
 func (h *Handlers) coreNodeKinds() domain.CoreNodeKinds {
-	return domain.CoreNodeKindsOf(h.engine.CoreNodes())
+	return h.engine.CoreNodeKinds()
 }
 
 // styleWriteStatus is 400 for a clone refused because a copied
 // claim names a lane, and 500 for anything else.
 func styleWriteStatus(err error) int {
-	if errors.Is(err, domain.ErrLaneLeg) {
+	if errors.Is(err, domain.ErrRefusedLeg) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError

@@ -78,13 +78,20 @@ const (
 )
 
 // OnStaged decides what Core's OrderStaged at station wait ordinal does to
-// the intent. A lane wait (ordinal nil) changes nothing.
-func (i *Intent) OnStaged(ordinal *int) StageEffect {
+// the intent; purpose is that wait's (Facts.PurposeAt). A lane wait (ordinal
+// nil) changes nothing.
+//
+// A STANDING INTENT FOLLOWS ONLY WAITS OF ITS OWN PURPOSE. It stands through
+// the waits a creation put in front of curtained nodes, all of them the
+// creation's purpose; a wait for another decision (a tool change's Tooling
+// done) is the operator's to release, so reaching it consumes the intent. An
+// unknown purpose consumes too: nobody's press is assumed.
+func (i *Intent) OnStaged(ordinal *int, purpose Purpose) StageEffect {
 	if i == nil || ordinal == nil {
 		return StageKeep
 	}
 	switch {
-	case *ordinal > i.StationWait && i.Standing:
+	case *ordinal > i.StationWait && i.Standing && purpose == i.Purpose:
 		return StageAdvance
 	case *ordinal > i.StationWait:
 		return StageConsume

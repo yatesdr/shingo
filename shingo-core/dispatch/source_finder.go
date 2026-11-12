@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"errors"
 	"fmt"
 
 	"shingo/protocol"
@@ -145,14 +144,12 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 //
 // THE ORDER'S WANT IS THE NEED'S HEIGHT (orders.want, as its asker stated it):
 // a stated one is exact, its carrier type derived as any empty's. A pull of
-// tops & bottoms only lands on a fed press's outside, and its asker is that
-// press, which is the need's ProcessNode (so a strict group that supports the
-// press serves it): one read, on every find, the scanner's replay included.
-// The press is not written into the row's process_node, which is blank for a
-// plain order (the wire carries none) and which other readers key on: the
-// history row's reference, the futility key and the route's stops would all
-// start naming the press. A pull whose press no longer resolves fails with the
-// sentence intake would have refused it with (pressFor).
+// tops & bottoms only lands on a fed press's outside, and it names that press
+// (protocol.OrderRequest.ProcessNode, SEND BACK's), so it is asked as that
+// press, as every order is: a strict group that supports the press serves it.
+// Intake still refuses one whose outside is no fed press's (pressFor). The
+// press found from the outside, for a pull from an Edge older than the field,
+// is gone: every Edge names its press.
 func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResult {
 	need := SourceNeed{
 		SourceNode:   order.SourceNode,
@@ -179,22 +176,6 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		Asker:  digAskerFor(order),
 		Height: order.Want,
 	}
-	if order.Want == protocol.TopsAndBottomsOnly {
-		press, refusal, err := pressFor(f.db, order.PayloadCode, order.DeliveryNode)
-		switch {
-		case err != nil:
-			return sourceResultOf(plan.Plan{
-				Outcome:   plan.OutcomeWait,
-				QueueCode: protocol.QueueWaitingForMaterial,
-				Cause:     plan.CauseFinderSourceUnreadable,
-				Params:    plan.Params{Kind: plan.KindTopsAndBottoms, Payload: order.PayloadCode, Group: order.SourceNode},
-			})
-		case refusal != "":
-			return sourceResultOf(plan.Plan{Outcome: plan.OutcomeStructural, TermCode: codeStructural,
-				Err: errors.New(refusal)})
-		}
-		need.ProcessNode = press
-	}
 	return f.FindSourceForNeed(need)
 }
 
@@ -203,8 +184,8 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 // carries the part, or the sentence it is refused with when there is none.
 // err is a read that did not answer, which is no refusal. Which carrier type
 // it brings is no question here: the ordinary derivation chooses among the
-// part's own (Finder.wantedEmpty). Its askers: the intake guard
-// (decideTransport) and every find (FindSource).
+// part's own (Finder.wantedEmpty). Its asker is the intake guard
+// (decideTransport).
 func pressFor(db FinderDB, part, outside string) (press, refusal string, err error) {
 	if press, err = db.FedPressFor(part, outside); err != nil || press != "" {
 		return press, "", err

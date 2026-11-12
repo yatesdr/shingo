@@ -202,6 +202,9 @@ type FlowSaveResult struct {
 	Fingerprint string `json:"fingerprint"`
 	Written     int    `json:"written"`
 	Deleted     int    `json:"deleted"`
+	// Notes are the warnings the save went past, shown and never refused: a
+	// press whose styles disagree about who brings its next carrier.
+	Notes []domain.NodeFinding `json:"notes,omitempty"`
 }
 
 var (
@@ -364,7 +367,7 @@ func (e *Engine) claimContext(processID int64) (domain.ClaimContextSet, error) {
 		for name := range known {
 			in.KnownCoreNodes[name] = true
 		}
-		in.Kinds = domain.CoreNodeKindsOf(known)
+		in.Kinds = e.CoreNodeKinds()
 	}
 	return domain.NewClaimContextSet(in), nil
 }
@@ -495,6 +498,7 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 	}
 	findings := validateFlowInputs(claimCtx, draft.inputs())
 	findings = append(findings, domain.ValidateFlowPartsPlaced(stored, toClaims, req.TakenOff)...)
+	findings = append(findings, refillByFindings(e.db.DB, req.ToStyleID, toClaims)...)
 
 	// THE RUNNING STYLE IS NOT PLANNED (owner ruling R3, 2026-09-12).
 	//
@@ -981,5 +985,41 @@ func (e *Engine) saveFlowTx(tx *sql.Tx, process *processes.Process, style proces
 	if err != nil {
 		return nil, nil, err
 	}
+	result.Notes = refillByFindings(tx, req.ToStyleID, written)
 	return &result, cleared, nil
+}
+
+// refillByFindings is a warning for each index press of styleID's claims whose
+// other styles disagree about which robot brings its next carrier
+// (domain.RefillByDisagreementFinding): one read, and none with no index press.
+// A read that fails says nothing: the save proceeds either way, and the log
+// line (warnRefillByDrift) stays.
+func refillByFindings(db processes.DBTX, styleID int64, claims []processes.NodeClaim) []domain.NodeFinding {
+	var presses []*processes.NodeClaim
+	for i := range claims {
+		if claims[i].IsPressIndex() {
+			presses = append(presses, &claims[i])
+		}
+	}
+	if len(presses) == 0 {
+		return nil
+	}
+	byNode, err := processes.OtherStylesRefillBy(db, styleID)
+	if err != nil {
+		return nil
+	}
+	var out []domain.NodeFinding
+	for _, c := range presses {
+		want := c.RefillBy.OrDefault()
+		var others []domain.StyleRefillBy
+		for _, o := range byNode[c.CoreNodeName] {
+			if o.RefillBy != want {
+				others = append(others, o)
+			}
+		}
+		if f, ok := domain.RefillByDisagreementFinding(c.CoreNodeName, want, others); ok {
+			out = append(out, f)
+		}
+	}
+	return out
 }

@@ -28,10 +28,10 @@ import (
 // PairedCoreNode=active).
 //
 // Press-index different-bin-type detection runs as a separate post-
-// processor (FanOutPressIndexDifferentBinType in changeover.go) before
+// processor (PlanPressPositions in changeover.go) before
 // BuildChangeoverPlan sees the diffs; per-position diffs reach the
 // planner with SwapMode = "press_position" and route through the
-// dedicated case in BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps.
+// dedicated case in BuildSwapChangeoverSteps.
 func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool, tooling toolingChangeover) changeover.Plan {
 	plan, _ := BuildChangeoverPlanReporting(diffs, nodes, fallbackAutoConfirm, activePullByCoreNode, tooling)
 	return plan
@@ -139,10 +139,11 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 	}
 
 	switch diff.Situation {
-	case SituationSwap:
+	case SituationSwap, SituationEvacuate:
+		// A tool change's node is planned as its mode's ordinary swap; the
+		// decorator (applyToolingChangeover) gives each marked position the
+		// clearing leg in its place. No builder writes a Tooling done wait.
 		action = planSwapAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
-	case SituationEvacuate:
-		action = planEvacuateAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationAdd:
 		action = planAddAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationDrop:
@@ -151,6 +152,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		return action
 	}
 	markChangeoverRefillEmpty(&action, diff.FromClaim, diff.ToClaim)
+	action.FollowOns = len(followOnPositions(diff.ToClaim.Positions(), actionLegs(action)...))
 	return action
 }
 
@@ -213,17 +215,6 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 	return action
 }
 
-// changeoverDispatch builds a node's changeover choreography: the from-claim's
-// mode decides it, for every to-claim. A keep-staged to-claim needs nothing of
-// its own here: its builders fetch the incoming carrier from its spot
-// (refillPickup), whatever the mode.
-func changeoverDispatch(fromClaim, toClaim *processes.NodeClaim, tooling bool, inactive, active string) ChangeoverDispatch {
-	if tooling {
-		return BuildEvacuateChangeoverSteps(fromClaim, toClaim, inactive, active)
-	}
-	return BuildSwapChangeoverSteps(fromClaim, toClaim, inactive, active)
-}
-
 // assignDispatch wires a ChangeoverDispatch into NodeAction.SupplyOrder/EvacOrder.
 // processNode is the line node both legs belong to (CoreNodeName); empty
 // DeliveryNode for the evac order lets Core resolve from the steps.
@@ -242,9 +233,9 @@ func changeoverDispatch(fromClaim, toClaim *processes.NodeClaim, tooling bool, i
 // an old tote through carriesFromPayload below — and it is the order's part for
 // the containment divert and the audit (evac_payload_mismatch fires when the
 // resident differs). Where the old carrier GOES is not this tag's job: the
-// FROM claim's OutboundDestination is aimed at the resident carrier's home
-// upstream (aimEvacsAtResidentHome). Mirrors the SituationDrop path, which
-// passes FromClaim.PayloadCode the same way.
+// FROM claim's OutboundDestination is its aim, and Core sends a carrier of
+// another part to its own claim's outbound at the lift. Mirrors the
+// SituationDrop path, which passes FromClaim.PayloadCode the same way.
 func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode string, d ChangeoverDispatch) {
 	if d.Roles != nil {
 		// Role-declared two-leg swap: the builder told us which leg clears the
@@ -419,7 +410,9 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 		inactive, active = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 	}
-	disp := changeoverDispatch(diff.FromClaim, diff.ToClaim, false, inactive, active)
+	// A keep-staged to-claim needs nothing of its own here: its builders fetch
+	// the incoming carrier from its spot (refillPickup), whatever the mode.
+	disp := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim, inactive, active)
 	// An empty dispatch (no StepsA and no Roles) is the builder's "I
 	// rejected this claim" signal. Per-mode field validation above already
 	// catches the known rejection cases with operator-readable diagnostics;
@@ -434,50 +427,6 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 		action.LogTag = "swap_sequential"
 	} else {
 		action.LogTag = "swap"
-	}
-
-	return action
-}
-
-// planEvacuateAction plans an evacuate-swap: the outgoing bin leaves before the incoming one lands.
-func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
-	if diff.FromClaim == nil || diff.ToClaim == nil {
-		action.Err = fmt.Errorf("evacuate requires both from and to claims")
-		return action
-	}
-	if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
-		switch diff.FromClaim.SwapMode {
-		case protocol.SwapModeTwoRobot:
-			if diff.ToClaim.InboundStaging == "" {
-				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
-			}
-		default:
-			if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
-			}
-		}
-	}
-	// Per-mode field validation for evacuate.
-	if missing := requiredChangeoverFields(diff.FromClaim, diff.ToClaim); len(missing) > 0 {
-		action.Err = fmt.Errorf("node %s: %s evacuate-changeover requires %s",
-			node.Name, diff.FromClaim.SwapMode, formatMissingFields(missing))
-		return action
-	}
-	var einactive, eactive string
-	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
-		einactive, eactive = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
-	}
-	disp := changeoverDispatch(diff.FromClaim, diff.ToClaim, true, einactive, eactive)
-	if disp.rejected() {
-		action.Err = fmt.Errorf("cannot build evacuate steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
-		return action
-	}
-	assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
-	action.NextState = domain.NodeTaskStagingRequested
-	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
-		action.LogTag = "evacuate_sequential"
-	} else {
-		action.LogTag = "evacuate"
 	}
 
 	return action
@@ -533,16 +482,15 @@ func planDropAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 	// via the standard release-prompt dialog before the robot picks up.
 	action.EvacOrder = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, false, diff.FromClaim.PayloadCode)
 	action.LogTag = "drop"
-	// EvacuateOnChangeover gates whether cutover waits for this drop.
-	// When false, the bin can be retrieved at leisure; cutover does
-	// not depend on it, so the task is terminal from plan time. The
-	// drop order still runs (operator confirms partial count at the
-	// lineside release prompt and the robot returns the bin), it just
-	// isn't on the cutover critical path. When true, the operator
-	// marked this node as needing tool-change-style evacuation before
-	// cutover; the task stays at empty_requested until the bin
+	// A mark on this node gates whether cutover waits for this drop.
+	// Unmarked, the bin can be retrieved at leisure; cutover does not
+	// depend on it, so the task is terminal from plan time. The drop
+	// order still runs (operator confirms partial count at the lineside
+	// release prompt and the robot returns the bin), it just isn't on
+	// the cutover critical path. Marked, the position must be clear for
+	// the tool change: the task stays at empty_requested until the bin
 	// physically leaves the line (handled in the pickup hook).
-	if diff.FromClaim.EvacuateOnChangeover {
+	if domain.MarksNode(diff.FromClaim, diff.CoreNodeName) {
 		action.NextState = domain.NodeTaskEmptyRequested
 	} else {
 		action.NextState = domain.NodeTaskLineCleared

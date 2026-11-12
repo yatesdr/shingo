@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -733,10 +734,10 @@ func cardGroups(groups []domain.RecipeGroup, scope composerScope) []domain.Recip
 // stationAdvanced is a group's Advanced as the station reads it: the robot
 // that fetches the empty when the group says Robot 2, and nothing otherwise.
 func stationAdvanced(a *domain.RecipeAdvanced) *domain.RecipeAdvanced {
-	if a == nil || !a.IndexRobotSupplies {
+	if a == nil || a.RefillBy.OrDefault() == protocol.RefillByClearingRobot {
 		return nil
 	}
-	return &domain.RecipeAdvanced{IndexRobotSupplies: true}
+	return &domain.RecipeAdvanced{RefillBy: a.RefillBy}
 }
 
 // presetMemberCounts is how many of the process's parts run each preset: the

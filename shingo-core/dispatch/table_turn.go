@@ -361,13 +361,15 @@ func waitArgsRecognize(raw json.RawMessage) (bool, error) {
 // no drop, so the rules that keep a bin off an occupied node read it with the
 // set-down after it (withSetDown).
 
-// turnWaits is the turn rule's inserts for a plan, in plan order.
-func (d *Dispatcher) turnWaits(steps []resolvedStep) []insertedWait {
+// turnWaits is the turn rule's inserts for steps[from:], in plan order. A step
+// before from is read only as the one a wait may already stand in front of.
+func (d *Dispatcher) turnWaits(steps []resolvedStep, from int) []insertedWait {
 	if !d.hasTurnNodes() {
 		return nil
 	}
 	var out []insertedWait
-	for i, s := range steps {
+	for i := from; i < len(steps); i++ {
+		s := steps[i]
 		t, ok := d.turnAt(s.Node)
 		if !ok || !turnsBefore(s, t) {
 			continue
@@ -418,10 +420,16 @@ func withSetDown(steps []resolvedStep, start int, seg []resolvedStep) []resolved
 // lane rule; a home clear's trade leg, whose create skips the splice, runs it
 // alone (dispatchToFleetCore).
 func (d *Dispatcher) spliceTurnWaits(steps []resolvedStep) ([]resolvedStep, error) {
-	if waits := d.turnWaits(steps); len(waits) > 0 {
+	return d.spliceTurnWaitsFrom(steps, 0)
+}
+
+// spliceTurnWaitsFrom is the turn rule over steps[from:]: a re-plan's span
+// (repoint), the steps before it already turned or passed.
+func (d *Dispatcher) spliceTurnWaitsFrom(steps []resolvedStep, from int) ([]resolvedStep, error) {
+	if waits := d.turnWaits(steps, from); len(waits) > 0 {
 		steps = insertWaits(steps, waits)
 	}
-	if err := d.assertEveryTurnHasItsWait(steps); err != nil {
+	if err := d.assertEveryTurnHasItsWaitFrom(steps, from); err != nil {
 		return nil, err
 	}
 	return steps, nil
@@ -432,10 +440,16 @@ func (d *Dispatcher) spliceTurnWaits(steps []resolvedStep) ([]resolvedStep, erro
 // fails is a shape the rule did not foresee, and it is refused by name rather
 // than shipped to lift an unturned cart.
 func (d *Dispatcher) assertEveryTurnHasItsWait(steps []resolvedStep) error {
+	return d.assertEveryTurnHasItsWaitFrom(steps, 0)
+}
+
+// assertEveryTurnHasItsWaitFrom is the check over steps[from:].
+func (d *Dispatcher) assertEveryTurnHasItsWaitFrom(steps []resolvedStep, from int) error {
 	if !d.hasTurnNodes() {
 		return nil
 	}
-	for i, s := range steps {
+	for i := from; i < len(steps); i++ {
+		s := steps[i]
 		t, ok := d.turnAt(s.Node)
 		if !ok || !turnsBefore(s, t) {
 			continue

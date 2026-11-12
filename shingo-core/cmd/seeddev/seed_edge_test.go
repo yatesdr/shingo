@@ -64,14 +64,14 @@ CREATE TABLE style_node_claims (
   inbound_source TEXT NOT NULL DEFAULT '', outbound_destination TEXT NOT NULL DEFAULT '',
   containment_destination TEXT NOT NULL DEFAULT '', partial_destination TEXT NOT NULL DEFAULT '', curtain_required INTEGER NOT NULL DEFAULT 0, strict_pack INTEGER NOT NULL DEFAULT 0, pack_tolerance_pct INTEGER NOT NULL DEFAULT 0,
   allowed_payload_codes TEXT NOT NULL DEFAULT '', auto_request_payload TEXT NOT NULL DEFAULT '',
-  keep_staged_node TEXT NOT NULL DEFAULT '', evacuate_on_changeover INTEGER NOT NULL DEFAULT 0,
+  keep_staged_node TEXT NOT NULL DEFAULT '',
   paired_core_node TEXT NOT NULL DEFAULT '', auto_confirm INTEGER NOT NULL DEFAULT 0,
-  second_paired_core_node TEXT NOT NULL DEFAULT '', index_robot_supplies INTEGER NOT NULL DEFAULT 0,
+  second_paired_core_node TEXT NOT NULL DEFAULT '', refill_by TEXT NOT NULL DEFAULT 'clearing_robot',
   sequence INTEGER NOT NULL DEFAULT 0, lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
   reuse_compatible_bins INTEGER NOT NULL DEFAULT 0, auto_push INTEGER NOT NULL DEFAULT 0,
   reorder_point_source TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT (datetime('now')),
   below_reorder_since TEXT,
-  changeover_evac_nodes TEXT NOT NULL DEFAULT '', changeover_evac_destination TEXT NOT NULL DEFAULT '',
+  changeover_evac_nodes TEXT NOT NULL DEFAULT '',
   changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
   key_route TEXT NOT NULL DEFAULT '', key_task TEXT NOT NULL DEFAULT '',
   staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '',
@@ -430,7 +430,6 @@ func TestSeedEdge_WritesRoutingAndPartSets(t *testing.T) {
 		proc := styleProc[c.Style]
 		for _, leg := range []struct{ name, role string }{
 			{c.InboundSource, "source"}, {c.OutboundDestination, "destination"},
-			{c.ChangeoverEvacDestination, "destination"},
 			{c.InboundStaging, "staging"}, {c.OutboundStaging, "staging"},
 		} {
 			if leg.name == "" || positions[proc+"|"+leg.name] {

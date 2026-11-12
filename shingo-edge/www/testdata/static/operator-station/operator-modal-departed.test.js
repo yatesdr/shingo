@@ -3,7 +3,7 @@
 //
 // WHY THIS IS PINNED. The bug the departed-leg work exists for was a HIDDEN
 // BUTTON, not a wrong backend answer. Springfield press trial 2026-09-02: under
-// the IndexRobotSupplies flip, R1 clears the press and drives the full tote to
+// the refill_by flip (Robot 2), R1 clears the press and drives the full tote to
 // the supermarket while R2 puts the fresh carrier on. Every position the cell
 // needs was filled, the backend would have accepted the next swap — and the
 // card computed `inFlight` over every non-terminal order at the node, found the

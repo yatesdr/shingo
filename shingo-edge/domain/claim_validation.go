@@ -73,7 +73,8 @@ type ClaimNodeContext struct {
 }
 
 // CoreNodeKinds is what a claim save reads off Core's node list beyond the
-// names: which nodes are lanes, and which groups keep a level of empties.
+// names: which nodes are lanes, which groups keep a level of empties, which
+// nodes are members of a node group, and which names the list holds at all.
 //
 // Lines name node groups, never lanes (owner, 2026-10-03). A leg that names a
 // lane searches that lane only, so a bin put in a sibling lane of the same
@@ -82,7 +83,17 @@ type ClaimNodeContext struct {
 // never put back. Core refuses both for a loader at its own save; these sets
 // let the Edge say the same at its claim and routing-set saves.
 //
-// EMPTY REFUSES NOTHING. No node list heard yet leaves both sets empty, and an
+// WHERE CORE PICKS, A LINE NEVER NAMES A MEMBER (owner, 2026-11-11). A source
+// or a destination names a node group or a node in no group: picking the
+// member is Core's job, by the group's store and retrieve rules
+// (protocol.MsgMemberIsCoresToPick). The members are the "Group.Child" names
+// of Core's list, which the engine keeps as its group map. A slot inside a
+// lane is never in the list, so in those roles a name a PLANT-WIDE list does
+// not hold is refused too (Known, PlantWide); a station-scoped list leaves out
+// names the station may still route to, so it refuses none on that account. A
+// staging spot names the exact node.
+//
+// EMPTY REFUSES NOTHING. No node list heard yet leaves every set empty, and an
 // older Core never sends the kanban flag, so its groups read as unmarked.
 // Neither is evidence, and neither refuses a write.
 type CoreNodeKinds struct {
@@ -92,30 +103,46 @@ type CoreNodeKinds struct {
 	// and the groups above them (protocol.NodeInfo.AcceptsPartials). A partial
 	// home may not be one.
 	AcceptsPartials map[string]bool
+	// MemberOf is each member of a node group, by its bare name, to the group.
+	MemberOf map[string]string
+	// Known is every name Core's list holds, as the engine keys it. Nil means
+	// no list heard: a name absent from it refuses nothing then.
+	Known map[string]bool
+	// PlantWide is whether the list is Core's plant-wide one
+	// (protocol.NodeListResponse.PlantWide). Only then is a name absent from
+	// Known refused where Core picks.
+	PlantWide bool
 }
 
-// CoreNodeKindsOf reduces Core's node list, as the engine holds it, to the
-// two sets. One pass over a map already in memory, at save time only.
-func CoreNodeKindsOf(known map[string]protocol.NodeInfo) CoreNodeKinds {
-	var k CoreNodeKinds
+// CoreNodeKindsOf reduces Core's node list, as the engine holds it, its group
+// map (group → bare member names, Engine.CoreNodeGroups) and its scope to the
+// sets. One pass over maps already in memory, at save time only.
+func CoreNodeKindsOf(known map[string]protocol.NodeInfo, groups map[string][]string, plantWide bool) CoreNodeKinds {
+	k := CoreNodeKinds{PlantWide: plantWide}
+	set := func(m *map[string]bool, name string) {
+		if *m == nil {
+			*m = map[string]bool{}
+		}
+		(*m)[name] = true
+	}
 	for name, n := range known {
+		set(&k.Known, name)
 		if n.NodeType == protocol.NodeClassLANE {
-			if k.Lanes == nil {
-				k.Lanes = map[string]bool{}
-			}
-			k.Lanes[name] = true
+			set(&k.Lanes, name)
 		}
 		if n.Kanban {
-			if k.Kanban == nil {
-				k.Kanban = map[string]bool{}
-			}
-			k.Kanban[name] = true
+			set(&k.Kanban, name)
 		}
 		if n.AcceptsPartials {
-			if k.AcceptsPartials == nil {
-				k.AcceptsPartials = map[string]bool{}
+			set(&k.AcceptsPartials, name)
+		}
+	}
+	for group, members := range groups {
+		for _, m := range members {
+			if k.MemberOf == nil {
+				k.MemberOf = map[string]string{}
 			}
-			k.AcceptsPartials[name] = true
+			k.MemberOf[m] = group
 		}
 	}
 	return k
@@ -137,24 +164,62 @@ func kindsHas(set map[string]bool, name string) bool {
 // IsKanban reports whether name is a group Core keeps a level of empties in.
 func (k CoreNodeKinds) IsKanban(name string) bool { return kindsHas(k.Kanban, name) }
 
-// LegRefusal is the refusal for a lane named in a routing role, in the
+// GroupOf is the node group name is a member of, "" when it is in none or the
+// list does not say. Looked up exact, then bare, as kindsHas does.
+func (k CoreNodeKinds) GroupOf(name string) string {
+	if g := k.MemberOf[name]; g != "" {
+		return g
+	}
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return k.MemberOf[name[i+1:]]
+	}
+	return ""
+}
+
+// Empty reports whether the kinds came from no node list: nothing is refused.
+// A door that skips the leg rule when there is nothing to refuse asks this,
+// never one set: a plant-wide list carries no lanes (a lane is a synthetic
+// node's child), and its members and names are refused all the same.
+func (k CoreNodeKinds) Empty() bool {
+	return len(k.Lanes) == 0 && len(k.AcceptsPartials) == 0 && len(k.MemberOf) == 0 && len(k.Known) == 0
+}
+
+// LegRefusal is the refusal for a node named in a routing role, in the
 // sentence Core and the claim editor both use, or "" when the name is fine.
+//
 // Every role refuses a lane, staging included (owner ruling, 2026-10-04): a
 // staging node is a spot a robot waits at, and the keep-staged spare is read
 // by that spot's name, while a lane has no bin of its own to answer with.
+//
+// A source and a destination are roles where Core picks: there a member of a
+// node group is refused too, and so is a name Core's plant-wide list does not
+// hold (a station-scoped list refuses no name for its absence). A staging spot
+// names where a robot waits, the exact node, and a member is one.
 func (k CoreNodeKinds) LegRefusal(role, name string) string {
 	name = strings.TrimSpace(name)
-	if name == "" || !kindsHas(k.Lanes, name) {
+	if name == "" {
 		return ""
 	}
-	switch role {
-	case RoutingRoleSource:
-		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotASource, name)
-	case RoutingRoleStaging:
-		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotAStagingNode, name)
-	default:
-		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotADestination, name)
+	if kindsHas(k.Lanes, name) {
+		switch role {
+		case RoutingRoleSource:
+			return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotASource, name)
+		case RoutingRoleStaging:
+			return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotAStagingNode, name)
+		default:
+			return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotADestination, name)
+		}
 	}
+	if role == RoutingRoleStaging {
+		return ""
+	}
+	if g := k.GroupOf(name); g != "" {
+		return fmt.Sprintf("%s: %q is in %q", protocol.MsgMemberIsCoresToPick, name, g)
+	}
+	if k.PlantWide && len(k.Known) > 0 && !kindsHas(k.Known, name) {
+		return fmt.Sprintf("%s: %q", protocol.MsgNotInCoresNodeList, name)
+	}
+	return ""
 }
 
 // ClaimLeg is one leg of a claim: the wire field, the routing role a node on
@@ -164,7 +229,7 @@ type ClaimLeg struct {
 }
 
 // ClaimLegs lists the seven legs of a claim, in a fixed order. Every writer of
-// a claim row asks about these seven through LaneLegs, so an eighth leg added
+// a claim row asks about these seven through RefusedLegs, so an eighth leg added
 // to the claim is added here or it is not checked anywhere. The keep-staged
 // node is a leg: a robot sets a spare down there and lifts it from there, so
 // it is offered as a staging node, and a lane is no more one than any other.
@@ -172,7 +237,6 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 	return []ClaimLeg{
 		{"inbound_source", RoutingRoleSource, in.InboundSource},
 		{"outbound_destination", RoutingRoleDestination, in.OutboundDestination},
-		{"changeover_evac_destination", RoutingRoleDestination, OptValue(in.ChangeoverEvacDestination)},
 		{"containment_destination", RoutingRoleDestination, in.ContainmentDestination},
 		{"partial_destination", RoutingRoleDestination, in.PartialDestination},
 		{"inbound_staging", RoutingRoleStaging, in.InboundStaging},
@@ -181,11 +245,12 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 	}
 }
 
-// LaneLegs is every leg of the claim that names a lane, each with its
-// sentence, in ClaimLegs order. The claim editor shows one per field; the
-// store refuses on the first (RefuseLaneLegs). Empty kinds find nothing.
-func (k CoreNodeKinds) LaneLegs(in NodeClaimInput) []FieldError {
-	if len(k.Lanes) == 0 && len(k.AcceptsPartials) == 0 {
+// RefusedLegs is every leg of the claim LegRefusal refuses (a lane, and where
+// Core picks a member of a group or a name Core's list does not hold), each
+// with its sentence, in ClaimLegs order. The claim editor shows one per field;
+// the store refuses on the first (RefuseLegs). Empty kinds find nothing.
+func (k CoreNodeKinds) RefusedLegs(in NodeClaimInput) []FieldError {
+	if k.Empty() {
 		return nil
 	}
 	var out []FieldError
@@ -205,49 +270,50 @@ func (k CoreNodeKinds) LaneLegs(in NodeClaimInput) []FieldError {
 	return out
 }
 
-// ErrLaneLeg matches every LaneLegError, so a door can answer 400 rather than
+// ErrRefusedLeg matches every LegError, so a door can answer 400 rather than
 // 500 without knowing which leg it was.
-var ErrLaneLeg = errors.New("a leg names a lane")
+var ErrRefusedLeg = errors.New("a leg names a node it may not")
 
-// LaneLegError is a claim or routing write refused because it names a lane.
+// LegError is a claim or routing write refused by LegRefusal.
 // Field is the claim's wire field, or "" for a routing row, whose role is
 // already in the sentence.
-type LaneLegError struct {
+type LegError struct {
 	Field, Message string
 }
 
-func (e *LaneLegError) Error() string {
+func (e *LegError) Error() string {
 	if e.Field == "" {
 		return e.Message
 	}
 	return e.Field + ": " + e.Message
 }
 
-// Is makes errors.Is(err, ErrLaneLeg) true for every LaneLegError.
-func (e *LaneLegError) Is(target error) bool { return target == ErrLaneLeg }
+// Is makes errors.Is(err, ErrRefusedLeg) true for every LegError.
+func (e *LegError) Is(target error) bool { return target == ErrRefusedLeg }
 
-// RefuseLaneLegs is the store's form of LaneLegs: the first leg naming a lane
-// as a *LaneLegError, or nil.
-func (k CoreNodeKinds) RefuseLaneLegs(in NodeClaimInput) error {
-	if legs := k.LaneLegs(in); len(legs) > 0 {
-		return &LaneLegError{Field: legs[0].Field, Message: legs[0].Message}
+// RefuseLegs is the store's form of RefusedLegs: the first refused leg as a
+// *LegError, or nil.
+func (k CoreNodeKinds) RefuseLegs(in NodeClaimInput) error {
+	if legs := k.RefusedLegs(in); len(legs) > 0 {
+		return &LegError{Field: legs[0].Field, Message: legs[0].Message}
 	}
 	return nil
 }
 
-// RefuseLaneRow is the routing set's form: a row naming a lane in any role.
-func (k CoreNodeKinds) RefuseLaneRow(role, name string) error {
+// RefuseRoutingRow is the routing set's form: a row LegRefusal refuses in its
+// role.
+func (k CoreNodeKinds) RefuseRoutingRow(role, name string) error {
 	if msg := k.LegRefusal(role, name); msg != "" {
-		return &LaneLegError{Message: msg}
+		return &LegError{Message: msg}
 	}
 	return nil
 }
 
-// validateLegKinds refuses a lane on any of the claim's legs (LaneLegs, the
-// same answer the store gives), and a kanban as a consume claim's
-// source. A field already refused for another reason is not refused twice.
+// validateLegKinds refuses on the claim's legs what LegRefusal refuses
+// (RefusedLegs, the same answer the store gives), and a kanban as a consume
+// claim's source. A field already refused for another reason is not refused twice.
 func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[string]bool, add func(field, msg string)) {
-	for _, f := range kinds.LaneLegs(in) {
+	for _, f := range kinds.RefusedLegs(in) {
 		if !reported[f.Field] {
 			add(f.Field, f.Message)
 		}
@@ -559,14 +625,22 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	if len(marked) > 0 {
 		if spec[flowspec.ChangeoverEvacNodes] == flowspec.Forbidden {
 			add("changeover_evac_nodes",
-				"Per-node changeover clearance applies to a cell whose claim names several nodes; use Evacuate on changeover for a single-node claim")
+				"A tool change applies to a line a robot serves; this claim's mode has no positions to clear")
 		} else {
-			held := in.Positions()
+			held := in.ToolChangePositions()
 			for _, node := range marked {
 				if !slices.Contains(held, node) {
 					add("changeover_evac_nodes", fmt.Sprintf(
 						"%q is marked for changeover clearance but is not one of this claim's nodes", node))
 				}
+			}
+			// A tool change holds the incoming carrier at inbound staging until
+			// the operator's Tooling done, so a claim with marks names where.
+			// START refuses the same changeover (refuseToolingChangeoverWithoutStaging)
+			// for a row saved before this rule.
+			if in.InboundStaging == "" {
+				add("inbound_staging",
+					"A tool change holds the new carrier at inbound staging. Set inbound staging on this claim.")
 			}
 		}
 	}
@@ -594,11 +668,13 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
-	// The flip is press-index choreography; nothing else has two robots to
-	// swap between.
-	if ClaimInputHas(in, flowspec.IndexRobotSupplies) && spec[flowspec.IndexRobotSupplies] == flowspec.Forbidden {
-		add("index_robot_supplies",
-			"Index robot fetches the replacement applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
+	// Which robot brings the next carrier is press-index choreography; nothing
+	// else has two robots to swap between.
+	if in.RefillBy != nil && !in.RefillBy.OrDefault().Valid() {
+		add("refill_by", fmt.Sprintf("%q is not a robot that brings the next carrier", *in.RefillBy))
+	} else if ClaimInputHas(in, flowspec.RefillBy) && spec[flowspec.RefillBy] == flowspec.Forbidden {
+		add("refill_by",
+			"Robot 2 or Robot 3 bringing the next carrier applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
 	}
 
 	// A kept spare is what a swap fetches its carrier from, and only the four

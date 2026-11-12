@@ -418,7 +418,7 @@ func TestHeldStepBase_TwoRobotEvac(t *testing.T) {
 // ── C3: the press-index swap ────────────────────────────────────────────────
 
 // TestHeldStepBase_PressIndexReleaseOrder — C3. 2- and 3-position, unflipped
-// and flipped (IndexRobotSupplies), the shapes BuildTwoRobotPressIndexSwapSteps
+// and flipped (refill_by Robot 2), the shapes BuildTwoRobotPressIndexSwapSteps
 // authors; R1 then R2, and R2 then R1. No grant applies to any of them, so no
 // step carries a stamp, and R2 dropping on the front R1 has not lifted is not
 // fenced.

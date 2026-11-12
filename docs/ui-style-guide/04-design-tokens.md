@@ -110,6 +110,7 @@ keeps the light value):
 | `--map-dock-park` | `#d98c4a` | — |
 | `--robot-1` | `#22c9ae` | — |
 | `--robot-2` | `#8a7bff` | — |
+| `--robot-3` | `#f2b84b` | — |
 | `--station` | `#f2f5f8` | — |
 | `--map-class-1` | `#6cb0ff` | — |
 | `--map-class-2` | `#56d364` | — |
@@ -199,6 +200,7 @@ The operator station's own `:root` block
 | `--os-station` | `var(--station)` |
 | `--os-robot-1` | `var(--robot-1)` |
 | `--os-robot-2` | `var(--robot-2)` |
+| `--os-robot-3` | `var(--robot-3)` |
 | `--os-sub-3` | `var(--sub-3)` |
 | `--os-sub-4` | `var(--sub-4)` |
 | `--os-sub-5` | `var(--sub-5)` |
@@ -278,12 +280,13 @@ before it, and each light step's ratio is within 0.05 of its dark twin's. Steps
 
 **A robot's colour is an identity, not a status and not the accent.**
 
-Three tokens, theme-invariant, in `:root`:
+Four tokens, theme-invariant, in `:root`:
 
 | Token | Value | What it is |
 |---|---|---|
 | `--robot-1` | `#22c9ae` | Robot 1 — its chevrons and words on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
 | `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
+| `--robot-3` | `#f2b84b` | Robot 3 — the trip an index press's own robot makes to its back position (refill set to Robot 3): its chevrons, its words, its in glyph |
 | `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph — on the station; the desktop Processes page, which follows the light theme, draws these through `--os-station` mapped to `--text-strong` |
 
 **How this sits with rule 5 (indigo is the accent, never a status).** A robot
@@ -310,6 +313,13 @@ identity in a two-identity set, and the set was chosen for separation from each
 other first. The separation from the accent is carried by ROLE, not by hue —
 an accent mark is a border or a filled control, a robot mark is a stroked path
 or a chevron, and no element is both.
+
+**Robot 3 is amber, and amber here is a robot.** The same hue family is a
+warning everywhere a status is drawn, so Robot 3's amber is only ever a
+**stroke, a chevron or the words "Robot 3"**: never a fill, a badge, a button
+or a dot (a route point on its trip is a ring, not a filled dot), and it
+**always appears with its words**, so a reader never has to tell a robot from a
+warning by colour alone. It never colours a chip, a tile or a status.
 
 ### Recipe group identities
 

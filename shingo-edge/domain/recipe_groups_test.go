@@ -57,7 +57,7 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 			strings.Replace(rightHand, `"reorder_point":1`, `"strict_pack":true,"pack_tolerance_pct":10`, 1)),
 		// Robot 2 fetches the empty: the press hardware, said once on the recipe.
 		"a press-index group naming its robot": twoSpotWith(leftHand,
-			strings.Replace(rightHand, `"reorder_point":1`, `"index_robot_supplies":true`, 1)),
+			strings.Replace(rightHand, `"reorder_point":1`, `"refill_by":"index_robot"`, 1)),
 		// A tied list: PLN_013 is fed only by PLN_014, and nothing else is.
 		"a spot with a deck of its own": twoSpotWith(`{"of":"PLN_006","name":"Left Hand","spots":[
 			{"core_node_name":"PLN_006","paired_core_node":["PLN_005"]},
@@ -70,7 +70,7 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 			{"core_node_name":"SEQ_A","paired_core_node":["SEQ_B"]},
 			{"core_node_name":"SEQ_C","paired_core_node":["SEQ_D"]}]}]}`,
 	} {
-		if err := ValidateFlowPreset(flow, groupsLive); err != nil {
+		if err := ValidateFlowPreset(flow, groupsLive, CoreNodeKinds{}); err != nil {
 			t.Errorf("%s: refused: %v", name, err)
 		}
 	}
@@ -122,14 +122,14 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 		// The mint would refuse every style made from it (the claim validator
 		// refuses what the mode forbids), so the save says so first.
 		"an Advanced field the mode does not use": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"auto_push":true`, 1)),
-			says: "Right Hand's Advanced sets auto push, which a 2‑Robot Index produce spot does not use — clear it"},
+			says: "Right Hand's Advanced sets auto push, which an Index Swap produce spot does not use — clear it"},
 		// The index-robot flip has no meaning off a press index: the claim
 		// validator refuses it there, so the recipe save does first.
 		"the robot flip off a press index": {flow: `{"cells":[
 			{"core_node_name":"PLN_009","role":"produce","swap_mode":"two_robot","inbound_staging":"STG_TOOL_1","inbound_source":"SMN_BUF_100","outbound_destination":"ULN_002"}],
 			"groups":[{"of":"PLN_009","name":"Solo","spots":[
-			{"core_node_name":"PLN_009","inbound_staging":["STG_TOOL_1"]}],"advanced":{"index_robot_supplies":true}}]}`,
-			says: "Solo's Advanced sets index robot supplies, which a 2‑Robot Swap produce spot does not use — clear it"},
+			{"core_node_name":"PLN_009","inbound_staging":["STG_TOOL_1"]}],"advanced":{"refill_by":"index_robot"}}]}`,
+			says: "Solo's Advanced sets next carrier, which a 2‑Robot Swap produce spot does not use — clear it"},
 		// The same reason: the claim validator would refuse every minted claim.
 		"a pack tolerance out of range": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"strict_pack":true,"pack_tolerance_pct":25`, 1)),
 			says: "Right Hand's Advanced: Pack tolerance is a percent of the pack from 0 to 20; 25 is out of range"},
@@ -154,7 +154,7 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 		"two groups of one name": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"name":"Right Hand"`, `"name":"Left Hand"`, 1)),
 			says: "two groups are called Left Hand — the floor asks for each part by its group's name"},
 	} {
-		err := ValidateFlowPreset(tc.flow, groupsLive)
+		err := ValidateFlowPreset(tc.flow, groupsLive, CoreNodeKinds{})
 		if err == nil || !strings.Contains(err.Error(), tc.says) || (tc.is != nil && !errors.Is(err, tc.is)) {
 			t.Errorf("%s: %v, want a refusal saying %q", name, err, tc.says)
 		}
@@ -175,7 +175,7 @@ func TestRecipeAdvanced_IsFlowAdvancedLessWhatARecipeMayNotSay(t *testing.T) {
 		return out
 	}
 	want := keys(FlowAdvanced{})
-	// index_robot_supplies is NOT on this list (2026-11-05): a recipe that
+	// refill_by is NOT on this list (2026-11-05): a recipe that
 	// cannot say which robot fetches the empty mints every floor-built style
 	// as Robot 1, whatever the press is.
 	for _, k := range []string{"allowed_payload_codes", "auto_request_payload", "sequence", "reorder_point_source"} {

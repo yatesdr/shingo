@@ -97,7 +97,7 @@ func RoutingFieldsFor(c NodeClaim, role string) []string {
 	case RoutingRoleStaging:
 		return []string{c.InboundStaging, c.OutboundStaging}
 	default:
-		return []string{c.OutboundDestination, c.ChangeoverEvacDestination}
+		return []string{c.OutboundDestination}
 	}
 }
 

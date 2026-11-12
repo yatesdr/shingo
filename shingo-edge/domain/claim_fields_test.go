@@ -3,6 +3,7 @@ package domain
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/domain/flowspec"
 )
 
@@ -46,20 +47,16 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.StrictPack = true
 	case flowspec.PackTolerancePct:
 		c.PackTolerancePct = 5
-	case flowspec.EvacuateOnChangeover:
-		c.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:
 		c.ChangeoverEvacNodes = []string{v}
-	case flowspec.ChangeoverEvacDestination:
-		c.ChangeoverEvacDestination = v
 	case flowspec.PartialDestination:
 		c.PartialDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:
 		c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	case flowspec.ReuseCompatibleBins:
 		c.ReuseCompatibleBins = true
-	case flowspec.IndexRobotSupplies:
-		c.IndexRobotSupplies = true
+	case flowspec.RefillBy:
+		c.RefillBy = protocol.RefillByIndexRobot
 	case flowspec.AutoConfirm:
 		c.AutoConfirm = true
 	case flowspec.AutoRequestPayload:
@@ -113,13 +110,9 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.StrictPack = true
 	case flowspec.PackTolerancePct:
 		in.PackTolerancePct = 5
-	case flowspec.EvacuateOnChangeover:
-		in.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:
 		nodes := []string{v}
 		in.ChangeoverEvacNodes = &nodes
-	case flowspec.ChangeoverEvacDestination:
-		in.ChangeoverEvacDestination = &v
 	case flowspec.PartialDestination:
 		in.PartialDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:
@@ -127,8 +120,8 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.ChangeoverCarryoverDisposition = &d
 	case flowspec.ReuseCompatibleBins:
 		in.ReuseCompatibleBins = true
-	case flowspec.IndexRobotSupplies:
-		in.IndexRobotSupplies = &t
+	case flowspec.RefillBy:
+		in.RefillBy = Ptr(protocol.RefillByIndexRobot)
 	case flowspec.AutoConfirm:
 		in.AutoConfirm = true
 	case flowspec.AutoRequestPayload:

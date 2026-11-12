@@ -20,15 +20,6 @@ func countWaits(steps []protocol.ComplexOrderStep) int {
 	return n
 }
 
-// stepActions returns the action sequence (e.g. ["pickup","dropoff","wait"]).
-func stepActions(steps []protocol.ComplexOrderStep) []string {
-	out := make([]string, len(steps))
-	for i, s := range steps {
-		out[i] = s.Action
-	}
-	return out
-}
-
 // ---------------------------------------------------------------------------
 // BuildSwapChangeoverSteps — single_robot: ONE 9-step order
 // ---------------------------------------------------------------------------
@@ -77,50 +68,6 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 	for i, s := range disp.StepsB {
 		if s != want[i] {
 			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// BuildEvacuateChangeoverSteps — single_robot: 8-step with tooling wait
-// ---------------------------------------------------------------------------
-
-func TestBuildEvacuateChangeoverSteps_SingleRobot(t *testing.T) {
-	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE-A",
-		OutboundStaging:     "OUT-STAGE",
-		OutboundDestination: "DEST-FINAL",
-		SwapMode:            "single_robot",
-	}
-	to := &processes.NodeClaim{
-		CoreNodeName:   "CORE-B",
-		InboundSource:  "MARKET",
-		InboundStaging: "IN-STAGE",
-	}
-
-	disp := BuildEvacuateChangeoverSteps(from, to, "", "")
-
-	if disp.StepsA != nil {
-		t.Fatalf("a stage order was built: %+v", disp.StepsA)
-	}
-	if len(disp.StepsB) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(disp.StepsB))
-	}
-	if w := countWaits(disp.StepsB); w != 2 {
-		t.Errorf("expected 2 waits, got %d", w)
-	}
-	if disp.StepsB[2].Action != "wait" || disp.StepsB[2].Node != "CORE-A" {
-		t.Errorf("step 2: expected wait at CORE-A, got %q at %q", disp.StepsB[2].Action, disp.StepsB[2].Node)
-	}
-	if disp.StepsB[5].Action != "wait" {
-		t.Errorf("step 5: expected wait (tooling done), got %q", disp.StepsB[5].Action)
-	}
-
-	wantActions := []string{"pickup", "dropoff", "wait", "pickup", "dropoff", "wait", "pickup", "dropoff", "pickup", "dropoff"}
-	for i, a := range stepActions(disp.StepsB) {
-		if a != wantActions[i] {
-			t.Errorf("step %d action: got %q, want %q", i, a, wantActions[i])
 		}
 	}
 }
@@ -196,53 +143,6 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 		if s != wantB[i] {
 			t.Errorf("evac leg step %d: got %+v, want %+v", i, s, wantB[i])
 		}
-	}
-}
-
-// two_robot Evacuate has no second "tooling done" wait: with two
-// independent robots, Robot B clears the line while Robot A delivers,
-// so the line is naturally clear without an operator gate between the
-// two legs. Step shape is identical to two_robot Swap.
-func TestBuildEvacuateChangeoverSteps_TwoRobot(t *testing.T) {
-	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE",
-		OutboundStaging:     "OUT-STAGE",
-		OutboundDestination: "DEST",
-		SwapMode:            "two_robot",
-	}
-	to := &processes.NodeClaim{
-		CoreNodeName:   "CORE",
-		InboundSource:  "MARKET",
-		InboundStaging: "IN-STAGE",
-	}
-	swap := BuildSwapChangeoverSteps(from, to, "", "")
-	evac := BuildEvacuateChangeoverSteps(from, to, "", "")
-
-	if swap.Roles == nil || evac.Roles == nil {
-		t.Fatal("two_robot: expected role-declared legs on both swap and evacuate")
-	}
-	// Supply leg: only the shared "ready" wait, same as Swap.
-	evacSupply, swapSupply := evac.Roles.supply.steps, swap.Roles.supply.steps
-	if w := countWaits(evacSupply); w != 1 {
-		t.Errorf("supply leg: expected 1 wait (ready only — no second tooling-done gate), got %d", w)
-	}
-	if len(evacSupply) != len(swapSupply) {
-		t.Fatalf("supply leg length: evac=%d swap=%d, expected match", len(evacSupply), len(swapSupply))
-	}
-	for i := range evacSupply {
-		if evacSupply[i] != swapSupply[i] {
-			t.Errorf("supply leg step %d: evac=%+v swap=%+v, expected match", i, evacSupply[i], swapSupply[i])
-		}
-	}
-
-	// Evac leg unchanged from Swap.
-	evacEvac, swapEvac := evac.Roles.evac.steps, swap.Roles.evac.steps
-	if w := countWaits(evacEvac); w != 1 {
-		t.Errorf("evac leg: expected 1 wait, got %d", w)
-	}
-	if len(evacEvac) != len(swapEvac) {
-		t.Fatalf("evac leg length mismatch: evac=%d swap=%d", len(evacEvac), len(swapEvac))
 	}
 }
 
@@ -348,39 +248,6 @@ func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
 		if s != wantR2[i] {
 			t.Errorf("R2 step %d: got %+v, want %+v", i, s, wantR2[i])
 		}
-	}
-}
-
-// two_robot_press_index Evacuate — extra tooling-done wait on R1 between
-// dropoff outbound and pickup inbound.
-func TestBuildEvacuateChangeoverSteps_PressIndex_2Pos(t *testing.T) {
-	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "FRONT",
-		PairedCoreNode:      "BACK",
-		OutboundDestination: "DEST",
-		SwapMode:            "two_robot_press_index",
-	}
-	to := &processes.NodeClaim{
-		CoreNodeName:  "FRONT",
-		InboundSource: "MARKET",
-	}
-	disp := BuildEvacuateChangeoverSteps(from, to, "", "")
-
-	if disp.Roles == nil {
-		t.Fatal("press-index: expected role-declared legs")
-	}
-	r1 := disp.Roles.evac.steps // R1 clears the press → evac leg
-
-	if w := countWaits(r1); w != 2 {
-		t.Errorf("R1: expected 2 waits (ready + tooling done), got %d", w)
-	}
-	// Sequence: wait(FRONT), pickup(FRONT), dropoff(DEST), wait(""), pickup(MARKET), dropoff(BACK)
-	if len(r1) != 6 {
-		t.Fatalf("R1: expected 6 steps, got %d", len(r1))
-	}
-	if r1[3].Action != "wait" || r1[3].Node != "" {
-		t.Errorf("R1 step 3: expected bare tooling-done wait, got %+v", r1[3])
 	}
 }
 
@@ -586,64 +453,6 @@ func TestBuildSwapChangeoverSteps_Sequential_ActiveSideWaitsForCutover(t *testin
 	}
 }
 
-// Sequential Evacuate emits one position's evac+backfill per call:
-//
-//	pickup(my position) → dropoff(OutboundDestination)
-//	pickup(InboundSource) → wait() → dropoff(my position)
-//
-// A single tooling-done click still releases BOTH positions' bare waits — it
-// always did so through ReleaseChangeoverWait's per-task fan-out, which walks
-// every node task of the changeover. Under the whole-press builder the two
-// waits were two step-lists in one action; now they are two orders on two
-// tasks, and the fan-out iterates tasks either way.
-func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
-	t.Parallel()
-	to := &processes.NodeClaim{CoreNodeName: "CORE-A", InboundSource: "MARKET"}
-	claimAt := func(own, partner string) *processes.NodeClaim {
-		return &processes.NodeClaim{
-			CoreNodeName:        own,
-			PairedCoreNode:      partner,
-			OutboundDestination: "DEST",
-			SwapMode:            "sequential",
-		}
-	}
-
-	for _, tc := range []struct {
-		own, partner string
-	}{{"CORE-A", "CORE-B"}, {"CORE-B", "CORE-A"}} {
-		// Evacuate has no cutover, so which side is parked changes nothing about
-		// the route; it is passed because the parked position of a produce press
-		// holds an on-deck empty. These claims carry no role, so neither is flagged.
-		disp := BuildEvacuateChangeoverSteps(claimAt(tc.own, tc.partner), to, "CORE-A", "CORE-B")
-
-		want := []protocol.ComplexOrderStep{
-			{Action: "pickup", Node: tc.own},  // evac old
-			{Action: "dropoff", Node: "DEST"}, // old to destination
-			{Action: "pickup", Node: "MARKET"},
-			stationWait("", release.PurposeToolingDone), // bare — tooling-done shared gate
-			{Action: "dropoff", Node: tc.own},
-		}
-		if len(disp.StepsA) != len(want) {
-			t.Fatalf("%s: expected %d steps, got %d: %+v", tc.own, len(want), len(disp.StepsA), disp.StepsA)
-		}
-		for i, s := range disp.StepsA {
-			if s != want[i] {
-				t.Errorf("%s step %d: got %+v, want %+v", tc.own, i, s, want[i])
-			}
-		}
-		if disp.StepsB != nil {
-			t.Errorf("%s: per-node evacuate is one order per position; StepsB must be nil", tc.own)
-		}
-		if w := countWaits(disp.StepsA); w != 1 {
-			t.Errorf("%s: expected 1 wait, got %d", tc.own, w)
-		}
-		if disp.StepsA[3].Node != "" {
-			t.Errorf("%s: the wait must be BARE (no Node) so one tooling-done click releases both "+
-				"positions, got %q", tc.own, disp.StepsA[3].Node)
-		}
-	}
-}
-
 // Sequential without PairedCoreNode → empty dispatch (planner emits
 // NodeAction.Err). Tested for both Swap and Evacuate.
 func TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T) {
@@ -655,20 +464,6 @@ func TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T)
 	}
 	to := &processes.NodeClaim{CoreNodeName: "CORE", InboundSource: "MARKET"}
 	disp := BuildSwapChangeoverSteps(from, to, "CORE", "")
-	if disp.StepsA != nil || disp.StepsB != nil {
-		t.Errorf("unpaired sequential should produce empty dispatch, got A=%v B=%v", disp.StepsA, disp.StepsB)
-	}
-}
-
-func TestBuildEvacuateChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T) {
-	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE",
-		OutboundDestination: "DEST",
-		SwapMode:            "sequential",
-	}
-	to := &processes.NodeClaim{CoreNodeName: "CORE", InboundSource: "MARKET"}
-	disp := BuildEvacuateChangeoverSteps(from, to, "", "")
 	if disp.StepsA != nil || disp.StepsB != nil {
 		t.Errorf("unpaired sequential should produce empty dispatch, got A=%v B=%v", disp.StepsA, disp.StepsB)
 	}
@@ -998,7 +793,7 @@ func TestPressIndexChangeoverR2_OnDeckPickupsSayWhatTheyLift(t *testing.T) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "PLN_03"} {
 				from := &processes.NodeClaim{CoreNodeName: "PLN_01", SwapMode: protocol.SwapModeTwoRobotPressIndex, Role: role,
-					PairedCoreNode: "PLN_02", SecondPairedCoreNode: second, IndexRobotSupplies: flipped,
+					PairedCoreNode: "PLN_02", SecondPairedCoreNode: second, RefillBy: refillFor(flipped),
 					PayloadCode: "OLD", InboundSource: "IN", OutboundDestination: "OUT"}
 				to := *from
 				to.PayloadCode = "NEW"

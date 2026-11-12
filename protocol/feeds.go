@@ -95,10 +95,12 @@ func Digest(v any) (string, error) {
 // the data — Core stores a claim's index as its sequence — and is kept.
 
 // NodesDigest is the FeedNodes digest: exactly the node list, loaders, payload
-// bin types and floors one station's NodeListResponse carries. Geometry and the
-// scene revision are outside it; they have FeedScene. No floors digests as a Core
-// that sends none does.
-func NodesDigest(nodes []NodeInfo, loaders []LoaderInfo, binTypes []PayloadBinTypeInfo, floors map[string]string) (string, error) {
+// bin types, floors and the list's scope one station's NodeListResponse carries.
+// Geometry and the scene revision are outside it; they have FeedScene. No floors
+// digests as a Core that sends none does, and a station-scoped list as one from
+// a Core that sends no scope.
+func NodesDigest(nodes []NodeInfo, loaders []LoaderInfo, binTypes []PayloadBinTypeInfo, floors map[string]string,
+	plantWide bool) (string, error) {
 	n := append([]NodeInfo{}, nodes...)
 	sort.Slice(n, func(i, j int) bool { return n[i].Name < n[j].Name })
 	l := append([]LoaderInfo{}, loaders...)
@@ -111,11 +113,12 @@ func NodesDigest(nodes []NodeInfo, loaders []LoaderInfo, binTypes []PayloadBinTy
 		return b[i].BinTypeCode < b[j].BinTypeCode
 	})
 	return Digest(struct {
-		Nodes    []NodeInfo           `json:"nodes"`
-		Loaders  []LoaderInfo         `json:"loaders"`
-		BinTypes []PayloadBinTypeInfo `json:"payload_bin_types"`
-		Floors   map[string]string    `json:"floor,omitempty"`
-	}{n, l, b, floors})
+		Nodes     []NodeInfo           `json:"nodes"`
+		Loaders   []LoaderInfo         `json:"loaders"`
+		BinTypes  []PayloadBinTypeInfo `json:"payload_bin_types"`
+		Floors    map[string]string    `json:"floor,omitempty"`
+		PlantWide bool                 `json:"plant_wide,omitempty"`
+	}{n, l, b, floors, plantWide})
 }
 
 // CatalogDigest is the FeedCatalog digest over the payload list.

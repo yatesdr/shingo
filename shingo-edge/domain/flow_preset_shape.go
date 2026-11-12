@@ -59,7 +59,6 @@ var shapeFields = []struct {
 	{flowspec.OutboundStaging, func(c FlowCell) string { return c.OutboundStaging }},
 	{flowspec.InboundSource, func(c FlowCell) string { return c.InboundSource }},
 	{flowspec.OutboundDestination, func(c FlowCell) string { return c.OutboundDestination }},
-	{flowspec.ChangeoverEvacDestination, func(c FlowCell) string { return c.ChangeoverEvacDestination }},
 	{flowspec.PartialDestination, func(c FlowCell) string { return c.PartialDestination }},
 	{flowspec.ChangeoverEvacNodes, func(c FlowCell) string { return strings.Join(c.ChangeoverEvacNodes, ",") }},
 	{flowspec.KeyRoute, func(c FlowCell) string { return strings.Join(c.KeyRoute, " › ") }},
@@ -211,15 +210,15 @@ func ParsePresetShape(flowJSON string) ([]FlowCell, error) {
 }
 
 // SuggestPresetName is the migration offer's suggested name: THE MODE WORD
-// ALONE — `2‑Robot Index` (owner ruling R5, 2026-09-12).
+// ALONE — `Index Swap` (owner ruling R5, 2026-09-12).
 //
 // THE POSITIONS ARE NOT IN THE NAME, because they are not a property of the
 // name. Every card and every row draws the shape's positions itself, always
 // and beside whatever the preset is called, so a name that carried them said
 // them twice on every surface that shows both — and said them WRONG the moment
 // an engineer typed a name of their own, which they may. The 200x56 strip card
-// could not hold `2‑Robot Index · PLN_01 / PLN_04` either and ellipsised it to
-// `2-Robot Index · PL...`, which is the mode word with a stump attached.
+// could not hold `Index Swap · PLN_01 / PLN_04` either and ellipsised it to
+// `Index Swap · PL...`, which is the mode word with a stump attached.
 //
 // A SUGGESTION AND NOTHING MORE: the engineer types over it, and nothing reads
 // it back. A shape whose cells disagree on a mode has no mode word and so gets
@@ -301,10 +300,19 @@ func PresetShapeNodeWord(cells []FlowCell, pressOrder []string) string {
 // TestSwapModeWordsMatchTheModel holds the two together. The hyphen in the
 // two is U+2011 (non-breaking), exactly as the model spells it — a chip that
 // wraps mid-word is the thing it is there to prevent.
+// withArticle is a mode word after its indefinite article, for a sentence
+// that says "which a ... does not use": "an Index Swap", "a 2‑Robot Swap".
+func withArticle(word string) string {
+	if word != "" && strings.ContainsRune("AEIOU", rune(word[0])) {
+		return "an " + word
+	}
+	return "a " + word
+}
+
 func SwapModeWord(mode protocol.SwapMode) string {
 	switch mode {
 	case protocol.SwapModeTwoRobotPressIndex:
-		return "2‑Robot Index"
+		return "Index Swap"
 	case protocol.SwapModeTwoRobot:
 		return "2‑Robot Swap"
 	case protocol.SwapModeSingleRobot:

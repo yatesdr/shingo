@@ -67,9 +67,10 @@ type routePlan struct {
 // PLN_008) reads PLN_012 → ULN_002 → SMN_BUF_100 → PLN_008.
 //
 // AN ORDER WITH NO STEPS, or steps that do not parse or name no node (an old
-// row), reads From → Line → To: source_node, then process_node unless it
-// repeats an end, then delivery_node, an end not chosen yet Unassigned. Its
-// plan is the two steps it implies, the lift at From and the drop at To.
+// row), reads From → To: source_node, then delivery_node, an end not chosen yet
+// Unassigned. Its plan is the two steps it implies, the lift at From and the
+// drop at To. The press it serves (process_node) is no stop: the robot never
+// goes there on its way.
 //
 // WHERE THE ROBOT IS comes from the row: steps_done, the plan's steps the fleet
 // has finished (the block subscriber's count), with the waits the wait_index
@@ -154,9 +155,8 @@ func stepPlan(stepsJSON string) (routePlan, bool) {
 	return p, len(p.stops) > 0
 }
 
-// endpointPlan is the route of an order with no steps to read: From → Line →
-// To, the line omitted when it repeats an end, worked by the lift at From and
-// the drop at To.
+// endpointPlan is the route of an order with no steps to read: From → To,
+// worked by the lift at From and the drop at To.
 func endpointPlan(o *Order) routePlan {
 	end := func(node string) RouteStop {
 		if node == "" {
@@ -164,11 +164,7 @@ func endpointPlan(o *Order) routePlan {
 		}
 		return RouteStop{Node: node}
 	}
-	stops := []RouteStop{end(o.SourceNode)}
-	if o.ProcessNode != "" && o.ProcessNode != o.SourceNode && o.ProcessNode != o.DeliveryNode {
-		stops = append(stops, RouteStop{Node: o.ProcessNode})
-	}
-	stops = append(stops, end(o.DeliveryNode))
+	stops := []RouteStop{end(o.SourceNode), end(o.DeliveryNode)}
 	return routePlan{
 		stops:  stops,
 		steps:  []routeStep{{Action: protocol.ActionPickup, Node: o.SourceNode}, {Action: protocol.ActionDropoff, Node: o.DeliveryNode}},

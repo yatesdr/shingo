@@ -45,8 +45,10 @@ func TestRequestNodeMaterial_AWrongCarrierIsClearedThenPrimedThenSwapped(t *test
 	if clear.OrderType != orders.TypeMove || clear.SourceNode != censusDeck || clear.DeliveryNode != ksDest {
 		t.Errorf("first: %s %s -> %s, want the clear: a move off %s to %s", clear.OrderType, clear.SourceNode, clear.DeliveryNode, censusDeck, ksDest)
 	}
-	if prime.OrderType != orders.TypeMove || prime.SourceNode != ksMarket || prime.DeliveryNode != censusDeck {
-		t.Errorf("second: %s %s -> %s, want the prime: a full from %s to %s", prime.OrderType, prime.SourceNode, prime.DeliveryNode, ksMarket, censusDeck)
+	if prime.OrderType != orders.TypeRetrieve || prime.RetrieveEmpty || prime.SourceNode != ksMarket ||
+		prime.DeliveryNode != censusDeck || !prime.AutoConfirm {
+		t.Errorf("second: %s %s -> %s, want the prime: a full retrieved from %s to %s, auto-confirmed",
+			prime.OrderType, prime.SourceNode, prime.DeliveryNode, ksMarket, censusDeck)
 	}
 	for _, leg := range rows[2:] {
 		if leg.OrderType != orders.TypeComplex {

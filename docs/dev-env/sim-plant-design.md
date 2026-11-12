@@ -89,7 +89,7 @@ refuses a spec without them (✅), mirroring the runtime checks of `BuildSwapDis
 (`shingo-edge/engine/swap_dispatch.go`); the step choreographies are in `material_orders.go`. The four
 swap modes are `protocol.ConfigurableSwapModes`; `simple` is refused.
 
-| `swap_mode` | inbound_staging | outbound_staging | paired_core_node | keep_staged_node | index_robot_supplies | also requires | robots | sim drives? |
+| `swap_mode` | inbound_staging | outbound_staging | paired_core_node | keep_staged_node | refill_by | also requires | robots | sim drives? |
 |---|:---:|:---:|:---:|:---:|:---:|---|:---:|:---:|
 | `sequential` (A/B) | – | – | the A/B partner | optional | – | `active_pull` arbitration | 1/leg | yes (release) |
 | `single_robot` | ✅ **required** | ✅ **required**, distinct | – | optional | – | — | 1 | yes (release) |
@@ -103,8 +103,13 @@ swap modes are `protocol.ConfigurableSwapModes`; `simple` is refused.
 
 `keep_staged_node` is one more place a line's carrier comes from instead of `inbound_source`, with a spare
 kept standing on it; the spot may be the claim's own `inbound_staging` and is otherwise dedicated to the
-line (`plantspec.Validate` restates the Edge's `CheckKeepStagedSpots` rule over the spec). `index_robot_supplies`
-belongs to `two_robot_press_index` only (§3).
+line (`plantspec.Validate` restates the Edge's `CheckKeepStagedSpots` rule over the spec). `refill_by:
+index_robot` (Robot 2 brings the next carrier) belongs to `two_robot_press_index` only (§3); blank or
+`clearing_robot` is Robot 1.
+
+A tool change's marks (`changeover_evac_nodes`) may name the positions of any mode but `manual_swap`, and a
+claim with marks requires `inbound_staging`: the new carrier waits there for the operator's Tooling done.
+`plantspec.Validate` refuses both, as the Edge's save does.
 
 ---
 
@@ -133,8 +138,8 @@ keep-staged claim whose spot is its inbound staging skips steps 1-2: the spare a
   - R2: wait(back)→pickup(back)→dropoff(front)
 - 3-position adds `SecondPairedCoreNode` (C→B→A index). One front-node claim drives it;
   the paired node(s) are **not** separate claims.
-- `index_robot_supplies` flips the supply trip: R1 stops at OutboundDestination, and R2 indexes forward and
-  then fetches the replacement to the rearmost position.
+- `refill_by: index_robot` (Robot 2) flips the supply trip: R1 stops at OutboundDestination, and R2 indexes
+  forward and then fetches the replacement to the rearmost position.
 
 **`sequential`** (A/B) — the **two-bins-at-the-line, rotate** pattern (`BuildSequential{Removal,Backfill}Steps`):
 - Two positions (A, B) share one process+style; `paired_core_node` points each at the other;
@@ -230,6 +235,6 @@ headlessly.
 `[demo]`'s PRESS-1 in `plants/master.yaml` is the two-position press shape: `swap_mode:
 two_robot_press_index`, front node `PLN_001` with `paired_core_node: PLN_002`, **no staging** for the swap,
 `inbound_source` the press-empties kanban `SYN_PRESS_EMPTIES`, `outbound_destination` the market
-`SYN_MARKET`. Its alternate style `PRESS-1-ALT` sets `index_robot_supplies`, so one press runs both
+`SYN_MARKET`. Its alternate style `PRESS-1-ALT` sets `refill_by: index_robot`, so one press runs both
 choreographies. The unload side of such a loop is a `manual_swap` consume loader (pull full → return
 empty).

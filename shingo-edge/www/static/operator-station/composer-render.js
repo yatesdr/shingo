@@ -572,7 +572,8 @@ function cellsAdvanced(cells) {
 function recipeAdvanced(p, mv) {
     const out = {};
     for (const g of (p && p.groups) || []) {
-        if (g.advanced && g.advanced.index_robot_supplies) out[(mv && mv[g.of]) || g.of] = { index_robot_supplies: true };
+        const r = g.advanced && g.advanced.refill_by;
+        if (r && r !== 'clearing_robot') out[(mv && mv[g.of]) || g.of] = { refill_by: r };
     }
     return out;
 }
@@ -828,12 +829,12 @@ function uniq(xs) { return [...new Set(xs.filter(Boolean))]; }
 function goSentences(pv) {
     const orders = M().orderSentences({ preview: pv });
     const out = [];
-    const off = orders.filter(o => o.robot === 2);
+    const off = orders.filter(o => o.role === 'evac');
     if (off.length) {
         out.push('Takes the bins off ' + andList(uniq(off.map(o => o.from))) + ' to ' + andList(uniq(off.map(o => o.to))) + '.');
     }
     const byPart = {};
-    for (const o of orders.filter(x => x.robot === 1)) (byPart[o.what || ''] = byPart[o.what || ''] || []).push(o);
+    for (const o of orders.filter(x => x.role === 'supply')) (byPart[o.what || ''] = byPart[o.what || ''] || []).push(o);
     for (const what of Object.keys(byPart)) {
         const legs = byPart[what];
         out.push('Brings ' + (what || 'a bin') + ' to ' + andList(uniq(legs.map(o => o.to))) +

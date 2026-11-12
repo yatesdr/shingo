@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -47,5 +48,34 @@ func TestOrderRequest_BinID_OmittedWhenUnset(t *testing.T) {
 	}
 	if strings.Contains(string(buf), "bin_id") {
 		t.Errorf("an unset bin was serialised anyway: %s", buf)
+	}
+}
+
+// The press an order serves, on both request types: one field name, one tag.
+// A plain order carries it as the multi-step order always has, so Core reads
+// it from either the same way; unset, the wire is what it was.
+func TestOrderRequest_ProcessNode_OneTagOnBothRequests(t *testing.T) {
+	plain, _ := reflect.TypeFor[OrderRequest]().FieldByName("ProcessNode")
+	complexReq, _ := reflect.TypeFor[ComplexOrderRequest]().FieldByName("ProcessNode")
+	if plain.Tag != complexReq.Tag || plain.Tag.Get("json") != "process_node,omitempty" {
+		t.Fatalf("tags differ: OrderRequest %q, ComplexOrderRequest %q", plain.Tag, complexReq.Tag)
+	}
+	buf, err := json.Marshal(OrderRequest{OrderUUID: "u-3", OrderType: OrderTypeRetrieveEmpty, DeliveryNode: "POS", ProcessNode: "PRESS"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got OrderRequest
+	if err := json.Unmarshal(buf, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.ProcessNode != "PRESS" || got.DeliveryNode != "POS" {
+		t.Errorf("round-trip = %+v, want the press beside the delivery", got)
+	}
+	unset, err := json.Marshal(OrderRequest{OrderUUID: "u-4", OrderType: OrderTypeRetrieve, DeliveryNode: "POS"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(unset), "process_node") {
+		t.Errorf("an unset press was serialised anyway: %s", unset)
 	}
 }

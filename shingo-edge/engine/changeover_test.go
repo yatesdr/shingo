@@ -818,9 +818,9 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 		InboundSource:       "SOURCE-OLD",
 		OutboundStaging:     "OUT-STAGING",
 		OutboundDestination: "DEST-OLD",
-		// The OUTGOING claim carries the flag: the bins in the way of the tool
+		// The OUTGOING claim carries the marks: the bins in the way of the tool
 		// change are the ones this setup put on the node.
-		EvacuateOnChangeover: true,
+		ChangeoverEvacNodes: toolChangeMarks(true, "P3E-NODE"),
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
@@ -861,13 +861,18 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	if task.Situation != "evacuate" {
 		t.Fatalf("expected situation=evacuate, got %s", task.Situation)
 	}
-	// One order: it parks the new carrier on staging, and collects it itself.
-	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected the single-robot evacuate's one order, and no stage order")
+	// One order, the tool change's leg (toolingPositionAction), under the
+	// supply pointer: it clears the node, fetches the new carrier and holds it at
+	// staging for Tooling done, then sets it down.
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("expected the tool change's one leg in the supply slot")
+	}
+	if task.OldMaterialReleaseOrderID != nil {
+		t.Fatalf("a second order %d in the old-material slot; a tool change is one leg", *task.OldMaterialReleaseOrderID)
 	}
 
-	// Order B completion (evacuate with 2 waits — when fully complete) → released
-	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	// The leg's completion → released
+	orderB, _ := db.GetOrder(*task.NextMaterialOrderID)
 	markOrderTerminal(db, orderB.ID)
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
@@ -1099,17 +1104,17 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	// Same payload + EvacuateOnChangeover so the diff resolves to
-	// SituationEvacuate (not Swap), exercising the sequential evacuate
-	// dispatch path and the OrderB→paired-runtime reset.
+	// Same payload and a tool-change mark so the diff resolves to
+	// SituationEvacuate (not Swap), exercising the tool change's one leg on a
+	// sequential position.
 	// Sequential is direct-trip; staging fields intentionally omitted
 	// so this test also pins that the planner doesn't divert sequential
 	// claims into the staging-fallback path.
 	fcID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "MARKET", OutboundDestination: "DEST",
-		// Outgoing claim owns the evacuate flag.
-		PairedCoreNode: "SEQ-B", EvacuateOnChangeover: true,
+		// The outgoing claim marks its line for a tool change.
+		PairedCoreNode: "SEQ-B", ChangeoverEvacNodes: toolChangeMarks(true, "SEQ-A"),
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
@@ -1117,7 +1122,7 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
 		PayloadCode: "PART-SAME", UOPCapacity: 250, InboundSource: "MARKET", OutboundDestination: "DEST",
-		PairedCoreNode: "SEQ-B",
+		PairedCoreNode: "SEQ-B", InboundStaging: "SEQ-STG",
 	}); err != nil {
 		t.Fatalf("upsert to claim: %v", err)
 	}
@@ -1440,8 +1445,11 @@ func seedSequentialScenarioRaw(t *testing.T, db *store.DB, evacuate bool) (
 			StyleID: c.style, CoreNodeName: c.own, Role: "produce", SwapMode: "sequential",
 			PayloadCode: c.payload, UOPCapacity: 100,
 			InboundSource: "MARKET", OutboundDestination: "DEST",
-			PairedCoreNode:       c.partner,
-			EvacuateOnChangeover: evacuate && c.isFrom, // the outgoing claim owns the marker
+			PairedCoreNode: c.partner,
+			// A tool change: the outgoing claim marks its own line, and the
+			// incoming one names where the new carrier waits for Tooling done.
+			ChangeoverEvacNodes: toolChangeMarks(evacuate && c.isFrom, c.own),
+			InboundStaging:      map[bool]string{true: "SEQ-STG"}[evacuate && !c.isFrom],
 		}); err != nil {
 			t.Fatalf("upsert claim %s/%d: %v", c.own, c.style, err)
 		}
@@ -2038,4 +2046,13 @@ func claimIDFor(t *testing.T, db *store.DB, styleID int64, coreNode string) int6
 		t.Fatalf("get claim for style %d at %s: %v", styleID, coreNode, err)
 	}
 	return c.ID
+}
+
+// toolChangeMarks is a claim input's tool-change marks: node alone when on,
+// none otherwise.
+func toolChangeMarks(on bool, node string) *[]string {
+	if !on {
+		return nil
+	}
+	return &[]string{node}
 }

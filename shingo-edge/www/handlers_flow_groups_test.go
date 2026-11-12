@@ -135,7 +135,7 @@ func TestFlowPresets_TheStationReadsAGroupsRobotAndNothingElse(t *testing.T) {
 	f := newPress6(t)
 	cookie := f.engineer(t)
 	groups := press6Groups()
-	groups[1]["advanced"] = map[string]any{"reorder_point": 1, "auto_reorder": true, "index_robot_supplies": true}
+	groups[1]["advanced"] = map[string]any{"reorder_point": 1, "auto_reorder": true, "refill_by": "index_robot"}
 	resp := f.saveRecipe(t, cookie, "Two spot press index", press6TwoSpotCells, groups)
 	assertStatus(t, resp, http.StatusOK)
 	id := int64(decodeBody(t, resp)["id"].(float64))
@@ -147,7 +147,7 @@ func TestFlowPresets_TheStationReadsAGroupsRobotAndNothingElse(t *testing.T) {
 		`{"of":"PLN_007","name":"Right Hand","spots":[` +
 		`{"core_node_name":"PLN_007","paired_core_node":["PLN_008"]},` +
 		`{"core_node_name":"PLN_012","paired_core_node":["PLN_008"]}],` +
-		`"advanced":{"index_robot_supplies":true}}]`
+		`"advanced":{"refill_by":"index_robot"}}]`
 	if !sameJSON(t, string(got), station) {
 		t.Errorf("the station reads groups %s, want %s (Right Hand's robot and nothing else)", got, station)
 	}

@@ -59,20 +59,16 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.KeepStagedNode != ""
 	case flowspec.CurtainRequired:
 		return c.CurtainRequired
-	case flowspec.EvacuateOnChangeover:
-		return c.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:
 		return len(c.ChangeoverEvacNodes) > 0
-	case flowspec.ChangeoverEvacDestination:
-		return c.ChangeoverEvacDestination != ""
 	case flowspec.PartialDestination:
 		return c.PartialDestination != ""
 	case flowspec.ChangeoverCarryoverDisposition:
 		return c.ChangeoverCarryoverDisposition != "" && c.ChangeoverCarryoverDisposition != CarryoverReplace
 	case flowspec.ReuseCompatibleBins:
 		return c.ReuseCompatibleBins
-	case flowspec.IndexRobotSupplies:
-		return c.IndexRobotSupplies
+	case flowspec.RefillBy:
+		return c.IndexRobotFetches()
 	case flowspec.AutoConfirm:
 		return c.AutoConfirm
 	case flowspec.AutoRequestPayload:
@@ -124,12 +120,8 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return OptValue(in.KeepStagedNode) != ""
 	case flowspec.CurtainRequired:
 		return in.CurtainRequired
-	case flowspec.EvacuateOnChangeover:
-		return in.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:
 		return len(OptValue(in.ChangeoverEvacNodes)) > 0
-	case flowspec.ChangeoverEvacDestination:
-		return OptValue(in.ChangeoverEvacDestination) != ""
 	case flowspec.PartialDestination:
 		return in.PartialDestination != ""
 	case flowspec.ChangeoverCarryoverDisposition:
@@ -137,8 +129,8 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return d != "" && d != CarryoverReplace
 	case flowspec.ReuseCompatibleBins:
 		return in.ReuseCompatibleBins
-	case flowspec.IndexRobotSupplies:
-		return in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
+	case flowspec.RefillBy:
+		return in.RefillBy != nil && in.RefillBy.OrDefault() != protocol.RefillByClearingRobot
 	case flowspec.AutoConfirm:
 		return in.AutoConfirm
 	case flowspec.AutoRequestPayload:

@@ -428,7 +428,7 @@ func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient) (*edgeharness
 	h := edgemessaging.NewEdgeHandler(eng.OrderManager())
 	subjects := router.NewSubject()
 	router.RegisterSubject(subjects, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, r *protocol.NodeListResponse) {
-		eng.SetCoreNodes(r.Nodes)
+		eng.SetCoreNodes(r.Nodes, false)
 	})
 	router.RegisterSubject(subjects, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
 		eng.HandleBinPickedUpMessage(*bp)

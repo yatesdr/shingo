@@ -28,7 +28,8 @@ func pressIndexClaim(front, paired, second string) *processes.NodeClaim {
 // TestExtensionPositions_ScopeIsExtensionsOnly is the guard on the shared
 // derivation's deliberately narrow contract. It must return ONLY the extension
 // positions — no front node, no swap-mode filtering. The front is the callers'
-// difference (fanOutPositions prepends it, the cross-mode walk must not), and the
+// difference (a split cell's positions start with it, the walk of positions no
+// diff stands on must not), and the
 // mode gate is DependentPositions', which the swap-chain callers ask; the
 // geometry callers (the cell picture, the station view) want the ungated answer.
 // Asserted from engine because that is where the callers live.
@@ -42,7 +43,7 @@ func TestExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
 	}
 	for _, g := range got {
 		if g == "PLN_01" {
-			t.Error("derivation returned the FRONT position; callers own that difference (fanOutPositions prepends it, the cross-mode walk must not)")
+			t.Error("derivation returned the FRONT position; callers own that difference (a split cell starts with it, the walk of positions no diff stands on must not)")
 		}
 	}
 

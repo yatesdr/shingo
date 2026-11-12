@@ -38,7 +38,7 @@ var composerSpeaks = map[string]bool{
 	"core_node_name": true, "role": true, "swap_mode": true, "payload_code": true,
 	"paired_core_node": true, "second_paired_core_node": true,
 	"inbound_source": true, "inbound_staging": true, "outbound_staging": true,
-	"outbound_destination": true, "changeover_evac_destination": true,
+	"outbound_destination":  true,
 	"changeover_evac_nodes": true, "key_route": true,
 	// The partial route: composer-authored, a routing field of a produce claim
 	// like outbound_destination beside it; carried through a flow copy.
@@ -96,7 +96,6 @@ var unspokenColumns = []struct {
 	{"allowed_payload_codes", func(c processes.NodeClaim) any { return c.AllowedPayloadCodes }},
 	{"auto_request_payload", func(c processes.NodeClaim) any { return c.AutoRequestPayload }},
 	{"keep_staged_node", func(c processes.NodeClaim) any { return c.KeepStagedNode }},
-	{"evacuate_on_changeover", func(c processes.NodeClaim) any { return c.EvacuateOnChangeover }},
 	{"auto_confirm", func(c processes.NodeClaim) any { return c.AutoConfirm }},
 	{"sequence", func(c processes.NodeClaim) any { return c.Sequence }},
 	{"lineside_soft_threshold", func(c processes.NodeClaim) any { return c.LinesideSoftThreshold }},
@@ -104,7 +103,7 @@ var unspokenColumns = []struct {
 	{"auto_push", func(c processes.NodeClaim) any { return c.AutoPush }},
 	{"strict_pack", func(c processes.NodeClaim) any { return c.StrictPack }},
 	{"pack_tolerance_pct", func(c processes.NodeClaim) any { return c.PackTolerancePct }},
-	{"index_robot_supplies", func(c processes.NodeClaim) any { return c.IndexRobotSupplies }},
+	{"refill_by", func(c processes.NodeClaim) any { return c.RefillBy }},
 	{"key_task", func(c processes.NodeClaim) any { return c.KeyTask }},
 	{"changeover_carryover_disposition", func(c processes.NodeClaim) any { return c.ChangeoverCarryoverDisposition }},
 	{"source_preset_id", func(c processes.NodeClaim) any { return c.SourcePresetID }},

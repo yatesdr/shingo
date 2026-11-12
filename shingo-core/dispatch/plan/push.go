@@ -38,8 +38,11 @@ import (
 // NO LEDGER. A source declaring no level of the type is short of nothing. Two kanbans sharing a
 // source both see its count: whoever borrowed, the next cart that fits repays it.
 //
-// NEVER UNDER A ROBOT, and that is the callers': each door asks only for an order no
-// robot has. A person's named drop never comes here either (dispatch.WindowPushShaped).
+// UNDER A ROBOT ONLY AT A RELEASE. Intake, the scanner and the cancel-return ask for an
+// order no robot has; the lift's divert (dispatch's placeByContentsAtRelease) asks for an
+// order whose robot stands at the line, and the drop it is given is moved with the rest of
+// that route planned again (dispatch's repoint). A person's named drop never comes here
+// (dispatch.WindowPushShaped).
 
 // PushDB is what the chooser reads beyond the resolver's store: the door's one
 // statement (store.DB.ReadKanbanDoor).

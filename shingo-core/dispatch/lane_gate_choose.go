@@ -567,29 +567,22 @@ func (d *Dispatcher) giveBackRelease(order *orders.Order, slot *nodes.Node, took
 	d.dbg("lane gate: order %d gives %s back as paper — its tail never reached the fleet", order.ID, slot.Name)
 }
 
-// patchChosenDrop moves the plan to the chosen slot. Two copies of "where is
-// this going", all or none (they were the widen's; the third, the junction's
-// dest_node, is gone: a cart's set-down is its row's drop step in the plan):
+// patchChosenDrop moves the plan to the chosen slot, all or none:
 //
-//	the entry step (+ delivery_node    what the append emits, and what the row
-//	  when it is the plan's last drop)  says; an interior drop moves in the plan
-//	                                    alone (C2a A.5: delivery_node is the trip's end)
 //	the WAIT step's WaitLane           whose occupancy the append takes — a stale
 //	                                    one takes the wrong lane's (F-12's shape)
+//	the entry step, and the rest of    repoint, from the entry with the robot in
+//	  the route after it                the chosen lane: delivery_node when the
+//	                                    entry is the plan's last drop (C2a A.5),
+//	                                    and the waits of every step after it
+//	                                    planned again by the splice
 //
 // A mid-trip drop that changed lane leaves the steps after it entering a lane the
-// robot is not in, so each such entry gets its own wait (gateLaterLaneEntries,
-// ruling 6), and the waits are checked again (assertEachWaitGatesItsEntry): a
+// robot is not in; the splice gives each such entry its wait (ruling 6), drops a
+// wait spliced for the lane the drop left, and turns a table where the new route
+// meets a turn node. The waits are checked by the splice that planned them: a
 // guard that runs only where a value is born stops guarding once it can change.
 func (d *Dispatcher) patchChosenDrop(order *orders.Order, c gateCandidate, steps []resolvedStep, lane, slot *nodes.Node) error {
-	final := entryIsFinalIn(steps, c.entryIndex)
-	if final {
-		if err := applyDeliveryNodeAtStep(d.db, order, slot.Name, c.entryIndex); err != nil {
-			return err
-		}
-	} else {
-		applyPlanNode(d.db, order, slot.Name, c.entryIndex, protocol.ActionDropoff)
-	}
 	// A FLAT CHILD (lane nil) is in no lane: the wait it is released from names
 	// no lane after it (WaitLane 0) and keeps its group, so the tail takes no
 	// occupancy and the plan's check reads the child as its group's.
@@ -601,18 +594,18 @@ func (d *Dispatcher) patchChosenDrop(order *orders.Order, c gateCandidate, steps
 		if err := d.rebindWaitLane(order, laneID, groupIDOf(c.lane)); err != nil {
 			return err
 		}
-		if !final {
-			if err := d.gateLaterLaneEntries(order, c.entryIndex, laneID); err != nil {
-				return err
-			}
+		var ok bool
+		if steps, ok = decodeSteps(order.StepsJSON); !ok {
+			return fmt.Errorf("re-read order %d's plan after the wait's rebind", order.ID)
 		}
-		var patched []resolvedStep
-		if err := json.Unmarshal([]byte(order.StepsJSON), &patched); err != nil {
-			return fmt.Errorf("re-read the patched plan: %w", err)
-		}
-		if err := d.assertEachWaitGatesItsEntry(patched); err != nil {
-			return fmt.Errorf("the plan no longer holds after moving to %s: %w", slot.Name, err)
-		}
+	}
+	if c.entryIndex < 0 || c.entryIndex >= len(steps) {
+		return fmt.Errorf("order %d: entry step %d is outside its plan of %d steps", order.ID, c.entryIndex, len(steps))
+	}
+	_, err := d.repoint(order, steps, stepMove{at: c.entryIndex, action: protocol.ActionDropoff, node: slot.Name,
+		group: steps[c.entryIndex].Group}, &spliceFrom{at: c.entryIndex, inside: laneID})
+	if err != nil {
+		return fmt.Errorf("the plan does not hold after moving to %s: %w", slot.Name, err)
 	}
 	return nil
 }

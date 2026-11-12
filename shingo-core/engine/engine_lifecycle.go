@@ -102,17 +102,8 @@ func (e *Engine) Start() {
 		e.logFn("engine: seeded %d default full-plant dashboard(s)", n)
 	}
 
-	// Name the nodes whose bin-type config says "accepts nothing" — mode
-	// `specific` with no types assigned. Every reader in dispatch treats an
-	// empty list as unrestricted, so this shape is silently permissive
-	// everywhere except the stranded-bin placement gate, which refuses it. One
-	// line at boot is how a half-finished config gets finished.
-	if names, err := e.db.NodesAcceptingNothing(); err != nil {
-		e.dbg("engine: audit nodes accepting no bin type: %v", err)
-	} else if len(names) > 0 {
-		e.logFn("engine: %d node(s) are set to accept specific bin types but have none "+
-			"assigned, so their config accepts nothing: %s", len(names), strings.Join(names, ", "))
-	}
+	// Setups saved half-finished or before a rule, named at boot (reportSetups).
+	e.reportSetups()
 
 	// Two-stage unloaders: pairs re-derived, and pull-mode carts moved on, now
 	// rather than at the next edit or event; and every draining unloader's
@@ -525,4 +516,56 @@ func (e *Engine) polledRobotStatus(vehicleID string) (fleet.RobotStatus, bool) {
 		}
 	}
 	return fleet.RobotStatus{}, false
+}
+
+// reportSetups names, at boot, the setups saved half-finished or before a rule
+// refused them, so the owner can see how the plant is set up:
+//
+//   - the nodes whose bin-type config says "accepts nothing" — mode `specific`
+//     with no types assigned. Every reader in dispatch treats an empty list as
+//     unrestricted, so this shape is silently permissive everywhere except the
+//     stranded-bin placement gate, which refuses it. One line at boot is how a
+//     half-finished config gets finished;
+//   - the claim legs where Core picks that name a member of a node group
+//     (reportMemberLegs).
+func (e *Engine) reportSetups() {
+	if names, err := e.db.NodesAcceptingNothing(); err != nil {
+		e.dbg("engine: audit nodes accepting no bin type: %v", err)
+	} else if len(names) > 0 {
+		e.logFn("engine: %d node(s) are set to accept specific bin types but have none "+
+			"assigned, so their config accepts nothing: %s", len(names), strings.Join(names, ", "))
+	}
+	e.reportMemberLegs()
+}
+
+// reportMemberLegs logs, at start, every claim leg where Core picks (inbound
+// source, outbound, containment and partial destinations) that names a member
+// of a node group, and which of those members are loader homes. It refuses
+// nothing: what Core does with each is unchanged, except containment, which
+// parks (dispatch.CauseContainmentMember).
+func (e *Engine) reportMemberLegs() {
+	legs, err := e.db.ClaimPickLegsNamingMembers()
+	if err != nil {
+		e.dbg("engine: audit claim legs naming a group member: %v", err)
+		return
+	}
+	if len(legs) == 0 {
+		return
+	}
+	homes := 0
+	for _, l := range legs {
+		if l.LoaderHome {
+			homes++
+		}
+	}
+	e.logFn("engine: %d claim leg(s) where Core picks name a member of a node group (%d of them a loader home); "+
+		"the Edge refuses these now: name the group, or a node in no group", len(legs), homes)
+	for _, l := range legs {
+		home := ""
+		if l.LoaderHome {
+			home = " (a loader home)"
+		}
+		e.logFn("engine:   claim %s / %s at %s: %s = %s, a member of %s%s",
+			l.Process, l.Style, l.Node, l.Leg, l.Name, l.Group, home)
+	}
 }

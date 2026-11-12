@@ -652,6 +652,9 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 		Local    bool   `json:"node_local,omitempty"`
 		Setup    string `json:"setup,omitempty"`
 		Asker    string `json:"asker,omitempty"`
+		// Press is the press the need is for (its process node), as every Edge
+		// order names it.
+		Press string `json:"process_node,omitempty"`
 	}
 	cases := []struct {
 		name  string
@@ -668,7 +671,10 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 		{name: "full-shim-anywhere", need: need{Payload: "SHIM", Delivery: "ALN_008", Intent: "full"}},
 		{name: "empty-standard-from-market", need: need{Source: "SYN_MARKET", Payload: "PANEL-A", Delivery: "PLN_001", Intent: "empty"}},
 		{name: "empty-standard-sm-from-market", need: need{Source: "SYN_MARKET", Payload: "PANEL-B", Delivery: "PLN_003", Intent: "empty"}},
-		{name: "empty-from-press-empties", need: need{Source: "SYN_PRESS_EMPTIES", Payload: "PANEL-A", Delivery: "PLN_001", Intent: "empty"}},
+		// The press empties kanban is strict and supports PRESS-1: an empty for
+		// its press is served, an empty asked for no press is an outsider there.
+		{name: "empty-from-press-empties", need: need{Source: "SYN_PRESS_EMPTIES", Payload: "PANEL-A", Delivery: "PLN_001", Intent: "empty", Press: "PLN_001"}},
+		{name: "empty-from-press-empties-for-no-press", need: need{Source: "SYN_PRESS_EMPTIES", Payload: "PANEL-A", Delivery: "PLN_001", Intent: "empty"}},
 		{name: "empty-anywhere", need: need{Payload: "PANEL-A", Delivery: "PLN_001", Intent: "empty"}},
 		{name: "node-local-shim-at-home", need: need{Source: "PLK_H1", Payload: "SHIM", Delivery: "ALN_008", Intent: "full", Local: true}},
 		{name: "node-local-at-empty-node", need: need{Source: "PLK_B1", Payload: "SHIM", Delivery: "ALN_008", Intent: "full", Local: true}},
@@ -781,7 +787,7 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 			}
 			res := g.finder().FindSourceForNeed(dispatch.SourceNeed{
 				SourceNode: c.need.Source, PayloadCode: c.need.Payload, DeliveryNode: c.need.Delivery,
-				Intent: intent, NodeLocal: c.need.Local, Asker: asker,
+				Intent: intent, NodeLocal: c.need.Local, Asker: asker, ProcessNode: c.need.Press,
 			})
 			golden(t, "bin-picker/"+c.name, c.need, g.sourceAnswer(res))
 		})
@@ -986,9 +992,19 @@ func TestPlannerGolden_Doors(t *testing.T) {
 		},
 		{
 			name: "wire-retrieve-empty-press",
-			need: map[string]any{"door": "edge wire intake", "type": "retrieve_empty", "payload": "PANEL-A", "source": "SYN_PRESS_EMPTIES", "delivery": "PLN_005"},
+			need: map[string]any{"door": "edge wire intake", "type": "retrieve_empty", "payload": "PANEL-A", "source": "SYN_PRESS_EMPTIES", "delivery": "PLN_005", "process_node": "PLN_005"},
 			run: func(g *goldenPlant) {
 				wire(g, protocol.OrderRequest{OrderUUID: "g-retrieve-empty", OrderType: protocol.OrderTypeRetrieveEmpty,
+					PayloadCode: "PANEL-A", SourceNode: "SYN_PRESS_EMPTIES", DeliveryNode: "PLN_005", ProcessNode: "PLN_005", Quantity: 1})
+			},
+		},
+		{
+			// The same empty from an Edge that names no press: the strict press
+			// empties kanban fences it.
+			name: "wire-retrieve-empty-for-no-press",
+			need: map[string]any{"door": "edge wire intake", "type": "retrieve_empty", "payload": "PANEL-A", "source": "SYN_PRESS_EMPTIES", "delivery": "PLN_005"},
+			run: func(g *goldenPlant) {
+				wire(g, protocol.OrderRequest{OrderUUID: "g-retrieve-empty-blank", OrderType: protocol.OrderTypeRetrieveEmpty,
 					PayloadCode: "PANEL-A", SourceNode: "SYN_PRESS_EMPTIES", DeliveryNode: "PLN_005", Quantity: 1})
 			},
 		},

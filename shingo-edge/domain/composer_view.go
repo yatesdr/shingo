@@ -180,7 +180,7 @@ type ComposerStyle struct {
 	// ClaimCount is zero for a style nobody has set up — the "Build" verdict,
 	// and with the gate off the row that reads "Set up from the desktop".
 	ClaimCount int `json:"claim_count"`
-	// Modes and Nodes build the row's flow summary ("2‑Robot Index · P01/P04").
+	// Modes and Nodes build the row's flow summary ("Index Swap · P01/P04").
 	//
 	// NODES RIDES THE PICKER SCOPE ONLY (owner, 2026-09-17: carrying the same
 	// data twice is not kept). It is the core node of every claim, which is
@@ -279,13 +279,14 @@ type ComposerRoutingNode struct {
 	Sequence     int    `json:"sequence"`
 }
 
-// DropLaneLegs takes out every routing row that names a lane, in any role, so
-// the composer offers no lane chip on a leg the claim save would refuse. A row
-// can be there from before the routing-set save refused one, or derived from a
-// claim stored before. With no node list heard yet nothing is known to be a
-// lane and every row stays.
-func (d *ComposerData) DropLaneLegs(kinds CoreNodeKinds) {
-	if d == nil || len(kinds.Lanes) == 0 {
+// DropRefusedRows takes out every routing row LegRefusal refuses in its role (a
+// lane in any role; a member of a group, or a name Core's list does not hold,
+// as a source or a destination), so the composer offers no chip on a leg the
+// claim save would refuse. A row can be there from before the routing-set save
+// refused one, or derived from a claim stored before. With no node list heard
+// yet nothing is refused and every row stays.
+func (d *ComposerData) DropRefusedRows(kinds CoreNodeKinds) {
+	if d == nil || kinds.Empty() {
 		return
 	}
 	kept := d.Routing[:0]

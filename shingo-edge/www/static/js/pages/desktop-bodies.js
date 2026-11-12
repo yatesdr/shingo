@@ -375,19 +375,32 @@ function flowPresetApplySave(styleID, cells, fingerprint, stationID, preset) {
 //
 // A LEG NAMES A NODE OR A GROUP, NEVER A LANE. The claim and routing saves
 // refuse a lane on every leg, staging included (domain.CoreNodeKinds), so no
-// list that feeds a leg offers one. One predicate, the node's type as Core
-// sent it.
+// list that feeds a leg offers one. And where Core picks (a source or a
+// destination) a leg names the group, never one of its members: choosing the
+// member is Core's job. A staging spot names the exact node, a member or not.
+// One predicate, the node as Core's list sent it (the server marks a member
+// with its group, handlers_catalog.go).
 const LANE_ON_A_LEG = 'a lane — a flow names its group, or the spot itself, never a lane';
+const MEMBER_ON_A_PICK = 'a member of a group — Core picks the member, so a source or destination names the group';
 
 function isLane(node) {
     return !!node && node.node_type === 'LANE';
 }
 
-// laneExclusion is a picker's `exclude` answer for a name: the reason when
-// Core's list says it is a lane, else ''. A name not in the list is not
+// isMember says Core's list puts the node in a group.
+function isMember(node) {
+    return !!node && !!node.group;
+}
+
+// legExclusion is a picker's `exclude` answer for a name in a role (source,
+// destination or staging): the reason when Core's list says it is a lane, or
+// a member of a group where Core picks, else ''. A name not in the list is not
 // refused here; the save answers for it.
-function laneExclusion(coreNodes, name) {
-    return isLane((coreNodes || []).find(n => n.name === name)) ? LANE_ON_A_LEG : '';
+function legExclusion(coreNodes, name, role) {
+    const n = (coreNodes || []).find(c => c.name === name);
+    if (isLane(n)) return LANE_ON_A_LEG;
+    if (role !== 'staging' && isMember(n)) return MEMBER_ON_A_PICK + ' (' + n.group + ')';
+    return '';
 }
 
 // ── the apply loop's two decisions ───────────────────────────────────────────
@@ -487,7 +500,7 @@ function saveOutcome(status, body) {
         routingSet, processPayloads,
         flowPresetCreate, flowPresetApplySave,
         applyOrder, applyOutcome, saveOutcome,
-        isLane, laneExclusion,
+        isLane, isMember, legExclusion,
     };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

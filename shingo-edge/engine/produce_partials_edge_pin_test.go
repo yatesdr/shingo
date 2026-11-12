@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -71,32 +72,80 @@ func TestProducePartials_ManualEmptySendsTheOperatorsCount(t *testing.T) {
 }
 
 // TestProducePartials_ThePickNamesTheFetch: the operator's chosen held partial
-// rides the swap's fetch — its first pickup of a carrier to fill — and no
-// other step.
+// rides the swap's fetch, the pickup at the node the refill comes from (the
+// claim's inbound source, or its keep-staged spot), and no other step, on every
+// shape that fetches in the pair: single robot, two robot, and an index press
+// whichever robot refills. Robot 2's leg opens on a pickup of the empty on
+// deck, which is no fetch: the first Empty pickup named that one (a bin that
+// is not there). A swap that fetches nothing in the pair (sequential: its
+// backfill is made after the removal) refuses the pick by name.
 func TestProducePartials_ThePickNamesTheFetch(t *testing.T) {
 	t.Parallel()
-	claim := &processes.NodeClaim{CoreNodeName: "PP-LINE", Role: protocol.ClaimRoleProduce,
-		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PP-X", InboundSource: "PP-MKT",
-		InboundStaging: "PP-STG", OutboundStaging: "PP-OUT", OutboundDestination: "PP-DEST"}
-	d, err := BuildSwapDispatch(&processes.Node{Name: "PP-LINE", CoreNodeName: "PP-LINE"}, claim)
-	if err != nil || d == nil {
-		t.Fatalf("no dispatch: %v", err)
-	}
-	nameRefillBin(d, 42)
-	named := 0
-	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
-		for _, s := range steps {
-			if s.BinID == 0 {
-				continue
-			}
-			named++
-			if s.Action != protocol.ActionPickup || !s.Empty || s.BinID != 42 {
-				t.Errorf("bin 42 named on %+v, want the fetch of a carrier to fill", s)
+	base := processes.NodeClaim{CoreNodeName: "PP-LINE", Role: protocol.ClaimRoleProduce,
+		PayloadCode: "PP-X", InboundSource: "PP-MKT", InboundStaging: "PP-STG", OutboundStaging: "PP-OUT",
+		OutboundDestination: "PP-DEST"}
+	node := &processes.Node{Name: "PP-LINE", CoreNodeName: "PP-LINE"}
+	for _, c := range []struct {
+		name  string
+		edit  func(*processes.NodeClaim)
+		fetch string
+	}{
+		{"single robot", func(c *processes.NodeClaim) { c.SwapMode = protocol.SwapModeSingleRobot }, "PP-MKT"},
+		{"two robot", func(c *processes.NodeClaim) { c.SwapMode = protocol.SwapModeTwoRobot }, "PP-MKT"},
+		{"index press, Robot 1 refills", func(c *processes.NodeClaim) {
+			c.SwapMode, c.PairedCoreNode = protocol.SwapModeTwoRobotPressIndex, "PP-BACK"
+		}, "PP-MKT"},
+		{"index press, Robot 2 refills", func(c *processes.NodeClaim) {
+			c.SwapMode, c.PairedCoreNode, c.RefillBy = protocol.SwapModeTwoRobotPressIndex, "PP-BACK", protocol.RefillByIndexRobot
+		}, "PP-MKT"},
+		{"three-position index press, Robot 2 refills", func(c *processes.NodeClaim) {
+			c.SwapMode, c.PairedCoreNode, c.SecondPairedCoreNode = protocol.SwapModeTwoRobotPressIndex, "PP-BACK", "PP-THIRD"
+			c.RefillBy = protocol.RefillByIndexRobot
+		}, "PP-MKT"},
+		{"two robot from its spot", func(c *processes.NodeClaim) {
+			c.SwapMode, c.KeepStagedNode = protocol.SwapModeTwoRobot, "PP-SPOT"
+		}, "PP-SPOT"},
+	} {
+		claim := base
+		c.edit(&claim)
+		d, err := BuildSwapDispatch(node, &claim)
+		if err != nil || d == nil {
+			t.Fatalf("%s: no dispatch: %v", c.name, err)
+		}
+		testutil.MustNoErr(t, nameRefillBin(d, &claim, 42), c.name)
+		named := 0
+		for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
+			for _, s := range steps {
+				if s.BinID == 0 {
+					continue
+				}
+				named++
+				if s.Action != protocol.ActionPickup || s.Node != c.fetch || s.BinID != 42 {
+					t.Errorf("%s: bin 42 named on %+v, want the fetch at %s", c.name, s, c.fetch)
+				}
 			}
 		}
+		if named != 1 {
+			t.Errorf("%s: %d steps name the pick, want exactly the fetch", c.name, named)
+		}
 	}
-	if named != 1 {
-		t.Errorf("%d steps name the pick, want exactly the fetch", named)
+
+	seq := base
+	seq.SwapMode, seq.PairedCoreNode, seq.InboundStaging, seq.OutboundStaging = protocol.SwapModeSequential, "PP-B", "", ""
+	d, err := BuildSwapDispatch(node, &seq)
+	if err != nil || d == nil {
+		t.Fatalf("sequential: no dispatch: %v", err)
+	}
+	err = nameRefillBin(d, &seq, 42)
+	if err == nil || !strings.Contains(err.Error(), "fetches no carrier") {
+		t.Errorf("sequential: the pick = %v, want a refusal naming that the swap fetches no carrier", err)
+	}
+	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
+		for _, s := range steps {
+			if s.BinID != 0 {
+				t.Errorf("sequential: a refused pick named bin %d on %+v", s.BinID, s)
+			}
+		}
 	}
 }
 
@@ -110,14 +159,14 @@ func TestProducePartials_AHomeMayNotTakePartialsToUnload(t *testing.T) {
 		"STAGE2":      {Name: "STAGE2", NodeType: protocol.NodeClassNGRP, AcceptsPartials: true},
 		"STAGE2.WIN1": {Name: "STAGE2.WIN1", AcceptsPartials: true},
 		"PP-HOME":     {Name: "PP-HOME", NodeType: protocol.NodeClassNGRP},
-	})
+	}, nil, false)
 	for _, c := range []struct {
 		home   string
 		refuse bool
 	}{{"STAGE2", true}, {"STAGE2.WIN1", true}, {"PP-HOME", false}, {"", false}} {
 		in := domain.NodeClaimInput{CoreNodeName: "PP-LINE", Role: protocol.ClaimRoleProduce, PartialDestination: c.home}
 		refused := false
-		for _, f := range kinds.LaneLegs(in) {
+		for _, f := range kinds.RefusedLegs(in) {
 			if f.Field == "partial_destination" {
 				refused = true
 			}

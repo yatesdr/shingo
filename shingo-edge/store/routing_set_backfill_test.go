@@ -217,11 +217,10 @@ func expectedRoutingSets(f plantFixture) map[int64]map[string]bool {
 		positions[pid][fixtureStr(n["core_node_name"])] = true
 	}
 	fields := map[string]string{
-		"inbound_source":              domain.RoutingRoleSource,
-		"outbound_destination":        domain.RoutingRoleDestination,
-		"changeover_evac_destination": domain.RoutingRoleDestination,
-		"inbound_staging":             domain.RoutingRoleStaging,
-		"outbound_staging":            domain.RoutingRoleStaging,
+		"inbound_source":       domain.RoutingRoleSource,
+		"outbound_destination": domain.RoutingRoleDestination,
+		"inbound_staging":      domain.RoutingRoleStaging,
+		"outbound_staging":     domain.RoutingRoleStaging,
 	}
 	out := map[int64]map[string]bool{}
 	for pid := range procs {

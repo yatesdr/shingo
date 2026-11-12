@@ -69,7 +69,7 @@ func TestSwapModeWordsMatchTheModel(t *testing.T) {
 // kept (U+2011).
 func TestSwapModeWordsAreTitleCase(t *testing.T) {
 	want := map[protocol.SwapMode]string{
-		protocol.SwapModeTwoRobotPressIndex: "2‑Robot Index",
+		protocol.SwapModeTwoRobotPressIndex: "Index Swap",
 		protocol.SwapModeTwoRobot:           "2‑Robot Swap",
 		protocol.SwapModeSingleRobot:        "1‑Robot Swap",
 		protocol.SwapModeSequential:         "Sequential A/B",

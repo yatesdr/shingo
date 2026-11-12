@@ -586,7 +586,7 @@ func newWalk(t *testing.T) *walk {
 		nodes = append(nodes, protocol.NodeInfo{Name: name})
 	}
 	nodes = append(nodes, protocol.NodeInfo{Name: "SMN_W1"}, protocol.NodeInfo{Name: "SMN_W2"})
-	eng.SetCoreNodes(nodes)
+	eng.SetCoreNodes(nodes, false)
 	if err := eng.SetCoreLoaders(walkLoaders("operator")); err != nil {
 		t.Fatalf("SetCoreLoaders: %v", err)
 	}

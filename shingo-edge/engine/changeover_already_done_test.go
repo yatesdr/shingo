@@ -109,10 +109,12 @@ func TestChangeoverRestart_DoesNotSwapANodeAlreadyHoldingTheNewPart(t *testing.T
 	}
 }
 
-// TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome: a node holding a part of a
-// third style sends its carrier where that part belongs, the same aim REQUEST
-// takes (residentEvacDest), not to the outgoing style's destination.
-func TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome(t *testing.T) {
+// TestChangeoverPlan_AimsTheOldCarrierAtTheOutgoingClaimsOutbound: a node
+// holding a part of a third style is planned with the outgoing claim's
+// outbound, as every node is. Core holds the bin and, at the lift, sends a
+// carrier aimed at another part's outbound to its own claim's (shingo-core
+// dispatch's by-contents choice).
+func TestChangeoverPlan_AimsTheOldCarrierAtTheOutgoingClaimsOutbound(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
@@ -132,8 +134,7 @@ func TestChangeoverPlan_AimsTheOldCarrierAtItsOwnHome(t *testing.T) {
 	if d == nil || d.FromClaim == nil {
 		t.Fatalf("CO-NODE diff = %+v, want a swap with a from-claim", d)
 	}
-	if d.FromClaim.OutboundDestination != "DEST-X" {
-		t.Errorf("old carrier goes to %q, want DEST-X — it holds PART-X, whose home that is, not DEST-OLD",
-			d.FromClaim.OutboundDestination)
+	if d.FromClaim.OutboundDestination != "DEST-OLD" {
+		t.Errorf("old carrier is aimed at %q, want DEST-OLD, the outgoing claim's outbound", d.FromClaim.OutboundDestination)
 	}
 }

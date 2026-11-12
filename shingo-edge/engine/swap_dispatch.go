@@ -45,6 +45,12 @@ type SwapDispatch struct {
 	// order.
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
+
+	// FollowOns is how many orders the pair leaves to be made after a lift:
+	// one per position its legs lift from and set nothing down on
+	// (followOnPositions), a sequential line's backfill. The plans count them
+	// (OrderCount), so the episode expects them.
+	FollowOns int `json:",omitempty"`
 }
 
 // BuildSwapDispatch validates per-mode required fields and returns the
@@ -58,26 +64,20 @@ type SwapDispatch struct {
 // RequestProduceSwap and requestNodeFromClaim verbatim, so error
 // messages stay diff-stable across the refactor.
 //
-// After building the per-mode steps, a produce claim's inbound-source pickup
-// (the "fetch a fresh bin from the supermarket" leg) is marked Empty so Core
-// sources and claims an EMPTY carrier to fill — the store dual of a consume
-// node's full retrieve, and the same intent the simple-retrieve path already
-// carries via RetrieveEmpty (changeover_planner). Without it the complex-order
-// path delivers a full bin to the press.
+// A produce claim's fetch (the fresh carrier from the supermarket) is an
+// EMPTY pickup, the store dual of a consume node's full retrieve: each builder
+// gets it from refillPickup, which sets the flag, so nothing here marks it.
 func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	disp, err := buildSwapDispatch(node, claim)
 	if err != nil || disp == nil {
 		return disp, err
-	}
-	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(disp.StepsA, claim.InboundSource, "")
-		markInboundEmpty(disp.StepsB, claim.InboundSource, "")
 	}
 	// Derive Leg A's delivery node from its own steps rather than asserting it is
 	// the process node. The per-mode builders are the single source of truth for
 	// where a leg ends; anything that restates it by hand can drift out of step
 	// with them, and did — see DeliveryNodeA.
 	disp.DeliveryNodeA = finalDropoff(disp.StepsA)
+	disp.FollowOns = len(followOnPositions(claim.Positions(), disp.StepsA, disp.StepsB))
 	return disp, nil
 }
 
@@ -95,10 +95,12 @@ func finalDropoff(steps []protocol.ComplexOrderStep) string {
 	return dest
 }
 
-// markInboundEmpty flags every pickup at inboundSource as an empty leg. The
-// inbound-source pickup is the only leg that fetches a fresh carrier from the
-// supermarket; the other pickups move bins already in the swap, so they keep
-// their contents and must not be flagged.
+// markInboundEmpty flags every pickup at inboundSource as an empty leg and
+// says which carrier it fetches. The inbound-source pickup is the only leg
+// that fetches a fresh carrier from the supermarket; the other pickups move
+// bins already in the swap, so they keep their contents and must not be
+// flagged. A steady swap's builders need no call: refillPickup sets the flag.
+// A changeover's legs call it for carrierFor.
 //
 // carrierFor is what this leg SAYS about the carrier it fetches, and it is
 // blank for almost every caller. Empty drops the full-bin content match, so
@@ -162,7 +164,7 @@ func refillCarrierPayload(fromClaim, toClaim *processes.NodeClaim) string {
 // buildSwapDispatch, and it should stay that way.
 //
 // AutoConfirmA/AutoConfirmB were positional literals, and position is not what
-// the operator signs for. The IndexRobotSupplies flip moves the supermarket trip
+// the operator signs for. The RefillBy flip (Robot 2) moves the supermarket trip
 // between R1 and R2 without moving the press pickup or the press dropoff, so
 // under the flip the leg carrying AutoConfirmA=false became the one ending at
 // the SUPERMARKET. Springfield press trial 2026-09-02: the order landed
@@ -180,13 +182,12 @@ func confirmPolicy(claim *processes.NodeClaim, steps []protocol.ComplexOrderStep
 	return !protocol.PlacesBinAt(steps, claim.CoreNodeName)
 }
 
-// claim.OutboundDestination MAY BE AN OVERRIDE, not the claim's own row. Every
-// read of it below is the evac leg's dropoff — "where does the carrier leaving
-// this cell go" — and an Engine caller resolves that from the RESIDENT claim
-// when the cell holds a style other than the one being requested. See
-// withResidentEvacDest / residentEvacDest in swap_evac_dest.go for why, and for
-// the Springfield 2026-09-02 incident that made the distinction load-bearing.
-// InboundSource is untouched: the supply leg still fetches what was asked for.
+// Every read of claim.OutboundDestination below is the evac leg's dropoff,
+// "where does the carrier leaving this cell go", aimed at the requested claim's
+// outbound whatever stands on the cell. A carrier of another part is Core's to
+// send home: Core holds the bin and sends a carrier aimed at another part's
+// outbound to its own claim's (dispatch's by-contents choice). InboundSource is
+// the supply leg's: it fetches what was asked for.
 func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	switch claim.SwapMode {
 	case protocol.SwapModeSequential:

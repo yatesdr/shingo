@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine"
 	ordermgr "shingoedge/orders"
 )
@@ -17,6 +18,26 @@ import (
 const MaxBatchRetrieveCount = 5
 
 // --- Order Creation ---
+
+// pickedNode is a node an API order's caller named in a role where Core picks:
+// the source it takes from or the destination it sends to.
+type pickedNode struct{ role, name string }
+
+// refusePicked answers 400 for the first name the caller gave that the leg
+// rule refuses where Core picks (domain.CoreNodeKinds.LegRefusal: a member of
+// a node group, or a name Core's list does not hold), and reports whether it
+// did. A name the handler filled in from the cell's own position is the exact
+// node and is not passed here.
+func (h *Handlers) refusePicked(w http.ResponseWriter, picks ...pickedNode) bool {
+	kinds := h.coreNodeKinds()
+	for _, p := range picks {
+		if msg := kinds.LegRefusal(p.role, p.name); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return true
+		}
+	}
+	return false
+}
 
 func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -34,6 +55,10 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if h.refusePicked(w, pickedNode{domain.RoutingRoleSource, req.SourceNode},
+		pickedNode{domain.RoutingRoleDestination, req.DeliveryNode}) {
+		return
+	}
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
@@ -134,6 +159,10 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if h.refusePicked(w, pickedNode{domain.RoutingRoleSource, req.SourceNode},
+		pickedNode{domain.RoutingRoleDestination, req.DeliveryNode}) {
+		return
+	}
 
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
@@ -177,8 +206,11 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 		processNodeID = &req.ProcessNodeID
 	}
 
-	order, err := h.engine.OrderManager().CreateComplexOrder(
-		processNodeID, req.Quantity, "", "", req.Steps, ordermgr.NoDemand(),
+	// The press is named by the plain funnels' rule (PressOf): the claim's
+	// node, blank with no process node or a loader's.
+	mgr := h.engine.OrderManager()
+	order, err := mgr.CreateComplexOrder(
+		processNodeID, req.Quantity, "", mgr.PressOf(processNodeID), req.Steps, ordermgr.NoDemand(),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

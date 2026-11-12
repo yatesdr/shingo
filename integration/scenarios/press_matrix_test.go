@@ -96,7 +96,7 @@ const (
 	pmNoOnDeck = "no on-deck off a press: the swap lifts only at the line (DependentPositions nil), so " +
 		"a carrier standing elsewhere is no step of it"
 	pmNoMarker = "the marker is press-index only: a marker on an on-deck needs an on-deck"
-	pmFlipOnly = "the flip (IndexRobotSupplies) is press-index only: it shapes only " +
+	pmFlipOnly = "the flip (refill_by Robot 2) is press-index only: it shapes only " +
 		"BuildTwoRobotPressIndexSwapSteps, and every other mode's swap is the same either way"
 	pmFlipNoIndex = "the flip shapes only the press's index swap; a changeover into a vacant press plans " +
 		"each position an Add (a plain delivery), which the flip does not shape, and the outgoing mode " +
@@ -223,7 +223,7 @@ func TestScenario_PressMatrix_TheCellsThatDoNotExist(t *testing.T) {
 			claim := func(flipped bool) *processes.NodeClaim {
 				return &processes.NodeClaim{CoreNodeName: ksrLine, Role: role, SwapMode: mode, PayloadCode: ksrPartA,
 					InboundSource: ksrMktA, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
-					OutboundDestination: ksrDest, PairedCoreNode: ksrDeck, IndexRobotSupplies: flipped}
+					OutboundDestination: ksrDest, PairedCoreNode: ksrDeck, RefillBy: refillFor(flipped)}
 			}
 			dep := claim(false).DependentPositions()
 			if mode == protocol.SwapModeTwoRobotPressIndex {
@@ -279,7 +279,7 @@ func newPmCell(t *testing.T, r pmRow) *pmCell {
 		o.sameB = true
 	case "changeover":
 		// Into a press: from a press of another part and carrier, or across
-		// modes from any other (the cross-mode read, FanOutPressIndexCrossMode).
+		// modes from any other (the press positions' one pass, PlanPressPositions).
 		o.modeB = protocol.SwapModeTwoRobotPressIndex
 	}
 	p := &pmCell{ksrCell: newKsrCell(t, o), r: r}
@@ -896,7 +896,7 @@ func (p *pmCell) seatGone(nodeID int64) {
 // each seat recording its carrier gone. The outgoing style is the row's mode
 // (a press, or across modes any other); the incoming is a press of B. START
 // plans each vacant position an Add (ApplyNodeState: a vacant Swap is an Add;
-// FanOutPressIndexCrossMode plans the to-only paired position a Swap first),
+// PlanPressPositions plans the to-only paired position an Add from its seat),
 // so its orders are plain deliveries of B, one to each position, and no leg;
 // the changeover runs to CUTOVER with a B bin on each.
 func pmChangeoverIntoVacant(p *pmCell) {

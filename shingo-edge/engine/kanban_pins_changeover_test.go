@@ -152,10 +152,11 @@ func TestKanbanPin_PerPositionSwapDropsTheOldBinAtTheFromOutbound(t *testing.T) 
 	}
 }
 
-// TestKanbanPin_FanOutFromClaimOfAnExtensionPosition: what the fan-out hands the
-// builder as the from-claim of a position outside the parent's diff. From-side
-// only drops at the outgoing outbound; to-side only uses the incoming claim for
-// both sides, so whatever stands there goes to the INCOMING outbound.
+// TestKanbanPin_FanOutFromClaimOfAnExtensionPosition: what the press positions
+// hand the builder as the from-claim of a position outside the parent's diff.
+// From-side only drops at the outgoing outbound; to-side only, with a bin bound
+// there (the swap), uses the incoming claim for both sides, so whatever stands
+// there goes to the INCOMING outbound.
 func TestKanbanPin_FanOutFromClaimOfAnExtensionPosition(t *testing.T) {
 	t.Parallel()
 	press := func(part, out string) processes.NodeClaim {
@@ -179,8 +180,9 @@ func TestKanbanPin_FanOutFromClaimOfAnExtensionPosition(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out := FanOutPressIndexCrossMode([]ChangeoverNodeDiff{
-				{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &tc.from, ToClaim: &tc.to}}, nil)
+			out := PlanPressPositions([]ChangeoverNodeDiff{
+				{CoreNodeName: "FRONT", Situation: SituationSwap, FromClaim: &tc.from, ToClaim: &tc.to}}, nil,
+				func(string) NodeState { return NodeState{Seat: SeatBin} })
 			for _, d := range out {
 				if d.CoreNodeName != "MIDDLE" && d.CoreNodeName != "BACK" {
 					continue

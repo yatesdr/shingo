@@ -112,7 +112,7 @@ func TestCollapseRecipeRouting_StoresOneNodeRolesByRole(t *testing.T) {
 	flow, err := RecipeShapeJSON([]FlowCell{{
 		CoreNodeName: "PLN_01", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
 		InboundSource: "SRC_A", OutboundDestination: "DST_B", InboundStaging: "PLN_02", OutboundStaging: "",
-		ChangeoverEvacDestination: "DST_A", PartialDestination: "DOCK",
+		PartialDestination: "DOCK",
 	}, {
 		CoreNodeName: "PLN_03", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
 		InboundSource: "SRC_A",
@@ -133,8 +133,8 @@ func TestCollapseRecipeRouting_StoresOneNodeRolesByRole(t *testing.T) {
 	if c.InboundSource != RecipeFollowsSource || cells[1].InboundSource != RecipeFollowsSource {
 		t.Errorf("source = %q and %q, want the role", c.InboundSource, cells[1].InboundSource)
 	}
-	if c.OutboundDestination != "DST_B" || c.ChangeoverEvacDestination != "DST_A" {
-		t.Errorf("destinations = %q, %q: a role with several keeps its names", c.OutboundDestination, c.ChangeoverEvacDestination)
+	if c.OutboundDestination != "DST_B" {
+		t.Errorf("destination = %q: a role with several keeps its name", c.OutboundDestination)
 	}
 	if c.InboundStaging != "PLN_02" || c.OutboundStaging != "" || c.PartialDestination != "DOCK" {
 		t.Errorf("staging %q/%q partial %q: a position, a blank and a partial home stay", c.InboundStaging, c.OutboundStaging, c.PartialDestination)
@@ -149,7 +149,7 @@ func TestCollapseRecipeRouting_StoresOneNodeRolesByRole(t *testing.T) {
 	if key, stored := RecipeStructureKey(cells), RecipeStructureKey([]FlowCell{{
 		CoreNodeName: "PLN_01", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
 		InboundSource: "SRC_A", OutboundDestination: "DST_B", InboundStaging: "PLN_02",
-		ChangeoverEvacDestination: "DST_A", PartialDestination: "DOCK",
+		PartialDestination: "DOCK",
 	}, {
 		CoreNodeName: "PLN_03", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot, InboundSource: "SRC_A",
 	}}); key != stored {

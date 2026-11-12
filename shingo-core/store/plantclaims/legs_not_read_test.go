@@ -93,6 +93,7 @@ var sanctionedLegReaders = map[string]string{
 	"store/kanbans.go":                 "a node rename lists what joins it by name, a claim's legs among them (ReferencesToNodeName): a warning read at a save, never a decision",
 	"store/plantclaims/plantclaims.go": "the writer (ReplaceProcess), and the addressing read: a station binds at its cell's paired positions too (Lane H, H.3)",
 	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
+	"store/partial_route.go":           "where a carrier lifted off a line goes by what it holds: the outbounds the claims at the lift node name (ClaimOutboundsAt), read by the other-part arm",
 	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
 	"store/kanban_picture.go":          "the kanban's running processes: a claim belongs to a kanban when its core, paired or second paired node is supported",
 	"store/nodes/kanban.go":            "which kanbans a process's claims have a supported position in, by the picture's own match: a claim's move rings their lines",

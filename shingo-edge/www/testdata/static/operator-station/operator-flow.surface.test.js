@@ -608,7 +608,7 @@ console.log('staging a mode forbids');
               claim: { swap_mode: 'two_robot_press_index', payload_code: 'PANEL-A', outbound_staging: 'SLN_026',
                        inbound_source: 'SYN_SM_IN', outbound_destination: 'SYN_SM_OUT' } },
             { core_node_name: 'PLN_013', sequence: 3, kind: 'front',
-              claim: { swap_mode: 'sequential', payload_code: 'STUD', inbound_staging: 'SLN_024',
+              claim: { swap_mode: 'sequential', payload_code: 'STUD', outbound_staging: 'SLN_024',
                        inbound_source: 'SYN_SM_IN', outbound_destination: 'SYN_SM_OUT' } },
         ],
         staging: ['SLN_020', 'SLN_021', 'SLN_024', 'SLN_025', 'SLN_026'].map(n => ({ core_node_name: n })),
@@ -617,7 +617,7 @@ console.log('staging a mode forbids');
     const line = svg.split('not used by this flow</text>')[1] || '';
     const listed = n => new RegExp('<g class="stage off chip"[^>]*>[\\s\\S]*?>' + n + '<').test(line);
     check('picture: a two-robot claim\'s outbound staging (Forbidden) is listed unused', listed('SLN_021'), line.slice(0, 300));
-    check('picture: a sequential claim\'s inbound staging (Forbidden) is listed unused', listed('SLN_024'), line.slice(0, 300));
+    check('picture: a sequential claim\'s outbound staging (Forbidden) is listed unused', listed('SLN_024'), line.slice(0, 300));
     check('picture: a lane no claim names is listed unused', listed('SLN_025'), line.slice(0, 300));
     check('picture: a press index\'s outbound staging (Used, no slot) is not listed', !listed('SLN_026'), line.slice(0, 300));
     check('picture: a drawn inbound slot is not listed', !listed('SLN_020'), line.slice(0, 300));
