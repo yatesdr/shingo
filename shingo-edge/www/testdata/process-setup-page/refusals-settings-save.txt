@@ -47,7 +47,7 @@
     new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
     state: settingsError="Signed out"
     unhandled rejection: none
@@ -94,7 +94,7 @@
     new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
     state: settingsError="Signed out"
     unhandled rejection: none
@@ -141,7 +141,7 @@
     new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
     state: settingsError="Signed out"
     unhandled rejection: none
@@ -188,7 +188,7 @@
     new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
     state: settingsError="Signed out"
     unhandled rejection: none
@@ -235,7 +235,7 @@
     new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
     state: settingsError="Signed out"
     unhandled rejection: none

@@ -6,27 +6,33 @@
 # writes, in order: POST /api/payload-catalog/sync
 ### POST /api/payload-catalog/sync  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: The catalog sync failed (400). Core may be unreachable.
+    new text: #pd-root div.pd-refusal: The catalog sync failed: the Edge refused it.
+    notice: error "the Edge refused it"
     sheet: closed
-    state: settingsError="The catalog sync failed (400). Core may be unreachable."
+    state: settingsError="The catalog sync failed: the Edge refused it."
     unhandled rejection: none
 ### POST /api/payload-catalog/sync  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: The catalog sync failed (500). Core may be unreachable.
+    new text: #pd-root div.pd-refusal: The catalog sync failed: Server error (500).
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="The catalog sync failed (500). Core may be unreachable."
+    state: settingsError="The catalog sync failed: Server error (500)."
     unhandled rejection: none
 ### POST /api/payload-catalog/sync  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: none
+    new text: #pd-root div.pd-refusal: The catalog sync failed: No answer from the server.
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="The catalog sync failed: No answer from the server."
+    unhandled rejection: none
 ### POST /api/payload-catalog/sync  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-root div.pd-notice: Catalog synced from Core.
+    new text: #pd-root div.pd-refusal: The catalog sync failed: Signed out.
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: settingsNotice="Catalog synced from Core."
+    state: settingsError="The catalog sync failed: Signed out."
     unhandled rejection: none
 
 ## Delete process

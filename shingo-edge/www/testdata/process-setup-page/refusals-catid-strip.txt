@@ -154,30 +154,39 @@
     new text: #pd-scrim p: its preview could not be read: the Edge refused it. Nothing was charged.
     new text: #pd-scrim button.pd-btn: Cancel
     new text: #pd-scrim button.pd-btn.primary: Close
+    notice: error "the Edge refused it"
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/catid-holds/41/charge?mode=preview  ←  500, no body (chi Recoverer)
     then: GET /api/core-nodes
     new text: #pd-scrim h2: Charge this hold?
-    new text: #pd-scrim p: its preview could not be read: the server answered 500. Nothing was charged.
+    new text: #pd-scrim p: its preview could not be read: Server error (500). Nothing was charged.
     new text: #pd-scrim button.pd-btn: Cancel
     new text: #pd-scrim button.pd-btn.primary: Close
+    notice: error "Server error (500)"
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/catid-holds/41/charge?mode=preview  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
-    sheet: closed
+    then: GET /api/core-nodes
+    new text: #pd-scrim h2: Charge this hold?
+    new text: #pd-scrim p: its preview could not be read: No answer from the server. Nothing was charged.
+    new text: #pd-scrim button.pd-btn: Cancel
+    new text: #pd-scrim button.pd-btn.primary: Close
+    notice: error "No answer from the server"
+    sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    unhandled rejection: none
 ### POST /api/catid-holds/41/charge?mode=preview  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/core-nodes
     new text: #pd-scrim h2: Charge this hold?
-    new text: #pd-scrim p: its preview could not be read: the server answered 200. Nothing was charged.
+    new text: #pd-scrim p: its preview could not be read: Signed out. Nothing was charged.
     new text: #pd-scrim button.pd-btn: Cancel
     new text: #pd-scrim button.pd-btn.primary: Close
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses
     sheet: open "Charge this hold?", no status, OK "Close" enabled
     state: no message set
     unhandled rejection: none

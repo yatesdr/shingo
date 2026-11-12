@@ -36,12 +36,13 @@
     unhandled rejection: none
 ### POST /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/routing-nodes
+    new text: #pd-root div.pd-refusal: Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: routingError="Signed out"
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: routingError="Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read."
+    unhandled rejection: none
 
 ## Routing set: add DST_9 (PATCH adopts)
 # writes, in order: PATCH /api/processes/1/routing-nodes/109
@@ -77,12 +78,13 @@
     unhandled rejection: none
 ### PATCH /api/processes/1/routing-nodes/109  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/routing-nodes
+    new text: #pd-root div.pd-refusal: Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: routingError="Signed out"
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: routingError="Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read."
+    unhandled rejection: none
 
 ## Routing set: × STG_3 (DELETE)
 # writes, in order: DELETE /api/processes/1/routing-nodes/105
@@ -124,12 +126,13 @@
     unhandled rejection: none
 ### DELETE /api/processes/1/routing-nodes/105  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/routing-nodes
+    new text: #pd-root div.pd-refusal: Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: routingError="Signed out"
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: routingError="Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read."
+    unhandled rejection: none
 
 ## Routing set: click STG_1 (DELETE)
 # writes, in order: DELETE /api/processes/1/routing-nodes/103
@@ -171,12 +174,13 @@
     unhandled rejection: none
 ### DELETE /api/processes/1/routing-nodes/103  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/routing-nodes
+    new text: #pd-root div.pd-refusal: Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: routingError="Signed out"
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: routingError="Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read."
+    unhandled rejection: none
 
 ## Routing set: Turn all 1 on (Staging)
 # writes, in order: PATCH /api/processes/1/routing-nodes/106
@@ -203,9 +207,10 @@
     unhandled rejection: none
 ### PATCH /api/processes/1/routing-nodes/106  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/routing-nodes
+    new text: #pd-root div.pd-refusal: Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: routingError="Switching STG_9 on was refused: Signed out"
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: routingError="Could not read this process’s routing set: Signed out. Nothing below is the set — it is what could not be read."
+    unhandled rejection: none

@@ -1130,7 +1130,11 @@ async function pinDoorBugs() {
     T.out['door-bugs.txt'] = L.join('\n') + '\n';
 }
 
-// ── the fetch( site table (`node pins.js --sites`) ───────────────────────
+// ── the request site table (`node pins.js --sites`) ─────────────────────
+//
+// Every line of the page that calls the HTTP door (send, shared/http.js),
+// which replaced its 41 bare fetch( sites, then every line that calls
+// sheetSubmit, the page's one sheet write over the door.
 function sitesTable(seen) {
     const src = fs.readFileSync(PAGE, 'utf8').split('\n');
     const rows = [];
@@ -1138,34 +1142,34 @@ function sitesTable(seen) {
     src.forEach((l, i) => {
         const m = /^(?:async\s+)?function\s+(\w+)/.exec(l);
         if (m) fn = m[1];
-        if (/\bfetch\(/.test(l) && !/^\s*\/\//.test(l)) {
+        if (/\b(fetch|send)\(/.test(l) && !/^\s*\/\//.test(l) && !/^(?:async\s+)?function\s/.test(l)) {
             const n = i + 1;
             const at = seen.filter(s => s.site === n);
             const goldens = [...new Set(at.map(s => s.golden))].sort();
             rows.push('| ' + n + ' | ' + fn + ' | ' + (goldens.length ? goldens.join(', ') : '—') + ' |');
         }
     });
-    // postJSON's one fetch( carries every write that goes through it, and
-    // sheetSubmit is postJSON again: so each line that calls either is a site
-    // of its own, attributed by the first frame of the stack past the two.
+    // sheetSubmit's one send( carries every write that goes through it, so
+    // each line that calls it is a site of its own, attributed by the first
+    // frame of the stack past it.
     const via = [];
     let fn2 = '';
     const helper = new Set();
-    src.forEach((l, i) => { if (/^(?:async\s+)?function\s+(postJSON|sheetSubmit)\b/.test(l)) helper.add(i + 1); });
+    src.forEach((l, i) => { if (/^(?:async\s+)?function\s+sheetSubmit\b/.test(l)) helper.add(i + 1); });
     const inHelper = n => [...helper].some(h => n >= h && n < h + 12);
     src.forEach((l, i) => {
         const m = /^(?:async\s+)?function\s+(\w+)/.exec(l);
         if (m) fn2 = m[1];
-        if (/\b(postJSON|sheetSubmit)\(/.test(l) && !/^(?:async\s+)?function\s/.test(l) && !/^\s*\/\//.test(l) && !inHelper(i + 1)) {
+        if (/\bsheetSubmit\(/.test(l) && !/^(?:async\s+)?function\s/.test(l) && !/^\s*\/\//.test(l) && !inHelper(i + 1)) {
             const n = i + 1;
             const at = seen.filter(s => (s.stack || []).filter(x => !inHelper(x))[0] === n);
             const goldens = [...new Set(at.map(s => s.golden))].sort();
-            via.push('| ' + n + ' | ' + fn2 + ' | ' + /\b(postJSON|sheetSubmit)\(/.exec(l)[1] + ' | ' + (goldens.length ? goldens.join(', ') : '—') + ' |');
+            via.push('| ' + n + ' | ' + fn2 + ' | sheetSubmit | ' + (goldens.length ? goldens.join(', ') : '—') + ' |');
         }
     });
-    return '| line | function | goldens that reach it |\n|---|---|---|\n' + rows.join('\n') + '\n\n' + rows.length + ' fetch( sites\n\n' +
+    return '| line | function | goldens that reach it |\n|---|---|---|\n' + rows.join('\n') + '\n\n' + rows.length + ' send( sites\n\n' +
         '| line | function | through | goldens that reach it |\n|---|---|---|---|\n' + via.join('\n') + '\n\n' +
-        via.length + ' postJSON( / sheetSubmit( call sites\n';
+        via.length + ' sheetSubmit( call sites\n';
 }
 
 async function run(t) {

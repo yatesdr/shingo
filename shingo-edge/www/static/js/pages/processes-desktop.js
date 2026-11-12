@@ -318,13 +318,13 @@ async function refreshCatidHealth() {
     const strip = window.CatidHealth;
     if (!box || !strip) return;
     try {
-        const res = await fetch('/api/catid-health', { cache: 'no-store' });
+        const res = await send('GET', '/api/catid-health', undefined, NO_NOTICE);
         if (!res.ok) return;
-        const rows = await res.json();
+        const rows = res.body;
         const items = {};
         await Promise.all((rows || []).filter(strip.shows).map(async r => {
-            const one = await fetch('/api/processes/' + r.process_id + '/catid-health', { cache: 'no-store' });
-            if (one.ok) items[r.process_id] = ((await one.json()) || {}).items || [];
+            const one = await send('GET', '/api/processes/' + r.process_id + '/catid-health', undefined, NO_NOTICE);
+            if (one.ok) items[r.process_id] = (one.body || {}).items || [];
         }));
         box.innerHTML = strip.listHTML(rows, items);
     } catch (e) { /* advisory */ }
@@ -364,13 +364,12 @@ async function afterRepoint() {
 
 async function catidCharge(holdID) {
     const charge = '/api/catid-holds/' + holdID + '/charge';
-    const res = await fetch(charge + '?mode=preview', { method: 'POST', cache: 'no-store' });
-    let p = null;
-    try { p = await res.json(); } catch (_) { /* status only */ }
+    const res = await send('POST', charge + '?mode=preview', null);
+    const p = res.ok ? res.body : null;
     // A preview that did not answer is said, not swallowed: the button
     // otherwise looked dead.
     if (!res.ok || !p || !p.hold) {
-        const why = (p && (p.error || p.message)) || ('the server answered ' + res.status);
+        const why = res.ok ? 'it named no hold' : res.error;
         openSheet('Charge this hold?', 'its preview could not be read: ' + why + '. Nothing was charged.', '',
             'Close', closeSheet);
         return;
@@ -506,12 +505,12 @@ async function openProcess(id) {
     S.settingsNotice = '';
     S.notice = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
-    const res = await fetch('/api/processes/' + id + '/composer', { cache: 'no-store' });
+    const res = await send('GET', '/api/processes/' + id + '/composer');
     if (!res.ok) {
         root().innerHTML = appbar() + '<div class="pd-list"><p class="pd-dim">Could not read this process.</p></div>';
         return;
     }
-    takeComposer(await res.json());
+    takeComposer(res.body);
     // S.stationNodes covers only the process the PAGE was loaded for, and this
     // is a single-page app — so every process reached by a click had an empty
     // map, and D4 drew "nothing claimed" against every HMI that had claims.
@@ -926,10 +925,9 @@ function openRecipe(id) {
 // page holds the one it opened with: a destination added in Settings since
 // would not reach the row. One composer read per click.
 async function openNewRecipe() {
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
-        if (res.ok) takeComposer(await res.json());
-    } catch (_) { /* the draft opens on the routing set the page holds */ }
+    // A failed read opens the draft on the routing set the page holds.
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    if (res.ok) takeComposer(res.body);
     startShapeDraft([], {});
 }
 
@@ -940,11 +938,8 @@ async function openNewRecipe() {
 // picture are the engineer's and are left exactly as they are.
 async function refreshRail() {
     if (!S.processID || S.tab !== 'flows' || document.hidden) return;
-    let data = null;
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
-        if (res.ok) data = await res.json();
-    } catch (_) { return; }
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer', undefined, NO_NOTICE);
+    const data = res.ok ? res.body : null;
     if (!data || S.tab !== 'flows') return;
     const key = d => JSON.stringify([((d && d.styles) || []).map(x => [x.id, x.name, x.claim_count, x.last_run]),
         ((d && d.presets) || []).map(x => [x.id, x.name, x.where])]);
@@ -2947,14 +2942,14 @@ async function writePartSet(codes) {
     S.partSet = codes.slice().sort();
     // The palette is the server's union with what saved flows run, so it is
     // read back rather than guessed at here.
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/composer');
-        if (res.ok) {
-            const pal = ((await res.json()) || {}).palette || [];
-            S.composer.palette = pal;
-            if (S.model) S.model.palette = pal.slice();
-        }
-    } catch (_) { /* the write landed; the list catches up on the next open */ }
+    // A failed read leaves the list as it was: the write landed, and the
+    // list catches up on the next open.
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    if (res.ok) {
+        const pal = (res.body || {}).palette || [];
+        S.composer.palette = pal;
+        if (S.model) S.model.palette = pal.slice();
+    }
     return out;
 }
 
@@ -3752,7 +3747,7 @@ async function setRoutingNode(role, name, on) {
 }
 
 async function loadRouting() {
-    const res = await fetch('/api/processes/' + S.processID + '/routing-nodes');
+    const res = await send('GET', '/api/processes/' + S.processID + '/routing-nodes');
     // A READ THAT FAILED IS NOT AN EMPTY SET. This swallowed !res.ok into {},
     // so a 500 or a dropped connection drew three roles of "nothing picked
     // yet", an empty summary and a map with only the press — indistinguishable
@@ -3762,13 +3757,13 @@ async function loadRouting() {
     // there. Say what happened and leave the set unread so the next open asks
     // again.
     if (!res.ok) {
-        let why = 'Could not read this process’s routing set (' + res.status + ').';
-        try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
+        // The server's own sentence when it gave one, else the door's.
+        const why = res.body ? res.error : 'Could not read this process’s routing set: ' + res.error + '.';
         S.routingError = why + ' Nothing below is the set — it is what could not be read.';
         S.routing = null;
         return;
     }
-    const view = await res.json();
+    const view = res.body || {};
     const rows = Array.isArray(view) ? view : (view.rows || view.routing_nodes || []);
     S.routing = rows;
     S.routingError = '';
@@ -4598,11 +4593,8 @@ async function loadCurtainNodes() {
 // into S.livePositions and returns it. A failed read is [] here and marks
 // nothing: SetNodes still refuses what it must, it just cannot be warned of.
 async function loadLivePositions() {
-    try {
-        const res = await fetch('/api/process-nodes');
-        const rows = res.ok ? await res.json() : [];
-        S.livePositions = Array.isArray(rows) ? rows : [];
-    } catch (_) { S.livePositions = []; }
+    const res = await send('GET', '/api/process-nodes');
+    S.livePositions = res.ok && Array.isArray(res.body) ? res.body : [];
     return S.livePositions;
 }
 
@@ -4757,10 +4749,8 @@ function notesField() {
 // loadCatidItems reads the open process's health items, for the slots row's
 // words and the notes ([] on a failed read).
 async function loadCatidItems() {
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/catid-health', { cache: 'no-store' });
-        S.catidItems = res.ok ? (((await res.json()) || {}).items || []) : [];
-    } catch (_) { S.catidItems = []; }
+    const res = await send('GET', '/api/processes/' + S.processID + '/catid-health', undefined, NO_NOTICE);
+    S.catidItems = res.ok ? ((res.body || {}).items || []) : [];
 }
 
 // loadStationVerdicts reads the binding's dry run for each of the process's
@@ -4770,10 +4760,9 @@ async function loadStationVerdicts() {
     S.stationVerdicts = {};
     if (!(S.stationCounters || []).length) return;
     await Promise.all((S.curtainNodes || []).map(async n => {
-        try {
-            const res = await fetch('/api/process-nodes/' + n.id + '/countable', { cache: 'no-store' });
-            if (res.ok) S.stationVerdicts[n.id] = await res.json();
-        } catch (_) { /* greyed: not checked yet */ }
+        // A failed read leaves the position greyed: not checked yet.
+        const res = await send('GET', '/api/process-nodes/' + n.id + '/countable');
+        if (res.ok) S.stationVerdicts[n.id] = res.body;
     }));
 }
 
@@ -4814,18 +4803,14 @@ function saveStationPositions(id) {
 // loadCountingSlots reads the process's MES slots for the Production counter
 // section (none on a failed read).
 async function loadCountingSlots() {
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/counting-slots', { cache: 'no-store' });
-        S.countingSlots = res.ok ? ((await res.json()).slots || []) : [];
-    } catch (_) { S.countingSlots = []; }
+    const res = await send('GET', '/api/processes/' + S.processID + '/counting-slots');
+    S.countingSlots = res.ok ? ((res.body || {}).slots || []) : [];
 }
 
 // loadStationCounters reads the process's station counters ([] on a failed read).
 async function loadStationCounters() {
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/station-counters', { cache: 'no-store' });
-        S.stationCounters = res.ok ? (await res.json()) || [] : [];
-    } catch (_) { S.stationCounters = []; }
+    const res = await send('GET', '/api/processes/' + S.processID + '/station-counters');
+    S.stationCounters = res.ok ? res.body || [] : [];
 }
 
 // openStationCounter is the station counter's editor: its label, its tag and
@@ -4970,12 +4955,9 @@ function positionRow(n) {
 // and an add sent over a stale list would remove whatever the page had not
 // seen yet — so a failed read stops the write instead.
 async function readStationNodes(stationID) {
-    try {
-        const res = await fetch('/api/operator-stations/' + stationID + '/claimed-nodes');
-        if (!res.ok) return null;
-        const names = await res.json();
-        return Array.isArray(names) ? names : [];
-    } catch (_) { return null; }
+    const res = await send('GET', '/api/operator-stations/' + stationID + '/claimed-nodes');
+    if (!res.ok) return null;
+    return Array.isArray(res.body) ? res.body : [];
 }
 
 const ADD_POSITIONS_PICKER = 'addpos';
@@ -5072,9 +5054,9 @@ async function afterPositionsChanged(stationID) {
     const settings = S.settings, curtain = S.curtain;
     S.settingsError = '';
     await refreshStationNodes(stationID);
-    const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
     if (res.ok) {
-        takeComposer(await res.json());
+        takeComposer(res.body);
         S.graph = null;
     }
     await loadCurtainNodes();
@@ -5238,10 +5220,8 @@ function bindCombos(container) {
             const kind = wrap.dataset.combo;
             if (kind === 'plc') {
                 if (!S._plcList) {
-                    try {
-                        const res = await fetch('/api/plcs');
-                        S._plcList = res.ok ? await res.json() : [];
-                    } catch (_) { S._plcList = []; }
+                    const res = await send('GET', '/api/plcs');
+                    S._plcList = res.ok ? res.body || [] : [];
                 }
                 return (S._plcList || []).map(p => ({
                     name: p.name, note: p.connected ? 'connected' : 'not connected',
@@ -5255,13 +5235,9 @@ function bindCombos(container) {
             S._tagCache = S._tagCache || {};
             if (!S._tagCache[plcName]) {
                 // A failed read is not cached: the next open asks again.
-                try {
-                    const res = await fetch('/api/plcs/all-tags/' + encodeURIComponent(plcName));
-                    if (!res.ok) return [{ name: '', note: 'WarLink did not answer — the typed value is kept' }];
-                    S._tagCache[plcName] = (await res.json()) || [];
-                } catch (_) {
-                    return [{ name: '', note: 'WarLink did not answer — the typed value is kept' }];
-                }
+                const res = await send('GET', '/api/plcs/all-tags/' + encodeURIComponent(plcName));
+                if (!res.ok) return [{ name: '', note: 'WarLink did not answer — the typed value is kept' }];
+                S._tagCache[plcName] = res.body || [];
             }
             const suggest = wrap.dataset.suggest || '';
             return window.TagSuggest ? window.TagSuggest.options(S._tagCache[plcName], suggest)
@@ -5428,9 +5404,9 @@ async function refreshProcessStationNodes() {
 }
 
 async function refreshStationNodes(stationID) {
-    const res = await fetch('/api/operator-stations/' + stationID + '/claimed-nodes');
+    const res = await send('GET', '/api/operator-stations/' + stationID + '/claimed-nodes');
     if (!res.ok) return;
-    const names = await res.json();
+    const names = res.body;
     S.stationNodes[String(stationID)] = Array.isArray(names) ? names : [];
 }
 
@@ -5498,10 +5474,10 @@ function hideSheet() {
 // racing four.
 function loadCoreNodes() {
     if (!S.coreNodesReq) {
-        S.coreNodesReq = fetch('/api/core-nodes')
+        S.coreNodesReq = send('GET', '/api/core-nodes')
             .then(res => {
-                if (!res.ok) throw new Error('core nodes: ' + res.status);
-                return res.json();
+                if (!res.ok) throw new Error('core nodes: ' + res.error);
+                return res.body;
             })
             .then(rows => { S.coreNodes = Array.isArray(rows) ? rows : []; })
             // A FAILED READ IS NOT AN EMPTY PLANT, and it must not be cached as
@@ -5766,8 +5742,8 @@ function payloadPickerOptions(key, p) {
 // is not cached as one — same reasoning, same shape.
 function loadPayloadCatalog() {
     if (!S.payloadCatalogReq) {
-        S.payloadCatalogReq = fetch('/api/payload-catalog')
-            .then(r => (r.ok ? r.json() : Promise.reject(new Error('payload catalog: ' + r.status))))
+        S.payloadCatalogReq = send('GET', '/api/payload-catalog')
+            .then(r => (r.ok ? r.body : Promise.reject(new Error('payload catalog: ' + r.error))))
             .then(rows => { S.payloadCatalog = Array.isArray(rows) ? rows : []; })
             .catch(() => { S.payloadCatalogReq = null; });
     }
@@ -6183,10 +6159,9 @@ async function openRunningSheet(st, id) {
     if (p && p.target_style_id && p.target_style_id !== p.active_style_id) {
         const target = styleByID(p.target_style_id);
         let waiting = [];
-        try {
-            const res = await fetch('/api/processes/' + S.processID + '/changeover/gate-status', { cache: 'no-store' });
-            if (res.ok) waiting = ((await res.json()).blockers || []).map(b => b.reason);
-        } catch (e) { /* the sheet still says a changeover is open */ }
+        // A failed read still opens the sheet saying a changeover is open.
+        const res = await send('GET', '/api/processes/' + S.processID + '/changeover/gate-status');
+        if (res.ok) waiting = ((res.body || {}).blockers || []).map(b => b.reason);
         const how = id === p.target_style_id ? 'completes it now'
             : 'completes it to ' + target.name + ' and then switches to ' + st.name;
         // The style the changeover leaves is the server's refusal, not a
@@ -6211,14 +6186,14 @@ async function openRunningSheet(st, id) {
 // no screen can be left showing what it read before the write.
 async function refreshProcess() {
     await reloadProcesses();
-    const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
     if (res.ok) {
-        takeComposer(await res.json());
+        takeComposer(res.body);
         S.graph = null;
     }
-    const styles = await fetch('/api/processes/' + S.processID + '/styles');
+    const styles = await send('GET', '/api/processes/' + S.processID + '/styles');
     if (styles.ok) {
-        const rows = await styles.json();
+        const rows = styles.body;
         // null is this process having no styles left — which is exactly the
         // state deleting the last one produces, and the state in which the old
         // guard kept it on screen.
@@ -6507,11 +6482,8 @@ function openNewGroup() {
                 B().processGroupCreate(name, sheetValue('description')));
             if (!made.ok) { sheetStatus(made.error, true); return; }
             closeSheet();
-            const res = await fetch('/api/process-groups');
-            if (res.ok) {
-                const rows = await res.json();
-                if (Array.isArray(rows)) S.groups = rows;
-            }
+            const res = await send('GET', '/api/process-groups');
+            if (res.ok && Array.isArray(res.body)) S.groups = res.body;
             drawList();
         }, false);
 }
@@ -6642,14 +6614,9 @@ const PART_SET_NOTE = 'The parts this process can run. A part used by a flow sta
 // saving that would be an accidental wipe, so a failure is reported rather
 // than treated as "no parts": the caller opens on null and the sheet says so.
 async function loadProcessPayloads(processID) {
-    try {
-        const res = await fetch('/api/processes/' + processID + '/payloads');
-        if (!res.ok) return null;
-        const rows = await res.json();
-        return Array.isArray(rows) ? rows : [];
-    } catch (_) {
-        return null;
-    }
+    const res = await send('GET', '/api/processes/' + processID + '/payloads');
+    if (!res.ok) return null;
+    return Array.isArray(res.body) ? res.body : [];
 }
 
 // ── the sheet's map read-back (owner ruling 5, 2026-09-17) ──────────────────
@@ -7096,9 +7063,13 @@ function openDeleteProcess() {
 async function syncCatalog() {
     S.settingsError = '';
     S.settingsNotice = '';
-    const res = await fetch('/api/payload-catalog/sync', { method: 'POST' });
+    // The sync only asks the Edge to ask Core (apiSyncPayloadCatalog answers
+    // ok and never refuses), so what can fail here is this Edge: no answer, a
+    // lapsed session, a panic. The door's sentence says which; "(0). Core may
+    // be unreachable" named the wrong machine.
+    const res = await send('POST', '/api/payload-catalog/sync', null);
     if (!res.ok) {
-        S.settingsError = 'The catalog sync failed (' + res.status + '). Core may be unreachable.';
+        S.settingsError = 'The catalog sync failed: ' + res.error + '.';
     } else {
         S.settingsNotice = 'Catalog synced from Core.';
     }
@@ -7425,10 +7396,9 @@ async function leaveShapeDraft() {
     const back = S.shapeDraft ? S.shapeDraft.back : S.styleID;
     const fromTab = S.shapeDraft ? S.shapeDraft.fromTab : '';
     S.shapeDraft = null;
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
-        if (res.ok) takeComposer(await res.json());
-    } catch (_) { /* the rail catches up on its next read */ }
+    // A failed read: the rail catches up on its next read.
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    if (res.ok) takeComposer(res.body);
     selectStyle(back);
     if (fromTab === 'presets') await openPresets();
 }
@@ -7536,10 +7506,9 @@ async function saveGroupedRecipe(name, from) {
     }
     closeSheet();
     const keep = d ? { back: d.back, fromTab: d.fromTab } : null;
-    try {
-        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
-        if (res.ok) takeComposer(await res.json());
-    } catch (_) { /* the rail catches up on its next read */ }
+    // A failed read: the rail catches up on its next read.
+    const read = await send('GET', '/api/processes/' + S.processID + '/composer');
+    if (read.ok) takeComposer(read.body);
     const id = String(bodyOf(out).id || '');
     if (id && (S.composer.presets || []).some(p => String(p.id) === id)) {
         openRecipe(id);

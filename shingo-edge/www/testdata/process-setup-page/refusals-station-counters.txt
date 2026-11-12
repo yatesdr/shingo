@@ -105,7 +105,7 @@
     new text: #pd-root div.pd-refusal: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: closed
     state: settingsError="Signed out"
     unhandled rejection: none
@@ -213,7 +213,7 @@
     new text: #pd-scrim .mf .st (textContent): POS_A1: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: open "Save this station counter’s positions?", status "POS_A1: Signed out" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
@@ -248,7 +248,7 @@
     new text: #pd-scrim .mf .st (textContent): POS_A2: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 4 times, one on screen)
     sheet: open "Save this station counter’s positions?", status "POS_A2: Signed out" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
