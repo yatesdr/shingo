@@ -3,6 +3,8 @@ import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
+import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
+import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
 
@@ -248,6 +250,10 @@ function loadJournal() {
 function captureTyped(reset) {
   var saved = [];
   var active = document.activeElement;
+  Object.keys(BD_PICKERS).forEach(function(id) {
+    var v = BD_PICKERS[id].value();
+    if (reset.indexOf(id) === -1 && v) saved.push({ id: id, picker: true, dirty: true, value: v });
+  });
   document.querySelectorAll('#bin-detail-modal input[id], #bin-detail-modal select[id], #bin-detail-modal textarea[id]')
     .forEach(function(f) {
       if (reset.indexOf(f.id) !== -1) return;
@@ -279,6 +285,7 @@ function drawnIndex(f) {
 // form is not carried over as typing by a later redraw.
 function clearFields(ids) {
   ids.forEach(function(id) {
+    if (BD_PICKERS[id]) { BD_PICKERS[id].set(''); return; }
     var f = document.getElementById(id);
     if (!f) return;
     if (f.tagName === 'SELECT') {
@@ -291,6 +298,7 @@ function clearFields(ids) {
 
 function restoreTyped(saved) {
   saved.forEach(function(rec) {
+    if (rec.picker) { if (BD_PICKERS[rec.id]) BD_PICKERS[rec.id].set(rec.value); return; }
     var f = document.getElementById(rec.id);
     if (!f || f.tagName !== rec.tag) return;
     if (rec.dirty) {
@@ -432,13 +440,7 @@ function renderContents(data) {
     html += '<div class="action-group"><h4>Load Payload</h4>';
     if (held) html += '<p class="text-muted mb-1" id="bd-load-held">' + escapeHtml(held) + '</p>';
     html += '<div class="inline-form">';
-    html += '<div class="form-group"><label>Payload</label><select id="bd-load-payload" style="width:200px"' + off + '><option value="">-- Select --</option>';
-    (PAGE_PAYLOADS || []).forEach(function(p) {
-      var allowed = (PAGE_PAYLOAD_BIN_TYPES || {})[p.code];
-      if (allowed && allowed.length > 0 && allowed.indexOf(b.bin_type_id) === -1) return;
-      html += '<option value="' + escapeHtml(p.code) + '">' + escapeHtml(p.code) + '</option>';
-    });
-    html += '</select></div>';
+    html += '<div class="form-group"><label>Payload</label><div id="bd-load-payload" class="bd-picker"></div></div>';
     html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off + '></div>';
     html += held ? '<button class="btn btn-primary btn-sm" disabled>Load</button>'
       : '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
@@ -458,7 +460,55 @@ function renderContents(data) {
   }
 
   document.getElementById('bd-contents').innerHTML = html;
+  if (PAGE_AUTH) mountLoadPicker(b, data.load_refusal || '');
 }
+
+// THE PAGE'S ONE NODE LIST AND ONE PART LIST (shared/node-picker.js,
+// part-picker.js), as handleBins rendered them. Each field says what it may
+// not take, and the picker shows it greyed with the reason; _TRANSIT is never
+// offered.
+var binNodes = nodeSource(function() { return PAGE_NODES || []; }, PAGE_NODES || []);
+var binParts = partSource(function() { return PAGE_PAYLOADS || []; }, PAGE_PAYLOADS || []);
+// The pop-up's pickers, by their host's id: drawn afresh with the pop-up, and
+// kept across a redraw as a typed field is (captureTyped).
+var BD_PICKERS = {};
+
+// mountLoadPicker is Load Payload's part: a part whose bin-type allow-list is
+// set and leaves this bin's type out is shown greyed (BinService.LoadPayload
+// refuses it too); a load the server would refuse while an order holds the
+// bin greys every part with its sentence.
+function mountLoadPicker(b, held) {
+  var host = document.getElementById('bd-load-payload');
+  BD_PICKERS['bd-load-payload'] = partPicker(host, binParts, {
+    rule: function(p) {
+      if (held) return held;
+      var allowed = (PAGE_PAYLOAD_BIN_TYPES || {})[p.code];
+      return allowed && allowed.length > 0 && allowed.indexOf(b.bin_type_id) === -1 ? 'not on a ' + b.bin_type_code : '';
+    },
+  }, { placeholder: 'Pick a payload' });
+}
+
+// mountMovePicker is Move's destination: any node but the one the bin is at,
+// and a robot deck (BinService.MoveByHand refuses one; a bin reaches it only
+// by a robot lifting it).
+function mountMovePicker(b) {
+  var host = document.getElementById('bd-move-node');
+  BD_PICKERS['bd-move-node'] = nodePicker(host, binNodes, {
+    value: 'id',
+    rule: nodeWhy.any(nodeWhy.robot, function(n) { return b.node_id && n.id === b.node_id ? 'the bin is here' : ''; }),
+  }, { placeholder: 'Pick a node' });
+}
+
+// mountCreateNodePicker is Create bin's Node: optional, any node but a robot
+// deck and a disabled one; the form posts it as node_id.
+var createNodePicker = null;
+function mountCreateNodePicker() {
+  var host = document.getElementById('bin-create-node');
+  if (!host) return;
+  createNodePicker = nodePicker(host, binNodes, { value: 'id', rule: nodeWhy.any(nodeWhy.robot, nodeWhy.disabled) },
+    { name: 'node_id', placeholder: 'No node' });
+}
+mountCreateNodePicker();
 
 async function renderActions(data) {
   var b = data.bin;
@@ -498,15 +548,7 @@ async function renderActions(data) {
   // Move
   html += '<div class="action-group"><h4>Move</h4>';
   html += '<div class="inline-form">';
-  html += '<div class="form-group"><label>Destination</label><select id="bd-move-node" style="width:200px"><option value="">-- Select --</option>';
-  (PAGE_NODES || []).forEach(function(n) {
-    if (b.node_id && n.id === b.node_id) return; // skip current location
-    // _TRANSIT and robot decks are not places; a bin reaches them only by a
-    // robot lifting it (BinService.MoveByHand refuses them too).
-    if (n.name === '_TRANSIT' || n.name.indexOf('_ROBOT:') === 0) return;
-    html += '<option value="' + n.id + '">' + escapeHtml(n.name) + '</option>';
-  });
-  html += '</select></div>';
+  html += '<div class="form-group"><label>Destination</label><div id="bd-move-node" class="bd-picker"></div></div>';
   html += '<button class="btn btn-sm" data-action="moveBin">Move</button>';
   html += '<button class="btn btn-sm" data-action="requestMove">Request Move</button>';
   html += '</div></div>';
@@ -547,6 +589,7 @@ async function renderActions(data) {
   html += '</form></div>';
 
   document.getElementById('bd-actions').innerHTML = html;
+  mountMovePicker(b);
 }
 
 function renderJournal(data) {
@@ -629,7 +672,7 @@ function runBinAction(action, params, reset) {
 }
 
 function loadPayload() {
-  var code = document.getElementById('bd-load-payload').value;
+  var code = BD_PICKERS['bd-load-payload'] ? BD_PICKERS['bd-load-payload'].value() : '';
   if (!code) { toast('Select a payload', 'info'); return; }
   // Blank = template capacity (full pack). An explicit value — 0 included —
   // is the operator's declared count and must survive as-is; the old
@@ -661,7 +704,7 @@ function lockBin() {
 }
 
 function moveBin() {
-  var nodeId = parseInt(document.getElementById('bd-move-node').value);
+  var nodeId = parseInt(BD_PICKERS['bd-move-node'] ? BD_PICKERS['bd-move-node'].value() : '');
   if (!nodeId) { toast('Select a destination', 'info'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
     toast('Bin is already at this location', 'info'); return;
@@ -674,7 +717,7 @@ function moveBin() {
 // Orders page uses for a named bin. "Move" beside it records a move made by
 // hand and sends no robot. A refusal shows the door's sentence unchanged.
 function requestMove() {
-  var nodeId = parseInt(document.getElementById('bd-move-node').value);
+  var nodeId = parseInt(BD_PICKERS['bd-move-node'] ? BD_PICKERS['bd-move-node'].value() : '');
   if (!nodeId) { toast('Select a destination', 'info'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
     toast('Bin is already at this location', 'info'); return;
@@ -1187,7 +1230,7 @@ function openEditBTModal(btn) {
 function closeBTEditModal() { hideModal('bt-edit-modal'); }
 
 // ===== CREATE BIN MODAL =====
-function openCreateBinModal() { showModal('bin-create-modal'); previewBinLabels(); }
+function openCreateBinModal() { if (createNodePicker) createNodePicker.set(''); showModal('bin-create-modal'); previewBinLabels(); }
 function closeCreateBinModal() { hideModal('bin-create-modal'); }
 
 // previewBinLabels mirrors the server's batchLabels rule (bin_service.go

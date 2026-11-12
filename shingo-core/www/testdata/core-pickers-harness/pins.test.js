@@ -397,40 +397,58 @@ function binAt(nodeID, binTypeID, extra) {
 async function binsPins() {
     const L = [
         '# Core Bins, bin pop-up (census #51 Move C2, #52 Load C3) and Create bin\'s label check.',
-        '# static/pages/bins.js run as served over PAGE_NODES / PAGE_PAYLOADS = the fixture.',
-        '# (The Create bin Node select itself is server-rendered: bins-template.txt.)',
+        '# static/pages/bins.js run as served over PAGE_NODES / PAGE_PAYLOADS = the fixture, its',
+        '# pickers on shared/node-picker.js and part-picker.js (rows: "value" | label · note (off: reason)).',
         '',
     ];
     const t = binsPage();
+    const pk = (id) => t.p.pickers[id];
 
-    L.push('== Move destination (C2): renderActions, bin at GRP-A-L1-S1');
+    L.push('== Create bin\'s Node (C1, census #50): mounted at load on #bin-create-node, rule: robot, disabled');
+    D.rowLines(pk('bin-create-node').rows()).forEach((l) => L.push(l));
+    const hidden = pk('bin-create-node').el.children.find((c) => c.getAttribute('type') === 'hidden');
+    L.push('  the form posts it as: <input type="hidden" name="' + hidden.getAttribute('name') + '"> value ' + JSON.stringify(hidden.value));
+    for (const v of ['8', '10', '11', '12', '']) {
+        const why = pk('bin-create-node').choose(v);
+        L.push('  pick ' + JSON.stringify(v) + ': ' + (why ? 'not taken: ' + why : 'node_id = ' + JSON.stringify(hidden.value)));
+    }
+    L.push('census #11 fixed: _TRANSIT is not offered; the robot deck and the disabled OLD-SLOT and GRP-OFF');
+    L.push('are greyed with their reason; groups and lanes stay (the server decides those).');
+    L.push('== (end of Create bin)');
+
+    L.push('', '== Move destination (C2): renderActions, bin at GRP-A-L1-S1');
     await t.p.run('renderActions(' + JSON.stringify({ bin: binAt(3, 1) }) + ')');
-    D.optionLines(D.selectIn(t.doc.getElementById('bd-actions').innerHTML, 'bd-move-node').inner).forEach((l) => L.push(l));
-    L.push('  dropped: the bin\'s own node, _TRANSIT, _ROBOT:*; kept: groups, lanes, the disabled OLD-SLOT');
-    L.push('  and GRP-OFF, VIRT-1. No headings, no badges, value = id, label = name (not display name).');
+    D.rowLines(pk('bd-move-node').rows()).forEach((l) => L.push(l));
     await t.p.run('renderActions(' + JSON.stringify({ bin: binAt(null, 1) }) + ')');
-    const unassigned = D.parseOptions(D.selectIn(t.doc.getElementById('bd-actions').innerHTML, 'bd-move-node').inner);
-    L.push('  an unassigned bin: ' + (unassigned.length - 1) + ' destinations, GRP-A-L1-S1 ' +
-        (unassigned.some((o) => o.text === 'GRP-A-L1-S1') ? 'included' : 'left out'));
+    const unassigned = pk('bd-move-node').rows();
+    const off = [];
+    unassigned.forEach((r) => { [r].concat(r.members || []).forEach((x) => { if (x.reason) off.push(x.label); }); });
+    L.push('  an unassigned bin: greyed ' + JSON.stringify(off));
 
-    L.push('', '== Load payload (C3): renderContents, per bin type (PAGE_PAYLOAD_BIN_TYPES filters)');
+    L.push('', '== Load payload (C3): renderContents, per bin type (PAGE_PAYLOAD_BIN_TYPES greys)');
     for (const bt of [1, 2, 3]) {
-        t.p.run('renderContents(' + JSON.stringify({ bin: binAt(3, bt), manifest: null }) + ')');
-        const sel = D.selectIn(t.doc.getElementById('bd-contents').innerHTML, 'bd-load-payload');
-        L.push('  bin type ' + bt + ': ' + D.parseOptions(sel.inner).map((o) => JSON.stringify(o.value)).join(', '));
+        t.p.run('renderContents(' + JSON.stringify({ bin: Object.assign(binAt(3, bt), { bin_type_code: 'TYPE-' + bt }), manifest: null }) + ')');
+        L.push('  bin type ' + bt + ':');
+        D.rowLines(pk('bd-load-payload').rows(), '    ').forEach((l) => L.push(l));
     }
     t.p.run('renderContents(' + JSON.stringify({ bin: binAt(3, 1), manifest: null, load_refusal: 'Held by order 41 until it is delivered.' }) + ')');
     const held = t.doc.getElementById('bd-contents').innerHTML;
-    L.push('  held (load_refusal set): select ' + (/id="bd-load-payload"[^>]*disabled/.test(held) ? 'disabled' : 'enabled') +
-        ', sentence shown: ' + (held.indexOf('Held by order 41') >= 0) + ', Load button ' +
-        (/<button[^>]*disabled>Load<\/button>/.test(held) ? 'disabled' : 'live'));
+    L.push('  held (load_refusal set): sentence shown: ' + (held.indexOf('Held by order 41') >= 0) + ', Load button ' +
+        (/<button[^>]*disabled>Load<\/button>/.test(held) ? 'disabled' : 'live') + ', rows:');
+    D.rowLines(pk('bd-load-payload').rows(), '    ').forEach((l) => L.push(l));
+    t.p.run('renderContents(' + JSON.stringify({ bin: binAt(3, 1), manifest: null }) + ')');
     flush(L, t.net, t.rec);
 
     // --- bodies ---------------------------------------------------------
     t.p.run('currentBinId = 50; currentBinData = ' + JSON.stringify({ bin: binAt(3, 1) }));
     t.net.on('POST', '/api/bins/action', { json: { status: 'ok', bin: binAt(8, 1) } })
         .on('POST', '/api/bins/request-move', { json: { order_id: 41, status: 'queued', queue_reason: 'the lane is busy', to: 'GRP-B-N1' } });
-    const val = (id, v) => { t.doc.getElementById(id).value = v; };
+    const val = (id, v) => {
+        if (!pk(id)) { t.doc.getElementById(id).value = v; return; }
+        pk(id).set('');
+        const why = pk(id).choose(v);
+        if (why) L.push('  (' + id + ' ' + JSON.stringify(v) + ' not taken: ' + why + ')');
+    };
     L.push('', '== the body each pick sends (an answer of 200)');
     const cases = [
         ['Move to LINE-1', () => { val('bd-move-node', '8'); t.p.run('moveBin()'); }],

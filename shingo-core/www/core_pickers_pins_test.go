@@ -152,19 +152,28 @@ func TestCorePickerPins(t *testing.T) {
 	}
 }
 
-// corePickerCensusBugs holds the three census bugs this unit pins AS THEY ARE
-// (census §4 #6, #7, #11), beside the goldens that show them, so a fix has to
-// say which one it is. Each check reads the page's own output.
+// corePickerCensusBugs holds the census bugs the shared adapters fixed
+// (census §4 #6, #7, #11; the P0 report's assignReason and otherGroups),
+// beside the goldens that show them, so a change that brings one back says so.
+// Each check reads the page's own output.
 func corePickerCensusBugs(t *testing.T, got map[string]string) {
 	t.Helper()
-	// #11: Create bin's Node list (templates/bins.html:342) offers every node,
-	// _TRANSIT, the robot decks and a disabled node included, where the Move
-	// list on the same page (static/pages/bins.js:488) drops the first two.
-	bins := got["bins-template.txt"]
-	for _, name := range []string{"_TRANSIT", "_ROBOT:AMR-01", "OLD-SLOT"} {
-		if !strings.Contains(bins, `label="`+name+`"`) {
-			t.Errorf("census #11 (pinned as is): Create bin no longer offers %s; if that is the fix, say so and regenerate", name)
+	// #11, fixed: Create bin's Node list no longer offers _TRANSIT, and shows
+	// the robot deck and a disabled node greyed with the reason (was
+	// templates/bins.html:342, {{range .Nodes}}).
+	bins := got["bins-page.txt"]
+	create := bins[:strings.Index(bins, "== (end of Create bin)")]
+	for _, line := range []string{
+		`"11" | _ROBOT:AMR-01 · robot  (off: a robot, not a place)`,
+		`"12" | OLD-SLOT  (off: disabled)`,
+		`pick "10": not taken: not offered`,
+	} {
+		if !strings.Contains(create, line) {
+			t.Errorf("census #11: Create bin's Node list no longer holds %q", line)
 		}
+	}
+	if strings.Contains(create, `| _TRANSIT`) {
+		t.Errorf("census #11: Create bin offers _TRANSIT")
 	}
 	// #6, fixed: a group whose children are lanes sits in its slots' zone with
 	// its lane and the lane's slots under it, and a disabled group's live
@@ -490,28 +499,26 @@ func corePickerBinsTemplate(t *testing.T, fx corePickerFixtureData) string {
 	pbtJSON, _ := json.Marshal(fx.PayloadBinTypes)
 	page := renderPage(t, "bins.html", map[string]any{
 		"Page": "bins", "Bins": []binRow{}, "BinTypes": fx.BinTypes, "CarrierFamilies": []string{},
-		"Nodes": fx.Nodes, "Payloads": fx.Payloads, "BinHasNotes": map[int64]bool{},
+		"Payloads": fx.Payloads, "BinHasNotes": map[int64]bool{},
 		"NodesJSON": template.JS(nodesJSON), "PayloadsJSON": template.JS(payloadsJSON),
 		"BinTypesJSON": template.JS(binTypesJSON), "PayloadBinTypesJSON": template.JS(pbtJSON),
 	})
 	var b strings.Builder
-	b.WriteString("# Core Bins, Create bin (census #50, C1): templates/bins.html {{range .Nodes}}, rendered as\n")
-	b.WriteString("# router.go renders it, Nodes = NodeService().ListNodes() in its order (handlers_bins.go handleBins).\n")
-	b.WriteString("# Pinned as is: census #11, every node is offered: _TRANSIT, the robot deck, groups, lanes,\n")
-	b.WriteString("# the disabled OLD-SLOT and GRP-OFF. No headings, no badges, label = .Name, value = .ID.\n\n")
-	_, opts := corePickerSelect(t, page, "name", "node_id")
-	b.WriteString("select name=\"node_id\" (Node (optional))\n")
-	for _, o := range opts {
-		b.WriteString("  " + o + "\n")
-	}
+	b.WriteString("# Core Bins, Create bin (census #50, C1): templates/bins.html rendered as router.go renders it.\n")
+	b.WriteString("# The Node field is a host bins.js mounts the shared node picker on, over PAGE_NODES (its rows\n")
+	b.WriteString("# and the hidden node_id input it adds: bins-page.txt).\n\n")
 	form := page[strings.Index(page, `action="/bins/create"`):]
 	form = form[:strings.Index(form, "</form>")]
+	if !strings.Contains(form, `<div id="bin-create-node"></div>`) {
+		t.Errorf("bins.html's Create bin form no longer holds the Node picker's host")
+	}
+	b.WriteString("Node (optional): <div id=\"bin-create-node\"> inside the form\n")
 	var fields []string
 	for _, m := range corePickerNameRe.FindAllStringSubmatch(form, -1) {
 		fields = append(fields, m[1])
 	}
 	b.WriteString("\nThe form posts (a native POST /bins/create, gated by bins.js confirmBinCreate; the body is the\n")
-	b.WriteString("browser's): " + strings.Join(fields, ", ") + "\n")
+	b.WriteString("browser's): " + strings.Join(fields, ", ") + ", and node_id from the picker's hidden input\n")
 	b.WriteString("On success: 303 to /bins. On a refusal: http.Error text, which the browser shows as the page\n")
 	b.WriteString("(see refusal-shapes.txt bins.create.400); no script reads it.\n")
 	for _, v := range []string{"PAGE_NODES", "PAGE_PAYLOADS", "PAGE_BIN_TYPES", "PAGE_PAYLOAD_BIN_TYPES"} {
@@ -519,7 +526,7 @@ func corePickerBinsTemplate(t *testing.T, fx corePickerFixtureData) string {
 			t.Errorf("bins.html no longer sets %s; the page script reads it", v)
 		}
 	}
-	b.WriteString("The same list is serialised again as PAGE_NODES for bins.js (Move, and the label check).\n")
+	b.WriteString("The node list is serialised once, as PAGE_NODES for bins.js (Create bin, Move, the label check).\n")
 	return b.String()
 }
 

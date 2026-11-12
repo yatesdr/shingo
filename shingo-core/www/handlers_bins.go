@@ -166,7 +166,6 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 		"Bins":                rows,
 		"BinTypes":            binTypes,
 		"CarrierFamilies":     h.carrierFamilyCodes(),
-		"Nodes":               nodes,
 		"Payloads":            payloads,
 		"BinHasNotes":         binHasNotes,
 		"NodesJSON":           template.JS(nodesJSON),

@@ -340,12 +340,7 @@
         </div>
         <div class="form-group">
           <label>Node (optional)</label>
-          <select name="node_id">
-            <option value="">-- No Node --</option>
-            {{range .Nodes}}
-            <option value="{{.ID}}">{{.Name}}</option>
-            {{end}}
-          </select>
+          <div id="bin-create-node"></div>
         </div>
         <div class="form-group">
           <label>Quantity — how many carriers to create (1–100)</label>

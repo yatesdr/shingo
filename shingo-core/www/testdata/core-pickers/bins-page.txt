@@ -1,30 +1,72 @@
 # Core Bins, bin pop-up (census #51 Move C2, #52 Load C3) and Create bin's label check.
-# static/pages/bins.js run as served over PAGE_NODES / PAGE_PAYLOADS = the fixture.
-# (The Create bin Node select itself is server-rendered: bins-template.txt.)
+# static/pages/bins.js run as served over PAGE_NODES / PAGE_PAYLOADS = the fixture, its
+# pickers on shared/node-picker.js and part-picker.js (rows: "value" | label · note (off: reason)).
+
+== Create bin's Node (C1, census #50): mounted at load on #bin-create-node, rule: robot, disabled
+  [ZONE-1]
+    "1" | GRP-A · group
+      "2" | GRP-A-L1 · lane
+      "3" | ↳ GRP-A-L1-S1
+      "4" | ↳ GRP-A-L1-S2
+    "12" | OLD-SLOT  (off: disabled)
+  [ZONE-2]
+    "5" | GRP-B · group
+      "6" | GRP-B-N1
+      "7" | GRP-B-N2
+    "14" | GRP-OFF · group  (off: disabled)
+      "15" | GRP-OFF-N1
+    "8" | LINE-1 · Line one
+  [Other]
+    "9" | SPOT-9
+    "13" | VIRT-1 · synthetic
+    "11" | _ROBOT:AMR-01 · robot  (off: a robot, not a place)
+  the form posts it as: <input type="hidden" name="node_id"> value ""
+  pick "8": node_id = "8"
+  pick "10": not taken: not offered
+  pick "11": not taken: offered greyed: a robot, not a place
+  pick "12": not taken: offered greyed: disabled
+  pick "": node_id = ""
+census #11 fixed: _TRANSIT is not offered; the robot deck and the disabled OLD-SLOT and GRP-OFF
+are greyed with their reason; groups and lanes stay (the server decides those).
+== (end of Create bin)
 
 == Move destination (C2): renderActions, bin at GRP-A-L1-S1
-  "" | -- Select --
-  "1" | GRP-A
-  "2" | GRP-A-L1
-  "4" | GRP-A-L1-S2
-  "5" | GRP-B
-  "6" | GRP-B-N1
-  "7" | GRP-B-N2
-  "8" | LINE-1
-  "9" | SPOT-9
-  "12" | OLD-SLOT
-  "13" | VIRT-1
-  "14" | GRP-OFF
-  "15" | GRP-OFF-N1
-  dropped: the bin's own node, _TRANSIT, _ROBOT:*; kept: groups, lanes, the disabled OLD-SLOT
-  and GRP-OFF, VIRT-1. No headings, no badges, value = id, label = name (not display name).
-  an unassigned bin: 13 destinations, GRP-A-L1-S1 included
+  [ZONE-1]
+    "1" | GRP-A · group
+      "2" | GRP-A-L1 · lane
+      "3" | ↳ GRP-A-L1-S1  (off: the bin is here)
+      "4" | ↳ GRP-A-L1-S2
+    "12" | OLD-SLOT
+  [ZONE-2]
+    "5" | GRP-B · group
+      "6" | GRP-B-N1
+      "7" | GRP-B-N2
+    "14" | GRP-OFF · group
+      "15" | GRP-OFF-N1
+    "8" | LINE-1 · Line one
+  [Other]
+    "9" | SPOT-9
+    "13" | VIRT-1 · synthetic
+    "11" | _ROBOT:AMR-01 · robot  (off: a robot, not a place)
+  an unassigned bin: greyed ["_ROBOT:AMR-01"]
 
-== Load payload (C3): renderContents, per bin type (PAGE_PAYLOAD_BIN_TYPES filters)
-  bin type 1: "", "PART-A", "PART-C"
-  bin type 2: "", "PART-B", "PART-A"
-  bin type 3: "", "PART-A"
-  held (load_refusal set): select disabled, sentence shown: true, Load button disabled
+== Load payload (C3): renderContents, per bin type (PAGE_PAYLOAD_BIN_TYPES greys)
+  bin type 1:
+    "PART-A" | PART-A · Part A
+    "PART-B" | PART-B · Part B  (off: not on a TYPE-1)
+    "PART-C" | PART-C · Part C
+  bin type 2:
+    "PART-A" | PART-A · Part A
+    "PART-B" | PART-B · Part B
+    "PART-C" | PART-C · Part C  (off: not on a TYPE-2)
+  bin type 3:
+    "PART-A" | PART-A · Part A
+    "PART-B" | PART-B · Part B  (off: not on a TYPE-3)
+    "PART-C" | PART-C · Part C  (off: not on a TYPE-3)
+  held (load_refusal set): sentence shown: true, Load button disabled, rows:
+    "PART-A" | PART-A · Part A  (off: Held by order 41 until it is delivered.)
+    "PART-B" | PART-B · Part B  (off: Held by order 41 until it is delivered.)
+    "PART-C" | PART-C · Part C  (off: Held by order 41 until it is delivered.)
   (no request)
 
 == the body each pick sends (an answer of 200)

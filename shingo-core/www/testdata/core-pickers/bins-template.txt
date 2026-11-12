@@ -1,28 +1,11 @@
-# Core Bins, Create bin (census #50, C1): templates/bins.html {{range .Nodes}}, rendered as
-# router.go renders it, Nodes = NodeService().ListNodes() in its order (handlers_bins.go handleBins).
-# Pinned as is: census #11, every node is offered: _TRANSIT, the robot deck, groups, lanes,
-# the disabled OLD-SLOT and GRP-OFF. No headings, no badges, label = .Name, value = .ID.
+# Core Bins, Create bin (census #50, C1): templates/bins.html rendered as router.go renders it.
+# The Node field is a host bins.js mounts the shared node picker on, over PAGE_NODES (its rows
+# and the hidden node_id input it adds: bins-page.txt).
 
-select name="node_id" (Node (optional))
-  value="" label="-- No Node --"
-  value="1" label="GRP-A"
-  value="2" label="GRP-A-L1"
-  value="3" label="GRP-A-L1-S1"
-  value="4" label="GRP-A-L1-S2"
-  value="5" label="GRP-B"
-  value="6" label="GRP-B-N1"
-  value="7" label="GRP-B-N2"
-  value="8" label="LINE-1"
-  value="9" label="SPOT-9"
-  value="10" label="_TRANSIT"
-  value="11" label="_ROBOT:AMR-01"
-  value="12" label="OLD-SLOT"
-  value="13" label="VIRT-1"
-  value="14" label="GRP-OFF"
-  value="15" label="GRP-OFF-N1"
+Node (optional): <div id="bin-create-node"> inside the form
 
 The form posts (a native POST /bins/create, gated by bins.js confirmBinCreate; the body is the
-browser's): bin_type_id, label_prefix, node_id, quantity, status
+browser's): bin_type_id, label_prefix, quantity, status, and node_id from the picker's hidden input
 On success: 303 to /bins. On a refusal: http.Error text, which the browser shows as the page
 (see refusal-shapes.txt bins.create.400); no script reads it.
-The same list is serialised again as PAGE_NODES for bins.js (Move, and the label check).
+The node list is serialised once, as PAGE_NODES for bins.js (Create bin, Move, the label check).
