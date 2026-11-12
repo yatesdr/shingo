@@ -40,6 +40,9 @@
      {{template "orders-body" .}}
 </div>
 
-<script type="module" src="/static/js/pages/orders.js"></script>
+<script src="{{assetURL "/static/js/htmx.min.js"}}"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/orders.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/orders.js";</script>
 
 {{template "footer" .}}

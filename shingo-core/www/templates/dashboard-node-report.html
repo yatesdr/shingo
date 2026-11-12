@@ -7,13 +7,14 @@
   <title>{{.Dashboard.Name}} — Node Report</title>
   {{template "clock-globals" .}}
   <link rel="icon" type="image/svg+xml"
-    href="/static/favicon.svg">
+    href="{{assetURL "/static/favicon.svg"}}">
   <link rel="stylesheet"
-    href="/static/shared/tokens.css">
+    href="{{assetURL "/static/shared/tokens.css"}}">
   <link rel="stylesheet"
-    href="/static/dashboard.css">
+    href="{{assetURL "/static/dashboard.css"}}">
   <link rel="stylesheet"
-    href="/static/style.css">
+    href="{{assetURL "/static/style.css"}}">
+  {{importMap "/static/pages/dashboard-node-report.js"}}
 </head>
 <body class="dash-kiosk"
       data-dashboard-id="{{.Dashboard.ID}}"
@@ -35,8 +36,6 @@
     <div class="board-empty" id="nr-empty" style="display:none">No nodes configured</div>
   </main>
 
-  <script type="module"
-    src="/static/pages/dashboard-node-report.js">
-  </script>
+  <script type="module">import "/static/pages/dashboard-node-report.js";</script>
 </body>
 </html>

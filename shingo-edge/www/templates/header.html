@@ -6,18 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
     <title>Shingo Edge</title>
-    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="icon" type="image/x-icon" href="{{assetURL "/static/favicon.ico"}}">
     <script>
     (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
     </script>
     {{template "clock-globals" .}}
-    <link rel="stylesheet" href="/static/shared/tokens.css">
-    <link rel="stylesheet" href="/static/shared/status-classes.css">
-    <link rel="stylesheet" href="/static/shared/components.css">
-    <link rel="stylesheet" href="/static/css/shingoedge.css">
-    <script src="/static/js/htmx.min.js"></script>
-    <script type="module" src="/static/js/shingoedge.js"></script>
-    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="{{assetURL "/static/shared/tokens.css"}}">
+    <link rel="stylesheet" href="{{assetURL "/static/shared/status-classes.css"}}">
+    <link rel="stylesheet" href="{{assetURL "/static/shared/components.css"}}">
+    <link rel="stylesheet" href="{{assetURL "/static/css/shingoedge.css"}}">
+    <script src="{{assetURL "/static/js/theme.js"}}"></script>
+    {{/* NO MODULE HERE. A page's import map has to come before its first
+         module script, and only the page knows what it loads: every page
+         template is in one set, so there is no per-page block to fill. Each
+         page ends with its own {{importMap}}, then the hub shingoedge.js and
+         its own entry as inline imports. Modules run after the document is
+         parsed wherever their tag sits, so the hub still runs first.
+         htmx is on the three pages that swap partials (changeover, orders,
+         production), not here. */}}
 </head>
 <body>
     <nav>

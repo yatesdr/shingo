@@ -41,7 +41,7 @@ import (
 // the page runs the wrong body with no error anywhere.
 
 var (
-	classicTag   = regexp.MustCompile(`<script\s+src="(/static/[^"?]+)`)
+	classicTag   = regexp.MustCompile(`<script\s+src="\{\{\s*assetURL\s+"(/static/[^"?]+)"`) // the tag is {{assetURL "…"}}
 	moduleTag    = regexp.MustCompile(`<script\s+type="module"`)
 	templateCall = regexp.MustCompile(`{{template "(\w+)" \.}}`)
 	topLevelDecl = regexp.MustCompile(`(?m)^(?:const|let|class|function)\s+([A-Za-z_$][\w$]*)`)

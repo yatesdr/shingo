@@ -68,6 +68,8 @@
   The loader threshold is Core's, on its loader and inventory pages.
 </p>
 
-<script type="module" src="/static/js/pages/replenishment.js"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/replenishment.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/replenishment.js";</script>
 
 {{template "footer" .}}

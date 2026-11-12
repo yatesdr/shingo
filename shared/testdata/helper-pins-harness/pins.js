@@ -863,8 +863,8 @@ async function coreHubBusPins() {
 // ═══ Edge admin on the bus ═══════════════════════════════════════════════════
 //
 // What an Edge admin page does with the one bus (shared/bus.js) since both
-// createSSE copies and htmx-sse.js went (ruling 4): the hub loaded as
-// header.html loads it (it subscribes build-changed to the new-build banner,
+// createSSE copies and htmx-sse.js went (ruling 4): the hub loaded as each
+// page loads it first (it subscribes build-changed to the new-build banner,
 // which opens no stream), the partial's element as its template writes it,
 // then the subscriptions the page's module makes, in its order. htmx is a
 // stub that notes each trigger it is asked for.
@@ -1080,7 +1080,7 @@ function htmxErrorPins() {
 }
 
 // htmxErrorShown is what an Edge admin page shows when an htmx request fails:
-// the Edge hub loaded as header.html loads it, then htmx's own error event
+// the Edge hub loaded as each page loads it, then htmx's own error event
 // dispatched as htmx dispatches it (on the requesting element, bubbling, the
 // request in detail.xhr). htmx answers an HX-Redirect (the Edge's auth bounce
 // for an htmx request, router.go) before its response handling, so a lapsed
@@ -1123,7 +1123,7 @@ function htmxErrorShown() {
 // ═══ who opens a stream: every page that reaches the bus ══════════════════════
 //
 // A census of the shipped templates: for each page of Core and the Edge, the
-// module graph its <script type="module" src> tags reach (static imports and
+// module graph its inline module entries reach (static imports and
 // export-from), and what those modules subscribe on shared/bus.js — server
 // topics by name, the bus's own frames, a call whose type is not a literal,
 // and the hub's refreshOnEvents('<id>', onSSE) read off the page's template
@@ -1154,7 +1154,10 @@ function busUsersCensus(root, rule, busURLs) {
         for (const t of fs.readdirSync(tdir).filter((f) => f.endsWith('.html') && f !== tree.shell && f !== 'footer.html').sort()) {
             const page = fs.readFileSync(path.join(tdir, t), 'utf8');
             const html = (tree.inShell(page) ? shell : '') + page;
-            const queue = [...html.matchAll(/<script\b[^>]*type="module"[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1].split('?')[0]);
+            // A module entry is an inline import after the page's import map
+            // (a src tag is read too, in case one comes back).
+            const queue = [...html.matchAll(/<script\b[^>]*type="module"[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1].split('?')[0])
+                .concat([...html.matchAll(/<script type="module">\s*import\s*"([^"]+)";?\s*<\/script>/g)].map((m) => m[1]));
             const seen = new Set();
             const topics = new Set();
             const frames = new Set();

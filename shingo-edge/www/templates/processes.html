@@ -46,9 +46,9 @@
      declarations under another name. */}}
 <div id="pd-scrim" class="modal-overlay"></div>
 
-<link rel="stylesheet" href="/static/operator-station/flow-picture.css">
-<link rel="stylesheet" href="/static/css/processes-desktop.css">
-<link rel="stylesheet" href="/static/operator-station/composer-glyphs.css">
+<link rel="stylesheet" href="{{assetURL "/static/operator-station/flow-picture.css"}}">
+<link rel="stylesheet" href="{{assetURL "/static/css/processes-desktop.css"}}">
+<link rel="stylesheet" href="{{assetURL "/static/operator-station/composer-glyphs.css"}}">
 
 {{/*
   Classic scripts, for the same reason the station loads them that way:
@@ -57,14 +57,16 @@
   puts both on window without either file needing an ESM-only line the other
   loader would choke on.
 */}}
-<script src="/static/operator-station/composer-model.js"></script>
-<script src="/static/operator-station/composer-glyphs.js"></script>
-<script src="/static/operator-station/flowspec-data.js"></script>
+<script src="{{assetURL "/static/operator-station/composer-model.js"}}"></script>
+<script src="{{assetURL "/static/operator-station/composer-glyphs.js"}}"></script>
+<script src="{{assetURL "/static/operator-station/flowspec-data.js"}}"></script>
 {{/* Every request body the page sends, in one place the handler tests read too. */}}
-<script src="/static/js/pages/desktop-bodies.js"></script>
+<script src="{{assetURL "/static/js/pages/desktop-bodies.js"}}"></script>
 {{/* The part-identity health strip above the list. */}}
-<script src="/static/js/pages/catid-health.js"></script>
-<script src="/static/js/pages/tag-suggest.js"></script>
-<script src="/static/js/pages/station-card.js"></script>
-<script type="module" src="/static/js/pages/processes-desktop.js"></script>
+<script src="{{assetURL "/static/js/pages/catid-health.js"}}"></script>
+<script src="{{assetURL "/static/js/pages/tag-suggest.js"}}"></script>
+<script src="{{assetURL "/static/js/pages/station-card.js"}}"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/processes-desktop.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/processes-desktop.js";</script>
 {{template "footer" .}}

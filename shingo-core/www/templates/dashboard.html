@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/dashboard-landing.js"}}{{end}}
 {{define "content"}}
 <div data-sse="dashboard">
   <div class="flex flex-between mb-2">
@@ -89,5 +90,5 @@
 
   {{template "dashboard-active-orders" .}}
 </div>
-<script type="module" src="/static/pages/dashboard-landing.js"></script>
+<script type="module">import "/static/pages/dashboard-landing.js";</script>
 {{end}}

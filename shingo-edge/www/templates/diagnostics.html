@@ -144,7 +144,9 @@
 </div>
 {{end}}
 
-<script type="module" src="/static/js/pages/diagnostics.js"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/diagnostics.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/diagnostics.js";</script>
 <script>
 async function replayDeadLetter(id) {
   const resp = await fetch('/api/diagnostics/outbox/replay?id=' + encodeURIComponent(id), { method: 'POST' });

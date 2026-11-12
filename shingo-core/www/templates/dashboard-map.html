@@ -6,10 +6,11 @@
   <meta name="color-scheme" content="dark">
   <title>{{.Dashboard.Name}} — Shingo Map</title>
   {{template "clock-globals" .}}
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/shared/tokens.css">
-  <link rel="stylesheet" href="/static/shared/components.css">
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="icon" type="image/svg+xml" href="{{assetURL "/static/favicon.svg"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/shared/tokens.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/shared/components.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/dashboard.css"}}">
+  {{importMap "/static/pages/dashboard-map.js"}}
 </head>
 <body class="dash-kiosk"
       data-dashboard-id="{{.Dashboard.ID}}"
@@ -52,6 +53,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/static/pages/dashboard-map.js"></script>
+  <script type="module">import "/static/pages/dashboard-map.js";</script>
 </body>
 </html>

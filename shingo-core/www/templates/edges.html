@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/edges.js"}}{{end}}
 {{define "content"}}
 <div class="flex flex-between mb-2">
   <h1>Stations</h1>
@@ -98,5 +99,5 @@
 {{end}}
 {{end}}
 
-<script type="module" src="/static/pages/edges.js"></script>
+<script type="module">import "/static/pages/edges.js";</script>
 {{end}}

@@ -105,5 +105,7 @@
   </div>
   {{end}}
 
-<script type="module" src="/static/js/pages/containment.js"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/containment.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/containment.js";</script>
 {{template "footer" .}}

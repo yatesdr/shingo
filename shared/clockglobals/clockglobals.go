@@ -51,7 +51,11 @@ var (
 	// every page passes — the failure the subject-count assertion in each
 	// tree's test exists to catch, and did.
 	namedImportRe = regexp.MustCompile(`import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]`)
-	srcRe         = regexp.MustCompile(`<script[^>]*\ssrc="([^"]+)"`)
+	// srcRe reads a classic tag's URL, written plain or as the template's
+	// {{assetURL "…"}}; inlineEntryRe reads a module entry, which is an
+	// inline import after the page's import map, never a src.
+	srcRe         = regexp.MustCompile(`<script[^>]*\ssrc="(?:\{\{\s*assetURL\s+"([^"]+)"\s*\}\}|([^"{]+))"`)
+	inlineEntryRe = regexp.MustCompile(`(?s)<script\s+type="module"\s*>\s*import\s*['"]([^'"]+)['"]`)
 )
 
 // Result is one page that needs the globals and does not carry them.
@@ -177,10 +181,17 @@ func Audit(templates, static fs.FS, carriers []string) ([]Result, int, error) {
 			continue
 		}
 
-		var hit string
+		var entries []string
 		for _, m := range srcRe.FindAllStringSubmatch(body, -1) {
-			if reachesClock(res, m[1], map[string]bool{}) {
-				hit = m[1]
+			entries = append(entries, m[1]+m[2])
+		}
+		for _, m := range inlineEntryRe.FindAllStringSubmatch(body, -1) {
+			entries = append(entries, m[1])
+		}
+		var hit string
+		for _, e := range entries {
+			if reachesClock(res, e, map[string]bool{}) {
+				hit = e
 				break
 			}
 		}

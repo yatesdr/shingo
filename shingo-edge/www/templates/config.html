@@ -223,5 +223,7 @@
     </div>
 </div>
 
-<script type="module" src="/static/js/pages/config.js"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/config.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/config.js";</script>
 {{template "footer" .}}

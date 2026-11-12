@@ -133,7 +133,7 @@ func TestNoBareClassDeclaredInTwoCoLoadedStylesheets(t *testing.T) {
 
 var (
 	stylesheetLinkPattern  = regexp.MustCompile(`(?s)<link\s[^>]*rel="stylesheet"[^>]*>`)
-	hrefPattern            = regexp.MustCompile(`href="([^"]+)"`)
+	hrefPattern            = regexp.MustCompile(`href="(?:\{\{\s*assetURL\s+"([^"]+)"\s*\}\}|([^"{]+))"`) // plain or {{assetURL "…"}}
 	inlineStylePattern     = regexp.MustCompile(`(?s)<style[^>]*>(.*?)</style>`)
 	contentTemplatePattern = regexp.MustCompile(`\{\{\s*define\s+"content"\s*\}\}`)
 	contentBlockPattern    = regexp.MustCompile(`\{\{\s*block\s+"content"`)
@@ -241,7 +241,7 @@ func linkedSheets(t *testing.T, src string) []sheet {
 		if m == nil {
 			continue
 		}
-		href := strings.SplitN(m[1], "?", 2)[0]
+		href := strings.SplitN(m[1]+m[2], "?", 2)[0]
 		if !strings.HasSuffix(href, ".css") {
 			continue
 		}

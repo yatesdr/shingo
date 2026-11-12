@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/diagnostics.js"}}{{end}}
 {{define "content"}}
 <div class="tabs" role="tablist">
   <button type="button" class="tab active" data-action="switchDiagTab:debug">Debug Log</button>
@@ -293,5 +294,5 @@
   {{end}}
 </div>
 
-<script type="module" src="/static/pages/diagnostics.js"></script>
+<script type="module">import "/static/pages/diagnostics.js";</script>
 {{end}}

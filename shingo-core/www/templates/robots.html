@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/robots.js"}}{{end}}
 {{define "content"}}
 <div>
   <div class="flex flex-between mb-2">
@@ -265,5 +266,5 @@
   </div>
 </div>
 
-<script type="module" src="/static/pages/robots.js"></script>
+<script type="module">import "/static/pages/robots.js";</script>
 {{end}}

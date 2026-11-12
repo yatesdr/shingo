@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/missions.js"}}{{end}}
 {{define "content"}}
 <style>
   /* ── U3 breakdown tables ──────────────────────────────────────────────────
@@ -153,7 +154,7 @@
 </div>
 
 <!-- Chart.js UMD + zoom plugin (vendored) for the trends grid + drill modal. -->
-<script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
-<script type="module" src="/static/pages/missions.js"></script>
+<script src="{{assetURL "/static/vendor/chart.umd.min.js"}}"></script>
+<script src="{{assetURL "/static/vendor/chartjs-plugin-zoom.min.js"}}"></script>
+<script type="module">import "/static/pages/missions.js";</script>
 {{end}}

@@ -40,6 +40,6 @@ func TestEveryClockPageCarriesGlobals(t *testing.T) {
 	// script resolver or the import walk breaks, every page trivially passes.
 	if subject == 0 {
 		t.Fatal("no Edge page was found to load a clock function — the script/import walk is " +
-			"broken, not the templates (operator-display.html and header.html both qualify)")
+			"broken, not the templates (operator-display.html qualifies; header.html carries no module, each page names its own)")
 	}
 }

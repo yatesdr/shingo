@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/overview.js"}}{{end}}
 {{define "content"}}
 <div class="ops-overview">
 
@@ -61,7 +62,7 @@
 
 <!-- Chart.js UMD + zoom plugin, vendored for air-gapped deploys (§6). Plain
      <script> tags set window.Chart before the deferred page module runs. -->
-<script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
-<script type="module" src="/static/pages/overview.js"></script>
+<script src="{{assetURL "/static/vendor/chart.umd.min.js"}}"></script>
+<script src="{{assetURL "/static/vendor/chartjs-plugin-zoom.min.js"}}"></script>
+<script type="module">import "/static/pages/overview.js";</script>
 {{end}}

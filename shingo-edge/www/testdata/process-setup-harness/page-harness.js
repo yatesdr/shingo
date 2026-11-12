@@ -85,7 +85,8 @@ const PAGE_LINE_OFFSET = 1;
 function classicScripts() {
     const tmpl = read(path.join(WWW, 'templates', 'processes.html'));
     const out = [];
-    for (const m of tmpl.matchAll(/<script\s+src="\/static\/([^"?]+)"/g)) out.push(m[1]);
+    // Each tag is the template's {{assetURL "/static/…"}}.
+    for (const m of tmpl.matchAll(/<script\s+src="\{\{\s*assetURL\s+"\/static\/([^"?]+)"/g)) out.push(m[1]);
     if (!out.length) throw new Error('processes.html names no classic script; the tag pattern has drifted');
     return out;
 }

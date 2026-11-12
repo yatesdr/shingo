@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/mission-detail.js"}}{{end}}
 {{define "content"}}
 <div class="flex-center gap-2 mb-1">
   <a href="/missions">&larr; Back to Missions</a>
@@ -46,5 +47,5 @@
 
 </div>
 
-<script type="module" src="/static/pages/mission-detail.js"></script>
+<script type="module">import "/static/pages/mission-detail.js";</script>
 {{end}}

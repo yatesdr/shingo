@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/orders.js"}}{{end}}
 {{define "content"}}
 {{/* data-authenticated is read by orders.js, which renders the manifest's
      Controls section client-side — the manifest is drawn in the modal and
@@ -201,5 +202,5 @@
   </div>
 </div>
 
-<script type="module" src="/static/pages/orders.js"></script>
+<script type="module">import "/static/pages/orders.js";</script>
 {{end}}

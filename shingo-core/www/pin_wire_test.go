@@ -117,7 +117,7 @@ func TestPinWire_W1_CoreTestOrdersHideModalMapped(t *testing.T) {
 // connected, which put up and take down the lost-connection banner (S5).
 func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 	page := pinReadFile(t, "templates/dashboard.html")
-	if !strings.Contains(page, `src="/static/pages/dashboard-landing.js`) {
+	if !strings.Contains(page, `<script type="module">import "/static/pages/dashboard-landing.js";</script>`) {
 		t.Fatalf("dashboard.html no longer loads dashboard-landing.js; repoint this pin")
 	}
 	if !strings.Contains(page, `{{template "dashboard-active-orders" .}}`) {

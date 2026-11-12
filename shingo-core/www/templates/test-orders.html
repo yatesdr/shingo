@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/test-orders.js"}}{{end}}
 {{define "content"}}
 <div>
   <h1>Test Orders</h1>
@@ -368,5 +369,5 @@
 </div>
 
 <div id="page-data" data-authenticated="{{.Authenticated}}"></div>
-<script type="module" src="/static/pages/test-orders.js"></script>
+<script type="module">import "/static/pages/test-orders.js";</script>
 {{end}}

@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/inventory.js"}}{{end}}
 {{define "content"}}
 <!-- Inventory: the supermarket positions the threshold monitor watches (and
      setting their UoP threshold), and the lines (the Edge's processes), every
@@ -69,5 +70,5 @@
   </div>
 </div>
 
-<script type="module" src="/static/pages/inventory.js"></script>
+<script type="module">import "/static/pages/inventory.js";</script>
 {{end}}

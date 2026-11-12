@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/rds-explorer.js"}}{{end}}
 {{define "content"}}
 <div>
   <div class="flex flex-between mb-2">
@@ -236,5 +237,5 @@
   </div>
 </div>
 
-<script type="module" src="/static/pages/rds-explorer.js"></script>
+<script type="module">import "/static/pages/rds-explorer.js";</script>
 {{end}}

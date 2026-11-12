@@ -98,12 +98,13 @@ const HELPERS = [
     unModule(read(path.join(JS, 'ask-act.js'))),
 ].join('\n');
 
-// pageMarkup is the page's own markup: from <main> to its module tag.
+// pageMarkup is the page's own markup: from <main> to its import map, which
+// precedes its module entries, less the htmx tag the three swap pages carry.
 function pageMarkup(html) {
     const i = html.indexOf('<main');
-    const j = html.indexOf('<script type="module" src="/static/js/pages/');
+    const j = html.indexOf('<script type="importmap">');
     if (i < 0 || j < i) throw new Error('page markup not found');
-    return html.slice(html.indexOf('>', i) + 1, j).replace(/<canvas\b[\s\S]*?<\/canvas>/g, '');
+    return html.slice(html.indexOf('>', i) + 1, j).replace(/<script src="[^"]*\/htmx\.[^"]*"><\/script>/g, '').replace(/<canvas\b[\s\S]*?<\/canvas>/g, '');
 }
 
 // ── one boot ─────────────────────────────────────────────────────────────────

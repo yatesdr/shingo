@@ -14,7 +14,8 @@
      hx-trigger="refreshProduction from:body, refreshMaterial from:body, sse:order-update throttle:5s, sse:order-failed, sse:counter-update throttle:10s"
      hx-swap="innerHTML">
      {{/* The sse: triggers are fired by production.js from the page's one
-          /events stream (production-refresh.js), not by a second stream here. */}}
+          /events stream (shingoedge.js's refreshOnEvents), not by a second
+          stream here. */}}
      {{template "production-body" .}}
         </div>
     </div>
@@ -201,5 +202,8 @@
         </div>
     </div>
 </div>
-<script type="module" src="/static/js/pages/production.js"></script>
+<script src="{{assetURL "/static/js/htmx.min.js"}}"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/production.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/production.js";</script>
 {{template "footer" .}}

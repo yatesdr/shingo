@@ -45,12 +45,12 @@ func renderConfigPage(t *testing.T, seed func(c *config.Config), boot bool, afte
 	return string(b)
 }
 
-// configPageBody is the page's own markup: from the H1 to the page script,
-// without the shared header and footer.
+// configPageBody is the page's own markup: from the H1 to the page's import
+// map, which precedes its scripts, without the shared header and footer.
 func configPageBody(t *testing.T, html string) string {
 	t.Helper()
 	i := strings.Index(html, `<div class="page-header">`)
-	j := strings.Index(html, `<script type="module" src="/static/js/pages/config.js">`)
+	j := strings.Index(html, `<script type="importmap">`)
 	if i < 0 || j < i {
 		t.Fatalf("config page markup not found")
 	}

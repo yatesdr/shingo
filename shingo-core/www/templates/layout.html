@@ -5,16 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shingo Core{{if .Page}} - {{.Page}}{{end}}</title>
   <meta name="color-scheme" content="light dark">
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="{{assetURL "/static/favicon.svg"}}">
   <script>
   (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
   </script>
   {{template "clock-globals" .}}
-  <link rel="stylesheet" href="/static/shared/tokens.css">
-  <link rel="stylesheet" href="/static/shared/status-classes.css">
-  <link rel="stylesheet" href="/static/shared/components.css">
-  <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/route-strip.css">
+  <link rel="stylesheet" href="{{assetURL "/static/shared/tokens.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/shared/status-classes.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/shared/components.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/style.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/route-strip.css"}}">
+  {{/* THE IMPORT MAP, before any module script: every module the page can
+       reach, plain URL to hashed. A page with modules of its own overrides
+       this block with {{define "importmap"}}, naming app.js and its own
+       entries; the pages with none get app.js's alone. */}}
+  {{block "importmap" .}}{{importMap "/static/app.js"}}{{end}}
 </head>
 <body>
   {{/* Vendored Lucide icon sprite, inlined once so <use href="#icon-…"> resolves same-document. */}}
@@ -131,18 +136,18 @@
       {{end}}
     </div>
   </nav>
-  <script src="/static/theme.js"></script>
-  <!-- NO ?v= HERE, AND THAT IS THE POINT. Every page module does
-       `import { ... } from '/static/app.js'` — a bare URL with no query. With a
-       cache-bust on this tag the two URLs differ, so the browser instantiates
-       app.js TWICE and each copy holds its own module state. Freshness is not
-       lost: /static/* is served with an ETag keyed to the running binary, so the
-       bundle is revalidated on every request and re-downloaded on redeploy
-       (see staticCache in router.go). This tag stays — eight pages have no page
-       module of their own, and the import graph alone would leave them without
-       the nav pills, toasts and timestamp rendering app.js provides. -->
-  <script type="module" src="/static/app.js"></script>
-  {{if simMode}}<script src="/static/sim-speed-strip.js"></script>{{end}}
+  <script src="{{assetURL "/static/theme.js"}}"></script>
+  {{/* THE HUB IS AN INLINE IMPORT, NOT A SRC TAG. Every page module imports
+       '/static/app.js' by its plain URL. With an import map the browser sends
+       that import and this one to the same hashed URL, cached for good;
+       without one (Chromium before 89) both stay plain and revalidate by
+       ETag. One URL either way, so one instance of app.js: a hashed src
+       would be a second instance in the browser without maps, a plain src a
+       second in the one with them. This tag stays because pages with no
+       module of their own still need the nav pills, toasts and timestamp
+       rendering app.js provides. */}}
+  <script type="module">import "/static/app.js";</script>
+  {{if simMode}}<script src="{{assetURL "/static/sim-speed-strip.js"}}"></script>{{end}}
   <main class="container" style="padding-top:1.5rem;padding-bottom:2rem;">
     {{block "content" .}}{{end}}
   </main>

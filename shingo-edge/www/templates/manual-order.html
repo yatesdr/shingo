@@ -57,6 +57,8 @@
      data-nodes='{{.NodesJSON}}'
      data-core-nodes='{{.CoreNodesJSON}}'>
 </div>
-<script type="module" src="/static/js/pages/manual-order.js"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/manual-order.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/manual-order.js";</script>
 
 {{template "footer" .}}

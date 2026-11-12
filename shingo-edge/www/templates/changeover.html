@@ -66,6 +66,9 @@
 {{end}}
 
 <div id="page-data" data-process-id="{{.ActiveProcessID}}"></div>
-<script type="module" src="/static/js/pages/changeover.js"></script>
+<script src="{{assetURL "/static/js/htmx.min.js"}}"></script>
+{{importMap "/static/js/shingoedge.js" "/static/js/pages/changeover.js"}}
+<script type="module">import "/static/js/shingoedge.js";</script>
+<script type="module">import "/static/js/pages/changeover.js";</script>
 
 {{template "footer" .}}

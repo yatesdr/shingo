@@ -63,7 +63,7 @@ func edgeAdminScripts(t *testing.T) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`<script type="module" src="/static/(js/pages/[a-z-]+\.js)"></script>`)
+	re := regexp.MustCompile(`<script type="module">import "/static/(js/pages/[a-z-]+\.js)";</script>`)
 	out := map[string]string{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".html") || strings.HasPrefix(e.Name(), "operator-") {

@@ -168,15 +168,17 @@ func TestProcessesPage_BootsTheDesktop(t *testing.T) {
 		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4"},
 		"ActiveProcessID": int64(15),
 	})
+	// The module is an inline import; every other file is named by its
+	// hashed URL (assetURL).
 	for _, want := range []string{
 		`id="pd-root"`,
 		`id="pd-scrim"`,
-		`/static/js/pages/processes-desktop.js`,
-		`/static/operator-station/composer-model.js`,
-		`/static/operator-station/composer-glyphs.js`,
-		`/static/operator-station/flowspec-data.js`,
-		`/static/operator-station/flow-picture.css`,
-		`/static/css/processes-desktop.css`,
+		`<script type="module">import "/static/js/pages/processes-desktop.js";</script>`,
+		staticAssets().URL(`/static/operator-station/composer-model.js`),
+		staticAssets().URL(`/static/operator-station/composer-glyphs.js`),
+		staticAssets().URL(`/static/operator-station/flowspec-data.js`),
+		staticAssets().URL(`/static/operator-station/flow-picture.css`),
+		staticAssets().URL(`/static/css/processes-desktop.css`),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the Processes page does not carry %s", want)

@@ -1,3 +1,4 @@
+{{define "importmap"}}{{importMap "/static/app.js" "/static/pages/config.js"}}{{end}}
 {{define "content"}}
 <h1 class="mb-2">Configuration</h1>
 {{/* The settings shape (docs/ui-style-guide/33-settings-pages.md): one page,
@@ -228,5 +229,5 @@
   </div>
 </div>
 
-<script type="module" src="/static/pages/config.js"></script>
+<script type="module">import "/static/pages/config.js";</script>
 {{end}}
