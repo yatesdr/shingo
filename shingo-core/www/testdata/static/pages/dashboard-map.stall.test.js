@@ -107,7 +107,7 @@ function load() {
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ mergeRobot: mergeRobot, isMoving: isMoving,' +
         ' laneVisible: laneVisible, robots: robots, MOVE_LINGER_MS: MOVE_LINGER_MS,' +
-        ' alarmWords: alarmWords, STATUS_COLOR: STATUS_COLOR });\n})();\n';
+        ' alarmWords: alarmWords, STATUS_COLOR: STATUS_COLOR, restDisc: restDisc });\n})();\n';
     const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
     if (src === stripped) {
         throw new Error('dashboard-map.js no longer ends in the "})();" IIFE close this ' +
@@ -200,6 +200,25 @@ console.log('alarmWords');
         m.alarmWords({ code: 59997, desc: '["Accuracy error is too large(xy): {1}",0.3093002995165057]' }) === 'Accuracy error is too large(xy): 0.31');
     check('no alarm: no words', m.alarmWords(null) === '');
     check('faulted is drawn in blocked’s red', m.STATUS_COLOR.faulted === m.STATUS_COLOR.blocked);
+})();
+
+// --- a robot at rest: one disc, one size ---------------------------------
+
+console.log('restDisc');
+
+(function everyRestingRobotIsOneSize() {
+    const m = load();
+    // HOP, 2026-11-12: AMR-12, paused on a park bay, drew larger than the
+    // ready robots parked in the same row.
+    const nodeR = 0.5;
+    const sizes = ['ready', 'paused', 'offline', 'error'].map(function (state) {
+        return m.restDisc({ id: 'AMR-12', x: 3, y: 4, state: state }, nodeR).r;
+    });
+    sizes.push(m.restDisc({ id: 'AMR-05', x: 3, y: 4, state: 'ready', charging: true }, nodeR).r);
+    check('ready, paused, offline, error and charging rest at one size',
+        sizes.every(function (r) { return r === sizes[0]; }), JSON.stringify(sizes));
+    const off = m.restDisc({ id: 'AMR-12', x: 3, y: 4, state: 'paused' }, nodeR);
+    check('off any bay, the disc sits where the robot is', off.x === 3 && off.y === 4, JSON.stringify(off));
 })();
 
 console.log(failures === 0 ? 'PASS' : failures + ' FAILURE(S)');

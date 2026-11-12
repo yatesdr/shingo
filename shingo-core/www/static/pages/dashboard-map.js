@@ -359,6 +359,17 @@ import {
     return null;
   }
 
+  // A robot at rest is one disc, one size, whatever its state (HOP,
+  // 2026-11-12: a paused robot on a park bay drew larger than the ready robots
+  // in the row, because only a ready robot was fitted to its bay). On a bay it
+  // sits on the bay's centre, since the reported pose is a few cm off it and a
+  // row of parked robots should read as a row. The size is the one a charging
+  // robot fills its ring at, so the bay under it never shows as a rim.
+  function restDisc(r, nodeR) {
+    var dock = dockOf(r);
+    return { x: dock ? dock.x : r.x, y: dock ? dock.y : r.y, r: nodeR * 1.05 };
+  }
+
   // Effective robot color: fault > active job > physical motion > bay hue > state.
   // A delivered/confirmed order is NOT a job — the robot is transitioning. While
   // physically moving with no active job (just delivered, repositioning, returning
@@ -1555,25 +1566,17 @@ import {
         rg.appendChild(g);
         rg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
       } else {
-        // Parked/stopped: heading is noise — a compact disc reads as a docked
-        // unit. A ready robot docked on a bay snaps to the bay center and
-        // fills the ring's inner edge: the reported pose sits a few cm off
-        // the bay point, which left a crescent of background between disc
-        // and ring instead of a filled socket.
-        var cx = s[0], cy = s[1], dr = robotR * 0.62;
-        if (r.state === 'ready') {
-          var dock = dockOf(r);
-          if (dock) {
-            var bs = proj(dock.x, dock.y);
-            cx = bs[0]; cy = bs[1];
-            dr = nodeR * (dock.kind === 'charge' ? 1.05 : 0.88);
-          }
-        }
-        rg.appendChild(svgEl('circle', {
-          cx: cx, cy: cy, r: dr, class: 'map-robot',
-          fill: color, 'stroke-width': robotR * 0.14
-        }));
-        rg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: dr * 0.3, class: 'map-robot-core' }));
+        // At rest heading is noise: one solid disc (restDisc), so it reads as
+        // a robot and not as one more ring on the floor. Paused, not taking
+        // orders: the same disc with its fill faded, so it never reads as the
+        // ready robot beside it. Offline: the disc dimmed whole.
+        var d = restDisc(r, nodeR), ds = proj(d.x, d.y);
+        var disc = svgEl('circle', {
+          cx: ds[0], cy: ds[1], r: d.r, fill: color, 'stroke-width': robotR * 0.14,
+          class: 'map-robot' + (r.state === 'paused' ? ' is-paused' : r.state === 'offline' ? ' is-offline' : '')
+        });
+        if (r.state === 'paused') disc.setAttribute('style', 'stroke: ' + color);
+        rg.appendChild(disc);
       }
     });
 
