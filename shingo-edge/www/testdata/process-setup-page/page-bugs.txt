@@ -28,13 +28,13 @@ ok   the rows follow coreNodeList
 ok   GRP_Q first, Z_PLAIN and A_PLAIN last
 
 ## census #3: a source added in Settings is offered on the Styles tab
-BUG  POS_A5's Inbound source offers SRC_2: offers ["GRP_A","SRC_1"]
+ok   POS_A5's Inbound source offers SRC_2
 
 ## P0 :3746: a refused routing-set add is drawn, not cleared by the re-read
-BUG  the page says "the Edge refused it": routingError ""
+ok   the page says "the Edge refused it"
 
 ## P0 :3626: a refused Turn all on is drawn, not cleared by the re-read
-BUG  the page says "the Edge refused it": routingError ""
+ok   the page says "the Edge refused it"
 
 ## P0 :5368: a refused Save settings keeps the typed draft
 ok   the page says "the Edge refused it"
@@ -79,4 +79,4 @@ ok   nothing is deleted
 BUG  the process list is read again: after Cancel: nothing
 
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
-BUG  no refusal block leaves the page silent: refusals-routing-set.txt Routing set: Turn all 1 on (Staging): PATCH /api/processes/1/routing-nodes/106  ←  400 {"error"} (writeError) | refusals-routing-set.txt Routing set: Turn all 1 on (Staging): PATCH /api/processes/1/routing-nodes/106  ←  500, no body (chi Recoverer) | refusals-routing-set.txt Routing set: Turn all 1 on (Staging): PATCH /api/processes/1/routing-nodes/106  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+ok   no refusal block leaves the page silent

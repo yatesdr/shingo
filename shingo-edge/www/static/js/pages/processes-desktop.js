@@ -3668,8 +3668,8 @@ async function rsAllOn(role) {
         const out = await send('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + r.id,
             B().routingEnable(true), NO_NOTICE);
         if (!out.ok) {
-            S.routingError = said(out, 'Switching ' + r.core_node_name + ' on was refused: ');
             await loadRouting();
+            keepRefusal(said(out, 'Switching ' + r.core_node_name + ' on was refused: '));
             drawSettings();
             return;
         }
@@ -3757,15 +3757,43 @@ async function setRoutingNode(role, name, on) {
         out = await send('POST', '/api/processes/' + S.processID + '/routing-nodes',
             B().routingAdd(name, role, routingRowsFor(role).length), NO_NOTICE);
     }
-    S.routingError = out.ok ? '' : said(out);
     S.routingWarning = out.ok ? (bodyOf(out).warning || '') : '';
     await loadRouting();
+    keepRefusal(out.ok ? '' : said(out));
     drawSettings();
     // Back into the field the name was typed into: the engineer adding one
     // name is usually adding three.
     const box = $('npk-' + routingPickerKey(role));
     const input = box && box.querySelector('[data-npkq]');
     if (input) input.focus();
+}
+
+// keepRefusal is a routing write's answer, after its re-read. The re-read
+// clears S.routingError when it lands, so a refusal set before it was gone
+// before the draw and the refused name simply did not appear (P0 :3746,
+// :3626). A failed re-read keeps its own sentence beside the refusal.
+//
+// A good re-read is also what the Styles tab offers: its pickers read
+// S.composer.routing, which only a composer read set, so a name added or
+// taken out here stayed (or stayed missing) there (census #3). The rows are
+// the composer's own cut of the set (buildComposerData: enabled rows
+// with their sequence, the rest named in routing_off), written into the
+// arrays the open draft already holds so its defaults follow too.
+function keepRefusal(refusal) {
+    const unread = S.routing ? '' : S.routingError;
+    S.routingError = [refusal, unread].filter(Boolean).join(' ');
+    if (!S.routing || !S.composer) return;
+    const rows = S.composer.routing = S.composer.routing || [];
+    rows.length = 0;
+    const off = {};
+    for (const r of S.routing) {
+        if (r.enabled) rows.push({ core_node_name: r.core_node_name, role: r.role, sequence: r.sequence });
+        else (off[r.role] = off[r.role] || []).push(r.core_node_name);
+    }
+    if (S.composer.routing_off) {
+        for (const k of Object.keys(S.composer.routing_off)) delete S.composer.routing_off[k];
+        Object.assign(S.composer.routing_off, off);
+    } else S.composer.routing_off = off;
 }
 
 async function loadRouting() {
