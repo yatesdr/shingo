@@ -30,3 +30,7 @@ ok   pressed again, it saves again
 ## "Preview OK · null orders" (processes-desktop.js:2400): the flow edit's preview answers a 500 with no body
 ok   the page does not say "Preview OK · null orders"
 ok   the page says "Server error (500)"
+
+## Save settings on a dead Edge (processes-desktop.js:5306): PUT /api/processes/1 gets no answer
+ok   no unhandled rejection
+ok   the page says "No answer from the server"

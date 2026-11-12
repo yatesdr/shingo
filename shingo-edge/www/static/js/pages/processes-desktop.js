@@ -5326,23 +5326,18 @@ function markSettingsBar() {
 async function saveSettings() {
     const before = settingsDraft();
     const body = B().processSettings(process(), S.settings);
-    const fail = async res => {
-        let why = 'The server refused the change (' + res.status + ').';
-        try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
-        S.settingsError = why;
-    };
+    // A DEAD EDGE STOPPED THIS HALFWAY (P0 bug, :5306): the PUT's rejection
+    // left the function after it had cleared both messages and before it drew,
+    // so Save settings did nothing on screen. The writes and the re-reads
+    // after them go through the door, and its sentence is the refusal.
+    const fail = out => { S.settingsError = out.error; };
     S.settingsError = '';
     S.settingsNotice = '';
-    const res = await fetch('/api/processes/' + S.processID, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    if (!res.ok) await fail(res);
+    const res = await send('PUT', '/api/processes/' + S.processID, body);
+    if (!res.ok) fail(res);
     if (!S.settingsError && S.settings.flow_composer_enabled !== before.flow_composer_enabled) {
-        const g = await fetch('/api/processes/' + S.processID, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(B().processGate(S.settings.flow_composer_enabled)),
-        });
-        if (!g.ok) await fail(g);
+        const g = await send('PATCH', '/api/processes/' + S.processID, B().processGate(S.settings.flow_composer_enabled));
+        if (!g.ok) fail(g);
     }
     // QUALITY HOLD rides its own door too (the gate's pattern): the toggle
     // stamps/clears the containment route on the process's produce claims, so
@@ -5352,11 +5347,9 @@ async function saveSettings() {
         if (S.settings.quality_hold_enabled && !S.settings.quality_hold_destination) {
             S.settingsError = 'Pick a containment destination before enabling the quality hold.';
         } else {
-            const c = await fetch('/api/processes/' + S.processID + '/containment-setting', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination)),
-            });
-            if (!c.ok) await fail(c);
+            const c = await send('POST', '/api/processes/' + S.processID + '/containment-setting',
+                B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination));
+            if (!c.ok) fail(c);
         }
     }
     // THE LIGHT-CURTAIN INTERLOCK rides its own door per node: the settings
@@ -5377,11 +5370,9 @@ async function saveSettings() {
                 S.settingsError = n.name + ': choose which curtain tag value allows the release (TRUE or FALSE) before enabling the interlock.';
                 break;
             }
-            const cu = await fetch('/api/process-nodes/' + n.id + '/curtain-setting', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(B().nodeCurtain(d.enabled, d.plc, d.tag, d.safe)),
-            });
-            if (!cu.ok) { await fail(cu); break; }
+            const cu = await send('POST', '/api/process-nodes/' + n.id + '/curtain-setting',
+                B().nodeCurtain(d.enabled, d.plc, d.tag, d.safe));
+            if (!cu.ok) { fail(cu); break; }
         }
     }
     // A refused curtain edit keeps its draft on screen, so the engineer fixes
@@ -5399,9 +5390,9 @@ async function saveSettings() {
 }
 
 async function reloadProcesses() {
-    const res = await fetch('/api/processes');
+    const res = await send('GET', '/api/processes');
     if (!res.ok) return;
-    const rows = await res.json();
+    const rows = res.body;
     // A NIL GO SLICE MARSHALS TO null, AND null MEANS EMPTY. Guarding with
     // Array.isArray avoided the crash and made null a no-op instead, so
     // deleting the last process left it on the list.
@@ -5409,9 +5400,9 @@ async function reloadProcesses() {
 }
 
 async function reloadStations() {
-    const res = await fetch('/api/operator-stations');
+    const res = await send('GET', '/api/operator-stations');
     if (!res.ok) return;
-    const rows = await res.json();
+    const rows = res.body;
     S.stations = Array.isArray(rows) ? rows : [];
 }
 

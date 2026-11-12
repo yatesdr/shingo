@@ -11,6 +11,7 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -20,22 +21,36 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    new text: #pd-root div.pd-refusal: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="The server refused the change (500)."
+    state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="No answer from the server"
+    unhandled rejection: none
 ### PUT /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: PATCH /api/processes/1 · POST /api/processes/1/containment-setting · POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: settingsError="Signed out"
+    unhandled rejection: none
 ### PATCH /api/processes/1  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
@@ -43,6 +58,7 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -52,22 +68,36 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    new text: #pd-root div.pd-refusal: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="The server refused the change (500)."
+    state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="No answer from the server"
+    unhandled rejection: none
 ### PATCH /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: POST /api/processes/1/containment-setting · POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: settingsError="Signed out"
+    unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
@@ -75,6 +105,7 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -84,22 +115,36 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    new text: #pd-root div.pd-refusal: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="The server refused the change (500)."
+    state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="No answer from the server"
+    unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: POST /api/process-nodes/201/curtain-setting · POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: settingsError="Signed out"
+    unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
@@ -107,6 +152,7 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -116,22 +162,36 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    new text: #pd-root div.pd-refusal: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="The server refused the change (500)."
+    state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="No answer from the server"
+    unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: POST /api/process-nodes/203/curtain-setting · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: settingsError="Signed out"
+    unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
     new text: #pd-root button.pd-sel: Presses
@@ -139,6 +199,7 @@
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
     new text: #pd-root div.pd-refusal: the Edge refused it
+    notice: error "the Edge refused it"
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
@@ -148,19 +209,33 @@
     new text: #pd-root button.on: Cut over automatically
     new text: #pd-root button: Prompt the operator
     new text: #pd-root button.pd-btn.danger: Delete Press A…
-    new text: #pd-root div.pd-refusal: The server refused the change (500).
+    new text: #pd-root div.pd-refusal: Server error (500)
+    notice: error "Server error (500)"
     sheet: closed
-    state: settingsError="The server refused the change (500)."
+    state: settingsError="Server error (500)"
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: none
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: No answer from the server
+    notice: error "No answer from the server"
     sheet: closed
-    state: no message set
-    unhandled rejection: TypeError: Failed to fetch (body data-pd-error set to its message)
+    state: settingsError="No answer from the server"
+    unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: none
+    new text: #pd-root button.pd-sel: Presses
+    new text: #pd-root p.pd-note: This process has no positions yet.
+    new text: #pd-root button.on: Cut over automatically
+    new text: #pd-root button: Prompt the operator
+    new text: #pd-root button.pd-btn.danger: Delete Press A…
+    new text: #pd-root div.pd-refusal: Signed out
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: closed
-    state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    state: settingsError="Signed out"
+    unhandled rejection: none

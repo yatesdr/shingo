@@ -131,7 +131,18 @@ function stateLine(page) {
 // What the HTTP door put on the notice (shared/http.js: a failure is shown
 // once, there): its level, its words and its one action.
 function noticeLine(n) {
-    return 'notice: ' + n.level + ' ' + JSON.stringify(n.text) + (n.sticky ? ' (sticky)' : '') + (n.action ? ' · ' + n.action : '');
+    return 'notice: ' + n.level + ' ' + JSON.stringify(n.text) + (n.sticky ? ' (sticky)' : '') + (n.action ? ' · ' + n.action : '') +
+        (n.times > 1 ? ' (shown ' + n.times + ' times, one on screen)' : '');
+}
+// noticeLines is the notices as notice.js shows them: the same words at the
+// same level are one toast, its lifetime restarted (notice.js, "ONE OF EACH").
+function noticeLines(list) {
+    const out = [];
+    for (const n of list) {
+        const same = out.find(o => o.text === n.text && o.level === n.level && o.action === n.action);
+        if (same) same.times++; else out.push(Object.assign({}, n, { times: 1 }));
+    }
+    return out.map(noticeLine);
 }
 
 // ── refusal answers ──────────────────────────────────────────────────────
@@ -262,7 +273,7 @@ async function refusalBlock(spec) {
             const shown = fresh.length > 8 ? fresh.filter(s => MESSAGE.test(s)) : fresh;
             for (const s of shown) lines.push("    new text: " + s);
             if (shown.length < fresh.length) lines.push("    new text: … and " + (fresh.length - shown.length) + " more runs (the tab redrew)");
-            for (const n of page.notices.slice(r.hit.notices)) lines.push('    ' + noticeLine(n));
+            for (const l of noticeLines(page.notices.slice(r.hit.notices))) lines.push('    ' + l);
             if (r.stopped) lines.push('    the act stopped: ' + r.stopped);
             lines.push('    ' + sheetLine(page));
             lines.push('    ' + stateLine(page));
@@ -1089,6 +1100,11 @@ const DOOR_BUGS = [
         answer: BODILESS_500,
         checks: [checks.notSays('Preview OK · null orders'), checks.says('Server error (500)')],
     },
+    {
+        title: 'Save settings on a dead Edge (processes-desktop.js:5306): PUT /api/processes/1 gets no answer',
+        spec: () => T.DRIVE.settingsSave, target: { method: 'PUT', url: '/api/processes/1', k: 0 }, answer: NO_ANSWER,
+        checks: [checks.noRejection, checks.says('No answer from the server')],
+    },
 ];
 async function pinDoorBugs() {
     T.setCurrent('door-bugs.txt');
@@ -1155,4 +1171,4 @@ async function run(t) {
     await pinDoorBugs();
 }
 
-module.exports = { run, sitesTable, noticeLine };
+module.exports = { run, sitesTable, noticeLines };

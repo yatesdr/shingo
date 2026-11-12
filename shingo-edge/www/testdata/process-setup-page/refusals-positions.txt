@@ -149,10 +149,10 @@
     state: settingsError="Could not make a screen for LDR_1: No answer from the server"
     unhandled rejection: none
 ### POST /api/loader-boards  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/operator-stations
+    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 3 times, one on screen)
     sheet: closed
     state: settingsError="Could not make a screen for LDR_1: Signed out"
     unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)

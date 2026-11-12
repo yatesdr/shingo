@@ -337,7 +337,7 @@ function actLines(title, page, from, note) {
     const lines = ['## ' + title];
     if (note) for (const n of [].concat(note)) lines.push('# ' + n);
     for (const l of fmtCalls(page.since(from))) lines.push(l);
-    for (const n of page.noticesSince(from)) lines.push('-- ' + P0.noticeLine(n));
+    for (const l of P0.noticeLines(page.noticesSince(from))) lines.push('-- ' + l);
     lines.push('-- sheet ' + (page.sheetOpen() ? 'open' : 'closed') + (page.status() ? ', status ' + JSON.stringify(page.status()) : ''));
     return lines;
 }

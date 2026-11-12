@@ -101,10 +101,10 @@
     new text: #pd-scrim .mf .st (textContent): The screen was saved; its positions were refused: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: open "Edit Screen A", status "The screen was saved; its positions were refused: Signed out" (bad), OK "Save" enabled
     state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    unhandled rejection: none
     pressed again: POST /api/operator-stations/11/claimed-nodes/impact → sheet: open "Edit Screen A", status "Signed out" (bad), OK "Save" enabled
 
 ## Add operator screen (Screen C on NEW_1)
@@ -172,8 +172,8 @@
     new text: #pd-scrim .mf .st (textContent): The screen was saved; its positions were refused: Signed out
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
+    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1 (shown 2 times, one on screen)
     sheet: open "Add operator screen", status "The screen was saved; its positions were refused: Signed out" (bad), OK "Add" enabled
     state: no message set
-    unhandled rejection: SyntaxError (JSON.parse of a body that is not JSON) (body data-pd-error set to its message)
+    unhandled rejection: none
     pressed again: POST /api/operator-stations → sheet: open "Add operator screen", status "Signed out" (bad), OK "Add" enabled
