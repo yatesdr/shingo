@@ -13,7 +13,7 @@ a Core page imports app.js
     t=1000 open #2 /events?topics=system-status
     = #2 opened 1000 ms after #1 closed
 #2 ← connected {"build":"b2"}  (Core redeployed)
-    (nothing)
+    t=1000 refresh banner shown
     = "build" banners in the page: 1
     the banner:
       div class="notice-banner notice-banner--info" role="status" data-banner="build"
@@ -27,10 +27,10 @@ a Core page imports app.js
     (nothing)
     = "build" banners in the page: 1, the same node
 click its Dismiss (×)
-    (nothing)
+    t=1000 refresh banner gone
     = "build" banners in the page: 0
 #2 ← heartbeat {"build":"b2"} after Dismiss
-    (nothing)
+    t=1000 refresh banner shown
     = "build" banners in the page: 1
 click its Refresh
     t=1000 location.reload()

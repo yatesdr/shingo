@@ -3,8 +3,8 @@
 // shared/helper_pins_test.go (TestHelperPins); prints one JSON object
 // {golden file name: text} on stdout, compared with testdata/helper-pins/.
 //
-// THE THREE COPIES, each pinned on its own even where two read the same, so the
-// swap behind a name shows up as that surface's golden moving:
+// THE COPIES, each pinned on its own even where two read the same, so the swap
+// behind a name showed up as that surface's golden moving:
 //
 //   core-hub  shingo-core/www/static/app.js        showModal hideModal uiConfirm
 //             uiConfirmWithInput uiPrompt toast api apiGet/Post/Put/Delete, and
@@ -13,53 +13,39 @@
 //             shared/layer.js's showModal hideModal confirm prompt, notice.js's
 //             toast, and shingoedge.js's api (over shared/http.js), with the
 //             hub loaded for what it does on import; hubs.txt reads the hub
-//   shared    shared/utils.js  api apiResult createSSE showRefreshBanner showModal
-//             hideModal confirm prompt toast installBackdropClose; shared/bus.js
-//             the onSSE bus
+//   bus       shared/bus.js, the onSSE bus
+//
+// The third copy, shared/utils.js (its modal, confirm, prompt, toast, api,
+// apiResult and createSSE), is deleted (s2-utils-out): what it pinned is gone,
+// and the shared modules that replace it are pinned on these same case lists
+// by shared/testdata/components (cases.js).
 //
 // plus Edge admin on the bus (the hub's refreshOnEvents and new-build banner,
 // as the pages call them) and htmx request-error handling on Edge admin.
 //
 // A hub loads as a page loads it: the hub module and the shared modules in one
-// realm (world.js), so a hub's import-time side effects (installBackdropClose,
-// app.js's bus subscription) are part of what its helpers do. The shared
-// surface is shared/utils.js loaded with no hub, as on the operator station
-// (which reaches it through bus.js); a case that depends on a page having
-// called installBackdropClose says so.
+// realm (world.js), so a hub's import-time side effects (app.js's bus
+// subscription) are part of what its helpers do. A modal case that says the
+// page called installBackdropClose() calls the surface's no-op: the layer
+// needs no install, and utils.js's is gone.
 //
 // Every case starts a fresh page unless its label says it continues one. A
 // golden records behaviour, bugs included, and a bug is pinned as it is, never
 // fixed here.
 //
-// BUGS PINNED AS IS (golden: case label — source):
-//   modal.shared.txt "show m1 {closeOnBackdrop:true}, press in the card,
-//     release on the overlay": closes on a drag that began in the card, the
-//     case installBackdropClose guards — shared/utils.js:272.
-//   modal.shared.txt "show m2, show m1 (m1 first in the document), Escape":
-//     closes m2, the last open overlay in document order, not the last opened
-//     — shared/utils.js:263.
-//   dialog.shared.txt "confirm: the page opened and hid a modal with this
-//     surface's showModal first, then Escape on body": Escape strips .active
-//     from the dialog's overlay, which stays in the DOM, and the promise never
-//     resolves — shared/utils.js:263 (the document Escape) over confirm's
-//     "modal-overlay active" class.
-//   dialog.shared.txt "prompt: over an open modal (this surface's showModal),
-//     Escape in the input": resolves null AND closes the modal underneath (the
-//     input's Escape, then the document's) — shared/utils.js:324 then :263.
-//   sse.shared-createSSE.txt "#n error, then client.close() before the
-//     reconnect fires": a stream opens after close() — the pending timer is
-//     not cancelled — shared/utils.js:165.
+// BUGS PINNED AS IS (golden: case label — source), until the swap fixed each:
 //   api.core-hub.txt "204 no content", "200 empty body": a 2xx with no body
 //     rejects (SyntaxError) — app.js:257.
 //   api.core-hub.txt "400 JSON null": rejects TypeError (reads null.error) —
 //     app.js:253.
-//   toast.shared.txt 'lifetime, "error", {sticky:false}': an error toast
-//     lives 3200 ms, not 5000 — shared/utils.js:375.
 //
 // GONE WITH THEIR CODE (ruling 4: both createSSE copies go, the bus is the one
 // client): sse.edge-hub.txt's stream reopened after close() and its handler
 // names ("onfoo" listened for "oo"), the Edge hub's createSSE; sse.htmx-sse.txt,
-// htmx-sse.js. Edge admin's one stream is sse.edge-admin.txt.
+// htmx-sse.js. Edge admin's one stream is sse.edge-admin.txt. With utils.js:
+// modal/dialog/toast/api.shared.txt (its Escape in document order, a drag out
+// of the card closing, a confirm never resolving, an error toast's 3.2 s) and
+// sse.shared-createSSE.txt (a stream reopened after close()).
 //
 // CHANGED BY A RULING (lead ruling 1 on S2-hubs-edge): sse.shared-bus.txt
 //   "only stream frames subscribed": the bus's own frames alone open nothing
@@ -110,12 +96,6 @@ const SURFACES = [
         words: { confirm: 'confirm', prompt: 'prompt' },
         sel: { dialog: '.layer-scrim', toastBox: '.notice-stack', toast: '.notice-toast' },
     },
-    {
-        name: 'shared', root: 'core', entry: '/static/shared/utils.js',
-        file: 'shared/utils.js',
-        pick: (m) => ({ showModal: m.showModal, hideModal: m.hideModal, confirm: m.confirm, prompt: m.prompt, toast: m.toast }),
-        words: { confirm: 'confirm', prompt: 'prompt' },
-    },
 ];
 
 // A surface outside this file (shared/testdata/components/cases.js runs these
@@ -125,7 +105,7 @@ function page(surface, opts) {
     const r = makeRealm(Object.assign({ surface: surface.root }, opts || {}));
     r.sel = surface.sel || {};
     const m = r.load(surface.entry);
-    const shared = r.load(surface.sharedEntry || '/static/shared/utils.js');
+    const shared = surface.sharedEntry ? r.load(surface.sharedEntry) : null;
     return { r, m, s: surface.pick(m), shared };
 }
 
@@ -566,21 +546,6 @@ async function apiPins(surface) {
             throwing: [['api.get', (p) => p.m.api.get('/api/x')], ['api.post', (p) => p.m.api.post('/api/x', { a: 1 })], ['api.del', (p) => p.m.api.del('/api/x')]],
             safe: [],
         },
-        'shared': {
-            shape: () => 'api is an ' + typeof probe.m.api + ' {' + Object.keys(probe.m.api).join(', ') + '}; apiResult is a ' + typeof probe.m.apiResult + ' (method, url, body)',
-            requests: [
-                ['api.get(url)', (p) => p.m.api.get('/api/x')],
-                ['api.post(url, {a:1})', (p) => p.m.api.post('/api/x', { a: 1 })],
-                ['api.post(url)', (p) => p.m.api.post('/api/x')],
-                ['api.put(url, {a:1})', (p) => p.m.api.put('/api/x', { a: 1 })],
-                ['api.del(url)', (p) => p.m.api.del('/api/x')],
-                ['api.patch', (p) => p.m.api.patch('/api/x', { a: 1 })],
-                ['apiResult("GET", url)', (p) => p.m.apiResult('GET', '/api/x')],
-                ['apiResult("POST", url, {a:1})', (p) => p.m.apiResult('POST', '/api/x', { a: 1 })],
-            ],
-            throwing: [['api.get', (p) => p.m.api.get('/api/x')], ['api.post', (p) => p.m.api.post('/api/x', { a: 1 })], ['api.del', (p) => p.m.api.del('/api/x')]],
-            safe: [['apiResult GET', (p) => p.m.apiResult('GET', '/api/x')]],
-        },
     }[surface.name];
 
     out.push('shape: ' + doors.shape());
@@ -616,7 +581,7 @@ async function apiPins(surface) {
 // handler calls, console errors, reloads, the refresh banner coming or going),
 // stamped with the fake clock, then any summary line the step returns.
 function timeline(r, out) {
-    const banner = () => !!r.doc.getElementById('shingo-refresh-banner');
+    const banner = () => !!r.doc.querySelector('[data-banner="build"]');
     return async (label, fn) => {
         r.notes = [];
         const had = banner();
@@ -653,115 +618,22 @@ function handlerNote(r, label) {
     };
 }
 
-// createSSEPins pins shared/utils.js's createSSE (no page imports it; the
-// Edge hub's copy went with ruling 4).
-async function createSSEPins(surfaceName) {
-    const surface = SURFACES.find((s) => s.name === surfaceName);
-    const out = [
-        '# createSSE — ' + surfaceName + ': createSSE of ' + surface.file,
-        '# one page, steps in order; "#n" is the n-th EventSource the page opened, "←" a frame',
-        '# the server sends on it. The clock is fake: t= is ms since the page loaded.',
-        '',
-    ];
-    const p = page(surface);
-    const r = p.r;
-    const step = timeline(r, out);
-    const handlers = { 'order-update': handlerNote(r, 'order-update'), 'core-nodes': handlerNote(r, 'core-nodes'), onOrderUpdate: handlerNote(r, 'onOrderUpdate'), notAFunction: 7 };
-    out.push('handlers given: ' + Object.keys(handlers).join(', '));
-    let client;
-    await step('page loaded (the module imported, no createSSE yet)', async () => {});
-    await step('createSSE("/events", handlers)', async () => { client = p.m.createSSE('/events', handlers); });
-    out.push('    returns {' + Object.keys(client).join(', ') + '}; #1 listens for: ' + r.streams[0].types().join(', '));
-    const s1 = r.streams[0];
-    await step('#1 open (readyState OPEN)', async () => s1.open());
-    await step('#1 ← connected {"build":"b1"}', async () => s1.emit('connected', { build: 'b1' }));
-    await step('#1 ← order-update {"id":1}', async () => s1.emit('order-update', { id: 1 }));
-    await step('#1 ← core-nodes {"nodes":[]}', async () => s1.emit('core-nodes', { nodes: [] }));
-    await step('#1 ← oo {"x":1}  (the type a handler named "onfoo" maps to)', async () => s1.emit('oo', { x: 1 }));
-    await step('#1 ← order-update "not json"', async () => s1.emit('order-update', 'not json'));
-    await step('#1 ← heartbeat {"build":"b1"}', async () => s1.emit('heartbeat', { build: 'b1' }));
-    await step('#1 ← heartbeat {"build":"b2"}  (a new build, seen on a heartbeat)', async () => s1.emit('heartbeat', { build: 'b2' }));
-    if (r.doc.getElementById('shingo-refresh-banner')) {
-        out.push('    the banner:');
-        out.push(dump(r.doc.getElementById('shingo-refresh-banner'), '      '));
-        await step('click the banner\'s Dismiss', async () => { r.doc.getElementById('shingo-refresh-banner').querySelectorAll('button')[1].click(); });
-    }
-    out.push('');
-    out.push('## reconnect');
-    await step('#1 error', async () => { s1.fail(0); return waitForOpen(r, 70000); });
-    for (let i = 0; i < 5; i++) {
-        const s = r.lastStream();
-        await step('#' + s.n + ' error (no connected since the last error)', async () => { s.fail(0); return waitForOpen(r, 70000); });
-    }
-    {
-        const s = r.lastStream();
-        await step('#' + s.n + ' ← connected {"build":"b1"}, then #' + s.n + ' error', async () => { s.emit('connected', { build: 'b1' }); s.fail(0); return waitForOpen(r, 70000); });
-    }
-    out.push('    #' + r.lastStream().n + ' listens for: ' + r.lastStream().types().join(', '));
-    out.push('');
-    out.push('## build change');
-    {
-        const s = r.lastStream();
-        await step('#' + s.n + ' ← connected {"build":"b2"}  (a new build, on a connect)', async () => s.emit('connected', { build: 'b2' }));
-        await step('#' + s.n + ' ← connected {"build":"b2"} again', async () => s.emit('connected', { build: 'b2' }));
-        await step('#' + s.n + ' ← connected {"build":"b1"}  (the first build again)', async () => s.emit('connected', { build: 'b1' }));
-        await step('#' + s.n + ' ← connected {}  (no build)', async () => s.emit('connected', {}));
-        await step('#' + s.n + ' ← connected "garbage"', async () => s.emit('connected', 'garbage'));
-        if (r.doc.getElementById('shingo-refresh-banner')) {
-            await step('click the banner\'s Refresh', async () => { r.doc.getElementById('shingo-refresh-banner').querySelectorAll('button')[0].click(); });
-        }
-    }
-    out.push('');
-    out.push('## close and unload');
-    {
-        const s = r.lastStream();
-        await step('#' + s.n + ' error, then client.close() before the reconnect fires', async () => { s.fail(0); client.close(); return waitForOpen(r, 70000); });
-        const t = r.lastStream();
-        await step('client.close() with #' + t.n + ' open', async () => { client.close(); });
-    }
-    {
-        const q = page(surface);
-        const qs = [];
-        const qstep = timeline(q.r, qs);
-        q.m.createSSE('/events?x=1', {});
-        await qstep('a second page: createSSE("/events?x=1", {}), then window beforeunload', async () => { q.r.window.dispatchEvent(new Event('beforeunload')); });
-        out.push(...qs);
-    }
-    {
-        const q = page(surface, { readyState: 'loading' });
-        const qs = [];
-        const qstep = timeline(q.r, qs);
-        await qstep('a page still loading (readyState "loading"): createSSE("/events", {})', async () => { q.m.createSSE('/events', {}); });
-        await qstep('then DOMContentLoaded', async () => { q.r.doc.readyState = 'interactive'; q.r.doc.dispatchEvent(new Event('DOMContentLoaded')); });
-        out.push(...qs);
-    }
-    out.push('');
-    out.push('## disconnected / connected signals');
-    out.push('a second page, handlers for "connected" and "disconnected" given as "connected", "disconnected":');
-    {
-        const q = page(surface);
-        const qs = [];
-        const qstep = timeline(q.r, qs);
-        const hs = { disconnected: handlerNote(q.r, 'disconnected'), connected: handlerNote(q.r, 'connected') };
-        q.m.createSSE('/events', hs);
-        await qstep('#1 ← connected {"build":"b1"}, then #1 error', async () => { q.r.streams[0].emit('connected', { build: 'b1' }); q.r.streams[0].fail(0); });
-        out.push(...qs);
-    }
-    return out;
-}
-
 async function busPins() {
     const out = [
         '# onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus',
-        '# of shared/bus.js; it dispatches build-changed, and BC shows showRefreshBanner of shared/utils.js',
-        '# (a subscriber; Core\'s hub shows notice.js\'s banner, sse.core-hub.txt). One page (shared/bus.js, as the',
+        '# of shared/bus.js; it dispatches build-changed, and BC shows notice.js\'s "build" banner, as the',
+        '# Core hub does (sse.core-hub.txt). One page (shared/bus.js, as the',
         '# operator station loads it), steps in order; a "second page" is a fresh one.',
         '',
     ];
-    const surface = SURFACES.find((s) => s.name === 'shared');
-    // busPage is a page with the bus loaded beside utils.js, one instance of
+    // busPage is a page with the bus loaded beside notice.js, one instance of
     // each. The bus shows no banner: a page subscribes build-changed to show it.
-    const busPage = () => { const q = page(surface); q.bus = q.r.load('/static/shared/bus.js'); return q; };
+    const busPage = () => {
+        const q = { r: makeRealm({ surface: 'core' }) };
+        q.m = q.r.load('/static/shared/notice.js');
+        q.bus = q.r.load('/static/shared/bus.js');
+        return q;
+    };
     const p = busPage();
     const r = p.r;
     const m = p.m;
@@ -794,19 +666,21 @@ async function busPins() {
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":10}', async () => s2.emit('heartbeat', { build: 'b1', seq: 10 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1","seq":12}', async () => s2.emit('heartbeat', { build: 'b1', seq: 12 }));
     await step('#' + s2.n + ' ← heartbeat {"build":"b1"}  (no seq: Core)', async () => s2.emit('heartbeat', { build: 'b1' }));
-    await step('onSSE("build-changed", BC), BC calling showRefreshBanner()', async () => {
+    const buildBanner = () => m.banner('build', { text: 'A new version is available.', action: { label: 'Refresh', onClick: () => r.window.location.reload() } });
+    const shownBanner = () => r.doc.querySelector('[data-banner="build"]');
+    await step('onSSE("build-changed", BC), BC showing notice.js\'s "build" banner', async () => {
         const note = handlerNote(r, 'BC');
-        bus.onSSE('build-changed', function () { note.apply(null, arguments); m.showRefreshBanner(); });
+        bus.onSSE('build-changed', function () { note.apply(null, arguments); buildBanner(); });
     });
     await step('#' + s2.n + ' ← heartbeat {"build":"b2","seq":12}  (a new build)', async () => s2.emit('heartbeat', { build: 'b2', seq: 12 }));
-    if (r.doc.getElementById('shingo-refresh-banner')) {
+    if (shownBanner()) {
         out.push('    the banner:');
-        out.push(dump(r.doc.getElementById('shingo-refresh-banner'), '      '));
+        out.push(dump(shownBanner(), '      '));
     }
-    await step('showRefreshBanner() again while it is shown', async () => { m.showRefreshBanner(); r.note('banners in the DOM: ' + r.doc.querySelectorAll('#shingo-refresh-banner').length); });
-    await step('click Dismiss', async () => { r.doc.getElementById('shingo-refresh-banner').querySelectorAll('button')[1].click(); });
+    await step('the banner again while it is shown', async () => { buildBanner(); r.note('banners in the DOM: ' + r.doc.querySelectorAll('[data-banner="build"]').length); });
+    await step('click Dismiss', async () => { shownBanner().querySelector('.notice-dismiss').click(); });
     await step('#' + s2.n + ' ← connected {"build":"b2"}  (the new build again, after Dismiss)', async () => s2.emit('connected', { build: 'b2' }));
-    await step('click Refresh', async () => { r.doc.getElementById('shingo-refresh-banner').querySelectorAll('button')[0].click(); });
+    await step('click Refresh', async () => { shownBanner().querySelector('.notice-action').click(); });
     out.push('');
     out.push('## reconnect');
     await step('#' + s2.n + ' error', async () => { s2.fail(0); return waitForOpen(r, 70000); });
@@ -863,7 +737,7 @@ async function busPins() {
         ['onSSE("a"), stream up, then setSSEQuery({station:7}) and onSSE("b")', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.bus.onSSE('b', () => {}); }],
         ['onSSE("a"), stream up, then setSSEQuery({station:7}) and the stream errors', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.bus.setSSEQuery({ station: 7 }); q.r.streams[0].fail(0); await q.r.advance(2000); }],
         ['window beforeunload with the stream up', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.r.window.dispatchEvent(new Event('beforeunload')); }],
-        ['onSSE("a"), stream up, ← connected {"build":"b1"} then {"build":"b2"}, nothing subscribed to build-changed', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.r.streams[0].emit('connected', { build: 'b1' }); q.r.streams[0].emit('connected', { build: 'b2' }); q.r.note('refresh banner in the DOM: ' + !!q.r.doc.getElementById('shingo-refresh-banner')); }],
+        ['onSSE("a"), stream up, ← connected {"build":"b1"} then {"build":"b2"}, nothing subscribed to build-changed', async (q) => { q.bus.onSSE('a', () => {}); await q.r.advance(0); q.r.streams[0].emit('connected', { build: 'b1' }); q.r.streams[0].emit('connected', { build: 'b2' }); q.r.note('refresh banner in the DOM: ' + !!q.r.doc.querySelector('[data-banner="build"]')); }],
     ]) {
         const q = busPage();
         const qs = [];
@@ -1282,17 +1156,14 @@ function hubCensus() {
     const core = makeRealm({ surface: 'core' });
     const coreWindowBefore = Object.keys(core.window);
     const cm = core.load('/static/app.js');
-    core.load('/static/shared/utils.js');
     const coreAdded = added(core.window, coreWindowBefore);
     const edge = makeRealm({ surface: 'edge' });
     const edgeWindowBefore = Object.keys(edge.window);
     const em = edge.load('/static/js/shingoedge.js');
-    edge.load('/static/shared/utils.js');
     const edgeAdded = added(edge.window, edgeWindowBefore);
     // A hub's export is "shared" when it is the very value a shared module
     // that exports the name exports in the same realm (one module instance per
-    // URL): any of them, since utils.js still carries a copy of the layer's and
-    // the notice's names while a hub takes the component's.
+    // URL).
     const home = sharedHome();
     const exporters = sharedExporters();
     const kind = (r, mod, n) => (!(n in mod) ? '-'
@@ -1311,10 +1182,7 @@ function hubCensus() {
 
 // sharedHome maps each name a shared/*.js module exports to that file, read
 // off the export lines. shared/helper_pins_test.go holds that no two files
-// export one name, save a copy it lists: utils.js's showModal, hideModal,
-// confirm, prompt and toast beside layer.js's and notice.js's, until wave C.
-// The files are read in name order, so utils.js, the copy the hubs take
-// today, is the one named here.
+// export one name.
 function sharedHome() {
     const out = {};
     const all = sharedExporters();
@@ -1345,7 +1213,6 @@ if (require.main === module) (async function main() {
         golden('toast.' + s.name + '.txt', await toastPins(s));
         golden('api.' + s.name + '.txt', await apiPins(s));
     }
-    golden('sse.shared-createSSE.txt', await createSSEPins('shared'));
     golden('sse.shared-bus.txt', await busPins());
     golden('sse.core-hub.txt', await coreHubBusPins());
     golden('sse.edge-admin.txt', await edgeAdminBusPins());

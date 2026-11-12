@@ -86,36 +86,100 @@ two buses).
 
 <!-- /generated -->
 
-#### `utils.js`: HTTP, modals, confirm / prompt / toast, the SSE factory
+#### `esc.js`: the escape the station's renderers use
 
-<!-- generated: shared/utils.js -->
+`esc` is an escape with no imports and no DOM, for the station's renderers and
+the node tests. It leaves `'` alone where `escapeHtml` escapes it, so the two
+are not one helper; `dom.js`'s header says why they stay in two files.
+
+<!-- generated: shared/esc.js -->
 
 | Export | Kind | What it does |
 |---|---|---|
-| `api` | const | — |
-| `apiResult` | const | apiResult is api's non-throwing twin: it always resolves to { ok, status, body }, so a 400 carrying errors{field: msg} reaches the page whole. |
-| `createSSE` | function | Wraps EventSource with exponential backoff and build-id auto-reload. |
-| `showRefreshBanner` | function | showRefreshBanner pins a non-modal banner at the top of the viewport telling the operator a new server build is available. |
-| `showModal` | function | Open a modal. |
-| `hideModal` | function | Hide a modal. |
-| `confirm` | function | Promise-based async confirm. |
-| `prompt` | function | Promise-based async prompt. |
-| `toast` | function | Auto-dismissing toast notification. |
-| `installBackdropClose` | function | installBackdropClose registers a single document-level click listener that closes any .modal-overlay element marked `data-backdrop-close` when the click target IS the overlay (not an inner .modal child). |
+| `esc` | function | esc escapes a value for either a text node or a double-quoted attribute. |
 
 <!-- /generated -->
 
-Four more modules are the shared components, which no page imports yet (wave
-C moves the hubs and the Processes page onto them, and their names in
-`utils.js` and the hubs go): `layer.js`, the one overlay stack
-([Modals](10-modals.md)); `notice.js`, the toast and the banner
-([Dialog UX](11-dialog-ux-confirmation-prompt-toast.md)); `http.js`, the HTTP
-door (below); and `picker.js`, the picker's shell ([Picker](34-picker.md)).
+#### `layer.js`: the one overlay stack
 
-`shared/esc.js` exports `esc`, an escape with no imports and no DOM, for the
-station's renderers and the node tests. It leaves `'` alone where `escapeHtml`
-escapes it, so the two are not one helper; `dom.js`'s header says why they stay
-in two files.
+Modals, sheets, confirm, prompt and popovers ([Modals](10-modals.md)).
+
+<!-- generated: shared/layer.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `openLayer` | function | openLayer registers node as the innermost entry and shows it. |
+| `closeLayer` | function | closeLayer closes an entry, by its handle or its element, as a deliberate close does: no question asked. |
+| `layerDepth` | function | layerDepth is how many entries are open. |
+| `showModal` | function | showModal opens a markup modal (.modal-overlay, shown by .active) as an entry. |
+| `hideModal` | function | hideModal is the deliberate close: it never asks. |
+| `confirm` | function | confirm resolves true on its OK and false on anything else that closes it: Cancel, Escape, the backdrop where opts.backdrop opts in, a page closing it. |
+| `prompt` | function | prompt resolves the typed text on OK or Enter, and null on anything else. |
+| `confirmWithInput` | function | confirmWithInput is a confirm with an optional free-text field (Core's uiConfirmWithInput): {ok, value}, ok false on anything but its OK. |
+| `openSheet` | function | openSheet is the Processes page's sheet shell, moved: a card with a title, a body, a status line and Cancel and OK. |
+
+<!-- /generated -->
+
+#### `notice.js`: the toast and the banner
+
+([Dialog UX](11-dialog-ux-confirmation-prompt-toast.md)).
+
+<!-- generated: shared/notice.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `toast` | function | toast shows one message and returns its element. |
+| `banner` | function | banner shows, or redraws in place, the banner under key, and returns its element. |
+| `clearBanner` | function | clearBanner takes the banner under key down; no banner is no error. |
+
+<!-- /generated -->
+
+#### `http.js`: the HTTP door
+
+(Below.)
+
+<!-- generated: shared/http.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `REQUEST_TIMEOUT_MS` | const | — |
+| `send` | function | send is the door. |
+| `http` | const | http is the door by verb. |
+| `hookHtmxErrors` | function | hookHtmxErrors puts htmx's failed requests on the same notice the door uses: a 4xx/5xx partial (htmx:responseError), no answer (htmx:sendError) and htmx's own timeout (htmx:timeout). |
+
+<!-- /generated -->
+
+#### `picker.js`: the picker's shell
+
+([Picker](34-picker.md)).
+
+<!-- generated: shared/picker.js -->
+
+| Export | Kind | What it does |
+|---|---|---|
+| `createPicker` | function | createPicker draws a picker into host (its content replaced) and returns it. |
+
+<!-- /generated -->
+
+#### What each hub keeps
+
+The hubs re-export none of these; a page imports each from its file.
+
+- **Core, `/static/app.js`** (layout.html, every admin page): the door verbs
+  Core's pages were written to, `apiGet` / `apiPost` / `apiPut` / `apiDelete`,
+  over `http.js` with the notice off; a refusal rejects an Error named
+  `ApiError` whose string is the door's sentence. Page verbs: `timeAgoHTML`,
+  `setText`, `openFromQuery`, `enterSubmits`, `removeParentElement`,
+  `removeClosestRow`, `toggleVisibility`, and the submit gates
+  `confirmDeleteForm` / `containmentForm`. At load: table sort, the bus
+  subscription every page holds, the new-build banner on `build-changed`.
+- **Edge admin, `/static/js/shingoedge.js`**: its `api` (`get`, `post`, `put`,
+  `patch`, `del`) over `http.js` with the notice off, a refusal rejected as an
+  Error carrying the door's sentence; `refreshOnEvents` (an htmx
+  partial refreshed from the bus), `navigateToProcess` /
+  `navigateToProcessOrOrders`. At load: the new-build banner on
+  `build-changed` and `hookHtmxErrors`, so a failed htmx request is on the
+  notice.
 
 ### The HTTP door
 
@@ -137,8 +201,10 @@ body, opts)`, and `http.get`, `post`, `put`, `patch`, `del`, resolve to
 **A failure shows once, from the door.** It puts the error on the notice
 (`shared/notice.js`), and a lapsed session's notice carries the **Sign in**
 link back to the page. A caller that draws the error inline passes
-`{ notice: false }` for that call. A write given no body sends `{}`; `null`
-sends none.
+`{ notice: false }` for that call; a 401 goes on the notice even then (only the
+notice has Sign in), and the answer carries `shown: true`, so the caller's own
+line adds nothing to its "failed" or "not saved". A write given no body sends
+`{}`; `null` sends none.
 
 **Every request has a deadline**, `REQUEST_TIMEOUT_MS` (30 s, the operator
 station's own): its own AbortController and timer, cleared when the answer is
@@ -147,7 +213,7 @@ aborts resolves `{ aborted: true }` and shows nothing.
 
 `hookHtmxErrors(root)` puts htmx's failed requests (`htmx:responseError`,
 `htmx:sendError`, `htmx:timeout`) on the same notice and returns the function
-that takes it off again. Nothing installs it yet.
+that takes it off again. The Edge hub installs it.
 
 `TestSharedComponentSpecs` holds each rule; `TestSharedComponentPins` runs
 the helper pins' api cases on the door.
@@ -156,10 +222,9 @@ the helper pins' api cases on the door.
 
 **ES modules.** Shared utilities and page JS use `import`/`export`, and their
 script tags carry `type="module"`: an explicit import is a dependency a reader
-and a linter can see, where a `window.X` global is not. Edge admin page scripts
-import from `/static/js/shingoedge.js`, which re-exports `escapeHtml` and
-`delegateActions` from `dom.js` but carries its own `api`, `createSSE`,
-`showModal` / `hideModal`, `confirm` / `prompt` and `toast`. The classic scripts left
+and a linter can see, where a `window.X` global is not. A page takes each
+shared helper from its file and only its hub's own verbs from the hub (above).
+The classic scripts left
 are the ones that must run before any module: the theme pre-paint in each
 layout's head, the clock globals partial, vendored bundles, and the glyph file
 that ships verbatim (`composer-glyphs.js`).
@@ -182,6 +247,8 @@ opt-out for pre-built safe HTML (`{ __html: true, value: safe }`).
 ### Avoid
 
 - Raw `innerHTML += '...'` with concatenated user data
-- Bare `fetch()` — use `api.*` for consistent error handling
-- Bare `EventSource` — use `createSSE` for reconnect + build-id detection
+- Bare `fetch()` — use the door (`http.js`), or the hub's api verbs, for one
+  error sentence and the lapsed session
+- Bare `EventSource` — use the bus (`onSSE`, `bus.js`) for one stream per tab,
+  reconnect and build-change detection
 

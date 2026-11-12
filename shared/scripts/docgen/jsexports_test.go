@@ -26,8 +26,8 @@ export class Store {}
 `
 
 func TestJSExports_ListsEveryExport(t *testing.T) {
-	root := gosrcWriteTree(t, map[string]string{"shared/utils.js": jsexportsFixture})
-	got, err := jsexportsTable(root, "shared/utils.js")
+	root := gosrcWriteTree(t, map[string]string{"shared/fixture.js": jsexportsFixture})
+	got, err := jsexportsTable(root, "shared/fixture.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,9 @@ func TestJSExports_TheRealModule(t *testing.T) {
 		"shared/list.js":     {"installTableSort", "reconcileList", "createStore"},
 		"shared/settings.js": {"settingsPage", "durationFromText", "collectList"},
 		"shared/bus.js":      {"onSSE", "setSSEWatchdog", "closeSSEBus"},
-		"shared/utils.js":    {"api", "createSSE"},
+		"shared/layer.js":    {"openLayer", "showModal", "confirm"},
+		"shared/notice.js":   {"toast", "banner"},
+		"shared/http.js":     {"send", "http"},
 	} {
 		got, err := jsexportsTable(repoRoot, file)
 		if err != nil {

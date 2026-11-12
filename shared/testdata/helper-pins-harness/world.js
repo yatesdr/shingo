@@ -20,8 +20,9 @@
 // helper that starts using one fails loudly rather than matching nothing.
 //
 // The vm context gets its own JS intrinsics (JSON, SyntaxError, TypeError):
-// shared/utils.js tests `e instanceof SyntaxError` on a JSON.parse failure, and
-// a SyntaxError from the harness's realm would fail that test where the
+// a helper that tests `e instanceof SyntaxError` on a JSON.parse failure (utils.js
+// did, before it was deleted) would see
+// a SyntaxError from the harness's realm fail that test where the
 // browser's passes. Response.json() parses with the context's JSON for the
 // same reason.
 

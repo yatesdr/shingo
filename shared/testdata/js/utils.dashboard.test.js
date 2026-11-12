@@ -98,7 +98,7 @@ function ESStub(url) {
 }
 
 function loadUtils() {
-    const src = sharedSource(['dom.js', 'utils.js', 'list.js', 'bus.js']);
+    const src = sharedSource(['dom.js', 'list.js', 'bus.js']);
     const transformed = src
         .replace(/export\s+function\s+/g, 'function ')
         .replace(/export\s+const\s+/g, 'const ');

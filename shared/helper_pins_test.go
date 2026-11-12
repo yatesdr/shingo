@@ -38,9 +38,10 @@ var updateHelperPinsGolden = flag.Bool("update-helper-pins-golden", false,
 //     error (the Edge hub's hook), and what the page shows;
 //   - hubs.txt: which copy each hub exports under each helper name.
 //
-// The surfaces are core-hub (shingo-core/www/static/app.js), edge-hub
-// (shingo-edge/www/static/js/shingoedge.js) and shared (utils.js here; the
-// bus pins load bus.js). The
+// The surfaces are core-hub (shingo-core/www/static/app.js) and edge-hub
+// (shingo-edge/www/static/js/shingoedge.js); the bus pins load bus.js.
+// utils.js, the third surface, is deleted, and the shared modules that
+// replace it run the same case lists in testdata/components. The
 // harness and its DOM, clock, fetch and EventSource stubs are in
 // testdata/helper-pins-harness (pins.js says what each golden covers; world.js
 // how a page is built). Every source file loads under node unmodified.
@@ -147,15 +148,14 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 
 // ── the shared modules' census: one definition, an importer, one URL ─────────
 //
-// utils.js was split into one-job files. Three rules keep the split from
-// growing back, and they read the same sources the browser does:
+// utils.js was split into one-job files (and is gone). Three rules keep the
+// split from growing back, and they read the same sources the browser does:
 // shared/*.js and every page module and template of Core and Edge.
 //
 //   - TestSharedHelpersDefinedOnce: a name a shared module exports is defined
 //     nowhere else, in any tree, except the copies sharedHelperCopies lists. A
 //     second shared module may export the name only when it is one of those
-//     copies (utils.js's, while the hubs still take it): the other module is
-//     the name's home.
+//     copies: the other module is the name's home.
 //   - TestSharedExportsHaveImporters: every export of a shared module is
 //     imported by some page, hub or other shared module, except the ones
 //     sharedExportsNoImporter lists.
@@ -171,8 +171,6 @@ func helperPinsFirstDiff(want, got string) (line int, w, g string, ok bool) {
 // sharedHelperCopies are the definitions of a shared name outside its shared
 // module that exist today, as "path name". Each is someone else's to remove.
 var sharedHelperCopies = map[string]string{
-	// The Edge hub's own copies, likewise.
-	"shingo-edge/www/static/js/shingoedge.js api": "the Edge hub's api: http.js's door, its refusal thrown as an Error for the pages that catch one",
 	// The station's own builder: it sets properties where dom.js's el sets
 	// attributes (operator-util.js's comment), and the station's touch layer is
 	// not extracted (brief v2 S2).
@@ -183,38 +181,10 @@ var sharedHelperCopies = map[string]string{
 	// each carries its own.
 	"shingo-edge/www/static/js/pages/catid-health.js esc": "classic script's private escaper",
 	"shingo-edge/www/static/js/pages/station-card.js esc": "classic script's private escaper",
-	// The components' names (layer.js, notice.js) still defined where the
-	// pages take them today: utils.js's copies, which the hubs re-export.
-	"shared/utils.js showModal": "adopted in wave C (s2-hubs): the hubs move to layer.js's",
-	"shared/utils.js hideModal": "adopted in wave C (s2-hubs): the hubs move to layer.js's",
-	"shared/utils.js confirm":   "adopted in wave C (s2-hubs): the hubs move to layer.js's",
-	"shared/utils.js prompt":    "adopted in wave C (s2-hubs): the hubs move to layer.js's",
-	"shared/utils.js toast":     "adopted in wave C (s2-hubs): the hubs move to notice.js's",
 }
 
 // sharedExportsNoImporter are the exports no page imports, as "file name".
 var sharedExportsNoImporter = map[string]string{
-	// No page imports the shared copies: Edge's pages take the Edge hub's,
-	// and Core's pages use uiConfirm / uiPrompt and the bus.
-	"utils.js confirm":   "pages take the Edge hub's copy",
-	"utils.js prompt":    "pages take the Edge hub's copy",
-	"utils.js createSSE": "pages take the bus (ruling 4); the copy goes with utils.js's remnants",
-	// Its toast: the Edge Config page took it, and takes notice.js's now.
-	"utils.js toast": "pages take notice.js's (wave C); the copy goes with utils.js's remnants",
-	// Its backdrop listener: the Edge hub called it last; layer.js reads
-	// data-backdrop-close when it opens an overlay.
-	"utils.js installBackdropClose": "no hub calls it since wave C; goes with utils.js's remnants",
-	// Its door and modals: Core's config, sourcing and robots' cleaning tab
-	// took them last (s2-core-pages); no Core file imports utils.js now.
-	"utils.js api":       "Core's pages use app.js's verbs; goes with utils.js's remnants",
-	"utils.js showModal": "Core's pages take layer.js's; goes with utils.js's remnants",
-	"utils.js hideModal": "Core's pages take layer.js's; goes with utils.js's remnants",
-	// Its non-throwing door: the Edge Configuration page took it last, and
-	// takes http.js's send now (s2-utils-out).
-	"utils.js apiResult": "the Edge Config page takes http.js's send; goes with utils.js's remnants",
-	// utils.js's own banner, still shown by its createSSE; Core's hub shows
-	// notice.js's banner on the bus's build-changed instead.
-	"utils.js showRefreshBanner": "read by createSSE alone; Core's hub shows notice.js's banner",
 	// The bus's teardown and the clock's single repaint: exported for the
 	// node tests (testdata/js) and for a page that needs one.
 	"bus.js closeSSEBus":           "teardown, read by utils.dashboard.test.js",

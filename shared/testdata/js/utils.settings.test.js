@@ -1,5 +1,5 @@
 // Unit tests for the settings-page helpers in /static/shared/settings.js:
-// durationFromText / durationToText, collectList, apiResult and settingsPage.
+// durationFromText / durationToText, collectList and settingsPage.
 // Run under plain Node via the Go wrapper settings_page_test.go. Exit 0 on
 // pass, 1 on any assertion failure.
 //
@@ -151,9 +151,8 @@ function mk(tag, cls, data, children) {
 }
 
 function loadUtils(fetchImpl) {
-    // utils.js for apiResult, which pages still call; notice.js's toast and
-    // http.js's send are settings.js's own (notice.js after utils.js: one toast).
-    const src = sharedSource(['dom.js', 'utils.js', 'notice.js', 'http.js', 'settings.js']);
+    // notice.js's toast and http.js's send are settings.js's own.
+    const src = sharedSource(['dom.js', 'notice.js', 'http.js', 'settings.js']);
     const transformed = src
         .replace(/export\s+(async\s+)?function\s+/g, '$1function ')
         .replace(/export\s+const\s+/g, 'const ');
@@ -177,7 +176,7 @@ function loadUtils(fetchImpl) {
     });
     vm.runInContext(transformed +
         '; this.durationFromText = durationFromText; this.durationToText = durationToText;' +
-        ' this.collectList = collectList; this.settingsPage = settingsPage; this.apiResult = apiResult;' +
+        ' this.collectList = collectList; this.settingsPage = settingsPage;' +
         ' this.toast = toast;', ctx);
     ctx.__toasts = toasts;
     return ctx;
@@ -233,23 +232,6 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         list.appendChild(mk('div', 'row', { v: '' }));
         eq(JSON.stringify(u.collectList(list, '.row', read)), '["b:9093"]', 'a blank new row is left out');
         eq(JSON.stringify(u.collectList(null, '.row', read)), '[]', 'no container, no rows');
-    }
-
-    // ─── apiResult never throws ───────────────────────────────────────────
-    {
-        const answer = (status, text) => () => Promise.resolve({
-            ok: status >= 200 && status < 300, status, text: () => Promise.resolve(text),
-        });
-        let r = await loadUtils(answer(400, '{"ok":false,"error":"bad","errors":{"port":"not a number"}}')).apiResult('PUT', '/x', {});
-        assert(r.ok === false && r.status === 400 && r.body.errors.port === 'not a number', 'a 400 arrives with its errors: ' + JSON.stringify(r));
-        r = await loadUtils(answer(200, '{"ok":true,"restart":[]}')).apiResult('PUT', '/x', {});
-        assert(r.ok === true && r.status === 200 && r.body.ok === true, 'a 200 arrives parsed: ' + JSON.stringify(r));
-        r = await loadUtils(answer(500, 'boom')).apiResult('GET', '/x');
-        assert(r.ok === false && r.body.error === 'boom', 'a non-JSON failure is {error: text}: ' + JSON.stringify(r));
-        r = await loadUtils(answer(204, '')).apiResult('DELETE', '/x');
-        assert(r.ok === true && r.body === null, 'an empty body is null: ' + JSON.stringify(r));
-        r = await loadUtils(() => Promise.reject(new Error('offline'))).apiResult('GET', '/x');
-        assert(r.ok === false && r.status === 0 && /offline/.test(r.body.error), 'no answer is status 0: ' + JSON.stringify(r));
     }
 
     // ─── settingsPage: dirty tracking, one request, errors, discard ───────

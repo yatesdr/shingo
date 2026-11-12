@@ -9,12 +9,13 @@ import (
 )
 
 // TestSharedFilesEmbedded asserts the foundational embed contract:
-// tokens.css, status-classes.css, utils.js and the one-job modules split
-// out of it are all reachable through Files. If embed.FS isn't picking up an asset, every consumer
+// tokens.css, status-classes.css and the one-job modules are all reachable
+// through Files. If embed.FS isn't picking up an asset, every consumer
 // silently 404s — catching it here is much better than catching it on
 // the first plant.
 func TestSharedFilesEmbedded(t *testing.T) {
-	required := []string{"tokens.css", "status-classes.css", "utils.js", "dom.js", "clock.js", "list.js", "settings.js", "bus.js"}
+	required := []string{"tokens.css", "status-classes.css", "dom.js", "clock.js", "list.js", "settings.js", "bus.js",
+		"esc.js", "layer.js", "notice.js", "http.js", "picker.js"}
 	for _, name := range required {
 		f, err := Files.Open(name)
 		if err != nil {
@@ -33,8 +34,9 @@ func TestSharedFilesEmbedded(t *testing.T) {
 	}
 }
 
-// TestUtilsJSHasExports is a smoke check that utils.js and the one-job
-// modules split out of it advertise the helpers the style guide promises,
+// TestUtilsJSHasExports is a smoke check that the one-job modules utils.js
+// was split into (utils.js itself is gone) advertise the helpers the style
+// guide promises,
 // each in the file a page imports it from. Doesn't run the JS — just asserts
 // the export lines exist. A missing export is a regression that consumers
 // will hit at module-load time with a non-obvious error.
@@ -73,15 +75,23 @@ func TestUtilsJSHasExports(t *testing.T) {
 			"export function setSSEReloadOnBuild",
 			"export function closeSSEBus",
 		},
-		"utils.js": {
-			"export const api",
-			"export function createSSE",
+		"layer.js": {
+			"export function openLayer",
 			"export function showModal",
 			"export function hideModal",
 			"export function confirm",
 			"export function prompt",
+			"export function confirmWithInput",
+		},
+		"notice.js": {
 			"export function toast",
-			"export function installBackdropClose",
+			"export function banner",
+			"export function clearBanner",
+		},
+		"http.js": {
+			"export async function send",
+			"export const http",
+			"export function hookHtmxErrors",
 		},
 	} {
 		body, err := fs.ReadFile(Files, file)

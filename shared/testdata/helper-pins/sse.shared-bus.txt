@@ -1,6 +1,6 @@
 # onSSE bus — shared: onSSE setSSEQuery setSSEWatchdog setSSEReloadOnBuild closeSSEBus
-# of shared/bus.js; it dispatches build-changed, and BC shows showRefreshBanner of shared/utils.js
-# (a subscriber; Core's hub shows notice.js's banner, sse.core-hub.txt). One page (shared/bus.js, as the
+# of shared/bus.js; it dispatches build-changed, and BC shows notice.js's "build" banner, as the
+# Core hub does (sse.core-hub.txt). One page (shared/bus.js, as the
 # operator station loads it), steps in order; a "second page" is a fresh one.
 
 onSSE("order-update", A); onSSE("order-update", B); onSSE("connected", C); onSSE("disconnected", D) — before a microtask
@@ -37,21 +37,21 @@ onSSE("stream-gap", G); onSSE("heartbeat", H)
     t=0 handler H({"build":"b1","seq":12}, <event>)
 #2 ← heartbeat {"build":"b1"}  (no seq: Core)
     t=0 handler H({"build":"b1"}, <event>)
-onSSE("build-changed", BC), BC calling showRefreshBanner()
+onSSE("build-changed", BC), BC showing notice.js's "build" banner
     (nothing)
 #2 ← heartbeat {"build":"b2","seq":12}  (a new build)
     t=0 handler BC({"build":"b2","seq":12}, <event>)
     t=0 handler H({"build":"b2","seq":12}, <event>)
     t=0 refresh banner shown
     the banner:
-      div id="shingo-refresh-banner" role="status" style="position:fixed;top:0;left:0;right:0;z-index:var(--z-toast);background:#fff3cd;border-bottom:1px solid #ffe69c;color:#664d03;padding:0.6rem 1rem;display:flex;align-items:center;gap:0.75rem;justify-content:center;font-size:0.95rem;box-shadow:0 2px 6px rgba(0,0,0,0.08)"
-        span
+      div class="notice-banner notice-banner--info" role="status" data-banner="build"
+        span class="notice-text"
           "A new version is available."
-        button style="padding:0.3rem 0.9rem;background:#0d6efd;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600" listens=click
+        button class="notice-action" type="button" listens=click
           "Refresh"
-        button style="padding:0.3rem 0.7rem;background:transparent;color:#664d03;border:1px solid #c9a85e;border-radius:4px;cursor:pointer" listens=click
-          "Dismiss"
-showRefreshBanner() again while it is shown
+        button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+          "×"
+the banner again while it is shown
     t=0 banners in the DOM: 1
 click Dismiss
     t=0 refresh banner gone

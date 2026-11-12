@@ -5,11 +5,12 @@ Verified against: 51489c78
 ### Never use native dialogs
 
 `alert()`, `confirm()`, `prompt()` are forbidden. Use the shared helpers in
-`shared/utils.js`; each `confirm` / `prompt` call site is `await`ed, so its
-enclosing function is `async`.
+`shared/layer.js` and `shared/notice.js`; each `confirm` / `prompt` call site
+is `await`ed, so its enclosing function is `async`.
 
 ```js
-import { confirm, toast, prompt } from '/static/shared/utils.js';
+import { confirm, prompt } from '/static/shared/layer.js';
+import { toast } from '/static/shared/notice.js';
 
 // Confirmation — Promise-based, styled overlay
 if (!await confirm('Delete this style?')) return;

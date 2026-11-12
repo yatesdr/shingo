@@ -522,7 +522,7 @@ body {
 /* ===== Modal Backdrop ===== */
 
 /* Touch-sized variant of the shared .modal-overlay pattern. Mirrors
- * the admin /static/shared/utils.js modal mechanism: .active toggles
+ * the admin /static/shared/layer.js modal mechanism: .active toggles
  * visibility, button-only close, no [hidden] attribute. The
  * .modal--touch modifier scopes operator-station's larger sizing /
  * font sizes — see docs/ui-style-guide.md. The selectors here are

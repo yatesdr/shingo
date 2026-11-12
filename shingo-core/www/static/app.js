@@ -92,8 +92,9 @@ export function setText(id, v) {
 // SUBSCRIPTION is what matters: it is the one every layout page has, so
 // without it _busSync (shared/bus.js) never connects on a page with no
 // handler of its own and the new-build banner stops there. Do not swap it for
-// 'connected': that topic is excluded from the filter list, so the page would
-// become an unfiltered client and receive every event.
+// 'connected': that is one of the bus's own frames, never a topic, and a page
+// that subscribes only those opens no stream at all (shared/bus.js, "NO SERVER
+// TOPIC, NO STREAM"), so it would see no new build.
 onSSE('system-status', function() {});
 
 // The bus only says the build changed; a Core admin page shows the notice's

@@ -21,10 +21,10 @@
 //
 //	<link rel="stylesheet" href="/static/shared/tokens.css">
 //	<link rel="stylesheet" href="/static/shared/status-classes.css">
-//	<script type="module" src="/static/shared/utils.js"></script>
+//	<script type="module" src="/static/shared/dom.js"></script>
 //
 // The embed.FS is rooted at the module directory; the assets sit at the
-// top level (tokens.css, status-classes.css, utils.js).
+// top level (tokens.css, status-classes.css, the one-job modules).
 package shared
 
 import (

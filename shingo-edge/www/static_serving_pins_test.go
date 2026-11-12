@@ -64,7 +64,7 @@ func TestStaticServingPins(t *testing.T) {
 	got := staticServingPins(t, router, edgeStaticSource, []string{
 		"/static/operator-station/operator.js",
 		"/static/operator-station/operator.css",
-		"/static/shared/utils.js",
+		"/static/shared/dom.js",
 		"/static/shared/tokens.css",
 		"/favicon.ico",
 		"/static/favicon.ico",

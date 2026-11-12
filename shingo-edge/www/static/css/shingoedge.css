@@ -364,7 +364,7 @@ textarea.form-input {
 /* === Modals === */
 /* Shared mechanism: .modal-overlay is the full-viewport flex container;
    .active toggles visibility. The inner .modal is the card. Matches
-   Core's pattern and the shared helpers in /static/shared/utils.js. */
+   Core's pattern and the shared overlay stack in /static/shared/layer.js. */
 .modal-overlay {
     position: fixed;
     top: 0;

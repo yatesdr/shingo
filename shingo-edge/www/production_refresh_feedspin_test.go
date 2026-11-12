@@ -83,7 +83,7 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		// The next two were true.
 		{"production.html sse-connect=\"/events\"", strings.Contains(attrs, `sse-connect="/events"`), false},
 		{"production.html hx-ext=\"sse\"", strings.Contains(attrs, `hx-ext="sse"`), false},
-		// Was createSSE('/events', …), once: the page's one stream is the bus.
+		// createSSE('/events', …), once, is gone: the page's one stream is the bus.
 		{"production.js createSSE", strings.Count(js, "createSSE("), 0},
 		{"production.js refreshOnEvents('production-content', onSSE)", strings.Count(js, "refreshOnEvents('production-content', onSSE)"), 1},
 		// The page's own handlers; the order-update / order-failed /

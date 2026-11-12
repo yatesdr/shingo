@@ -56,7 +56,7 @@ func TestStaticServingPins(t *testing.T) {
 	got := staticServingPins(t, coreStaticRouter(), coreStaticSource, []string{
 		"/static/app.js",
 		"/static/style.css",
-		"/static/shared/utils.js",
+		"/static/shared/dom.js",
 		"/static/shared/tokens.css",
 		"/favicon.ico",
 		"/static/favicon.ico",

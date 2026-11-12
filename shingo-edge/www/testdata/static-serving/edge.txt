@@ -64,7 +64,7 @@ GET /static/operator-station/operator.css gzip=yes if-none-match=yes
   Vary: Accept-Encoding
   body: empty
 
-GET /static/shared/utils.js gzip=no if-none-match=no
+GET /static/shared/dom.js gzip=no if-none-match=no
   status 200
   Cache-Control: no-cache
   Content-Length: length of the body
@@ -73,7 +73,7 @@ GET /static/shared/utils.js gzip=no if-none-match=no
   Vary: Accept-Encoding
   body: source
 
-GET /static/shared/utils.js gzip=yes if-none-match=no
+GET /static/shared/dom.js gzip=yes if-none-match=no
   status 200
   Cache-Control: no-cache
   Content-Encoding: gzip
@@ -83,14 +83,14 @@ GET /static/shared/utils.js gzip=yes if-none-match=no
   Vary: Accept-Encoding
   body: gzip of source
 
-GET /static/shared/utils.js gzip=no if-none-match=yes
+GET /static/shared/dom.js gzip=no if-none-match=yes
   status 304
   Cache-Control: no-cache
   Etag: "{hash of the served bytes}"
   Vary: Accept-Encoding
   body: empty
 
-GET /static/shared/utils.js gzip=yes if-none-match=yes
+GET /static/shared/dom.js gzip=yes if-none-match=yes
   status 304
   Cache-Control: no-cache
   Etag: "{hash of the served bytes}"

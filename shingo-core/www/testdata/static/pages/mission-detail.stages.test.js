@@ -38,7 +38,7 @@ function check(name, cond, detail) {
 // Enough DOM for the page's render calls, a fetch that serves one canned
 // mission payload, and the server clock pinned to `now`. Returns every element
 // the page wrote to.
-const UTILS = ['dom.js', 'clock.js', 'utils.js', 'bus.js']
+const UTILS = ['dom.js', 'clock.js', 'bus.js']
     .map((f) => fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', f), 'utf8'))
     .join('\n')
     .replace(/^import[^;]+;\s*/gm, '')

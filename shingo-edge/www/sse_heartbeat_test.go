@@ -40,7 +40,7 @@ func (f *flushRecorder) snapshot() string {
 // TestSSE_HeartbeatCarriesBuildID pins Field-notes Note 9b. The 30s
 // keepalive used to be a bare `: keepalive` comment which `EventSource`
 // strips before the JS client sees it — so the existing build-ID
-// reload mechanism in shared/utils.js could never fire mid-stream when
+// reload mechanism (shared/bus.js now) could never fire mid-stream when
 // a reverse proxy held the connection open through an Edge restart.
 // The fix replaces the comment with a named `heartbeat` event carrying
 // the build id.

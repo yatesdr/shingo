@@ -59,10 +59,10 @@ Add a new event type by extending the `eventRe` in both
 - `stopPropagation` — calls `event.stopPropagation()` and returns.
   Lets a child cell with its own data-action exist inside a row
   handler without firing the row handler.
-- `data-backdrop-close` on a `.modal-overlay` removes `.active`
-  when the click target IS the overlay (not an inner element).
-  Wired by `installBackdropClose()` from `shared/utils.js`,
-  called once per surface at module load.
+- `data-backdrop-close` on a `.modal-overlay` closes it when the
+  press and the click are both on the overlay (not an inner element).
+  Read by `showModal` (`shared/layer.js`) when it opens the overlay;
+  there is no install call.
 - `data-skip-on-checkbox="1"` on a row handler skips the dispatch
   when the click originated inside a checkbox cell — lets row-click
   and per-row checkbox actions coexist cleanly.

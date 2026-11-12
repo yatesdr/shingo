@@ -15,9 +15,10 @@ import (
 	"strings"
 )
 
-// jsexportsFiles are the shared modules utils.js was split into (one job
-// each), and what is left of it; each feeds the block named after it.
-var jsexportsFiles = []string{"shared/dom.js", "shared/clock.js", "shared/list.js", "shared/settings.js", "shared/bus.js", "shared/utils.js"}
+// jsexportsFiles are the shared modules, one job each; each feeds the block
+// named after it.
+var jsexportsFiles = []string{"shared/dom.js", "shared/clock.js", "shared/list.js", "shared/settings.js", "shared/bus.js",
+	"shared/esc.js", "shared/layer.js", "shared/notice.js", "shared/http.js", "shared/picker.js"}
 
 func init() {
 	for _, file := range jsexportsFiles {

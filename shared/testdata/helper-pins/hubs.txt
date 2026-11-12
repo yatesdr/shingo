@@ -10,24 +10,24 @@ h                     -         -         dom.js
 el                    -         -         dom.js
 debounce              -         -         dom.js
 delegateActions       -         -         dom.js
-installBackdropClose  -         -         utils.js
-showModal             -         -         utils.js
-hideModal             -         -         utils.js
-confirm               -         -         utils.js
-prompt                -         -         utils.js
+installBackdropClose  -         -         -
+showModal             -         -         layer.js
+hideModal             -         -         layer.js
+confirm               -         -         layer.js
+prompt                -         -         layer.js
 uiConfirm             -         -         -
 uiConfirmWithInput    -         -         -
 uiPrompt              -         -         -
-toast                 -         -         utils.js
-api                   -         own       utils.js
+toast                 -         -         notice.js
+api                   -         own       -
 apiGet                own       -         -
 apiPost               own       -         -
 apiPut                own       -         -
 apiDelete             own       -         -
-apiResult             -         -         utils.js
-createSSE             -         -         utils.js
+apiResult             -         -         -
+createSSE             -         -         -
 onSSE                 -         -         bus.js
-showRefreshBanner     -         -         utils.js
+showRefreshBanner     -         -         -
 
 edge-hub window.ShingoEdge: {toast}
 edge-hub window.ShingoEdge entries that are the module's exports: 0 of 1
