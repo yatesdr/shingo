@@ -467,9 +467,6 @@ async function binsPins() {
             '; default prevented ' + prevented + ', form.submit() x' + form.submitted);
         flush(L, t.net, t.rec);
     }
-    L.push('Pinned as is: batchLabelsPreview appends 0001 to a single label with no trailing number, where the');
-    L.push('server\'s batchLabels (service/bin_service.go) keeps it as typed; so a single carrier named exactly');
-    L.push('like OLD-SLOT, _TRANSIT or GRP-A passes the node-name check, and the preview names a label never made.');
 
     goldens['bins-page.txt'] = L.join('\n') + '\n';
 }

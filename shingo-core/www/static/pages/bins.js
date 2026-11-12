@@ -1214,10 +1214,11 @@ function previewBinLabels() {
 }
 
 // batchLabelsPreview is the client twin of the server's label generation
-// (bin_service.go batchLabels): trailing number incremented at its own
-// width, else a 4-digit suffix appended.
+// (bin_service.go batchLabels): one carrier keeps the label as typed; a batch
+// increments a trailing number at its own width, else appends a 4-digit suffix.
 function batchLabelsPreview(label, count) {
   count = Math.max(1, Math.min(count, 100));
+  if (count === 1) return [label];
   var m = label.match(/^(.*?)(\d+)$/);
   var out = [];
   if (m) {

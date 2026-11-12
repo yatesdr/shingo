@@ -87,17 +87,17 @@
 -- label "LINE-1" x1: checked as ["LINE-1"]; default prevented 1, form.submit() x0
   (no request)
   toast error: Label LINE-1 is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
--- label "OLD-SLOT" x1: checked as ["OLD-SLOT0001"]; default prevented 1, form.submit() x1
+-- label "OLD-SLOT" x1: checked as ["OLD-SLOT"]; default prevented 1, form.submit() x0
   (no request)
--- label "_TRANSIT" x1: checked as ["_TRANSIT0001"]; default prevented 1, form.submit() x1
+  toast error: Label OLD-SLOT is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+-- label "_TRANSIT" x1: checked as ["_TRANSIT"]; default prevented 1, form.submit() x0
   (no request)
--- label "GRP-A" x1: checked as ["GRP-A0001"]; default prevented 1, form.submit() x1
+  toast error: Label _TRANSIT is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+-- label "GRP-A" x1: checked as ["GRP-A"]; default prevented 1, form.submit() x0
   (no request)
+  toast error: Label GRP-A is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
 -- label "CART-7" x1: checked as ["CART-7"]; default prevented 1, form.submit() x1
   (no request)
 -- label "CART-" x3: checked as ["CART-0001","CART-0002","CART-0003"]; default prevented 1, form.submit() x1
   (no request)
   confirm: "Create 3 carriers labeled CART-0001 … CART-0003?"
-Pinned as is: batchLabelsPreview appends 0001 to a single label with no trailing number, where the
-server's batchLabels (service/bin_service.go) keeps it as typed; so a single carrier named exactly
-like OLD-SLOT, _TRANSIT or GRP-A passes the node-name check, and the preview names a label never made.
