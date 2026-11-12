@@ -206,6 +206,17 @@ const BUGS = [
         },
     },
     {
+        title: '+ Add a position is on the box\'s head line, above the headings, not under the rows and the bar',
+        run: async page => {
+            const html = String(page.pd('positionsTable')());
+            const add = html.indexOf('data-act="add-position"');
+            const head = html.indexOf('id="pd-poshead"');
+            const rows = html.indexOf('id="pd-postbl"');
+            return [['the control is drawn before the headings and the rows', add >= 0 && add < head && add < rows,
+                'at ' + add + ', headings at ' + head + ', rows at ' + rows + ': under the rows, where the bar covers it at 1440x900']];
+        },
+    },
+    {
         title: 'Advanced · a flipped switch is typed work, so Escape and the backdrop ask first',
         run: async page => {
             const n = tableRows(page.S)[0];

@@ -971,11 +971,12 @@ function reportDesktopFit() {
     const cb = col.getBoundingClientRect();
     const svgEl = pic.querySelector('#pd-svg');
     const svgRect = svgEl ? svgEl.getBoundingClientRect() : { width: 0, height: 0 };
-    // The add row is the box's footer, under the rows; the paired-above line
-    // is the last row. Both have to be reachable by scrolling the column.
-    // Both are rendered geometry, so both are measured — a footer that had
-    // slipped under the bar would still be in the DOM.
-    const foot = $('pd-posfoot');
+    // The add control is on the box's head line and has to be on screen, above
+    // the bar, as the tab opens; the paired-above line is the last row and has
+    // to be reachable by scrolling the column. Both are rendered geometry, so
+    // both are measured — a control that had slipped under the bar would
+    // still be in the DOM.
+    const add = $('pd-posadd');
     const paired = root().querySelector('#pd-postbl tr.paired');
     // A point's distance from the top of the column's scrolled content.
     const inColumn = y => Math.round(y - cb.top + col.scrollTop);
@@ -993,7 +994,7 @@ function reportDesktopFit() {
         picBottom: Math.round(pb.bottom),
         tableTop: Math.round(ox.top),
         tableBottom: Math.round(ox.bottom),
-        // The rows' box's own extent, which is what the footer has to sit under.
+        // The rows' box's own extent.
         scrollerBottom: Math.round(bx.bottom),
         // ONE VERTICAL SCROLL: the column scrolls, the rows' box does not.
         colScrollH: Math.round(col.scrollHeight),
@@ -1011,14 +1012,13 @@ function reportDesktopFit() {
         // AND IT IS NEVER CLIPPED: the frame is at least the svg's height.
         picFrameH: Math.round(pic.clientHeight),
         viewBox: (svgEl || { getAttribute: () => '' }).getAttribute('viewBox') || '',
-        hasFooter: !!foot,
+        hasAdd: !!add,
         hasPairedLine: !!paired,
     };
-    if (foot) {
-        const fb = foot.getBoundingClientRect();
-        fit.footerTop = Math.round(fb.top);
-        fit.footerBottom = Math.round(fb.bottom);
-        fit.footerInColumn = inColumn(fb.bottom);
+    if (add) {
+        const ab = add.getBoundingClientRect();
+        fit.addTop = Math.round(ab.top);
+        fit.addBottom = Math.round(ab.bottom);
     }
     // HOW MANY POSITION ROWS ARE ON SCREEN AS THE PAGE OPENS, measured rather
     // than divided by an assumed row height: rows wholly between the headings
@@ -2229,19 +2229,20 @@ function positionsTable() {
             ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
             ' own</td></tr>';
     }
-    // P3 · THE ADD ROW IS THE BOX'S FOOTER, NOT ITS LAST ROW. In the accepted
-    // D1 shot neither it nor the paired-above line was on screen: both were
-    // inside a tbody that scrolls, and with the picture at its resting height
-    // the box showed exactly the two position rows. An engineer looking at that
-    // screen has no way to learn that PLN_03 and PLN_06 are free — the one
-    // control that adds a position was below the fold of a box with no visible
-    // scrollbar.
+    // P3 · THE ADD CONTROL IS NOT A ROW. In the accepted D1 shot neither it
+    // nor the paired-above line was on screen: both were inside a tbody that
+    // scrolls, and with the picture at its resting height the box showed
+    // exactly the two position rows. An engineer looking at that screen has
+    // no way to learn that PLN_03 and PLN_06 are free — the one control that
+    // adds a position was below the fold of a box with no visible scrollbar.
     //
-    // Ruling: the rows scroll, the add row does not. It leaves the table and
-    // becomes a sibling of the scroller, so it is always visible however many
-    // positions the press has. The paired-above line STAYS a scrolling row: it
-    // is a statement about the rows, it belongs at the end of them, and it is
-    // reachable by scroll rather than always on screen.
+    // IT SITS ON THE BOX'S HEAD LINE, NOT UNDER THE ROWS (browser walk
+    // 2026-11-11). As the box's footer it was still under the sticky bar at
+    // 1440x900 until the column scrolled: the picture, two rows and the
+    // paired-above line already fill the column. On the head line it is on
+    // screen as the tab opens, beside the label, above the headings. The
+    // paired-above line STAYS a scrolling row: it is a statement about the
+    // rows, it belongs at the end of them.
     // THE ONE CONTROL THAT ADDS A POSITION LOOKS LIKE ONE. The whole footer
     // was a 12 px dim-grey line with a cursor on it — the same value as the
     // hint above the table and the free-name list beside it — so the only way
@@ -2249,13 +2250,13 @@ function positionsTable() {
     // station card's chips and its Remove line (Amendment A): a control is
     // drawn as a control. The free names stay as the quiet half, because they
     // are what the button is offering rather than a second control.
-    const footer = free.length
-        ? '<div class="pd-posfoot" id="pd-posfoot">' +
+    const addCtl = free.length
+        ? '<span class="pd-posadd" id="pd-posadd">' +
         '<button class="pd-btn" data-act="add-position">+ Add a position</button>' +
-        '<span>' + esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free') + '</span></div>'
+        '<span>' + esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free') + '</span></span>'
         : '';
     const cols = '<colgroup>' + columns.map(col => '<col class="' + col.col + '">').join('') + '</colgroup>';
-    // THE LABEL, THE HEADINGS AND THE FOOTER ARE OUTSIDE THE ROWS' BOX.
+    // THE LABEL (WITH THE ADD CONTROL) AND THE HEADINGS ARE OUTSIDE THE ROWS' BOX.
     // `#pd-postbl` scrolls the rows sideways and is still the box T1 measures
     // the table against — its clientWidth is what a column has to fit inside.
     // The headings are a strip of their own, `#pd-poshead`, so they can stick
@@ -2265,7 +2266,7 @@ function positionsTable() {
     // are the rows' columns; syncPosHead carries it sideways with the rows.
     return '<div class="pd-posbox" id="pd-posbox">' +
         '<div class="pd-lbl">Positions' +
-        '<span class="hint">click a card to find its row · click a cell to change it</span></div>' +
+        '<span class="hint">click a card to find its row · click a cell to change it</span>' + addCtl + '</div>' +
         '<div class="pd-postbl pd-poshead" id="pd-poshead">' +
         // F3: A FIELD IS CALLED WHAT THE CLAIM CALLS IT. These read `New bins
         // from`, `Old bins to`, `Robot drives via` and `Partner` — four names
@@ -2288,7 +2289,7 @@ function positionsTable() {
         '</tr></thead></table></div>' +
         '<div class="pd-postbl" id="pd-postbl">' +
         '<table>' + cols + '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
-        footer + '</div>';
+        '</div>';
 }
 
 // tableColumns is the positions table's columns, in order: the <col> class,

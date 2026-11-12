@@ -211,8 +211,8 @@ function tableGrid(html) {
         if (!row) { lines.push('tail: ' + tds.map(cellText).join(' ‖ ')); continue; }
         lines.push(row + ': ' + tds.map((td, i) => (head[i] || '?') + '=' + cellText(td)).join(' ‖ '));
     }
-    const foot = /<div class="pd-posfoot"[\s\S]*<\/div><\/div>$/.exec(html);
-    lines.push('footer: ' + (foot ? JSON.stringify(text(foot[0])) : '(none)'));
+    const add = /<span class="pd-posadd"[\s\S]*?<\/span><\/span>/.exec(html);
+    lines.push('add: ' + (add ? JSON.stringify(text(add[0])) : '(none)'));
     return lines;
 }
 async function pinTable() {

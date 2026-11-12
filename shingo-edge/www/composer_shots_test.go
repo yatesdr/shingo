@@ -757,11 +757,10 @@ func TestComposerShots(t *testing.T) {
 			TableBottom  int   `json:"tableBottom"`
 			// P3
 			ScrollerBottom  int    `json:"scrollerBottom"`
-			HasFooter       bool   `json:"hasFooter"`
+			HasAdd          bool   `json:"hasAdd"`
 			HasPairedLine   bool   `json:"hasPairedLine"`
-			FooterTop       int    `json:"footerTop"`
-			FooterBottom    int    `json:"footerBottom"`
-			FooterInColumn  int    `json:"footerInColumn"`
+			AddTop          int    `json:"addTop"`
+			AddBottom       int    `json:"addBottom"`
 			PairedInColumn  int    `json:"pairedInColumn"`
 			ScrollerScrollH int    `json:"scrollerScrollH"`
 			ScrollerClientH int    `json:"scrollerClientH"`
@@ -811,18 +810,19 @@ func TestComposerShots(t *testing.T) {
 			t.Errorf("%s: the rows' box is %d px of content in %d px — it scrolls down, and only the column may",
 				label, fit.ScrollerScrollH, fit.ScrollerClientH)
 		}
-		// THE ADD ROW IS THE BOX'S FOOTER: under the rows, outside the box
-		// that scrolls them sideways, and reachable by scrolling the column.
-		if !fit.HasFooter {
-			t.Errorf("%s: the positions box has no add-a-position footer", label)
+		// THE ADD CONTROL IS ON THE BOX'S HEAD LINE: above the headings, and
+		// on screen above the bar as the tab opens. As the box's footer it sat
+		// under the sticky bar at 1440x900 until the column scrolled.
+		if !fit.HasAdd {
+			t.Errorf("%s: the positions box has no add-a-position control", label)
 		} else {
-			if fit.FooterInColumn > fit.ColScrollH+1 {
-				t.Errorf("%s: the add row ends %d px into a %d px column — it cannot be reached",
-					label, fit.FooterInColumn, fit.ColScrollH)
+			if fit.AddBottom > fit.BarTop+1 {
+				t.Errorf("%s: the add control ends at y=%d, under the bar at y=%d — it is off screen as the tab opens",
+					label, fit.AddBottom, fit.BarTop)
 			}
-			if fit.FooterTop < fit.ScrollerBottom-1 {
-				t.Errorf("%s: the add row starts at y=%d, above the rows' box foot at y=%d — it is still inside the box",
-					label, fit.FooterTop, fit.ScrollerBottom)
+			if fit.AddTop < fit.TableTop-1 {
+				t.Errorf("%s: the add control starts at y=%d, above the positions box at y=%d",
+					label, fit.AddTop, fit.TableTop)
 			}
 		}
 		// THE VIEWBOX IS THE FRAME. Not a constant: the drawing is laid out at
@@ -851,9 +851,9 @@ func TestComposerShots(t *testing.T) {
 		// row is taller, because the chips inside it carry their own padding.
 		t.Logf("%s rows: %d whole on screen (header %d, row %d) · column %d in %d",
 			label, fit.RowsVisible, fit.HeaderH, fit.RowH, fit.ColScrollH, fit.ColClientH)
-		t.Logf("%s fits: viewport %dx%d · table %d in %d · picture %dx%d in %d (viewBox %q) foot %d · box %d..%d · footer %d..%d · bar %d..%d",
+		t.Logf("%s fits: viewport %dx%d · table %d in %d · picture %dx%d in %d (viewBox %q) foot %d · box %d..%d · add %d..%d · bar %d..%d",
 			label, vw, vh, fit.TableScrollW, fit.TableClientW, fit.PicW, fit.PicH, fit.PicFrameH, fit.ViewBox, fit.PicBottom,
-			fit.TableTop, fit.TableBottom, fit.FooterTop, fit.FooterBottom, fit.BarTop, fit.BarBottom)
+			fit.TableTop, fit.TableBottom, fit.AddTop, fit.AddBottom, fit.BarTop, fit.BarBottom)
 	}
 
 	desktopShot("P0-processes.png", "/processes")
@@ -1039,8 +1039,8 @@ func TestComposerShots(t *testing.T) {
 	// The two mode-dependent columns are separate (owner ruling Q1). One
 	// "Partner" column could only ever hold one of them.
 	desktopDOM("D1 staging column", d1, `<th>Staging</th>`)
-	// P3: the add row is the box's footer, not a row of the table.
-	desktopDOM("D1 add-position footer", d1, `class="pd-posfoot"`)
+	// P3: the add control is on the box's head line, not a row of the table.
+	desktopDOM("D1 add-position control", d1, `class="pd-posadd"`)
 	checkDesktopFits("D1 flows", d1)
 
 	// ── THE MENUS OPEN, AND ADDING A POSITION ADDS A ROW ────────────────
@@ -2252,8 +2252,8 @@ const settle = () => new Promise(r => {
     d.body.click();
     await settle();
     out.dataset.step = 'open the add-position chooser';
-    const foot = d.querySelector('#pd-posfoot [data-act="add-position"]');
-    out.dataset.freecount = String(d.querySelectorAll('#pd-posfoot span').length);
+    const foot = d.querySelector('#pd-posadd [data-act="add-position"]');
+    out.dataset.freecount = String(d.querySelectorAll('#pd-posadd span').length);
     if (!foot) {
         // Every position is already in the flow — nothing to choose. Say so
         // rather than reporting a failure about a control that is correctly

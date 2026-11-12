@@ -295,21 +295,22 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
     overflow: hidden; padding-top: 6px;
 }
-/* The add row, as the box's footer. It reads as the last row of the table —
-   same dim size, same rule above it — and sits outside the sideways box, under
-   the rows, because it is the only control that adds a position and an
-   engineer cannot be expected to find it by scrolling a box sideways. */
-/* The footer is a CONTROL and a caption, not one dim line that is secretly
-   both. It was 12 px --text-muted with a cursor on it, which is the value of
-   the hint above the table and of the free-name list beside it — so the only
-   way to put a position into a flow was drawn as the quietest thing in the
-   box. The button is the page's own .pd-btn; the free names keep the muted
-   value, because they are what the button is offering. */
-.pd-posfoot {
-    flex: 0 0 auto; padding: 8px 4px; border-top: 1px solid var(--sub-1);
-    display: flex; align-items: center; gap: 10px;
+/* THE ADD CONTROL IS ON THE BOX'S HEAD LINE, right of the label: outside
+   the sideways box, above the headings, and on screen as the tab opens. As
+   the box's footer it sat under the sticky bar at 1440x900 until the column
+   scrolled (browser walk 2026-11-11). */
+/* It is a CONTROL and a caption, not one dim line that is secretly both. It
+   was 12 px --text-muted with a cursor on it, which is the value of the hint
+   beside it and of the free-name list — so the only way to put a position
+   into a flow was drawn as the quietest thing in the box. The button is the
+   page's own .pd-btn; the free names keep the muted value, because they are
+   what the button is offering. The label's caps and tracking stop here. */
+.pd-posbox > .pd-lbl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; }
+.pd-posadd {
+    margin-left: auto; display: flex; align-items: center; gap: 10px;
+    text-transform: none; letter-spacing: 0; font-weight: 400;
 }
-.pd-posfoot span { color: var(--text-muted); font-size: 12px; }
+.pd-posadd span { color: var(--text-muted); font-size: 12px; }
 .pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-postbl table { width: 100%; border-collapse: collapse; }
 .pd-postbl th {

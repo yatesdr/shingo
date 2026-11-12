@@ -41,6 +41,9 @@ ok   only POS_A3 two_robot, POS_A4 two_robot, POS_A5 single_robot, POS_A6 single
 ok   no card says "on deck for" or "paired with"
 ok   a pair card says "Paired core node"
 
+## + Add a position is on the box's head line, above the headings, not under the rows and the bar
+ok   the control is drawn before the headings and the rows
+
 ## Advanced · a flipped switch is typed work, so Escape and the backdrop ask first
 ok   POS_A1: the sheet as it opened is not marked
 ok   POS_A1: Strict pack flipped marks it data-dirty
