@@ -570,7 +570,9 @@ function setupExtras() {
 function hmiSetupFacts() {
     const p = process() || {};
     const n = (S.composer && S.composer.presets || []).length;
-    const on = !!p.flow_composer_enabled;
+    // On Settings the switch is a draft until Save: the row beside it reads
+    // the draft, so switching it on with no recipe says so at once (F36).
+    const on = S.tab === 'settings' && S.settings ? !!S.settings.flow_composer_enabled : !!p.flow_composer_enabled;
     return {
         value: (on ? 'on' : 'off') + ' · ' + (n ? n + ' recipe' + (n === 1 ? '' : 's') : 'no recipe yet'),
         warn: on && !n,
@@ -637,7 +639,8 @@ async function setupGo(key) {
 // headings carry.
 async function openSettingsAt(heading) {
     S.tab = 'settings';
-    S.notice = '';
+    // What the last write saved is said on Settings' own notice line.
+    if (S.notice) { S.settingsNotice = S.notice; S.notice = ''; }
     await openSettings();
     syncHash();
     const h = [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(heading) === 0);

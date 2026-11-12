@@ -32,6 +32,8 @@ ok   and the row uses it
 ok   the HMI setup row says the process has no recipe
 ok   and offers New recipe there
 ok   "Found in your flows" is beside it
+ok   HMI setup on with no recipe: the recipes row says it in the warning hue
+ok   switched off (not saved), the recipes row does not warn
 
 ## Press A with Recipe One
 rail headings: ["Recipes · 1","Styles · 2"] · + New recipe drawn

@@ -186,6 +186,14 @@ async function bugHmiNoRecipe() {
     check('the HMI setup row says the process has no recipe', /no recipe/i.test(hmi), 'nothing says so');
     check('and offers New recipe there', /data-act="new-recipe"/.test(html), 'no New recipe on Settings');
     check('"Found in your flows" is beside it', /Found in your flows/.test(html), 'not on Settings');
+    const before = html.slice(html.indexOf('id="pd-hmirecipes"'));
+    check('HMI setup on with no recipe: the recipes row says it in the warning hue', /pd-cnt warn/.test(before.slice(0, 600)),
+        'no warning');
+    page.click('root', { act: 'st-toggle', st: 'flow_composer_enabled' });
+    const after = page.root.innerHTML.slice(page.root.innerHTML.indexOf('id="pd-hmirecipes"'));
+    const on = !!page.S.settings.flow_composer_enabled;
+    check('switched ' + (on ? 'on' : 'off') + ' (not saved), the recipes row ' + (on ? 'warns' : 'does not warn'),
+        /pd-cnt warn/.test(after.slice(0, 600)) === on, 'warn=' + /pd-cnt warn/.test(after.slice(0, 600)));
 }
 
 // ── style first (F2): the rail, the header and New style, with and without a recipe ──
