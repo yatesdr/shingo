@@ -116,6 +116,7 @@ const S = {
     partPop: null,       // the open part popover: {node, q, note, catalogFailed}
     partSet: null,       // the STORED half of the open process's part set; null = not read
     newStyle: null,      // the New style sheet's Spots step: {recipe, moves, sel} — see drawNewSpots
+    fromSetup: false,    // the style on screen was opened by Setup's First style row: its Save goes back there
 };
 
 function root() { return $('pd-root'); }
@@ -654,6 +655,8 @@ async function setupGo(key) {
         return;
     }
     if (key === 'style') {
+        // Its Save comes back here (saveFlow), while Setup has a step left.
+        S.fromSetup = true;
         const styles = S.composer.styles || [];
         if (!styles.length) { openNewStyle(); return; }
         S.tab = 'flows';
@@ -2247,7 +2250,7 @@ function positionsTable() {
             ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
             ' own</td></tr>';
     }
-    // P3 · THE ADD CONTROL IS NOT A ROW. In the accepted D1 shot neither it
+    // P3 · THE ADD CONTROL IS NOT ONLY A ROW. In the accepted D1 shot neither it
     // nor the paired-above line was on screen: both were inside a tbody that
     // scrolls, and with the picture at its resting height the box showed
     // exactly the two position rows. An engineer looking at that screen has
@@ -2261,6 +2264,14 @@ function positionsTable() {
     // screen as the tab opens, beside the label, above the headings. The
     // paired-above line STAYS a scrolling row: it is a statement about the
     // rows, it belongs at the end of them.
+    //
+    // FIRST ON THE LINE, IN THE ACCENT, AND AGAIN UNDER THE ROWS (HOP,
+    // 2026-11-12). At the line's far right, past the hint, it still read as
+    // part of the caption, so it sits right after the label in the accent
+    // colour. And an engineer who has just filled a row looks below it for
+    // the next one, so a dashed "+ Add a position" row closes the table too:
+    // the same act, where the eye already is. The head line keeps the one
+    // that is on screen as the tab opens.
     // THE ONE CONTROL THAT ADDS A POSITION LOOKS LIKE ONE. The whole footer
     // was a 12 px dim-grey line with a cursor on it — the same value as the
     // hint above the table and the free-name list beside it — so the only way
@@ -2273,6 +2284,10 @@ function positionsTable() {
         '<button class="pd-btn" data-act="add-position">+ Add a position</button>' +
         '<span>' + esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free') + '</span></span>'
         : '';
+    const addRow = free.length
+        ? '<tr class="pd-addrow"><td colspan="' + columns.length + '"><button class="pd-addrowbtn" data-act="add-position">' +
+        '+ Add a position</button></td></tr>'
+        : '';
     const cols = '<colgroup>' + columns.map(col => '<col class="' + col.col + '">').join('') + '</colgroup>';
     // THE LABEL (WITH THE ADD CONTROL) AND THE HEADINGS ARE OUTSIDE THE ROWS' BOX.
     // `#pd-postbl` scrolls the rows sideways and is still the box T1 measures
@@ -2283,8 +2298,8 @@ function positionsTable() {
     // strip is a second `.pd-postbl` with the same colgroup, so its columns
     // are the rows' columns; syncPosHead carries it sideways with the rows.
     return '<div class="pd-posbox" id="pd-posbox">' +
-        '<div class="pd-lbl">Positions' +
-        '<span class="hint">click a card to find its row · click a cell to change it</span>' + addCtl + '</div>' +
+        '<div class="pd-lbl">Positions' + addCtl +
+        '<span class="hint">click a card to find its row · click a cell to change it</span></div>' +
         '<div class="pd-postbl pd-poshead" id="pd-poshead">' +
         // F3: A FIELD IS CALLED WHAT THE CLAIM CALLS IT. These read `New bins
         // from`, `Old bins to`, `Robot drives via` and `Partner` — four names
@@ -2306,7 +2321,7 @@ function positionsTable() {
         '<table>' + cols + '<thead><tr>' + columns.map(col => '<th>' + esc(col.head) + '</th>').join('') +
         '</tr></thead></table></div>' +
         '<div class="pd-postbl" id="pd-postbl">' +
-        '<table>' + cols + '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
+        '<table>' + cols + '<tbody>' + rows.join('') + addRow + tail + '</tbody></table></div>' +
         '</div>';
 }
 
@@ -2838,7 +2853,22 @@ async function saveFlow() {
     // rail's counts and last-run follow.
     S.baseline = JSON.stringify(M().toCells(S.model));
     S.flowSaved = { styleID: S.model.styleId, at: clockNow() };
+    // A STYLE SETUP SENT THE ENGINEER TO GOES BACK TO SETUP once it is saved
+    // (HOP, 2026-11-12): the walkthrough is where the next step is, and
+    // landing back on the Styles tab left them to find their own way there.
+    // Only while Setup still has a step; a process it no longer needs stays
+    // on its style.
+    const back = S.fromSetup;
+    S.fromSetup = false;
     await openProcess(S.processID);
+    if (back && needsSetup()) {
+        const style = composerStyle(S.flowSaved.styleID);
+        S.tab = 'setup';
+        drawSetup();
+        syncHash();
+        toast('Saved' + (style ? ' ' + style.name : '') + '. Next: ' +
+            (setupRows().find(r => !r.done) || {}).label + '.', 'info');
+    }
 }
 
 // answerBody is the body a flow answer's readers take (saveOutcome,
@@ -9233,6 +9263,8 @@ function showTab(t) {
 // Back leaves, asking first when the draft has changed (F4); the tab the draft
 // is drawn on is not.
 function tabTo(t) {
+    // A tab picked by hand is the engineer leaving the walkthrough.
+    S.fromSetup = false;
     if (!S.shapeDraft || t === S.tab) { showTab(t); return; }
     const go = () => void leaveShapeDraft(t);
     if (!draftHold(go)) go();

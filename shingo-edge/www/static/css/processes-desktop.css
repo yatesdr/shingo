@@ -307,11 +307,20 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    what the button is offering. The label's caps and tracking stop here. */
 .pd-posbox > .pd-lbl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; }
 .pd-posadd {
-    margin-left: auto; display: flex; align-items: center; gap: 10px;
+    margin-left: 12px; display: flex; align-items: center; gap: 10px;
     text-transform: none; letter-spacing: 0; font-weight: 400;
 }
+/* First on the line and in the accent: at the far right it read as caption. */
+.pd-posadd .pd-btn { border-color: var(--accent); color: var(--accent); font-weight: var(--fw-bold); }
+/* The same act again where a row ends: a dashed row closing the table. */
+.pd-addrow td { padding: 6px 3px; }
+.pd-addrowbtn {
+    width: 100%; min-height: 40px; padding: 0 12px; border: 1px dashed var(--sub-4); border-radius: var(--radius);
+    background: none; color: var(--accent); font: inherit; font-weight: var(--fw-bold); text-align: left; cursor: pointer;
+}
+.pd-addrowbtn:hover { border-color: var(--accent); }
 .pd-posadd span { color: var(--text-muted); font-size: 12px; }
-.pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-postbl table { width: 100%; border-collapse: collapse; }
 .pd-postbl th {
     text-align: left; padding: 8px 3px; border-bottom: 1px solid var(--sub-1);
