@@ -92,6 +92,18 @@ test('a single picker: a pick replaces the value and closes its list', async () 
     eq([f.k.value(), f.L.layerDepth(), f.k.el.querySelector('.picker-list').hidden, f.changes], ['PLN_003', 0, true, ['PLN_003']]);
 });
 
+test('a single pick ends the search: the box is empty under the chip, a multi-select keeps its query', async () => {
+    const f = picker({});
+    f.k.input.dispatchEvent(ev('focus'));
+    f.typeQ('pln_00');
+    f.row('PLN_003').click();
+    eq([f.k.value(), f.k.input.value], ['PLN_003', ''], 'single');
+    const m = picker({ multi: true, open: true });
+    m.typeQ('pln_00');
+    m.row('PLN_003').click();
+    eq([m.k.value(), m.k.input.value], [['PLN_003'], 'pln_00'], 'multi');
+});
+
 test('a multi-select: a pick toggles, the chips are the selection and their × takes one out', async () => {
     const f = picker({ multi: true, open: true });
     f.row('PLN_001').click();

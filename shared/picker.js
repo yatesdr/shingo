@@ -315,7 +315,7 @@ export function createPicker(host, opts) {
     // the caller's write answers (see onPick). A pick made while one is out
     // is not taken: the first answer has not said where the selection is.
     function commit(next, value) {
-        if (!o.onPick) { st.sel = next; changed(); return; }
+        if (!o.onPick) { st.sel = next; clearQuery(); changed(); return; }
         if (st.pending !== null) return;
         st.pending = value === undefined ? '' : String(value);
         st.refused = '';
@@ -327,6 +327,7 @@ export function createPicker(host, opts) {
                 st.sel = list(vals);
                 if (!multi) st.sel = st.sel.slice(0, 1);
                 st.was = st.sel.slice();
+                clearQuery();
             } else {
                 st.refused = ans && ans.error ? String(ans.error) : '';
             }
@@ -361,6 +362,16 @@ export function createPicker(host, opts) {
         if (multi) { if (st.sel.indexOf(v) < 0) st.sel = st.sel.concat([v]); } else st.sel = [v];
         changed();
         if (!multi) closeList();
+    }
+
+    // A SINGLE PICK ENDS THE SEARCH. The chip is the value; a query left in
+    // the box under it read as a second value ("SLN_0" under "SLN_03 x"). A
+    // multi-select keeps it: the engineer adding one name is adding three.
+    function clearQuery() {
+        if (multi) return;
+        st.q = '';
+        input.value = '';
+        st.active = -1;
     }
 
     function changed() {
