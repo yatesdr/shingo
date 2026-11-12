@@ -422,7 +422,7 @@ async function openPartPop(page) {
 }
 function partPopRow(page, how, code) {
     const pop = page.byId('pd-pop');
-    const row = page.rows('pd-partlist', 'data-pp').find(r => r.dataset.pp === how && r.dataset.code === code);
+    const row = page.rows('pd-partlist', 'data-pp').find(r => r.dataset.pp === how && (code === undefined || r.dataset.code === code));
     if (!row) throw new Error('the part popover has no ' + how + ' ' + code + ': ' + (page.byId('pd-partlist') || {}).innerHTML);
     pop.onclick({ target: row, stopPropagation() {} });
 }
@@ -532,7 +532,12 @@ const DRIVE = {
         npk(page, 'scrim', 'positions', 'NEW_1');
         await sheetOK(page);
     } },
-    partPopAdd: { setup: openPartPop, drive: async page => { partPopRow(page, 'add', 'PART-12'); await page.settle(); } },
+    partPopAdd: { setup: openPartPop, drive: async page => {
+        // Core's catalog waits behind its own button while the process has parts.
+        partPopRow(page, 'catalog');
+        partPopRow(page, 'add', 'PART-12');
+        await page.settle();
+    } },
     partPopDrop: { setup: openPartPop, drive: async page => { partPopRow(page, 'drop', 'PART-11'); await page.settle(); } },
     partSettingsAdd: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-13'); await page.settle(); } },
     partSettingsDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-11', 'drop'); await page.settle(); } },

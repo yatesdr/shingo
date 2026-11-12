@@ -948,11 +948,13 @@ function selectStyle(id) {
     S.selected = null;
     S.model = initModel(st);
     S.baseline = JSON.stringify(M().toCells(S.model));
+    S.flowStale = false;
     drawFlows();
     schedulePreview();
 }
 
 function drawFlows() {
+    if (S.flowStale) rebuildStaleFlow();
     // WHERE THE ENGINEER WAS SURVIVES THE REDRAW, as on Settings: the write
     // below replaces both scrollers with fresh ones at the top, so a cell
     // edit far down the table would otherwise throw the page back up. The
@@ -3218,7 +3220,7 @@ function closePop() {
 async function openPartPop(btn, node) {
     const pop = $('pd-pop');
     if (!pop || !S.model) return;
-    S.partPop = { node: node, q: '', note: '', catalogFailed: false };
+    S.partPop = { node: node, q: '', note: '', catalogFailed: false, catalog: false, anchor: btn };
     pop.classList.add('pd-partpop');
     pop.innerHTML =
         '<input class="pd-npkq pd-partq" type="text" autocomplete="off" ' +
@@ -3305,7 +3307,28 @@ function drawPartList() {
             '</div>';
     }
 
-    h += '<div class="pd-lbl">Add from Core’s catalog</div>';
+    // CORE'S CATALOG IS FOR THE PART SOMEBODY FORGOT (owner, 2026-11-12). The
+    // parts were dialled in at Setup, so the list is those, and a few hundred
+    // catalog rows under them buried it. The catalog opens on its own button,
+    // on a search, or when the process has no parts to offer yet.
+    if (!pp.catalog && !needle && palette.size) {
+        h += '<div class="pd-partrow"><button data-pp="catalog">+ Add from Core’s catalog…</button></div>';
+    } else {
+        h += catalogRows(pp, palette, needle, hit);
+    }
+
+    if (c.part) {
+        h += '<div class="pd-partfoot"><button data-pp="clear">Take ' + esc(M().shortPart(c.part)) +
+            ' off this position</button></div>';
+    }
+    if (pp.note) h += '<div class="none pd-partnote">' + esc(pp.note) + '</div>';
+    box.innerHTML = h;
+}
+
+// catalogRows is the popover's second half: Core's catalog less the parts the
+// process already has, searched by the same needle.
+function catalogRows(pp, palette, needle, hit) {
+    let h = '<div class="pd-lbl">Add from Core’s catalog</div>';
     if (pp.catalogFailed) {
         h += '<div class="none">Core’s catalog could not be read. Reload the page to try again.</div>';
     } else if (!S.payloadCatalog) {
@@ -3328,13 +3351,7 @@ function drawPartList() {
             h += '<div class="none">' + (more.length - LIMIT) + ' more — type to narrow the list.</div>';
         }
     }
-
-    if (c.part) {
-        h += '<div class="pd-partfoot"><button data-pp="clear">Take ' + esc(M().shortPart(c.part)) +
-            ' off this position</button></div>';
-    }
-    if (pp.note) h += '<div class="none pd-partnote">' + esc(pp.note) + '</div>';
-    box.innerHTML = h;
+    return h;
 }
 
 // The popover redraws its own list, so a click inside it can land on a button
@@ -3362,6 +3379,16 @@ function onPartPopClick(e) {
         }
         case 'add': void addToPartSet(node, code); return;
         case 'drop': void dropFromPartSet(code); return;
+        case 'catalog': {
+            S.partPop.catalog = true;
+            drawPartList();
+            // Taller now, so placed again, as when the catalog first arrives.
+            const pop = $('pd-pop'), at = S.partPop.anchor;
+            if (pop && at && at.isConnected) placePopover(pop, at, 300);
+            const q = pop && pop.querySelector('.pd-partq');
+            if (q) q.focus();
+            return;
+        }
         default: return;
     }
 }
@@ -6959,6 +6986,7 @@ async function refreshProcess() {
     if (res.ok) {
         takeComposer(res.body);
         S.graph = null;
+        if (S.tab !== 'flows') S.flowStale = true;
     }
     const styles = await send('GET', '/api/processes/' + S.processID + '/styles');
     if (styles.ok) {
@@ -6977,6 +7005,31 @@ async function refreshProcess() {
     else if (S.tab === 'setup') drawSetup();
     else if (S.tab === 'screens') drawScreens();
     else await openSettings();
+}
+
+// rebuildStaleFlow rebuilds the open style's flow from the composer block
+// refreshProcess re-read while the page was on another tab.
+//
+// THE FLOW IS BUILT WHEN THE PROCESS OPENS, whatever tab it lands on, and the
+// Styles tab only redraws it. So a part set, positions or routing set changed
+// through Setup's Change… reached the Styles tab as the page first read them:
+// the part popover said "No parts yet" over Core's whole catalog (owner,
+// 2026-11-12). On Styles itself refreshProcess re-selects the style instead.
+//
+// ON THE WAY BACK TO STYLES, not at the write: drawFlows is every door onto
+// the tab, and a rebuild at the write would preview a flow nobody is looking
+// at after every Settings save. An edited draft is kept, with only its part
+// list brought up to date.
+function rebuildStaleFlow() {
+    S.flowStale = false;
+    if (!S.model || S.shapeDraft) return;
+    if (dirty()) { S.model.palette = S.composer.palette.slice(); return; }
+    const st = composerStyle(S.styleID);
+    if (!st) return;
+    S.selected = null;
+    S.model = initModel(st);
+    S.baseline = JSON.stringify(M().toCells(S.model));
+    schedulePreview();
 }
 
 // ── the rail's and the list's own creates ────────────────────────────────────
@@ -8060,6 +8113,10 @@ async function submitEditProcess() {
     await reloadStations();
     for (const st of e.screens) await refreshStationNodes(st.id);
     await loadRouting();
+    // loadPartSet keeps what it read once, so the set this sheet just wrote
+    // would never be read back: Settings › Parts and the popover's × kept the
+    // old list until a reload.
+    S.partSet = null;
     await loadPartSet();
     await refreshProcess();
     if (S.tab === 'settings') { S.settingsNotice = summary; drawSettings(); } else toast(summary, 'info');

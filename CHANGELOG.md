@@ -21,6 +21,8 @@ Deploy: no migration.
 - A picker's list in a pop-up is no longer cut off by it: it opens above or below its box, wherever there is room
 - Every robot at rest on the robot map is one solid disc of one size; a paused robot's fill is faded and an offline one dimmed
 - The robot map redraws as soon as a scroll-zoom stops, so robots and names no longer grow and shrink with the zoom
+- Parts picked in Setup's Change… show up in the Styles tab's part list without a page reload
+- The Styles tab's part list shows this process's parts; Core's catalog opens on its own button or a search
 
 ## v0.6.3 — 2026-11-12
 
