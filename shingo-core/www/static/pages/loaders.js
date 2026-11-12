@@ -1557,8 +1557,10 @@ function onBoxDrop(e) {
   const ordered = existing.slice();
   ordered.splice(idx, 0, nodeId);
 
+  // A refused write is read again, so the box shows what was saved, not the drop.
+  const refused = function (err) { toast('' + err, 'error'); refresh(); };
   const reorder = function () {
-    apiPost('/api/loader/reorder-homes', { loader_id: lid, ordered_ids: ordered }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
+    apiPost('/api/loader/reorder-homes', { loader_id: lid, ordered_ids: ordered }).then(refresh).catch(refused);
   };
   // Which zone did the tile land in? The Buffer zone marks the member
   // home_kind=buffer; anywhere else (Positions zone, shared-window list) is a home.
@@ -1580,9 +1582,9 @@ function onBoxDrop(e) {
     home_kind: homeKind,
     uop_threshold: prev ? prev.uop_threshold : 0,
   }).then(function (d) {
-    if (d && d.error) { toast(d.error, 'error'); return; }
+    if (d && d.error) { refused(d.error); return; }
     reorder();
-  }).catch(function (err) { toast('' + err, 'error'); });
+  }).catch(refused);
 }
 
 function onPlaceDragOver(e) {
@@ -1624,13 +1626,15 @@ function onPlaceDrop(e) {
 
 /* ── Mutations ────────────────────────────────────────── */
 
+// setMemberPayload saves a spot's part; a refusal is read again, so the
+// picker goes back to the saved part.
 function setMemberPayload(lid, nodeId, pc) {
   const home = findHome(lid, nodeId);
   apiPost('/api/loader/set-home', {
     loader_id: Number(lid), position_node_id: Number(nodeId), payload_code: pc,
     home_kind: home ? (home.home_kind || 'home') : 'home',
     uop_threshold: home ? home.uop_threshold : 0,
-  }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
+  }).then(refresh).catch(function (err) { toast('' + err, 'error'); refresh(); });
 }
 // removeMember is the × on a member tile. Edits on this page save on change
 // and ask first only when the change loses data (docs/ui-style-guide.md): a
@@ -1676,19 +1680,25 @@ function refreshPayloadStatus(lid, box) {
   }
 }
 
-function savePayloads(lid, box, btn) {
+// savePayloads saves the ticked parts one write after another and stops at
+// the first refusal; either way the box is read again, so it shows what was
+// saved (some writes may have landed before the refusal).
+async function savePayloads(lid, box, btn) {
   const d = loaderPayloadDiff(lid, box);
   if (!d.toAdd.length && !d.toRemove.length) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  const ops = d.toAdd.map(function (pc) {
-    return apiPost('/api/loader/set-payload', { loader_id: Number(lid), payload_code: pc, uop_threshold: 0 });
+  const writes = d.toAdd.map(function (pc) {
+    return ['/api/loader/set-payload', { loader_id: Number(lid), payload_code: pc, uop_threshold: 0 }];
   }).concat(d.toRemove.map(function (pc) {
-    return apiPost('/api/loader/remove-payload', { loader_id: Number(lid), payload_code: pc });
+    return ['/api/loader/remove-payload', { loader_id: Number(lid), payload_code: pc }];
   }));
-  Promise.all(ops).then(refresh).catch(function (err) {
+  try {
+    for (const w of writes) await apiPost(w[0], w[1]);
+  } catch (err) {
     toast('' + err, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Save parts'; }
-  });
+  }
+  await refresh();
 }
 
 function findHome(lid, nodeId) {

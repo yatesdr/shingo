@@ -886,7 +886,7 @@ async function loadersPins() {
     await D.settle();
     L.push('-- reorder-homes ' + refusalTitle('json.500') + ' (the window was added)');
     flush(L, t.net, t.rec);
-    L.push('', '== refusals: drop SPOT-9 on UNL-A\'s box (no re-read after a refusal)');
+    L.push('', '== refusals: drop SPOT-9 on UNL-A\'s box (re-read after a refusal)');
     for (const key of ['loader.set-home.400', 'reject']) {
         t = await stationsReady();
         t.net.on('POST', '/api/loader/set-home', answer(key));
@@ -896,14 +896,14 @@ async function loadersPins() {
         L.push('-- set-home ' + refusalTitle(key));
         flush(L, t.net, t.rec);
     }
-    L.push('', '== refusals: pick PART-A on GRP-B-N2 (no re-read after a refusal)');
+    L.push('', '== refusals: pick PART-A on GRP-B-N2 (re-read after a refusal)');
     t = await stationsReady();
     t.net.on('POST', '/api/loader/set-home', answer('json.400'));
     t.p.ctx.setMemberPayload(21, '7', 'PART-A');
     await D.settle();
     L.push('-- set-home ' + refusalTitle('json.400'));
     flush(L, t.net, t.rec);
-    L.push('', '== refusals: Save parts (both posts are sent at once; one refused)');
+    L.push('', '== refusals: Save parts (one write after another; the first refused, the rest not sent)');
     t = await stationsReady();
     t.net.on('POST', '/api/loader/set-payload', answer('loader.set-payload.400'));
     const btn2 = D.makeEl('button');

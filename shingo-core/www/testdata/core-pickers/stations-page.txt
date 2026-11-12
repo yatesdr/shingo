@@ -10,8 +10,8 @@
   GET /api/payloads
   GET /api/loader/list
 
-== refresh() re-reads /api/nodes, /api/payloads and /api/loader/list; called 15 times, from:
-  submitLoader, saveWindowCap, addLoaderQuota, setLoaderQuota, removeLoaderQuota, saveStationSetting, deleteStation, appendWindow, appendWindow, assignPlace, onBoxDrop, setMemberPayload, removeMember, savePayloads, init
+== refresh() re-reads /api/nodes, /api/payloads and /api/loader/list; called 17 times, from:
+  submitLoader, saveWindowCap, addLoaderQuota, setLoaderQuota, removeLoaderQuota, saveStationSetting, deleteStation, appendWindow, appendWindow, assignPlace, onBoxDrop, onBoxDrop, setMemberPayload, setMemberPayload, removeMember, savePayloads, init
 
 == armed: UNL-A Windows; the grid as decorated (assignReason via decorateGrid)
   bar: "Adding a window — tap a node. Greyed nodes can’t go here."
@@ -238,23 +238,34 @@
   GET /api/loader/list
   toast error: failed: the store's error
 
-== refusals: drop SPOT-9 on UNL-A's box (no re-read after a refusal)
+== refusals: drop SPOT-9 on UNL-A's box (re-read after a refusal)
 -- set-home loader.set-home.400: 400 "{\"error\":\"loader_id and position_node_id are required\"}"
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
   toast error: loader_id and position_node_id are required
 -- set-home fetch rejects (TypeError: Failed to fetch)
   POST /api/loader/set-home {"loader_id":20,"position_node_id":9,"payload_code":"","home_kind":"home","uop_threshold":0}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
   toast error: No answer from the server
 
-== refusals: pick PART-A on GRP-B-N2 (no re-read after a refusal)
+== refusals: pick PART-A on GRP-B-N2 (re-read after a refusal)
 -- set-home json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
   POST /api/loader/set-home {"loader_id":21,"position_node_id":7,"payload_code":"PART-A","home_kind":"home","uop_threshold":0}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
   toast error: refused: the service's sentence
 
-== refusals: Save parts (both posts are sent at once; one refused)
+== refusals: Save parts (one write after another; the first refused, the rest not sent)
 -- set-payload loader.set-payload.400: 400 "{\"error\":\"loader_id and payload_code are required\"}"
   POST /api/loader/set-payload {"loader_id":20,"payload_code":"PART-A","uop_threshold":0}
-  POST /api/loader/remove-payload {"loader_id":20,"payload_code":"PART-B"}
+  GET /api/nodes
+  GET /api/payloads
+  GET /api/loader/list
   toast error: loader_id and payload_code are required
   Save parts button: "Save parts", enabled
 
