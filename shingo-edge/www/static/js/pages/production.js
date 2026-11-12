@@ -3,6 +3,7 @@ import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm, hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
+import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
 
@@ -98,29 +99,42 @@ function viewBinContents() {
     showModal('view-bin-modal');
 }
 
+// THE TWO PART FIELDS (shared/part-picker.js) offer the claim's allowed codes,
+// in the claim's order. Load bin names each from the page's one copy of the
+// catalog, read on its first open; a failed read offers the codes alone and
+// is read again on the next open.
+var catalog = partSource(function() { return api.get('/api/payload-catalog'); });
+function catalogName(p) {
+    var entry = (catalog.rows() || []).find(function(c) { return c.code === p.code; });
+    return entry && entry.name ? entry.name : '';
+}
+var reField = { allowed: [] };
+var rePicker = partPicker(document.getElementById('re-payload'), null, reField, { placeholder: 'Part' });
+var rbField = { allowed: [], note: catalogName };
+var rbPicker = partPicker(document.getElementById('rb-payload'), null, rbField,
+    { placeholder: 'Select payload', onChange: function() { onLoadPayloadChanged(); } });
+catalog.watch(function() { rbPicker.refresh(); });
+
+function allowedOf(btn) {
+    try { return JSON.parse(btn.dataset.allowedPayloads || '[]') || []; } catch (e) { return []; }
+}
+
 function openRequestEmptyModal() {
     // Invoked via data-action="openRequestEmptyModal" — args come off
     // the clicked element's dataset. `this` is the clicked button.
     var nodeID = parseInt(this.dataset.nodeId, 10);
-    var allowedCodes = [];
-    try {
-        allowedCodes = JSON.parse(this.dataset.allowedPayloads || '[]') || [];
-    } catch (e) { allowedCodes = []; }
+    var allowedCodes = allowedOf(this);
     document.getElementById('re-node-id').value = nodeID;
-    var sel = document.getElementById('re-payload');
-    sel.innerHTML = '';
-    (allowedCodes || []).forEach(function(code) {
-        var opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code;
-        sel.appendChild(opt);
-    });
+    // The first allowed part is the pick unless the person changes it.
+    reField.allowed = allowedCodes;
+    rePicker.set(allowedCodes[0] || '', { clean: true });
+    rePicker.refresh();
     showModal('request-empty-modal');
 }
 
 async function submitRequestEmpty() {
     var nodeID = parseInt(document.getElementById('re-node-id').value, 10);
-    var payloadCode = document.getElementById('re-payload').value;
+    var payloadCode = rePicker.value();
     if (!payloadCode) { toast('Select a payload', 'warning'); return; }
     try {
         var answer = await postAct('/api/process-nodes/' + nodeID + '/request-empty', {payload_code: payloadCode});
@@ -133,25 +147,11 @@ async function submitRequestEmpty() {
     }
 }
 
-var _loadBinCatalog = null;
-
-// ensureLoadBinCatalog reads the catalog once per page. A failed read is not
-// kept: this open shows the codes alone and the next open reads again.
-async function ensureLoadBinCatalog() {
-    if (_loadBinCatalog) return _loadBinCatalog;
-    var got;
-    try { got = await api.get('/api/payload-catalog'); } catch(_) { return []; }
-    _loadBinCatalog = Array.isArray(got) ? got : [];
-    return _loadBinCatalog;
-}
-
 async function openLoadBinModal() {
     // Invoked via data-action="openLoadBinModal" with data-node-id,
     // data-allowed-payloads (JSON array), data-uop-capacity.
     var nodeID = parseInt(this.dataset.nodeId, 10);
-    var allowedCodes = [];
-    try { allowedCodes = JSON.parse(this.dataset.allowedPayloads || '[]') || []; }
-    catch (e) { allowedCodes = []; }
+    var allowedCodes = allowedOf(this);
     // defaultCapacity kept as a positional param historically; no
     // callers actually used it for anything beyond pass-through, but
     // pull it off the dataset for parity.
@@ -159,22 +159,16 @@ async function openLoadBinModal() {
     void defaultCapacity;
     document.getElementById('rb-node-id').value = nodeID;
     document.getElementById('rb-payload-code').value = '';
-    var catalog = await ensureLoadBinCatalog();
-    var sel = document.getElementById('rb-payload');
-    sel.innerHTML = '<option value="">-- Select payload --</option>';
-    (allowedCodes || []).forEach(function(code) {
-        var entry = catalog.find(function(p) { return p.code === code; });
-        var opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code + (entry && entry.name ? ' — ' + entry.name : '');
-        sel.appendChild(opt);
-    });
+    rbField.allowed = allowedCodes;
+    rbPicker.set('', { clean: true });
+    await catalog.load();
+    rbPicker.refresh();
     document.getElementById('rb-manifest-rows').innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">Select a payload to see its manifest.</div>';
     showModal('load-bin-modal');
 }
 
 async function onLoadPayloadChanged() {
-    var code = document.getElementById('rb-payload').value;
+    var code = rbPicker.value();
     document.getElementById('rb-payload-code').value = code;
     var rows = document.getElementById('rb-manifest-rows');
     if (!code) {
@@ -724,7 +718,6 @@ delegateActions(document.body, {
     createOrder,
     hideModal,
     navigateToProcess,
-    onLoadPayloadChanged,
     onShiftProcessChange,
     openLoadBinModal,
     openRequestEmptyModal,

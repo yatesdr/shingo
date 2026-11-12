@@ -2,10 +2,10 @@
 
 ## request empty, three allowed, left as opened
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-B"
+  * value="PART-B"
+    value="PART-A"
+    value="PART-C"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-B"}
 answer: 200 {"status":"ok"}
 shows: toast success: "Empty bin requested"
@@ -13,20 +13,20 @@ modal closed, re-payload="PART-B"
 
 ## request empty, three allowed, the second picked
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-B"
+  * value="PART-B"
+    value="PART-A"
+    value="PART-C"
 picked "PART-A"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-A"}
 answer: 200 {"status":"ok"}
 shows: toast success: "Empty bin requested"
-modal closed, re-payload="PART-B"
+modal closed, re-payload="PART-A"
 
 ## request empty, one allowed
 button data-allowed-payloads="[\"PART-A\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-A" label="PART-A"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-A"
+  * value="PART-A"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-A"}
 answer: 200 {"status":"ok"}
 shows: toast success: "Empty bin requested"
@@ -34,24 +34,24 @@ modal closed, re-payload="PART-A"
 
 ## request empty, none allowed (the template writes [])
 button data-allowed-payloads="[]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=-1
+#re-payload (Request empty bin compatible with:) — modal open picker value=""
 (no request)
 shows: toast warning: "Select a payload"
 modal open, re-payload=""
 
 ## request empty, none allowed (the template writes null for a nil list)
 button data-allowed-payloads="null"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=-1
+#re-payload (Request empty bin compatible with:) — modal open picker value=""
 (no request)
 shows: toast warning: "Select a payload"
 modal open, re-payload=""
 
 ## request empty refused (apiRequestEmptyBin: 400)
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-B"
+  * value="PART-B"
+    value="PART-A"
+    value="PART-C"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-B"}
 answer: 400 {"error":"payload \"PART-B\" not in allowed list for node Slot one"}
 shows: toast error: "Error: payload \"PART-B\" not in allowed list for node Slot one"
@@ -59,24 +59,24 @@ modal open, re-payload="PART-B"
 
 ## request empty pending (202), then Request again inside the hold
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-B"
+  * value="PART-B"
+    value="PART-A"
+    value="PART-C"
 picked "PART-A"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-A"}
 answer: 202 {"notice":"sent — waiting for Core","pending":true,"status":"pending"}
 shows: toast info: "sent — waiting for Core"
-modal closed, re-payload="PART-B"
+modal closed, re-payload="PART-A"
 again inside the hold (re-opened, left on its first part): (no request)
 shows: toast info: "sent — waiting for Core"
 
 ## request empty 500 from a panic (Recoverer: empty body)
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-B"
+  * value="PART-B"
+    value="PART-A"
+    value="PART-C"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-B"}
 answer: 500 (empty body)
 shows: toast error: "Error: Server error (500)"
@@ -84,10 +84,10 @@ modal open, re-payload="PART-B"
 
 ## request empty, fetch rejects
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]"
-#re-payload (Request empty bin compatible with:) — modal open selectedIndex=0
-  * value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#re-payload (Request empty bin compatible with:) — modal open picker value="PART-B"
+  * value="PART-B"
+    value="PART-A"
+    value="PART-C"
 POST /api/process-nodes/2/request-empty {"payload_code":"PART-B"}
 answer: fetch rejects (TypeError: Failed to fetch)
 shows: toast error: "Error: TypeError: Failed to fetch"
@@ -96,47 +96,43 @@ modal open, re-payload="PART-B"
 ## load bin, three allowed, PART-A picked
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 opened again: (no request)
-#rb-payload (Payload) selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
   rows: UoP count="24" PN-A1=48 "left"
 POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
 answer: 200 {"status":"ok"}
 shows: toast success: "Bin loaded"
-modal closed, rb-payload=""
+modal closed, rb-payload="PART-A"
 
 ## load bin, PART-B picked (its catalog row has no manifest lines)
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 picked "PART-B": GET /api/payload/PART-B/manifest
   rows: UoP count="10" PART-B=10 ""
 POST /api/process-nodes/2/load-bin {"payload_code":"PART-B","manifest":[{"part_number":"PART-B","quantity":10,"description":""}],"uop_count":10}
 answer: 200 {"status":"ok"}
 shows: toast success: "Bin loaded"
-modal closed, rb-payload=""
+modal closed, rb-payload="PART-B"
 
 ## load bin, nothing picked
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 (no request)
 shows: toast warning: "Select a payload first"
 modal open, rb-payload=""
@@ -144,32 +140,29 @@ modal open, rb-payload=""
 ## load bin, the catalog read fails (500): codes alone, and the next open reads it again
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog (answered 500)
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B"
-    value="PART-A" label="PART-A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B"
+    value="PART-A"
+    value="PART-C"
 opened again: GET /api/payload-catalog
-#rb-payload (Payload) selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
   rows: UoP count="24" PN-A1=48 "left"
 POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
 answer: 200 {"status":"ok"}
 shows: toast success: "Bin loaded"
-modal closed, rb-payload=""
+modal closed, rb-payload="PART-A"
 
 ## load bin refused (apiLoadBin: 400)
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
   rows: UoP count="24" PN-A1=48 "left"
 POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
@@ -180,26 +173,24 @@ modal open, rb-payload="PART-A"
 ## load bin pending (202)
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
   rows: UoP count="24" PN-A1=48 "left"
 POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
 answer: 202 {"notice":"sent — waiting for Core","pending":true,"status":"pending"}
 shows: toast info: "sent — waiting for Core"
-modal closed, rb-payload=""
+modal closed, rb-payload="PART-A"
 
 ## load bin, fetch rejects
 button data-allowed-payloads="[\"PART-B\",\"PART-A\",\"PART-C\"]" data-uop-capacity="24"
 on open: GET /api/payload-catalog
-#rb-payload (Payload) — modal open selectedIndex=0
-  * value="" label="-- Select payload --"
-    value="PART-B" label="PART-B — Part <b>B</b>"
-    value="PART-A" label="PART-A — Part A"
-    value="PART-C" label="PART-C"
+#rb-payload (Payload) — modal open picker value=""
+    value="PART-B" note="Part <b>B</b>"
+    value="PART-A" note="Part A"
+    value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
   rows: UoP count="24" PN-A1=48 "left"
 POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}

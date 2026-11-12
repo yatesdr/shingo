@@ -75,6 +75,8 @@ function pageContext(extra) {
         window: { location: { reload: () => toasts.push(['reload']) } },
         toast: (msg, type) => toasts.push([type, msg]),
         hideModal: () => {},
+        // The Request empty part field (shared/part-picker.js), picked.
+        rePicker: { value: () => 'PART-A' },
         closeLoadBinModal: () => {},
         confirmHolding: async () => true,
         applyHeldReload: () => {},

@@ -420,14 +420,14 @@ async function requestEmpty(title, allowed, choose, answers, then) {
     b.rec.actions.openRequestEmptyModal.call(button(b, 2, allowed));
     const lines = ['## ' + title, 'button data-allowed-payloads=' + show(JSON.stringify(allowed)),
         options(b, 're-payload', 'modal ' + active(b, 'request-empty-modal'))];
-    if (choose) { b.doc.getElementById('re-payload').value = choose; lines.push('picked ' + show(choose)); }
+    if (choose) { pick(b, 're-payload', choose); lines.push('picked ' + show(choose)); }
     b.rec.next = answers.slice();
     await b.rec.actions.submitRequestEmpty();
     await settle();
     lines.push(...requests(b));
     answers.forEach(a => lines.push(answerLine(a)));
     lines.push('shows: ' + toasts(b).join(' | '), 'modal ' + active(b, 'request-empty-modal') +
-        ', re-payload=' + show(b.doc.getElementById('re-payload').value));
+        ', re-payload=' + show(valueOf(b, 're-payload')));
     if (then) lines.push(...(await then(b)));
     lines.push('');
     return lines.join('\n');
@@ -448,9 +448,7 @@ async function loadBin(title, allowed, choose, answers, opts) {
         lines.push('opened again: ' + requests(b).join(' '), options(b, 'rb-payload'));
     }
     if (choose) {
-        const sel = b.doc.getElementById('rb-payload');
-        sel.value = choose;
-        await b.rec.actions.onLoadPayloadChanged.call(sel);
+        pick(b, 'rb-payload', choose);
         await settle();
         lines.push('picked ' + show(choose) + ': ' + requests(b).join(' '));
         const uop = b.doc.getElementById('rb-uop-count');
@@ -463,7 +461,7 @@ async function loadBin(title, allowed, choose, answers, opts) {
     lines.push(...requests(b));
     answers.forEach(a => lines.push(answerLine(a)));
     lines.push('shows: ' + toasts(b).join(' | '), 'modal ' + active(b, 'load-bin-modal') +
-        ', rb-payload=' + show(b.doc.getElementById('rb-payload').value));
+        ', rb-payload=' + show(valueOf(b, 'rb-payload')));
     lines.push('');
     return lines.join('\n');
 }
@@ -471,9 +469,9 @@ async function loadBin(title, allowed, choose, answers, opts) {
 async function productionPartPickers() {
     const many = ['PART-B', 'PART-A', 'PART-C'];
     const L = ['# production: Request empty ("compatible with") and Load bin part pickers', ''];
-    // "COMPATIBLE WITH" SENDS ITS FIRST ALLOWED PART BY DEFAULT: the select
-    // has no placeholder, so the first code is the pick unless the person
-    // changes it (pinned as is; the brief's REQUEST EMPTY ruling reads it).
+    // "COMPATIBLE WITH" SENDS ITS FIRST ALLOWED PART BY DEFAULT: the field
+    // opens on the first code, which is the pick unless the person changes it
+    // (pinned as is; the brief's REQUEST EMPTY ruling reads it).
     L.push(await requestEmpty('request empty, three allowed, left as opened', many, null, [A['act-ok']]));
     L.push(await requestEmpty('request empty, three allowed, the second picked', many, 'PART-A', [A['act-ok']]));
     L.push(await requestEmpty('request empty, one allowed', ['PART-A'], null, [A['act-ok']]));
