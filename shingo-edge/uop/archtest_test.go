@@ -168,6 +168,8 @@ func TestArch_ActiveBinPointerWritersAreKnown(t *testing.T) {
 		// The landing's bind (Lane H, H.4) replaced the delivered bind
 		// (SetProcessNodeRuntimeForDeliveredBin, deleted with H.5).
 		".BindLandingAt(",
+		".BindLandingIn(",
+		"SetProcessNodeRuntimeWithBinAndEpochIn(",
 	}
 
 	var bad []string

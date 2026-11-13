@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -397,5 +398,200 @@ func TestBetweenBins_TheSweepKeepsADepartedSeatsPileWithinThePack(t *testing.T) 
 			assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropSweep, Qty: int64(tc.held),
 				PayloadCode: "WIDGET-A", Node: "PRODUCE-NODE", CalledBy: "edge:sweep"})
 		})
+	}
+}
+
+// ── D4: the hold lands only on a cart an order of this Edge's delivered ──
+
+// landSeat is betweenBinsSeat with a sink that writes (binds land) and a
+// standing hold of held of WIDGET-A on the unbound seat.
+func landSeat(t *testing.T, held int) (eng *Engine, sink *fakeDeltaSink, processID, nodeID, styleID, claimID int64) {
+	t.Helper()
+	eng, _, processID, nodeID, styleID, claimID = betweenBinsSeat(t, false)
+	sink = &fakeDeltaSink{db: eng.db}
+	eng.SetInventoryDeltaSink(sink)
+	if held != 0 {
+		testutil.MustNoErr(t, processes.AddPendingUOPDelta(eng.db.DB, nodeID, held, "WIDGET-A"), "the standing hold")
+	}
+	return eng, sink, processID, nodeID, styleID, claimID
+}
+
+// landAt announces bin landed at the fixture's node by order uuid.
+func landAt(eng *Engine, bin int64, uuid string, seq int64) {
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bin, CoreNodeName: "PRODUCE-NODE", Epoch: 1,
+		OrderUUID: uuid, PlacedSeq: seq})
+}
+
+// orderUUID is the uuid of the fixture's order id.
+func orderUUID(t *testing.T, eng *Engine, id int64) string {
+	t.Helper()
+	o, err := eng.db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read the order")
+	return o.UUID
+}
+
+// TestLanding_TheHoldLandsOnlyOnACartAnOrderOfOursDelivered — E4's matrix. A
+// seat stands with a hold of 5 and a cart binds. The supply leg placing here
+// (an order this Edge holds, RetrieveEmpty, which orderedPart would call "")
+// is ours: the hold stays and replays onto the cart. A hand landing, a landing
+// naming an order this Edge does not have, one naming an order that delivers
+// elsewhere, and a hand load are not: the bind drops the hold in its own
+// transaction with one no_carrier row naming the trigger. A re-landing of the
+// bin already bound is left alone (H.4).
+func TestLanding_TheHoldLandsOnlyOnACartAnOrderOfOursDelivered(t *testing.T) {
+	t.Parallel()
+	const held = 5
+	dropped := func(by string) []protocol.HoldDropped {
+		return []protocol.HoldDropped{{Reason: protocol.HoldDropNoCarrier, Qty: held, PayloadCode: "WIDGET-A",
+			Node: "PRODUCE-NODE", CalledBy: by}}
+	}
+	for _, tc := range []struct {
+		name  string
+		bind  func(t *testing.T, eng *Engine, nodeID, claimID int64)
+		kept  bool
+		drops []protocol.HoldDropped
+	}{
+		{name: "the supply leg placing here", kept: true, bind: func(t *testing.T, eng *Engine, _, claimID int64) {
+			landAt(eng, 7820, orderUUID(t, eng, p2Supply(t, eng, claimID)), 1<<40)
+		}},
+		{name: "a hand landing", drops: dropped("edge:landing"), bind: func(t *testing.T, eng *Engine, _, _ int64) {
+			landAt(eng, 7821, "", 1<<40)
+		}},
+		{name: "an order this Edge does not hold", drops: dropped("edge:landing"), bind: func(t *testing.T, eng *Engine, _, _ int64) {
+			landAt(eng, 7822, "core-recovery-set-down", 1<<40)
+		}},
+		{name: "an order that delivers elsewhere", drops: dropped("edge:landing"), bind: func(t *testing.T, eng *Engine, _, _ int64) {
+			landAt(eng, 7823, orderUUID(t, eng, p2Order(t, eng.db, protocol.StatusInTransit, "ELSEWHERE", nil, false)), 1<<40)
+		}},
+		{name: "a re-landing of the bin bound", kept: true, bind: func(t *testing.T, eng *Engine, nodeID, _ int64) {
+			seq := int64(1 << 39)
+			_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7824, Epoch: 1, PlacedSeq: &seq})
+			testutil.MustNoErr(t, err, "bin 7824 bound")
+			landAt(eng, 7824, "", 1<<40)
+		}},
+		{name: "a hand load", drops: dropped("edge:manual-load"), bind: func(t *testing.T, eng *Engine, nodeID, claimID int64) {
+			node, err := eng.db.GetProcessNode(nodeID)
+			testutil.MustNoErr(t, err, "read node")
+			bin := int64(7825)
+			eng.seatManuallyLoadedBin(node, &claimID, &bin, 1, 0, "WIDGET-A")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, _, nodeID, _, claimID := landSeat(t, held)
+			tc.bind(t, eng, nodeID, claimID)
+			rt := runtimeOf(t, eng, nodeID)
+			if rt.ActiveBinID == nil {
+				t.Fatal("the cart did not bind")
+			}
+			want := int64(0)
+			if tc.kept {
+				want = held
+			}
+			if rt.PendingUOPDelta != want {
+				t.Errorf("hold after the bind = %d, want %d", rt.PendingUOPDelta, want)
+			}
+			assertDrops(t, eng.db, tc.drops...)
+		})
+	}
+}
+
+// TestLanding_ARefusedBindWritesNoRow — a stranger's landing that the seat
+// refuses (a placement stamp older than the one it last bound) binds nothing,
+// and the hold drop and its row ride the bind's transaction, so neither is
+// written: the hold of 5 stands and no row is queued.
+func TestLanding_ARefusedBindWritesNoRow(t *testing.T) {
+	t.Parallel()
+	eng, _, _, nodeID, _, _ := landSeat(t, 0)
+	seq := int64(1 << 41)
+	_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7860, Epoch: 1, PlacedSeq: &seq})
+	testutil.MustNoErr(t, err, "bin 7860 lands at a newer stamp")
+	testutil.MustNoErr(t, eng.carrierLeft(nodeID, "PRODUCE-NODE"), "and leaves")
+	testutil.MustNoErr(t, processes.AddPendingUOPDelta(eng.db.DB, nodeID, 5, "WIDGET-A"), "the standing hold")
+
+	landAt(eng, 7861, "", 1<<40)
+	rt := runtimeOf(t, eng, nodeID)
+	if rt.ActiveBinID != nil || rt.PendingUOPDelta != 5 {
+		t.Errorf("seat = bin %v hold %d, want unbound with the hold of 5: the refused bind writes nothing", rt.ActiveBinID, rt.PendingUOPDelta)
+	}
+	assertDrops(t, eng.db)
+}
+
+// TestLanding_TheNormalSwapIsUnchanged — E9.2 (D7): a full strict cart with a
+// pile of 6 beside it is released (the release's seat write is carrierLeft;
+// the hold is not touched), 4 strokes come in the gap, and the supply leg
+// lands: an order this Edge holds, RetrieveEmpty, placing here. The first
+// stroke after it charges 11 onto the new cart, and no row is written.
+func TestLanding_TheNormalSwapIsUnchanged(t *testing.T) {
+	t.Parallel()
+	eng, sink, processID, nodeID, styleID, claimID := strictSeatOn(t, testEngineDB(t), betweenBinsPack, betweenBinsPack, 6, "WIDGET-A", true)
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: eng.db})
+	supply := p2Supply(t, eng, claimID)
+	_, err := eng.db.DB.Exec(`UPDATE orders SET retrieve_empty=1 WHERE id=?`, supply)
+	testutil.MustNoErr(t, err, "the supply leg brings an empty")
+	if o, err := eng.db.GetOrder(supply); err != nil || !o.RetrieveEmpty {
+		t.Fatalf("fixture: the supply leg is not a RetrieveEmpty order (%v)", err)
+	}
+	testutil.MustNoErr(t, eng.carrierLeft(nodeID, "PRODUCE-NODE"), "RELEASE")
+	strokes(eng, processID, styleID, 4)
+	assertSeat(t, eng, nodeID, 0, 10, "WIDGET-A")
+
+	landAt(eng, 7830, orderUUID(t, eng, supply), 1<<40)
+	eng.SetInventoryDeltaSink(sink)
+	charSPTick(eng, processID, styleID, 1)
+	assertSeat(t, eng, nodeID, 11, 0, "")
+	if len(sink.binCalls) != 1 || emitted(t, sink) != 11 {
+		t.Errorf("deltas = %+v, want one produce_tick of 11", sink.binCalls)
+	}
+	assertDrops(t, eng.db)
+}
+
+// TestLanding_ALateRequestIsAProperty — E9.3, over a range rather than a point:
+// a pile of b beside the full cart, the cart released, g strokes in the gap,
+// then the supply's cart lands. Within one pack (b + g <= 132) the new cart
+// takes b + g with its first stroke, up to its pack (at b + g = 132 the first
+// stroke is held beside it), with no row; past it there is exactly one
+// hold_cap row of the pile, and the new cart starts at 0 with counting resumed.
+func TestLanding_ALateRequestIsAProperty(t *testing.T) {
+	t.Parallel()
+	for _, b := range []int{0, 55, 115, 131, 132} {
+		for _, g := range []int{1, 14, 132} {
+			t.Run(fmt.Sprintf("b%d_g%d", b, g), func(t *testing.T) {
+				t.Parallel()
+				eng, sink, processID, nodeID, styleID, claimID := strictSeatOn(t, testEngineDB(t), betweenBinsPack, betweenBinsPack, b, "WIDGET-A", true)
+				eng.SetInventoryDeltaSink(&fakeDeltaSink{db: eng.db})
+				testutil.MustNoErr(t, eng.carrierLeft(nodeID, "PRODUCE-NODE"), "RELEASE")
+				strokes(eng, processID, styleID, g)
+				supply := p2Supply(t, eng, claimID)
+				landAt(eng, 7840, orderUUID(t, eng, supply), 1<<40)
+				eng.SetInventoryDeltaSink(sink)
+				charSPTick(eng, processID, styleID, 1)
+
+				if b+g <= betweenBinsPack {
+					count := min(b+g+1, betweenBinsPack)
+					holdPart := ""
+					if b+g+1 > count {
+						holdPart = "WIDGET-A"
+					}
+					assertSeat(t, eng, nodeID, count, int64(b+g+1-count), holdPart)
+					assertDrops(t, eng.db)
+					return
+				}
+				rt := runtimeOf(t, eng, nodeID)
+				if rt.RemainingUOPCached != 1 || rt.PendingUOPDelta != 0 || rt.HoldStopped {
+					t.Errorf("new cart = count %d hold %d stopped %t, want 1 / 0 / counting", rt.RemainingUOPCached,
+						rt.PendingUOPDelta, rt.HoldStopped)
+				}
+				var capRows []protocol.HoldDropped
+				for _, d := range holdDrops(t, eng.db) {
+					if d.Reason == protocol.HoldDropHoldCap {
+						capRows = append(capRows, d)
+					}
+				}
+				if len(capRows) != 1 || capRows[0].Qty <= 0 || capRows[0].Qty > betweenBinsPack {
+					t.Errorf("hold_cap rows = %+v, want exactly one of the pile (at most one pack)", capRows)
+				}
+			})
+		}
 	}
 }

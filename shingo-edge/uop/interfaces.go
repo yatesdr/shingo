@@ -30,14 +30,14 @@ type Ticker interface {
 // intent is visible at the call site.
 type SlotWriter interface {
 	BindActiveBin(nodeID, binID int64, deltaEpoch int64) error
-	BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
+	BindFromCore(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 	BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error)
 	ClearActiveBin(nodeID int64) error
 	LeaveAtPickup(nodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetClaim(nodeID int64, activeClaimID *int64) error
 	SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error
-	Land(nodeID int64, l processes.LandingBind) (landed, activePull bool, err error)
-	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
+	Land(ex processes.DBTX, nodeID int64, l processes.LandingBind) (landed, activePull bool, err error)
+	ManualLoad(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 }
 
 // Capturer — operator release-click capture (the piles' gain and the bin's

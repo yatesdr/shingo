@@ -164,8 +164,10 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 // at the call site. The identity is not written here; each caller records it
 // through the doorway (recordLinesideCarrier): the uop-adjustment arms record
 // UNKNOWN where a new carrier arrived (an announcement carries no payload).
-func (m *Mutator) BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
-	return m.rw.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
+// ex is the store, or the transaction of a person's count that clears the
+// hold with it (D5).
+func (m *Mutator) BindFromCore(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+	return m.rw.SetProcessNodeRuntimeWithBinAndEpochIn(ex, nodeID, activeClaimID, binID, deltaEpoch, uop)
 }
 
 // BindStagedUnlessDeparted binds a staged carrier into a slot read as empty,
@@ -251,8 +253,9 @@ func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop 
 // It replaced OnDelivered, which bound from order.delivered with WHERE node
 // only and wrote Core's arrival count over the ticks the line had counted
 // since the carrier landed (H.5; TestPinH5_LandingThenDeliveredKeepsTheTicks).
-func (m *Mutator) Land(nodeID int64, l processes.LandingBind) (landed, activePull bool, err error) {
-	return m.rw.BindLandingAt(nodeID, l)
+// ex is the store, or the transaction of a landing that ends a hold (D4).
+func (m *Mutator) Land(ex processes.DBTX, nodeID int64, l processes.LandingBind) (landed, activePull bool, err error) {
+	return m.rw.BindLandingIn(ex, nodeID, l)
 }
 
 // ManualLoad atomically writes claim + active_bin_id + epoch + count
@@ -273,6 +276,9 @@ func (m *Mutator) Land(nodeID int64, l processes.LandingBind) (landed, activePul
 // response (Core bumps it atomically in SetForProduction). It seeds
 // active_bin_epoch so subsequent BinUOPDeltas carry the right
 // generation for Core's epoch-aware dedup.
-func (m *Mutator) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
-	return m.rw.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
+//
+// ex is the store, or the transaction of a hand load that drops the seat's
+// standing hold with it (D4: a cart no order of this Edge's delivered).
+func (m *Mutator) ManualLoad(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+	return m.rw.SetProcessNodeRuntimeWithBinAndEpochIn(ex, nodeID, activeClaimID, binID, deltaEpoch, uop)
 }

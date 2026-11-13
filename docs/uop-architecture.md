@@ -209,7 +209,9 @@ resets the hold to zero. The active pile — location-bound at the slot — cove
 gap. A produce seat never sets aside more than one pack (the claim's `UOPCapacity`), whether a carrier is coming or
 not: the stroke that would pass it throws the whole pile away (a `hold_dropped` `hold_cap` row) and the seat sets
 nothing aside until a cart binds there; those strokes reach Core as one `no_bin` row per no-cart stretch (SPR
-ALN_011, 2026-11-12).
+ALN_011, 2026-11-12). The hold replays only onto a cart delivered by an order the Edge holds that places a bin at the
+node; any other bind (a cart placed or recorded by hand, a hand load, a set-down naming an order the Edge does not
+have) drops the standing hold in the bind's own transaction with one `no_carrier` row, and ends the no-cart stretch.
 
 ## Release dispositions
 

@@ -63,10 +63,12 @@ type writeActiveBinIDer interface {
 	LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
+	SetProcessNodeRuntimeWithBinAndEpochIn(ex processes.DBTX, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 	SetProcessNodeActiveClaim(processNodeID int64, activeClaimID *int64) error
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
 	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, bool, error)
+	BindLandingIn(ex processes.DBTX, processNodeID int64, l processes.LandingBind) (bool, bool, error)
 	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
 }
 
@@ -184,13 +186,13 @@ type fakeLandCall struct {
 
 // Land is the landing verb (Lane H, H.4; uop.Mutator.Land), which replaced
 // OnDelivered: it records the call and binds through the real statement.
-func (s *fakeDeltaSink) Land(nodeID int64, l processes.LandingBind) (bool, bool, error) {
+func (s *fakeDeltaSink) Land(ex processes.DBTX, nodeID int64, l processes.LandingBind) (bool, bool, error) {
 	s.mu.Lock()
 	s.landCalls = append(s.landCalls, fakeLandCall{nodeID, l})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.BindLandingAt(nodeID, l)
+		return db.BindLandingIn(ex, nodeID, l)
 	}
 	return true, true, nil
 }
@@ -203,25 +205,25 @@ type fakeManualLoadCall struct {
 	UOP     int
 }
 
-func (s *fakeDeltaSink) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+func (s *fakeDeltaSink) ManualLoad(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
 	s.mu.Lock()
 	s.manualLoadCalls = append(s.manualLoadCalls, fakeManualLoadCall{nodeID, activeClaimID, binID, deltaEpoch, uop})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
+		return db.SetProcessNodeRuntimeWithBinAndEpochIn(ex, nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return nil
 }
 
 // BindFromCore records and delegates like ManualLoad (the same statement).
-func (s *fakeDeltaSink) BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+func (s *fakeDeltaSink) BindFromCore(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
 	s.mu.Lock()
 	s.bindFromCoreCalls = append(s.bindFromCoreCalls, fakeManualLoadCall{nodeID, activeClaimID, binID, deltaEpoch, uop})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
+		return db.SetProcessNodeRuntimeWithBinAndEpochIn(ex, nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return nil
 }

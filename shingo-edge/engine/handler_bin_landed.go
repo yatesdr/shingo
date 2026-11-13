@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -33,10 +34,21 @@ import (
 // not, Core's stands: it is the bin's record, and the one Core checks every
 // count against. A carrier is never recorded as the previous occupant's part.
 //
+// THE HOLD LANDS ONLY ON A CART AN ORDER OF THIS EDGE'S DELIVERED (D4). The
+// landing is ours when it names an order this Edge holds (one it authored, or
+// one Core authored and projected to it) that places a bin at this node
+// (strangerBy); the seat's hold then replays onto the cart as always. Any
+// other landing of another carrier, a cart placed or recorded by hand or a
+// recovery set-down naming an order this Edge does not have, drops the
+// standing hold in the bind's own transaction (bindEndingHold). That is not
+// orderedPart's question: a swap's supply leg brings an empty, for which
+// orderedPart answers "" and strangerBy answers ours.
+//
 // Pi cost per landing at a seat: the node read, the order read (a landing
-// naming one), the runtime row's ensure, the bind, the identity write and the
-// placement settle (settleCellPlacement's reads); a landing that names no part
-// adds the runtime row and its claim (the assumed part).
+// naming one), the runtime row's ensure, the runtime read under the count lock
+// (bindEndingHold), the bind, the identity write and the placement settle
+// (settleCellPlacement's reads); a landing that names no part adds the runtime
+// row and its claim (the assumed part).
 func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 	node, err := e.db.GetProcessNodeByCoreNodeName(l.CoreNodeName)
 	if err != nil || node == nil {
@@ -47,8 +59,9 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 		return
 	}
 	seq := l.PlacedSeq
+	order := e.landingOrder(l.OrderUUID)
 	carrier, src := domain.UnknownCarrier(), domain.CarrierFromLanding
-	switch part := e.orderedPart(l); {
+	switch part := orderedPart(order, l); {
 	case part != "" && (!l.PayloadKnown || l.PayloadCode == part):
 		carrier, src = domain.KnownCarrier(domain.LinesidePayloadCode(part)), domain.CarrierFromDelivery
 	case l.PayloadKnown:
@@ -56,22 +69,97 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 	}
 	e.landCarrier(node, processes.LandingBind{
 		BinID: l.BinID, Epoch: l.Epoch, Count: l.Count, PlacedSeq: &seq,
-	}, carrier, src, "landing "+l.OrderUUID)
+	}, carrier, src, "landing "+l.OrderUUID, e.strangerBy(order, l.CoreNodeName))
+}
+
+// landingOrder is the order a landing names, when this Edge holds it; nil for
+// none, an order this Edge does not have, or one it cannot read.
+func (e *Engine) landingOrder(orderUUID string) *orders.Order {
+	if orderUUID == "" {
+		return nil
+	}
+	o, err := e.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		return nil
+	}
+	return o
 }
 
 // orderedPart is the part the landing's order delivered to the node it
 // landed at; "" when the landing names no order, the order is not this
 // Edge's, it delivers elsewhere (the evacuation leg of a swap) or it brought
 // an empty.
-func (e *Engine) orderedPart(l protocol.BinLanded) string {
-	if l.OrderUUID == "" {
-		return ""
-	}
-	o, err := e.db.GetOrderByUUID(l.OrderUUID)
-	if err != nil || o == nil || o.RetrieveEmpty || o.DeliveryNode != l.CoreNodeName {
+func orderedPart(o *orders.Order, l protocol.BinLanded) string {
+	if o == nil || o.RetrieveEmpty || o.DeliveryNode != l.CoreNodeName {
 		return ""
 	}
 	return o.PayloadCode
+}
+
+// strangerBy answers D4 for a bind at coreNode by order o: "" when the cart is
+// ours (an order this Edge holds, which places a bin at the node:
+// orderPlacesBinAtAny, which fails closed to ours on steps it cannot read),
+// else the actor a dropped hold's row names (holdDropByLanding).
+func (e *Engine) strangerBy(o *orders.Order, coreNode string) string {
+	if o != nil && e.orderPlacesBinAtAny(o, []string{coreNode}) {
+		return ""
+	}
+	return holdDropByLanding
+}
+
+// The actors a hold_dropped row names for a bind that ends a hold (D4).
+const (
+	holdDropByLanding    = "edge:landing"
+	holdDropByManualLoad = "edge:manual-load"
+)
+
+// bindEndingHold runs a bind at the seat with what it ends, in the bind's own
+// transaction (writeSeatWithDrops; no transaction when it ends nothing):
+//
+//   - a bind of another carrier than the one bound by a stranger (by names
+//     the actor; "" for a cart an order of this Edge's delivered) drops the
+//     seat's standing hold (processes.DropSeatHold) with one hold_dropped
+//     (no_carrier) row naming by (D4);
+//   - any bind of another carrier ends the no-cart stretch: its rows ride the
+//     same transaction, naming stretchBy (D6).
+//
+// binID is the carrier the bind names (nil: none). bind is the bind statement
+// on ex and reports whether it landed; a bind that does not land writes
+// nothing, row or hold. One runtime read, under the lock. A re-landing of the
+// bin already bound (H.4) ends nothing. Caller holds countMu.
+func (e *Engine) bindEndingHold(node *processes.Node, binID *int64, by, stretchBy string,
+	bind func(processes.DBTX) (bool, error)) (bool, error) {
+	rt, err := e.db.GetProcessNodeRuntime(node.ID)
+	if err != nil {
+		rt = nil
+	}
+	another := rt == nil || rt.ActiveBinID == nil || binID == nil || *rt.ActiveBinID != *binID
+	var rows, noBin []protocol.HoldDropped
+	var pile int64
+	if another && by != "" && rt != nil && rt.PendingUOPDelta != 0 {
+		pile = rt.PendingUOPDelta
+		rows = append(rows, protocol.HoldDropped{PayloadCode: rt.PendingUOPPayload, Qty: pile,
+			Reason: protocol.HoldDropNoCarrier, CalledBy: by})
+	}
+	if another {
+		noBin = e.noBinRows(node.ID)
+		for i := range noBin {
+			noBin[i].CalledBy = stretchBy
+		}
+	}
+	ok, err := e.writeSeatWithDrops(node, append(rows, noBin...), func(ex processes.DBTX) (bool, error) {
+		if ok, err := bind(ex); err != nil || !ok || pile == 0 {
+			return ok, err
+		}
+		return processes.DropSeatHold(ex, node.ID, pile)
+	})
+	if err == nil && ok {
+		e.endNoBinEpisode(node.ID, noBin)
+		if pile != 0 {
+			e.endUnheldEpisode(node.ID)
+		}
+	}
+	return ok, err
 }
 
 // landCarrier is the landing verb's engine half: the bind (uop.Mutator.Land,
@@ -86,11 +174,15 @@ func (e *Engine) orderedPart(l protocol.BinLanded) string {
 // of the pickup and the placement lands second completes the departure
 // (leg_departure.go). The Bound arm fired it; the landing now does.
 //
+// by is strangerBy's answer for the cart: "" when an order of this Edge's
+// delivered it, else the actor of the hold drop the bind writes (D4,
+// bindEndingHold).
+//
 // Callers: HandleBinLanded (stamped), and for one release an older Core's
 // Bound (bindAdjustmentFromCore) and delivered (landFromOldCore), unstamped
 // (H.7).
 func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carrier domain.LinesideCarrier,
-	src domain.CarrierSource, why string) bool {
+	src domain.CarrierSource, why, by string) bool {
 	if e.inventoryDelta == nil {
 		return false
 	}
@@ -103,7 +195,12 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 	// seat before the bind is refused by its own WHERE and re-applied to the
 	// carrier that landed (applyHoldAndReplay).
 	e.countMu.Lock()
-	landed, activePull, err := e.inventoryDelta.Land(node.ID, l)
+	var activePull bool
+	landed, err := e.bindEndingHold(node, &l.BinID, by, holdDropByLanding, func(ex processes.DBTX) (bool, error) {
+		landed, ap, err := e.inventoryDelta.Land(ex, node.ID, l)
+		activePull = ap
+		return landed, err
+	})
 	if landed && !activePull {
 		e.lightDarkSequentialPair(node)
 	}

@@ -300,7 +300,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	if e.inventoryDelta == nil {
 		return
 	}
-	if err := e.inventoryDelta.BindFromCore(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
+	if err := e.inventoryDelta.BindFromCore(e.db.DB, node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
 		log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
 		return
 	}
@@ -336,5 +336,5 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 func (e *Engine) bindAdjustmentFromCore(node *processes.Node, adj protocol.UOPAdjustment) {
 	e.landCarrier(node, processes.LandingBind{
 		BinID: adj.BinID, Epoch: adj.Epoch, Count: adj.NewRemaining, MayDisplace: true,
-	}, domain.UnknownCarrier(), domain.CarrierFromLanding, "an older Core's Bound, actor "+adj.Actor)
+	}, domain.UnknownCarrier(), domain.CarrierFromLanding, "an older Core's Bound, actor "+adj.Actor, holdDropByLanding)
 }

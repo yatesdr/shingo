@@ -44,7 +44,8 @@ type runtimeWriter interface {
 	// atomically. Used by ManualLoad (operator imprint via Core's LoadBin
 	// response) and BindFromCore (Core's announcement of the carrier at
 	// the slot).
-	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
+	// It runs on ex: a transaction when the bind ends a hold (D4, D5).
+	SetProcessNodeRuntimeWithBinAndEpochIn(ex processes.DBTX, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 
 	// SetProcessNodeActiveClaim writes active_claim_id and nothing else.
 	// Used by SetClaim — the changeover's claim advances (staged delivery,
@@ -65,8 +66,9 @@ type runtimeWriter interface {
 
 	// BindLandingAt is the landing's bind (Lane H, H.4): its refusals are
 	// its WHERE. Reports whether it landed, and the seat's active_pull as
-	// the bind left it. Used by Land.
-	BindLandingAt(processNodeID int64, l processes.LandingBind) (landed, activePull bool, err error)
+	// the bind left it. Used by Land, on ex: a transaction when the landing
+	// ends a hold (D4).
+	BindLandingIn(ex processes.DBTX, processNodeID int64, l processes.LandingBind) (landed, activePull bool, err error)
 }
 
 // bucketStore is the lineside pile surface uop verbs need.

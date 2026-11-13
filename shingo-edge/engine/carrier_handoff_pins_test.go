@@ -606,7 +606,9 @@ func uopTick(binID int64, n int) uop.TickEvent {
 
 // TestControlH_ProduceTickWithNoBinIsHeldAndReplayed — CONTROL: a produce tick
 // at a seat with no carrier, while the next carrier is coming (a live order
-// placing it), is held, and replays onto that carrier.
+// placing it), is held, and replays onto that carrier when the order's
+// landing binds it (D4: the hold lands only on a cart an order of this Edge's
+// delivered; an older Core's Bound, which names no order, drops it).
 func TestControlH_ProduceTickWithNoBinIsHeldAndReplayed(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -614,14 +616,16 @@ func TestControlH_ProduceTickWithNoBinIsHeldAndReplayed(t *testing.T) {
 	eng.wireEventHandlers()
 	processID, nodeID, styleID, claimID := seedProduceNode(t, db, protocol.SwapModeSimple)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, nil, 0), "empty the seat")
-	p2Supply(t, eng, claimID)
+	supply, err := db.GetOrder(p2Supply(t, eng, claimID))
+	testutil.MustNoErr(t, err, "read the supply leg")
 
 	tickConsume(eng, processID, styleID, 1)
 	tickConsume(eng, processID, styleID, 1)
 	if got := runtimeOf(t, eng, nodeID).PendingUOPDelta; got != 2 {
 		t.Fatalf("held = %d, want 2", got)
 	}
-	landBound(eng, "PRODUCE-NODE", 8805, 1, 0)
+	eng.HandleBinLanded(protocol.BinLanded{BinID: 8805, CoreNodeName: "PRODUCE-NODE", Epoch: 1,
+		OrderUUID: supply.UUID, PlacedSeq: 1 << 40})
 	tickConsume(eng, processID, styleID, 1)
 
 	rt := runtimeOf(t, eng, nodeID)

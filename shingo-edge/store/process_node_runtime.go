@@ -93,6 +93,12 @@ func (db *DB) SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeCl
 	return processes.SetRuntimeWithBinAndEpoch(db.DB, processNodeID, activeClaimID, activeBinID, deltaEpoch, remainingUOP)
 }
 
+// SetProcessNodeRuntimeWithBinAndEpochIn is the same statement on ex, a
+// transaction when the bind ends a hold (D4, D5) and *sql.DB otherwise.
+func (db *DB) SetProcessNodeRuntimeWithBinAndEpochIn(ex processes.DBTX, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error {
+	return processes.SetRuntimeWithBinAndEpoch(ex, processNodeID, activeClaimID, activeBinID, deltaEpoch, remainingUOP)
+}
+
 // SetProcessNodeCountFenced writes a fenced count for the carrier bound at
 // the slot. Reports whether it landed. See processes.SetCountFenced.
 func (db *DB) SetProcessNodeCountFenced(processNodeID, binID, deltaEpoch int64, remainingUOP int, asOfSeq int64) (bool, error) {
@@ -112,6 +118,12 @@ func (db *DB) BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *in
 // active_pull as the bind left it. See processes.BindLanding.
 func (db *DB) BindLandingAt(processNodeID int64, l processes.LandingBind) (landed, activePull bool, err error) {
 	return processes.BindLanding(db.DB, processNodeID, l)
+}
+
+// BindLandingIn is BindLandingAt on ex, a transaction when the landing ends a
+// hold (D4) and *sql.DB otherwise.
+func (db *DB) BindLandingIn(ex processes.DBTX, processNodeID int64, l processes.LandingBind) (landed, activePull bool, err error) {
+	return processes.BindLanding(ex, processNodeID, l)
 }
 
 // SetProcessNodeRuntimeLinesidePayload records the identity of the carrier

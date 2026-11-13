@@ -481,9 +481,19 @@ func (e *Engine) confirmDeliveredAt(coreNodeName string, retrieveEmpty bool, fin
 // behind it, so their selection is not a weaker answer than Core's — it is the
 // only one. They chose payloadCode and it was validated against what this node
 // accepts, which makes it exactly the statement the resident identity is for.
+//
+// A HAND LOAD IS NOT A CART AN ORDER OF THIS EDGE'S DELIVERED (D4): the seat's
+// standing hold is dropped in the load's own transaction, with one
+// hold_dropped (no_carrier) row by edge:manual-load, and the no-cart stretch
+// ends with it (bindEndingHold). Under the count lock, as every seat write.
 func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeBinID *int64, deltaEpoch int64, uopCount int, payloadCode string) {
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ManualLoad(node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount); err != nil {
+		e.countMu.Lock()
+		_, err := e.bindEndingHold(node, activeBinID, holdDropByManualLoad, holdDropByManualLoad, func(ex processes.DBTX) (bool, error) {
+			return true, e.inventoryDelta.ManualLoad(ex, node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount)
+		})
+		e.countMu.Unlock()
+		if err != nil {
 			log.Printf("bin_ops: set runtime for node %d: %v", node.ID, err)
 		}
 	}

@@ -988,8 +988,10 @@ func epochArgs(activeBinID any, deltaEpoch int64) []any {
 //
 // The epoch is subject to epochAssignOnBind; the other three columns are
 // written unconditionally. It clears hold_stopped: a bind ends a produce seat's
-// stop (D3), and counting resumes onto the carrier.
-func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
+// stop (D3), and counting resumes onto the carrier. db is a DBTX so a hand
+// load (D4) or a person's count (D5) shares a transaction with the hold's
+// drop and its row.
+func SetRuntimeWithBinAndEpoch(db DBTX, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
 	args := []any{activeBinID, remainingUOPCached, activeClaimID, activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID)
@@ -1120,8 +1122,10 @@ type LandingBind struct {
 //
 // activePull is the seat's active_pull as the bind left it (the statement's
 // RETURNING, no read of its own), for the landing's relight of a dark
-// sequential pair (engine lightDarkSequentialPair).
-func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (landed, activePull bool, err error) {
+// sequential pair (engine lightDarkSequentialPair). db is a DBTX so a bind
+// that ends a hold (D4: a cart no order of this Edge's delivered) shares a
+// transaction with the hold's drop and its row (engine landSeat).
+func BindLanding(db DBTX, processNodeID int64, l LandingBind) (landed, activePull bool, err error) {
 	var seq any
 	if l.PlacedSeq != nil {
 		seq = *l.PlacedSeq
@@ -1505,6 +1509,18 @@ func SetSeatHold(db DBTX, processNodeID int64, hold int, part string, seat SeatA
 		pending_uop_delta = ?, pending_uop_payload = ?, updated_at=datetime('now')
 		WHERE `+seatUnchangedSQL,
 		append([]any{hold, part}, seatArgs(processNodeID, seat)...)...)
+	return oneRow(res, err)
+}
+
+// DropSeatHold drops a seat's standing hold of pile, which the caller read
+// under the engine's count lock: a bind no order of this Edge's placed (D4) or
+// a person's count (D5) ends it. It runs on the transaction of that bind or
+// count, beside the hold_dropped row that records it; a hold that is no longer
+// pile refuses (false), and the caller rolls the whole transaction back.
+func DropSeatHold(db DBTX, processNodeID, pile int64) (bool, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		pending_uop_delta = 0, pending_uop_payload = '', updated_at=datetime('now')
+		WHERE process_node_id=? AND pending_uop_delta=?`, processNodeID, pile)
 	return oneRow(res, err)
 }
 
