@@ -1,6 +1,6 @@
 ## Picker
 
-Verified against: 69ffb314
+Verified against: 74c3eb77
 
 `shared/picker.js` is the picker's shell: a search box, the rows it filters,
 the selection as chips, and an **Add and use** slot. It knows no node and no

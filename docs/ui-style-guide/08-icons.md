@@ -1,6 +1,6 @@
 ## Icons
 
-Verified against: 51489c78
+Verified against: 74c3eb77
 
 **No emoji, ever.** Emoji render inconsistently across platforms, can't take
 `currentColor`, and drift from the monochrome look. Use a vendored icon or plain
