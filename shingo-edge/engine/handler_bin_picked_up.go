@@ -327,6 +327,24 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 			held, part, bp.BinID, rt.PendingUOPDelta, rt.PendingUOPPayload)
 		return 0, ""
 	}
+	if rt.HoldStopped {
+		// D3: a stopped seat sets nothing aside; they join the no-cart stretch.
+		e.noteNoBinStroke(node.ID, part, held)
+		return 0, ""
+	}
+	if capN := holdCap(claim); capN > 0 && int(rt.PendingUOPDelta)+held > capN {
+		// D2: past one pack, the pile is thrown away whole and the seat stops,
+		// in the throw-away's own transaction before the leave; the ticks join
+		// the no-cart stretch.
+		seat := processes.SeatAsReadOf(rt)
+		if committed, _ := e.throwAwayPile(node, int(rt.PendingUOPDelta), rt.PendingUOPPayload, part, held, nil, func(ex processes.DBTX) (bool, error) {
+			return processes.SetSeatHold(ex, node.ID, 0, "", seat)
+		}); !committed {
+			log.Printf("bin_picked_up: %d of part %s counted after the lift of bin %d not held -- the throw-away "+
+				"past one pack did not land", held, part, bp.BinID)
+		}
+		return 0, ""
+	}
 	log.Printf("bin_picked_up: bin %d lifted at %s (generation %d -> %d): %d counted after the lift held for the next carrier of %s",
 		bp.BinID, bp.PickedUpAt.Format("15:04:05.000"), rt.ActiveBinEpoch, bp.Epoch, held, part)
 	return held, part

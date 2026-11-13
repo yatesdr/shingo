@@ -617,14 +617,21 @@ func (e *Engine) secondLitSide(tick tickScope, p *abPairTick, node *processes.No
 // one is, the rules above hold it. If none is, nothing will take the hold: the
 // tick is logged and not held, and a standing pile at the seat is dropped with
 // a hold_dropped row (dropPileAndLogTick). The strokes logged are counted in
-// memory and sent as one hold_dropped (no_bin) row when the episode ends, in
+// memory and sent as one hold_dropped (no_bin) row when the stretch ends, in
 // the transaction of the write that ends it. The one exception is a seat
 // between bins (betweenBins): its last carrier departed through Shingo, so the
-// tick is held with none coming, up to one pack; the stroke past the pack
-// drops the pile and clears the departure, and the seat logs from there. The
-// stranded monitor's produce arm (sweepProduceHold) drops such a pile between
-// ticks and at boot, except a hold between bins, and ends an episode whose
-// seat has since bound.
+// tick is held with none coming. The stranded monitor's produce arm
+// (sweepProduceHold) drops such a pile between ticks and at boot, except a
+// hold between bins, and ends a stretch whose seat has since bound.
+//
+// ── NEVER MORE THAN ONE PACK, CARRIER COMING OR NOT (D1-D3) ─────────────
+//
+// Every arm holds at most holdCap (the claim's UOPCapacity). The stroke that
+// would take the pile past it throws the whole pile away and stops the seat
+// (throwAwayPile, hold_stopped); a stopped seat sets nothing aside until a
+// cart binds, and its strokes join the no-cart stretch. A carrier "coming"
+// does not lift the cap: on 2026-11-11/12 at SPR ALN_011 a stuck supply leg
+// kept one coming all night and the hold reached 794.
 //
 // ── A STRICT PRODUCE SEAT STOPS AT THE PACK (NodeClaim.StrictPackApplies) ─
 //
@@ -666,7 +673,9 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	if held == 0 {
 		e.endUnheldEpisode(node.ID)
 	}
-	if rt.ActiveBinID != nil {
+	if rt.ActiveBinID != nil && !rt.HoldStopped {
+		// A stopped seat keeps its note (holdNoteStopped) across bound strokes
+		// until a bind clears the stop, so it is logged once, not per stroke.
 		e.endCarrierNote(node.ID)
 	}
 	if rt.ActiveBinID != nil && parts.pack > 0 {
@@ -698,12 +707,28 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	if input == 0 {
 		return false, 0, true
 	}
+	if rt.HoldStopped {
+		// D3: after a throw-away the seat sets nothing aside, carrier coming or
+		// not, until a cart binds here. The stroke joins the no-cart stretch.
+		e.noteCarrier(node, holdNoteStopped, fmt.Sprintf("%d of part %s not set aside -- the seat threw away a pile "+
+			"past one pack and holds nothing until a cart binds here", input, parts.tick))
+		e.noteNoBinStroke(node.ID, parts.tick, input)
+		return false, 0, true
+	}
 	if !e.carrierComing(node) {
-		if hold, pastPack := betweenBins(rt, parts.tick, parts.holdCap, input); !hold {
-			return e.dropPileAndLogTick(node, rt, input, parts.tick, pastPack)
+		hold, pastPack := betweenBins(rt, parts.tick, parts.holdCap, input)
+		if pastPack {
+			return e.throwAwayUnbound(node, rt, input, parts.tick, true)
+		}
+		if !hold {
+			return e.dropPileAndLogTick(node, rt, input, parts.tick)
 		}
 	}
 	if held == 0 || holdIsOf(rt.PendingUOPPayload, parts.hold) {
+		if parts.holdCap > 0 && held+input > parts.holdCap {
+			// D1/D2 with a carrier coming: the pile never grows past one pack.
+			return e.throwAwayUnbound(node, rt, input, parts.tick, false)
+		}
 		noBin := e.noBinRows(node.ID)
 		ok, err := e.writeSeatWithDrops(node, noBin, func(ex processes.DBTX) (bool, error) {
 			return processes.HoldSeatUOP(ex, node.ID, input, parts.hold, seat)
@@ -934,12 +959,15 @@ func strictPackFor(claim *processes.NodeClaim) int {
 const holdDropByTick = "edge:tick"
 
 // strictSplit is one strict tick's division of the seat: what is offered to
-// the bin (avail), what the bin takes (charge), the hold the seat keeps (hold
-// of holdPart), and what fits nowhere (drops, one per reason).
+// the bin (avail), what the bin takes (charge), the pile the seat keeps (hold
+// of holdPart, before the stroke's rest joins it), the stroke's part no bin
+// takes (rest), whether the pile with that rest would pass one pack (past) and
+// what was dropped on the way (drops).
 type strictSplit struct {
-	avail, charge, hold int
-	holdPart            string
-	drops               []protocol.HoldDropped
+	avail, charge, hold, rest int
+	holdPart                  string
+	foreign, past             bool
+	drops                     []protocol.HoldDropped
 }
 
 // splitStrict divides one tick on a bound strict seat, from the seat as read:
@@ -951,40 +979,38 @@ type strictSplit struct {
 // down.
 //
 //   - A hold of ANOTHER part (held != 0, !holdIsOf) is not offered and not
-//     relabelled: the tick charges to room, and what of the tick does not fit
-//     is dropped (foreign_hold). The hold stays for its own part's bin.
-//   - A hold of the part LARGER THAN THE PACK is the backstop: it is offered
-//     nothing and dropped whole (backstop), and the tick charges to room alone.
-//   - Otherwise the hold is offered with the tick, and what the bin does not
-//     take stays held, its part the tick's. A partial replay keeps its
-//     remainder; the hold clears only when the bin took all of it.
-//
-// In the last two cases the hold left behind is capped at one pack (hold_cap):
-// a bin at its pack with no carrier coming would otherwise grow it without
-// bound.
+//     relabelled (foreign): the tick charges to room, and the rest is the
+//     caller's (chargeStrict drops it as foreign_hold). The hold stays for its
+//     own part's bin.
+//   - A hold of the part LARGER THAN THE PACK is the backstop, kept as
+//     insurance for a pack lowered mid-hold: it is offered nothing and dropped
+//     whole (backstop), and the tick charges to room alone.
+//   - Otherwise the hold is offered with the tick, the pile first: the bin
+//     takes what fits, hold is what is left of the pile and rest what is left
+//     of the stroke. past reports that the two together would pass one pack,
+//     which chargeStrict answers by throwing the pile away (throwAwayPile);
+//     otherwise they are held together, their part the tick's.
 func splitStrict(count, held int, heldPart, part string, input, pack, capN int) strictSplit {
 	room := max(0, pack-count)
 	if held != 0 && !holdIsOf(heldPart, part) {
-		s := strictSplit{avail: input, charge: min(input, room), hold: held, holdPart: heldPart}
-		if over := input - s.charge; over > 0 {
-			s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: part, Qty: int64(over), Reason: protocol.HoldDropForeignHold})
-		}
+		s := strictSplit{avail: input, charge: min(input, room), hold: held, holdPart: heldPart, foreign: true}
+		s.rest = input - s.charge
 		return s
 	}
-	s := strictSplit{avail: input + held}
+	pile := held
+	var s strictSplit
 	if held > capN {
-		s.avail = input
 		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: heldPart, Qty: int64(held), Reason: protocol.HoldDropBackstop})
+		pile = 0
 	}
+	s.avail = input + pile
 	s.charge = min(s.avail, room)
-	s.hold = s.avail - s.charge
-	if s.hold > capN {
-		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: part, Qty: int64(s.hold - capN), Reason: protocol.HoldDropHoldCap})
-		s.hold = capN
-	}
+	fromPile := min(pile, s.charge)
+	s.hold, s.rest = pile-fromPile, input-(s.charge-fromPile)
 	if s.hold > 0 {
-		s.holdPart = part
+		s.holdPart = heldPart
 	}
+	s.past = s.hold+s.rest > capN
 	return s
 }
 
@@ -997,13 +1023,53 @@ func splitStrict(count, held int, heldPart, part string, input, pack, capN int) 
 // seat or its count changed) returns written false and applyHoldAndReplay
 // re-reads once. A failed write is logged and emits nothing: the count did
 // not move.
+//
+// What the bin does not take of the stroke (splitStrict's rest):
+//
+//   - on a stopped seat (hold_stopped, D3) it joins the no-cart stretch, and
+//     nothing more is set aside;
+//   - beside another part's hold it is dropped (foreign_hold);
+//   - when it would take the pile past one pack the pile is thrown away whole
+//     and the seat stops (throwAwayPile, D2); the bin still takes what fits;
+//   - otherwise it is held with the pile for the next bin of the part.
+//
+// The open no-cart stretch rides the write that ends it: a bound tick none of
+// whose stroke joins the stretch.
 func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, input int, parts tickParts) (bound bool, binAttributed int, written bool) {
 	s := splitStrict(rt.RemainingUOPCached, int(rt.PendingUOPDelta), rt.PendingUOPPayload, parts.tick, input, parts.pack, parts.holdCap)
 	seat := processes.SeatAsReadOf(rt)
-	noBin := e.noBinRows(node.ID)
-	ok, err := e.writeSeatWithDrops(node, append(s.drops, noBin...), func(ex processes.DBTX) (bool, error) {
-		return processes.ChargeSeatUOPStrict(ex, node.ID, s.avail, parts.pack, s.hold, s.holdPart, seat)
-	})
+	charge := func(hold int, holdPart string) func(processes.DBTX) (bool, error) {
+		return func(ex processes.DBTX) (bool, error) {
+			return processes.ChargeSeatUOPStrict(ex, node.ID, s.avail, parts.pack, hold, holdPart, seat)
+		}
+	}
+	toStretch := 0
+	switch {
+	case rt.HoldStopped:
+		toStretch = s.rest
+	case s.foreign:
+		if s.rest > 0 {
+			s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: parts.tick, Qty: int64(s.rest), Reason: protocol.HoldDropForeignHold})
+		}
+	case s.past:
+		switch committed, written := e.throwAwayPile(node, s.hold, s.holdPart, parts.tick, s.rest, s.drops, charge(0, "")); {
+		case !written:
+			return false, 0, false
+		case !committed:
+			return true, 0, true // the count did not move: nothing is emitted
+		}
+		return true, s.charge, true
+	default:
+		s.hold += s.rest
+		if s.hold > 0 {
+			s.holdPart = parts.tick
+		}
+	}
+	var noBin []protocol.HoldDropped
+	if toStretch == 0 {
+		noBin = e.noBinRows(node.ID)
+	}
+	ok, err := e.writeSeatWithDrops(node, append(s.drops, noBin...), charge(s.hold, s.holdPart))
 	if err != nil {
 		log.Printf("counter delta: node %s: strict charge of %d (pack %d): %v", node.CoreNodeName, input, parts.pack, err)
 		return true, 0, true
@@ -1012,6 +1078,11 @@ func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, 
 		return false, 0, false
 	}
 	e.endNoBinEpisode(node.ID, noBin)
+	if toStretch > 0 {
+		e.noteCarrier(node, holdNoteStopped, fmt.Sprintf("%d of part %s past the bin's pack not set aside -- the seat "+
+			"threw away a pile past one pack and holds nothing until a cart binds here", toStretch, parts.tick))
+		e.noteNoBinStroke(node.ID, parts.tick, toStretch)
+	}
 	if s.hold == 0 {
 		e.endUnheldEpisode(node.ID)
 	}

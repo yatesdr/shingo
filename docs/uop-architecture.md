@@ -206,7 +206,10 @@ one, no bin is bound: PLC ticks during this gap still drain lineside as usual, b
 accumulated into `pending_uop_delta` (a durable column, with its part in `pending_uop_payload`) rather than charged
 to a departed bin or lost. When the next bin of that part binds, the first tick applies `current + pending` and
 resets the hold to zero. The active pile — location-bound at the slot — covers the parts the operator runs during the
-gap.
+gap. A produce seat never sets aside more than one pack (the claim's `UOPCapacity`), whether a carrier is coming or
+not: the stroke that would pass it throws the whole pile away (a `hold_dropped` `hold_cap` row) and the seat sets
+nothing aside until a cart binds there; those strokes reach Core as one `no_bin` row per no-cart stretch (SPR
+ALN_011, 2026-11-12).
 
 ## Release dispositions
 

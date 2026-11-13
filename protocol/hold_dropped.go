@@ -38,8 +38,11 @@ const (
 	// HoldDropBackstop: a hold larger than the pack found at replay onto a
 	// bound bin; the tick's own input is charged and the hold is dropped.
 	HoldDropBackstop = "backstop"
-	// HoldDropHoldCap: a bound seat at its pack whose hold would pass one
-	// pack; the excess over one pack is dropped.
+	// HoldDropHoldCap: a produce seat's pile that a stroke would take past one
+	// pack (the claim's UOPCapacity), bound or not, carrier coming or not;
+	// the pile is dropped whole, Qty the pile before the stroke, and the seat
+	// sets nothing aside until a cart binds there. Rows before 2026-11-12
+	// carry only the excess over one pack, from a bound seat at its pack.
 	HoldDropHoldCap = "hold_cap"
 	// HoldDropCutover: the process's active style flipped to a part the hold
 	// is not of; the departing part's hold is cleared at the flip.

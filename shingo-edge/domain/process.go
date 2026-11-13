@@ -271,12 +271,14 @@ type RuntimeState struct {
 	// then ticked for an hour reads as an hour old by that clock and is not.
 	LinesideAt         time.Time `json:"lineside_at"`
 	RemainingUOPCached int       `json:"remaining_uop_cached"`
-	// PendingUOPDelta holds count changes that arrived while no bin was
-	// bound at this slot (active_bin_id nil — the pickup→delivery gap).
-	// The next tick that finds a bound bin of the held part (PendingUOPPayload)
+	// PendingUOPDelta holds count changes no bound bin took: while no bin was
+	// bound at this slot (active_bin_id nil — the pickup→delivery gap), or,
+	// on a strict produce seat, beside a bin at its pack. The next tick that
+	// finds a bound bin of the held part (PendingUOPPayload) with room
 	// applies (current + pending) and resets this to 0, so a swap or
-	// message-lag window can't lose or
-	// misattribute consumption. Durable (column) so an Edge restart
+	// message-lag window can't lose or misattribute consumption. On a produce
+	// seat it is never more than one pack (engine holdCap; the stroke past it
+	// throws it away, HoldStopped). Durable (column) so an Edge restart
 	// mid-gap doesn't drop the held count.
 	PendingUOPDelta int64 `json:"pending_uop_delta"`
 	// PendingUOPPayload is the part of the held ticks. The hold replays only

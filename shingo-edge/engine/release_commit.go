@@ -517,9 +517,11 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, departing *store
 		return err
 	}
 	storemsg.NotifyEnqueued()
-	// The count now belongs to the departing bin: clear the slot, so the
-	// hold-and-replay window starts HERE. Log-only on failure: the ingest
-	// already shipped.
+	// The count now belongs to the departing bin: clear the slot. The seat's
+	// hold is not touched (D7): parts set aside beside the full bin before
+	// the release carry to the next delivered cart, and the strokes from here
+	// join them, never past one pack (throwAwayPile). Log-only on failure: the
+	// ingest already shipped.
 	if err := e.carrierLeft(node.ID, node.CoreNodeName); err != nil {
 		log.Printf("produce release: clear active bin for node %d: %v", node.ID, err)
 	}

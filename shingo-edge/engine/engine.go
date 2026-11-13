@@ -494,8 +494,10 @@ func (e *Engine) Start() {
 	// pending_uop_delta growing across consecutive flush intervals while
 	// unbound, and raises a named stranding alarm; the consume arm never
 	// binds or moves anything. Its produce arm drops an unbound produce seat's
-	// hold with no carrier coming (sweepProduceHold), once at start and then
-	// every scan; after the order manager above, so a drop's row can be built.
+	// hold with no carrier coming, except a hold between bins
+	// (sweepProduceHold), once at start and then every scan; a pile past one
+	// pack never reaches it, the tick throws that away (throwAwayPile). After
+	// the order manager above, so a drop's row can be built.
 	e.startStrandedMonitor()
 
 	// Demand-episode reconciler: closes any open cell or changeover episode

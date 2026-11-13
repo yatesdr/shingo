@@ -999,8 +999,9 @@ var placingAtSQL = `SELECT a.value, COALESCE(MAX(CASE
 	GROUP BY a.value`
 
 // PlacingAt reports, for each node, whether a live order is placing a carrier
-// there: the produce hold's question (an unbound produce seat holds its ticks
-// only while one is) and REQUEST's (which of a press's dependent positions a
+// there: the produce hold's question (an unbound produce seat holds its ticks,
+// never past one pack, while one is, or between bins without one) and
+// REQUEST's (which of a press's dependent positions a
 // carrier is already coming to). One statement and one snapshot for the whole
 // set; see placingAtSQL for how each row is read. Every asked node has an
 // entry; no nodes asks nothing.

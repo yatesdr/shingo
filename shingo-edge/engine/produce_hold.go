@@ -3,26 +3,29 @@ package engine
 // produce_hold.go — the hold on every produce node.
 //
 // A produce seat's hold (pending_uop_delta / pending_uop_payload) is the
-// strokes waiting for the next bin of their part. It is bounded on every path
-// that could grow it without a bin to take it:
+// strokes waiting for the next bin of their part. It is never more than one
+// pack (holdCap, the claim's UOPCapacity; D1), in every seat state: the stroke
+// that would take it past one pack throws the WHOLE pile away with one
+// hold_dropped (hold_cap) row and stops the seat (hold_stopped), which then
+// sets nothing aside, carrier coming or not, until a cart binds there; that
+// stroke and every one after it join the no-cart stretch (throwAwayPile;
+// D2/D3; pinned by TestThrowAway_ACarrierComingNoLongerGrowsThePile,
+// TestStrictPack_PastOnePackThrowsThePileAwayAndStops). Within the pack:
 //
-//   - an UNBOUND seat holds a tick only while a live order is placing a
-//     carrier at the node (carrierComing); with none the tick is logged and
-//     not held, and a standing pile of any part is dropped with a
-//     hold_dropped row (dropPileAndLogTick); the strokes logged that way
-//     reach Core as one hold_dropped (no_bin) row per episode, carried by
-//     the write that ends it: the next bound tick's charge, the tick's hold
-//     once a carrier is coming, or the scan that finds the seat bound
-//     (noteNoBinStroke, sendNoBinEpisode);
+//   - an UNBOUND seat holds a tick while a live order is placing a carrier at
+//     the node (carrierComing); with none the tick is logged and not held, and
+//     a standing pile of any part is dropped with a hold_dropped (no_carrier)
+//     row (dropPileAndLogTick). Strokes no cart takes reach Core as one
+//     hold_dropped (no_bin) row per no-cart stretch, carried by the write that
+//     ends it: the next bound tick's charge, the tick's hold once a carrier is
+//     coming, or the scan that finds the seat bound (noteNoBinStroke,
+//     sendNoBinEpisode);
 //   - except BETWEEN BINS: an unbound seat whose last carrier departed
-//     through Shingo holds with nothing coming, capped at one pack; the
-//     stroke that would pass the pack drops the pile with the no_carrier row
-//     and clears the departure, and the seat logs until the next landing
-//     (betweenBins, dropPileAndLogTick);
+//     through Shingo holds with nothing coming (betweenBins);
 //   - the stranded monitor drops such a pile between ticks, every scan and
 //     once at boot (sweepProduceHold), except a hold between bins; the boot
 //     pass is what writes off a pile that stood before this rule existed;
-//   - a bound seat at its pack holds without an order, capped at one pack
+//   - a bound seat at its pack holds the next bin's strokes without an order
 //     (the strict arm, splitStrict);
 //   - a cutover clears the departing part's hold, in the strand's
 //     transaction (cutoverHoldClears);
@@ -56,6 +59,9 @@ const (
 const (
 	holdNoteNoCarrier  = "no_carrier"
 	holdNoteUnreadable = "unreadable"
+	// holdNoteStopped: the seat is stopped (hold_stopped, D3), noted once
+	// until a cart binds.
+	holdNoteStopped = "stopped"
 )
 
 // carrierComing asks whether a live order is placing a carrier at the node,
@@ -103,10 +109,9 @@ func holdCap(claim *processes.NodeClaim) int {
 // writes on the row the tick already read), the seat holds nothing of another
 // part, and the pile with the tick stays within capN (holdCap).
 // pastPack: everything but the size says hold, and the tick would take the
-// pile past the pack. A real gap between bins never makes a whole bin on the
-// table, so that stroke proves nobody is coming for these parts
-// (dropPileAndLogTick). A claim with no pack never holds here. The sweep asks
-// it with input 0 (sweepProduceHold). Pure.
+// pile past the pack, which chargeOrHold answers by throwing the pile away and
+// stopping the seat (throwAwayUnbound, D2). A claim with no pack never holds
+// here. The sweep asks it with input 0 (sweepProduceHold). Pure.
 func betweenBins(rt *processes.RuntimeState, part string, capN, input int) (hold, pastPack bool) {
 	if capN <= 0 || !carrierGone(rt) || !holdIsOf(rt.PendingUOPPayload, part) {
 		return false, false
@@ -117,32 +122,74 @@ func betweenBins(rt *processes.RuntimeState, part string, capN, input int) (hold
 	return true, false
 }
 
+// throwAwayPile is the one answer to a stroke that would take a produce seat's
+// pile past one pack (holdCap; D1-D3). The exit conveyor or accumulator cannot
+// hold a bin's worth, so parts past one pack went into some other container:
+// the pile is thrown away WHOLE, and the seat sets nothing aside until a cart
+// binds at it. In the seat write's own transaction (writeSeatsInTx):
+//
+//  1. write, the caller's guarded statement for this stroke, which leaves the
+//     hold at 0 (SetSeatHold, or the strict charge with no hold);
+//  2. the stop flag (processes.StopSeatHold), which every bind clears;
+//  3. one hold_dropped (hold_cap) row of pile of pilePart, the pile as it
+//     stood before the stroke, by the tick (none when the pile was empty);
+//
+// (also: rows the same stroke wrote on the way, the strict backstop's, ride
+// the same transaction), and once it commits, 4. the stroke's part no cart takes (stroke strokes of
+// part) joins the seat's no-cart stretch (noteNoBinStroke), which goes to Core
+// as one no_bin row when it ends. written false: the seat refused write (it
+// changed since it was read), nothing was written, and the caller re-reads.
+// committed false with written true: the transaction failed, nothing was
+// written (logged), and the tick goes on as every failed tick does, charging
+// and emitting nothing.
+// Callers: chargeOrHold (an unbound seat, between bins or with a carrier
+// coming), chargeStrict (a bound strict seat at its pack) and the pickup's
+// after-lift ticks (takeTicksAfterLift). Caller holds countMu.
+func (e *Engine) throwAwayPile(node *processes.Node, pile int, pilePart, part string, stroke int, also []protocol.HoldDropped,
+	write func(processes.DBTX) (bool, error)) (committed, written bool) {
+	drops := also
+	if pile != 0 {
+		drops = append(drops, protocol.HoldDropped{PayloadCode: pilePart, Qty: int64(pile), Reason: protocol.HoldDropHoldCap})
+	}
+	ok, err := e.writeSeatsInTx(node, drops, func(ex processes.DBTX) (bool, error) {
+		if ok, err := write(ex); err != nil || !ok {
+			return ok, err
+		}
+		return true, processes.StopSeatHold(ex, node.ID)
+	})
+	if err != nil {
+		log.Printf("produce hold: node %s: throw away %d of part %q past one pack: %v", node.CoreNodeName, pile, pilePart, err)
+		return false, true
+	}
+	if !ok {
+		return false, false
+	}
+	e.endUnheldEpisode(node.ID)
+	if stroke > 0 {
+		e.noteNoBinStroke(node.ID, part, stroke)
+	}
+	log.Printf("produce hold: node %s: %d of part %s set aside, with %d more, would pass one pack -- the pile is thrown "+
+		"away (hold_cap) and the seat sets nothing aside until a cart binds here", node.CoreNodeName, pile, pilePart, stroke)
+	return true, true
+}
+
 // dropPileAndLogTick is chargeOrHold's arm for an unbound produce seat with no
-// carrier coming that does not hold between bins (betweenBins). The tick is
-// not held: nothing will take it, and it is logged once per episode
-// (noteCarrier). A standing pile is dropped with one hold_dropped (no_carrier)
-// row in the drop's transaction, whatever its part: with no part test in the
-// predicate, nothing is coming for another part's pile either. pastPack (the
-// tick would take a between-bins pile past the pack) also clears the
-// departure mark in that transaction (CarrierNotSeen), so the seat logs from
-// this tick until the next landing. A refused drop (the seat changed since it
-// was read) returns written false, and applyHoldAndReplay re-reads once. (A
-// produce hold is never negative; a negative one of another part, which only a
-// seat whose claim changed role could carry, is dropped too.)
-func (e *Engine) dropPileAndLogTick(node *processes.Node, rt *processes.RuntimeState, input int, tick string, pastPack bool) (bound bool, binAttributed int, written bool) {
+// carrier coming that does not hold between bins (betweenBins) and is not past
+// the pack there (throwAwayPile). The tick is not held: nothing will take it,
+// and it is logged once per episode (noteCarrier). A standing pile is dropped
+// with one hold_dropped (no_carrier) row in the drop's transaction, whatever
+// its part: with no part test in the predicate, nothing is coming for another
+// part's pile either. A refused drop (the seat changed since it was read)
+// returns written false, and applyHoldAndReplay re-reads once. (A produce hold
+// is never negative; a negative one of another part, which only a seat whose
+// claim changed role could carry, is dropped too.)
+func (e *Engine) dropPileAndLogTick(node *processes.Node, rt *processes.RuntimeState, input int, tick string) (bound bool, binAttributed int, written bool) {
 	seat := processes.SeatAsReadOf(rt)
 	held, heldPart := int(rt.PendingUOPDelta), rt.PendingUOPPayload
-	dropPile := held > 0 || (held != 0 && !holdIsOf(heldPart, tick))
-	if dropPile || pastPack {
-		var drops []protocol.HoldDropped
-		if dropPile {
-			drops = append(drops, protocol.HoldDropped{PayloadCode: heldPart, Qty: int64(held), Reason: protocol.HoldDropNoCarrier})
-		}
+	if held > 0 || (held != 0 && !holdIsOf(heldPart, tick)) {
+		drops := []protocol.HoldDropped{{PayloadCode: heldPart, Qty: int64(held), Reason: protocol.HoldDropNoCarrier}}
 		ok, err := e.writeSeatWithDrops(node, drops, func(ex processes.DBTX) (bool, error) {
-			if ok, err := processes.SetSeatHold(ex, node.ID, 0, "", seat); err != nil || !ok || !pastPack {
-				return ok, err
-			}
-			return true, e.recordLinesideCarrierIn(ex, node.ID, domain.UnknownCarrier(), domain.CarrierNotSeen)
+			return processes.SetSeatHold(ex, node.ID, 0, "", seat)
 		})
 		if err != nil {
 			log.Printf("produce hold: node %s: drop %d of part %q with no carrier coming: %v", node.CoreNodeName, held, heldPart, err)
@@ -152,16 +199,27 @@ func (e *Engine) dropPileAndLogTick(node *processes.Node, rt *processes.RuntimeS
 			return false, 0, false
 		}
 		e.endUnheldEpisode(node.ID)
-		if pastPack {
-			log.Printf("produce hold: node %s: %d of part %s held since its carrier left would pass the pack with "+
-				"nothing coming -- dropped; the departure is forgotten and the seat logs until the next landing",
-				node.CoreNodeName, held+input, tick)
-		}
 	}
 	e.noteCarrier(node, holdNoteNoCarrier, fmt.Sprintf("%d of part %s not held -- no bin is bound and no live order is "+
 		"placing a carrier here, so nothing would take it", input, tick))
 	e.noteNoBinStroke(node.ID, tick, input)
 	return false, 0, true
+}
+
+// throwAwayUnbound is throwAwayPile on an unbound seat: the pile goes with
+// SetSeatHold on the seat as read and the whole stroke joins the stretch.
+// Between bins (forgetDeparture) the departure mark goes too, in the same
+// transaction (CarrierNotSeen), so a cart that binds later starts the seat
+// afresh. Caller holds countMu.
+func (e *Engine) throwAwayUnbound(node *processes.Node, rt *processes.RuntimeState, input int, part string, forgetDeparture bool) (bound bool, binAttributed int, written bool) {
+	seat := processes.SeatAsReadOf(rt)
+	_, written = e.throwAwayPile(node, int(rt.PendingUOPDelta), rt.PendingUOPPayload, part, input, nil, func(ex processes.DBTX) (bool, error) {
+		if ok, err := processes.SetSeatHold(ex, node.ID, 0, "", seat); err != nil || !ok || !forgetDeparture {
+			return ok, err
+		}
+		return true, e.recordLinesideCarrierIn(ex, node.ID, domain.UnknownCarrier(), domain.CarrierNotSeen)
+	})
+	return false, 0, written
 }
 
 // noteNoBinStroke adds a logged tick to the node's no-bin episode: input
@@ -488,7 +546,12 @@ func (e *Engine) sweepProduceHold(node *processes.Node, claim *processes.NodeCla
 	}
 	if rt.ActiveBinID != nil {
 		// A bin bound since a no-bin episode's last tick ends the episode
-		// here when no tick has yet.
+		// here when no tick has yet. A STOPPED seat's stretch stays open: its
+		// strokes go on joining it beside the bound full cart, and it ends at
+		// the next bind (D6: one row per stretch).
+		if rt.HoldStopped {
+			return
+		}
 		e.countMu.Lock()
 		e.sendNoBinEpisode(node, holdDropBySweep)
 		e.countMu.Unlock()

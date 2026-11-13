@@ -473,23 +473,29 @@ func TestStrictPack_ForeignHoldIsNotRelabelledAndTheRestIsDropped(t *testing.T) 
 	}
 }
 
-// TestStrictPack_HoldCapDropsTheExcessOverOnePack: a bin at its pack with 131
-// held takes a tick of 5. Nothing is charged; the hold would be 136, so it
-// holds exactly one pack and the 4 over it are dropped with one hold_cap row.
-func TestStrictPack_HoldCapDropsTheExcessOverOnePack(t *testing.T) {
+// TestStrictPack_PastOnePackThrowsThePileAwayAndStops: a bin at its pack with
+// 131 held takes a tick of 5. Nothing is charged; the hold would be 136, past
+// one pack, so the whole pile of 131 is thrown away with one hold_cap row, the
+// seat stops (D2/D3), and the 5 join the no-cart stretch. The strokes after it
+// are set aside nowhere: the seat's hold stays 0 and they join the stretch.
+// (It held exactly one pack and dropped the 4 over it, until ALN_011.)
+func TestStrictPack_PastOnePackThrowsThePileAwayAndStops(t *testing.T) {
 	t.Parallel()
 	eng, sink, processID, nodeID, styleID := strictSeat(t, strictPack, 131, "WIDGET-A")
 	charSPTick(eng, processID, styleID, 5)
-	assertSeat(t, eng, nodeID, strictPack, strictPack, "WIDGET-A")
+	assertSeat(t, eng, nodeID, strictPack, 0, "")
+	if !runtimeOf(t, eng, nodeID).HoldStopped {
+		t.Error("the seat is not stopped after the throw-away")
+	}
+	charSPTick(eng, processID, styleID, 3)
+	assertSeat(t, eng, nodeID, strictPack, 0, "")
 	if len(sink.binCalls) != 0 {
 		t.Errorf("deltas = %+v, want none", sink.binCalls)
 	}
-	drops := holdDrops(t, eng.db)
-	if len(drops) != 1 {
-		t.Fatalf("drops = %+v, want exactly one", drops)
-	}
-	if d := drops[0]; d.Reason != protocol.HoldDropHoldCap || d.Qty != 4 || d.PayloadCode != "WIDGET-A" {
-		t.Errorf("drop = %+v, want hold_cap of 4 WIDGET-A", d)
+	assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropHoldCap, Qty: 131, PayloadCode: "WIDGET-A",
+		Node: "PRODUCE-NODE", CalledBy: "edge:tick"})
+	if got := eng.noBinRows(nodeID); len(got) != 1 || got[0].Qty != 8 {
+		t.Errorf("the no-cart stretch = %+v, want one row of 8", got)
 	}
 }
 

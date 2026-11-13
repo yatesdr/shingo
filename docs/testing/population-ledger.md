@@ -1212,3 +1212,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### STALE — `TestBetweenBins_PastThePackDropsThePileAndLogs`
+- test: `TestBetweenBins_PastThePackDropsThePileAndLogs` · pkg `shingoedge/engine` · run `-run '^TestBetweenBins_PastThePackDropsThePileAndLogs$'` · `shingo-edge/engine/produce_between_bins_test.go:76` @ `b0e65e2e` · tags `none`
+- code: STALE (a pile past one pack is thrown away whole and the seat stops until a cart binds, SPR ALN_011 D2/D3; "fix(edge): past one pack, throw the whole pile away and stop the seat")
+- assertion map: stroke 133 drops the pile of 132 as no_carrier, clears the mark, the next bind's tick is +1 with a no_bin row of 5 → `TestBetweenBins_PastThePackThrowsThePileAwayAndStops` (same file: one hold_cap row of 132, the mark cleared, the seat stopped; the strokes after it join the stretch, a carrier coming included; the next bind's tick is +1 with a no_bin row of 6)
+- mutation: the old assertion against the new code: `produce_between_bins_test.go:89: drop 0 = {... Qty:132 Reason:hold_cap ...}, want {... Qty:132 Reason:no_carrier ...}`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestStrictPack_HoldCapDropsTheExcessOverOnePack`
+- test: `TestStrictPack_HoldCapDropsTheExcessOverOnePack` · pkg `shingoedge/engine` · run `-run '^TestStrictPack_HoldCapDropsTheExcessOverOnePack$'` · `shingo-edge/engine/wiring_counter_delta_holdreplay_test.go:479` @ `b0e65e2e` · tags `none`
+- code: STALE (as above: the bound strict seat at its pack throws the pile away whole, D2)
+- assertion map: a full bin with 131 held takes 5: the hold is capped at 132 with one hold_cap row of 4 → `TestStrictPack_PastOnePackThrowsThePileAwayAndStops` (same file: the hold goes to 0 with one hold_cap row of 131, the seat stops, and the 5 and the 3 after them join the no-cart stretch as 8)
+- mutation: the old assertion against the new code: `wiring_counter_delta_holdreplay_test.go:483: seat = count 132, hold 0 of ""; want count 132, hold 132 of "WIDGET-A"` and `:492: drop = {... Qty:131 Reason:hold_cap ...}, want hold_cap of 4 WIDGET-A`
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

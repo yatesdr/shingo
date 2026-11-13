@@ -1508,6 +1508,17 @@ func SetSeatHold(db DBTX, processNodeID int64, hold int, part string, seat SeatA
 	return oneRow(res, err)
 }
 
+// StopSeatHold sets the produce seat's stop flag (hold_stopped, D3): the seat
+// threw away a pile that would have passed one pack and sets nothing aside
+// until a cart binds here (every bind clears it). Unguarded: its one caller,
+// engine throwAwayPile, runs it on the transaction of the seat's own guarded
+// write, after that write landed, under the engine's count lock.
+func StopSeatHold(db DBTX, processNodeID int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET hold_stopped=1, updated_at=datetime('now')
+		WHERE process_node_id=?`, processNodeID)
+	return err
+}
+
 func oneRow(res sql.Result, err error) (bool, error) {
 	if err != nil {
 		return false, err

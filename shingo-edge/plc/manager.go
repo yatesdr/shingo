@@ -898,8 +898,10 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// their units go where any tick's go when the engine takes it: onto the
 	// carrier bound at that moment (on a strict-pack claim only up to its pack,
 	// the rest held for the next bin), or held for the next carrier when none
-	// is bound — on a produce seat only while an order is placing one; with
-	// nothing coming a produce tick is logged, not held. They used to wait: a
+	// is bound — on a produce seat while an order is placing one or between
+	// bins, and never past one pack: the stroke past it throws the pile away
+	// and the seat holds nothing until a cart binds (engine throwAwayPile);
+	// otherwise a produce tick is logged, not held. They used to wait: a
 	// jump for an operator's Confirm, which charged whatever carrier was bound
 	// by then, and a reset forever, dropped downstream. The anomaly rides the
 	// event and the row as a record of how the counter moved; nothing gates on
