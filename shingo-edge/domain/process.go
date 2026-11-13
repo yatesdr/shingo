@@ -286,7 +286,12 @@ type RuntimeState struct {
 	// ReleasedEmpty: the bound carrier was released as empty and is not
 	// charged afterwards (Lane H R3, D12). Meaningful only while it is bound;
 	// cleared when it leaves or another carrier binds.
-	ReleasedEmpty bool      `json:"released_empty,omitempty"`
+	ReleasedEmpty bool `json:"released_empty,omitempty"`
+	// HoldStopped: the produce seat threw away a pile that would have passed
+	// one pack (D2) and sets nothing aside until a cart binds here (D3).
+	// Written with the hold, under the engine's count lock; cleared by every
+	// bind of another carrier.
+	HoldStopped   bool      `json:"hold_stopped,omitempty"`
 	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
 	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
 	ActivePull    bool      `json:"active_pull"`

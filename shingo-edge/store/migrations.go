@@ -2500,6 +2500,35 @@ func edgeMigrations() []migrate.Migration {
 				return nil
 			},
 		},
+		{
+			// v49 (2026-11-12): process_node_runtime_states.hold_stopped, the
+			// produce seat's stop flag (SPR ALN_011, decisions D2/D3). Set when
+			// a pile that would pass one pack is thrown away whole
+			// (engine throwAwayPile); while it is set the seat sets nothing
+			// aside, and the strokes go to the no-cart stretch, until a cart
+			// binds at the seat. 0 on every existing row. Column-check guarded,
+			// like v20.
+			Version: 49,
+			Name:    "runtime_hold_stopped",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'hold_stopped'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_node_runtime_states ADD COLUMN hold_stopped INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'hold_stopped'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

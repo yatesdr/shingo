@@ -640,7 +640,12 @@ CREATE TABLE process_node_runtime_states (
     -- so a redelivered or overtaken landing binds nothing. Kept by every
     -- leave; a person's bind leaves it as it is. NULL until the first
     -- landing. After released_empty, where the v20 ALTER puts it.
-    placed_seq INTEGER
+    placed_seq INTEGER,
+    -- hold_stopped: a produce seat's pile would have passed one pack and was
+    -- thrown away whole; the seat sets nothing aside until a cart binds here
+    -- (every bind of another carrier clears it). After placed_seq, where the
+    -- v49 ALTER puts it.
+    hold_stopped INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE process_nodes (

@@ -722,7 +722,7 @@ func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) 
 	var updatedAt, linesideAt string
 	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch,
 		&r.LinesidePayloadCode, &r.LinesidePayloadKnown, &r.LinesideSource, &linesideAt, &r.RemainingUOPCached,
-		&r.PendingUOPDelta, &r.PendingUOPPayload, &r.ReleasedEmpty, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
+		&r.PendingUOPDelta, &r.PendingUOPPayload, &r.ReleasedEmpty, &r.HoldStopped, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
 	}
@@ -767,7 +767,7 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 	}
 	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, pending_uop_payload, released_empty, active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id IN (`+placeholders.String()+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -805,7 +805,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, pending_uop_payload, released_empty, active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
 		return nil, err
@@ -987,13 +987,15 @@ func epochArgs(activeBinID any, deltaEpoch int64) []any {
 // Core's landing now, the reseat, through BindLanding.)
 //
 // The epoch is subject to epochAssignOnBind; the other three columns are
-// written unconditionally.
+// written unconditionally. It clears hold_stopped: a bind ends a produce seat's
+// stop (D3), and counting resumes onto the carrier.
 func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
 	args := []any{activeBinID, remainingUOPCached, activeClaimID, activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?,
+		hold_stopped=0, updated_at=datetime('now')
 		WHERE process_node_id=?`, args...)
 	return err
 }
@@ -1046,13 +1048,14 @@ func SetCountFenced(db *sql.DB, processNodeID, binID, deltaEpoch int64, remainin
 // same bin at an equal or newer stamp, binds as before.
 //
 // The refusal is the WHERE clause of the bind itself, so it costs no
-// statement.
+// statement. A bind that lands clears hold_stopped (D3), as every bind does.
 func BindEmptySlotUnlessDeparted(db *sql.DB, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOPCached int) (bool, error) {
 	args := []any{binID, remainingUOPCached, activeClaimID, binID}
 	args = append(args, epochArgs(binID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID, binID, deltaEpoch)
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET
-		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?,
+		hold_stopped=0, updated_at=datetime('now')
 		WHERE process_node_id=?
 		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)`, args...)
 	if err != nil {
@@ -1104,7 +1107,8 @@ type LandingBind struct {
 // arrival's, and the ticks the line counted since are in the Edge's. It keeps
 // released_empty with it (R3: the carrier the release declared empty stays
 // declared). Otherwise the count is Core's, and released_empty follows
-// releasedEmptyOnBind.
+// releasedEmptyOnBind. hold_stopped (D3) goes the same way: kept for the same
+// bin (a re-landing is not a new cart), cleared by any other carrier.
 //
 // The claim is left as it is: a carrier arriving changes what is on the seat,
 // not what the node makes or uses. The identity is written by the caller
@@ -1131,6 +1135,8 @@ func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (landed, active
 		l.BinID, l.Epoch, l.BinID, l.Count,
 		// remaining_uop_cached: kept for the same bin at >= generation.
 		l.BinID, l.Epoch, l.Count,
+		// hold_stopped: kept for the same bin, cleared by another carrier.
+		l.BinID,
 		l.BinID,
 	}
 	args = append(args, epochArgs(l.BinID, l.Epoch)...)
@@ -1143,6 +1149,7 @@ func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (landed, active
 		released_empty=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN released_empty
 		                    ELSE (CASE WHEN active_bin_id IS ? AND ? <= 0 THEN released_empty ELSE 0 END) END,
 		remaining_uop_cached=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN remaining_uop_cached ELSE ? END,
+		hold_stopped=CASE WHEN active_bin_id IS ? THEN hold_stopped ELSE 0 END,
 		active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`,
 		placed_seq=CASE WHEN ? IS NULL THEN placed_seq ELSE ? END,
 		updated_at=datetime('now')
@@ -1384,18 +1391,22 @@ func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int, part string)
 // count. The other writers move the count by a delta, so a count written in
 // between stands and the tick lands on top of it; seatUnchangedSQL leaves it
 // out for them.
+//
+// Stopped is the seat's stop flag (hold_stopped) as read: a seat stopped or
+// unstopped since the read refuses the write, like a hold written since.
 type SeatAsRead struct {
 	BinID         *int64
 	Epoch         int64
 	ReleasedEmpty bool
 	Pending       int64
 	Count         int
+	Stopped       bool
 }
 
 // SeatAsReadOf is the seat as rt holds it.
 func SeatAsReadOf(rt *RuntimeState) SeatAsRead {
 	return SeatAsRead{BinID: rt.ActiveBinID, Epoch: rt.ActiveBinEpoch, ReleasedEmpty: rt.ReleasedEmpty,
-		Pending: rt.PendingUOPDelta, Count: rt.RemainingUOPCached}
+		Pending: rt.PendingUOPDelta, Count: rt.RemainingUOPCached, Stopped: rt.HoldStopped}
 }
 
 // SeatUnchanged is the WHERE that refuses a seat changed since it was read,
@@ -1408,14 +1419,14 @@ func SeatUnchanged(processNodeID int64, seat SeatAsRead) (string, []any) {
 // seatUnchangedSQL is the WHERE that refuses a seat changed since it was read
 // (its args are seatArgs).
 const seatUnchangedSQL = `process_node_id=? AND active_bin_id IS ? AND active_bin_epoch=?
-		AND released_empty=? AND pending_uop_delta=?`
+		AND released_empty=? AND pending_uop_delta=? AND hold_stopped=?`
 
 func seatArgs(processNodeID int64, seat SeatAsRead) []any {
 	var bin any
 	if seat.BinID != nil {
 		bin = *seat.BinID
 	}
-	return []any{processNodeID, bin, seat.Epoch, boolInt(seat.ReleasedEmpty), seat.Pending}
+	return []any{processNodeID, bin, seat.Epoch, boolInt(seat.ReleasedEmpty), seat.Pending, boolInt(seat.Stopped)}
 }
 
 func boolInt(b bool) int {

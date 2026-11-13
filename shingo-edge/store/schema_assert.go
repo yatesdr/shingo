@@ -168,6 +168,9 @@ var requiredColumns = []requiredColumn{
 	// The landing's placement stamp (v20, D10): every landing bind names it
 	// in its SET and WHERE, so a missing column fails every landing.
 	{"process_node_runtime_states", "placed_seq"},
+	// The produce seat's stop flag (v49): scanRuntime SELECTs it and every
+	// seat-guarded write names it, so a missing column kills every tick.
+	{"process_node_runtime_states", "hold_stopped"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

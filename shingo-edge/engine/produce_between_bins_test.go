@@ -211,6 +211,67 @@ func TestHoldCap_EverySiteStopsAtTheSameNumber(t *testing.T) {
 	}
 }
 
+// TestHoldStopped_ReadsBackAndEveryBindOfAnotherCartClearsIt — the stop flag
+// (hold_stopped, D3) round-trips through the runtime read, a seat write that
+// read the seat before it was set is refused (SeatAsRead names it), and every
+// bind of a cart clears it: a landing of another bin, a hand load, Core's bind
+// and a staged bind. A re-landing of the bin already bound keeps it (H.4).
+func TestHoldStopped_ReadsBackAndEveryBindOfAnotherCartClearsIt(t *testing.T) {
+	t.Parallel()
+	stop := func(t *testing.T, eng *Engine, nodeID int64) {
+		t.Helper()
+		_, err := eng.db.DB.Exec(`UPDATE process_node_runtime_states SET hold_stopped=1 WHERE process_node_id=?`, nodeID)
+		testutil.MustNoErr(t, err, "stop the seat")
+		if !runtimeOf(t, eng, nodeID).HoldStopped {
+			t.Fatal("hold_stopped set, but the runtime read says it is not")
+		}
+	}
+	seq := int64(1 << 40)
+	for _, tc := range []struct {
+		name    string
+		bound   bool // bin 7801 bound before the bind
+		bind    func(eng *Engine, nodeID, claimID int64) error
+		stopped bool
+	}{
+		{name: "a landing of another bin", bind: func(eng *Engine, nodeID, _ int64) error {
+			_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7802, Epoch: 1, PlacedSeq: &seq})
+			return err
+		}},
+		{name: "a re-landing of the bin bound", bound: true, stopped: true, bind: func(eng *Engine, nodeID, _ int64) error {
+			_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7801, Epoch: 1, PlacedSeq: &seq})
+			return err
+		}},
+		{name: "a hand load or Core's bind", bind: func(eng *Engine, nodeID, claimID int64) error {
+			bin := int64(7803)
+			return eng.db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin, 1, 0)
+		}},
+		{name: "a staged bind from a person's count", bind: func(eng *Engine, nodeID, claimID int64) error {
+			_, err := eng.db.BindEmptySlotUnlessDeparted(nodeID, &claimID, 7804, 1, 5)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, _, nodeID, _, claimID := betweenBinsSeat(t, false)
+			if tc.bound {
+				bin := int64(7801)
+				testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin, 1, 0), "bind 7801")
+			}
+			before := processes.SeatAsReadOf(runtimeOf(t, eng, nodeID))
+			stop(t, eng, nodeID)
+			ok, err := processes.SetSeatHold(eng.db.DB, nodeID, 3, "WIDGET-A", before)
+			testutil.MustNoErr(t, err, "a write on the seat as read before the stop")
+			if ok {
+				t.Error("a seat write that read the seat before it stopped landed, want it refused")
+			}
+			testutil.MustNoErr(t, tc.bind(eng, nodeID, claimID), "the bind")
+			if got := runtimeOf(t, eng, nodeID).HoldStopped; got != tc.stopped {
+				t.Errorf("hold_stopped after the bind = %t, want %t", got, tc.stopped)
+			}
+		})
+	}
+}
+
 // TestBetweenBins_TheSweepKeepsADepartedSeatsPileWithinThePack — the scan's
 // produce arm drops an unbound pile with no carrier coming, except the hold
 // the tick itself would keep: a departed seat's pile within the pack stays; one
