@@ -16,6 +16,8 @@
 //     (returnSources, store/return_sources.go). Never where the bin was lifted,
 //     never where the cancelled order was taking it, never a press, a line or
 //     staging, never a place the policy picked.
+//   - NOT A RECORDED EMPTY OFF A PRODUCE LINE. It may hold parts nobody
+//     counted, so it stays on the robot for a person (chooseDeclared).
 //   - ONCE PER EPISODE. One attempt per (bin, carrier order); a hold is final
 //     for that episode, and the Recover button is the retry.
 //   - THROUGH THE BUTTON'S DOOR (orderCarriedBinDown), so the deck check, the
@@ -535,7 +537,24 @@ func (e *Engine) chooseReturn(judged *orders.Order) func(*bins.Bin, fleet.RobotS
 // and takes the first storeInto answer; with none, it refuses with a sentence
 // naming every place tried and why it said no. carrier may be nil (a bin with
 // no order on record): the walk then has no "own process" to put first.
+//
+// A RECORDED EMPTY OFF A PRODUCE LINE IS HELD (owner, 2026-11-12, D8). The
+// cart was lifted where parts are made, so "empty" may only mean nobody counted
+// it; it stays on the robot for a person. The lift is the cart's own row
+// (cartPickNode), not the order's press: a single-robot swap's old cart is
+// lifted at the line its order delivers to. Pinned by
+// TestCancelReturn_ARecordedEmptyOffAProduceLineIsHeld.
 func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error) {
+	if bin.PayloadCode == "" && carrier != nil {
+		lifted := cartPickNode(carrier, bin.ID)
+		produce, err := e.db.ProduceClaimAt(lifted)
+		if err != nil {
+			return nil, "", fmt.Errorf("could not read whether %s is a produce line: %v", lifted, err)
+		}
+		if produce {
+			return nil, "", fmt.Errorf("came off produce line %s recorded empty; it may hold parts, so it is not returned automatically", lifted)
+		}
+	}
 	srcs, err := e.returnSources(bin, carrier)
 	if err != nil {
 		return nil, "", fmt.Errorf("could not read where %s is sourced from: %v", describeBinLoad(bin), err)
