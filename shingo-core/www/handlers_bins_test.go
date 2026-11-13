@@ -25,6 +25,7 @@ import (
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
+	"shingocore/store/plantclaims"
 )
 
 // testHandlers creates a Handlers struct backed by a real Postgres database and a
@@ -720,6 +721,62 @@ func TestBinAction_Move_ABinALiveOrderHoldsIsRefusedNamingTheOrder(t *testing.T)
 	}
 	if after, err := db.GetBin(bin.ID); err != nil || after.NodeID == nil || *after.NodeID != sd.StorageNode.ID {
 		t.Errorf("bin moved despite the refusal: %+v (%v)", after, err)
+	}
+}
+
+// TestBinAction_Move_AForeignCarrierTypeWarnsAndMoves: a hand move onto a line
+// whose part takes another carrier type answers with a warning naming the line,
+// its part, the types it takes and the bin's own, and the move stands: a person
+// recording where a cart is is believed (owner, 2026-11-12, D10). A type the
+// part takes, or a part with no carrier rows, says nothing.
+func TestBinAction_Move_AForeignCarrierTypeWarnsAndMoves(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		takes func(t *testing.T, db *store.DB, sd *testdb.StandardData) []int64
+		warn  string
+	}{
+		{"a type the part does not take: warned", func(t *testing.T, db *store.DB, _ *testdb.StandardData) []int64 {
+			narrow := &bins.BinType{Code: "C3-NARROW", Description: "the line's carrier"}
+			testutil.MustNoErr(t, db.CreateBinType(narrow), "the line's carrier type")
+			return []int64{narrow.ID}
+		}, "LINE1-IN runs PART-A, which takes C3-NARROW; BIN-ACTION-1 is DEFAULT"},
+		{"a type the part takes: silent", func(t *testing.T, _ *store.DB, sd *testdb.StandardData) []int64 {
+			return []int64{sd.BinType.ID}
+		}, ""},
+		{"a part with no carrier rows: silent", func(*testing.T, *store.DB, *testdb.StandardData) []int64 {
+			return nil
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, db, sd, bin := setupBinForAction(t)
+			if ids := tc.takes(t, db, sd); ids != nil {
+				testutil.MustNoErr(t, db.SetPayloadBinTypes(sd.Payload.ID, ids), "the part's carrier rule")
+			}
+			testutil.MustNoErr(t, db.ReplacePlantClaims("PROC-C3",
+				[]plantclaims.StyleRow{{ProcessID: "PROC-C3", StyleID: "STY", ConfigGen: 1, IsActive: true}},
+				[]plantclaims.ClaimRow{{ProcessID: "PROC-C3", StyleID: "STY", CoreNodeName: sd.LineNode.Name,
+					Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSimple, PayloadCode: sd.Payload.Code}}, 0),
+				"the line runs the part")
+
+			rec := postJSON(t, h.apiBinAction, "/api/bins/action", map[string]any{
+				"id": bin.ID, "action": "move", "params": map[string]any{"node_id": sd.LineNode.ID},
+			})
+			var answer struct {
+				Status  string `json:"status"`
+				Warning string `json:"warning"`
+			}
+			if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &answer) != nil || answer.Status != "ok" {
+				t.Fatalf("answer %d %s, want 200 ok: the check never refuses", rec.Code, rec.Body.String())
+			}
+			if answer.Warning != tc.warn {
+				t.Errorf("warning = %q, want %q", answer.Warning, tc.warn)
+			}
+			if after, err := db.GetBin(bin.ID); err != nil || after.NodeID == nil || *after.NodeID != sd.LineNode.ID {
+				t.Errorf("bin not at %s after the move: %+v (%v)", sd.LineNode.Name, after, err)
+			}
+		})
 	}
 }
 

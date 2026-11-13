@@ -19,6 +19,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/inventory"
 	"shingocore/store/nodes"
+	"shingocore/store/plantclaims"
 )
 
 // BinService centralizes bin validation and mutation. Handlers call BinService
@@ -322,6 +323,38 @@ func (s *BinService) MoveByHand(b *bins.Bin, toNodeID int64) (*MoveResult, error
 			"to take a bin out of a slot, move it to where it physically went", dest.Name)
 	}
 	return s.Move(b, toNodeID)
+}
+
+// CarrierTypeWarning is the hand move's carrier check (owner, 2026-11-12,
+// D10): a sentence when no part the claims at the bin's node run may travel in
+// its type, "" when one may, when the node runs none, or when a part there
+// names no carrier types. The rule is the dispatch doors' own
+// (domain.BinTypeRule): the types payload_bin_types names, or any type where it
+// names none. Not carrier families: all six SPR types share family 2.
+//
+// A WARNING, NEVER A REFUSAL. A person recording where a cart is states a
+// physical fact and is believed (engine.binTypeRefusal's ruling), so this is
+// asked after the move. SPR ALN_011, 2026-11-12: a 45x48 was recorded at a line
+// whose part takes only 32x30x34, and nothing said so.
+func (s *BinService) CarrierTypeWarning(b *bins.Bin) (string, error) {
+	if b == nil || b.NodeName == "" {
+		return "", nil
+	}
+	parts, err := plantclaims.PayloadCarriersAt(s.db.DB, b.NodeName)
+	if err != nil {
+		return "", err
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	runs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p.PayloadCode == "" || domain.NewBinTypeRule(p.BinTypeIDs, nil).Permits(b.BinTypeID) {
+			return "", nil
+		}
+		runs = append(runs, p.PayloadCode+", which takes "+strings.Join(p.BinTypeCodes, " or "))
+	}
+	return fmt.Sprintf("%s runs %s; %s is %s", b.NodeName, strings.Join(runs, ", and "), b.Label, b.BinTypeCode), nil
 }
 
 // Move relocates a bin to a new node. Validates:

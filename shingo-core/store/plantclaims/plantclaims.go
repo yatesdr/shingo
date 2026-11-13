@@ -446,6 +446,58 @@ func StationsClaimingNode(db *sql.DB, nodeName string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// PayloadCarriers is one part a node's claims run, with the carrier types
+// payload_bin_types names for it: nil when it names none, which is the
+// carrier rule's "no rows, no rule" (domain.BinTypeRule).
+type PayloadCarriers struct {
+	PayloadCode  string
+	BinTypeIDs   []int64
+	BinTypeCodes []string
+}
+
+// PayloadCarriersAt lists the parts the claims at node run, under any style
+// (a claim's payload and its allowed set), each with its carrier types, in
+// code order. One statement. A claim with no payload lists "": it constrains
+// nothing. The bins page's hand move reads it to warn, never to refuse
+// (service.BinService.CarrierTypeWarning).
+func PayloadCarriersAt(db *sql.DB, node string) ([]PayloadCarriers, error) {
+	rows, err := db.Query(`
+		SELECT c.code, pbt.bin_type_id, bt.code
+		  FROM (SELECT DISTINCT x.code
+		          FROM style_claims sc
+		          CROSS JOIN LATERAL (
+		            SELECT sc.payload_code AS code
+		            UNION SELECT jsonb_array_elements_text(COALESCE(NULLIF(sc.allowed_payload_codes, ''), '[]')::jsonb)
+		          ) x
+		         WHERE sc.core_node_name = $1) c
+		  LEFT JOIN payloads p ON p.code = c.code
+		  LEFT JOIN payload_bin_types pbt ON pbt.payload_id = p.id
+		  LEFT JOIN bin_types bt ON bt.id = pbt.bin_type_id
+		 ORDER BY c.code, bt.code`, node)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims payload carriers at %s: %w", node, err)
+	}
+	defer rows.Close()
+	var out []PayloadCarriers
+	for rows.Next() {
+		var code string
+		var typeID sql.NullInt64
+		var typeCode sql.NullString
+		if err := rows.Scan(&code, &typeID, &typeCode); err != nil {
+			return nil, fmt.Errorf("plantclaims payload carriers at %s: scan: %w", node, err)
+		}
+		if len(out) == 0 || out[len(out)-1].PayloadCode != code {
+			out = append(out, PayloadCarriers{PayloadCode: code})
+		}
+		if typeID.Valid {
+			last := &out[len(out)-1]
+			last.BinTypeIDs = append(last.BinTypeIDs, typeID.Int64)
+			last.BinTypeCodes = append(last.BinTypeCodes, typeCode.String)
+		}
+	}
+	return out, rows.Err()
+}
+
 // Querier is a *sql.DB or a *sql.Tx.
 type Querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)

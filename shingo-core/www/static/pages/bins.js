@@ -663,6 +663,9 @@ function runBinAction(action, params, reset) {
   var id = currentBinId;
   postBinAction(id, action, params)
     .then(function(resp) {
+      // A done action can carry a warning (a move onto a line whose parts
+      // take another carrier type): shown, never a refusal.
+      if (resp && resp.warning) toast(resp.warning, 'warning');
       if (!resp || !resp.bin) { refreshBinRow(id); return; }
       clearFields(reset || []);
       paintBinRow(resp);

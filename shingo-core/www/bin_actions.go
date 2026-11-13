@@ -286,6 +286,20 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 	return nil
 }
 
+// binMoveWarning is what the bins page shows after a move when the node the
+// bin now stands at runs no part its type may carry (BinService.
+// CarrierTypeWarning; owner, 2026-11-12, D10): "" otherwise. The move has
+// already happened and stays: a warning, never a refusal. A check that cannot
+// read says nothing rather than holding up the answer.
+func (h *Handlers) binMoveWarning(b *domain.Bin) string {
+	warn, err := h.engine.BinService().CarrierTypeWarning(b)
+	if err != nil {
+		log.Printf("bin_move: carrier check for bin %d at %s: %v", b.ID, b.NodeName, err)
+		return ""
+	}
+	return warn
+}
+
 func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 	var p struct {
 		ActualUOP int    `json:"actual_uop"`

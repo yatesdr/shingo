@@ -315,13 +315,20 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 		h.jsonSuccess(w)
 		return
 	}
-	h.jsonOK(w, binActionAnswer{Status: "ok", binView: h.binDetailView(fresh)})
+	answer := binActionAnswer{Status: "ok", binView: h.binDetailView(fresh)}
+	if req.Action == "move" {
+		answer.Warning = h.binMoveWarning(fresh)
+	}
+	h.jsonOK(w, answer)
 }
 
 // binActionAnswer is apiBinAction's answer: the bare ok plus the bin's
 // history-free detail, flattened, so it reads like GET /api/bins/detail?history=0.
+// Warning is a sentence the page shows beside a done action (a move's carrier
+// check, binMoveWarning); absent when there is none.
 type binActionAnswer struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Warning string `json:"warning,omitempty"`
 	binView
 }
 
