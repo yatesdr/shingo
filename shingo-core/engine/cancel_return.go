@@ -10,12 +10,15 @@
 //   - ONLY A CANCELLED ORDER'S BIN (returnEligible). A failed order keeps
 //     today's behaviour — the bin stays on the deck for an engineer — because a
 //     failure says nothing trustworthy about what the robot is holding.
-//   - ONLY INTO A PLACE SOMEBODY DECLARED, and only storage: the inbound
-//     sources the claims name for the bin's payload, or for an empty bin the
-//     places the claims declare empties of its type go to and come from
-//     (returnSources, store/return_sources.go). Never where the bin was lifted,
-//     never where the cancelled order was taking it, never a press, a line or
-//     staging, never a place the policy picked.
+//   - ONLY INTO A PLACE SOMEBODY DECLARED, and only storage. A cancelled cart
+//     goes back to where it would be sourced from: a full to the inbound
+//     sources the claims name for its payload, an empty to where empties of
+//     its type are kept, the places the claims declare they go to and come
+//     from (returnSources, store/return_sources.go). Where the cancelled order
+//     was taking the cart, and where it was lifted, are neither a reason nor a
+//     bar: a declared place is a declared place whichever it is (owner,
+//     2026-11-12). Never a press, a line or staging, never a place the policy
+//     picked.
 //   - NOT A RECORDED EMPTY OFF A PRODUCE LINE. It may hold parts nobody
 //     counted, so it stays on the robot for a person (chooseDeclared).
 //   - ONCE PER EPISODE. One attempt per (bin, carrier order); a hold is final
