@@ -212,6 +212,8 @@ nothing aside until a cart binds there; those strokes reach Core as one `no_bin`
 ALN_011, 2026-11-12). The hold replays only onto a cart delivered by an order the Edge holds that places a bin at the
 node; any other bind (a cart placed or recorded by hand, a hand load, a set-down naming an order the Edge does not
 have) drops the standing hold in the bind's own transaction with one `no_carrier` row, and ends the no-cart stretch.
+A count a person enters (the bins page, the line's Record Count) writes the count and clears the seat's hold in the
+same write, at any count; Core's lifecycle announcements never touch the hold.
 
 ## Release dispositions
 

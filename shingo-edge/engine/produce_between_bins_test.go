@@ -595,3 +595,54 @@ func TestLanding_ALateRequestIsAProperty(t *testing.T) {
 		}
 	}
 }
+
+// ── D5: a person's count wins ──
+
+// TestRecount_APersonsCountClearsTheHold — a full strict cart (132) with 40
+// set aside beside it. A person's count of 67, fenced by Core or not, writes
+// 67 and clears the hold in the same write, with one no_carrier row by
+// edge:recount; the next stroke makes it 68, not 132 (SPR ALN_011,
+// 2026-11-12: the recount of 67 was undone 4 s later by the replay). A Core
+// lifecycle announcement of the same cart never touches the hold.
+func TestRecount_APersonsCountClearsTheHold(t *testing.T) {
+	t.Parallel()
+	const held = 40
+	for _, tc := range []struct {
+		name   string
+		adj    func(eng *Engine) protocol.UOPAdjustment
+		person bool
+	}{
+		{name: "the bins page, fenced", person: true, adj: func(eng *Engine) protocol.UOPAdjustment {
+			return fenced(eng, 7301, "PRODUCE-NODE", 67, 0, 1)
+		}},
+		{name: "a person's count, unfenced", person: true, adj: func(*Engine) protocol.UOPAdjustment {
+			return protocol.UOPAdjustment{BinID: 7301, CoreNodeName: "PRODUCE-NODE", NewRemaining: 67, Epoch: 3, Actor: "ui"}
+		}},
+		{name: "a Core lifecycle announcement", adj: func(*Engine) protocol.UOPAdjustment {
+			return protocol.UOPAdjustment{BinID: 7301, CoreNodeName: "PRODUCE-NODE", NewRemaining: 67, Epoch: 4,
+				Actor: protocol.ActorCoreLifecycle}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, processID, nodeID, styleID, claimID := strictSeatOn(t, testEngineDB(t), betweenBinsPack, betweenBinsPack, held, "WIDGET-A", true)
+			bin := int64(7301)
+			testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin, 3, betweenBinsPack), "generation 3")
+			eng.SetInventoryDeltaSink(&fakeDeltaSink{db: eng.db})
+
+			eng.HandleUOPAdjustment(tc.adj(eng))
+			if !tc.person {
+				assertSeat(t, eng, nodeID, 67, held, "WIDGET-A")
+				assertDrops(t, eng.db)
+				return
+			}
+			assertSeat(t, eng, nodeID, 67, 0, "")
+			recount := protocol.HoldDropped{Reason: protocol.HoldDropNoCarrier, Qty: held, PayloadCode: "WIDGET-A",
+				Node: "PRODUCE-NODE", CalledBy: "edge:recount"}
+			assertDrops(t, eng.db, recount)
+			charSPTick(eng, processID, styleID, 1)
+			assertSeat(t, eng, nodeID, 68, 0, "")
+			assertDrops(t, eng.db, recount)
+		})
+	}
+}

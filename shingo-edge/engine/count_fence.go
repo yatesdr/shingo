@@ -38,8 +38,16 @@ import (
 // holds for the same carrier and generation is refused (a late delivery; see
 // processes.SetCountFenced). applied reports whether the count landed.
 //
+// A PERSON'S COUNT WINS (D5): when the adjustment is a person's
+// (protocol.IsLifecycleActor false: the bins page, the line's Record Count)
+// the count clears the seat's hold in the same transaction, with one
+// hold_dropped (no_carrier) row by edge:recount (writeCountClearingHold). A
+// Core lifecycle announcement never touches the hold.
+//
 // Cost: one SELECT (the flushed net) on top of the write the absolute path
-// already does. The write is one statement, as before.
+// already does. The write is one statement, as before; a person's count on a
+// seat with a hold adds the runtime read and the hold's drop, in one
+// transaction.
 func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj protocol.UOPAdjustment) (handled, applied bool, remaining int) {
 	if adj.AsOfNet == nil || adj.AsOfSeq == nil || e.inventoryDelta == nil {
 		return false, false, 0
@@ -73,7 +81,10 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 		}
 		drift = flushed - *adj.AsOfNet + int64(p.Bin(adj.BinID, adj.Epoch))
 		remaining = adj.NewRemaining + int(drift)
-		ok, err = e.db.SetProcessNodeCountFenced(nodeID, adj.BinID, adj.Epoch, remaining, *adj.AsOfSeq)
+		seat := &processes.Node{ID: nodeID, CoreNodeName: adj.CoreNodeName}
+		ok, err = e.writeCountClearingHold(seat, !protocol.IsLifecycleActor(adj.Actor), func(ex processes.DBTX) (bool, error) {
+			return processes.SetCountFenced(ex, nodeID, adj.BinID, adj.Epoch, remaining, *adj.AsOfSeq)
+		})
 		return err
 	})
 	e.countMu.Unlock()
@@ -93,6 +104,40 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 	log.Printf("uop_adjustment: fenced count bin %d at node %s: counted %d, as of net %d seq %d, drift %+d -> %d",
 		adj.BinID, adj.CoreNodeName, adj.NewRemaining, *adj.AsOfNet, *adj.AsOfSeq, drift, remaining)
 	return true, true, remaining
+}
+
+// holdDropByRecount is the actor of the hold drop a person's count writes (D5).
+const holdDropByRecount = "edge:recount"
+
+// writeCountClearingHold runs a count's write and, for a person's count
+// (person), drops the seat's standing hold in the same transaction with one
+// hold_dropped (no_carrier) row by edge:recount, at any count (D5): the hold
+// was the line's guess at parts for this seat, and the person at the cart has
+// just said what is in it. Before it, a count below the pack reopened room and
+// the next tick replayed the hold into it (SPR ALN_011, 2026-11-12: a recount
+// of 132 to 67 read 132 again 4 s later). A count that does not land writes
+// nothing. A lifecycle count writes alone. Caller holds countMu.
+func (e *Engine) writeCountClearingHold(node *processes.Node, person bool, write func(processes.DBTX) (bool, error)) (bool, error) {
+	if !person {
+		return write(e.db.DB)
+	}
+	var rows []protocol.HoldDropped
+	var pile int64
+	if rt, err := e.db.GetProcessNodeRuntime(node.ID); err == nil && rt != nil && rt.PendingUOPDelta != 0 {
+		pile = rt.PendingUOPDelta
+		rows = append(rows, protocol.HoldDropped{PayloadCode: rt.PendingUOPPayload, Qty: pile,
+			Reason: protocol.HoldDropNoCarrier, CalledBy: holdDropByRecount})
+	}
+	ok, err := e.writeSeatWithDrops(node, rows, func(ex processes.DBTX) (bool, error) {
+		if ok, err := write(ex); err != nil || !ok || pile == 0 {
+			return ok, err
+		}
+		return processes.DropSeatHold(ex, node.ID, pile)
+	})
+	if err == nil && ok && pile != 0 {
+		e.endUnheldEpisode(node.ID)
+	}
+	return ok, err
 }
 
 // writeReleaseCount writes the old carrier's count at a release and reads the

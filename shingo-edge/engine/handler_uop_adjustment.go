@@ -119,15 +119,18 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// corrected.
 		//
 		// A held pile on an EMPTY slot is proof the slot is mid-swap (an unbound
-		// produce seat holds only while an order is placing its next carrier, or
-		// may be: Engine.carrierComing). Waiting costs nothing — the
-		// arriving carrier brings its own count and generation on delivery.
+		// produce seat holds while an order is placing its next carrier, or may
+		// be: Engine.carrierComing; or between bins, after its carrier departed
+		// through Shingo: betweenBins). Waiting costs nothing — the arriving
+		// carrier brings its own count and generation on delivery.
 		//
-		// A hold BESIDE A BOUND BIN never reaches this guard, and that is now
-		// routine: a strict-pack bin at its pack holds the next bin's parts in
-		// the same columns. A person's correction there proceeds as for any bound
-		// bin; a count below the pack reopens room, and the next tick replays a
-		// hold of the bin's part into it.
+		// A hold BESIDE A BOUND BIN never reaches this guard: a strict-pack bin
+		// at its pack holds the next bin's parts in the same columns. A person's
+		// correction there writes the count and clears that hold in the same
+		// write, at any count (D5, writeCountClearingHold): it used to proceed
+		// as for any bound bin, and the next tick replayed the hold into the room
+		// a count below the pack reopened, undoing the person's number (SPR
+		// ALN_011, 2026-11-12: 132 recounted to 67 read 132 again 4 s later).
 		log.Printf("uop_adjustment: bin %d at node %s arrived while %d ticks are held for the "+
 			"next carrier — not binding over them",
 			adj.BinID, adj.CoreNodeName, rt.PendingUOPDelta)
@@ -300,7 +303,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	if e.inventoryDelta == nil {
 		return
 	}
-	if err := e.inventoryDelta.BindFromCore(e.db.DB, node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
+	if err := e.writeCoreCount(node, rt, adj); err != nil {
 		log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
 		return
 	}
@@ -321,6 +324,20 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		NewRemaining:  adj.NewRemaining,
 		Actor:         adj.Actor,
 	}})
+}
+
+// writeCoreCount writes Core's count and stamp for the carrier bound here
+// (BindFromCore). A PERSON'S COUNT WINS (D5): a person's count clears the
+// seat's hold in the count's own write (writeCountClearingHold); Core's
+// lifecycle announcements never touch it. Under the count lock, as every seat
+// write.
+func (e *Engine) writeCoreCount(node *processes.Node, rt *processes.RuntimeState, adj protocol.UOPAdjustment) error {
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	_, err := e.writeCountClearingHold(node, !protocol.IsLifecycleActor(adj.Actor), func(ex processes.DBTX) (bool, error) {
+		return true, e.inventoryDelta.BindFromCore(ex, node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining)
+	})
+	return err
 }
 
 // bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: an older Core

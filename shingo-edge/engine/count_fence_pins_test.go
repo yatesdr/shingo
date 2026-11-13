@@ -211,6 +211,9 @@ func TestLineCount_TicksAfterTheReplyAreNotLost(t *testing.T) {
 // count at a bound slot is 3 statements (node, runtime, the write). A fenced
 // one adds the flushed-net SELECT and records the seq in the same write: 4.
 // A refused (older) fenced count is also 4: the refusal is the write's WHERE.
+// A PERSON'S count (these are; actor "op") adds one runtime read under the
+// count lock, which sizes the hold it clears in the same write (D5,
+// writeCountClearingHold): 4, 5 and 5. A lifecycle count does not.
 func TestFence_Statements(t *testing.T) {
 	t.Parallel()
 	eng, counter := newCountingCoverageEngine(t)
@@ -222,14 +225,14 @@ func TestFence_Statements(t *testing.T) {
 
 	counter.Reset()
 	eng.HandleUOPAdjustment(protocol.UOPAdjustment{BinID: binID, CoreNodeName: "FENCE-COST", NewRemaining: 50, Epoch: 3, Actor: "op"})
-	if got := counter.Count(); got != 3 {
-		t.Errorf("unfenced count issued %d statements, want 3", got)
+	if got := counter.Count(); got != 4 {
+		t.Errorf("unfenced count issued %d statements, want 4", got)
 	}
 
 	counter.Reset()
 	eng.HandleUOPAdjustment(fenced(eng, binID, "FENCE-COST", 50, -10, 5))
-	if got := counter.Count(); got != 4 {
-		t.Errorf("fenced count issued %d statements, want 4 (one SELECT for the flushed net)", got)
+	if got := counter.Count(); got != 5 {
+		t.Errorf("fenced count issued %d statements, want 5 (one SELECT for the flushed net, one for the hold)", got)
 	}
 	if got := runtimeCount(t, eng, nodeID); got != 50 {
 		t.Errorf("fenced count = %d, want 50", got)
@@ -237,8 +240,8 @@ func TestFence_Statements(t *testing.T) {
 
 	counter.Reset()
 	eng.HandleUOPAdjustment(fenced(eng, binID, "FENCE-COST", 70, -10, 4))
-	if got := counter.Count(); got != 4 {
-		t.Errorf("refused fenced count issued %d statements, want 4", got)
+	if got := counter.Count(); got != 5 {
+		t.Errorf("refused fenced count issued %d statements, want 5", got)
 	}
 	if got := runtimeCount(t, eng, nodeID); got != 50 {
 		t.Errorf("after an older fenced count = %d, want 50", got)

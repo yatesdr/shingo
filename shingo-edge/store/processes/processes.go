@@ -1013,12 +1013,13 @@ func SetRuntimeWithBinAndEpoch(db DBTX, processNodeID int64, activeClaimID, acti
 // higher AsOfSeq: that count was taken later in the station's stream, and this
 // one is a late delivery of an older count. An equal AsOfSeq lands (a
 // redelivery, or two counts with no message applied between them). Both
-// refusals are the WHERE clause of the write, so they cost no statement.
+// refusals are the WHERE clause of the write, so they cost no statement. db is
+// a DBTX so a person's count shares a transaction with the hold it clears (D5).
 //
 // The seq is kept with its (bin, epoch) rather than alone because the carrier
 // at a slot changes through writers that know nothing of it: a seq recorded for
 // one carrier's stream says nothing about another's.
-func SetCountFenced(db *sql.DB, processNodeID, binID, deltaEpoch int64, remainingUOPCached int, asOfSeq int64) (bool, error) {
+func SetCountFenced(db DBTX, processNodeID, binID, deltaEpoch int64, remainingUOPCached int, asOfSeq int64) (bool, error) {
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET
 		remaining_uop_cached=?, adj_bin_id=?, adj_bin_epoch=?, adj_as_of_seq=?, updated_at=datetime('now')
 		WHERE process_node_id=? AND active_bin_id=? AND active_bin_epoch=?
