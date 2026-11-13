@@ -158,6 +158,7 @@ func TestArch_ActiveBinPointerWritersAreKnown(t *testing.T) {
 	}
 	patterns := []string{
 		".BindEmptySlotUnlessDeparted(",
+		".BindEmptySlotUnlessDepartedIn(",
 		"SetProcessNodeActiveBinID(",
 		"SetProcessNodeActiveBinIDAndEpoch(",
 		"ClearProcessNodeActiveBinAndCount(",

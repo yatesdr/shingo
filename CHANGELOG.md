@@ -22,6 +22,7 @@ Deploy: Edge v49. Core has no migration; the two go in either order.
 - Past one bin's worth, the set-aside parts are written off whole and nothing more is set aside until another cart arrives or a person counts
 - Set-aside parts go only onto a cart an order brought; a cart placed or loaded by hand writes them off
 - A count a person enters clears the set-aside parts, so the next stroke counts on from that number
+- A person's count of a cart at a press with none recorded records it there, even with parts set aside
 - Strokes made with no cart at a press are reported to Core when the Edge stops, not lost in a restart
 - A changeover cancel that finds no cart at a press no longer starts "between bins" there
 - A bin move or retire refused for a live order names the order and its route, and the refusal is logged

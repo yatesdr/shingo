@@ -490,7 +490,7 @@ func (e *Engine) confirmDeliveredAt(coreNodeName string, retrieveEmpty bool, fin
 func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeBinID *int64, deltaEpoch int64, uopCount int, payloadCode string) {
 	if e.inventoryDelta != nil {
 		e.countMu.Lock()
-		_, err := e.bindEndingHold(node, activeBinID, holdDropByManualLoad, holdDropByManualLoad, true, func(ex processes.DBTX) (bool, error) {
+		_, err := e.bindEndingHold(node, nil, activeBinID, holdDropByManualLoad, holdDropByManualLoad, true, func(ex processes.DBTX) (bool, error) {
 			return true, e.inventoryDelta.ManualLoad(ex, node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount)
 		})
 		e.countMu.Unlock()

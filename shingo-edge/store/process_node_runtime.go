@@ -121,6 +121,12 @@ func (db *DB) BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *in
 	return processes.BindEmptySlotUnlessDeparted(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
 }
 
+// BindEmptySlotUnlessDepartedIn is the same statement on ex, a transaction
+// when the bind drops a seat's pile (U2) and *sql.DB otherwise.
+func (db *DB) BindEmptySlotUnlessDepartedIn(ex processes.DBTX, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error) {
+	return processes.BindEmptySlotUnlessDeparted(ex, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
+}
+
 // BindLandingAt binds the carrier a landing names at the slot, its refusals
 // in its WHERE (Lane H, H.4). Reports whether it landed, and the seat's
 // active_pull as the bind left it. See processes.BindLanding.

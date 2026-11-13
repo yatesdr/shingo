@@ -63,7 +63,8 @@ type runtimeWriter interface {
 	// BindEmptySlotUnlessDeparted binds a carrier into a slot read as
 	// empty, refusing in its own WHERE clause when it is the carrier that
 	// last left the slot at an older stamp. Used by BindStagedUnlessDeparted.
-	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
+	// It runs on ex: a transaction when the bind drops a seat's pile (U2).
+	BindEmptySlotUnlessDepartedIn(ex processes.DBTX, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 
 	// BindLandingAt is the landing's bind (Lane H, H.4): its refusals are
 	// its WHERE. Reports whether it landed, and the seat's active_pull as

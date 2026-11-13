@@ -68,6 +68,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeActiveClaim(processNodeID int64, activeClaimID *int64) error
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
 	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
+	BindEmptySlotUnlessDepartedIn(ex processes.DBTX, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, bool, error)
 	BindLandingIn(ex processes.DBTX, processNodeID int64, l processes.LandingBind) (bool, bool, error)
 	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
@@ -233,12 +234,12 @@ func (s *fakeDeltaSink) BindFromCore(ex processes.DBTX, nodeID int64, activeClai
 
 // BindStagedUnlessDeparted delegates to the store's guarded bind; with no db
 // it reports a bind, as the recorded-calls-only tests expect a clean path.
-func (s *fakeDeltaSink) BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error) {
+func (s *fakeDeltaSink) BindStagedUnlessDeparted(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error) {
 	s.mu.Lock()
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.BindEmptySlotUnlessDeparted(nodeID, activeClaimID, binID, deltaEpoch, uop)
+		return db.BindEmptySlotUnlessDepartedIn(ex, nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return true, nil
 }

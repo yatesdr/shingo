@@ -775,6 +775,65 @@ func TestRecount_APersonsCountClearsTheHold(t *testing.T) {
 	}
 }
 
+// TestRecount_APersonsCountBindsOverAPile — U2: a person's count of 12 for
+// the cart staged at an unbound seat holding a pile of 40 (and stopped) binds
+// the cart at 12 and, in the bind's transaction, drops the pile with one
+// no_carrier row of 40 by edge:recount and lifts the stop. It used to be
+// refused, "not binding over them", and never landed. Controls: Core's own
+// lifecycle announcement of the same cart is still refused and keeps the pile
+// (as TestProduceFinalizeAnnouncement_DoesNotBindADepartedCarrierOverHeldTicks
+// pins), and a late count for the cart that left at a newer generation binds
+// nothing and writes no row.
+func TestRecount_APersonsCountBindsOverAPile(t *testing.T) {
+	t.Parallel()
+	const pile = 40
+	for _, tc := range []struct {
+		name  string
+		adj   protocol.UOPAdjustment
+		left  bool // bin 7901 left this seat at generation 5 first
+		binds bool
+	}{
+		{name: "a person's count", binds: true,
+			adj: protocol.UOPAdjustment{BinID: 7901, CoreNodeName: "PRODUCE-NODE", NewRemaining: 12, Epoch: 1, Actor: "ui"}},
+		{name: "Core's lifecycle announcement: refused",
+			adj: protocol.UOPAdjustment{BinID: 7901, CoreNodeName: "PRODUCE-NODE", NewRemaining: 12, Epoch: 1, Actor: protocol.ActorCoreLifecycle}},
+		{name: "a late count for the cart that left at a newer generation: refused", left: true,
+			adj: protocol.UOPAdjustment{BinID: 7901, CoreNodeName: "PRODUCE-NODE", NewRemaining: 12, Epoch: 3, Actor: "ui"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, _, nodeID, _, _ := landSeat(t, 0)
+			if tc.left {
+				seq := int64(1 << 39)
+				_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7901, Epoch: 5, PlacedSeq: &seq})
+				testutil.MustNoErr(t, err, "bin 7901 at generation 5")
+				testutil.MustNoErr(t, eng.carrierLeft(nodeID, "PRODUCE-NODE"), "and it leaves")
+			}
+			testutil.MustNoErr(t, processes.AddPendingUOPDelta(eng.db.DB, nodeID, pile, "WIDGET-A"), "the pile")
+			testutil.MustNoErr(t, processes.StopSeatHold(eng.db.DB, nodeID), "the seat stopped")
+
+			eng.HandleUOPAdjustment(tc.adj)
+			rt := runtimeOf(t, eng, nodeID)
+			if !tc.binds {
+				if rt.ActiveBinID != nil || rt.PendingUOPDelta != pile || !rt.HoldStopped {
+					t.Errorf("seat = bin %v pile %d stopped %t, want unbound, the pile of %d kept, still stopped",
+						rt.ActiveBinID, rt.PendingUOPDelta, rt.HoldStopped, pile)
+				}
+				assertDrops(t, eng.db)
+				return
+			}
+			if rt.ActiveBinID == nil || *rt.ActiveBinID != 7901 || rt.RemainingUOPCached != 12 {
+				t.Errorf("seat = bin %v count %d, want bin 7901 bound at 12", rt.ActiveBinID, rt.RemainingUOPCached)
+			}
+			if rt.PendingUOPDelta != 0 || rt.HoldStopped {
+				t.Errorf("seat pile %d stopped %t, want the pile dropped and the stop lifted", rt.PendingUOPDelta, rt.HoldStopped)
+			}
+			assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropNoCarrier, Qty: pile, PayloadCode: "WIDGET-A",
+				Node: "PRODUCE-NODE", CalledBy: "edge:recount"})
+		})
+	}
+}
+
 // ── D6: one row per no-cart stretch, and a restart cannot lose one ──
 
 // TestShutdown_AnOpenNoCartStretchIsWritten — strokes on an unbound seat with

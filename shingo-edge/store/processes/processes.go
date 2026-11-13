@@ -1052,8 +1052,10 @@ func SetCountFenced(db DBTX, processNodeID, binID, deltaEpoch int64, remainingUO
 // same bin at an equal or newer stamp, binds as before.
 //
 // The refusal is the WHERE clause of the bind itself, so it costs no
-// statement. A bind that lands clears hold_stopped (D3), as every bind does.
-func BindEmptySlotUnlessDeparted(db *sql.DB, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOPCached int) (bool, error) {
+// statement. A bind that lands clears hold_stopped (D3, U1: a person's count
+// binding a cart). db is a DBTX so a person's count that binds over a seat's
+// pile drops it in the same transaction (U2, engine bindEndingHold).
+func BindEmptySlotUnlessDeparted(db DBTX, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOPCached int) (bool, error) {
 	args := []any{binID, remainingUOPCached, activeClaimID, binID}
 	args = append(args, epochArgs(binID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID, binID, deltaEpoch)

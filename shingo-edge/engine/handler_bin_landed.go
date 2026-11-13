@@ -129,13 +129,23 @@ const (
 //
 // binID is the carrier the bind names (nil: none). bind is the bind statement
 // on ex and reports whether it landed; a bind that does not land writes
-// nothing, row, hold or stop. One runtime read, under the lock. A re-landing of
-// the bin already bound (H.4) ends nothing. Caller holds countMu.
-func (e *Engine) bindEndingHold(node *processes.Node, binID *int64, by, stretchBy string, liftStop bool,
-	bind func(processes.DBTX) (bool, error)) (bool, error) {
-	rt, err := e.db.GetProcessNodeRuntime(node.ID)
-	if err != nil {
-		rt = nil
+// nothing, row, hold or stop. A re-landing of the bin already bound (H.4) ends
+// nothing.
+//
+// seat is the seat as the caller read it just before the lock, or nil, and
+// then it is read here, under the lock (one statement). A caller passes its
+// read only when it shows no pile and no stop (the count's staged bind,
+// whose cost is pinned at its node, runtime and bind statements by
+// TestEmptySlotGuard_CostsNoStatement): a pile or a stop is always re-read
+// under the lock, so the row's quantity is the seat's. Caller holds countMu.
+func (e *Engine) bindEndingHold(node *processes.Node, seat *processes.RuntimeState, binID *int64, by, stretchBy string,
+	liftStop bool, bind func(processes.DBTX) (bool, error)) (bool, error) {
+	rt := seat
+	if rt == nil {
+		var err error
+		if rt, err = e.db.GetProcessNodeRuntime(node.ID); err != nil {
+			rt = nil
+		}
 	}
 	another := rt == nil || rt.ActiveBinID == nil || binID == nil || *rt.ActiveBinID != *binID
 	var rows, noBin []protocol.HoldDropped
@@ -201,7 +211,7 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 	// carrier that landed (applyHoldAndReplay).
 	e.countMu.Lock()
 	var activePull bool
-	landed, err := e.bindEndingHold(node, &l.BinID, by, holdDropByLanding, false, func(ex processes.DBTX) (bool, error) {
+	landed, err := e.bindEndingHold(node, nil, &l.BinID, by, holdDropByLanding, false, func(ex processes.DBTX) (bool, error) {
 		landed, ap, err := e.inventoryDelta.Land(ex, node.ID, l)
 		activePull = ap
 		return landed, err

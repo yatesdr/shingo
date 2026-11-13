@@ -31,7 +31,7 @@ type Ticker interface {
 type SlotWriter interface {
 	BindActiveBin(nodeID, binID int64, deltaEpoch int64) error
 	BindFromCore(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
-	BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error)
+	BindStagedUnlessDeparted(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error)
 	ClearActiveBin(nodeID int64) (wasBound bool, err error)
 	LeaveAtPickup(nodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetClaim(nodeID int64, activeClaimID *int64) error

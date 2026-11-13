@@ -214,7 +214,8 @@ ALN_011, 2026-11-12). The hold replays only onto a cart delivered by an order th
 node; any other bind (a cart placed or recorded by hand, a hand load, a set-down naming an order the Edge does not
 have) drops the standing hold in the bind's own transaction with one `no_carrier` row, and ends the no-cart stretch.
 A count a person enters (the bins page, the line's Record Count) writes the count and clears the seat's hold in the
-same write, at any count, and lifts the stop. Core's lifecycle announcements never touch the hold or the stop.
+same write, at any count, and lifts the stop; on a seat with no cart bound it binds the counted cart, its pile dropped
+in the bind's write. Core's lifecycle announcements never touch the hold or the stop, and never bind an empty seat.
 
 ## Release dispositions
 

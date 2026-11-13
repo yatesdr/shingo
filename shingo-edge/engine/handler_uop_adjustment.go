@@ -45,7 +45,8 @@ import (
 // with NO bin bound also binds: the carrier is staged there and Edge never
 // bound it (the SNF3 detachment). Rather than throwing the correction away as
 // stale, Edge seeds the runtime with the corrected value + adj.Epoch so the bin
-// binds and its ticks resume (P2-C5). A correction naming a bin that a DIFFERENT
+// binds and its ticks resume (P2-C5); a pile the seat holds is dropped in the
+// bind's transaction, since the person's number wins (U2). A correction naming a bin that a DIFFERENT
 // bin already occupies is still rejected — it is for a bin bound elsewhere.
 // On Released, Edge also blanks the cached count so the operator tile never
 // shows a dead number for the now-empty slot.
@@ -97,43 +98,15 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// ticks were being held, on the reasoning that a held pile proves a swap
 		// gap. It does — but the pile is empty for the whole interval between the
 		// robot lifting the carrier and the press completing its next part, and
-		// that interval is exactly where these announcements land. The held-ticks
-		// check survives below because it still answers a different question.
+		// that interval is exactly where these announcements land. A held-ticks
+		// check survived below this for a person's count, and the owner overruled
+		// it (U2, 2026-11-12): a person's count binds over a pile, dropping it.
 		//
 		// Waiting costs nothing. The arriving carrier brings its own identity,
 		// count and generation with it on delivery.
 		log.Printf("uop_adjustment: bin %d at node %s is a Core lifecycle announcement (actor=%q) "+
 			"and the slot is empty — not binding a carrier that has left",
 			adj.BinID, adj.CoreNodeName, adj.Actor)
-		return
-	}
-
-	if rt.ActiveBinID == nil && !adj.Released && rt.PendingUOPDelta != 0 {
-		// A PERSON's correction, arriving while the slot is mid-swap and holding
-		// ticks for the carrier that has not arrived yet. Still do not bind.
-		//
-		// The machine case is already gone above, so what reaches here is somebody
-		// declaring a number for a carrier the Edge is not holding, at a moment
-		// when the next tick will replay the held pile onto whatever is bound.
-		// Those parts belong to the carrier still on its way, not to the one being
-		// corrected.
-		//
-		// A held pile on an EMPTY slot is proof the slot is mid-swap (an unbound
-		// produce seat holds while an order is placing its next carrier, or may
-		// be: Engine.carrierComing; or between bins, after its carrier departed
-		// through Shingo: betweenBins). Waiting costs nothing — the arriving
-		// carrier brings its own count and generation on delivery.
-		//
-		// A hold BESIDE A BOUND BIN never reaches this guard: a strict-pack bin
-		// at its pack holds the next bin's parts in the same columns. A person's
-		// correction there writes the count and clears that hold in the same
-		// write, at any count (D5, writeCountClearingHold): it used to proceed
-		// as for any bound bin, and the next tick replayed the hold into the room
-		// a count below the pack reopened, undoing the person's number (SPR
-		// ALN_011, 2026-11-12: 132 recounted to 67 read 132 again 4 s later).
-		log.Printf("uop_adjustment: bin %d at node %s arrived while %d ticks are held for the "+
-			"next carrier — not binding over them",
-			adj.BinID, adj.CoreNodeName, rt.PendingUOPDelta)
 		return
 	}
 
@@ -157,10 +130,21 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// and the bind is refused in its own WHERE clause when this is that
 		// bin at an older stamp. A different bin, or the same one at an equal
 		// or newer stamp, binds as before.
+		//
+		// A PERSON'S COUNT WINS OVER A PILE HELD AT THE SEAT (U2, owner,
+		// 2026-11-12). The machine case is already gone above, so what reaches
+		// here is somebody saying what the staged cart holds. A pile the seat
+		// set aside for a cart on its way is the line's guess; the person's
+		// number is the record. The bind drops the pile in its own transaction,
+		// with one hold_dropped (no_carrier) row by edge:recount, ends the
+		// no-cart stretch and lifts the stop (bindEndingHold, under the count
+		// lock). This used to refuse while a pile was held, "not binding over
+		// them", and the count never landed. A bind the departed rule refuses
+		// writes nothing and keeps the pile.
 		if e.inventoryDelta == nil {
 			return
 		}
-		bound, err := e.inventoryDelta.BindStagedUnlessDeparted(node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
+		bound, err := e.bindStagedByCount(node, rt, adj)
 		if err != nil {
 			log.Printf("uop_adjustment: bind staged bin %d to node %s via count correction: %v", adj.BinID, adj.CoreNodeName, err)
 			return
@@ -324,6 +308,23 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		NewRemaining:  adj.NewRemaining,
 		Actor:         adj.Actor,
 	}})
+}
+
+// bindStagedByCount is the count's staged bind (U2): the cart at the person's
+// number, the seat's pile dropped by edge:recount, the stretch ended and the
+// stop lifted, in the bind's transaction (bindEndingHold), under the count
+// lock. The seat as the handler read it stands in for a read under the lock
+// only when it shows nothing to end. Reports whether the cart bound.
+func (e *Engine) bindStagedByCount(node *processes.Node, rt *processes.RuntimeState, adj protocol.UOPAdjustment) (bool, error) {
+	seat := rt
+	if rt.PendingUOPDelta != 0 || rt.HoldStopped {
+		seat = nil
+	}
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	return e.bindEndingHold(node, seat, &adj.BinID, holdDropByRecount, holdDropByRecount, false, func(ex processes.DBTX) (bool, error) {
+		return e.inventoryDelta.BindStagedUnlessDeparted(ex, node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
+	})
 }
 
 // writeCoreCount writes Core's count and stamp for the carrier bound here

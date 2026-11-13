@@ -174,9 +174,11 @@ func (m *Mutator) BindFromCore(ex processes.DBTX, nodeID int64, activeClaimID *i
 // from a person's count correction (handler_uop_adjustment.go), unless it is
 // the carrier that last left this slot arriving at an older stamp — a late
 // correction for a carrier that has moved on. Reports whether it bound. See
-// processes.BindEmptySlotUnlessDeparted for the WHERE-clause guard.
-func (m *Mutator) BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error) {
-	return m.rw.BindEmptySlotUnlessDeparted(nodeID, activeClaimID, binID, deltaEpoch, uop)
+// processes.BindEmptySlotUnlessDeparted for the WHERE-clause guard. ex is the
+// store, or the transaction of a count that drops the seat's pile with the bind
+// (U2).
+func (m *Mutator) BindStagedUnlessDeparted(ex processes.DBTX, nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error) {
+	return m.rw.BindEmptySlotUnlessDepartedIn(ex, nodeID, activeClaimID, binID, deltaEpoch, uop)
 }
 
 // ClearActiveBin clears the active bin pointer AND zeroes the cached count on
