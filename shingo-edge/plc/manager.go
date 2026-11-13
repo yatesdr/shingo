@@ -900,7 +900,8 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// the rest held for the next bin), or held for the next carrier when none
 	// is bound — on a produce seat while an order is placing one or between
 	// bins, and never past one pack: the stroke past it throws the pile away
-	// and the seat holds nothing until a cart binds (engine throwAwayPile);
+	// and the seat holds nothing until another cart binds or a person counts
+	// (engine throwAwayPile);
 	// otherwise a produce tick is logged, not held. They used to wait: a
 	// jump for an operator's Confirm, which charged whatever carrier was bound
 	// by then, and a reset forever, dropped downstream. The anomaly rides the

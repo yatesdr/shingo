@@ -484,12 +484,13 @@ func (e *Engine) confirmDeliveredAt(coreNodeName string, retrieveEmpty bool, fin
 //
 // A HAND LOAD IS NOT A CART AN ORDER OF THIS EDGE'S DELIVERED (D4): the seat's
 // standing hold is dropped in the load's own transaction, with one
-// hold_dropped (no_carrier) row by edge:manual-load, and the no-cart stretch
-// ends with it (bindEndingHold). Under the count lock, as every seat write.
+// hold_dropped (no_carrier) row by edge:manual-load, the no-cart stretch ends
+// with it, and a stopped seat's stop is lifted (U1), all in the load's own
+// transaction (bindEndingHold). Under the count lock, as every seat write.
 func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeBinID *int64, deltaEpoch int64, uopCount int, payloadCode string) {
 	if e.inventoryDelta != nil {
 		e.countMu.Lock()
-		_, err := e.bindEndingHold(node, activeBinID, holdDropByManualLoad, holdDropByManualLoad, func(ex processes.DBTX) (bool, error) {
+		_, err := e.bindEndingHold(node, activeBinID, holdDropByManualLoad, holdDropByManualLoad, true, func(ex processes.DBTX) (bool, error) {
 			return true, e.inventoryDelta.ManualLoad(ex, node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount)
 		})
 		e.countMu.Unlock()

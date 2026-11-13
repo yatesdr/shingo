@@ -22,8 +22,9 @@ import (
 // while the mark stands, capped at one pack (the claim's UOPCapacity, 132
 // here). The first stroke that would take the pile past the pack throws the
 // whole pile away with one hold_dropped (hold_cap) row, clears the mark and
-// stops the seat, which sets nothing aside (the no_bin stretch) until a cart
-// binds (D2/D3). A seat with no Shingo departure logs, as before.
+// stops the seat, which sets nothing aside (the no_bin stretch) until another
+// cart binds or a person counts (D2/D3, U1). A seat with no Shingo departure
+// logs, as before.
 
 const betweenBinsPack = 132
 
@@ -116,13 +117,14 @@ func TestBetweenBins_PastThePackThrowsThePileAwayAndStops(t *testing.T) {
 		PayloadCode: "WIDGET-A", Node: "PRODUCE-NODE", CalledBy: "edge:tick"})
 }
 
-// bindCart binds bin at the seat through a real bind statement (Core's bind,
-// SetRuntimeWithBinAndEpoch), which clears the stop flag as every bind does;
-// SetProcessNodeActiveBinID is a fixture pointer write and clears nothing.
+// bindCart binds bin at the seat as a landing of another cart (BindLanding),
+// whose statement lifts the stop flag (U1); SetProcessNodeActiveBinID is a
+// fixture pointer write and lifts nothing.
 func bindCart(t *testing.T, eng *Engine, nodeID, bin int64) {
 	t.Helper()
-	rt := runtimeOf(t, eng, nodeID)
-	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, rt.ActiveClaimID, &bin, 1, 0), "a cart binds")
+	seq := int64(1<<40) + bin
+	_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: bin, Epoch: 1, PlacedSeq: &seq})
+	testutil.MustNoErr(t, err, "a cart lands")
 }
 
 // TestThrowAway_ACarrierComingNoLongerGrowsThePile — the ALN_011 night's arm
@@ -312,9 +314,12 @@ func TestHoldCap_EverySiteStopsAtTheSameNumber(t *testing.T) {
 
 // TestHoldStopped_ReadsBackAndEveryBindOfAnotherCartClearsIt — the stop flag
 // (hold_stopped, D3) round-trips through the runtime read, a seat write that
-// read the seat before it was set is refused (SeatAsRead names it), and every
-// bind of a cart clears it: a landing of another bin, a hand load, Core's bind
-// and a staged bind. A re-landing of the bin already bound keeps it (H.4).
+// read the seat before it was set is refused (SeatAsRead names it), and the
+// bind statements that lift it in their own SET do: a landing of another bin
+// and a staged bind. A re-landing of the bin already bound keeps it (H.4), and
+// so does the hand load's and Core's count statement on its own: who acted
+// decides there, and the engine lifts it for a hand load or a person's count
+// (U1; TestHoldStopped_WhatLiftsTheStop).
 func TestHoldStopped_ReadsBackAndEveryBindOfAnotherCartClearsIt(t *testing.T) {
 	t.Parallel()
 	stop := func(t *testing.T, eng *Engine, nodeID int64) {
@@ -340,7 +345,7 @@ func TestHoldStopped_ReadsBackAndEveryBindOfAnotherCartClearsIt(t *testing.T) {
 			_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7801, Epoch: 1, PlacedSeq: &seq})
 			return err
 		}},
-		{name: "a hand load or Core's bind", bind: func(eng *Engine, nodeID, claimID int64) error {
+		{name: "the hand load's and Core's count statement alone", stopped: true, bind: func(eng *Engine, nodeID, claimID int64) error {
 			bin := int64(7803)
 			return eng.db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin, 1, 0)
 		}},
@@ -366,6 +371,66 @@ func TestHoldStopped_ReadsBackAndEveryBindOfAnotherCartClearsIt(t *testing.T) {
 			testutil.MustNoErr(t, tc.bind(eng, nodeID, claimID), "the bind")
 			if got := runtimeOf(t, eng, nodeID).HoldStopped; got != tc.stopped {
 				t.Errorf("hold_stopped after the bind = %t, want %t", got, tc.stopped)
+			}
+		})
+	}
+}
+
+// TestHoldStopped_WhatLiftsTheStop — U1, through the engine's doors, on a
+// stopped seat with bin 7801 bound at generation 3. Another cart binding
+// (ours or a stranger's landing, a hand load) and a person's count (unfenced,
+// or fenced as the line's Record Count is) lift the stop. A Core lifecycle
+// message never does, though it runs the same statement as a person's
+// unfenced count, and a re-landing of the cart bound keeps it.
+func TestHoldStopped_WhatLiftsTheStop(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		event   func(t *testing.T, eng *Engine, nodeID, claimID int64)
+		stopped bool
+	}{
+		{name: "another cart lands, ours", event: func(t *testing.T, eng *Engine, _, claimID int64) {
+			landAt(eng, 7802, orderUUID(t, eng, p2Supply(t, eng, claimID)), 1<<40)
+		}},
+		{name: "another cart lands, a stranger's", event: func(_ *testing.T, eng *Engine, _, _ int64) {
+			landAt(eng, 7803, "", 1<<40)
+		}},
+		{name: "a hand load at the station", event: func(t *testing.T, eng *Engine, nodeID, claimID int64) {
+			node, err := eng.db.GetProcessNode(nodeID)
+			testutil.MustNoErr(t, err, "read node")
+			bin := int64(7804)
+			eng.seatManuallyLoadedBin(node, &claimID, &bin, 1, 0, "WIDGET-A")
+		}},
+		{name: "a person's unfenced count", event: func(_ *testing.T, eng *Engine, _, _ int64) {
+			eng.HandleUOPAdjustment(protocol.UOPAdjustment{BinID: 7801, CoreNodeName: "PRODUCE-NODE",
+				NewRemaining: 50, Epoch: 3, Actor: "ui"})
+		}},
+		{name: "a person's fenced count (Record Count's fencedCount)", event: func(_ *testing.T, eng *Engine, _, _ int64) {
+			eng.HandleUOPAdjustment(fenced(eng, 7801, "PRODUCE-NODE", 50, 0, 1))
+		}},
+		{name: "a Core lifecycle new generation of the cart bound", stopped: true, event: func(_ *testing.T, eng *Engine, _, _ int64) {
+			eng.HandleUOPAdjustment(protocol.UOPAdjustment{BinID: 7801, CoreNodeName: "PRODUCE-NODE",
+				NewRemaining: 0, Epoch: 4, Actor: protocol.ActorCoreLifecycle})
+		}},
+		{name: "a re-landing of the cart bound", stopped: true, event: func(_ *testing.T, eng *Engine, _, _ int64) {
+			landAt(eng, 7801, "", 1<<40)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, _, nodeID, _, claimID := landSeat(t, 0)
+			seq := int64(1 << 39)
+			_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7801, Epoch: 3, Count: betweenBinsPack, PlacedSeq: &seq})
+			testutil.MustNoErr(t, err, "bin 7801 bound at generation 3")
+			testutil.MustNoErr(t, processes.StopSeatHold(eng.db.DB, nodeID), "the seat stopped")
+
+			tc.event(t, eng, nodeID, claimID)
+			rt := runtimeOf(t, eng, nodeID)
+			if rt.ActiveBinID == nil {
+				t.Fatal("no cart bound after the event")
+			}
+			if rt.HoldStopped != tc.stopped {
+				t.Errorf("stopped after the event = %t, want %t", rt.HoldStopped, tc.stopped)
 			}
 		})
 	}
@@ -432,7 +497,7 @@ func TestThrowAway_TheSweepLeavesAStoppedSeatsStretchOpen(t *testing.T) {
 
 // TestThrowAway_AStoppedSeatIsLoggedOnce — the stop is noted once, not per
 // stroke: a full strict cart thrown away past one pack, then ten more strokes
-// beside it, logs one "holds nothing until a cart binds here" line (the line
+// beside it, logs one "holds nothing until another cart binds here" line (the line
 // runs a stroke every ~22 s for hours behind a stuck supply). Not parallel: it
 // swaps the process logger.
 func TestThrowAway_AStoppedSeatIsLoggedOnce(t *testing.T) {
@@ -452,7 +517,7 @@ func TestThrowAway_AStoppedSeatIsLoggedOnce(t *testing.T) {
 		t.Fatal("fixture: the seat did not stop")
 	}
 	mu.Lock()
-	n := strings.Count(buf.String(), "holds nothing until a cart binds here")
+	n := strings.Count(buf.String(), "holds nothing until another cart binds here or a person counts")
 	mu.Unlock()
 	if n != 1 {
 		t.Errorf("the stopped seat logged %d lines over 10 strokes, want 1", n)

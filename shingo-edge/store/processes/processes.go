@@ -987,17 +987,18 @@ func epochArgs(activeBinID any, deltaEpoch int64) []any {
 // Core's landing now, the reseat, through BindLanding.)
 //
 // The epoch is subject to epochAssignOnBind; the other three columns are
-// written unconditionally. It clears hold_stopped: a bind ends a produce seat's
-// stop (D3), and counting resumes onto the carrier. db is a DBTX so a hand
-// load (D4) or a person's count (D5) shares a transaction with the hold's
-// drop and its row.
+// written unconditionally. It does NOT touch hold_stopped: its callers are a
+// hand load, which lifts the stop, and Core's count, which lifts it only when
+// a person counted (U1); each caller lifts it in its own transaction
+// (LiftSeatStop). db is a DBTX so a hand load (D4) or a person's count (D5)
+// shares a transaction with the hold's drop and its row.
 func SetRuntimeWithBinAndEpoch(db DBTX, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
 	args := []any{activeBinID, remainingUOPCached, activeClaimID, activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?,
-		hold_stopped=0, updated_at=datetime('now')
+		updated_at=datetime('now')
 		WHERE process_node_id=?`, args...)
 	return err
 }
@@ -1538,11 +1539,25 @@ func DropSeatHold(db DBTX, processNodeID, pile int64) (bool, error) {
 
 // StopSeatHold sets the produce seat's stop flag (hold_stopped, D3): the seat
 // threw away a pile that would have passed one pack and sets nothing aside
-// until a cart binds here (every bind clears it). Unguarded: its one caller,
-// engine throwAwayPile, runs it on the transaction of the seat's own guarded
-// write, after that write landed, under the engine's count lock.
+// until another cart binds here or a person enters a count (U1). Unguarded:
+// its one caller, engine throwAwayPile, runs it on the transaction of the
+// seat's own guarded write, after that write landed, under the engine's count
+// lock.
 func StopSeatHold(db DBTX, processNodeID int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET hold_stopped=1, updated_at=datetime('now')
+		WHERE process_node_id=?`, processNodeID)
+	return err
+}
+
+// LiftSeatStop clears the produce seat's stop flag (hold_stopped): a person's
+// count, on any path, or a hand load lifts it (U1). The landing and the staged
+// bind clear it in their own statements (another cart; a re-landing of the
+// cart bound keeps it). Unguarded: its callers (engine writeCountClearingHold,
+// bindEndingHold) run it on the transaction of their write, after that write
+// landed, under the engine's count lock, and only for a seat they read
+// stopped.
+func LiftSeatStop(db DBTX, processNodeID int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET hold_stopped=0, updated_at=datetime('now')
 		WHERE process_node_id=?`, processNodeID)
 	return err
 }

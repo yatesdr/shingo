@@ -41,7 +41,8 @@ const (
 	// HoldDropHoldCap: a produce seat's pile that a stroke would take past one
 	// pack (the claim's UOPCapacity), bound or not, carrier coming or not;
 	// the pile is dropped whole, Qty the pile before the stroke, and the seat
-	// sets nothing aside until a cart binds there. Rows before 2026-11-12
+	// sets nothing aside until another cart binds there or a person enters a
+	// count. Rows before 2026-11-12
 	// carry only the excess over one pack, from a bound seat at its pack.
 	HoldDropHoldCap = "hold_cap"
 	// HoldDropCutover: the process's active style flipped to a part the hold

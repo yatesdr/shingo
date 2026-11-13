@@ -110,25 +110,31 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 const holdDropByRecount = "edge:recount"
 
 // writeCountClearingHold runs a count's write and, for a person's count
-// (person), drops the seat's standing hold in the same transaction with one
-// hold_dropped (no_carrier) row by edge:recount, at any count (D5): the hold
-// was the line's guess at parts for this seat, and the person at the cart has
-// just said what is in it. Before it, a count below the pack reopened room and
-// the next tick replayed the hold into it (SPR ALN_011, 2026-11-12: a recount
-// of 132 to 67 read 132 again 4 s later). A count that does not land writes
-// nothing. A lifecycle count writes alone. Caller holds countMu.
+// (person), in the same transaction: drops the seat's standing hold with one
+// hold_dropped (no_carrier) row by edge:recount, at any count (D5), and lifts
+// a stopped seat's stop (U1). The hold was the line's guess at parts for this
+// seat, and the person at the cart has just said what is in it. Before it, a
+// count below the pack reopened room and the next tick replayed the hold into
+// it (SPR ALN_011, 2026-11-12: a recount of 132 to 67 read 132 again 4 s
+// later). A count that does not land writes nothing. A lifecycle count writes
+// alone and touches neither the hold nor the stop: the clear follows who
+// counted, not which statement ran. Caller holds countMu.
 func (e *Engine) writeCountClearingHold(node *processes.Node, person bool, write func(processes.DBTX) (bool, error)) (bool, error) {
 	if !person {
 		return write(e.db.DB)
 	}
 	var rows []protocol.HoldDropped
 	var pile int64
-	if rt, err := e.db.GetProcessNodeRuntime(node.ID); err == nil && rt != nil && rt.PendingUOPDelta != 0 {
-		pile = rt.PendingUOPDelta
-		rows = append(rows, protocol.HoldDropped{PayloadCode: rt.PendingUOPPayload, Qty: pile,
-			Reason: protocol.HoldDropNoCarrier, CalledBy: holdDropByRecount})
+	var stopped bool
+	if rt, err := e.db.GetProcessNodeRuntime(node.ID); err == nil && rt != nil {
+		stopped = rt.HoldStopped
+		if rt.PendingUOPDelta != 0 {
+			pile = rt.PendingUOPDelta
+			rows = append(rows, protocol.HoldDropped{PayloadCode: rt.PendingUOPPayload, Qty: pile,
+				Reason: protocol.HoldDropNoCarrier, CalledBy: holdDropByRecount})
+		}
 	}
-	ok, err := e.writeSeatWithDrops(node, rows, func(ex processes.DBTX) (bool, error) {
+	ok, err := e.writeEndingHold(node, rows, stopped, func(ex processes.DBTX) (bool, error) {
 		if ok, err := write(ex); err != nil || !ok || pile == 0 {
 			return ok, err
 		}
@@ -138,6 +144,24 @@ func (e *Engine) writeCountClearingHold(node *processes.Node, person bool, write
 		e.endUnheldEpisode(node.ID)
 	}
 	return ok, err
+}
+
+// writeEndingHold runs write with rows, as writeSeatWithDrops does, and when
+// lift, also lifts the seat's stop (processes.LiftSeatStop) once write has
+// landed, in the same transaction (writeSeatsInTx: lift or rows, never one
+// without the other). A seat read unstopped costs no statement more. Caller
+// holds countMu.
+func (e *Engine) writeEndingHold(node *processes.Node, rows []protocol.HoldDropped, lift bool,
+	write func(processes.DBTX) (bool, error)) (bool, error) {
+	if !lift {
+		return e.writeSeatWithDrops(node, rows, write)
+	}
+	return e.writeSeatsInTx(node, rows, func(ex processes.DBTX) (bool, error) {
+		if ok, err := write(ex); err != nil || !ok {
+			return ok, err
+		}
+		return true, processes.LiftSeatStop(ex, node.ID)
+	})
 }
 
 // writeReleaseCount writes the old carrier's count at a release and reads the

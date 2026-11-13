@@ -208,12 +208,13 @@ to a departed bin or lost. When the next bin of that part binds, the first tick 
 resets the hold to zero. The active pile — location-bound at the slot — covers the parts the operator runs during the
 gap. A produce seat never sets aside more than one pack (the claim's `UOPCapacity`), whether a carrier is coming or
 not: the stroke that would pass it throws the whole pile away (a `hold_dropped` `hold_cap` row) and the seat sets
-nothing aside until a cart binds there; those strokes reach Core as one `no_bin` row per no-cart stretch (SPR
+nothing aside until another cart binds there or a person enters a count (Core's own lifecycle messages never lift
+that stop); those strokes reach Core as one `no_bin` row per no-cart stretch (SPR
 ALN_011, 2026-11-12). The hold replays only onto a cart delivered by an order the Edge holds that places a bin at the
 node; any other bind (a cart placed or recorded by hand, a hand load, a set-down naming an order the Edge does not
 have) drops the standing hold in the bind's own transaction with one `no_carrier` row, and ends the no-cart stretch.
 A count a person enters (the bins page, the line's Record Count) writes the count and clears the seat's hold in the
-same write, at any count; Core's lifecycle announcements never touch the hold.
+same write, at any count, and lifts the stop. Core's lifecycle announcements never touch the hold or the stop.
 
 ## Release dispositions
 

@@ -290,9 +290,9 @@ type RuntimeState struct {
 	// cleared when it leaves or another carrier binds.
 	ReleasedEmpty bool `json:"released_empty,omitempty"`
 	// HoldStopped: the produce seat threw away a pile that would have passed
-	// one pack (D2) and sets nothing aside until a cart binds here (D3).
-	// Written with the hold, under the engine's count lock; cleared by every
-	// bind of another carrier.
+	// one pack (D2) and sets nothing aside until another cart binds here or a
+	// person enters a count (D3, U1). Written with the hold, under the engine's
+	// count lock; a Core lifecycle message never clears it.
 	HoldStopped   bool      `json:"hold_stopped,omitempty"`
 	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
 	StagedOrderID *int64    `json:"staged_order_id,omitempty"`

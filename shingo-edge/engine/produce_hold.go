@@ -7,8 +7,9 @@ package engine
 // pack (holdCap, the claim's UOPCapacity; D1), in every seat state: the stroke
 // that would take it past one pack throws the WHOLE pile away with one
 // hold_dropped (hold_cap) row and stops the seat (hold_stopped), which then
-// sets nothing aside, carrier coming or not, until a cart binds there; that
-// stroke and every one after it join the no-cart stretch (throwAwayPile;
+// sets nothing aside, carrier coming or not, until another cart binds there or
+// a person enters a count (U1); that stroke and every one after it join the
+// no-cart stretch (throwAwayPile;
 // D2/D3; pinned by TestThrowAway_ACarrierComingNoLongerGrowsThePile,
 // TestStrictPack_PastOnePackThrowsThePileAwayAndStops). Within the pack:
 //
@@ -61,7 +62,7 @@ const (
 	holdNoteNoCarrier  = "no_carrier"
 	holdNoteUnreadable = "unreadable"
 	// holdNoteStopped: the seat is stopped (hold_stopped, D3), noted once
-	// until a cart binds.
+	// until the stop is lifted.
 	holdNoteStopped = "stopped"
 )
 
@@ -126,12 +127,14 @@ func betweenBins(rt *processes.RuntimeState, part string, capN, input int) (hold
 // throwAwayPile is the one answer to a stroke that would take a produce seat's
 // pile past one pack (holdCap; D1-D3). The exit conveyor or accumulator cannot
 // hold a bin's worth, so parts past one pack went into some other container:
-// the pile is thrown away WHOLE, and the seat sets nothing aside until a cart
-// binds at it. In the seat write's own transaction (writeSeatsInTx):
+// the pile is thrown away WHOLE, and the seat sets nothing aside until another
+// cart binds at it or a person enters a count (U1). In the seat write's own
+// transaction (writeSeatsInTx):
 //
 //  1. write, the caller's guarded statement for this stroke, which leaves the
 //     hold at 0 (SetSeatHold, or the strict charge with no hold);
-//  2. the stop flag (processes.StopSeatHold), which every bind clears;
+//  2. the stop flag (processes.StopSeatHold), which another cart's bind or a
+//     person's count lifts (U1);
 //  3. one hold_dropped (hold_cap) row of pile of pilePart, the pile as it
 //     stood before the stroke, by the tick (none when the pile was empty);
 //
@@ -170,7 +173,7 @@ func (e *Engine) throwAwayPile(node *processes.Node, pile int, pilePart, part st
 		e.noteNoBinStroke(node.ID, part, stroke)
 	}
 	log.Printf("produce hold: node %s: %d of part %s set aside, with %d more, would pass one pack -- the pile is thrown "+
-		"away (hold_cap) and the seat sets nothing aside until a cart binds here", node.CoreNodeName, pile, pilePart, stroke)
+		"away (hold_cap) and the seat sets nothing aside until another cart binds here or a person counts", node.CoreNodeName, pile, pilePart, stroke)
 	return true, true
 }
 

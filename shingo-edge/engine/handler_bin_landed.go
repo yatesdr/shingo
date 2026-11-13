@@ -121,13 +121,17 @@ const (
 //     seat's standing hold (processes.DropSeatHold) with one hold_dropped
 //     (no_carrier) row naming by (D4);
 //   - any bind of another carrier ends the no-cart stretch: its rows ride the
-//     same transaction, naming stretchBy (D6).
+//     same transaction, naming stretchBy (D6);
+//   - with liftStop, a stopped seat's stop is lifted in the same transaction
+//     (U1: a hand load, whatever cart it names, and a person's staged bind).
+//     A landing passes false: its statement lifts the stop for another cart
+//     and keeps it for a re-landing of the cart bound.
 //
 // binID is the carrier the bind names (nil: none). bind is the bind statement
 // on ex and reports whether it landed; a bind that does not land writes
-// nothing, row or hold. One runtime read, under the lock. A re-landing of the
-// bin already bound (H.4) ends nothing. Caller holds countMu.
-func (e *Engine) bindEndingHold(node *processes.Node, binID *int64, by, stretchBy string,
+// nothing, row, hold or stop. One runtime read, under the lock. A re-landing of
+// the bin already bound (H.4) ends nothing. Caller holds countMu.
+func (e *Engine) bindEndingHold(node *processes.Node, binID *int64, by, stretchBy string, liftStop bool,
 	bind func(processes.DBTX) (bool, error)) (bool, error) {
 	rt, err := e.db.GetProcessNodeRuntime(node.ID)
 	if err != nil {
@@ -147,7 +151,8 @@ func (e *Engine) bindEndingHold(node *processes.Node, binID *int64, by, stretchB
 			noBin[i].CalledBy = stretchBy
 		}
 	}
-	ok, err := e.writeSeatWithDrops(node, append(rows, noBin...), func(ex processes.DBTX) (bool, error) {
+	lift := liftStop && rt != nil && rt.HoldStopped
+	ok, err := e.writeEndingHold(node, append(rows, noBin...), lift, func(ex processes.DBTX) (bool, error) {
 		if ok, err := bind(ex); err != nil || !ok || pile == 0 {
 			return ok, err
 		}
@@ -196,7 +201,7 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 	// carrier that landed (applyHoldAndReplay).
 	e.countMu.Lock()
 	var activePull bool
-	landed, err := e.bindEndingHold(node, &l.BinID, by, holdDropByLanding, func(ex processes.DBTX) (bool, error) {
+	landed, err := e.bindEndingHold(node, &l.BinID, by, holdDropByLanding, false, func(ex processes.DBTX) (bool, error) {
 		landed, ap, err := e.inventoryDelta.Land(ex, node.ID, l)
 		activePull = ap
 		return landed, err

@@ -2505,9 +2505,9 @@ func edgeMigrations() []migrate.Migration {
 			// produce seat's stop flag (SPR ALN_011, decisions D2/D3). Set when
 			// a pile that would pass one pack is thrown away whole
 			// (engine throwAwayPile); while it is set the seat sets nothing
-			// aside, and the strokes go to the no-cart stretch, until a cart
-			// binds at the seat. 0 on every existing row. Column-check guarded,
-			// like v20.
+			// aside, and the strokes go to the no-cart stretch, until another
+			// cart binds at the seat or a person enters a count. 0 on every
+			// existing row. Column-check guarded, like v20.
 			Version: 49,
 			Name:    "runtime_hold_stopped",
 			Fn: func(tx *sql.Tx) error {

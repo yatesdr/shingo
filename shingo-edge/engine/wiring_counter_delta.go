@@ -628,8 +628,9 @@ func (e *Engine) secondLitSide(tick tickScope, p *abPairTick, node *processes.No
 //
 // Every arm holds at most holdCap (the claim's UOPCapacity). The stroke that
 // would take the pile past it throws the whole pile away and stops the seat
-// (throwAwayPile, hold_stopped); a stopped seat sets nothing aside until a
-// cart binds, and its strokes join the no-cart stretch. A carrier "coming"
+// (throwAwayPile, hold_stopped); a stopped seat sets nothing aside until
+// another cart binds or a person enters a count (U1), and its strokes join the
+// no-cart stretch. A carrier "coming"
 // does not lift the cap: on 2026-11-11/12 at SPR ALN_011 a stuck supply leg
 // kept one coming all night and the hold reached 794.
 //
@@ -675,7 +676,7 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	}
 	if rt.ActiveBinID != nil && !rt.HoldStopped {
 		// A stopped seat keeps its note (holdNoteStopped) across bound strokes
-		// until a bind clears the stop, so it is logged once, not per stroke.
+		// until the stop is lifted, so it is logged once, not per stroke.
 		e.endCarrierNote(node.ID)
 	}
 	if rt.ActiveBinID != nil && parts.pack > 0 {
@@ -709,9 +710,10 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	}
 	if rt.HoldStopped {
 		// D3: after a throw-away the seat sets nothing aside, carrier coming or
-		// not, until a cart binds here. The stroke joins the no-cart stretch.
+		// not, until another cart binds here or a person enters a count (U1).
+		// The stroke joins the no-cart stretch.
 		e.noteCarrier(node, holdNoteStopped, fmt.Sprintf("%d of part %s not set aside -- the seat threw away a pile "+
-			"past one pack and holds nothing until a cart binds here", input, parts.tick))
+			"past one pack and holds nothing until another cart binds here or a person counts", input, parts.tick))
 		e.noteNoBinStroke(node.ID, parts.tick, input)
 		return false, 0, true
 	}
@@ -1080,7 +1082,7 @@ func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, 
 	e.endNoBinEpisode(node.ID, noBin)
 	if toStretch > 0 {
 		e.noteCarrier(node, holdNoteStopped, fmt.Sprintf("%d of part %s past the bin's pack not set aside -- the seat "+
-			"threw away a pile past one pack and holds nothing until a cart binds here", toStretch, parts.tick))
+			"threw away a pile past one pack and holds nothing until another cart binds here or a person counts", toStretch, parts.tick))
 		e.noteNoBinStroke(node.ID, parts.tick, toStretch)
 	}
 	if s.hold == 0 {
