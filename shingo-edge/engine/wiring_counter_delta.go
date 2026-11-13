@@ -699,7 +699,7 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 		return false, 0, true
 	}
 	if !e.carrierComing(node) {
-		if hold, pastPack := betweenBins(rt, parts.tick, parts.binPack, input); !hold {
+		if hold, pastPack := betweenBins(rt, parts.tick, parts.holdCap, input); !hold {
 			return e.dropPileAndLogTick(node, rt, input, parts.tick, pastPack)
 		}
 	}
@@ -738,9 +738,9 @@ type tickParts struct {
 	// read (strictPackFor), else 0. Carried per attempt like the parts, so a
 	// retry after a refused write decides it again on the fresh row.
 	pack int
-	// binPack is the tick's pack, the claim's UOPCapacity whether or not
-	// strict_pack is set: the cap on an unbound seat's hold between bins.
-	binPack int
+	// holdCap is the most the seat may set aside (holdCap: the claim's
+	// UOPCapacity whether or not strict_pack is set), on every arm.
+	holdCap int
 }
 
 // carrierIsPart reports whether the node's bound carrier is the claim's part:
@@ -883,13 +883,9 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// (producedPayload): an empty arrives known-empty, so its resident part
 	// would never match the hold. The consume seat's other-part rule is not a
 	// produce seat's (tickParts).
-	part, pack := producedPayload(claim), strictPackFor(claim)
-	binPack := 0
-	if claim != nil {
-		binPack = claim.UOPCapacity
-	}
+	part, pack, capN := producedPayload(claim), strictPackFor(claim), holdCap(claim)
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
-		return tickParts{tick: part, hold: part, carrier: part, pack: pack, binPack: binPack}
+		return tickParts{tick: part, hold: part, carrier: part, pack: pack, holdCap: capN}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -947,10 +943,12 @@ type strictSplit struct {
 }
 
 // splitStrict divides one tick on a bound strict seat, from the seat as read:
-// count is the bin's count, held / heldPart the hold, part the tick's part.
-// Pure. The bin takes MAX(0, MIN(avail, pack - count)), so a count already at
-// or past the pack (a person's, a bin bound before the setting, a pack lowered
-// mid-bin) takes 0 and is never written down.
+// count is the bin's count, held / heldPart the hold, part the tick's part,
+// pack the bin's cap (strictPackFor) and capN the hold's (holdCap; on a strict
+// claim the same number). Pure. The bin takes MAX(0, MIN(avail, pack -
+// count)), so a count already at or past the pack (a person's, a bin bound
+// before the setting, a pack lowered mid-bin) takes 0 and is never written
+// down.
 //
 //   - A hold of ANOTHER part (held != 0, !holdIsOf) is not offered and not
 //     relabelled: the tick charges to room, and what of the tick does not fit
@@ -964,7 +962,7 @@ type strictSplit struct {
 // In the last two cases the hold left behind is capped at one pack (hold_cap):
 // a bin at its pack with no carrier coming would otherwise grow it without
 // bound.
-func splitStrict(count, held int, heldPart, part string, input, pack int) strictSplit {
+func splitStrict(count, held int, heldPart, part string, input, pack, capN int) strictSplit {
 	room := max(0, pack-count)
 	if held != 0 && !holdIsOf(heldPart, part) {
 		s := strictSplit{avail: input, charge: min(input, room), hold: held, holdPart: heldPart}
@@ -974,15 +972,15 @@ func splitStrict(count, held int, heldPart, part string, input, pack int) strict
 		return s
 	}
 	s := strictSplit{avail: input + held}
-	if held > pack {
+	if held > capN {
 		s.avail = input
 		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: heldPart, Qty: int64(held), Reason: protocol.HoldDropBackstop})
 	}
 	s.charge = min(s.avail, room)
 	s.hold = s.avail - s.charge
-	if s.hold > pack {
-		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: part, Qty: int64(s.hold - pack), Reason: protocol.HoldDropHoldCap})
-		s.hold = pack
+	if s.hold > capN {
+		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: part, Qty: int64(s.hold - capN), Reason: protocol.HoldDropHoldCap})
+		s.hold = capN
 	}
 	if s.hold > 0 {
 		s.holdPart = part
@@ -1000,7 +998,7 @@ func splitStrict(count, held int, heldPart, part string, input, pack int) strict
 // re-reads once. A failed write is logged and emits nothing: the count did
 // not move.
 func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, input int, parts tickParts) (bound bool, binAttributed int, written bool) {
-	s := splitStrict(rt.RemainingUOPCached, int(rt.PendingUOPDelta), rt.PendingUOPPayload, parts.tick, input, parts.pack)
+	s := splitStrict(rt.RemainingUOPCached, int(rt.PendingUOPDelta), rt.PendingUOPPayload, parts.tick, input, parts.pack, parts.holdCap)
 	seat := processes.SeatAsReadOf(rt)
 	noBin := e.noBinRows(node.ID)
 	ok, err := e.writeSeatWithDrops(node, append(s.drops, noBin...), func(ex processes.DBTX) (bool, error) {

@@ -82,21 +82,36 @@ func (e *Engine) carrierComing(node *processes.Node) bool {
 	return false
 }
 
+// holdCap is the most a produce seat may set aside: one pack, the claim's
+// UOPCapacity, in every seat state (bound or not, strict or not; 0 when the
+// claim names no pack). It is the one number every "past one pack" decision
+// reads: the strict split (splitStrict), the hold between bins (betweenBins,
+// the tick's and the sweep's), and the flip carry (splitFlipCarry). How much
+// the BIN may take is a different question, the strict arm's
+// (NodeClaim.CappedPack). Pinned by TestHoldCap_EverySiteStopsAtTheSameNumber.
+// Pure.
+func holdCap(claim *processes.NodeClaim) int {
+	if claim == nil {
+		return 0
+	}
+	return claim.UOPCapacity
+}
+
 // betweenBins answers, for an unbound produce seat with no carrier coming,
 // whether a tick of input strokes of part is held between bins: the seat's
 // last carrier departed through Shingo (carrierGone, the mark carrierLeft
 // writes on the row the tick already read), the seat holds nothing of another
-// part, and the pile with the tick stays within pack (the claim's
-// UOPCapacity). pastPack: everything but the size says hold, and the tick
-// would take the pile past the pack. A real gap between bins never makes a
-// whole bin on the table, so that stroke proves nobody is coming for these
-// parts (dropPileAndLogTick). A claim with no pack never holds here. The
-// sweep asks it with input 0 (sweepProduceHold). Pure.
-func betweenBins(rt *processes.RuntimeState, part string, pack, input int) (hold, pastPack bool) {
-	if pack <= 0 || !carrierGone(rt) || !holdIsOf(rt.PendingUOPPayload, part) {
+// part, and the pile with the tick stays within capN (holdCap).
+// pastPack: everything but the size says hold, and the tick would take the
+// pile past the pack. A real gap between bins never makes a whole bin on the
+// table, so that stroke proves nobody is coming for these parts
+// (dropPileAndLogTick). A claim with no pack never holds here. The sweep asks
+// it with input 0 (sweepProduceHold). Pure.
+func betweenBins(rt *processes.RuntimeState, part string, capN, input int) (hold, pastPack bool) {
+	if capN <= 0 || !carrierGone(rt) || !holdIsOf(rt.PendingUOPPayload, part) {
 		return false, false
 	}
-	if int(rt.PendingUOPDelta)+input > pack {
+	if int(rt.PendingUOPDelta)+input > capN {
 		return false, true
 	}
 	return true, false
@@ -337,17 +352,17 @@ type flipCarry struct {
 }
 
 // splitFlipCarry divides a bucket of part carried onto B, from B's seat as
-// read: bound, its count, its hold (held of heldPart), and pack (B's strict
-// pack, strictPackFor; 0 when B's claim is not strict, and then no pack caps
-// it). Pure.
+// read: bound, its count, its hold (held of heldPart), pack (B's strict pack,
+// strictPackFor; 0 when B's claim is not strict, and then no pack caps the
+// bin) and capN (B's holdCap: the most B may set aside). Pure.
 //
 //   - B's bound bin takes MIN(bucket, room), room = MAX(0, pack - count), or
 //     all of it when pack is 0. An unbound B takes nothing into a bin.
-//   - The rest joins B's hold of the part, capped at one pack on a strict
-//     claim; the excess is dropped.
+//   - The rest joins B's hold of the part, capped at capN; the excess is
+//     dropped.
 //   - When B holds ANOTHER part's ticks, that hold is kept (it is not
 //     relabelled), and the rest, which can join no hold, is dropped.
-func splitFlipCarry(bucket int, bound bool, count, held int, heldPart, part string, pack int) flipCarry {
+func splitFlipCarry(bucket int, bound bool, count, held int, heldPart, part string, pack, capN int) flipCarry {
 	var c flipCarry
 	if bound {
 		room := bucket
@@ -371,9 +386,9 @@ func splitFlipCarry(bucket int, bound bool, count, held int, heldPart, part stri
 	if rest > 0 {
 		c.holdPart = part
 	}
-	if pack > 0 && c.hold > pack {
-		overflow(c.hold - pack)
-		c.hold = pack
+	if capN > 0 && c.hold > capN {
+		overflow(c.hold - capN)
+		c.hold = capN
 	}
 	return c
 }
@@ -412,7 +427,7 @@ func (e *Engine) carryFlipBucket(node, partner *processes.Node, orderUUID string
 		return
 	}
 	c := splitFlipCarry(int(a.PendingUOPDelta), b.ActiveBinID != nil, b.RemainingUOPCached,
-		int(b.PendingUOPDelta), b.PendingUOPPayload, part, strictPackFor(bClaim))
+		int(b.PendingUOPDelta), b.PendingUOPPayload, part, strictPackFor(bClaim), holdCap(bClaim))
 	for i := range c.drops {
 		c.drops[i].CalledBy, c.drops[i].OrderID = holdDropByFlip, orderUUID
 	}
@@ -482,7 +497,7 @@ func (e *Engine) sweepProduceHold(node *processes.Node, claim *processes.NodeCla
 	if rt.PendingUOPDelta <= 0 {
 		return
 	}
-	if hold, _ := betweenBins(rt, producedPayload(claim), claim.UOPCapacity, 0); hold {
+	if hold, _ := betweenBins(rt, producedPayload(claim), holdCap(claim), 0); hold {
 		return
 	}
 	e.countMu.Lock()

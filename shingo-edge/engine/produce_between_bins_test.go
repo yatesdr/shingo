@@ -6,6 +6,8 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 // ── A3: an unbound seat whose carrier departed through Shingo holds, up to one pack ──
@@ -159,6 +161,54 @@ func TestBetweenBins_ALandingEndsLogMode(t *testing.T) {
 
 	strokes(eng, processID, styleID, 3)
 	assertSeat(t, eng, nodeID, 0, 3, "WIDGET-A")
+}
+
+// TestHoldCap_EverySiteStopsAtTheSameNumber — D1: one cap. Every site that
+// decides "past one pack" reads holdCap (the claim's UOPCapacity), on a strict
+// claim and on one without strict_pack alike: at the cap the pile is kept, and
+// one stroke past it nothing more is set aside. The pure rows are the deciders;
+// the engine rows are the tick and the sweep reading the number off the claim.
+func TestHoldCap_EverySiteStopsAtTheSameNumber(t *testing.T) {
+	t.Parallel()
+	if got := holdCap(nil); got != 0 {
+		t.Errorf("holdCap(nil) = %d, want 0: no claim, no pack", got)
+	}
+	for _, strict := range []bool{true, false} {
+		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce, PayloadCode: "WIDGET-A",
+			StrictPack: strict, UOPCapacity: betweenBinsPack}
+		capN := holdCap(claim)
+		if capN != betweenBinsPack {
+			t.Fatalf("strict %t: holdCap = %d, want the claim's pack %d", strict, capN, betweenBinsPack)
+		}
+		departed := &processes.RuntimeState{LinesideSource: string(domain.CarrierDeparted),
+			PendingUOPDelta: int64(capN), PendingUOPPayload: "WIDGET-A"}
+		if hold, past := betweenBins(departed, "WIDGET-A", capN, 0); !hold || past {
+			t.Errorf("strict %t: betweenBins at the cap = hold %t past %t, want kept", strict, hold, past)
+		}
+		if hold, past := betweenBins(departed, "WIDGET-A", capN, 1); hold || !past {
+			t.Errorf("strict %t: betweenBins one past the cap = hold %t past %t, want past the pack", strict, hold, past)
+		}
+		if c := splitFlipCarry(capN+5, false, 0, 0, "", "WIDGET-A", strictPackFor(claim), capN); c.hold > capN {
+			t.Errorf("strict %t: a flip carry onto an unbound seat holds %d, want at most %d", strict, c.hold, capN)
+		}
+		if strict {
+			if s := splitStrict(capN, capN, "WIDGET-A", "WIDGET-A", 1, strictPackFor(claim), capN); s.hold > capN {
+				t.Errorf("a full strict bin's hold after one more stroke = %d, want at most %d", s.hold, capN)
+			}
+		}
+
+		eng, _, processID, nodeID, styleID, claimID := betweenBinsSeat(t, true)
+		_, err := eng.db.DB.Exec(`UPDATE style_node_claims SET strict_pack=? WHERE id=?`, strict, claimID)
+		testutil.MustNoErr(t, err, "set strict_pack")
+		strokes(eng, processID, styleID, capN)
+		assertSeat(t, eng, nodeID, 0, int64(capN), "WIDGET-A")
+		(&strandedMonitor{eng: eng}).tick(time.Now())
+		assertSeat(t, eng, nodeID, 0, int64(capN), "WIDGET-A")
+		strokes(eng, processID, styleID, 1)
+		if rt := runtimeOf(t, eng, nodeID); rt.PendingUOPDelta > int64(capN) {
+			t.Errorf("strict %t: the tick past the cap left a hold of %d, want at most %d", strict, rt.PendingUOPDelta, capN)
+		}
+	}
 }
 
 // TestBetweenBins_TheSweepKeepsADepartedSeatsPileWithinThePack — the scan's
