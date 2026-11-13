@@ -653,7 +653,28 @@ func (e *Engine) Stop() {
 	if e.plcMgr != nil {
 		e.plcMgr.Stop()
 	}
+	e.sendNoCartStretches()
 	e.logFn("Engine stopped")
+}
+
+// sendNoCartStretches writes every open no-cart stretch as its one no_bin row
+// at Stop (sendNoBinEpisode, actor edge:shutdown), after the PLC poll has
+// stopped, so no stroke joins it afterwards (D6). A stretch lives in memory
+// until a write ends it; a restart used to lose it whole (two SPR deploys lost
+// 1,262 and 970 strokes so). The row goes to the outbox, which drains after
+// the restart. Best effort: a node that cannot be read or a write that fails
+// is logged. Pinned by TestShutdown_AnOpenNoCartStretchIsWritten.
+func (e *Engine) sendNoCartStretches() {
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	for nodeID := range e.noBinStrokes {
+		node, err := e.db.GetProcessNode(nodeID)
+		if err != nil || node == nil {
+			log.Printf("produce hold: shutdown: node %d's no-cart stretch not sent: %v", nodeID, err)
+			continue
+		}
+		e.sendNoBinEpisode(node, holdDropByShutdown)
+	}
 }
 
 // ── WarLink (PLC connectivity) ──────────────────────────────────────

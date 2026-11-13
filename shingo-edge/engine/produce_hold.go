@@ -50,9 +50,10 @@ import (
 
 // The actors a hold_dropped row names for the drops written here.
 const (
-	holdDropBySweep   = "edge:sweep"
-	holdDropByCutover = "edge:cutover"
-	holdDropByFlip    = "edge:flip"
+	holdDropBySweep    = "edge:sweep"
+	holdDropByCutover  = "edge:cutover"
+	holdDropByFlip     = "edge:flip"
+	holdDropByShutdown = "edge:shutdown"
 )
 
 // The once-per-episode notes of carrierComing's answers (carrierNoteLogged).

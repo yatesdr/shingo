@@ -646,3 +646,25 @@ func TestRecount_APersonsCountClearsTheHold(t *testing.T) {
 		})
 	}
 }
+
+// ── D6: one row per no-cart stretch, and a restart cannot lose one ──
+
+// TestShutdown_AnOpenNoCartStretchIsWritten — strokes on an unbound seat with
+// nothing coming open a no-cart stretch, which lives in memory until a write
+// ends it. Stop writes it: exactly one no_bin row of the stretch's 7 strokes,
+// by edge:shutdown; a second Stop writes nothing more.
+func TestShutdown_AnOpenNoCartStretchIsWritten(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, _, styleID, _ := p2Seat(t, 0, "")
+	for _, d := range []int64{1, 2, 4} {
+		charSPTick(eng, processID, styleID, d)
+	}
+	assertDrops(t, eng.db)
+
+	eng.Stop()
+	shutdown := protocol.HoldDropped{Reason: protocol.HoldDropNoBin, Qty: 7, PayloadCode: "WIDGET-A",
+		Node: "PRODUCE-NODE", CalledBy: "edge:shutdown"}
+	assertDrops(t, eng.db, shutdown)
+	eng.Stop()
+	assertDrops(t, eng.db, shutdown)
+}
