@@ -24,7 +24,6 @@ Deploy: Edge v49. Core has no migration; the two go in either order.
 - A count a person enters clears the set-aside parts, so the next stroke counts on from that number
 - Strokes made with no cart at a press are reported to Core when the Edge stops, not lost in a restart
 - A changeover cancel that finds no cart at a press no longer starts "between bins" there
-- A cancelled robot carrying a cart that left a press recorded empty keeps it for a person
 - A bin move or retire refused for a live order names the order and its route, and the refusal is logged
 - Moving a bin by hand to a line whose parts take another cart type warns; the move stands
 

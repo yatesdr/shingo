@@ -1,6 +1,5 @@
-// return_sources.go — where the plant DECLARES a bin is used from, and whether
-// a node is a produce line, for the cancel-return policy (engine/cancel_return.go,
-// its only caller).
+// return_sources.go — where the plant DECLARES a bin is used from, for the
+// cancel-return policy (engine/cancel_return.go, its only caller).
 //
 // A PLACE THIS FILE NAMES IS A PLACE THE FINDER SERVES — claims' inbound
 // sources for fulls (dispatch.SourceFinder tiers 1/2), claims' declared empties
@@ -139,32 +138,6 @@ func (db *DB) EmptiesPlacesForBinType(binTypeID int64, ownNodes []string) ([]str
 		 GROUP BY src
 		 ORDER BY bool_or(own) DESC, bool_or(active) DESC, src`, fmt.Sprintf("empties places for bin type %d", binTypeID),
 		binTypeID, ownNodes)
-}
-
-// ProduceClaimAt reports whether any line's PRODUCE claim sits at node: a
-// press or line the plant makes parts at. The cancel-return policy asks it of
-// the node a recorded-empty cart was lifted from (engine.chooseDeclared): a
-// cart that left a produce line recorded empty may be full of parts nobody
-// counted (SPR ALN_011, 2026-11-12: a full FG cart recorded as an empty 45x48
-// was sent toward the Press 6 Press Buffer Zone).
-//
-// EXISTENCE IS LIVENESS. The mirror is replaced wholesale on every Edge
-// publish, so a row here is a claim the Edge holds now, under any style; the
-// running style (process_styles.is_active) is deliberately not joined. A
-// loader's windows never have a row: the Edge publisher leaves manual_swap
-// claims off the wire and names the windows as positions (process_positions)
-// instead, so a two-stage unloader's stage-2 window, which is produce, does
-// not count. Pinned by TestCancelReturn_ARecordedEmptyOffAProduceLineIsHeld.
-func (db *DB) ProduceClaimAt(node string) (bool, error) {
-	if node == "" {
-		return false, nil
-	}
-	var ok bool
-	if err := db.DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM style_claims
-		WHERE core_node_name = $1 AND role = 'produce')`, node).Scan(&ok); err != nil {
-		return false, fmt.Errorf("produce claim at %s: %w", node, err)
-	}
-	return ok, nil
 }
 
 // declaredPlaces runs one of the statements above and returns its node names.

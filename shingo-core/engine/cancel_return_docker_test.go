@@ -19,7 +19,6 @@ import (
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-	"shingocore/store/plantclaims"
 	"shingocore/store/reservations"
 
 	"shingo/protocol/eventbus"
@@ -300,6 +299,27 @@ func TestCancelReturn_AnEmptyGoesWhereClaimsDeclareEmptiesGo(t *testing.T) {
 		}
 	})
 
+	t.Run("off a press: the press's own declared empties-in first", func(t *testing.T) {
+		t.Parallel()
+		db := testdb.Open(t)
+		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+		pressA := &nodes.Node{Name: "CRE5-PRESS-A", Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(pressA), "create press A")
+		// Two presses whose parts admit the cart (their payloads name no
+		// carrier types), both under running styles. B's empties-in sorts
+		// before A's by name, so name order alone would pick B's.
+		inA, inASlot := storeGroupWithSlot(t, db, "CRE5-Z-IN-A")
+		inB, _ := storeGroupWithSlot(t, db, "CRE5-A-IN-B")
+		seedRoleClaim(t, db, "PROC-CRE5A", pressA.Name, protocol.ClaimRoleProduce, "CRE5-PA", inA.Name, "")
+		seedRoleClaim(t, db, "PROC-CRE5B", "CRE5-PRESS-B", protocol.ClaimRoleProduce, "CRE5-PB", inB.Name, "")
+		empty, _ := evacOff(t, db, "AMR-CRE5", "", pressA)
+		cacheRobot(eng, loadedDispatchable("AMR-CRE5"))
+		eng.sweepCarriedBins()
+		if ret := theReturn(t, db, empty.ID); ret.DeliveryNode != inASlot.Name {
+			t.Errorf("empty off press A returns to %q, want %s, press A's own declared empties-in", ret.DeliveryNode, inASlot.Name)
+		}
+	})
+
 	t.Run("no claim declares an empties place: hold", func(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
@@ -339,157 +359,6 @@ func TestCancelReturn_AnEmptyGoesWhereClaimsDeclareEmptiesGo(t *testing.T) {
 		if action, _, detail := lastBinAction(t, db, empty.ID); action != actionReturnHeld ||
 			!strings.Contains(detail, "a strict group that does not support "+press.Name) {
 			t.Errorf("audit = %s %q, want a hold naming the fence", action, detail)
-		}
-	})
-}
-
-// ── 4b. a recorded empty off a produce line is held (owner, 2026-11-12, D8) ──
-
-// produceLine is a line that makes parts: a produce claim at it, drawing its
-// empties from a store group with one free slot. That declaration is a place
-// an empty of any type may go, so every hold below is the D8 rule and not an
-// empty walk.
-func produceLine(t *testing.T, db *store.DB, prefix string) (line, slot *nodes.Node) {
-	t.Helper()
-	line = &nodes.Node{Name: prefix + "-LINE", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(line), "create the produce line")
-	grp, slot := storeGroupWithSlot(t, db, prefix+"-EMPTIES")
-	seedRoleClaim(t, db, "PROC-"+prefix, line.Name, protocol.ClaimRoleProduce, prefix+"-FG", grp.Name, "")
-	return line, slot
-}
-
-// liftedAt rewrites the carrier's plan to steps and its row for binID to lift
-// the cart at plan step pick and set it down at drop: the cart's own lift,
-// which is what cartPickNode reads.
-func liftedAt(t *testing.T, db *store.DB, o *orders.Order, binID int64, steps string, pick, drop int) {
-	t.Helper()
-	_, err := db.DB.Exec(`UPDATE orders SET order_type='complex', steps_json=$1 WHERE id=$2`, steps, o.ID)
-	testutil.MustNoErr(t, err, "the carrier's plan")
-	_, err = db.DB.Exec(`UPDATE order_bins SET pick_step=$1, drop_step=$2 WHERE order_id=$3 AND bin_id=$4`, pick, drop, o.ID, binID)
-	testutil.MustNoErr(t, err, "the cart's lift")
-}
-
-// TestCancelReturn_ARecordedEmptyOffAProduceLineIsHeld: a cart lifted off a
-// produce line and recorded empty may be full of parts nobody counted (SPR
-// ALN_011, 2026-11-12: a full FG cart recorded as an empty 45x48 was sent toward
-// the Press Buffer Zone). It stays on the robot for a person, by the watch and
-// by the Return button alike. Fulls, empties off anything else, and a two-stage
-// unloader's stage-2 window are returned as before. Each case on its own
-// database, because the empties walk is plant-wide.
-func TestCancelReturn_ARecordedEmptyOffAProduceLineIsHeld(t *testing.T) {
-	t.Parallel()
-	const held = "recorded empty; it may hold parts, so it is not returned automatically"
-
-	t.Run("two-robot evac off the line: held, notice sent, and the Return button holds too", func(t *testing.T) {
-		t.Parallel()
-		db := testdb.Open(t)
-		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		line, _ := produceLine(t, db, "CRP1")
-		empty, carrier := evacOff(t, db, "AMR-CRP1", "", line)
-		liftedAt(t, db, carrier, empty.ID, `[{"action":"pickup","node":"`+line.Name+`"},{"action":"dropoff","node":"OUTBOUND"}]`, 0, 1)
-		cacheRobot(eng, loadedDispatchable("AMR-CRP1"))
-		eng.sweepCarriedBins()
-		assertNoRecoveryOrder(t, db, empty.ID)
-		want := "came off produce line " + line.Name + " " + held
-		if action, _, detail := lastBinAction(t, db, empty.ID); action != actionReturnHeld || !strings.Contains(detail, want) {
-			t.Errorf("audit = %s %q, want a hold saying %q", action, detail, want)
-		}
-		got, _ := binReturnNotices(t, db, carrier.EdgeUUID)
-		if len(got) != 1 || got[0].State != protocol.BinReturnHeld || !strings.Contains(got[0].Reason, want) {
-			t.Errorf("notices = %+v, want one held saying %q", got, want)
-		}
-		// The bins page's Return button is the same chooser: the same rule.
-		if _, _, err := eng.RecoverCarriedBin(empty.ID, "tester"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Return button = %v, want refused saying %q", err, want)
-		}
-		assertNoRecoveryOrder(t, db, empty.ID)
-	})
-
-	t.Run("a single-robot swap's old cart: held, from the cart's own lift", func(t *testing.T) {
-		t.Parallel()
-		db := testdb.Open(t)
-		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		line, _ := produceLine(t, db, "CRP2")
-		// The order is sourced elsewhere and delivers to the line; the old
-		// cart is the one lifted at the line, plan step 2.
-		old, carrier := seedCancelledCarry(t, db, "AMR-CRP2", "", line.Name)
-		_, err := db.DB.Exec(`UPDATE orders SET source_node='CRP2-SRC' WHERE id=$1`, carrier.ID)
-		testutil.MustNoErr(t, err, "sourced elsewhere")
-		liftedAt(t, db, carrier, old.ID, `[{"action":"pickup","node":"CRP2-SRC"},{"action":"dropoff","node":"CRP2-STAGE"},`+
-			`{"action":"pickup","node":"`+line.Name+`"},{"action":"dropoff","node":"OUTBOUND"},`+
-			`{"action":"pickup","node":"CRP2-STAGE"},{"action":"dropoff","node":"`+line.Name+`"}]`, 2, 3)
-		cacheRobot(eng, loadedDispatchable("AMR-CRP2"))
-		eng.sweepCarriedBins()
-		assertNoRecoveryOrder(t, db, old.ID)
-		if action, _, detail := lastBinAction(t, db, old.ID); action != actionReturnHeld ||
-			!strings.Contains(detail, "came off produce line "+line.Name+" "+held) {
-			t.Errorf("audit = %s %q, want the D8 hold for the old cart", action, detail)
-		}
-	})
-
-	t.Run("a stage-2 window's empty: returned", func(t *testing.T) {
-		t.Parallel()
-		db := testdb.Open(t)
-		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		// A two-stage unloader: stage 2 is produce and sends the carts it
-		// finishes to its outbound destination.
-		out, outSlot := storeGroupWithSlot(t, db, "CRP3-OUT")
-		two, err := db.CreateLoader(loaders.Loader{Name: "CRP3-S2", Role: loaders.RoleProduce,
-			Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator, OutboundDest: out.Name})
-		testutil.MustNoErr(t, err, "stage 2")
-		testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: two, PayloadCode: "CRP3-FG"}), "stage 2 payload")
-		_, err = db.CreateLoader(loaders.Loader{Name: "CRP3-S1", Role: loaders.RoleConsume,
-			Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator, SecondStageLoaderID: &two})
-		testutil.MustNoErr(t, err, "stage 1")
-		// The Edge names a loader's window as a POSITION, never as a claim
-		// (pinned Edge-side by TestPlantClaimsPublisher_BuildProcessReportShape
-		// and TestPlantClaimsPublisher_LoaderPositionsOnTheWire).
-		win := &nodes.Node{Name: "CRP3-WIN", Enabled: true}
-		testutil.MustNoErr(t, db.CreateNode(win), "the stage-2 window")
-		_, err = db.ReplacePlantClaimsFromStation("PROC-CRP3", "edge.crp3",
-			[]plantclaims.StyleRow{{ProcessID: "PROC-CRP3", StyleID: "STY", ConfigGen: 1, IsActive: true}},
-			nil, []string{win.Name}, 0)
-		testutil.MustNoErr(t, err, "the window as Core mirrors it")
-		if produce, err := db.ProduceClaimAt(win.Name); err != nil || produce {
-			t.Fatalf("ProduceClaimAt(stage-2 window) = %v, %v; want false: a window has no style_claims row", produce, err)
-		}
-		empty, _ := evacOff(t, db, "AMR-CRP3", "", win)
-		cacheRobot(eng, loadedDispatchable("AMR-CRP3"))
-		eng.sweepCarriedBins()
-		if ret := theReturn(t, db, empty.ID); ret.DeliveryNode != outSlot.Name {
-			t.Errorf("stage-2 window's empty returns to %q, want %s, stage 2's outbound", ret.DeliveryNode, outSlot.Name)
-		}
-	})
-
-	// A consume line's empty evac is returned: the existing
-	// TestCancelReturn_AnEmptyGoesWhereClaimsDeclareEmptiesGo, its subtest "off a
-	// consumer line: that line's declared empties-out".
-
-	t.Run("a cart recorded full, off a produce line, with a consume source: returned", func(t *testing.T) {
-		t.Parallel()
-		db := testdb.Open(t)
-		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		line, _ := produceLine(t, db, "CRP5")
-		src, srcSlot := storeGroupWithSlot(t, db, "CRP5-SRC")
-		seedClaim(t, db, "PROC-CRP5C", "STY", "CRP5-CONSUMER", "CRP5-FG", src.Name, true)
-		full, _ := evacOff(t, db, "AMR-CRP5", "CRP5-FG", line)
-		cacheRobot(eng, loadedDispatchable("AMR-CRP5"))
-		eng.sweepCarriedBins()
-		if ret := theReturn(t, db, full.ID); ret.DeliveryNode != srcSlot.Name {
-			t.Errorf("a full off a produce line returns to %q, want %s, its consume claim's source", ret.DeliveryNode, srcSlot.Name)
-		}
-	})
-
-	t.Run("an order with no cart rows: the order's source node", func(t *testing.T) {
-		t.Parallel()
-		db := testdb.Open(t)
-		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-		line, _ := produceLine(t, db, "CRP7")
-		empty, _ := seedCancelledCarry(t, db, "AMR-CRP7", "", "")
-		carrier := &orders.Order{ID: 1 << 40, SourceNode: line.Name, DeliveryNode: "OUTBOUND"}
-		_, _, err := eng.chooseDeclared(empty, loadedDispatchable("AMR-CRP7"), carrier)
-		if want := "came off produce line " + line.Name + " " + held; err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("chooseDeclared = %v, want refused saying %q", err, want)
 		}
 	})
 }
@@ -1051,10 +920,7 @@ func TestCancelReturn_AKanbanAtLevelHolds(t *testing.T) {
 		eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 		press := &nodes.Node{Name: "CR16B-PRESS", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(press), "create press")
-		// Headed TO the press, not evacuated off it: an empty lifted off a
-		// press with a produce claim is held before the walk (D8,
-		// TestCancelReturn_ARecordedEmptyOffAProduceLineIsHeld).
-		b, _ := seedCancelledCarry(t, db, "AMR-CR16B", "", press.Name)
+		b, _ := evacOff(t, db, "AMR-CR16B", "", press)
 		kanbanAtLevel(t, db, "CR16B-KANBAN", b.BinTypeID, press, "")
 		cacheRobot(eng, loadedDispatchable("AMR-CR16B"))
 		eng.sweepCarriedBins()
