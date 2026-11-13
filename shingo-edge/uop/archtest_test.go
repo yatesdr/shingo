@@ -161,6 +161,7 @@ func TestArch_ActiveBinPointerWritersAreKnown(t *testing.T) {
 		"SetProcessNodeActiveBinID(",
 		"SetProcessNodeActiveBinIDAndEpoch(",
 		"ClearProcessNodeActiveBinAndCount(",
+		"ClearProcessNodeCarrier(",
 		"SetProcessNodeRuntime(",
 		"SetProcessNodeRuntimeWithBin(",
 		"SetProcessNodeRuntimeWithBinAndEpoch(",

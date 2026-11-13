@@ -60,6 +60,7 @@ type fakeDeltaSink struct {
 type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
+	ClearProcessNodeCarrier(processNodeID int64) (bool, error)
 	LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
@@ -132,15 +133,17 @@ func (s *fakeDeltaSink) BindActiveBin(nodeID, binID int64, deltaEpoch int64) err
 	return nil
 }
 
-func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) error {
+// ClearActiveBin with no db reports a carrier bound: the recorded-calls-only
+// fixtures call the verb to say a carrier left.
+func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) (bool, error) {
 	s.mu.Lock()
 	s.clearActiveCalls = append(s.clearActiveCalls, nodeID)
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.ClearProcessNodeActiveBinAndCount(nodeID)
+		return db.ClearProcessNodeCarrier(nodeID)
 	}
-	return nil
+	return true, nil
 }
 
 type fakeSetClaimCall struct {

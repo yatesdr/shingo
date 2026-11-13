@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -667,4 +668,45 @@ func TestShutdown_AnOpenNoCartStretchIsWritten(t *testing.T) {
 	assertDrops(t, eng.db, shutdown)
 	eng.Stop()
 	assertDrops(t, eng.db, shutdown)
+}
+
+// ── E7: a departure only when a carrier left ──
+
+// TestCarrierLeft_AnEmptySeatRecordsNoDeparture — a changeover cancel's reseat
+// that finds no carrier at the node (applyReseat) clears the seat through the
+// carrier-left verb. On a seat with a carrier bound it records the departure,
+// as before; on a seat already empty it records none, so "between bins" is not
+// re-armed on a departure that never happened. The pointer and count are
+// cleared either way.
+func TestCarrierLeft_AnEmptySeatRecordsNoDeparture(t *testing.T) {
+	t.Parallel()
+	reseat := func(t *testing.T, eng *Engine) {
+		t.Helper()
+		body, err := json.Marshal(protocol.ReseatAnswer{Node: "PRODUCE-NODE"})
+		testutil.MustNoErr(t, err, "the answer")
+		applyReseat(eng, &protocol.EdgeAnswer{Status: protocol.AnswerOK, Body: body})
+	}
+	for _, bound := range []bool{true, false} {
+		eng, _, _, nodeID, _ := landSeatBound(t, bound)
+		reseat(t, eng)
+		rt := runtimeOf(t, eng, nodeID)
+		if rt.ActiveBinID != nil || rt.RemainingUOPCached != 0 {
+			t.Errorf("bound %t: seat after the reseat = bin %v count %d, want cleared", bound, rt.ActiveBinID, rt.RemainingUOPCached)
+		}
+		assertDeparted(t, eng, nodeID, bound)
+	}
+}
+
+// landSeatBound is landSeat with no hold and, when bound, bin 7850 bound at 40
+// by its landing; unbound, the seat's last word is a person's (known empty).
+func landSeatBound(t *testing.T, bound bool) (eng *Engine, processID, styleID, nodeID, claimID int64) {
+	t.Helper()
+	eng, _, processID, nodeID, styleID, claimID = landSeat(t, 0)
+	if bound {
+		seq := int64(1 << 40)
+		_, _, err := eng.db.BindLandingAt(nodeID, processes.LandingBind{BinID: 7850, Epoch: 1, Count: 40, PlacedSeq: &seq})
+		testutil.MustNoErr(t, err, "bin 7850 lands")
+	}
+	eng.recordLinesideCarrier(nodeID, "PRODUCE-NODE", domain.KnownCarrier(""), domain.CarrierFromOperator)
+	return eng, processID, styleID, nodeID, claimID
 }

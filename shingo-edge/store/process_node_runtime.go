@@ -69,6 +69,14 @@ func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64)
 // cached count atomically — the pointer/count half of the carrier-left verb.
 // See processes.ClearActiveBinAndCount.
 func (db *DB) ClearProcessNodeActiveBinAndCount(processNodeID int64) error {
+	_, err := processes.ClearActiveBinAndCount(db.DB, processNodeID)
+	return err
+}
+
+// ClearProcessNodeCarrier is ClearProcessNodeActiveBinAndCount reporting
+// whether a carrier was bound before the clear (the carrier-left verb records
+// a departure only then). See processes.ClearActiveBinAndCount.
+func (db *DB) ClearProcessNodeCarrier(processNodeID int64) (wasBound bool, err error) {
 	return processes.ClearActiveBinAndCount(db.DB, processNodeID)
 }
 

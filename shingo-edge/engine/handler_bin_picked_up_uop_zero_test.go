@@ -99,7 +99,7 @@ func TestBinPickedUp_FlipReadinessReadsTheZeroedCount(t *testing.T) {
 	_ = orderUUID
 	// Drive ClearActiveBin through the inventory sink exactly as the handler
 	// does (handler_bin_picked_up.go), which is the write under test.
-	if err := eng.inventoryDelta.ClearActiveBin(nodeID); err != nil {
+	if _, err := eng.inventoryDelta.ClearActiveBin(nodeID); err != nil {
 		t.Fatalf("clear active bin: %v", err)
 	}
 

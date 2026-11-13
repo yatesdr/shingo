@@ -202,8 +202,11 @@ func (m *Mutator) BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, b
 // ActiveOrderID IS DELIBERATELY LEFT ALONE — it is the cell-busy pointer the
 // admission guards read, released by orderWorksTheCell on terminal/departure,
 // not by the pickup.
-func (m *Mutator) ClearActiveBin(nodeID int64) error {
-	return m.rw.ClearProcessNodeActiveBinAndCount(nodeID)
+//
+// wasBound reports whether a carrier was bound before the clear: the verb
+// records a departure only when one left (carrierLeft).
+func (m *Mutator) ClearActiveBin(nodeID int64) (wasBound bool, err error) {
+	return m.rw.ClearProcessNodeCarrier(nodeID)
 }
 
 // SetClaim points the slot at a claim and writes nothing else: not the count,

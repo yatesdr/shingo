@@ -27,7 +27,8 @@ type runtimeWriter interface {
 	// the cached count in one statement. Used by ClearActiveBin, the
 	// pointer/count half of the carrier-left verb (the count on the row is
 	// the departed bin's).
-	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
+	// It reports whether a carrier was bound before the clear.
+	ClearProcessNodeCarrier(processNodeID int64) (wasBound bool, err error)
 
 	// LeaveProcessNodeAtPickup is the same statement at the robot's pickup,
 	// also stamping the lift's generation and adding the ticks after the

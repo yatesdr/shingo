@@ -1199,14 +1199,25 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 // The identity half is NOT here: the verb records the departure through the
 // engine's lineside doorway right after this statement, so the one place
 // that writes the identity also names who cleared it.
-func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) error {
+//
+// wasBound reports whether a carrier was bound before the clear, which the
+// verb needs to record a departure only when one happened. It is the
+// statement's own answer, so a seat with a carrier costs one statement as
+// before; an already-empty seat takes a second, which zeroes its count and
+// flag as the one statement always did.
+func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) (wasBound bool, err error) {
 	// released_empty goes with the carrier it describes (Lane H R3, D12).
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
 		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0, released_empty=0,
 		updated_at=datetime('now')
-		WHERE process_node_id=?`,
+		WHERE process_node_id=? AND active_bin_id IS NOT NULL`,
 		processNodeID)
-	return err
+	if bound, err := oneRow(res, err); err != nil || bound {
+		return bound, err
+	}
+	_, err = db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=0, released_empty=0,
+		updated_at=datetime('now') WHERE process_node_id=?`, processNodeID)
+	return false, err
 }
 
 // LeaveAtPickup is ClearActiveBinAndCount for the robot's pickup (Lane H,

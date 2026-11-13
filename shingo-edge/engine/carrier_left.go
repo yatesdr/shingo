@@ -34,21 +34,35 @@ import (
 // cleared even when the pointer write failed: the carrier physically left,
 // and a held-over identity is a confident wrong answer about the next one.
 //
+// ── A DEPARTURE ONLY WHEN A CARRIER LEFT ─────────────────────────────────
+//
+// The departure is recorded only when a carrier was bound before the clear:
+// the clear's own statement says so (uop.ClearActiveBin's wasBound). A clear
+// of a seat already empty (a changeover cancel's reseat finding no carrier,
+// applyReseat) recorded one too, and that re-armed "between bins"
+// (betweenBins) on a departure that never happened. The pointer and count are
+// cleared either way, as before. A clear that fails records the departure as
+// before: the carrier physically left. Pinned by
+// TestCarrierLeft_AnEmptySeatRecordsNoDeparture.
+//
 // nil sink (tests and off-modes): nothing is written, pointer or identity,
 // matching the nil-guard every caller of the sink had before.
 func (e *Engine) carrierLeft(nodeID int64, nodeName string) error {
 	if e.inventoryDelta == nil {
 		return nil
 	}
-	err := e.inventoryDelta.ClearActiveBin(nodeID)
-	e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
+	wasBound, err := e.inventoryDelta.ClearActiveBin(nodeID)
+	if wasBound || err != nil {
+		e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
+	}
 	return err
 }
 
 // carrierGone reads what carrierLeft writes: no bin bound to the seat, and the
 // last carrier recorded as departed. A seat that is merely unbound (a carrier
-// placed by a path that sent no landing) is not gone; it cannot say. The one
-// reader is seatAt (swap_leg_role.go).
+// placed by a path that sent no landing) is not gone; it cannot say. Two
+// readers: seatAt (swap_leg_role.go) and betweenBins (produce_hold.go), whose
+// hold with nothing coming rests on it.
 func carrierGone(rt *processes.RuntimeState) bool {
 	return rt != nil && rt.ActiveBinID == nil && rt.LinesideSource == string(domain.CarrierDeparted)
 }
