@@ -718,12 +718,14 @@ func (s *BinService) Retire(id int64) error {
 //
 // It refuses rather than auto-cancels: cancelling here would free the slot
 // budget and let the next signal dispatch a fresh empty while stale bins rows
-// still read the slot occupied — trading a stall for a collision. The operator
-// cancels the named order first (or the UI offers to, as a follow-up), then
-// retires/moves. Keys on the order's rows (a live order with a row for this
-// cart: every cart it carries, a swap's second cart on the robot included), not
-// bins.claimed_by: ApplyArrival clears the claim on landing, which is exactly
-// why the manual retire slipped through.
+// still read the slot occupied — trading a stall for a collision. The refusal
+// names the order, its status and its route, and does NOT tell the person to
+// cancel it: a stuck order is stuck because something in the plant is, and the
+// house ruling is to go and look (store/reconciliation, the never-cancel
+// ruling at the active_order_stuck recommendation). Keys on the order's rows (a
+// live order with a row for this cart: every cart it carries, a swap's second
+// cart on the robot included), not bins.claimed_by: ApplyArrival clears the
+// claim on landing, which is exactly why the manual retire slipped through.
 func (s *BinService) guardNoOrphanedOrder(binID int64, action string) error {
 	active, err := s.db.ActiveOrdersByBin(binID)
 	if err != nil {
@@ -733,8 +735,25 @@ func (s *BinService) guardNoOrphanedOrder(binID int64, action string) error {
 		return nil
 	}
 	o := active[0]
-	return fmt.Errorf("cannot %s: bin is committed to order %d (%s → %s); cancel that order first or it will be orphaned",
-		action, o.ID, o.Status, o.DeliveryNode)
+	return fmt.Errorf("cannot %s: bin is committed to order %d (%s, %s); that order still counts on this cart, "+
+		"so look at it first — a %s now would leave it pointing at a cart that is not there",
+		action, o.ID, o.Status, orderRoute(o), action)
+}
+
+// orderRoute is an order's plan as the nodes it visits, in order, for a
+// sentence a person reads: "SMN_001 → ALN_011". A step that names no node is
+// left out, and an order whose plan names none says so.
+func orderRoute(o *domain.Order) string {
+	var stops []string
+	for _, st := range domain.OrderPlan(o) {
+		if st.Node != "" && (len(stops) == 0 || stops[len(stops)-1] != st.Node) {
+			stops = append(stops, st.Node)
+		}
+	}
+	if len(stops) == 0 {
+		return "no route recorded"
+	}
+	return strings.Join(stops, " → ")
 }
 
 // HasNotes returns a map indicating which of the supplied bin IDs have

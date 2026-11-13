@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/service"
@@ -290,6 +291,16 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.executeBinAction(b, req.Action, req.Params); err != nil {
+		// A REFUSAL IS LOGGED, one line: who, what, which bin, why. It was a
+		// 400 the person saw once and nothing kept (SPR ALN_011, 2026-11-12:
+		// the morning's "committed to order" refusals were reconstructed from
+		// memory). Not audited: the audit log records changes, and nothing
+		// changed.
+		actor := h.getUsername(r)
+		if actor == "" {
+			actor = protocol.AuditActorUI
+		}
+		log.Printf("bin action refused: actor=%s action=%s bin=%d (%s): %v", actor, req.Action, b.ID, b.Label, err)
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

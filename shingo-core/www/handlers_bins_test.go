@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"shingo/protocol"
@@ -22,6 +24,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
+	"shingocore/store/orders"
 )
 
 // testHandlers creates a Handlers struct backed by a real Postgres database and a
@@ -656,6 +659,67 @@ func TestExecuteBinAction_Move_RefusesOccupiedDestination(t *testing.T) {
 	if after.NodeID == nil || *after.NodeID != sd.StorageNode.ID {
 		t.Errorf("bin should have stayed at storage node %d; got node=%v",
 			sd.StorageNode.ID, after.NodeID)
+	}
+}
+
+// lockedLog collects the process logger's lines while the engine's own
+// goroutines write beside the test.
+type lockedLog struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// TestBinAction_Move_ABinALiveOrderHoldsIsRefusedNamingTheOrder: the bins
+// page's move of a cart a live order still counts on is refused with the
+// order, its status and its route named, never an instruction to cancel it
+// (the never-cancel ruling, store/reconciliation), and the refusal is logged:
+// who, what, which bin, why. SPR ALN_011, 2026-11-12: the morning's refusals
+// left no trace.
+//
+// Not parallel: it swaps the process-global logger.
+func TestBinAction_Move_ABinALiveOrderHoldsIsRefusedNamingTheOrder(t *testing.T) {
+	h, db, sd, bin := setupBinForAction(t)
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.Status, o.SourceNode, o.DeliveryNode = protocol.StatusStaged, sd.StorageNode.Name, sd.LineNode.Name
+	})
+	testdb.HoldCart(t, db, holder.ID, bin.ID)
+
+	logged := &lockedLog{}
+	prev := log.Writer()
+	log.SetOutput(logged)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	rec := postJSON(t, h.apiBinAction, "/api/bins/action", map[string]any{
+		"id": bin.ID, "action": "move", "params": map[string]any{"node_id": sd.LineNode.ID},
+	})
+	log.SetOutput(prev)
+
+	want := fmt.Sprintf("cannot move: bin is committed to order %d (%s, %s → %s)",
+		holder.ID, protocol.StatusStaged, sd.StorageNode.Name, sd.LineNode.Name)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("answer %d %s, want 400 saying %q", rec.Code, rec.Body.String(), want)
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "cancel") {
+		t.Errorf("answer %s tells the person to cancel the order: a stuck order is looked at, never cancelled", rec.Body.String())
+	}
+	if line := fmt.Sprintf("bin action refused: actor=%s action=move bin=%d (%s): %s",
+		protocol.AuditActorUI, bin.ID, bin.Label, want); !strings.Contains(logged.String(), line) {
+		t.Errorf("log has no line %q; got:\n%s", line, logged.String())
+	}
+	if after, err := db.GetBin(bin.ID); err != nil || after.NodeID == nil || *after.NodeID != sd.StorageNode.ID {
+		t.Errorf("bin moved despite the refusal: %+v (%v)", after, err)
 	}
 }
 
