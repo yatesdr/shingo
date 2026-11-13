@@ -3,6 +3,9 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -402,6 +405,65 @@ func TestBetweenBins_TheSweepKeepsADepartedSeatsPileWithinThePack(t *testing.T) 
 	}
 }
 
+// TestThrowAway_TheSweepLeavesAStoppedSeatsStretchOpen — D6: one row per
+// stretch. A full strict cart is thrown away past one pack and the seat
+// stops; the strokes beside the cart join the stretch, and a scan finding
+// the seat bound does not send it (it used to end a stretch at every scan of
+// a bound seat, which beside a stopped full cart is a row per scan). The
+// next cart's landing ends it as one row of all of them.
+func TestThrowAway_TheSweepLeavesAStoppedSeatsStretchOpen(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, nodeID, styleID := strictSeat(t, strictPack, strictPack, "WIDGET-A")
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: eng.db})
+	sm := &strandedMonitor{eng: eng}
+	strokes(eng, processID, styleID, 4)
+	sm.tick(time.Now())
+	strokes(eng, processID, styleID, 3)
+	sm.tick(time.Now())
+	holdCapRow := protocol.HoldDropped{Reason: protocol.HoldDropHoldCap, Qty: strictPack, PayloadCode: "WIDGET-A",
+		Node: "PRODUCE-NODE", CalledBy: "edge:tick"}
+	assertDrops(t, eng.db, holdCapRow)
+
+	testutil.MustNoErr(t, eng.carrierLeft(nodeID, "PRODUCE-NODE"), "RELEASE")
+	landAt(eng, 7870, "", 1<<40)
+	assertDrops(t, eng.db, holdCapRow, protocol.HoldDropped{Reason: protocol.HoldDropNoBin, Qty: 7,
+		PayloadCode: "WIDGET-A", Node: "PRODUCE-NODE", CalledBy: "edge:landing"})
+}
+
+// TestThrowAway_AStoppedSeatIsLoggedOnce — the stop is noted once, not per
+// stroke: a full strict cart thrown away past one pack, then ten more strokes
+// beside it, logs one "holds nothing until a cart binds here" line (the line
+// runs a stroke every ~22 s for hours behind a stuck supply). Not parallel: it
+// swaps the process logger.
+func TestThrowAway_AStoppedSeatIsLoggedOnce(t *testing.T) {
+	var buf strings.Builder
+	var mu sync.Mutex
+	prev := log.Writer()
+	log.SetOutput(writerFunc(func(p []byte) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}))
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	eng, _, processID, nodeID, styleID := strictSeat(t, strictPack, strictPack, "WIDGET-A")
+	strokes(eng, processID, styleID, 11)
+	if !runtimeOf(t, eng, nodeID).HoldStopped {
+		t.Fatal("fixture: the seat did not stop")
+	}
+	mu.Lock()
+	n := strings.Count(buf.String(), "holds nothing until a cart binds here")
+	mu.Unlock()
+	if n != 1 {
+		t.Errorf("the stopped seat logged %d lines over 10 strokes, want 1", n)
+	}
+}
+
+// writerFunc adapts a function to io.Writer.
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
 // ── D4: the hold lands only on a cart an order of this Edge's delivered ──
 
 // landSeat is betweenBinsSeat with a sink that writes (binds land) and a
@@ -709,4 +771,129 @@ func landSeatBound(t *testing.T, bound bool) (eng *Engine, processID, styleID, n
 	}
 	eng.recordLinesideCarrier(nodeID, "PRODUCE-NODE", domain.KnownCarrier(""), domain.CarrierFromOperator)
 	return eng, processID, styleID, nodeID, claimID
+}
+
+// ── E9.1: the ALN_011 night, replayed ──
+
+// TestALN011_TheNightReplayed drives SPR ALN_011's night of 2026-11-11/12
+// through the engine at delta 1, from the counter readings in the incident's
+// EVIDENCE-plant-checks.md §P5: a strict produce seat, pack 132, part 74575.
+// CARRIER-0011 (bin 23) is full at 528 (23:33:03), the hold beside it reaches
+// 132 at 660 (00:27:50), RELEASE comes at 665 (00:29:52), the line runs to
+// 1327 (06:50:14) behind a supply leg that stays live until it is cancelled
+// at 07:00:31, runs again to 1459 (08:12:47), and makes 1460 at 09:33:47 on
+// bin 23, recorded at the line by hand as empty.
+//
+// Exactly two rows: one hold_cap of 132 at the stroke that would take the
+// pile past one pack (661, 00:28:12), and one no_bin of 799 closed at bin 35's
+// hand landing; together the 931 strokes made after the cart filled. The hold
+// never passes 132, bin 23 reads 1 after 09:33:47 and asks for no swap, and a
+// person's count of 67 stays: the next stroke makes 68. On the night the sweep
+// dropped 794, bin 23 read 132 and fired a swap, and the recount was undone 4
+// s later.
+func TestALN011_TheNightReplayed(t *testing.T) {
+	t.Parallel()
+	const pack = 132
+	db := testEngineDB(t)
+	processID, nodeID, styleID, claimID := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	_, err := db.DB.Exec(`UPDATE payload_catalog SET code='74575', uop_capacity=? WHERE code='WIDGET-A'`, pack)
+	testutil.MustNoErr(t, err, "part 74575, pack 132")
+	_, err = db.DB.Exec(`UPDATE style_node_claims SET payload_code='74575', auto_request_payload='74575', strict_pack=1 WHERE id=?`, claimID)
+	testutil.MustNoErr(t, err, "the strict claim")
+	bin23 := int64(23)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin23, 1, pack), "CARRIER-0011 full at 528")
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
+	claim := p2Claim(t, eng, claimID)
+	if claim.UOPCapacity != pack || !claim.StrictPackApplies() {
+		t.Fatalf("fixture: claim pack %d strict %t, want %d strict", claim.UOPCapacity, claim.StrictPackApplies(), pack)
+	}
+	supply := p2Supply(t, eng, claimID) // live from 23:25, its release facts placing ALN_011
+	uuidOf := func(id int64) string {
+		o, err := db.GetOrder(id)
+		testutil.MustNoErr(t, err, "read order")
+		return o.UUID
+	}
+	evacLeg := func() int64 {
+		_, evac := BuildTwoRobotSwapSteps(claim)
+		return p2Order(t, db, protocol.StatusInTransit, "", evac, false)
+	}
+
+	counter, maxHold := 528, int64(0)
+	strokeTo := func(to int) {
+		t.Helper()
+		for ; counter < to; counter++ {
+			charSPTick(eng, processID, styleID, 1)
+			if h := runtimeOf(t, eng, nodeID).PendingUOPDelta; h > maxHold {
+				maxHold = h
+			}
+		}
+	}
+	holdCapRow := protocol.HoldDropped{Reason: protocol.HoldDropHoldCap, Qty: pack, PayloadCode: "74575",
+		Node: "PRODUCE-NODE", CalledBy: "edge:tick"}
+
+	strokeTo(660) // 00:27:50: the hold beside the full cart reaches one pack
+	assertSeat(t, eng, nodeID, pack, pack, "74575")
+	strokeTo(661) // 00:28:12: the stroke that would pass it
+	assertDrops(t, db, holdCapRow)
+	strokeTo(665) // 00:29:39, the last read before the release
+
+	// 00:29:52 RELEASE. Its seat write is the carrier-left verb
+	// (release_commit.go); the hold is not touched (D7).
+	testutil.MustNoErr(t, eng.carrierLeft(nodeID, "PRODUCE-NODE"), "RELEASE")
+	// 00:30:06 the evac's pickup of bin 23, which the seat no longer holds.
+	eng.HandleBinPickedUpMessage(protocol.BinPickedUp{OrderUUID: uuidOf(evacLeg()), BinID: 23, Location: "PRODUCE-NODE"})
+	strokeTo(1327) // 06:50:14; the line stops
+
+	// 07:00:31 the supply is cancelled on the stuck robot, and the cancel's
+	// reseat finds no carrier at the node.
+	_, err = db.DB.Exec(`UPDATE orders SET status=? WHERE id=?`, string(protocol.StatusCancelled), supply)
+	testutil.MustNoErr(t, err, "cancel the supply")
+	body, err := json.Marshal(protocol.ReseatAnswer{Node: "PRODUCE-NODE"})
+	testutil.MustNoErr(t, err, "the reseat answer")
+	applyReseat(eng, &protocol.EdgeAnswer{Status: protocol.AnswerOK, Body: body})
+	// 07:00:51 the sweep.
+	(&strandedMonitor{eng: eng}).tick(time.Now())
+	assertDrops(t, db, holdCapRow)
+	strokeTo(1459) // 07:20:52-08:12:47; the line stops
+
+	// 08:49:56 bin 35 placed at the line by hand, and lifted.
+	eng.HandleBinLanded(protocol.BinLanded{BinID: 35, CoreNodeName: "PRODUCE-NODE", Count: 105, Epoch: 1, PlacedSeq: 1 << 40})
+	noBinRow := protocol.HoldDropped{Reason: protocol.HoldDropNoBin, Qty: 799, PayloadCode: "74575",
+		Node: "PRODUCE-NODE", CalledBy: "edge:landing"}
+	assertDrops(t, db, holdCapRow, noBinRow)
+	eng.HandleBinPickedUpMessage(protocol.BinPickedUp{OrderUUID: uuidOf(evacLeg()), BinID: 35, Location: "PRODUCE-NODE"})
+
+	// 09:32:29 bin 23 recorded at the line by hand, empty; 09:33:47 one stroke.
+	eng.HandleBinLanded(protocol.BinLanded{BinID: 23, CoreNodeName: "PRODUCE-NODE", Count: 0, Epoch: 2, PlacedSeq: 1<<40 + 1})
+	strokeTo(1460)
+	assertSeat(t, eng, nodeID, 1, 0, "")
+	before := countOrders(t, db)
+	eng.reconcileDemand()
+	if after := countOrders(t, db); after != before {
+		t.Errorf("orders %d -> %d after the 09:33:47 stroke: a produce swap was requested for a cart reading 1", before, after)
+	}
+
+	// 10:07:04 a person's count of 67; one stroke.
+	eng.HandleUOPAdjustment(protocol.UOPAdjustment{BinID: 23, CoreNodeName: "PRODUCE-NODE", NewRemaining: 67, Epoch: 2, Actor: "ui"})
+	strokeTo(1461)
+	assertSeat(t, eng, nodeID, 68, 0, "")
+
+	assertDrops(t, db, holdCapRow, noBinRow)
+	if holdCapRow.Qty+noBinRow.Qty != 1459-528 {
+		t.Errorf("the rows hold %d strokes, want the %d made after the cart filled", holdCapRow.Qty+noBinRow.Qty, 1459-528)
+	}
+	if maxHold > pack {
+		t.Errorf("the hold reached %d, want never past one pack (%d)", maxHold, pack)
+	}
+
+	// CONTROL: the reconciler run above was able to ask. A full cart with
+	// nothing coming asks for its swap in this fixture.
+	testutil.MustNoErr(t, db.UpdateProcessNodeUOP(nodeID, pack), "bin 23 full")
+	before = countOrders(t, db)
+	eng.reconcileDemand()
+	if after := countOrders(t, db); after == before {
+		t.Error("control: a full cart asked for no swap -- the no-swap check above could not fail")
+	}
 }
