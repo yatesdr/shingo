@@ -455,16 +455,21 @@ type PayloadCarriers struct {
 	BinTypeCodes []string
 }
 
-// PayloadCarriersAt lists the parts the claims at node run, under any style
-// (a claim's payload and its allowed set), each with its carrier types, in
-// code order. One statement. A claim with no payload lists "": it constrains
-// nothing. The bins page's hand move reads it to warn, never to refuse
-// (service.BinService.CarrierTypeWarning).
+// PayloadCarriersAt lists the parts the claims at node run NOW, under the
+// style active at the node's process (process_styles.is_active, the join
+// store.ReturnSourcesForPayload makes), a claim's payload and its allowed set,
+// each with its carrier types, in code order. A claim under an inactive style
+// is not counted, and a node with no active style lists nothing (owner,
+// 2026-11-12, U3). One statement. A claim with no payload lists "": it
+// constrains nothing. The bins page's hand move reads it to warn, never to
+// refuse (service.BinService.CarrierTypeWarning).
 func PayloadCarriersAt(db *sql.DB, node string) ([]PayloadCarriers, error) {
 	rows, err := db.Query(`
 		SELECT c.code, pbt.bin_type_id, bt.code
 		  FROM (SELECT DISTINCT x.code
 		          FROM style_claims sc
+		          JOIN process_styles ps
+		            ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id AND ps.is_active
 		          CROSS JOIN LATERAL (
 		            SELECT sc.payload_code AS code
 		            UNION SELECT jsonb_array_elements_text(COALESCE(NULLIF(sc.allowed_payload_codes, ''), '[]')::jsonb)

@@ -326,9 +326,10 @@ func (s *BinService) MoveByHand(b *bins.Bin, toNodeID int64) (*MoveResult, error
 }
 
 // CarrierTypeWarning is the hand move's carrier check (owner, 2026-11-12,
-// D10): a sentence when no part the claims at the bin's node run may travel in
-// its type, "" when one may, when the node runs none, or when a part there
-// names no carrier types. The rule is the dispatch doors' own
+// D10): a sentence when no part the node runs now (its claims under the style
+// active there, U3) may travel in its type, "" when one may, when the node
+// runs none or no style is active there, or when a part there names no
+// carrier types. The rule is the dispatch doors' own
 // (domain.BinTypeRule): the types payload_bin_types names, or any type where it
 // names none. Not carrier families: all six SPR types share family 2.
 //

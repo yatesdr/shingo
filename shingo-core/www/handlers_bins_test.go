@@ -731,22 +731,48 @@ func TestBinAction_Move_ABinALiveOrderHoldsIsRefusedNamingTheOrder(t *testing.T)
 // part takes, or a part with no carrier rows, says nothing.
 func TestBinAction_Move_AForeignCarrierTypeWarnsAndMoves(t *testing.T) {
 	t.Parallel()
+	narrow := func(t *testing.T, db *store.DB, _ *testdb.StandardData) []int64 {
+		nt := &bins.BinType{Code: "C3-NARROW", Description: "the line's carrier"}
+		testutil.MustNoErr(t, db.CreateBinType(nt), "the line's carrier type")
+		return []int64{nt.ID}
+	}
+	// twoStyles mirrors the line under two styles: activePart under the
+	// running one and idlePart under the other, or neither running when
+	// noneActive. PART-A takes only C3-NARROW (narrow); PART-ANY has no
+	// carrier rows, so it takes any type (U3: only the running part counts).
+	twoStyles := func(activePart, idlePart string, noneActive bool) func(sd *testdb.StandardData) ([]plantclaims.StyleRow, []plantclaims.ClaimRow) {
+		return func(sd *testdb.StandardData) ([]plantclaims.StyleRow, []plantclaims.ClaimRow) {
+			claim := func(style, part string) plantclaims.ClaimRow {
+				return plantclaims.ClaimRow{ProcessID: "PROC-C3", StyleID: style, CoreNodeName: sd.LineNode.Name,
+					Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSimple, PayloadCode: part}
+			}
+			return []plantclaims.StyleRow{
+					{ProcessID: "PROC-C3", StyleID: "RUN", ConfigGen: 1, IsActive: !noneActive},
+					{ProcessID: "PROC-C3", StyleID: "IDLE", ConfigGen: 1, IsActive: false}},
+				[]plantclaims.ClaimRow{claim("RUN", activePart), claim("IDLE", idlePart)}
+		}
+	}
 	for _, tc := range []struct {
 		name  string
 		takes func(t *testing.T, db *store.DB, sd *testdb.StandardData) []int64
+		plant func(sd *testdb.StandardData) ([]plantclaims.StyleRow, []plantclaims.ClaimRow)
 		warn  string
 	}{
-		{"a type the part does not take: warned", func(t *testing.T, db *store.DB, _ *testdb.StandardData) []int64 {
-			narrow := &bins.BinType{Code: "C3-NARROW", Description: "the line's carrier"}
-			testutil.MustNoErr(t, db.CreateBinType(narrow), "the line's carrier type")
-			return []int64{narrow.ID}
-		}, "LINE1-IN runs PART-A, which takes C3-NARROW; BIN-ACTION-1 is DEFAULT"},
-		{"a type the part takes: silent", func(t *testing.T, _ *store.DB, sd *testdb.StandardData) []int64 {
+		{name: "a type the part does not take: warned", takes: narrow,
+			warn: "LINE1-IN runs PART-A, which takes C3-NARROW; BIN-ACTION-1 is DEFAULT"},
+		{name: "a type the part takes: silent", takes: func(t *testing.T, _ *store.DB, sd *testdb.StandardData) []int64 {
 			return []int64{sd.BinType.ID}
-		}, ""},
-		{"a part with no carrier rows: silent", func(*testing.T, *store.DB, *testdb.StandardData) []int64 {
+		}},
+		{name: "a part with no carrier rows: silent", takes: func(*testing.T, *store.DB, *testdb.StandardData) []int64 {
 			return nil
-		}, ""},
+		}},
+		{name: "only an inactive style's part takes the type: warned", takes: narrow,
+			plant: twoStyles("PART-A", "PART-ANY", false),
+			warn:  "LINE1-IN runs PART-A, which takes C3-NARROW; BIN-ACTION-1 is DEFAULT"},
+		{name: "the running part takes the type, an inactive one does not: silent", takes: narrow,
+			plant: twoStyles("PART-ANY", "PART-A", false)},
+		{name: "no style running at the line: silent", takes: narrow,
+			plant: twoStyles("PART-A", "PART-A", true)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -754,11 +780,13 @@ func TestBinAction_Move_AForeignCarrierTypeWarnsAndMoves(t *testing.T) {
 			if ids := tc.takes(t, db, sd); ids != nil {
 				testutil.MustNoErr(t, db.SetPayloadBinTypes(sd.Payload.ID, ids), "the part's carrier rule")
 			}
-			testutil.MustNoErr(t, db.ReplacePlantClaims("PROC-C3",
-				[]plantclaims.StyleRow{{ProcessID: "PROC-C3", StyleID: "STY", ConfigGen: 1, IsActive: true}},
-				[]plantclaims.ClaimRow{{ProcessID: "PROC-C3", StyleID: "STY", CoreNodeName: sd.LineNode.Name,
-					Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSimple, PayloadCode: sd.Payload.Code}}, 0),
-				"the line runs the part")
+			styles := []plantclaims.StyleRow{{ProcessID: "PROC-C3", StyleID: "STY", ConfigGen: 1, IsActive: true}}
+			claims := []plantclaims.ClaimRow{{ProcessID: "PROC-C3", StyleID: "STY", CoreNodeName: sd.LineNode.Name,
+				Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSimple, PayloadCode: sd.Payload.Code}}
+			if tc.plant != nil {
+				styles, claims = tc.plant(sd)
+			}
+			testutil.MustNoErr(t, db.ReplacePlantClaims("PROC-C3", styles, claims, 0), "the line's claims")
 
 			rec := postJSON(t, h.apiBinAction, "/api/bins/action", map[string]any{
 				"id": bin.ID, "action": "move", "params": map[string]any{"node_id": sd.LineNode.ID},

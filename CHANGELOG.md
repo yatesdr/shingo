@@ -25,7 +25,7 @@ Deploy: Edge v49. Core has no migration; the two go in either order.
 - Strokes made with no cart at a press are reported to Core when the Edge stops, not lost in a restart
 - A changeover cancel that finds no cart at a press no longer starts "between bins" there
 - A bin move or retire refused for a live order names the order and its route, and the refusal is logged
-- Moving a bin by hand to a line whose parts take another cart type warns; the move stands
+- Moving a bin by hand to a line whose running part takes another cart type warns; the move stands
 
 ## v0.6.4 — 2026-11-12
 
