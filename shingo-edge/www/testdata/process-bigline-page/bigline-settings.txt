@@ -1,0 +1,8 @@
+positions on the line: 23
+position rows drawn (each "light curtain …" line): 24
+positions whose curtain is on: 2
+rows saying the curtain is off: 21
+parts in the part set: 46
+recipe versions listed: 12
+save bar: yes
+markup written, characters: 24339
