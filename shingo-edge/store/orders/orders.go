@@ -625,8 +625,17 @@ func UpdateBinID(db *sql.DB, id int64, binID *int64) error {
 // clear on terminal/dispatch transitions. code is protocol.QueueCode as a raw
 // string (Edge does not branch on it in v1 — it persists it so future behavior
 // is a read, not a schema change).
+//
+// A NO-OP WHEN NOTHING CHANGES, as SetFaultClock is. The handler clears the
+// reason on every non-waiting order.update, so without the guard every push
+// rewrote two empty columns and bumped updated_at, which reads as the order
+// advancing: the stuck-order and unconfirmed-delivery anomalies
+// (reconciliation.ListAnomalies) measure from it, and keep-staged's pause
+// reads a refill's end from it (engine spotPause). Pinned by
+// TestSetQueueReason_AnUnchangedReasonWritesNothing.
 func SetQueueReason(db *sql.DB, uuid, reason, code string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=?, queue_code=?, updated_at=datetime('now') WHERE uuid=?`, reason, code, uuid)
+	_, err := db.Exec(`UPDATE orders SET queue_reason=?, queue_code=?, updated_at=datetime('now')
+		WHERE uuid=? AND (queue_reason<>? OR queue_code<>?)`, reason, code, uuid, reason, code)
 	return err
 }
 

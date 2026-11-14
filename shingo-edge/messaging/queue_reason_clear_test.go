@@ -173,3 +173,58 @@ func TestHandleOrderUpdate_ReasonGoneByTerminal(t *testing.T) {
 			"ALN_001 modal quoted during the next changeover", o.QueueReason)
 	}
 }
+
+// rowsWritten is every row the store changed since the last call: SQLite's
+// total_changes() on the one connection the store holds (SetMaxOpenConns(1)),
+// the measure store/sourcing_state_feedspin_test.go uses.
+func rowsWritten(t *testing.T, db *store.DB) func() int64 {
+	t.Helper()
+	read := func() int64 {
+		var n int64
+		if err := db.QueryRow(`SELECT total_changes()`).Scan(&n); err != nil {
+			t.Fatalf("read total_changes: %v", err)
+		}
+		return n
+	}
+	last := read()
+	return func() int64 {
+		now := read()
+		d := now - last
+		last = now
+		return d
+	}
+}
+
+// AN UNCHANGED REASON WRITES NOTHING. The handler clears the reason on every
+// order.update for an order that is not waiting, so the write ran on every
+// push and bumped updated_at, which the stuck-order anomaly reads as the order
+// advancing. A push that changes nothing at all writes no row now.
+func TestSetQueueReason_AnUnchangedReasonWritesNothing(t *testing.T) {
+	t.Parallel()
+	db := testHandlerDB(t)
+	h := testHandler(t, db)
+	seedQueuedWithReason(t, h, db, "uuid-same")
+	written := rowsWritten(t, db)
+
+	if err := db.SetOrderQueueReason("uuid-same", "Waiting for material: SYN-PART13E.06", "waiting_for_material"); err != nil {
+		t.Fatalf("same reason: %v", err)
+	}
+	if n := written(); n != 0 {
+		t.Errorf("the reason the row already holds wrote %d row(s), want 0", n)
+	}
+	if err := db.SetOrderQueueReason("uuid-same", "Waiting for a slot at SYN-LANE-1", "waiting_for_slot"); err != nil {
+		t.Fatalf("new reason: %v", err)
+	}
+	if n := written(); n != 1 {
+		t.Errorf("a new reason wrote %d row(s), want 1", n)
+	}
+
+	// The order moves (the clear writes), then Core says the same again.
+	moving := &protocol.OrderUpdate{OrderUUID: "uuid-same", Status: string(protocol.StatusInTransit)}
+	h.HandleOrderUpdate(nil, moving)
+	written()
+	h.HandleOrderUpdate(nil, moving)
+	if n := written(); n != 0 {
+		t.Errorf("an order.update that changes nothing wrote %d row(s), want 0", n)
+	}
+}
