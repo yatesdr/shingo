@@ -508,7 +508,7 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 |---|---|
 | `data` | 5 min |
 | `order.request` | 10 min |
-| `order.cancel` | 10 min |
+| `order.cancel` | **none** |
 | `order.receipt` | 30 min |
 | `order.redirect` | 10 min |
 | `order.complex_request` | 10 min |

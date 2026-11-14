@@ -11,8 +11,17 @@ var defaultTTLs = map[string]time.Duration{
 	TypeData: 5 * time.Minute,
 
 	TypeOrderRequest:  10 * time.Minute,
-	TypeOrderCancel:   10 * time.Minute,
 	TypeOrderRedirect: 10 * time.Minute,
+	// A cancel. It fell to 10 minutes, and one dropped after a longer outage
+	// left the Edge's row cancelled (the Edge ends it itself,
+	// orders.Manager.AbortOrderWithReason) and Core's live: robots parked that
+	// nothing on the Edge ever asks about again, since its status sync lists
+	// only live rows. A late copy cancels what is still live, and is a no-op
+	// on an order Core has already ended (dispatch.HandleOrderCancel). The
+	// Edge stamps the exp at enqueue and Core only reads it, so this is the
+	// Edge's release: an older Core reads no exp as never expiring
+	// (IsExpiredHeader).
+	TypeOrderCancel: NoExpiry,
 	// An ingest is a produced bin's count. A dropped one leaves a full bin
 	// unconfirmed and invisible to sourcing; a late one is fenced by its
 	// bin_epoch at Core. So it never expires.

@@ -80,6 +80,7 @@ func (e *Engine) runDemandReconciler() {
 // close. Run the other way round, every close would be deciding on a flag one
 // period stale.
 func (e *Engine) reconcileDemand() {
+	e.idleCancelLines()
 	e.sweepCellLevels()
 	e.reconcileDemandEpisodes()
 }

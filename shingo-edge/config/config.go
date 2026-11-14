@@ -117,6 +117,27 @@ type DemandConfig struct {
 	// A specific number for a specific plant is a question for a human, not a
 	// default to quietly change here.
 	HysteresisPercent *float64 `yaml:"hysteresis_percent"`
+
+	// IdleCancelAfter is how long a line counts no part before the Edge sends
+	// back the robots parked at its station waits and switches those
+	// positions' auto-reorder off (engine/idle_cancel.go). The owner's one
+	// number. <= 0 uses DefaultIdleCancelAfter. A sim run shortens it in its
+	// own config to watch the rule fire.
+	IdleCancelAfter time.Duration `yaml:"idle_cancel_after"`
+}
+
+// DefaultIdleCancelAfter is the idle hour (DemandConfig.IdleCancelAfter).
+const DefaultIdleCancelAfter = time.Hour
+
+// IdleCancelAfter is the configured idle hour, or DefaultIdleCancelAfter.
+func (c *Config) IdleCancelAfter() time.Duration {
+	c.mu.RLock()
+	d := c.Demand.IdleCancelAfter
+	c.mu.RUnlock()
+	if d <= 0 {
+		return DefaultIdleCancelAfter
+	}
+	return d
 }
 
 // DefaultHysteresisPercent is the recovery margin as a fraction of
@@ -528,6 +549,7 @@ func Defaults() *Config {
 			},
 		},
 		Logging:     LoggingConfig{StderrSubsystems: DefaultStderrSubsystems()},
+		Demand:      DemandConfig{IdleCancelAfter: DefaultIdleCancelAfter},
 		PlantClaims: PlantClaimsConfig{SnapshotInterval: DefaultPlantClaimsSnapshotInterval},
 	}
 }

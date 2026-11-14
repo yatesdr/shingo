@@ -344,6 +344,12 @@ const CancelReasonAcceptHalfSwap = "accept_half_swap"
 // pausing it (shingo-edge/orders.holdOnCoreCancel).
 const CancelReasonAbandonedPrefix = "abandoned:"
 
+// CancelReasonLineIdle is the reason of the Edge's own cancel of the robots
+// parked at a line that has counted no part for its idle hour
+// (shingo-edge/engine/idle_cancel.go). It opens CancelReasonAbandonedPrefix,
+// so a reader of the prefix files it as a wait given up, not a person's stop.
+const CancelReasonLineIdle = CancelReasonAbandonedPrefix + " line idle"
+
 // OrderReceipt confirms delivery acceptance.
 type OrderReceipt struct {
 	// OrderUUID names the delivered order.

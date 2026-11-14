@@ -274,6 +274,11 @@ type Engine struct {
 	// the bins copy runs it again (keepSpotsOnBinsChange). Memory only; the
 	// first sweep runs every kept line.
 	keptSpotLines sync.Map
+	// lineStops is what the idle rule remembers of each line between passes
+	// (process id -> lineStop): its last part and whether it was stopped, so
+	// the first part after a stop ends the offs there (idle_cancel.go). Memory
+	// only; the first pass after a start learns every line afresh.
+	lineStops sync.Map
 	// unloaderAsks holds the U1 asks out with Core and not answered
 	// (unloaderAskKey -> struct{}): the board's pending note per unloader
 	// window (UnloaderAskNote). Memory only, as the ask's waiter is: a restart

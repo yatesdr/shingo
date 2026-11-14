@@ -24,6 +24,11 @@ Deploy: Edge v50–v51. Core has no migration; the two go in either order.
 - When Core gives up on an order that waited too long, that position's auto-reorder goes off until someone says go
 - REQUEST, or turning auto-reorder on in Processes, ends a pause or an off at the position
 - Auto-reorder does not ask on a count that cannot be the part's (a press past two packs or below zero, a line past one pack); the tile says so
+- A line that counts no part for an hour sends back the robots parked there waiting on a RELEASE, and auto-reorder goes off at those positions
+- Not during a changeover, nor within an hour of one ending or of a REQUEST there, nor while the counter cannot be read
+- That off ends when the line counts a part after the stop, or on REQUEST
+- A cancel the Edge sends no longer expires on its way to Core
+- The hour is `demand.idle_cancel_after` in the Edge config
 
 ## v0.7.0 — 2026-11-13
 

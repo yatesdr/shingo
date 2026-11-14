@@ -106,9 +106,11 @@ type Order struct {
 	// down as a projection). Every row that predates the column is "edge", which
 	// is true — they were all created here.
 	//
-	// NOTHING BRANCHES ON IT, deliberately. It labels the board and it is what
-	// the projection tests assert against. Keeping it inert means turning the
-	// label off is a rendering change, not a behaviour change.
+	// ONE THING BRANCHES ON IT: the idle rule sends back only rows this Edge
+	// authored (engine/idle_cancel.go parkedLeg; storeorders.AuthoredByEdge),
+	// since Core refuses to cancel a leg it built while the Edge would already
+	// have ended its row. Otherwise it labels the board and is what the
+	// projection tests assert against.
 	AuthoredBy string `json:"authored_by"`
 	// OriginID and OriginClass are the demand attribution on the order: which
 	// demand episode it belongs to, and what kind of demand that is.
@@ -125,8 +127,8 @@ type Order struct {
 	// projection INSERT, so a Core-authored order on the board carried no
 	// attribution at all and the demand grain stopped at the module boundary.
 	//
-	// INERT HERE, like AuthoredBy. Nothing branches on either; they label the
-	// board and they are what the drift test asserts against. Blank means "NOT
+	// INERT HERE. Nothing branches on either; they label the board and they
+	// are what the drift test asserts against. Blank means "NOT
 	// RECORDED" and never "no episode" — a no_demand order states that with its
 	// class and an empty id. No backfill can invent a value for a row whose one
 	// was dropped, which is why a projection carrying blank leaves a stored value
@@ -150,9 +152,8 @@ type Order struct {
 	// release anyway (dispatch.HandleOrderRelease), so a button that survived here
 	// would be one whose only correct outcome is an error.
 	//
-	// Unlike AuthoredBy — which is deliberately inert — this one BRANCHES, so it
-	// is computed in the query beside the row it describes rather than being
-	// re-derived by each caller.
+	// IT BRANCHES, so it is computed in the query beside the row it describes
+	// rather than being re-derived by each caller.
 	LaneHeld bool `json:"lane_held"`
 	// StationWait is Core's number for the station wait this order was last
 	// staged at (protocol.OrderStaged.StationWait): its ordinal among the

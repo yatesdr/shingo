@@ -84,3 +84,18 @@ func GoReorderAtCoreNode(db DBTX, processID int64, coreNode string, at time.Time
 	}
 	return nil
 }
+
+// ClearReorderOffAtProcess clears an off set before before at any position of
+// the process, in one statement: the line has counted a part after a stop
+// (engine/idle_cancel.go), which is one of the two things that end an off. A
+// pause and a person's off are left as they are. It reports how many cleared.
+func ClearReorderOffAtProcess(db DBTX, processID int64, before time.Time) (int64, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET reorder_hold='', reorder_hold_at='', reorder_hold_note=''
+		WHERE reorder_hold=? AND reorder_hold_at < ?
+		  AND process_node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`,
+		string(domain.ReorderHoldOff), before.UTC().Format(helpers.TimeLayout), processID)
+	if err != nil {
+		return 0, fmt.Errorf("clear reorder off: %w", err)
+	}
+	return res.RowsAffected()
+}

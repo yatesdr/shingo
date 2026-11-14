@@ -141,6 +141,12 @@ func TestNewEnvelope_OrderIngestCarriesNoExpiry(t *testing.T) {
 		Address{Role: RoleCore}, &OrderRelease{OrderUUID: "u"}); err != nil || !rel.ExpiresAt.IsZero() {
 		t.Fatalf("order.release ExpiresAt = %v (err %v), want zero (never expires)", rel.ExpiresAt, err)
 	}
+	// And the cancel: a dropped one leaves Core's robots parked under an Edge
+	// row already cancelled, which nothing re-asks about.
+	if cxl, err := NewEnvelope(TypeOrderCancel, Address{Role: RoleEdge, Station: "plant-a.line-1"},
+		Address{Role: RoleCore}, &OrderCancel{OrderUUID: "u", Reason: CancelReasonLineIdle}); err != nil || !cxl.ExpiresAt.IsZero() {
+		t.Fatalf("order.cancel ExpiresAt = %v (err %v), want zero (never expires)", cxl.ExpiresAt, err)
+	}
 	env, err := NewEnvelope(TypeOrderIngest, Address{Role: RoleEdge, Station: "plant-a.line-1"},
 		Address{Role: RoleCore}, &OrderIngestRequest{OrderUUID: "u", PayloadCode: "PART-X", Quantity: 47})
 	if err != nil {

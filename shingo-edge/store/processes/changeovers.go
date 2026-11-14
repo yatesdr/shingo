@@ -22,6 +22,7 @@ package processes
 import (
 	"database/sql"
 	"errors"
+	"time"
 
 	"shingo/protocol/clock"
 	"shingoedge/domain"
@@ -708,4 +709,22 @@ func ListParticipantsWithStation(db *sql.DB, changeoverID int64) ([]ParticipantW
 		out = append(out, pw)
 	}
 	return out, rows.Err()
+}
+
+// ChangeoverBounds is what the idle rule reads of a process's changeovers, in
+// one statement: whether one is open, and when the last one ended (completed
+// or cancelled; the engine's clock, zero when none has).
+func ChangeoverBounds(db DBTX, processID int64) (open bool, lastEnd time.Time, err error) {
+	var end string
+	err = db.QueryRow(`SELECT
+		EXISTS(SELECT 1 FROM process_changeovers WHERE process_id = ? AND state NOT IN ('completed', 'cancelled')),
+		COALESCE((SELECT MAX(completed_at) FROM process_changeovers WHERE process_id = ? AND completed_at IS NOT NULL), '')`,
+		processID, processID).Scan(&open, &end)
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	if end != "" {
+		lastEnd = helpers.ScanTime(end)
+	}
+	return open, lastEnd, nil
 }

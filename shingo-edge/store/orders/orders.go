@@ -386,6 +386,11 @@ type ProjectionRow struct {
 	OriginClass string
 }
 
+// AuthoredByEdge is orders.authored_by on a row this Edge created and sent up
+// (the column's default); UpsertProjection's INSERT stamps 'core'. The idle
+// rule (engine/idle_cancel.go) sends back only rows this Edge authored.
+const AuthoredByEdge = "edge"
+
 // UpsertProjection writes a Core-authored order row, creating it or updating it
 // in place. Returns whether the row was newly created.
 //

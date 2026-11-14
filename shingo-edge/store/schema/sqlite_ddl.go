@@ -191,9 +191,9 @@ CREATE TABLE IF NOT EXISTS orders (
     queue_code      TEXT NOT NULL DEFAULT '',
     -- authored_by: who decided this order should exist. 'edge' (the default, and
     -- what every existing row is) means this Edge created it and sent it up;
-    -- 'core' means Core created it and pushed the row down. Nothing branches on
-    -- it: it labels the board and it is what a projected-row test asserts
-    -- against. Deliberately cheap to stop rendering.
+    -- 'core' means Core created it and pushed the row down. The idle rule
+    -- sends back only 'edge' rows (engine/idle_cancel.go); otherwise it labels
+    -- the board and is what a projected-row test asserts against.
     authored_by     TEXT NOT NULL DEFAULT 'edge',
     -- The fault clock (v36). Set only while the order is faulted; the handler
     -- clears them on any other status, derived from the status rather than from

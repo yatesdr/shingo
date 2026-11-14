@@ -96,6 +96,7 @@ logging:
 
 demand:
   hysteresis_percent: null              # null: 10% of a claim's reorder point, at least 1 UOP
+  idle_cancel_after: 1h0m0s             # a line silent this long: its parked robots go back, auto-reorder off there
 
 plant_claims:
   snapshot_interval: 1h0m0s             # full plant-claims republish period

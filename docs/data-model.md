@@ -2312,7 +2312,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `sibling_order_id` | `INTEGER` |  |  | → `orders(id) ON DELETE SET NULL` |  |
 | `queue_reason` | `TEXT` | yes | `''` |  |  |
 | `queue_code` | `TEXT` | yes | `''` |  |  |
-| `authored_by` | `TEXT` | yes | `'edge'` |  | authored_by: who decided this order should exist. 'edge' (the default, and what every existing row is) means this Edge created it and sent it up; 'core' means Core created it and pushed the row down. Nothing branches on it: it labels the board and it is what a projected-row test asserts against. Deliberately cheap to stop rendering. |
+| `authored_by` | `TEXT` | yes | `'edge'` |  | authored_by: who decided this order should exist. 'edge' (the default, and what every existing row is) means this Edge created it and sent it up; 'core' means Core created it and pushed the row down. The idle rule sends back only 'edge' rows (engine/idle_cancel.go); otherwise it labels the board and is what a projected-row test asserts against. |
 | `fault_since` | `TEXT` | yes | `''` |  | The fault clock (v36). Set only while the order is faulted; the handler clears them on any other status, derived from the status rather than from a pushed empty value — see messaging/edge_handler.go and the queue_reason incident it documents. fault_notice_after_s is Core's replan/fault threshold in seconds as it stood when the fault was pushed; 0 means an older Core that did not send one. |
 | `fault_deadline` | `TEXT` | yes | `''` |  |  |
 | `fault_notice_after_s` | `INTEGER` | yes | `0` |  |  |

@@ -38,8 +38,9 @@ const (
 	// asks again ReorderPause after it was set, or sooner on a go.
 	ReorderHoldPaused ReorderHold = "paused"
 	// ReorderHoldOff: the line counted no part for the idle hour and its
-	// waiting robots were sent back. Until the line counts a part or someone
-	// gives a go.
+	// waiting robots were sent back (engine/idle_cancel.go), or an older Core
+	// gave up on an order that waited. Until the line counts a part after a
+	// stop, or someone gives a go.
 	ReorderHoldOff ReorderHold = "off"
 	// ReorderHoldPersonOff: a person switched auto-reorder off here. Only a
 	// person clears it.
@@ -125,7 +126,7 @@ func heldByRow(rt *RuntimeState, now time.Time) ReorderHeld {
 			Sentence: fmt.Sprintf("Auto-reorder is paused until %s: %s. REQUEST asks now and ends the pause.", clockTime(until), note)}
 	case ReorderHoldOff:
 		return ReorderHeld{Hold: ReorderHoldOff,
-			Sentence: fmt.Sprintf("Auto-reorder is off: %s. REQUEST turns it back on.", note)}
+			Sentence: fmt.Sprintf("Auto-reorder is off: %s. It comes back on when the line counts a part after a stop, or on REQUEST.", note)}
 	case ReorderHoldPersonOff:
 		return ReorderHeld{Hold: ReorderHoldPersonOff,
 			Sentence: fmt.Sprintf("Auto-reorder was switched off here by %s at %s.", note, clockTime(rt.ReorderHoldAt))}
