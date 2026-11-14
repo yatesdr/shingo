@@ -41,6 +41,8 @@ function bigLine(o) {
         flow_composer_enabled: true, counter_plc_name: 'PLC_BIG', counter_tag_name: 'BigCount', counter_enabled: true,
         identity_tag_name: '', identity_none: false, changeover_auto_arm: 'off',
         quality_hold_enabled: false, quality_hold_destination: '',
+        // The list row as the server sends it, first paint included.
+        curtain_nodes: CURTAINS.slice(),
     };
     // 13 styles: the running one works BPN_007KLM decked by BPN_008 and sets
     // its next carrier; the rest each work one or two positions.

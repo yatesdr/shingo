@@ -148,7 +148,12 @@ func durationText(d time.Duration) string {
 }
 
 func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
-	processList, _ := h.engine.ProcessService().List()
+	// The list's rows, not bare processes: the first paint carries the
+	// curtain and quality-hold summary /api/processes does.
+	processList, err := h.processListRows()
+	if err != nil {
+		log.Printf("processes page: list: %v", err)
+	}
 	groupList, _ := h.engine.ProcessService().ListGroups()
 	styles, _ := h.engine.StyleService().List()
 	stationList, _ := h.engine.StationService().List()
@@ -161,14 +166,14 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
 			for i := range processList {
 				if processList[i].ID == processID {
-					activeProcess = &processList[i]
+					activeProcess = &processList[i].Process
 					break
 				}
 			}
 		}
 	}
 	if activeProcess == nil && len(processList) > 0 {
-		activeProcess = &processList[0]
+		activeProcess = &processList[0].Process
 	}
 
 	var activeProcessID int64

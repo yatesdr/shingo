@@ -31,21 +31,22 @@ type processListRow struct {
 	CurtainNodes []string `json:"curtain_nodes,omitempty"`
 }
 
-func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
+// processListRows is every process as the list draws it. The page's first
+// paint (handleProcesses) and /api/processes both serve it, so the Curtain
+// column and Settings' Quality hold read the same on first load as after a
+// re-read.
+func (h *Handlers) processListRows() ([]processListRow, error) {
 	processes, err := h.engine.ProcessService().List()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	states, err := h.engine.ProcessService().ContainmentStates()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	curtained, err := h.engine.ProcessService().CurtainedNodeNames()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	rows := make([]processListRow, len(processes))
 	for i, p := range processes {
@@ -55,6 +56,15 @@ func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 			rows[i].QualityHoldDestination = dest
 		}
 		rows[i].CurtainNodes = curtained[p.ID]
+	}
+	return rows, nil
+}
+
+func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.processListRows()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, rows)
 }
