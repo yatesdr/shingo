@@ -6,6 +6,6 @@ Light curtain says: 2 of 23 positions · rows: 2
 Counted at says: all 23 at the production counter · rows: 0
 Counted at, with one station counter, says: all 23 at the production counter
 parts in the part set: 46
-recipe versions listed: 12
+recipe versions listed: 3
 save bar: yes
-markup written, characters: 18295
+markup written, characters: 13609

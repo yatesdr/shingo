@@ -90,6 +90,27 @@
 -- notice: success "Saved"
 -- sheet closed
 
+## With two counters: POS_A1 and POS_A2 in one pick, Station 2 chosen on POS_A1’s row, then Save settings
+  1  GET /api/processes/1/countable
+  2  PUT /api/processes/1/counted-at
+       {
+         "bindings": [
+           {
+             "node_id": 201,
+             "line_counter_id": 52
+           },
+           {
+             "node_id": 202,
+             "line_counter_id": 52
+           }
+         ]
+       }
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/station-counters
+  5  GET /api/processes
+-- notice: success "Saved"
+-- sheet closed
+
 ## Settings › Station 1 › Remove
   1  DELETE /api/station-counters/51
   2  GET /api/processes/1/station-counters

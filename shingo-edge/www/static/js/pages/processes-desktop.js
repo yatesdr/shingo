@@ -655,9 +655,7 @@ async function setupGo(key) {
     if (key === 'counter') { await openSettingsAt('Production counter'); return; }
     if (key === 'hmi') {
         if (r.verb === 'New recipe') { await openNewRecipe(); return; }
-        // Settings' HMI setup row, opened: its switch is what Change… is for.
-        stMoreOpen().hmi = true;
-        await openSettingsAt('HMI');
+        await openSettingsAt('Operator setup');
         return;
     }
     if (key === 'style') {
@@ -676,17 +674,15 @@ async function setupGo(key) {
 
 // openSettingsAt opens Settings scrolled to the section whose heading starts
 // with `heading` — the words of the brief's sections, which Settings' own
-// headings carry — or, for 'HMI', to HMI setup's recipes (a row, not a
-// section, on Settings).
+// headings carry.
 async function openSettingsAt(heading) {
     S.tab = 'settings';
     // What the last write saved is said on Settings' own notice line.
     if (S.notice) { S.settingsNotice = S.notice; S.notice = ''; }
     await openSettings();
     syncHash();
-    const h = heading === 'HMI' ? $('pd-hmirecipes')
-        : [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(heading) === 0);
-    if (h && h.scrollIntoView) h.scrollIntoView({ block: 'center' });
+    const h = settingsHeading(heading);
+    if (h && h.scrollIntoView) h.scrollIntoView({ block: 'start' });
 }
 
 // ── D1 · Flows ───────────────────────────────────────────────────────────────
@@ -5347,6 +5343,7 @@ function settingsDraftFor(p) {
         // editor over the claims, which stay the storage the divert reads.
         quality_hold_enabled: !!p.quality_hold_enabled,
         quality_hold_destination: p.quality_hold_destination || '',
+        auto_reorder_switch_hmi: !!p.auto_reorder_switch_hmi,
     };
 }
 
@@ -5491,6 +5488,7 @@ const PROCESS_KEYS = ['name', 'description', 'group_id', 'counter_plc_name', 'co
     'identity_tag_name', 'identity_none', 'changeover_auto_arm'];
 const GATE_KEYS = ['flow_composer_enabled'];
 const HOLD_KEYS = ['quality_hold_enabled', 'quality_hold_destination'];
+const REORDER_KEYS = ['auto_reorder_switch_hmi'];
 
 const pickKeys = (o, keys) => Object.fromEntries(keys.map(k => [k, (o || {})[k]]));
 
@@ -5547,6 +5545,11 @@ const SETTINGS_SECTIONS = {
             B().processContainment(d.quality_hold_enabled, d.quality_hold_destination), NO_NOTICE)),
     d => (d.quality_hold_enabled && !d.quality_hold_destination
         ? { quality_hold_destination: 'Pick a containment destination before switching the quality hold on.' } : null)),
+    // WHETHER THE STATION SHOWS THE AUTO-REORDER SWITCH is a setting, on its
+    // own door; switching the line is an action (autoReorderSection).
+    reorder: processSection('auto-reorder on the station', REORDER_KEYS, async d =>
+        doorOut(await send('POST', '/api/processes/' + S.processID + '/auto-reorder-station',
+            { shown: !!d.auto_reorder_switch_hmi }, NO_NOTICE))),
     // THE LIGHT-CURTAIN INTERLOCK rides its own door per position: only the
     // positions whose four fields moved are sent, in order, stopping at the
     // first refusal. A curtain switched on needs both pointers and a chosen
@@ -5657,7 +5660,8 @@ async function afterSettingsSave(out) {
     await Promise.all([loadCurtainNodes(), loadStationCounters(), reloadProcesses(),
         wrote('positions') ? refreshProcessStationNodes() : null,
         wrote('routing') ? loadRouting() : null,
-        wrote('parts') ? loadProcessPayloads(S.processID).then(codes => { S.partSet = codes; }) : null]);
+        wrote('parts') ? loadProcessPayloads(S.processID).then(codes => { S.partSet = codes; }) : null,
+        wrote('reorder') ? loadAutoReorder() : null]);
     // A position or a routing name moved is the Styles tab's too: its pickers
     // and its picture read the composer.
     if (wrote('positions') || wrote('routing')) {
@@ -5746,7 +5750,7 @@ function identityField() {
     const derived = window.TagSuggest ? window.TagSuggest.derivedIdentity(S.settings.counter_tag_name) : '';
     const sub = mode === 'none' ? 'no part identity: no wrong-part alert, no automatic cutover or switch'
         : mode === 'derive' ? (derived ? 'reads ' + derived : 'the counter tag names no struct member to derive from')
-            : 'the CATID tag this cell publishes';
+            : '';
     return stField('Part identity (CATID)', sub, '<div class="pd-seg">' + seg + '</div>') +
         (mode === 'override'
             ? stField('Identity tag', '', stCombo('identity_tag_name', 'identity', '[data-st="counter_plc_name"]', ''))
@@ -5828,13 +5832,12 @@ async function loadAutoReorder() {
     S.autoReorder = res.ok ? res.body : null;
 }
 
-// flipAutoReorder is the switch's two doors, written as they are pressed like
-// the positions: the line on or off ({on}), and the station showing it
-// ({shown}). A refusal (no counter, or one that cannot be read now) is the
-// server's sentence, said on the card.
-async function flipAutoReorder(path, body) {
+// flipAutoReorder switches the line on or off, as it is pressed, outside the
+// draft: the Save bar's state is whatever it was. A refusal (no counter, or
+// one that cannot be read now) is the server's sentence, said under the row.
+async function flipAutoReorder(on) {
     S.autoReorderError = '';
-    const res = await send('POST', '/api/processes/' + S.processID + path, body, NO_NOTICE);
+    const res = await send('POST', '/api/processes/' + S.processID + '/auto-reorder', { on: on }, NO_NOTICE);
     if (!res.ok) S.autoReorderError = said(res);
     await loadAutoReorder();
     drawSettings();
@@ -5895,14 +5898,21 @@ async function afterStationChange() {
     drawSettings();
 }
 
-// setCountedAt is a Counted at row's select: the counter its draft counts at
-// ('0' the production counter, 'new' to make one for it).
-function setCountedAt(nodeID, value) {
+// setCountedAt sets the counter a position's draft counts at ('0' the
+// production counter, 'new' to make one for it). From a row's select, a row
+// still waiting for its counter (-1, + Add's) takes it, and so does every
+// other row waiting: the positions one pick added count at one counter, each
+// changeable after.
+function setCountedAt(nodeID, value, fromSelect) {
     if (value === 'new') {
         openStationCounter(0, nodeID);
         return;
     }
-    S.counted[nodeID] = Number(value) || 0;
+    const to = Number(value) || 0;
+    if (fromSelect && S.counted[nodeID] === -1) {
+        for (const id of Object.keys(S.counted)) if (S.counted[id] === -1) S.counted[id] = to;
+    }
+    S.counted[nodeID] = to;
     drawSettings();
 }
 
@@ -6102,26 +6112,6 @@ function keepDraft(fresh, was) {
     for (const id of Object.keys(was || {})) if (id in fresh) fresh[id] = was[id];
 }
 
-// A RARELY CHANGED SETTING IS ONE ROW (33-settings-pages.md rule 7): its
-// current values in the sub-label, and Change… showing its controls under it,
-// in place — Core's Configuration page's pattern. No sheet: the controls stay
-// in the page's one draft and its one Save (rule 10). A row with unsaved
-// changes opens on them until Hide is pressed. extra is more of the value
-// column (a position's Remove). Open rows are this process's only.
-function stMore(key, label, now, inner, dirty, extra) {
-    const was = stMoreOpen()[key];
-    const open = was === undefined ? !!dirty : was;
-    return '<div class="pd-sfld"><label>' + esc(label) + '<small>' + esc(now) + '</small></label><div class="v">' +
-        '<button class="pd-btn" data-act="st-more" data-more="' + esc(key) + '" data-open="' + (open ? '1' : '') +
-        '" aria-expanded="' + (open ? 'true' : 'false') + '">' + (open ? 'Hide' : 'Change…') + '</button>' +
-        (extra || '') + '</div></div>' + (open ? inner : '');
-}
-
-function stMoreOpen() {
-    if (!S.stMore || S.stMore.pid !== S.processID) S.stMore = { pid: S.processID, open: {} };
-    return S.stMore.open;
-}
-
 // THE COUNTER'S PLC IS A PICK (F12) from the PLCs WarLink reports, the read
 // the Configuration page lists them from (/api/plcs, once per page: the
 // curtain's PLC boxes share it), with each one's connection; the Tag
@@ -6150,31 +6140,45 @@ async function loadPLCs() {
 // AUTO-REORDER, THE LINE'S SWITCH (owner, 2026-11-13). Off is a person's off
 // at every position: nothing asks on its own until someone turns it back on,
 // here or on the station where it is shown. On needs the line's counter,
-// configured and reading; the server refuses it otherwise and says why. Both
-// controls are written as they are pressed, outside the save bar, and every
-// flip is listed below them.
-function autoReorderCard() {
+// configured and reading; the server refuses it otherwise and says why.
+//
+// SWITCHING IS AN ACTION, NOT A SETTING (owner, 2026-11-14): written as it is
+// pressed, recorded with who, where and when, and never counted by the Save
+// bar. The row says the state and the last switch. Whether the station shows
+// the switch is a setting, in the page's draft (SETTINGS_SECTIONS.reorder).
+function autoReorderSection() {
+    const head = '<div class="pd-sect"><h2>Auto-reorder</h2></div>';
+    const station = stField('Show the switch on the station', '', stToggle('auto_reorder_switch_hmi'));
     const a = S.autoReorder;
-    if (!a) return '';
+    if (!a) return head + '<p class="pd-note">This line’s switch could not be read. Reload the page to switch it.</p>' + station;
     const off = a.switched_off > 0;
     const when = at => { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleString(); };
-    const state = off ? 'off' + (a.switched_off < a.positions ? ' at ' + a.switched_off + ' of ' + a.positions + ' positions' : '') : 'on';
-    const flips = a.flips || [];
-    const last = flips[0];
-    const now = state + (last ? ' · ' + (last.turned_on ? 'on' : 'off') + ' by ' + last.by + ', ' + when(last.at) : '');
-    const list = flips.map(f => '<li>' + esc((f.turned_on ? 'On' : 'Off') + ' by ' + f.by + ' from ' +
-        (f.source === 'station' ? 'the station' : 'Processes') + ', ' + when(f.at)) + '</li>').join('');
-    const inner =
-        stField('Auto-reorder on this line',
-            off ? 'off: no position asks on its own · REQUEST still asks' : 'on: a position with auto-reorder asks on its own',
-            '<button class="pd-btn' + (off ? ' primary' : '') + '" data-act="ar-flip" data-on="' + (off ? '1' : '') + '">' +
-                (off ? 'Turn on' : 'Turn off') + '</button>') +
-        stField('Show the switch on the station', 'off: it is flipped here only · on: the station board shows it',
-            '<button class="pd-chk' + (a.shown_on_station ? ' on' : '') + '" data-act="ar-shown" data-shown="' +
-                (a.shown_on_station ? '' : '1') + '" role="switch" aria-checked="' + (a.shown_on_station ? 'true' : 'false') + '"></button>') +
+    const state = off ? 'Off' + (a.switched_off < a.positions ? ' at ' + a.switched_off + ' of ' + a.positions + ' positions' : '') : 'On';
+    const last = (a.flips || [])[0];
+    const said = last
+        ? (last.turned_on ? 'on' : 'off') + ' by ' + last.by + (last.source === 'station' ? ' from the station' : '') + ', ' + when(last.at)
+        : 'never switched';
+    return head +
+        stField('This line', 'positions armed on their style rows ask on their own',
+            '<b class="pd-arstate">' + esc(state) + '</b><span class="pd-dim">' + esc(said) + '</span>' +
+            '<button class="pd-btn" data-act="ar-flip" data-on="' + (off ? '1' : '') + '">' + (off ? 'Switch on' : 'Switch off') + '</button>') +
         (S.autoReorderError ? '<div class="pd-refusal">' + esc(S.autoReorderError) + '</div>' : '') +
-        (list ? '<p class="pd-note">Flips, newest first:</p><ul class="pd-note">' + list + '</ul>' : '');
-    return stMore('reorder', 'Auto-reorder', now, inner, !!S.autoReorderError);
+        station;
+}
+
+// THE JUMP LIST is the sections in their order, each a button to its heading:
+// a page of eleven sections is not scrolled through to reach the ninth.
+const SETTINGS_ORDER = ['Line', 'Production counter', 'Screens and positions', 'Routing set', 'Parts',
+    'Position settings', 'Changeover', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
+
+function settingsJump() {
+    return '<nav class="pd-jump" aria-label="Settings sections">' + SETTINGS_ORDER.map(h =>
+        '<button type="button" data-act="st-jump" data-to="' + esc(h) + '">' + esc(h) + '</button>').join('') + '</nav>';
+}
+
+// settingsHeading is Settings' section heading that starts with text.
+function settingsHeading(text) {
+    return [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(text) === 0) || null;
 }
 
 function drawSettings() {
@@ -6182,9 +6186,8 @@ function drawSettings() {
     const p = process() || {};
     const counting = !!(p.counter_plc_name && p.counter_enabled);
     const group = S.groups.find(g => g.id === S.settings.group_id);
-    const saved = settingsDraft();
 
-    const general = '<div class="pd-sect"><h2>General</h2></div>' +
+    const line = '<div class="pd-sect"><h2>Line</h2></div>' +
         stField('Name', '', stText('name')) +
         stField('Description', '', stText('description', true)) +
         stField('Group', 'groups processes on the list',
@@ -6203,10 +6206,11 @@ function drawSettings() {
         '</div>' +
         // WarLink's own list, not one Shingo keeps: a PLC missing here is one
         // WarLink was never told about, so the field says where to add it.
-        stField('PLC', 'Only PLCs set up in WarLink are listed — add one in WarLink’s PLCs tab', plcPick()) +
-        stField('Tag', 'type to filter this PLC’s tags; a MES_ struct offers its counter member',
-            stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
-        stField('Counting', 'off: this process isn’t counted', stToggle('counter_enabled')) +
+        stField('PLC', 'PLCs set up in WarLink', plcPick()) +
+        stField('Tag', '', stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
+        // Auto-reorder needs the line's counter configured and reading: the
+        // server refuses switching it on otherwise.
+        stField('Counting', 'needed for auto-reorder', stToggle('counter_enabled')) +
         (hasPressIndexClaim() ? '<p class="pd-note">' + esc(PRESS_INDEX_COUNTING) + '</p>' : '') +
         identityField() + (card ? card.countingHTML(view) : '');
 
@@ -6214,11 +6218,11 @@ function drawSettings() {
     const positions = positionSettings();
 
     // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
-    // picks from. Write-through, so it is outside the save bar's draft. Sync
-    // catalog is the section's action, not a setting: it asks Core for the
-    // catalog the picker offers.
+    // picks from, a draft saved by the one Save (SETTINGS_SECTIONS.parts). Its
+    // count is the heading's; Sync catalog is the section's action, not a
+    // setting: it asks Core for the catalog the picker offers.
     const partsSect = '<div class="pd-sect"><h2>Parts</h2>' +
-        '<span class="pd-dim">the operator’s part list on CHANGEOVER</span>' +
+        (S.partSet === null ? '' : '<span class="pd-dim">' + pickerValue(PART_SET_PICKER).length + '</span>') +
         '<span class="pd-spacer"></span>' +
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
         (S.partSet === null
@@ -6228,40 +6232,25 @@ function drawSettings() {
             : stField('Parts', 'what this process may run — the catalog is Core’s', pickerBox(PART_SET_PICKER))) +
         '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
 
-    // THE RARELY CHANGED THREE ARE ONE ROW EACH (33-settings-pages.md rule 7,
-    // owner ruling 4): Changeover, HMI setup and Quality hold say their current
-    // values in the sub-label, and Change… shows their controls under it.
+    // EVERY SECTION IS OPEN (owner, 2026-11-14): Changeover, Operator setup
+    // and Quality hold show their controls in place, in the page's one draft.
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
         '" data-act="st-arm" data-arm="' + m[0] + '">' + esc(m[1]) + '</button>').join('');
-    const arm = (AUTO_ARM.find(m => m[0] === S.settings.changeover_auto_arm) || AUTO_ARM[0])[1];
-    const changeover = stMore('changeover', 'Changeover', 'on a confirmed part (CATID) change: ' + arm.toLowerCase(),
+    const changeover = '<div class="pd-sect"><h2>Changeover</h2></div>' +
         stField('On a confirmed part (CATID) change', 'the PLC says a new part is running',
             '<div class="pd-seg">' + seg + '</div>') +
-        '<p class="pd-note">' + esc(AUTO_ARM_NOTE) + '</p>',
-        S.settings.changeover_auto_arm !== saved.changeover_auto_arm);
+        '<p class="pd-note">' + esc(AUTO_ARM_NOTE) + '</p>';
 
-    // THE SWITCH LOCKS THE FLOOR'S ONE EDIT (owner ruling R-K, 2026-10-18).
-    // Off, the operator picks parts and Shingo runs the engineer's recipe as
-    // set up. On, one more screen lets them move a recipe's slot to another
-    // position or staging lane — never a mode, a pairing or a role — and the
-    // result is saved as a style with the recipe as its provenance. ON WITH NO
-    // RECIPE IS SAID (F36): the operator's SET UP A PART then has nothing to
-    // set a part up from.
-    const hmiOn = !!S.settings.flow_composer_enabled;
-    const recipes = ((S.composer && S.composer.presets) || []).length;
-    const hmi = stMore('hmi', 'HMI setup',
-        (hmiOn ? 'on: the operator may set a style up' : 'off: the operator changes over to a style an engineer made') +
-            (hmiOn && !recipes ? ' · no recipe yet' : ''),
-        stField('Operator sets styles up',
-            'off: the operator changes over to a style an engineer made · on: they may set a style up — ' +
-            'pick a part and a recipe, and move its spots',
-            stToggle('flow_composer_enabled')) +
-        '<p class="pd-note">For a cell being set up. The robot moves — mode, pairing, role — stay the ' +
-        'recipe’s; the spots an operator moves are checked against your recipes: a press spot, its ' +
-        'on-deck spot and its lanes go only where a recipe here pairs them.</p>',
-        hmiOn !== saved.flow_composer_enabled) +
-        // F36: HMI setup and its recipes are one feature (hmiRecipes), drawn
-        // under its row whether or not the row is open.
+    // OPERATOR SETUP: the switch and the recipes it sets styles up from, one
+    // feature (F36). THE SWITCH LOCKS THE FLOOR'S ONE EDIT (owner ruling R-K,
+    // 2026-10-18). Off, the operator picks parts and Shingo runs the
+    // engineer's recipe as set up. On, one more screen lets them move a
+    // recipe's slot to another position or staging lane — never a mode, a
+    // pairing or a role — and the result is saved as a style with the recipe
+    // as its provenance.
+    const setup = '<div class="pd-sect"><h2>Operator setup</h2><span class="pd-spacer"></span>' +
+        '<button class="pd-btn" data-act="new-recipe">New recipe</button></div>' +
+        stField('Operators set styles up', 'from a recipe, on the station', stToggle('flow_composer_enabled')) +
         hmiRecipes();
 
     // QUALITY HOLD — a per-process opt-in. Off (the default) means every
@@ -6274,20 +6263,14 @@ function drawSettings() {
     // the claim is the one storage, this screen is its batch editor.
     const holdOn = !!S.settings.quality_hold_enabled;
     const dest = S.settings.quality_hold_destination || '';
-    const hold = stMore('hold', 'Quality hold',
-        holdOn ? 'on · ' + (dest ? 'contained bins go to ' + dest : 'no destination picked yet')
-            : 'off: finished goods go to their outbound destination',
-        stField('Contain finished goods on a quality alert',
-            'off: FG deliveries go to the outbound destination as always · on: a contained payload\'s bins divert to the hold spot instead',
+    const hold = '<div class="pd-sect"><h2>Quality hold</h2></div>' +
+        stField('Contain finished goods on a quality alert', 'off: they go to their outbound destination',
             stToggle('quality_hold_enabled')) +
         (holdOn
-            ? stField('Containment destination',
-                'where a contained payload\'s bins go — a node or a node group; the hold is inert until this is picked',
+            ? stField('Containment destination', '',
                 '<button class="pd-sel" data-act="st-holddest">' +
                 esc(dest || '-- None --') + '<i class="car"></i></button>')
-            : ''),
-        holdOn !== saved.quality_hold_enabled || dest !== saved.quality_hold_destination);
-    const more = '<div class="pd-sect"><h2>More</h2></div>' + changeover + hmi + hold + autoReorderCard();
+            : '');
 
     const danger = '<div class="pd-sect danger"><h2>Danger</h2></div>' +
         stField('Delete this process', 'its styles, flows, routing set and screens go with it',
@@ -6301,7 +6284,8 @@ function drawSettings() {
     const body = shell.body;
     const wasAt = shell.sheet.scrollTop || 0;
     shell.top.innerHTML = appbar();
-    body.innerHTML = healthSection() + general + counter + screensSection() + routingSection() + partsSect + positions + more + danger +
+    body.innerHTML = settingsJump() + healthSection() + line + counter + screensSection() + routingSection() + partsSect +
+        positions + changeover + setup + autoReorderSection() + hold + danger +
         (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
         (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '');
 
@@ -6318,7 +6302,7 @@ function drawSettings() {
         el.addEventListener('input', () => { S.curtain[el.dataset.cn][el.dataset.cf] = el.value; });
     }
     for (const el of body.querySelectorAll('select[data-countedat]')) {
-        el.addEventListener('change', () => setCountedAt(Number(el.dataset.countedat), el.value));
+        el.addEventListener('change', () => setCountedAt(Number(el.dataset.countedat), el.value, true));
     }
     bindPickers();
     bindCombos(body);
@@ -7687,8 +7671,7 @@ const PART_SET_PICKER = 'parts';
 
 // What Settings says under the part set. Add process asks the same question
 // and leaves the sentence to Settings, to fit one screen (F16).
-const PART_SET_NOTE = 'The parts this process can run. A part used by a flow stays ' +
-    'available until it is removed from that flow.';
+const PART_SET_NOTE = 'A part used by a flow stays available until it is removed from that flow.';
 
 // loadProcessPayloads reads the STORED half of a process's part set — what
 // this sheet is about to replace. A failed read opens the picker empty, and
@@ -8403,15 +8386,15 @@ async function loadPresets() {
     S.presets.error = '';
 }
 
-// The Shape column: the glyph the mode draws on every other surface, the mode
-// word, and the positions in PRESS order — the order of the picture, not of
-// whichever list the shape arrived in, so two presets over the same positions
-// read as the same positions.
+// shapeCell is a shape found in the flows, not named yet: the glyph the mode
+// draws on every other surface, the mode word, and the positions in PRESS
+// order — the order of the picture, not of whichever list the shape arrived
+// in, so two shapes over the same positions read as the same positions.
 //
 // DRAWN FROM THE SHAPE, ALWAYS (owner ruling R5, 2026-09-12). A preset's NAME
 // is whatever the engineer typed — the suggestion is the mode word alone now —
 // so the positions are never in it, and every surface that shows a preset
-// draws them itself: this column, the strip card's second line
+// draws them itself: the recipes' Spots column, the strip card's second line
 // (service/station_composer.go's presetUse), and the apply modal's title.
 // THE POSITIONS COME FROM THE SERVER, IN PRESS ORDER. This sorted them by the
 // picture's position index and the apply modal's title sorted them
@@ -8460,12 +8443,15 @@ function presetRow(p) {
     const head = '<tr class="' + (open ? 'on' : '') + '" data-preset="' + p.id + '">' +
         '<td class="pn" title="' + esc(p.name) + '"><b>' + esc(p.name) + '</b> ' +
         '<span class="pd-vtag">v' + (p.version || 1) + '</span></td>' +
-        '<td>' + shapeCell(p.mode, p.where) + '</td>' +
-        '<td class="pd-dim">' + members + ' part' + (members === 1 ? '' : 's') + '</td>' +
-        '<td>' + (drifted
-            ? '<span class="pd-warn">' + drifted + ' drifted</span>'
-            : '<span class="pd-dim">in step</span>') + '</td>' +
-        '<td class="pd-dim">' + esc(savedWord(p)) + '</td>' +
+        // THE SPOTS, NOT THE MODE: the recipe's name is what tells two recipes
+        // apart (a repeated name is the same recipe, a new version), and the
+        // spots are what an engineer checks it against the press by.
+        '<td class="pd-dim pd-spots" title="' + esc(p.where || '') + '">' + esc(p.where || '') + '</td>' +
+        // APPLIED TO SAYS ITS DRIFT: "6 parts · 6 drifted", the drift a
+        // count of the parts beside it, not a column of its own.
+        '<td class="pd-dim">' + members + ' part' + (members === 1 ? '' : 's') +
+            (drifted ? ' · <span class="pd-warn">' + drifted + ' drifted</span>' : '') + '</td>' +
+        '<td class="pd-dim pd-saved">' + esc(savedWord(p)) + '</td>' +
         // APPLY IS A BUTTON, NOT A MENU ITEM (§3 C5). It is the only thing on
         // this row anybody comes here to DO — Rename and Archive are
         // housekeeping, which is what a ⋯ is for. A control that is the point
@@ -8490,7 +8476,7 @@ function presetRow(p) {
             (d ? '<span title="' + esc((d.fields || []).join(' · ')) + '">' + driftedLine(d) + '</span>'
                 : '<span class="pd-dim">in step</span>') + '</div>';
     }).join('');
-    return head + '<tr class="pd-memrow"><td colspan="6">' + (members ? rows
+    return head + '<tr class="pd-memrow"><td colspan="5">' + (members ? rows
         : '<p class="pd-dim">Not applied to any part yet. Saving a preset from a flow does not ' +
         'apply it to that flow; Apply to parts… does.</p>') +
         '</td></tr>';
@@ -8498,25 +8484,16 @@ function presetRow(p) {
 
 function candidateRow(c) {
     const names = c.member_names || [];
-    const n = (c.members || []).length;
     const sub = names.slice(0, 4).join(', ') + (names.length > 4 ? ', +' + (names.length - 4) + ' more' : '');
-    // `N parts` and not `run by N parts`: the column is headed RUN BY, and a
-    // cell that repeats its own heading says it twice. The two tables count
-    // different things and their headings say which: a preset counts the parts
-    // it was APPLIED TO (a preset named from a flow marks nothing, so a shape
-    // every part runs can read 0 there), a found shape counts the parts whose
-    // flow RUNS it.
-    //
-    // THE SAME SHAPE CELL AS THE PRESETS TABLE (owner ruling R5, 2026-09-12).
-    // The suggested name is the mode word alone now, so a row that drew only
-    // the name would offer `2‑Robot Swap` with nothing to say WHICH swap —
-    // and two candidate shapes of one mode would be two identical rows. The
-    // positions come off the shape, here as there.
-    return '<tr data-cand="' + esc(c.shape_key) + '">' +
-        '<td class="pn">' + shapeCell(c.mode, c.where) + '<small>' + esc(sub) + '</small></td>' +
-        '<td class="pd-dim">' + n + ' part' + (n === 1 ? '' : 's') + '</td>' +
-        '<td class="pd-acts"><button class="pd-dimlink" data-act="preset-name-cand" data-cand="' +
-        esc(c.shape_key) + '">Name it…</button></td></tr>';
+    // THE MODE AND THE POSITIONS (owner ruling R5, 2026-09-12): a shape not
+    // named yet has nothing else to tell it by. The suggested name is the mode
+    // word alone, so a line that drew only the name would offer `2‑Robot Swap`
+    // with nothing to say WHICH swap — and two candidate shapes of one mode
+    // would be two identical lines. The parts that run it follow.
+    return '<div class="pd-cand" data-cand="' + esc(c.shape_key) + '">' + shapeCell(c.mode, c.where) +
+        '<span class="pd-dim">' + esc(sub) + '</span>' +
+        '<button class="pd-dimlink" data-act="preset-name-cand" data-cand="' +
+        esc(c.shape_key) + '">Name it…</button></div>';
 }
 
 // drawPresets redraws the recipes where they are drawn: Settings, whose
@@ -8527,18 +8504,21 @@ function drawPresets() {
     drawSettings();
 }
 
-// hmiRecipes is HMI setup's recipes, under its switch on Settings (F36): the
-// fact (none, or how many) with New recipe, the recipes themselves with their
-// Apply to parts… and ⋯, and "Found in your flows" — what the Recipes tab
-// held, in the place the feature is switched on.
+// hmiRecipes is Operator setup's recipes, under its switch on Settings (F36):
+// the recipes with their Apply to parts… and ⋯, and "Found in your flows" —
+// what the Recipes tab held, in the place the feature is switched on.
 function hmiRecipes() {
-    const f = hmiSetupFacts();
-    const fact = stField('Recipes', 'what an operator sets a style up from',
-        '<span class="pd-cnt' + (f.warn ? ' warn' : '') + '"><i></i>' +
-        esc(f.value.replace(/^(on|off) · /, '')) + '</span>' +
-        '<button class="pd-btn" data-act="new-recipe">New recipe</button>');
-    return '<div class="pd-hmirecipes" id="pd-hmirecipes">' + fact + recipesHTML() +
+    return '<div class="pd-hmirecipes" id="pd-hmirecipes">' + recipesHTML() +
         '<div class="pd-pop" id="pd-pop" hidden></div></div>';
+}
+
+// newestRecipes is each recipe name's newest version: a repeated name is the
+// same recipe changing (ErrFlowPresetNameIsAnotherShape), and its older
+// versions are what claims made from them still point at.
+function newestRecipes(presets) {
+    const top = {};
+    for (const p of presets) if (!top[p.name] || (p.version || 1) > (top[p.name].version || 1)) top[p.name] = p;
+    return presets.filter(p => top[p.name] === p);
 }
 
 function recipesHTML() {
@@ -8546,43 +8526,35 @@ function recipesHTML() {
     const v = presetsView();
     if (!v) return '';
     const presets = v.presets || [];
+    const newest = newestRecipes(presets);
+    const older = presets.length - newest.length;
+    const shown = S.presets.older ? presets : newest;
     const cands = v.candidates || [];
-    const flows = v.styles_with_flow || 0;
-    let h = '';
     // THE COLUMNS ARE SIZED, the way D1's positions table is, and for the same
     // reason: left to itself the browser gave Name a third of what its content
-    // needs and Shape less than its position list, so the one thing an
-    // engineer scans down wrapped onto two lines with `v1` orphaned on the
-    // second, while `PLN_01 / PLN_04` ellipsised beside acres of empty Saved.
-    // THE ACTIONS COLUMN HOLDS A BUTTON NOW, not just a ⋯, so it gets the room
-    // for one. At 6 % the `Apply to parts…` button was clipped mid-word and
-    // pushed the ⋯ off the row entirely — the table is `table-layout: fixed`,
-    // so a cell does not grow to its contents, it cuts them.
-    const presetCols = '<colgroup><col style="width:20%"><col style="width:24%">' +
-        '<col style="width:9%"><col style="width:11%"><col style="width:18%"><col style="width:18%"></colgroup>';
-    h += presets.length
+    // needs and the spots less than their list. THE ACTIONS COLUMN HOLDS A
+    // BUTTON, not just a ⋯, so it gets the room for one: the table is
+    // `table-layout: fixed`, so a cell does not grow to its contents, it cuts
+    // them.
+    const presetCols = '<colgroup><col style="width:32%"><col style="width:22%">' +
+        '<col style="width:16%"><col style="width:12%"><col style="width:18%"></colgroup>';
+    const table = presets.length
         ? '<table class="pd-tbl pd-presettbl">' + presetCols +
-        '<thead><tr><th>Name</th><th>Shape</th><th>Applied to</th>' +
-        '<th>Drift</th><th>Saved</th><th></th></tr></thead><tbody>' +
-        presets.map(presetRow).join('') + '</tbody></table>'
-        : '';
-
+        '<thead><tr><th>Recipe</th><th>Spots</th><th>Applied to</th><th>Saved</th><th></th></tr></thead><tbody>' +
+        shown.map(presetRow).join('') + '</tbody></table>' +
+        (older ? '<p class="pd-dim">' + (S.presets.older ? 'every version'
+            : esc(nOf(older, 'older version'))) + ' · <button class="pd-dimlink" data-act="preset-older">' +
+            (S.presets.older ? 'newest only' : 'show') + '</button></p>' : '')
+        // ON WITH NO RECIPE IS SAID (F36): the operator's SET UP A PART then
+        // has nothing to set a part up from.
+        : '<span class="pd-cnt' + (hmiSetupFacts().warn ? ' warn' : '') + '"><i></i>no recipe yet</span>';
+    const names = newest.length;
+    let h = stBlock('Recipes', names ? nOf(names, 'recipe') + ' · newest version of each' : '', table);
     // THE OFFER, while there is one. Once every shape the press runs has a
-    // name this section is not empty, it is finished — and a heading over
-    // nothing would read as a thing still to do.
+    // name it is finished — and a row over nothing would read as a thing
+    // still to do.
     if (cands.length) {
-        h += '<div class="pd-lbl pd-foundlbl">Found in your flows · ' + cands.length +
-            '<span class="pd-dim"> shape' + (cands.length === 1 ? '' : 's') +
-            ' run by ' + flows + ' style' + (flows === 1 ? '' : 's') + ', not named yet</span></div>' +
-            // THREE COLUMNS, NOT FOUR. Section 1c asks for "glyph + suggested
-            // name, used by N parts, Name it…", and a suggested name IS the
-            // mode word and the positions — so a separate Shape column
-            // printed the mode and positions once in the name and again
-            // beside it. The glyph joins the name.
-            '<table class="pd-tbl pd-candtbl"><colgroup><col style="width:53%">' +
-            '<col style="width:10%"><col style="width:37%"></colgroup>' +
-            '<thead><tr><th>Shape</th><th>Run by</th><th></th></tr></thead><tbody>' +
-            cands.map(candidateRow).join('') + '</tbody></table>';
+        h += stBlock('Found in your flows', 'a shape run by styles, not named yet', cands.map(candidateRow).join(''));
     }
     // THE ROW MENU NEEDS A POPOVER TO OPEN INTO: hmiRecipes draws #pd-pop
     // beside these rows (Settings' own is #pd-stpop).
@@ -9444,12 +9416,16 @@ function onClick(e) {
                 drawSettings();
                 return;
             }
-            case 'st-more':
-                stMoreOpen()[btn.dataset.more] = btn.dataset.open !== '1';
-                drawSettings();
+            case 'ar-flip': void flipAutoReorder(btn.dataset.on === '1'); return;
+            case 'preset-older':
+                S.presets.older = !S.presets.older;
+                drawPresets();
                 return;
-            case 'ar-flip': flipAutoReorder('/auto-reorder', { on: btn.dataset.on === '1' }); return;
-            case 'ar-shown': flipAutoReorder('/auto-reorder-station', { shown: btn.dataset.shown === '1' }); return;
+            case 'st-jump': {
+                const h = settingsHeading(btn.dataset.to);
+                if (h && h.scrollIntoView) h.scrollIntoView({ block: 'start' });
+                return;
+            }
             case 'st-group': openGroupPicker(btn); return;
         case 'st-holddest': openContainmentPicker(btn); return;
             case 'st-ident': {

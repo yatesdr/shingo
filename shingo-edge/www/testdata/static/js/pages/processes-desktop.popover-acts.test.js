@@ -2427,17 +2427,21 @@ async function mainAsync() {
         fetch: url => (url === '/api/processes/1/presets' ? okJSON(presetsView()) : null),
     });
 
-    await pin('Presets say what the count counts', async () => {
+    // A recipe counts the parts it was APPLIED TO, its drift a count of those;
+    // a found shape names the parts whose flow runs it, on its own line.
+    await pin('Recipes say what the count counts', async () => {
         const { root } = presetsPage('#tab=presets');
         await settle();
         const h = root.innerHTML;
-        if (h.indexOf('<th>Name</th><th>Shape</th><th>Applied to</th>') < 0) {
-            throw new Error('the presets table heads its count ' + JSON.stringify((h.match(/<th>Shape<\/th><th>[^<]*<\/th>/) || [''])[0]));
+        if (h.indexOf('<th>Recipe</th><th>Spots</th><th>Applied to</th><th>Saved</th>') < 0) {
+            throw new Error('the recipes table heads its count ' + JSON.stringify((h.match(/<thead>.*?<\/thead>/) || [''])[0]));
         }
-        if (h.indexOf('<th>Shape</th><th>Run by</th><th></th>') < 0) {
-            throw new Error('the found-shapes table heads its count ' + JSON.stringify((h.match(/<th>Shape<\/th><th>[^<]*<\/th><th><\/th>/) || [''])[0]));
+        if (h.indexOf('<th>Drift</th>') >= 0) throw new Error('Drift is still a column of its own');
+        if (h.indexOf('<label>Found in your flows<small>a shape run by styles, not named yet</small></label>') < 0 ||
+            h.indexOf('<div class="pd-cand" data-cand=') < 0) {
+            throw new Error('the found shapes are not a field of lines: ' + JSON.stringify((h.match(/Found in your flows.{0,300}/) || [''])[0]));
         }
-        if (h.indexOf('Used by') >= 0) throw new Error('"Used by" is still on the Presets tab');
+        if (h.indexOf('Used by') >= 0 || h.indexOf('<th>Run by</th>') >= 0) throw new Error('a found shape still heads a count column');
     });
 
     await pin('a preset applied to nothing says how a part gets on it', async () => {
@@ -2447,18 +2451,20 @@ async function mainAsync() {
             'apply it to that flow; Apply to parts… does.</p>';
         if (root.innerHTML.indexOf(want) < 0) {
             throw new Error('the empty member list reads ' +
-                JSON.stringify((root.innerHTML.match(/<tr class="pd-memrow"><td colspan="6">(.*?)<\/td>/) || ['', ''])[1]));
+                JSON.stringify((root.innerHTML.match(/<tr class="pd-memrow"><td colspan="5">(.*?)<\/td>/) || ['', ''])[1]));
         }
     });
 
+    // A found shape is drawn by its mode; a recipe row by its name and spots,
+    // so only the found shape carries the mark.
     await pin('a mixed shape draws its own mark', async () => {
         const { root } = presetsPage('#tab=presets');
         await settle();
         const want = '<span class="pd-shape"><span class="pd-mixed" aria-hidden="true"><i></i><i></i></span>' +
             '<span class="w" title="its positions run different modes">mixed</span>';
         const n = root.innerHTML.split(want).length - 1;
-        if (n !== 2) {
-            throw new Error('want the mixed mark on the mixed preset and the mixed found shape (2), got ' + n + ': ' +
+        if (n !== 1) {
+            throw new Error('want the mixed mark on the mixed found shape (1), got ' + n + ': ' +
                 JSON.stringify(root.innerHTML.match(/<span class="pd-shape">.*?<\/span><\/span>/g)));
         }
     });
@@ -3067,6 +3073,7 @@ async function mainAsync() {
 
     await recipeGroupPins({ pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs });
     if (!nodeProcess.argv[2]) await settingsPositionsPins({ pin, okJSON, click, wireSheet, settle });
+    if (!nodeProcess.argv[2]) await settingsSectionsPins({ pin, okJSON, click, settle });
 
     if (failures > 0) {
         console.error('FAILED: ' + failures + ' of ' + (failures + checks));
@@ -3735,6 +3742,112 @@ async function recipeGroupPins(h) {
         if (JSON.stringify((o.active || []).slice().sort()) !== '["PLN_005","PLN_008","PLN_010","PLN_012"]') {
             throw new Error('the Use sheet draws full ' + JSON.stringify(o.active));
         }
+    });
+}
+
+// ── Settings · the sections in order, Auto-reorder, the recipes ──────────────
+//
+// One page on Settings: every write recorded; the line's auto-reorder switch
+// read on, never switched, and read back off once anything is posted to it.
+async function settingsSectionsPins(h) {
+    const { pin, okJSON, click, settle } = h;
+    const ORDER = ['Line', 'Production counter', 'Screens and positions', 'Routing set', 'Parts',
+        'Position settings', 'Changeover', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
+    const page = o => {
+        o = o || {};
+        const writes = [];
+        let sw = { shown_on_station: false, positions: 4, switched_off: 0, flips: [] };
+        const ctx = loadPage({
+            allowSheet: true, hash: '#tab=settings',
+            fetch: (url, init) => {
+                const method = (init && init.method) || 'GET';
+                if (url === '/api/processes/1/auto-reorder' && method === 'GET') return okJSON(sw);
+                if (url === '/api/processes/1/presets' && o.presets) return okJSON(o.presets);
+                if (method === 'GET') return null;
+                writes.push({ method: method, url: url, body: init.body ? JSON.parse(init.body) : null });
+                if (url === '/api/processes/1/auto-reorder') {
+                    sw = { shown_on_station: false, positions: 4, switched_off: 4,
+                        flips: [{ turned_on: false, by: 's.brown', source: 'processes', at: '2026-11-14T10:32:00Z' }] };
+                }
+                return okJSON({ ok: true });
+            },
+        });
+        return Object.assign(ctx, { writes: writes });
+    };
+    const prov = ctx => (findIn(ctx.root, '.prov')[0] || {}).textContent || '';
+    const lineRow = html => (html.match(/<b class="pd-arstate">.*?<\/button>/) || [''])[0];
+
+    await pin('Settings draws its sections in setup order, and a jump list of the same', async () => {
+        const ctx = page();
+        await settle();
+        const html = ctx.root.innerHTML;
+        const heads = (html.match(/<h2>[^<]*<\/h2>/g) || []).map(x => x.slice(4, -5)).filter(x => x !== 'Health');
+        if (JSON.stringify(heads) !== JSON.stringify(ORDER)) throw new Error('the sections read ' + JSON.stringify(heads));
+        const jump = (html.match(/data-act="st-jump" data-to="[^"]*"/g) || []).map(x => x.replace(/^.*data-to="/, '').slice(0, -1));
+        if (JSON.stringify(jump) !== JSON.stringify(ORDER)) throw new Error('the jump list reads ' + JSON.stringify(jump));
+        for (const gone of ['data-act="st-more"', '<h2>More</h2>', '<h2>General</h2>', 'data-act="ar-shown"']) {
+            if (html.indexOf(gone) >= 0) throw new Error('Settings still draws ' + gone);
+        }
+    });
+
+    // SWITCHING IS AN ACTION (owner, 2026-11-14): written as it is pressed,
+    // recorded, and never the Save bar's: a clean bar stays clean, and a
+    // draft changed before it is still the draft after.
+    await pin('Switch off acts at once, is recorded, and stays out of the Save bar', async () => {
+        const ctx = page();
+        await settle();
+        const on = '<b class="pd-arstate">On</b><span class="pd-dim">never switched</span>' +
+            '<button class="pd-btn" data-act="ar-flip" data-on="">Switch off</button>';
+        if (lineRow(ctx.root.innerHTML) !== on) throw new Error('the line reads ' + JSON.stringify(lineRow(ctx.root.innerHTML)));
+        click(ctx.root, ctx.doc, { act: 'ar-flip', on: '' });
+        await settle();
+        if (JSON.stringify(ctx.writes) !== JSON.stringify([{ method: 'POST', url: '/api/processes/1/auto-reorder', body: { on: false } }])) {
+            throw new Error('Switch off wrote ' + JSON.stringify(ctx.writes));
+        }
+        const off = lineRow(ctx.root.innerHTML);
+        if (off.indexOf('<b class="pd-arstate">Off</b><span class="pd-dim">off by s.brown, ') !== 0 ||
+            off.indexOf('data-on="1">Switch on</button>') < 0) {
+            throw new Error('after Switch off the line reads ' + JSON.stringify(off));
+        }
+        if (prov(ctx) !== 'No unsaved changes') throw new Error('Switch off marked the bar: ' + prov(ctx));
+        click(ctx.root, ctx.doc, { act: 'st-toggle', st: 'flow_composer_enabled' });
+        await settle();
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('setup: the toggle did not mark the bar: ' + prov(ctx));
+        click(ctx.root, ctx.doc, { act: 'ar-flip', on: '1' });
+        await settle();
+        if (ctx.writes.length !== 2 || JSON.stringify(ctx.writes[1].body) !== '{"on":true}') throw new Error('Switch on wrote ' + JSON.stringify(ctx.writes));
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('Switch on cleared the draft: ' + prov(ctx));
+    });
+
+    await pin('Show the switch on the station is a setting: Save sends it on its own door', async () => {
+        const ctx = page();
+        await settle();
+        click(ctx.root, ctx.doc, { act: 'st-toggle', st: 'auto_reorder_switch_hmi' });
+        await settle();
+        if (ctx.writes.length) throw new Error('the station switch wrote before Save: ' + JSON.stringify(ctx.writes));
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('the station switch is not in the draft: ' + prov(ctx));
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 3; i++) await settle();
+        const want = [{ method: 'POST', url: '/api/processes/1/auto-reorder-station', body: { shown: true } }];
+        if (JSON.stringify(ctx.writes) !== JSON.stringify(want)) throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
+    });
+
+    // A repeated name is the same recipe changing: the table lists the newest
+    // version of each, and the older ones on show.
+    await pin('Recipes list the newest version of each, the older ones on show', async () => {
+        const recipe = (id, name, version) => ({ id: id, name: name, version: version, mode: '', where: 'PLN_01 / PLN_02',
+            members: [], drifted: [], created_at: '2026-11-0' + id + 'T08:00:00Z', created_by: 's.brown' });
+        const ctx = page({ presets: { presets: [recipe(3, 'Two up', 2), recipe(1, 'Two up', 1), recipe(5, 'One up', 1)], candidates: [] } });
+        await settle();
+        const rows = () => (ctx.root.innerHTML.match(/<tr class="[^"]*" data-preset="\d+"/g) || []).map(x => x.replace(/^.*data-preset="/, '').slice(0, -1));
+        if (JSON.stringify(rows()) !== '["3","5"]') throw new Error('the recipes listed ' + JSON.stringify(rows()));
+        const html = ctx.root.innerHTML;
+        if (html.indexOf('<label>Recipes<small>2 recipes · newest version of each</small></label>') < 0) throw new Error('the Recipes row does not say what it lists');
+        if (html.indexOf('1 older version · <button class="pd-dimlink" data-act="preset-older">show</button>') < 0) throw new Error('no show for the older version');
+        click(ctx.root, ctx.doc, { act: 'preset-older' });
+        await settle();
+        if (JSON.stringify(rows()) !== '["3","1","5"]') throw new Error('show listed ' + JSON.stringify(rows()));
+        if (ctx.writes.length) throw new Error('show wrote ' + JSON.stringify(ctx.writes));
     });
 }
 

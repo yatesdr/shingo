@@ -120,7 +120,7 @@ check('the title: what it counts on, the CATID and the style that expects it, th
 check('the counting rows: MES slots counted first, in-use slots their own lines, unused ones folded', () => {
     const html = C.countingHTML(block);
     const slots = text(rowOf(html, 'slots'));
-    assert.strictEqual(slots, 'MES slots | the counter’s struct, read once a minute | ' +
+    assert.strictEqual(slots, 'MES slots | ' +
         'Prod_Counter_01 · counted · CATID 1315 · count 5234 · rising | ' +
         'Prod_Counter_02 · CATID 1315 · count 5230 · rising · rises with Prod_Counter_01: a second counter of the same stroke, counted once | ' +
         'Prod_Counter_03 · CATID 1316 · count 14 · rising | Count Prod_Counter_03 | ' +
@@ -144,7 +144,7 @@ check('the counting rows: unread slots fold, a slot leading with no record says 
 check('the station list: one row per counter, its tags, its positions as words, its status; then + Add', () => {
     const html = C.countingHTML(block);
     const st = rowOf(html, 'stations');
-    assert.strictEqual(text(st), 'Station counters | count positions where the part leaves the cart, in place of the production counter | ' +
+    assert.strictEqual(text(st), 'Station counters | where a part leaves the cart, in place of the production counter | ' +
         'op 10 | Sta010.CNT | Edit | Remove | counts POS-1, POS-2 | ≈1.0 per part · last click 1 stroke ago | ' +
         'op 20 | Sta020_Fix1.CNT + Sta020_Fix2.CNT | Edit | Remove | counts no position yet | ' +
         'not read yet · clicks per part not measured yet · no click for 40 strokes, more than the deepest run-out seen | ' +

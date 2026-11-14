@@ -67,7 +67,7 @@ ok   and the row is as it was
 ok   no position to add: the bar does not send the engineer below ("Nothing in the flow yet Its screen has no position yet: add them on Settings No unsaved changes")
 
 ## F36: Settings › HMI setup on a process with no recipe
-#    "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from no recipe yet New recipe Found in your flows · 1 shape run by 2 styles, not named yet Shape Ru"
+#    "id=\"pd-hmirecipes\"> Recipes no recipe yet Found in your flows a shape run by styles, not named yet mixed POS_A1 / POS_A3 Style A, Style B Name it… Auto-reorder "
 ok   the HMI setup row says the process has no recipe
 ok   and offers New recipe there
 ok   "Found in your flows" is beside it
@@ -145,7 +145,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   #tab=presets;preset=7 → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
   #tab=settings → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
   #tab=setup → tab flows · tabs ["Styles*","Settings"] · hash "?process=1#style=1"
-  Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from 1 recipe New recipe Name Shape Applied to Drift Saved Recipe One v1 mixed 0 parts in step — Apply to parts… ⋯ Quality hold off: finished goods go to their"
+  Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes 1 recipe · newest version of each Recipe Spots Applied to Saved Recipe One v1 0 parts — Apply to parts… ⋯ Auto-reorder This line’s switch could not be read. Reload the page to switch it. Show "
 
 ## the Setup tab's actions, from a new process with positions (each on a fresh page)
   positions → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog

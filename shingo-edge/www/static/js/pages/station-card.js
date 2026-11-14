@@ -150,7 +150,7 @@
         const f = v.fmt || when;
         const slots = v.slots || [];
         if (!slots.length) {
-            return field('slots', 'MES slots', 'the counter’s struct, read once a minute',
+            return field('slots', 'MES slots', '',
                 line('not a MES struct’s Prod_Counter_0N, or not read yet', '', 'pd-dim'));
         }
         const counted = slots.find(s => s.counted);
@@ -180,7 +180,7 @@
             }
         });
         const folded = (list, word) => list.length ? line(fold(list) + ' ' + word, '', 'pd-dim') : '';
-        return field('slots', 'MES slots', 'the counter’s struct, read once a minute',
+        return field('slots', 'MES slots', '',
             first + used.join('') + folded(unused, 'unused') + folded(unread, 'not read at the last pass'));
     }
 
@@ -207,7 +207,7 @@
         const list = v.counters || [];
         if (!wired && !list.length) return '';
         return field('stations', 'Station counters',
-            'count positions where the part leaves the cart, in place of the production counter',
+            'where a part leaves the cart, in place of the production counter',
             list.map(c => counterRow(c, v)).join('') +
             (wired ? '<div><button class="pd-btn" data-act="sc-new">+ Add station counter</button></div>' : ''));
     }

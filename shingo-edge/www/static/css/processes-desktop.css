@@ -809,7 +809,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    named from a shape carries the mode word and its positions, so it is long by
    construction: left to wrap it broke after the positions and orphaned `v1` on
    a second line. Ellipsised, with the full name in the cell's own title. */
-.pd-presettbl td.pn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-presettbl td.pn, .pd-presettbl td.pd-spots, .pd-presettbl td.pd-saved { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* The Shape column. CHIPS NEVER WRAP (SPEC §2): a shape over six positions
    ellipsises its list instead of growing the row, because a table whose row
@@ -844,7 +844,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-mem:hover { background: var(--surface-2, var(--surface)); }
 .pd-mem .nm { font-weight: 500; }
 .pd-mem .sp { flex: 1; }
-.pd-candtbl tbody tr { cursor: default; }
+/* A shape found in the flows, not named yet: one line, its shape, the parts
+   that run it, and Name it…. */
+.pd-cand { display: flex; align-items: center; gap: 12px; padding: 3px 0; font-size: 13px; }
 
 /* ── the apply modal ─────────────────────────────────────────────────────
    The Advanced sheet's shell at its one width. Its body is a list of parts
@@ -899,9 +901,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }
 
-/* Settings' shell (settingsShell): the sections are drawn in its body, so the
-   first one is the body's first child, not the sheet's. */
-.pd-settings > .pd-stbody > .pd-sect:first-child { border-top: 0; padding-top: 0; }
+/* Settings' shell (settingsShell): the sections are drawn in its body under
+   the jump list, whose line is the first section's top edge. */
+.pd-settings > .pd-stbody > .pd-jump + .pd-sect { border-top: 0; }
 
 /* Settings · Position settings: a light curtain's row fits the value column.
    A PLC name is short; a tag is a struct path and keeps the wider box. */
@@ -957,16 +959,30 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-step .pd-btn { justify-self: end; white-space: nowrap; text-decoration: none; }
 /* Open the screen is a link to the HMI, drawn as the button it is. */
 .pd-step a.pd-btn { display: inline-flex; align-items: center; }
-/* HMI setup's recipes on Settings (F36): the fact row, the recipes table and
-   "Found in your flows" under the switch, in the value column's indent. A
-   switch on with no recipe is the one state here that needs someone. */
+/* Operator setup's recipes on Settings (F36): the recipes table and "Found in
+   your flows", each a field under the switch. A switch on with no recipe is
+   the one state here that needs someone. */
 .pd-cnt.warn { color: var(--chip-ink-near); }
 .pd-cnt.warn i { background: var(--viz-amber); }
-.pd-hmirecipes { position: relative; margin: 4px 0 6px; }
-.pd-hmirecipes > .pd-tbl, .pd-hmirecipes > .pd-foundlbl, .pd-hmirecipes > .pd-refusal { margin-left: 314px; }
-.pd-hmirecipes > .pd-tbl { width: calc(100% - 314px); margin-top: 6px; }
-.pd-foundlbl { display: block; margin-top: 10px; }
-.pd-foundlbl .pd-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.pd-hmirecipes { position: relative; }
+.pd-hmirecipes > .pd-refusal { margin-left: 314px; }
+.pd-hmirecipes .pd-presettbl { width: 100%; }
+
+/* Settings' jump list (settingsJump): the sections in order, held at the
+   sheet's top edge as it scrolls; a heading jumped to lands below it. */
+.pd-jump {
+    position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
+    display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 0; border-bottom: 1px solid var(--sub-1);
+}
+.pd-jump button {
+    background: none; border: 0; padding: 2px 0; font: inherit; font-size: 12.5px;
+    color: var(--text-muted); cursor: pointer;
+}
+.pd-jump button:hover { color: var(--accent); }
+.pd-settings h2 { scroll-margin-top: 48px; }
+
+/* Settings · Auto-reorder: the line's state, its last switch, the action. */
+.pd-arstate { font-weight: 600; }
 
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the

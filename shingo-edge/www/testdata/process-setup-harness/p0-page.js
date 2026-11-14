@@ -359,6 +359,10 @@ const COUNTER_ROUTES = route([
     ['DELETE', /^\/api\/station-counters\/\d+$/, OK],
     ['PUT', /^\/api\/processes\/1\/counted-at$/, OK],
 ]);
+// Two station counters on Press A: a row + Add made waits for its counter.
+const COUNTER_2 = Object.assign({}, COUNTER, { id: 52, label: 'Station 2', tag_name: 'S2.Count' });
+const TWO_COUNTERS = route([['GET', /^\/api\/processes\/1\/station-counters$/, () => [COUNTER, COUNTER_2]]]);
+const TWO_COUNTER_ROUTES = (m, u) => TWO_COUNTERS(m, u) || COUNTER_ROUTES(m, u);
 const MISC_ROUTES = route([
     ['POST', /^\/api\/loader-boards$/, () => ({ station_id: 32 })],
     ['POST', /^\/api\/payload-catalog\/sync$/, OK],
@@ -473,6 +477,18 @@ Object.assign(D, {
     // write, one reload (owner ruling 2026-11-14, REPORT-slice1).
     scCountedAtTwo: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
         await countedAdd([201, 202])(page);
+        await saveSettings(page);
+    } },
+    // Two positions in one + Add on a process with two counters: each row
+    // waits for its counter, and the first chosen is both rows' (owner ruling
+    // 2026-11-14: one pick, one counter). One save, one write.
+    scCountedAtTwoOfTwo: { hash: '#tab=settings', extra: TWO_COUNTER_ROUTES, drive: async page => {
+        await countedAdd([201, 202])(page);
+        const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === '201');
+        if (!sel) throw new Error('Settings draws no Counted at for 201');
+        sel.value = '52';
+        page.fire(sel, 'change');
+        await page.settle();
         await saveSettings(page);
     } },
     scDelete: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
@@ -594,6 +610,7 @@ async function pinRequests() {
         ['Settings › Position settings › Counted at › + Add a position: POS_A1 (at Station 1, the only counter), then Save settings', D.scCountedAt],
         ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count), then Save settings', D.scCountedAtNew],
         ['Settings › Position settings › Counted at › + Add a position: POS_A1 and POS_A2 in one pick, then Save settings', D.scCountedAtTwo],
+        ['With two counters: POS_A1 and POS_A2 in one pick, Station 2 chosen on POS_A1’s row, then Save settings', D.scCountedAtTwoOfTwo],
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
