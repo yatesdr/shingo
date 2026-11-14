@@ -324,7 +324,7 @@ for (const inp of JSON.parse(fs.readFileSync(%q, 'utf8'))) {
   const model = M.init({
     styleId: st.id, styleName: st.name,
     positions: (cell.positions || []).map(p => ({ core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence })),
-    routing: comp.routing || [], routingOff: comp.routing_off || {}, scene: comp.map || null,
+    routing: comp.routing || [], routingOff: comp.routing_off || {},
     claims: st.claims || [], parts: [], palette: comp.palette || [], catid: st.catid || '',
     lastRun: st.last_run || null, flowspec: ctx.window.FLOWSPEC, groups: cell.groups || {},
     processClaims: (comp.styles || []).reduce((all, x) => all.concat(x.claims || []), []),

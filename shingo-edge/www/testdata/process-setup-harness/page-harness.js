@@ -11,13 +11,13 @@
 // WHAT IS REAL. The page module itself, byte for byte less its import and
 // export lines; every classic script processes.html loads before it, read off
 // the template's own <script src> tags in the template's order (so a script
-// added to the page is loaded here without anyone remembering to); esc.js and
-// scene-geom.js; and operator-flow.js's renderFlowPicture / pictureRows /
+// added to the page is loaded here without anyone remembering to); esc.js;
+// and operator-flow.js's renderFlowPicture / pictureRows /
 // sentencesFromModel / relationPlacement / moduleOf, loaded the way
-// operator-flow.test.js loads them; the shared components the page imports
-// (layer.js, notice.js, http.js, picker.js and dom.js under them), each loaded
-// once into the page's realm with its imports bound, as a browser's module map
-// holds them (sharedLoader).
+// operator-flow.test.js loads them; the shared modules the page imports
+// (layer.js, notice.js, http.js, picker.js and dom.js under them, scene-net.js
+// and scene-geom.js under it), each loaded once into the page's realm with its
+// imports bound, as a browser's module map holds them (sharedLoader).
 //
 // WHAT THE COMPONENTS BUILD IS A REAL TREE. They build with dom.js's el(), so
 // an element here holds either the markup the page wrote (a string, read by
@@ -128,9 +128,11 @@ function classList(set) {
 
 // The modules a page imports from shared/ that run here for real: the
 // components (layer.js, notice.js, http.js, picker.js and its node and part
-// adapters) and the DOM file they build with. esc.js, clock.js and scene-geom.js stay the realm globals they
-// always were (see open).
-const SHARED_REAL = new Set(['dom.js', 'notice.js', 'http.js', 'layer.js', 'picker.js', 'node-picker.js', 'part-picker.js']);
+// adapters), the DOM file they build with, and the scene network the key-route
+// walk asks (scene-net.js) with the geometry under it (scene-geom.js). esc.js
+// and clock.js stay the realm globals they always were (see open).
+const SHARED_REAL = new Set(['dom.js', 'notice.js', 'http.js', 'layer.js', 'picker.js', 'node-picker.js', 'part-picker.js',
+    'scene-geom.js', 'scene-net.js']);
 const sharedFile = spec => {
     const m = /^\/static\/shared\/([\w.-]+\.js)$/.exec(spec);
     return m && SHARED_REAL.has(m[1]) ? m[1] : null;
@@ -157,7 +159,7 @@ function sharedLoader(ctx) {
         src = src.replace(/^import\s*\{([^}]*)\}\s*from\s*'([^']+)';[ \t]*$/gm,
             (m, list, from) => (sharedFile(from) ? 'const ' + destructure(list) + ' = __shared(' + JSON.stringify(from) + ');' : '')
                 + blankLines(m));
-        src = src.replace(/^export\s+(async\s+function|function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm,
+        src = src.replace(/^export\s+(async\s+function|function|const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm,
             (m, kw, name) => { names.push(name); return kw + ' ' + name; });
         const fn = vm.runInContext('(function (__shared) {' + src + '\nreturn { ' + names.join(', ') + ' };\n})', ctx,
             { filename: file });
@@ -721,7 +723,6 @@ async function open(opts) {
         vm.runInContext(read(path.join(STATIC, rel)), ctx, { filename: rel });
     }
     vm.runInContext(read(path.join(SHARED, 'esc.js')).replace(/^export\s+/mg, ''), ctx, { filename: 'esc.js' });
-    vm.runInContext(read(path.join(SHARED, 'scene-geom.js')).replace(/^export\s+/mg, ''), ctx, { filename: 'scene-geom.js' });
     const flow = loadFlow();
     Object.assign(ctx, {
         renderFlowPicture: flow.renderFlowPicture, pictureRows: flow.pictureRows,

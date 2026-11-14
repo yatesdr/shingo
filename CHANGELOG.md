@@ -40,6 +40,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - The robot map draws a driving robot's comet and stopped-robot line along the route the fleet planned for it; a robot with no planned route draws neither, rather than a guess
 - The robot map's comets ask the browser for a frame only when they are about to draw one, about 30 a second instead of every screen refresh, with the same look
 - On the robot map, a robot parked between two close bays sits on the nearer one, and only that bay shows as taken
+- The Processes page's "robot drives via" picker offers waypoints along the way a robot may drive: one-way lanes only in their own direction, a bowed aisle by its real length
 
 ## v0.7.0 — 2026-11-13
 

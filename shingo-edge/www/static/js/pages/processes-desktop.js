@@ -20,6 +20,7 @@ import { formatClock, formatTime } from '/static/shared/clock.js';
 import {
     makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
 } from '/static/shared/scene-geom.js';
+import { sceneRoute } from '/static/shared/scene-net.js';
 // THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
 // this page puts up is an entry on it — see pageSheet, showSheet and showPop.
 import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal, confirm as layerConfirm } from '/static/shared/layer.js';
@@ -883,6 +884,14 @@ function composerStyle(id) {
     return st ? Object.assign({}, st, M().styleFacts(st)) : null;
 }
 
+// routeOver is the route model over one ComposerMap, as the composer model
+// asks it: (from, to) → the vertex names of the way, or null. sceneNet reads
+// a map object once and keeps its network, so every style opened on one
+// composer read walks one network.
+function routeOver(map) {
+    return map ? (from, to) => sceneRoute(map, from, to) : null;
+}
+
 // ONE INIT, EVERY STYLE THIS PAGE OPENS. D1 edits one style and the Presets
 // tab's apply modal previews many, and a second init would be a second answer
 // to "what is this style's flow" — which is the thing the shared model exists
@@ -906,9 +915,10 @@ function initModel(st, opts) {
         // sentence about an empty role rather than one saying it and one
         // drawing a heading over nothing.
         routingOff: S.composer.routing_off || {},
-        // The travel network for the key-route walk. The desktop's half of it
-        // is Map, whose edges carry the same lengths Scene does.
-        scene: S.composer.map || null,
+        // The key-route walk's route model: shared/scene-net.js over this
+        // process's ComposerMap as this style opens (lead decision D9). No
+        // map, no model, and the picker says why (pickerEmptyWord).
+        route: routeOver(S.composer.map),
         claims: st.claims || [],
         parts: (st.parts || []).map(p => p.payload_code || p),
         // The process's part set — what a part picker OFFERS. Different from

@@ -353,6 +353,10 @@ function loadShared(deps) {
     return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js']);
 }
 
+// The scene network and route model the page imports, loaded once the way a
+// browser's module map loads them (shared/testdata/js/shared-modules.js).
+const SCENE_NET = require(path.join(SHARED_DIR, 'testdata', 'js', 'shared-modules.js')).realm()('scene-net.js');
+
 // ── the page, booted for real ────────────────────────────────────────────────
 
 function loadPage(loadOpts) {
@@ -549,6 +553,9 @@ function loadPage(loadOpts) {
     for (const fn of ['makeProjector', 'rotate90For', 'dist2', 'cubicLength', 'cubicPathD', 'laneKey']) {
         global[fn] = () => { throw new Error(fn + ' must not run in this pin'); };
     }
+    // The key-route walk's route model is the real one (shared/scene-net.js),
+    // as the page imports it.
+    global.sceneRoute = SCENE_NET.sceneRoute;
     win.pictureCalls = [];
     win.pictureViews = [];
     if (loadOpts.realPicture) {
