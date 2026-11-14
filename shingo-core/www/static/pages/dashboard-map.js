@@ -1126,13 +1126,61 @@ import {
     };
   }
 
-  // tickComets positions every comet's dots along its LIVE polyline each frame.
-  // Geometry comes from cometState, which syncCometLayer refreshes every render
-  // tick — so the streak follows the robot as it drives, gliding continuously
-  // with no teardown or restart. Idles itself (stops re-arming) when empty.
+  // tickComets is the comet loop: one call per display frame, drawing at most
+  // 30 of them a second. Where a dot sits is a function of the frame's own
+  // timestamp, never of how many frames were drawn, so a skipped frame is
+  // skipped, not slowed, and after a pause the comets come back where the clock
+  // says. The 1 ms slack is for a 60 Hz display, whose second frame lands a hair
+  // under 1000/30 ms after the first.
+  //
+  // The loop runs only while there is something to see (cometsMayRun): a comet,
+  // a visible page, the map on screen. Otherwise it stops re-arming, and
+  // startComets arms it again from syncCometLayer, visibilitychange or the
+  // map's IntersectionObserver (wireCometPause). Pinned in
+  // dashboard-map.render.test.js: thirtyDrawnFramesASecond,
+  // aSkippedFrameIsSkippedNotSlowed, noCometWorkWhileHidden,
+  // noCometWorkWhileOffScreen, noCometWorkWithNoComets.
+  var COMET_FRAME_MS = 1000 / 30;
+  var COMET_FRAME_SLACK_MS = 1;
+  var cometDrawnAt = -Infinity; // timestamp of the last drawn frame
+  var mapOnScreen = true;       // until the IntersectionObserver says otherwise
+  function cometsMayRun() { return cometState.length > 0 && !document.hidden && mapOnScreen; }
   function tickComets(now) {
     cometRAF = 0;
-    if (!cometState.length) return;
+    if (!cometsMayRun()) return;
+    if (now - cometDrawnAt >= COMET_FRAME_MS - COMET_FRAME_SLACK_MS) {
+      cometDrawnAt = now;
+      placeComets(now);
+    }
+    cometRAF = requestAnimationFrame(tickComets);
+  }
+  function startComets() { if (!cometRAF && cometsMayRun()) cometRAF = requestAnimationFrame(tickComets); }
+  function stopComets() { if (cometRAF) { cancelAnimationFrame(cometRAF); cometRAF = 0; } }
+
+  // wireCometPause stops the comet loop while the page is hidden or the map is
+  // scrolled off screen, and restarts it when either comes back. Called once,
+  // from init. Without IntersectionObserver the map counts as on screen.
+  var cometPauseWired = false;
+  function wireCometPause() {
+    if (cometPauseWired) return;
+    cometPauseWired = true;
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) stopComets(); else startComets();
+    });
+    var host = document.getElementById('map-svg-wrap');
+    var Observer = window.IntersectionObserver;
+    if (!host || !Observer) return;
+    new Observer(function (entries) {
+      mapOnScreen = entries[entries.length - 1].isIntersecting;
+      if (mapOnScreen) startComets(); else stopComets();
+    }).observe(host);
+  }
+
+  // placeComets positions every comet's dots along its LIVE polyline at `now`.
+  // Geometry comes from cometState, which syncCometLayer refreshes every render
+  // tick, so the streak follows the robot as it drives, gliding continuously
+  // with no teardown or restart.
+  function placeComets(now) {
     var base = (now % COMET_PERIOD) / COMET_PERIOD; // head phase, advances with time
     var gapFrac = COMET_SPAN / COMET_COUNT;
     for (var c = 0; c < cometState.length; c++) {
@@ -1153,10 +1201,7 @@ import {
         }
       }
     }
-    cometRAF = requestAnimationFrame(tickComets);
   }
-  function startComets() { if (!cometRAF && cometState.length) cometRAF = requestAnimationFrame(tickComets); }
-  function stopComets() { if (cometRAF) { cancelAnimationFrame(cometRAF); cometRAF = 0; } }
 
   // ── persistent comet overlay ───────────────────────────────────────
   // The comets live on their own <svg> layered over the map — a sibling of
@@ -1215,7 +1260,9 @@ import {
         cometState[i].meas = measurePolyline(cometRoutes[i].pts);
       }
     }
-    startComets();
+    // No comets left: cancel the frame already queued rather than let it run
+    // once to find nothing.
+    if (cometState.length) startComets(); else stopComets();
   }
 
   // ── minimap (persistent small overview, bottom-right of .map-region) ──
@@ -2037,6 +2084,7 @@ import {
   function init() {
     renderLegend();
     wireViewControls(); // wheel-zoom + drag-pan + recenter on the map host
+    wireCometPause();   // comet loop off while the tab is hidden or the map off screen
     startFeedTimer(); // starts the 10s interval that ages/expires feed events
     // Initial paint from REST so the board isn't blank before the first SSE tick.
     refreshAll();

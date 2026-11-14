@@ -10,8 +10,10 @@
 // own render() through its own requestAnimationFrame coalescing, its own click
 // and wheel listeners. What is stubbed is the DOM (an element here is a little
 // tree that records every attribute set on it), the clock (Date.now is a
-// number the pin sets, so "moving" is decided, not timed), and the frame queue
-// (a frame runs when the pin says, with the `now` the pin gives).
+// number the pin sets, so "moving" is decided, not timed), the frame queue
+// (a frame runs when the pin says, with the `now` the pin gives), the page's
+// visibility (document.hidden, set by the pin, with the visibilitychange it
+// fires) and, for a pin that asks, an IntersectionObserver the pin drives.
 //
 // THE SCENE is shared/testdata/js/route-scene.json, the one the route vectors
 // in dashboard-map.curve.test.js and the Edge routers' pins read. No plant
@@ -127,7 +129,16 @@ function load(opts) {
     let frames = [];
     const stored = Object.assign({}, opts.stored || {});
     const winListeners = {};
+    const docListeners = {};
     const data = { orders: [] };
+    // opts.io: give the page an IntersectionObserver, recorded so a pin can
+    // say when the map scrolls off screen. Without it the page has none.
+    const observers = [];
+    function IntersectionObserver(cb) {
+        const io = { cb: cb, targets: [], observe(t) { this.targets.push(t); } };
+        observers.push(io);
+        return io;
+    }
 
     const region = el('div');
     region.setAttribute('class', 'map-region');
@@ -152,6 +163,7 @@ function load(opts) {
             // 'loading': the module tail then waits for DOMContentLoaded
             // instead of calling init(), and the pin drives the loads itself.
             readyState: 'loading',
+            hidden: false,
             body: {
                 dataset: { dashboardId: '7' },
                 getAttribute(k) { return k === 'data-dashboard-id' ? '7' : null; },
@@ -165,11 +177,12 @@ function load(opts) {
             },
             querySelectorAll() { return []; },
             createElementNS(ns, name) { return el(name); },
-            addEventListener() {},
+            addEventListener(t, fn) { (docListeners[t] = docListeners[t] || []).push(fn); },
         },
         window: {
             addEventListener(t, fn) { (winListeners[t] = winListeners[t] || []).push(fn); },
             matchMedia(q) { return { matches: !!opts.reduceMotion && /reduce/.test(q) }; },
+            IntersectionObserver: opts.io ? IntersectionObserver : undefined,
         },
         localStorage: {
             getItem(k) { return Object.prototype.hasOwnProperty.call(stored, k) ? stored[k] : null; },
@@ -204,7 +217,7 @@ function load(opts) {
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ render: render, syncCometLayer: syncCometLayer,' +
         ' onRobotUpdate: onRobotUpdate, loadPoints: loadPoints, loadEdges: loadEdges, loadOrders: loadOrders,' +
-        ' wireViewControls: wireViewControls,' +
+        ' wireViewControls: wireViewControls, wireCometPause: wireCometPause,' +
         ' view: function () { return view; }, viewTarget: function () { return viewTarget; },' +
         ' fullPlantView: function () { return fullPlantView; },' +
         ' focusRobot: function () { return focusRobot; }, turnDeg: function () { return turnDeg; },' +
@@ -229,6 +242,10 @@ function load(opts) {
     m.stored = stored;
     m.winListeners = winListeners;
     m.data = data;
+    m.doc = ctx.document;
+    // fireDoc hands the page's document listeners an event, as the browser would.
+    m.fireDoc = function (type) { (docListeners[type] || []).forEach(function (fn) { fn({ type: type }); }); };
+    m.observers = observers;
     // frame runs the frames queued so far, at `now`. A frame queued while one
     // runs waits for the next call, as a browser's would.
     m.frame = function (now) {
@@ -443,8 +460,8 @@ test(async function countedPerOrderNotPerRobot() {
 
 // One comet on a polyline drawn straight into the layer, robotR 1: the look
 // as a draw list, every element's attributes, at a fixed time.
-async function oneComet(leg) {
-    const m = await boot();
+async function oneComet(leg, opts) {
+    const m = await boot(opts);
     m.syncCometLayer([{ pts: [[0, 0], [10, 0], [10, 5]], color: '#34c3e0', leg: leg, sig: 'k>' + leg }], 1);
     return m;
 }
@@ -508,6 +525,118 @@ test(async function theEndsFade() {
         m.cometLayer().children[0].attrs.opacity);
     check('the loop re-arms itself every frame while a comet exists', m.pendingFrames() === 1,
         'pending ' + m.pendingFrames());
+});
+
+// ═══ 4b. the comet loop's cost ══════════════════════════════════════════════
+//
+// The loop runs on every display frame but DRAWS at most 30 a second, and not
+// at all while nobody can see it. A drawn frame sets the head's transform
+// exactly once, so counting those sets counts the frames that did work.
+
+function countHeadDraws(m) {
+    const head = m.cometLayer().children[0];
+    const set = head.setAttribute;
+    let n = 0;
+    head.setAttribute = function (k, v) { if (k === 'transform') n++; return set.call(this, k, v); };
+    return function () { return n; };
+}
+
+// One second of display frames at hz, timestamps t0 + i * 1000 / hz.
+function runDisplay(m, hz, t0) {
+    for (let i = 0; i < hz; i++) m.frame(t0 + i * 1000 / hz);
+}
+
+// What a comet built at the same time draws on its very first frame at `now`:
+// the look at that instant, with no history.
+async function drawnFreshAt(now) {
+    const ref = await oneComet('carry');
+    ref.frame(now);
+    return layerList(ref);
+}
+
+test(async function thirtyDrawnFramesASecond() {
+    console.log('comet loop cost');
+    for (const hz of [60, 120]) {
+        const m = await oneComet('carry');
+        const draws = countHeadDraws(m);
+        runDisplay(m, hz, 0);
+        check('a ' + hz + ' Hz display: 30 of its ' + hz + ' frames draw', draws() === 30, draws() + ' drawn');
+        check('...and the loop still re-arms on every display frame', m.pendingFrames() === 1,
+            'pending ' + m.pendingFrames());
+    }
+    const m = await oneComet('carry');
+    const draws = countHeadDraws(m);
+    runDisplay(m, 144, 0);
+    check('a 144 Hz display: never more than 30 a second', draws() <= 30 && draws() >= 28, draws() + ' drawn');
+});
+
+test(async function aSkippedFrameIsSkippedNotSlowed() {
+    const m = await oneComet('carry');
+    m.frame(2990);
+    const at2990 = layerList(m);
+    m.frame(3000);
+    check('a frame 10 ms after a drawn one draws nothing', JSON.stringify(layerList(m)) === JSON.stringify(at2990));
+    m.frame(3030);
+    const fresh = await drawnFreshAt(3030);
+    check('the next drawn frame puts every dot where the clock says, as a first frame at that time would',
+        JSON.stringify(layerList(m)) === JSON.stringify(fresh), '\n' + layerList(m).join('\n'));
+
+    const run = await oneComet('carry');
+    for (let i = 0; i <= 180; i++) run.frame(i * 1000 / 60);
+    check('three seconds at 60 Hz, half of them skipped, ends on the half-lap look',
+        JSON.stringify(layerList(run)) === JSON.stringify(await drawnFreshAt(3000)), '\n' + layerList(run).join('\n'));
+});
+
+const SAME_SET = [{ pts: [[0, 0], [10, 0], [10, 5]], color: '#34c3e0', leg: 'carry', sig: 'k>carry' }];
+
+test(async function noCometWorkWhileHidden() {
+    const half = await drawnFreshAt(3000);
+    const m = await oneComet('carry');
+    m.wireCometPause();
+    m.frame(1000);
+    const shown = layerList(m);
+    m.doc.hidden = true;
+    m.fireDoc('visibilitychange');
+    check('hidden: the loop stops, no frame queued', m.pendingFrames() === 0, 'pending ' + m.pendingFrames());
+    m.syncCometLayer(SAME_SET, 1);
+    check('...a render while hidden arms nothing and moves no dot',
+        m.pendingFrames() === 0 && JSON.stringify(layerList(m)) === JSON.stringify(shown), 'pending ' + m.pendingFrames());
+    m.doc.hidden = false;
+    m.fireDoc('visibilitychange');
+    check('shown again: one frame queued', m.pendingFrames() === 1, 'pending ' + m.pendingFrames());
+    m.frame(3000);
+    check('...and it draws where the clock says, not where the comet stopped',
+        JSON.stringify(layerList(m)) === JSON.stringify(half), '\n' + layerList(m).join('\n'));
+    m.doc.hidden = true;
+    m.frame(3100);
+    check('a frame that lands after the tab hides, before the event, draws nothing and does not re-arm',
+        m.pendingFrames() === 0 && JSON.stringify(layerList(m)) === JSON.stringify(half), 'pending ' + m.pendingFrames());
+});
+
+test(async function noCometWorkWhileOffScreen() {
+    const half = await drawnFreshAt(3000);
+    const o = await oneComet('carry', { io: true });
+    o.wireCometPause();
+    const io = o.observers[0];
+    check('the page watches the map host for leaving the screen',
+        o.observers.length === 1 && !!io && io.targets[0] === o.host);
+    if (!io) return;
+    o.frame(1000);
+    io.cb([{ isIntersecting: false }]);
+    check('off screen: the loop stops', o.pendingFrames() === 0, 'pending ' + o.pendingFrames());
+    o.syncCometLayer(SAME_SET, 1);
+    check('...and a render arms nothing', o.pendingFrames() === 0, 'pending ' + o.pendingFrames());
+    io.cb([{ isIntersecting: true }]);
+    check('back on screen: one frame queued', o.pendingFrames() === 1, 'pending ' + o.pendingFrames());
+    o.frame(3000);
+    check('...drawing where the clock says', JSON.stringify(layerList(o)) === JSON.stringify(half));
+});
+
+test(async function noCometWorkWithNoComets() {
+    const e = await oneComet('carry');
+    e.syncCometLayer([], 1);
+    check('no comets: the queued frame is cancelled, not run to find nothing',
+        e.pendingFrames() === 0 && e.cometLayer().children.length === 0, 'pending ' + e.pendingFrames());
 });
 
 // ═══ 5. click-to-focus ══════════════════════════════════════════════════════
