@@ -177,6 +177,10 @@ CREATE TABLE IF NOT EXISTS orders (
     -- (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs.
     load_type       TEXT NOT NULL DEFAULT '',
     waybill_id      TEXT,
+    -- robot_id (Edge v50): the robot Core assigned, written by a waybill or an
+    -- order.update that names one. An empty robot on the wire is absent, not a
+    -- clear. '' = none named yet.
+    robot_id        TEXT NOT NULL DEFAULT '',
     external_ref    TEXT,
     final_count     INTEGER,
     count_confirmed INTEGER NOT NULL DEFAULT 0,

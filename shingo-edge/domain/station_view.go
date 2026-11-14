@@ -615,8 +615,9 @@ type stationBinState struct {
 }
 
 // stationOrder is a tile's order as the station's JSON carries it: the keys
-// the glass reads and no other (domain.Order has some forty; the board polls
-// every tile's orders). The Go tile keeps the whole Order for the engine and
+// the glass reads and no other, but robot_id, which the robot panel reads
+// (domain.Order has some forty; the board polls every tile's orders, which is
+// why robot_id is omitted while empty). The Go tile keeps the whole Order for the engine and
 // the Production page's template. Pinned by
 // TestStationView_OrderRowsCarryTheKeysTheGlassReads (www).
 type stationOrder struct {
@@ -640,6 +641,10 @@ type stationOrder struct {
 	// orders page use. "" for any other status. Before 2026-11-05 the press read
 	// a faulted order as "ROBOT IN TRANSIT" for the whole grace window.
 	FaultLine string `json:"fault_line"`
+	// RobotID is the robot Core assigned (Order.RobotID), absent until there
+	// is one. The one key here the glass does not read yet: the station's
+	// robot panel (shared-map build) reads it.
+	RobotID string `json:"robot_id,omitempty"`
 }
 
 func stationOrders(orders []Order) []stationOrder {
@@ -654,6 +659,7 @@ func stationOrders(orders []Order) []stationOrder {
 			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
 			QueueReason: o.QueueReason, QueueCode: o.QueueCode, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
 			Departed: o.Departed, CreatedAt: o.CreatedAt, FaultLine: stationFaultLine(o, now),
+			RobotID: o.RobotID,
 		}
 	}
 	return out

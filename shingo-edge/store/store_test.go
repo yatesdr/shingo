@@ -908,7 +908,7 @@ func TestOrders_UpdateMutations(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderProcessNode(id, &nid), "update node")
 
 	// Waybill + ETA
-	testutil.MustNoErr(t, db.UpdateOrderWaybill(id, "WB-1", "2026-04-19T10:00:00Z"), "waybill")
+	testutil.MustNoErr(t, db.UpdateOrderWaybill(id, "WB-1", "", "2026-04-19T10:00:00Z"), "waybill")
 
 	// ETA-only update
 	testutil.MustNoErr(t, db.UpdateOrderETA(id, "2026-04-19T12:00:00Z"), "eta")

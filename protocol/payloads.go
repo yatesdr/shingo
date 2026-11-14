@@ -400,6 +400,13 @@ type OrderUpdate struct {
 	// to the sentence. Ships alongside QueueReason so Edge can persist the code
 	// for future branching without a schema change.
 	QueueCode string `json:"queue_code,omitempty"`
+	// RobotID is the robot Core holds for the order when it sends the update
+	// (orders.robot_id, or the fleet's robot on a vendor-status push). The
+	// waybill names the robot on its first assignment only, so a robot that
+	// changes later reaches the Edge on the next update that carries this.
+	// Empty when Core holds none, and an empty one is absent, not a clear: the
+	// Edge keeps the robot it has. Additive: an older Edge ignores it.
+	RobotID string `json:"robot_id,omitempty"`
 
 	// ── Fault fields ────────────────────────────────────────────────────
 	//

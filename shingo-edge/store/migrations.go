@@ -2529,6 +2529,34 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// v50 (2026-11-14): orders.robot_id, the robot Core assigned. The
+			// waybill carried it from the start and the Edge dropped it; an
+			// order.update carries it too, so a robot that changes after the
+			// waybill reaches the Edge. '' on every existing row: what those
+			// orders' robots were is not recoverable here. The baseline CREATE
+			// carries it for a fresh install; column-check guarded, like v49.
+			Version: 50,
+			Name:    "orders_robot_id",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'robot_id'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN robot_id TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'robot_id'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

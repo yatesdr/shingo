@@ -47,16 +47,16 @@ func (h *EdgeHandler) HandleOrderAck(env *protocol.Envelope, p *protocol.OrderAc
 }
 
 func (h *EdgeHandler) HandleOrderWaybill(env *protocol.Envelope, p *protocol.OrderWaybill) {
-	h.DebugLog.Log("order_waybill uuid=%s waybill=%s", p.OrderUUID, p.WaybillID)
-	log.Printf("edge_handler: order waybill: uuid=%s waybill=%s", p.OrderUUID, p.WaybillID)
-	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyWaybill, p.WaybillID, p.ETA, ""); err != nil {
+	h.DebugLog.Log("order_waybill uuid=%s waybill=%s robot=%s", p.OrderUUID, p.WaybillID, p.RobotID)
+	log.Printf("edge_handler: order waybill: uuid=%s waybill=%s robot=%s", p.OrderUUID, p.WaybillID, p.RobotID)
+	if err := h.orderMgr.HandleWaybill(p); err != nil {
 		log.Printf("edge_handler: handle waybill for %s: %v", p.OrderUUID, err)
 	}
 }
 
 func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.OrderUpdate) {
-	h.DebugLog.Log("order_update uuid=%s status=%s", p.OrderUUID, p.Status)
-	log.Printf("edge_handler: order update: uuid=%s status=%s", p.OrderUUID, p.Status)
+	h.DebugLog.Log("order_update uuid=%s status=%s robot=%s", p.OrderUUID, p.Status, p.RobotID)
+	log.Printf("edge_handler: order update: uuid=%s status=%s robot=%s", p.OrderUUID, p.Status, p.RobotID)
 
 	// AN OLD CORE STILL SAYS `sourcing`, and this Edge never stores it (C1; F3):
 	// it is `queued` with a cause, translated here at the door, before the status
@@ -76,6 +76,16 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	if p.ETA != "" {
 		if err := h.orderMgr.SetOrderETA(p.OrderUUID, p.ETA); err != nil {
 			log.Printf("edge_handler: set eta for %s: %v", p.OrderUUID, err)
+		}
+	}
+
+	// The robot, on the same terms as the ETA: written when the push names
+	// one, never cleared by a push that does not (an empty omitempty field is
+	// an absent one). Independent of the status write below, so it lands even
+	// when the status mapping is a no-op. A no-op write when unchanged.
+	if p.RobotID != "" {
+		if err := h.orderMgr.SetOrderRobotID(p.OrderUUID, p.RobotID); err != nil {
+			log.Printf("edge_handler: set robot for %s: %v", p.OrderUUID, err)
 		}
 	}
 
@@ -159,7 +169,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	}
 
 	// After the last write. Only the status write above emits (and only when
-	// the status moved); the ETA, the reason and the clock do not, and the
+	// the status moved); the ETA, the robot, the reason and the clock do not, and the
 	// board does not poll. Named by order, so only its boards rebuild. Pinned
 	// by TestHandleOrderUpdate_AnnouncesTheOrderAfterItsLastWrite.
 	h.orderMgr.AnnounceOrder(p.OrderUUID)

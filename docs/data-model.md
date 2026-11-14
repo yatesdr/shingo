@@ -1958,7 +1958,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 13 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
-| [`orders`](#edge-orders) | 43 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
+| [`orders`](#edge-orders) | 44 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
 | [`payload_catalog`](#edge-payload_catalog) | 8 | `id` |  |
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
@@ -2300,6 +2300,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `source_node` | `TEXT` | yes | `''` |  |  |
 | `load_type` | `TEXT` | yes | `''` |  | load_type: dormant. Nothing on either module read it, and its writers went (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs. |
 | `waybill_id` | `TEXT` |  |  |  |  |
+| `robot_id` | `TEXT` | yes | `''` |  | robot_id (Edge v50): the robot Core assigned, written by a waybill or an order.update that names one. An empty robot on the wire is absent, not a clear. '' = none named yet. |
 | `external_ref` | `TEXT` |  |  |  |  |
 | `final_count` | `INTEGER` |  |  |  |  |
 | `count_confirmed` | `INTEGER` | yes | `0` |  |  |

@@ -193,6 +193,13 @@ func (m *Manager) stampAwaitingMaterial(uuid string) {
 		task.ID, task.NodeName, order.ID)
 }
 
+// SetOrderRobotID persists the robot an OrderUpdate names. Called from the edge
+// handler only with a non-empty robot (an empty one is absent, not a clear).
+// Display only, like the fault clock: nothing branches on it.
+func (m *Manager) SetOrderRobotID(uuid, robotID string) error {
+	return m.db.SetOrderRobotID(uuid, robotID)
+}
+
 // SetOrderETA persists Core's ETA stamp for an order. Called from the edge
 // handler when an OrderUpdate carries an ETA field (Core stamps it on
 // transitions into in_transit). Independent of the status write so the HMI's

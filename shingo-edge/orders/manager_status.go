@@ -81,10 +81,9 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	case ReplyAck:
 		return m.mirrorTransition(order.ID, StatusAcknowledged, statusDetail)
 	case ReplyWaybill:
-		if err := m.db.UpdateOrderWaybill(order.ID, waybillID, eta); err != nil {
-			return err
-		}
-		return m.mirrorTransition(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
+		// No robot through this door: the stored one is left as it is. The
+		// wire's waybill comes through HandleWaybill, which carries it.
+		return m.applyWaybill(order, waybillID, "", eta)
 	case ReplyQueued:
 		// Order queued by Core — awaiting inventory
 		return m.mirrorTransition(order.ID, StatusQueued, statusDetail)
@@ -142,6 +141,28 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	default:
 		return fmt.Errorf("unknown reply type: %s", replyType)
 	}
+}
+
+// HandleWaybill is the wire's order.waybill: the vendor order, the robot Core
+// assigned and the ETA, then the mirror's move to in_transit. Core sends one at
+// dispatch, which names no robot yet, and one on the robot's first assignment
+// (Core's wiring_vendor_status.go), which names it.
+func (m *Manager) HandleWaybill(p *protocol.OrderWaybill) error {
+	m.DebugLog.Log("dispatch reply: uuid=%s type=%s robot=%s", p.OrderUUID, ReplyWaybill, p.RobotID)
+	order, err := m.db.GetOrderByUUID(p.OrderUUID)
+	if err != nil {
+		return fmt.Errorf("order %s not found: %w", p.OrderUUID, err)
+	}
+	return m.applyWaybill(order, p.WaybillID, p.RobotID, p.ETA)
+}
+
+// applyWaybill is a waybill's two writes: the waybill row (one statement,
+// the robot only when one is named) and the mirror's move to in_transit.
+func (m *Manager) applyWaybill(order *orders.Order, waybillID, robotID, eta string) error {
+	if err := m.db.UpdateOrderWaybill(order.ID, waybillID, robotID, eta); err != nil {
+		return err
+	}
+	return m.mirrorTransition(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
 }
 
 // siblingAlreadyEnded reports whether the order's swap sibling (the Edge's own

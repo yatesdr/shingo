@@ -70,6 +70,7 @@ CREATE TABLE orders (
     source_node     TEXT NOT NULL DEFAULT '',
     load_type       TEXT NOT NULL DEFAULT '',
     waybill_id      TEXT,
+    robot_id        TEXT NOT NULL DEFAULT '',
     external_ref    TEXT,
     final_count     INTEGER,
     count_confirmed INTEGER NOT NULL DEFAULT 0,
