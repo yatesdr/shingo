@@ -198,10 +198,10 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 
 /* Routes are comet-only: no standing line. The comet (a bright leading arrow +
  * fading tail, built in JS) carries the route and lives on .map-comet-layer — a
- * separate <svg> overlaid on the map so the per-tick scene rebuild doesn't
- * restart its animation. The layer ignores pointer events so robot clicks reach
- * the scene. .map-route-base is now only the reduced-motion fallback (a faint
- * static lane line for users who opt out of animation). */
+ * separate <svg> overlaid on the map, rebuilt only when the set of comets
+ * changes, which the scene's own redraws never touch. The layer ignores pointer
+ * events so robot clicks reach the scene. .map-route-base is drawn by nothing
+ * now: the reduced-motion fallback lane is .map-route-frozen. */
 .map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .map-route-base { stroke-linecap: round; stroke-linejoin: round; }
 .map-comet-head { stroke: none; }

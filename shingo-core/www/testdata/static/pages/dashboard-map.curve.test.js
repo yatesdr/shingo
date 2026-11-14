@@ -115,7 +115,10 @@ function load() {
     // non-global strip would leave the second `import` in a script vm cannot
     // parse — a failure that reads as a syntax error, not as a stale harness.
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
-    const INJECT = '  __export({ buildGraph: buildGraph, drawAisles: drawAisles,' +
+    // drawAisles is the scene view's: it takes the graph and the projector it
+    // draws with, here the page's own.
+    const INJECT = '  __export({ buildGraph: buildGraph,' +
+        ' drawAisles: function (svg, nodeR) { drawAisles(svg, { vertices: tnodes, adj: tadj }, nodeR, proj); },' +
         ' computeView: computeView, routeWorld: routeWorld,' +
         ' shortestPath: shortestPath, nearestTNode: nearestTNode,' +
         ' setEdges: function (v) { sceneEdges = v; },' +

@@ -223,7 +223,7 @@ function load(opts) {
             let body = [];
             // opts.extraPoints: more synthetic points, served after the route scene's.
             if (url === '/api/map/points') body = POINT_ROWS.concat(opts.extraPoints || []);
-            else if (url === '/api/map/edges') body = EDGE_ROWS;
+            else if (url === '/api/map/edges') body = data.edges || EDGE_ROWS; // data.edges: a pin's other scene
             else if (url.indexOf('/api/board/orders?dashboard=') === 0) body = data.orders;
             return Promise.resolve({ ok: true, json() { return Promise.resolve(JSON.parse(JSON.stringify(body))); } });
         },
@@ -251,6 +251,7 @@ function load(opts) {
         ' lastCometSig: function () { return lastCometSig; }, cometLayer: function () { return cometLayer; },' +
         ' cometState: function () { return cometState; }, minimapEl: function () { return minimapEl; },' +
         ' proj: function (x, y) { return proj(x, y); }, graphScale: function () { return graphScale; },' +
+        ' sceneView: function () { return sceneView; },' +
         ' STATUS_COLOR: STATUS_COLOR, IDLE_MOVE_COLOR: IDLE_MOVE_COLOR });\n})();\n';
     const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
     if (src === stripped) {
@@ -1085,6 +1086,251 @@ test(async function theWholeSceneAsDrawn() {
     check('the scene, legend, map key and rail are drawn as recorded in ' + path.basename(SCENE_GOLDEN),
         at === want.length && at === got.length,
         'first difference at line ' + (at + 1) + '\n  golden: ' + want[at] + '\n  page:   ' + got[at]);
+});
+
+// ═══ 10. the retained scene: what a frame costs ═════════════════════════════
+//
+// The map keeps one <svg> and four layers (base, routes, nodes, robots). Base
+// and nodes are built only when what they show changes; routes and robots are
+// patched in place. Each pin counts a real DOM operation on the real page —
+// elements a layer is handed, elements created — and then checks the drawing:
+// the scene as kept must spell exactly what a fresh build draws at that
+// moment (sameAsFresh), and the change itself must be on screen.
+
+function layerOf(m, name) {
+    return m.scene().children.filter(function (c) { return c.getAttribute('data-layer') === name; })[0] || null;
+}
+function inside(n, root) {
+    for (let p = n; p; p = p.parentNode) if (p === root) return true;
+    return false;
+}
+// createdIn: the elements made since `mark` that are now inside `root`.
+function createdIn(m, mark, root) {
+    return m.madeSince(mark).filter(function (e) { return inside(e, root); });
+}
+// handed counts the elements a layer is given (a build hands it every element
+// it draws once), from now on.
+function handed(layer) {
+    let n = 0;
+    const ins = layer.insertBefore;
+    layer.insertBefore = function (c, ref) { n++; return ins.call(this, c, ref); };
+    return function () { return n; };
+}
+// sameAsFresh: the scene as the page kept it, against what a fresh build of
+// the whole scene draws now. Leaves the fresh build on screen.
+function sameAsFresh(m) {
+    const kept = sceneList(m.scene());
+    m.sceneView().clear();
+    m.render();
+    const fresh = sceneList(m.scene());
+    let at = 0;
+    while (at < kept.length && kept[at] === fresh[at]) at++;
+    return { ok: at === kept.length && at === fresh.length, why: 'line ' + (at + 1) + '\n  kept:  ' + kept[at] + '\n  fresh: ' + fresh[at] };
+}
+// tick moves the three moving robots of glyphFloor a little, a second on.
+function tick(m, k) {
+    m.clock.t += 1000;
+    m.onRobotUpdate([
+        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3 }),
+        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy' }),
+        robotFrame('AMR-I', [8.5 + 0.1 * k, 6], { angle: 1.2 }),
+    ]);
+    paint(m);
+}
+function heading(m, id) { return robotGroup(m, id).children.filter(function (n) { return n.tag === 'g'; })[0] || null; }
+function halo(m, id) { return robotGroup(m, id).children.filter(function (n) { return cls(n) === 'map-robot-halo'; })[0] || null; }
+
+test(async function aFrameWithNothingStaticBuildsNothing() {
+    console.log('the retained scene');
+    const m = await glyphFloor();
+    const base = layerOf(m, 'base'), nodes = layerOf(m, 'nodes');
+    check('one <svg> in four layers, in paint order: base, routes, nodes, robots',
+        m.scene().children.map(function (c) { return c.getAttribute('data-layer'); }).join(',') === 'base,routes,nodes,robots');
+    const baseHanded = handed(base), nodesHanded = handed(nodes);
+    const baseKids = base.children.slice(), nodeKids = nodes.children.slice();
+    const group = robotGroup(m, 'AMR-A'), glow = halo(m, 'AMR-A'), chev = heading(m, 'AMR-A');
+    const mark = m.made.length;
+    for (let k = 1; k <= 5; k++) tick(m, k);
+    check('five robot ticks with nothing static changed hand the base and the nodes nothing, and keep every element',
+        baseHanded() === 0 && nodesHanded() === 0 &&
+        base.children.length === baseKids.length && base.children.every(function (c, i) { return c === baseKids[i]; }) &&
+        nodes.children.length === nodeKids.length && nodes.children.every(function (c, i) { return c === nodeKids[i]; }),
+        baseHanded() + ' to the base, ' + nodesHanded() + ' to the nodes');
+    check('...and create no element anywhere in the scene: robots, chips and routes are patched in place',
+        createdIn(m, mark, m.scene()).length === 0, createdIn(m, mark, m.scene()).map(drawList).join(' | '));
+    const s = m.proj(1.0, 0.3);
+    check('AMR-A\'s group, halo and chevron are the elements they were, moved to where it is now',
+        robotGroup(m, 'AMR-A') === group && halo(m, 'AMR-A') === glow && heading(m, 'AMR-A') === chev &&
+        chev.attrs.transform.indexOf('translate(' + s[0] + ',' + s[1] + ')') === 0 && glow.attrs.cx === String(s[0]),
+        chev.attrs.transform);
+    check('...so the halo\'s CSS pulse runs on: it is not a new element each render', glow.parentNode === group);
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function oneNodesBuildPerHotSetChange() {
+    const m = await glyphFloor();
+    const base = layerOf(m, 'base'), nodes = layerOf(m, 'nodes');
+    const baseKids = base.children.slice();
+    const baseHanded = handed(base), nodesHanded = handed(nodes);
+    await setOrders(m, m.data.orders.concat([order(40, 'queued', '', 'SH_01', 'PK_03', false)]));
+    m.render(); // as the page's order reload does once the orders are in (scheduleOrderReload)
+    const at = m.proj(32, 7);
+    const pk3 = nodes.children.filter(function (c) { return c.attrs.cx === String(at[0]) && c.attrs.cy === String(at[1]); });
+    check('an order naming an empty bay builds the nodes layer once, and the base not at all',
+        nodesHanded() === nodes.children.length && baseHanded() === 0 &&
+        base.children.every(function (c, i) { return c === baseKids[i]; }),
+        nodesHanded() + ' handed for ' + nodes.children.length + ' node elements, ' + baseHanded() + ' to the base');
+    check('...and the bay it names, PK_03, is now drawn, accented',
+        pk3.length === 1 && pk3[0].attrs.stroke === '#7c7cf0', pk3.map(drawList).join(' | '));
+    for (let k = 1; k <= 3; k++) tick(m, k);
+    check('...then three robot ticks build nothing more', nodesHanded() === nodes.children.length && baseHanded() === 0,
+        nodesHanded() + ' handed');
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function oneNodesBuildPerBayChange() {
+    const m = await glyphFloor();
+    const nodes = layerOf(m, 'nodes');
+    const nodesHanded = handed(nodes), baseHanded = handed(layerOf(m, 'base'));
+    const cp1 = m.proj(22, 6);
+    const ringAt = function () {
+        return nodes.children.filter(function (c) { return cls(c) === 'map-node-charge' && c.attrs.cx === String(cp1[0]); }).length;
+    };
+    check('CP_01 is drawn while AMR-C stands on it', ringAt() === 1);
+    // AMR-C drives off its charger to 4 m from any bay.
+    m.onRobotUpdate([robotFrame('AMR-C', [18, 6])]);
+    paint(m);
+    check('a robot leaving its bay builds the nodes once and the base not at all, and the empty bay is gone',
+        nodesHanded() === nodes.children.length && baseHanded() === 0 && ringAt() === 0,
+        nodesHanded() + ' handed for ' + nodes.children.length + ', ' + baseHanded() + ' to the base');
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function oneBaseBuildPerSceneLoad() {
+    const m = await glyphFloor();
+    const base = layerOf(m, 'base');
+    const baseHanded = handed(base);
+    const v0 = Object.assign({}, m.view());
+    // The same plant with route C's two stored rows gone; the median lane,
+    // and so every marker size, is unchanged.
+    m.data.edges = EDGE_ROWS.filter(function (e) {
+        return e.instance_name !== 'PLN_02-LM932' && e.instance_name !== 'LM932-LM931';
+    });
+    await m.loadEdges();
+    m.render();
+    const aisles = base.children.filter(function (c) { return cls(c) === 'map-aisle'; });
+    check('a scene load that keeps the view builds the base once, with the lanes it now has (7 of 9)',
+        sameView(m.view(), v0) && baseHanded() === base.children.length && aisles.length === 7,
+        baseHanded() + '/' + base.children.length + ' handed, ' + aisles.length + ' aisles, view ' + JSON.stringify(viewNums(m.view())));
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function oneBuildPerSettledZoom() {
+    const m = await glyphFloor();
+    const base = layerOf(m, 'base'), nodes = layerOf(m, 'nodes');
+    const baseHanded = handed(base), nodesHanded = handed(nodes);
+    const group = robotGroup(m, 'AMR-A'), r0 = halo(m, 'AMR-A').attrs.r;
+    const aisle0 = base.children.filter(function (c) { return cls(c) === 'map-aisle'; })[0].attrs['stroke-width'];
+    const notch = { deltaY: -100, clientX: 800, clientY: 450, preventDefault() {} };
+    const mark = m.made.length;
+    m.host.listeners.wheel[0](notch);
+    m.host.listeners.wheel[0](notch);
+    check('two wheel notches move the viewBox and draw nothing yet', baseHanded() === 0 && nodesHanded() === 0 &&
+        createdIn(m, mark, m.scene()).length === 0, baseHanded() + ' handed');
+    check('...and leave one settle pending, the first cancelled by the second', m.runTimers() === 1);
+    paint(m);
+    const aisle1 = base.children.filter(function (c) { return cls(c) === 'map-aisle'; })[0].attrs['stroke-width'];
+    check('the settle builds the base and the nodes once, at the zoomed marker size',
+        baseHanded() === base.children.length && nodesHanded() === nodes.children.length && aisle1 !== aisle0,
+        baseHanded() + '/' + base.children.length + ' base, ' + nodesHanded() + '/' + nodes.children.length + ' nodes, aisle ' + aisle0 + ' -> ' + aisle1);
+    check('...and resizes the robots in place: AMR-A\'s group is the same, its halo the new size',
+        robotGroup(m, 'AMR-A') === group && halo(m, 'AMR-A').attrs.r !== r0, r0 + ' -> ' + halo(m, 'AMR-A').attrs.r);
+    const built = baseHanded();
+    tick(m, 1);
+    check('a robot tick after the settle builds nothing', baseHanded() === built, baseHanded() + ' handed');
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function oneBuildPerRotate() {
+    const m = await glyphFloor();
+    const base = layerOf(m, 'base'), nodes = layerOf(m, 'nodes');
+    const baseHanded = handed(base), nodesHanded = handed(nodes);
+    const group = robotGroup(m, 'AMR-A'), chev = heading(m, 'AMR-A');
+    m.ids['map-rotate'].listeners.click[0]({});
+    check('a quarter turn builds the base and the nodes once',
+        baseHanded() === base.children.length && nodesHanded() === nodes.children.length,
+        baseHanded() + '/' + base.children.length + ' base, ' + nodesHanded() + '/' + nodes.children.length + ' nodes');
+    const turned = 'translate(0.3,0.5) rotate(' + (-(0.3 * 180 / Math.PI) + 90) + ')';
+    check('...and turns the robots in place: AMR-A\'s group and chevron are the same, heading turned with the map',
+        robotGroup(m, 'AMR-A') === group && heading(m, 'AMR-A') === chev && chev.attrs.transform === turned,
+        chev.attrs.transform + ' vs ' + turned);
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function robotsChangeShapeInTheirOwnGroup() {
+    const m = await glyphFloor();
+    const iGroup = robotGroup(m, 'AMR-I'), aGroup = robotGroup(m, 'AMR-A');
+    // AMR-I stands still for longer than the motion linger: it comes to rest.
+    m.clock.t += 6000;
+    m.onRobotUpdate([robotFrame('AMR-I', [8.5, 6], { angle: 1.2 })]);
+    paint(m);
+    check('a robot coming to rest keeps its group and trades halo, chevron and core for one disc',
+        robotGroup(m, 'AMR-I') === iGroup && iGroup.children.length === 1 && cls(iGroup.children[0]) === 'map-robot',
+        iGroup.children.map(drawList).join(' | '));
+    // AMR-P is taken off pause: its disc keeps its element and loses the
+    // paused outline, an attribute removed, not left behind.
+    const pDisc = robotGroup(m, 'AMR-P').children[0];
+    m.onRobotUpdate([robotFrame('AMR-P', [24.03, 3.01])]);
+    paint(m);
+    check('a paused robot made ready keeps its disc, which drops the paused class and its style',
+        robotGroup(m, 'AMR-P').children[0] === pDisc && cls(pDisc) === 'map-robot' && pDisc.getAttribute('style') === null,
+        drawList(pDisc));
+    // A robot new to the floor joins the robots, before every name chip.
+    m.onRobotUpdate([robotFrame('AMR-N', [16, 8], { state: 'error' })]);
+    paint(m);
+    const kids = layerOf(m, 'robots').children;
+    const firstChip = kids.findIndex(function (k) { return k.children.some(function (c) { return c.tag === 'text'; }); });
+    const nAt = kids.indexOf(robotGroup(m, 'AMR-N'));
+    check('a new robot\'s group lands after the last robot group and before the first chip',
+        nAt === firstChip - 1 && kids[kids.length - 1].children.some(function (c) { return c.textContent === 'AMR-N'; }),
+        'group at ' + nAt + ', first chip at ' + firstChip);
+    // A robot whose position goes missing leaves the map.
+    m.onRobotUpdate([{ vehicle_id: 'AMR-O', state: 'offline' }]);
+    paint(m);
+    check('a robot with no position is taken off the map, chip and all',
+        findAll(m.scene(), function (n) { return n.getAttribute('data-robot') === 'AMR-O'; }).length === 0);
+    // Focus: the ring joins AMR-A's own group; the staged intent lines go.
+    const lane = frozen(m)[0];
+    click(m, aGroup);
+    paint(m);
+    check('focusing AMR-A puts its ring in its own group, first, and removes the other robots\' intent lines',
+        robotGroup(m, 'AMR-A') === aGroup && cls(aGroup.children[0]) === 'map-robot-focus' && intents(m).length === 0,
+        aGroup.children.map(cls).join(','));
+    check('...and dims AMR-F\'s frozen lane on the same element', frozen(m)[0] === lane &&
+        lane.attrs['stroke-opacity'] === '0.22', drawList(lane));
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+test(async function aLaneFollowsItsRobotInPlace() {
+    const m = await boot({ reduceMotion: true });
+    await setOrders(m, [order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
+    drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3] }]);
+    paint(m);
+    const lane = frozen(m)[0];
+    drive(m, [{ id: 'AMR-A', from: [0.5, 0.3], to: [0.7, 0.4] }]);
+    paint(m);
+    check('under reduced motion the frozen lane is the same element, its points following the robot',
+        frozen(m).length === 1 && frozen(m)[0] === lane && lane.attrs.points === '0.7,-0.4 0,0 2,-1 14,-1 16,0 16,0',
+        drawList(lane));
+    const same = sameAsFresh(m);
+    check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
 });
 
 // --- run -------------------------------------------------------------------
