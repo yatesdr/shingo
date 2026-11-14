@@ -248,7 +248,7 @@ block({
         }
         return { seen: seen };
     },
-    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> screens | #tab=recipes -> settings | #style=2 -> flows style 2',
+    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> settings | #tab=recipes -> settings | #style=2 -> flows style 2',
         r.seen.join(' | ')]],
 });
 
@@ -300,7 +300,8 @@ block({
     }],
 });
 
-// Census #3 — a routing name added in Settings, then the Styles tab.
+// Census #3 — a routing name added in Settings, then the Styles tab. The save
+// reads the composer back, whose routing is what the Styles pickers offer.
 block({
     title: 'census #3: a source added in Settings is offered on the Styles tab',
     open: () => {
@@ -311,15 +312,20 @@ block({
             hash: '#tab=settings',
             extra: (m, u) => {
                 const p = u.split('?')[0];
-                if (m === 'POST' && p === '/api/processes/1/routing-nodes') { added = true; return { body: { id: 120 } }; }
+                if (m === 'PUT' && p === '/api/processes/1/routing-nodes') { added = true; return { body: { status: 'ok', warnings: [] } }; }
                 if (m === 'GET' && p === '/api/processes/1/routing-nodes') return { body: { rows: rows() } };
+                if (m === 'GET' && p === '/api/processes/1/composer' && added) {
+                    const c = JSON.parse(JSON.stringify(T.FX.composer));
+                    c.routing = (c.routing || []).concat([{ core_node_name: 'SRC_2', role: 'source', sequence: 3 }]);
+                    return { body: c };
+                }
                 return undefined;
             },
         };
     },
     act: async page => {
-        T.setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add');
-        await page.settle();
+        T.npk(page, 'root', 'rt-source', 'SRC_2');
+        await T.stSave(page);
         page.click('root', { tab: 'flows' });
         await page.settle();
     },
@@ -330,17 +336,31 @@ block({
 });
 
 // The P0 flat bugs on this page (REPORT-v2-stop1-P0, "S4 flat bugs").
+// A refused routing-set save is said on the bar, and its picks stay picked
+// (P0 :3746 and :3626, the add and Turn all on, on the one Save now).
+const barSays = r => {
+    const said = (r.page.S.stShell && r.page.S.stShell.page.state.refusal) || '';
+    return ['the bar says ' + JSON.stringify(MSG), said.toLowerCase().indexOf(MSG.toLowerCase()) >= 0, 'refusal ' + JSON.stringify(said)];
+};
 block({
-    title: 'P0 :3746: a refused routing-set add is drawn, not cleared by the re-read',
-    open: () => ({ hash: '#tab=settings', answer: refuse('POST', '/api/processes/1/routing-nodes', REFUSED) }),
-    act: async page => { T.setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add'); await page.settle(); },
-    checks: [r => ['the page says ' + JSON.stringify(MSG), onScreen(r.page, MSG), 'routingError ' + JSON.stringify(r.page.S.routingError)]],
+    title: 'P0 :3746: a refused routing-set save is said, and the name picked stays',
+    open: () => ({ hash: '#tab=settings', answer: refuse('PUT', '/api/processes/1/routing-nodes', REFUSED) }),
+    act: async page => { T.npk(page, 'root', 'rt-source', 'SRC_2'); await T.stSave(page); },
+    checks: [barSays,
+        r => ['SRC_2 is still picked', (r.page.S.pickers['rt-source'] || { sel: [] }).sel.indexOf('SRC_2') >= 0,
+            'Inbound ' + JSON.stringify((r.page.S.pickers['rt-source'] || {}).sel)]],
 });
 block({
-    title: 'P0 :3626: a refused Turn all on is drawn, not cleared by the re-read',
-    open: () => ({ hash: '#tab=settings', answer: refuse('PATCH', '/api/processes/1/routing-nodes/106', REFUSED) }),
-    act: async page => { page.click('root', { act: 'rs-all-on', role: 'staging' }); await page.settle(); },
-    checks: [r => ['the page says ' + JSON.stringify(MSG), onScreen(r.page, MSG), 'routingError ' + JSON.stringify(r.page.S.routingError)]],
+    title: 'P0 :3626: a refused Turn all on is said, and the names stay picked',
+    open: () => ({ hash: '#tab=settings', answer: refuse('PUT', '/api/processes/1/routing-nodes', REFUSED) }),
+    act: async page => { page.click('root', { act: 'rs-all-on', role: 'staging' }); await page.settle(); await T.stSave(page); },
+    checks: [barSays,
+        r => {
+            const off = (r.page.S.routing || []).filter(x => x.role === 'staging' && !x.enabled).map(x => x.core_node_name);
+            const sel = (r.page.S.pickers['rt-staging'] || { sel: [] }).sel;
+            return ['the switched-off names stay picked', off.length > 0 && off.every(n => sel.indexOf(n) >= 0),
+                'off ' + JSON.stringify(off) + ', Staging ' + JSON.stringify(sel)];
+        }],
 });
 block({
     title: 'P0 :5368: a refused Save settings keeps the typed draft',
@@ -407,7 +427,7 @@ block({
     open: () => {
         let k = 0;
         return {
-            hash: '#tab=screens', answer: (m, u) => {
+            hash: '#tab=settings', answer: (m, u) => {
                 if (m !== 'GET' || u.split('?')[0] !== '/api/processes/1/composer' || k++ === 0) return undefined;
                 const c = JSON.parse(JSON.stringify(T.FX.composer));
                 c.palette = c.palette.concat(['PART-NEW']).sort();
@@ -500,11 +520,6 @@ resume('ruling 5: + New style from Recipe One, its CATID refused, then pressed a
     open: { answer: refuse('PUT', '/api/styles/9', REFUSED) },
     drive: page => T.DRIVE.mint.drive(page),
     once: /^POST \/api\/processes\/1\/flow\/mint$/, step: /^PUT \/api\/styles\/9$/,
-});
-resume('ruling 5 (same chain class): Add operator screen, its positions refused, then pressed again', {
-    open: { answer: refuse('PUT', '/api/operator-stations/31/claimed-nodes', REFUSED) },
-    drive: page => T.DRIVE.screenAdd.drive(page),
-    once: /^POST \/api\/operator-stations$/, step: /^PUT \/api\/operator-stations\/31\/claimed-nodes$/,
 });
 block({
     title: 'ruling 5: Add process half made, then Cancel: what was made is read back',

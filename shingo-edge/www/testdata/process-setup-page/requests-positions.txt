@@ -1,4 +1,4 @@
-## Settings › Positions bucket: tick NEW_1 onto Screen A (the first screen)
+## Settings › Screens and positions › Screen A: NEW_1, Save
   1  GET /api/operator-stations/11/claimed-nodes
   2  PUT /api/operator-stations/11/claimed-nodes
        {
@@ -17,12 +17,16 @@
            "NEW_1"
          ]
        }
-  3  GET /api/operator-stations/11/claimed-nodes
-  4  GET /api/processes/1/composer
-  5  GET /api/process-nodes
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/station-counters
+  5  GET /api/processes
+  6  GET /api/operator-stations/11/claimed-nodes
+  7  GET /api/operator-stations/12/claimed-nodes
+  8  GET /api/processes/1/composer
+-- notice: success "Saved"
 -- sheet closed
 
-## Settings › Positions bucket: untick POS_A11 (the impact is read before the list is written)
+## Settings › Screens and positions › Screen A: POS_A11 off, Save, and Save again (the impact is read first)
   1  GET /api/operator-stations/11/claimed-nodes
   2  POST /api/operator-stations/11/claimed-nodes/impact
        {
@@ -54,12 +58,16 @@
            "POS_A10"
          ]
        }
-  4  GET /api/operator-stations/11/claimed-nodes
-  5  GET /api/processes/1/composer
-  6  GET /api/process-nodes
+  4  GET /api/process-nodes
+  5  GET /api/processes/1/station-counters
+  6  GET /api/processes
+  7  GET /api/operator-stations/11/claimed-nodes
+  8  GET /api/operator-stations/12/claimed-nodes
+  9  GET /api/processes/1/composer
+-- notice: success "Saved"
 -- sheet closed
 
-## Operator screens › Loader windows › Make a screen on Press A (LDR_1)
+## Settings › Screens and positions › Loader windows › Make a screen on Press A (LDR_1)
   1  POST /api/loader-boards
        {
          "loader_key": "LDR_1",
@@ -69,4 +77,10 @@
   3  GET /api/processes
   4  GET /api/processes/1/composer
   5  GET /api/processes/1/styles
+  6  GET /api/process-nodes
+  7  GET /api/processes/1/station-counters
+  8  GET /api/processes/1/counting-slots
+  9  GET /api/processes/1/catid-health
+ 10  GET /api/processes/1/presets
+ 11  GET /api/processes/1/auto-reorder
 -- sheet closed

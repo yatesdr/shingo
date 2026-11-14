@@ -72,26 +72,32 @@
 # writes, in order: PUT /api/processes/1/counted-at
 ### PUT /api/processes/1/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-stbody p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
-    new text: … and 52 more runs (the tab redrew)
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."
@@ -101,55 +107,69 @@
 # writes, in order: POST /api/processes/1/station-counters · PUT /api/processes/1/counted-at
 ### POST /api/processes/1/station-counters  ←  400 {"error"} (writeError)
     then: PUT /api/processes/1/counted-at · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 56 more runs (the tab redrew)
+    new text: #pd-stbody span: all 16 at the production counter
+    new text: .pd-sheet span.prov: No unsaved changes
+    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
     notice: success "Saved"
     sheet: open "New station counter", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/station-counters  ←  500, no body (chi Recoverer)
     then: PUT /api/processes/1/counted-at · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 56 more runs (the tab redrew)
+    new text: #pd-stbody span: all 16 at the production counter
+    new text: .pd-sheet span.prov: No unsaved changes
+    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     notice: success "Saved"
     sheet: open "New station counter", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/station-counters  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: PUT /api/processes/1/counted-at · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 56 more runs (the tab redrew)
+    new text: #pd-stbody span: all 16 at the production counter
+    new text: .pd-sheet span.prov: No unsaved changes
+    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     notice: success "Saved"
     sheet: open "New station counter", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/station-counters  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: PUT /api/processes/1/counted-at · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-stbody p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
-    new text: … and 51 more runs (the tab redrew)
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "New station counter", no status, OK "Save" enabled
     state: bar.refusal="Not saved."
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-stbody p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
-    new text: … and 52 more runs (the tab redrew)
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."
@@ -159,26 +179,32 @@
 # writes, in order: PUT /api/processes/1/counted-at
 ### PUT /api/processes/1/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: … and 55 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
     state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
-    new text: #pd-stbody p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
-    new text: … and 52 more runs (the tab redrew)
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."

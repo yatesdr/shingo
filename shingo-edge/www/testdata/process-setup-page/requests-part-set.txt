@@ -162,6 +162,11 @@
          ]
        }
   2  GET /api/processes/1/composer
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/station-counters
+  5  GET /api/processes
+  6  GET /api/processes/1/payloads
+-- notice: success "Saved"
 -- sheet closed
 
 ## Settings › Parts this process runs: × PART-11
@@ -170,7 +175,6 @@
          "payloads": [
            "PART-1",
            "PART-10",
-           "PART-13",
            "PART-2",
            "PART-3",
            "PART-4",
@@ -182,4 +186,9 @@
          ]
        }
   2  GET /api/processes/1/composer
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/station-counters
+  5  GET /api/processes
+  6  GET /api/processes/1/payloads
+-- notice: success "Saved"
 -- sheet closed

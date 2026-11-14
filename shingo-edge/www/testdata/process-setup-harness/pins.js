@@ -75,7 +75,12 @@ function server(extra) {
             ['GET', /^\/api\/processes\/\d+\/styles$/, () => FX.page.styles.filter(s => String(s.process_id) === pid)],
             ['GET', /^\/api\/processes\/\d+\/routing-nodes$/, () => ({ rows: pid === '1' ? FX.server.routingNodes : [] })],
             ['POST', /^\/api\/processes\/\d+\/routing-nodes$/, () => ({ id: 110 })],
-            ['PUT', /^\/api\/processes\/\d+\/routing-nodes$/, () => ({ status: 'ok' })],
+            // The routing set's one write answers each removal's warning.
+            ['PUT', /^\/api\/processes\/\d+\/routing-nodes$/, () => ({
+                status: 'ok',
+                warnings: ((body && (typeof body === 'string' ? JSON.parse(body) : body).remove) || [])
+                    .map(r => r.core_node_name + ' is still named by Style A.'),
+            })],
             ['PATCH', /^\/api\/processes\/\d+\/routing-nodes\/\d+$/, () => ({ status: 'ok' })],
             // A removal answers what it orphans, by name (owner ruling 2026-10-30).
             ['DELETE', /^\/api\/processes\/\d+\/routing-nodes\/\d+$/, () => ({
@@ -380,6 +385,14 @@ async function sheetOK(page) {
     page.click('scrim', { act: 'sheet-ok' });
     await page.settle();
 }
+// Settings' Save is the shared settings page's bar (shared/settings.js): its
+// own button, pressed as a person presses it.
+async function stSave(page) {
+    const b = page.root.querySelector('[data-set="save"]');
+    if (!b) throw new Error('Settings draws no Save');
+    b.click();
+    await page.settle();
+}
 // The containment destination is the node adapter's picker, open in
 // #pd-stpop: a node is picked by clicking its row.
 function holdRows(page) {
@@ -521,15 +534,14 @@ const DRIVE = {
             cu('tag');
             page.click('root', { act: 'cu-val', node: String(n.id), val: val });
         }
-        (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
-        await page.settle();
+        await stSave(page);
     } },
+    // A screen's name and note are its sheet; its positions are its row under
+    // Settings › Screens and positions, saved by the one Save.
     screenEdit: { drive: async page => {
         page.click('root', { act: 'screen-edit', station: '11' });
         await page.settle();
         page.type('note', 'front HMI, moved');
-        npk(page, 'scrim', 'positions', 'POS_A11');   // take one off
-        npk(page, 'scrim', 'positions', 'NEW_3');     // and add one
         await sheetOK(page);
     } },
     screenAdd: { drive: async page => {
@@ -537,8 +549,16 @@ const DRIVE = {
         await page.settle();
         page.type('name', 'Screen C');
         page.type('note', 'spare');
-        npk(page, 'scrim', 'positions', 'NEW_1');
         await sheetOK(page);
+    } },
+    // Screen A's row: POS_A11 off and NEW_3 on, then Save; a position taken
+    // off is asked about first, and Save again takes it off.
+    screenPositions: { hash: '#tab=settings', drive: async page => {
+        npk(page, 'root', 'scr-11', 'POS_A11', 'drop');
+        npk(page, 'root', 'scr-11', 'NEW_3');
+        await page.settle();
+        await stSave(page);
+        await stSave(page);
     } },
     partPopAdd: { setup: openPartPop, drive: async page => {
         // Core's catalog waits behind its own button while the process has parts.
@@ -547,15 +567,17 @@ const DRIVE = {
         await page.settle();
     } },
     partPopDrop: { setup: openPartPop, drive: async page => { partPopRow(page, 'drop', 'PART-11'); await page.settle(); } },
-    partSettingsAdd: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-13'); await page.settle(); } },
-    partSettingsDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-11', 'drop'); await page.settle(); } },
-    routingAddNew: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add'); await page.settle(); } },
-    routingAdopt: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'destination', 'DST_9', 'add'); await page.settle(); } },
-    routingDrop: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'staging', 'STG_3', 'drop'); await page.settle(); } },
-    routingToggleOff: { hash: '#tab=settings', drive: async page => { setPick(page, 'root', 'stset', 'staging', 'STG_1', 'add'); await page.settle(); } },
+    // Settings' part set and routing set are drafts: a pick, then Save.
+    partSettingsAdd: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-13'); await stSave(page); } },
+    partSettingsDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-11', 'drop'); await stSave(page); } },
+    routingAddNew: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-source', 'SRC_2'); await stSave(page); } },
+    routingAdopt: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-destination', 'DST_9'); await stSave(page); } },
+    routingDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-staging', 'STG_3', 'drop'); await stSave(page); } },
+    routingToggleOff: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-staging', 'STG_1'); await stSave(page); } },
     routingAllOn: { hash: '#tab=settings', drive: async page => {
         page.click('root', { act: 'rs-all-on', role: 'staging' });
         await page.settle();
+        await stSave(page);
     } },
     recipeFromStyle: { drive: async page => {
         page.click('root', { act: 'save-preset' });
@@ -668,14 +690,20 @@ async function actScreenSheet() {
         const page = await openPage();
         const from = page.mark();
         await DRIVE.screenEdit.drive(page);
-        lines.push(...actLines('Edit Screen A: the note, POS_A11 off and NEW_3 on; the removal is asked about first',
-            page, from), '');
+        lines.push(...actLines('Edit Screen A: the note (its positions are its row on Settings)', page, from), '');
     }
     {
         const page = await openPage();
         const from = page.mark();
         await DRIVE.screenAdd.drive(page);
-        lines.push(...actLines('Add operator screen: Screen C claiming NEW_1', page, from));
+        lines.push(...actLines('Add operator screen: Screen C (its positions are picked in its row)', page, from), '');
+    }
+    {
+        const page = await openPage({ hash: DRIVE.screenPositions.hash });
+        const from = page.mark();
+        await DRIVE.screenPositions.drive(page);
+        lines.push(...actLines('Settings › Screens and positions › Screen A: POS_A11 off and NEW_3 on, Save; the removal is asked about first, ' +
+            'and Save again takes it off', page, from));
     }
     out['requests-screen-sheet.txt'] = lines.join('\n') + '\n';
 }
@@ -711,24 +739,24 @@ async function actRouting() {
     CURRENT = 'requests-routing-set.txt';
     const lines = [];
     const acts = [
-        ['add SRC_2 to Sources (a name with no row: POST at the end of its role)', DRIVE.routingAddNew],
-        ['add DST_9 to Destinations (a switched-off row: PATCH adopts it)', DRIVE.routingAdopt],
-        ['× STG_3 out of Staging (DELETE, and the warning it answers)', DRIVE.routingDrop],
-        ['click STG_1, already in Staging (the picker takes it out)', DRIVE.routingToggleOff],
+        ['SRC_2 picked in Inbound, Save (a name with no row: the one write adds it at the end of its role)', DRIVE.routingAddNew],
+        ['DST_9 picked in Outbound, Save (a switched-off row: the one write adopts it)', DRIVE.routingAdopt],
+        ['× STG_3 out of Staging, Save (the one write takes it out, and says its warning)', DRIVE.routingDrop],
+        ['STG_1 clicked in Staging, Save (STG_1 was picked: the click takes it out)', DRIVE.routingToggleOff],
     ];
     for (const [title, d] of acts) {
         const page = await openPage({ hash: d.hash });
         const from = page.mark();
         await d.drive(page);
         const ls = actLines('Settings › Routing set: ' + title, page, from);
-        ls.push('-- routing warning ' + JSON.stringify(page.S.routingWarning) + ', error ' + JSON.stringify(page.S.routingError));
+        ls.push('-- settings notice ' + JSON.stringify(page.S.settingsNotice) + ', routing error ' + JSON.stringify(page.S.routingError));
         lines.push(...ls, '');
     }
     {
         const page = await openPage({ hash: DRIVE.routingAllOn.hash });
         const from = page.mark();
         await DRIVE.routingAllOn.drive(page);
-        lines.push(...actLines('Settings › Routing set: Turn all 1 on (Staging)', page, from));
+        lines.push(...actLines('Settings › Routing set: Turn all 1 on (Staging), Save', page, from));
     }
     out['requests-routing-set.txt'] = lines.join('\n') + '\n';
 }
@@ -789,10 +817,10 @@ const P0 = require('./p0-page.js');
     await actRouting();
     await actRecipe();
     await P0.run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, typeSetting, decode, text,
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, stSave, pickRow, typeSetting, decode, text,
         bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
     });
-    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
+    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, stSave, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
     await require('./cold-start.js').run({
         H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, typeSetting, decode, text,
         setCurrent: n => { CURRENT = n; }, SEEN,

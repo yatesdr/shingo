@@ -144,7 +144,6 @@ async function bugDraftBack() {
 const LEAVES = [
     ['the Settings tab', page => page.click('root', { tab: 'settings' }),
         page => page.S.tab === 'settings' && /class="pd-sheet/.test(page.root.innerHTML)],
-    ['the Operator screens tab', page => page.click('root', { tab: 'screens' }), page => page.S.tab === 'screens'],
     ['#tab=settings typed in the address bar', page => { page.ctx.location.hash = '#tab=settings'; page.fireWindow('hashchange'); },
         page => page.S.tab === 'settings'],
     ['the rail\'s + New style', page => page.click('root', { act: 'new-style' }),

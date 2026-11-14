@@ -481,21 +481,22 @@ Object.assign(D, {
     } },
 });
 Object.assign(D, {
-    // A position is ticked in Settings' set picker, in its Positions bucket:
-    // written as it is ticked, onto the screen's list as read just then.
+    // A position is picked in its screen's row under Screens and positions,
+    // then Save.
     posAdd: { hash: '#tab=settings', drive: async page => {
-        T.setPick(page, 'root', 'stset', 'positions', 'NEW_1');
-        await page.settle();
+        T.npk(page, 'root', 'scr-11', 'NEW_1');
+        await T.stSave(page);
     } },
-    // And unticked there: what still names it is read first, then the list
-    // without it is written (Settings' per-row Remove was a second door to
-    // the same write).
+    // And taken off there: what still names it is read first, and Save again
+    // takes it off (Settings' per-row Remove was a second door to the same
+    // write).
     posUntick: { hash: '#tab=settings', drive: async page => {
-        T.setPick(page, 'root', 'stset', 'positions', 'POS_A11');
-        await page.settle();
+        T.npk(page, 'root', 'scr-11', 'POS_A11', 'drop');
+        await T.stSave(page);
+        await T.stSave(page);
     } },
     bindLoader: {
-        hash: '#tab=screens', extra: MISC_ROUTES,
+        hash: '#tab=settings', extra: MISC_ROUTES,
         page: () => withPage(() => ({ loaderGaps: [{ loader_key: 'LDR_1', process_id: 1 }] })),
         drive: async page => { page.click('root', rootButton(page, 'bind-loader')); await page.settle(); },
     },
@@ -596,9 +597,9 @@ async function pinRequests() {
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
-        ['Settings › Positions bucket: tick NEW_1 onto Screen A (the first screen)', D.posAdd],
-        ['Settings › Positions bucket: untick POS_A11 (the impact is read before the list is written)', D.posUntick],
-        ['Operator screens › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
+        ['Settings › Screens and positions › Screen A: NEW_1, Save', D.posAdd],
+        ['Settings › Screens and positions › Screen A: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
+        ['Settings › Screens and positions › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
     ]);
     await requests('requests-settings-misc.txt', [
         ['Settings › Sync from Core', D.sync],
@@ -628,7 +629,7 @@ async function pinReads() {
         await page.settle();
         lines.push(...T.actLines(title, page, from), '');
     };
-    for (const tab of ['settings', 'screens', 'presets']) {
+    for (const tab of ['settings', 'presets']) {
         await act('the ' + tab + ' tab clicked', null, async page => { page.click('root', { tab: tab }); });
     }
     await act('window focus on the Styles tab (refreshRail)', null, async page => { page.fireWindow('focus'); });
@@ -700,8 +701,9 @@ async function pinRefusals() {
     await refusals('refusals-add-process.txt', [specOf('Add process (the chain of five writes)', U.addProcess, { again: true })]);
     await refusals('refusals-settings-save.txt', [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]);
     await refusals('refusals-screen-sheet.txt', [
-        specOf('Edit Screen A (POS_A11 off, NEW_3 on)', U.screenEdit, { again: true }),
-        specOf('Add operator screen (Screen C on NEW_1)', U.screenAdd, { again: true }),
+        specOf('Edit Screen A (the note)', U.screenEdit, { again: true }),
+        specOf('Add operator screen (Screen C)', U.screenAdd, { again: true }),
+        specOf('Screen A’s row on Settings (POS_A11 off, NEW_3 on), Save', U.screenPositions),
     ]);
     await refusals('refusals-part-set.txt', [
         specOf('Part popover: + PART-12 (on a fresh page)', U.partPopAdd),
@@ -746,8 +748,8 @@ async function pinRefusals() {
         specOf('Remove Station 1', D.scDelete, { again: true }),
     ]);
     await refusals('refusals-positions.txt', [
-        specOf('Positions bucket: tick NEW_1', D.posAdd),
-        specOf('Positions bucket: untick POS_A11, its list write refused', D.posUntick, { refuse: /^PUT / }),
+        specOf('Screen A: NEW_1, Save', D.posAdd),
+        specOf('Screen A: POS_A11 off, Save, its list write refused', D.posUntick, { refuse: /^PUT / }),
         specOf('Make a screen for LDR_1', D.bindLoader),
     ]);
     await refusals('refusals-settings-misc.txt', [

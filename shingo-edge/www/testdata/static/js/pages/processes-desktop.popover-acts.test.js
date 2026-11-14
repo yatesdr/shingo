@@ -997,41 +997,36 @@ async function mainAsync() {
         console.log('ok: an unplaced part is taken off the flow from its own door, and only it');
     }
 
-    // ── the screen sheet's picker names a position another process holds ────
+    // ── a screen's row on Settings names a position another process holds ───
     {
-        // One position belongs to one process; the save refuses a second. The
-        // positions editor (one checklist, R4) says so before the engineer
-        // tries: a name that is a live position of ANOTHER process is greyed
-        // "on <that process>", from one read of /api/process-nodes at sheet
-        // open. A sibling screen's claim on this process is tickable and says
-        // ticking moves it, and wins when a name is both. One of this
-        // process's positions on no screen says so.
-        const opts = makeElement('');
-        const input = makeElement('');
-        const box = makeElement('npk-positions');
-        box.dataset.npkbox = 'positions';
-        let sheetOpen = false;
+        // One position belongs to one process; the save refuses a second. A
+        // screen's row (Settings › Screens and positions, the one editor of a
+        // screen's positions) says so before the engineer tries: a name that
+        // is a live position of ANOTHER process is greyed "on <that process>",
+        // from Settings' one read of /api/process-nodes. A sibling screen's
+        // claim on this process is pickable and says picking moves it, and wins
+        // when a name is both. One of this process's positions on no screen
+        // says so.
+        const box = pickerHost('npk-scr-10');
         const fetched = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
-        const { main, doc } = loadPage({
-            allowSheet: true,
+        const { root } = loadPage({
+            hash: '#tab=settings',
             stations: [
                 { id: 10, process_id: 1, name: 'Screen A' },
                 { id: 11, process_id: 1, name: 'Screen B' },
             ],
-            stationNodes: { '11': ['PLN_02'] },
-            extraIds: { 'npk-positions': box },
-            docQSA: sel => (sel === '.pd-npk' && sheetOpen ? [box] : []),
+            stationNodes: { '10': ['PLN_01'], '11': ['PLN_02'] },
+            extraIds: { 'npk-scr-10': box },
             fetch: url => {
                 fetched.push(url);
-                if (url === '/api/operator-stations/10/claimed-nodes') return ok(['PLN_01']);
                 if (url === '/api/core-nodes') {
                     return ok(['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']
                         .map(name => ({ name, node_type: 'PLN' })));
                 }
                 if (url === '/api/process-nodes') {
                     return ok([
-                        { process_id: 1, core_node_name: 'PLN_01', process_name: 'Press 1' },
+                        { process_id: 1, core_node_name: 'PLN_01', process_name: 'Press 1', operator_station_id: 10 },
                         { process_id: 1, core_node_name: 'PLN_04', process_name: 'Press 1' },
                         { process_id: 2, core_node_name: 'PLN_02', process_name: 'Press 2' },
                         { process_id: 2, core_node_name: 'PLN_03', process_name: 'Press 2' },
@@ -1040,65 +1035,46 @@ async function mainAsync() {
                 return null;
             },
         });
-        await drain();
-        await drain();
-        fetched.length = 0;   // boot's reads are not the pin
-        sheetOpen = true;
-        const edit = makeElement('');
-        edit.dataset.act = 'screen-edit';
-        edit.dataset.station = '10';
-        edit.closest = function (sel) { return sel === '[data-act]' ? this : null; };
-        main.appendChild(edit);
-        bubble(edit, 'click', doc);
         for (let i = 0; i < 6; i++) await drain();
+        if (root.innerHTML.indexOf('<h2>Screens and positions</h2>') < 0) throw new Error('setup: Settings drew no Screens and positions');
         const pn = fetched.filter(u => u === '/api/process-nodes').length;
         if (pn !== 1) {
-            throw new Error('opening the screen sheet must read /api/process-nodes exactly once, got ' +
-                pn + ' in ' + JSON.stringify(fetched));
-        }
-        const others = fetched.filter(u => u !== '/api/process-nodes').sort();
-        const want = ['/api/core-nodes', '/api/operator-stations/10/claimed-nodes'];
-        if (JSON.stringify(others) !== JSON.stringify(want)) {
-            throw new Error('the sheet\'s other reads changed: ' + JSON.stringify(others));
+            throw new Error('Settings must read /api/process-nodes exactly once for its rows, got ' + pn + ' in ' + JSON.stringify(fetched));
         }
         pk.open(box);
-        // A row is a box: tickable, or greyed (the shell's excluded row), its
-        // note or reason beside it.
+        // A row is pickable, or greyed (the shell's excluded row), its note or
+        // reason beside it.
         const row = name => {
             if (!pk.row(box, name)) throw new Error('no picker row for ' + name + ': ' + box.innerHTML.slice(0, 400));
             return (pk.off(box, name) ? 'greyed: ' : '') + pk.side(box, name);
         };
         const got = {};
         for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']) got[n] = row(n);
-        const expect = { PLN_01: '', PLN_02: 'on Screen B · ticking moves it here', PLN_03: 'greyed: on Press 2',
+        const expect = { PLN_01: '', PLN_02: 'on Screen B · picking moves it here', PLN_03: 'greyed: on Press 2',
             PLN_04: 'on no screen yet', PLN_05: '' };
         if (JSON.stringify(got) !== JSON.stringify(expect)) {
             throw new Error('picker notes wrong: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(expect));
         }
         checks++;
-        console.log('ok: the screen picker marks another process\'s position "on <process>" from one read');
+        console.log('ok: a screen\'s row marks another process\'s position "on <process>" from one read');
     }
 
-    // ── the screen sheet says which removed position it had to keep ─────────
+    // ── Settings says which removed position the server had to keep ─────────
     //
     // Saving a screen's positions is a set-to, and a removed position with an
     // active order cannot be retired: the server disables it, keeps it on the
-    // screen, and names it in `kept`. A sheet that closed on that reply would
-    // leave the engineer believing the position was gone.
+    // screen, and names it in `kept`. The save says so on Settings' notice;
+    // a Save that only said "Saved" would leave the engineer believing the
+    // position was gone.
     async function saveScreenWithReply(reply) {
-        const opts = makeElement('');
-        const input = makeElement('');
-        const box = makeElement('npk-positions');
-        box.dataset.npkbox = 'positions';
-        let sheetOpen = false;
+        const box = pickerHost('npk-scr-10');
         const puts = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
-        const { main, doc, sheet } = loadPage({
-            allowSheet: true,
+        const { root } = loadPage({
+            hash: '#tab=settings',
             stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
             stationNodes: { '10': ['PLN_01', 'PLN_02'] },
-            extraIds: { 'npk-positions': box },
-            docQSA: sel => (sel === '.pd-npk' && sheetOpen ? [box] : []),
+            extraIds: { 'npk-scr-10': box },
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
                 // Nothing names PLN_02, so the removal goes through on the first Save.
@@ -1110,10 +1086,6 @@ async function mainAsync() {
                     }
                     return ok(['PLN_01', 'PLN_02']);
                 }
-                if (url === '/api/operator-stations/10' && method === 'PUT') return ok({ status: 'ok' });
-                if (url === '/api/operator-stations') {
-                    return ok([{ id: 10, process_id: 1, name: 'Screen A', enabled: true }]);
-                }
                 if (url === '/api/core-nodes') {
                     return ok(['PLN_01', 'PLN_02'].map(name => ({ name, node_type: 'PLN' })));
                 }
@@ -1121,65 +1093,53 @@ async function mainAsync() {
                 return null;
             },
         });
-        await drain();
-        await drain();
-        sheetOpen = true;
-        const edit = makeElement('');
-        edit.dataset.act = 'screen-edit';
-        edit.dataset.station = '10';
-        main.appendChild(edit);
-        bubble(edit, 'click', doc);
         for (let i = 0; i < 6; i++) await drain();
-        const at = sheet();
-        if (!at.open) throw new Error('setup: the screen sheet did not open');
-        const status = at.status;
-        // The engineer takes PLN_02 off the screen with its chip's ×.
+        // The engineer takes PLN_02 off the screen with its chip's ×, then Save.
+        // (The chips are drawn once the node list has been read: opened.)
+        pk.open(box);
+        for (let i = 0; i < 4; i++) await drain();
         pk.drop(box, 'PLN_02');
-        at.ok();
-        for (let i = 0; i < 10; i++) await drain();
+        for (let i = 0; i < 2; i++) await drain();
+        const save = findIn(root, '[data-set="save"]')[0];
+        if (!save || save.disabled) throw new Error('setup: Save is not there to press after the ×');
+        save.click();
+        // The save, then its one read-back (afterSettingsSave): several round trips.
+        for (let i = 0; i < 30; i++) await drain();
         if (puts.length !== 1 || JSON.stringify(puts[0]) !== JSON.stringify({ nodes: ['PLN_01'] })) {
             throw new Error('setup: the positions PUT was not sent as expected: ' + JSON.stringify(puts));
         }
-        return { open: sheet().open, status };
+        const m = root.innerHTML.match(/<div class="pd-notice">([^<]*)<\/div>/);
+        return m ? m[1] : '';
     }
 
     {
-        const { open, status } = await saveScreenWithReply({ status: 'ok', kept: ['PLN_02'] });
-        if (!open) throw new Error('the sheet closed although the server kept PLN_02 on the screen');
+        const said = await saveScreenWithReply({ status: 'ok', kept: ['PLN_02'] });
         const want = 'Saved. PLN_02 stays on this screen until its active order finishes.';
-        if (status.textContent !== want) {
-            throw new Error('status line: got ' + JSON.stringify(status.textContent) + ', want ' + JSON.stringify(want));
-        }
-        if (/\bbad\b/.test(status.className)) {
-            throw new Error('a kept position is not a refusal; status class was ' + JSON.stringify(status.className));
-        }
+        if (said !== want) throw new Error('notice: got ' + JSON.stringify(said) + ', want ' + JSON.stringify(want));
         checks++;
-        console.log('ok: a kept position keeps the screen sheet open and is named on its status line');
+        console.log('ok: a kept position is named on Settings\' notice after the save');
     }
 
     {
-        const { open, status } = await saveScreenWithReply({ status: 'ok', kept: ['PLN_02', 'PLN_05'] });
+        const said = await saveScreenWithReply({ status: 'ok', kept: ['PLN_02', 'PLN_05'] });
         const want = 'Saved. PLN_02, PLN_05 stay on this screen until their active orders finish.';
-        if (!open || status.textContent !== want) {
-            throw new Error('two kept positions: open=' + open + ', status ' + JSON.stringify(status.textContent) +
-                ', want ' + JSON.stringify(want));
-        }
+        if (said !== want) throw new Error('two kept positions: notice ' + JSON.stringify(said) + ', want ' + JSON.stringify(want));
         checks++;
         console.log('ok: several kept positions are named together in one sentence');
     }
 
     {
-        const { open } = await saveScreenWithReply({ status: 'ok', kept: [] });
-        if (open) throw new Error('the sheet stayed open although the server kept nothing');
+        const said = await saveScreenWithReply({ status: 'ok', kept: [] });
+        if (said) throw new Error('a save that kept nothing said ' + JSON.stringify(said));
         checks++;
-        console.log('ok: a save that kept nothing closes the screen sheet');
+        console.log('ok: a save that kept nothing says nothing more than "Saved"');
     }
 
     {
-        const { open } = await saveScreenWithReply({ status: 'ok' });
-        if (open) throw new Error('the sheet stayed open on a reply without kept');
+        const said = await saveScreenWithReply({ status: 'ok' });
+        if (said) throw new Error('a reply without kept said ' + JSON.stringify(said));
         checks++;
-        console.log('ok: a reply without kept closes the screen sheet as before');
+        console.log('ok: a reply without kept says nothing more than "Saved"');
     }
 
     // ── taking a position off a screen names what it orphans first ──────────
@@ -1189,21 +1149,15 @@ async function mainAsync() {
     // warning is shown and the save waits for a second Save; it is a warning,
     // not a refusal. Nothing to warn about and the save goes straight through.
     async function removeFromScreen(preview, saves) {
-        const opts = makeElement('');
-        const input = makeElement('');
-        const box = makeElement('npk-positions');
-        box.dataset.npkbox = 'positions';
-        let sheetOpen = false;
+        const box = pickerHost('npk-scr-10');
         const puts = [];
-        let rowPuts = 0;
         const previews = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
-        const { main, doc, sheet } = loadPage({
-            allowSheet: true,
+        const { root } = loadPage({
+            hash: '#tab=settings',
             stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
             stationNodes: { '10': ['PLN_01', 'PLN_02'] },
-            extraIds: { 'npk-positions': box },
-            docQSA: sel => (sel === '.pd-npk' && sheetOpen ? [box] : []),
+            extraIds: { 'npk-scr-10': box },
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
                 if (url === '/api/operator-stations/10/claimed-nodes/impact' && method === 'POST') {
@@ -1217,13 +1171,6 @@ async function mainAsync() {
                     }
                     return ok(['PLN_01', 'PLN_02']);
                 }
-                if (url === '/api/operator-stations/10' && method === 'PUT') {
-                    rowPuts++;
-                    return ok({ status: 'ok' });
-                }
-                if (url === '/api/operator-stations') {
-                    return ok([{ id: 10, process_id: 1, name: 'Screen A', enabled: true }]);
-                }
                 if (url === '/api/core-nodes') {
                     return ok(['PLN_01', 'PLN_02'].map(name => ({ name, node_type: 'PLN' })));
                 }
@@ -1231,25 +1178,19 @@ async function mainAsync() {
                 return null;
             },
         });
-        await drain();
-        await drain();
-        sheetOpen = true;
-        const edit = makeElement('');
-        edit.dataset.act = 'screen-edit';
-        edit.dataset.station = '10';
-        main.appendChild(edit);
-        bubble(edit, 'click', doc);
         for (let i = 0; i < 6; i++) await drain();
-        const at = sheet();
-        const status = at.status;
+        pk.open(box);
+        for (let i = 0; i < 4; i++) await drain();
         pk.drop(box, 'PLN_02');
+        for (let i = 0; i < 2; i++) await drain();
+        const save = findIn(root, '[data-set="save"]')[0];
         const after = [];
         for (let s = 0; s < saves; s++) {
-            sheet().ok();
-            for (let i = 0; i < 10; i++) await drain();
-            after.push({ puts: puts.length, rowPuts, status: status.textContent, cls: status.className });
+            save.click();
+            for (let i = 0; i < 30; i++) await drain();
+            after.push({ puts: puts.length, refusal: (findIn(root, '.set-refusal')[0] || {}).textContent || '' });
         }
-        return { after, previews, open: sheet().open };
+        return { after, previews };
     }
 
     {
@@ -1259,13 +1200,11 @@ async function mainAsync() {
         if (previews.length < 1 || JSON.stringify(previews[0]) !== JSON.stringify({ nodes: ['PLN_01'] })) {
             throw new Error('a save taking PLN_02 off the screen did not ask what names it first: ' + JSON.stringify(previews));
         }
-        if (after[0].puts !== 0 || after[0].rowPuts !== 0 || after[0].status !== warning) {
-            throw new Error('the first Save wrote before warning, or did not show the warning: ' + JSON.stringify(after[0]));
+        // Said on the bar, once: the server's sentence already ends with what to do.
+        if (after[0].puts !== 0 || after[0].refusal !== 'Not saved. ' + warning) {
+            throw new Error('the first Save wrote before warning, or did not say the warning on the bar: ' + JSON.stringify(after[0]));
         }
-        if (/\bbad\b/.test(after[0].cls)) {
-            throw new Error('the warning is not a refusal; status class was ' + JSON.stringify(after[0].cls));
-        }
-        if (after[1].puts !== 1 || after[1].rowPuts !== 1) {
+        if (after[1].puts !== 1 || after[1].refusal) {
             throw new Error('a second Save after the warning did not take the position off: ' + JSON.stringify(after[1]));
         }
         checks++;
@@ -1273,10 +1212,9 @@ async function mainAsync() {
     }
 
     {
-        const { after, open } = await removeFromScreen({ warning: '' }, 1);
-        if (after[0].puts !== 1 || after[0].status || open) {
-            throw new Error('a position nothing names was not taken off on the first Save, or warned: ' +
-                JSON.stringify(after[0]) + ' open=' + open);
+        const { after } = await removeFromScreen({ warning: '' }, 1);
+        if (after[0].puts !== 1 || after[0].refusal) {
+            throw new Error('a position nothing names was not taken off on the first Save, or warned: ' + JSON.stringify(after[0]));
         }
         checks++;
         console.log('ok: taking off a position nothing names goes through without a warning');
@@ -2743,19 +2681,18 @@ async function mainAsync() {
         allowSheet: true, composer: mapComposer(map), hash: '#tab=settings',
         fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null),
     });
-    const routingHead = '<div class="pd-sect"><h2>Positions and routing set</h2><span class="pd-dim">' +
-        'where this process works, and where it may draw bins from, stage them, and send them</span>' +
-        '<span class="pd-wt">saved as you pick</span></div>';
-    const noMapNote = '<p class="pd-note">No plant map on this Edge yet. Core sends it with the node ' +
-        'list; until then the lists above are the whole routing set.</p>';
+    // Settings' Routing set: its heading, one picker per role below it, the
+    // map behind Show on map on the heading when the Edge has one.
+    const routingHead = '<div class="pd-sect"><h2>Routing set</h2></div>';
+    const noMapNote = '<p class="pd-note">No plant map on this Edge yet. Core sends it with the node list.</p>';
 
     await pin('the routing panel with no plant map draws one line and no map frame', async () => {
         const { root } = settingsPage(null);
         await settle();
         const h = root.innerHTML;
-        if (h.indexOf('<h2>Positions and routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
+        if (h.indexOf('<h2>Routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
         if (h.indexOf(routingHead) < 0) {
-            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Positions and routing set<\/h2>.*?<\/div>/) || [''])[0]));
+            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
         }
         if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
         if (h.indexOf(noMapNote) < 0) throw new Error('the no-map line does not read ' + JSON.stringify(noMapNote));
@@ -2767,23 +2704,30 @@ async function mainAsync() {
     await pin('taking a routing name out goes through and shows what it orphans', async () => {
         const warning = 'Removed DN_001. Recipes left without their destination (2): "A" and "B".';
         const sent = [];
-        const dest = pickerHost('npk-stset');
-        const { root, doc } = loadPage({
-            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'npk-stset': dest },
+        const dest = pickerHost('npk-rt-destination');
+        const { root } = loadPage({
+            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'npk-rt-destination': dest },
             fetch: (url, init) => {
-                if (init && init.method === 'DELETE') { sent.push(url); return okJSON({ status: 'ok', warning }); }
+                if (url === '/api/processes/1/routing-nodes' && init && init.method === 'PUT') {
+                    sent.push(JSON.parse(init.body));
+                    return okJSON({ status: 'ok', warnings: [warning] });
+                }
                 return url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null;
             },
         });
         await settle();
-        // The routing set is the set picker's Outbound bucket: opened, then
-        // the name's token dropped.
-        click(root, doc, { act: 'set-bucket', set: 'stset', bucket: 'destination' });
+        // The routing set is a draft: Outbound's chip ×, then Save.
+        pk.open(dest);
+        await settle();
         pk.drop(dest, 'DN_001');
         await settle();
-        if (sent[0] !== '/api/processes/1/routing-nodes/2') throw new Error('the removal sent ' + JSON.stringify(sent));
-        if (root.innerHTML.indexOf('<div class="pd-warn">' + warning.replace(/"/g, '&quot;')) < 0) {
-            throw new Error('the warning is not on the panel');
+        findIn(root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 4; i++) await settle();
+        if (sent.length !== 1 || JSON.stringify(sent[0].remove) !== '[{"core_node_name":"DN_001","role":"destination"}]') {
+            throw new Error('the removal sent ' + JSON.stringify(sent));
+        }
+        if (root.innerHTML.indexOf('<div class="pd-notice">' + warning.replace(/"/g, '&quot;')) < 0) {
+            throw new Error('the warning is not said after the save');
         }
     });
 
@@ -2804,7 +2748,7 @@ async function mainAsync() {
         const h = root.innerHTML;
         if (h.indexOf('aria-expanded="true">Hide map</button>') < 0) throw new Error('the toggle does not read Hide map once pressed');
         if (h.indexOf(routingHead.slice(0, -'</div>'.length)) < 0) {
-            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Positions and routing set<\/h2>.*?<\/div>/) || [''])[0]));
+            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
         }
         if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
         if (h.indexOf('<div class="pd-map pd-rsmap" id="pd-rsmapbox">') < 0) throw new Error('the routing map frame is not drawn');
@@ -3831,9 +3775,9 @@ async function settingsPositionsPins(h) {
         o = o || {};
         const writes = [];
         const host = pickerHost('npk-procset');
-        const setHost = pickerHost('npk-stset');
+        const scrHost = pickerHost('npk-scr-18');
         const ctx = loadPage({
-            allowSheet: true, hash: hash, extraIds: { 'npk-procset': host, 'npk-stset': setHost },
+            allowSheet: true, hash: hash, extraIds: { 'npk-procset': host, 'npk-scr-18': scrHost },
             processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
             stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }],
             stationNodes: { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
@@ -3852,7 +3796,7 @@ async function settingsPositionsPins(h) {
                 return okJSON({ status: 'ok', kept: [] });
             },
         });
-        return Object.assign(ctx, { writes: writes, host: host, setHost: setHost });
+        return Object.assign(ctx, { writes: writes, host: host, scrHost: scrHost });
     };
     const rowOf = (html, name) => (html.match(new RegExp('<button[^>]*>(?:<i class="box"></i>)?' + name + '(?:<small>[^<]*</small>)?</button>')) || [''])[0];
 
@@ -3960,29 +3904,32 @@ async function settingsPositionsPins(h) {
         }
     });
 
-    // ONE DOOR TAKES A POSITION OFF A SCREEN: the Positions bucket of the set
-    // picker. It asks what still names the position first, and the same
-    // untick again takes it off (Settings' per-row Remove was a second door
-    // to the same write, and went with the one-row-per-position wall).
-    await pin('unticking a position in the Positions bucket asks what still names it, and unticking it again takes it off', async () => {
-        const says = 'PLN_005 is named by recipe Two up.';
+    // ONE DOOR TAKES A POSITION OFF A SCREEN: its row under Settings ›
+    // Screens and positions. Save asks what still names the position first,
+    // and Save again takes it off (Settings' per-row Remove was a second door
+    // to the same write, and went with the one-row-per-position wall). THE
+    // WRITE IS THE SERVER'S LIST: PLN_009BCD, which the page was not loaded
+    // with, is not dropped by it.
+    await pin('taking a position off a screen\'s row asks what still names it, and Save again takes it off', async () => {
+        const says = 'PLN_005 is named by recipe Two up. Save again to remove it anyway.';
         const ctx = page('#tab=settings', { warning: says });
         await settle();
-        pk.pick(ctx.setHost, 'PLN_005');
+        pk.open(ctx.scrHost);
         await settle();
+        pk.drop(ctx.scrHost, 'PLN_005');
+        await settle();
+        const save = findIn(ctx.root, '[data-set="save"]')[0];
+        save.click();
+        for (let i = 0; i < 4; i++) await settle();
         const ask = ctx.writes.find(w => /\/impact$/.test(w.url));
         if (!ask || JSON.stringify(ask.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the impact ask was ' + JSON.stringify(ctx.writes));
-        if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('the untick wrote before the warning was seen');
-        if (ctx.root.innerHTML.indexOf(says + ' Untick PLN_005 again to take it off.') < 0) {
-            throw new Error('Settings does not carry the warning: ' + (ctx.root.innerHTML.match(/<div class="pd-notice">[^<]*/) || ['none'])[0]);
-        }
-        pk.pick(ctx.setHost, 'PLN_005');
-        await settle();
+        if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('the save wrote before the warning was seen');
+        const bar = (findIn(ctx.root, '.set-refusal')[0] || {}).textContent || '';
+        if (bar !== 'Not saved. ' + says) throw new Error('the bar does not carry the warning, once: ' + JSON.stringify(bar));
+        save.click();
+        for (let i = 0; i < 6; i++) await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
-        if (!put || JSON.stringify(put.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the second untick sent ' + JSON.stringify(put));
-        if (ctx.root.innerHTML.indexOf('<div class="pd-notice">Took PLN_005 off Press 6 Operator Screen.</div>') < 0) {
-            throw new Error('Settings does not say what was taken off');
-        }
+        if (!put || JSON.stringify(put.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('Save again sent ' + JSON.stringify(put));
     });
 }
 

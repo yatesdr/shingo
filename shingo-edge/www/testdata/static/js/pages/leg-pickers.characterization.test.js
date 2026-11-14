@@ -91,25 +91,26 @@ test('legExclusion: no node list yet refuses nothing', () => {
     assert.strictEqual(B.legExclusion(undefined, 'SUP-L1'), '');
 });
 
-// The routing rule of each set picker (setInit: the positions and the
-// routing set, one list in four buckets). The process sheet declares its rule
-// inline in `setInit(PROC_SET, {`; Settings' is the function stSetRule.
+// The routing rule of each routing picker. The process sheet declares its
+// rule inline in its set picker, `setInit(PROC_SET, {` (four buckets over one
+// list, b the bucket); Settings' role pickers share the function routeRule
+// (one picker per role).
 function routingRuleSites() {
     const sites = [];
     const sheet = PAGE.indexOf('setInit(PROC_SET, {');
     assert.ok(sheet >= 0, 'the process sheet’s set picker not found');
     sites.push(PAGE.slice(sheet, PAGE.indexOf('});', sheet)));
-    const st = PAGE.indexOf('function stSetRule(');
-    assert.ok(st >= 0, 'stSetRule not found');
+    const st = PAGE.indexOf('function routeRule(');
+    assert.ok(st >= 0, 'routeRule not found');
     sites.push(PAGE.slice(st, PAGE.indexOf('\n}\n', st)));
     return sites;
 }
 
-test('the two set pickers each ask the leg rule in the bucket’s role', () => {
+test('the routing pickers each ask the leg rule in their role', () => {
     const sites = routingRuleSites();
     sites.forEach((s, i) => {
-        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name), b\)/.test(s),
-            'set picker #' + (i + 1) + ' does not ask legExclusion in its bucket’s role:\n' + s);
+        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name), (?:b|role)\)/.test(s),
+            'routing picker #' + (i + 1) + ' does not ask legExclusion in its role:\n' + s);
     });
 });
 

@@ -1,24 +1,6 @@
-## Edit Screen A: the note, POS_A11 off and NEW_3 on; the removal is asked about first
-  1  GET /api/operator-stations/11/claimed-nodes
-  2  GET /api/process-nodes
-  3  GET /api/core-nodes
-  4  POST /api/operator-stations/11/claimed-nodes/impact
-       {
-         "nodes": [
-           "POS_A1",
-           "POS_A2",
-           "POS_A3",
-           "POS_A4",
-           "POS_A5",
-           "POS_A6",
-           "POS_A7",
-           "POS_A8",
-           "POS_A9",
-           "POS_A10",
-           "NEW_3"
-         ]
-       }
-  5  PUT /api/operator-stations/11
+## Edit Screen A: the note (its positions are its row on Settings)
+  1  GET /api/core-nodes
+  2  PUT /api/operator-stations/11
        {
          "process_id": 1,
          "code": "scr-a",
@@ -29,7 +11,40 @@
          "controller_node_id": "",
          "enabled": true
        }
-  6  PUT /api/operator-stations/11/claimed-nodes
+  3  GET /api/operator-stations
+  4  GET /api/operator-stations/11/claimed-nodes
+  5  GET /api/processes
+  6  GET /api/processes/1/composer
+  7  GET /api/processes/1/styles
+  8  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Add operator screen: Screen C (its positions are picked in its row)
+  1  GET /api/core-nodes
+  2  POST /api/operator-stations
+       {
+         "process_id": 1,
+         "code": "",
+         "name": "Screen C",
+         "note": "spare",
+         "area_label": "",
+         "sequence": 0,
+         "controller_node_id": "",
+         "enabled": true
+       }
+  3  GET /api/operator-stations
+  4  GET /api/operator-stations/31/claimed-nodes
+  5  GET /api/processes
+  6  GET /api/processes/1/composer
+  7  GET /api/processes/1/styles
+  8  POST /api/processes/1/flow/preview
+       (the boot preview's body, as requests-open-process.txt pins it)
+-- sheet closed
+
+## Settings › Screens and positions › Screen A: POS_A11 off and NEW_3 on, Save; the removal is asked about first, and Save again takes it off
+  1  GET /api/operator-stations/11/claimed-nodes
+  2  POST /api/operator-stations/11/claimed-nodes/impact
        {
          "nodes": [
            "POS_A1",
@@ -45,40 +60,27 @@
            "NEW_3"
          ]
        }
-  7  GET /api/operator-stations
-  8  GET /api/operator-stations/11/claimed-nodes
-  9  GET /api/processes
- 10  GET /api/processes/1/composer
- 11  GET /api/processes/1/styles
- 12  POST /api/processes/1/flow/preview
-       (the boot preview's body, as requests-open-process.txt pins it)
--- sheet closed
-
-## Add operator screen: Screen C claiming NEW_1
-  1  GET /api/process-nodes
-  2  GET /api/core-nodes
-  3  POST /api/operator-stations
-       {
-         "process_id": 1,
-         "code": "",
-         "name": "Screen C",
-         "note": "spare",
-         "area_label": "",
-         "sequence": 0,
-         "controller_node_id": "",
-         "enabled": true
-       }
-  4  PUT /api/operator-stations/31/claimed-nodes
+  3  PUT /api/operator-stations/11/claimed-nodes
        {
          "nodes": [
-           "NEW_1"
+           "POS_A1",
+           "POS_A2",
+           "POS_A3",
+           "POS_A4",
+           "POS_A5",
+           "POS_A6",
+           "POS_A7",
+           "POS_A8",
+           "POS_A9",
+           "POS_A10",
+           "NEW_3"
          ]
        }
-  5  GET /api/operator-stations
-  6  GET /api/operator-stations/31/claimed-nodes
-  7  GET /api/processes
-  8  GET /api/processes/1/composer
-  9  GET /api/processes/1/styles
- 10  POST /api/processes/1/flow/preview
-       (the boot preview's body, as requests-open-process.txt pins it)
+  4  GET /api/process-nodes
+  5  GET /api/processes/1/station-counters
+  6  GET /api/processes
+  7  GET /api/operator-stations/11/claimed-nodes
+  8  GET /api/operator-stations/12/claimed-nodes
+  9  GET /api/processes/1/composer
+-- notice: success "Saved"
 -- sheet closed

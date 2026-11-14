@@ -1,50 +1,229 @@
-## Settings › Routing set: add SRC_2 to Sources (a name with no row: POST at the end of its role)
-  1  POST /api/processes/1/routing-nodes
+## Settings › Routing set: SRC_2 picked in Inbound, Save (a name with no row: the one write adds it at the end of its role)
+  1  PUT /api/processes/1/routing-nodes
        {
-         "core_node_name": "SRC_2",
-         "role": "source",
-         "label": "SRC_2",
-         "enabled": true,
-         "sequence": 3
+         "nodes": [
+           {
+             "core_node_name": "GRP_A",
+             "role": "source"
+           },
+           {
+             "core_node_name": "SRC_1",
+             "role": "source"
+           },
+           {
+             "core_node_name": "SRC_2",
+             "role": "source"
+           },
+           {
+             "core_node_name": "STG_1",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_2",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_3",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "DST_1",
+             "role": "destination"
+           },
+           {
+             "core_node_name": "DST_2",
+             "role": "destination"
+           }
+         ]
        }
-  2  GET /api/processes/1/routing-nodes
+  2  GET /api/process-nodes
+  3  GET /api/processes/1/station-counters
+  4  GET /api/processes
+  5  GET /api/processes/1/routing-nodes
+  6  GET /api/processes/1/composer
+-- notice: success "Saved"
 -- sheet closed
--- routing warning "", error ""
+-- settings notice "", routing error ""
 
-## Settings › Routing set: add DST_9 to Destinations (a switched-off row: PATCH adopts it)
-  1  PATCH /api/processes/1/routing-nodes/109
+## Settings › Routing set: DST_9 picked in Outbound, Save (a switched-off row: the one write adopts it)
+  1  PUT /api/processes/1/routing-nodes
        {
-         "enabled": true
+         "nodes": [
+           {
+             "core_node_name": "GRP_A",
+             "role": "source"
+           },
+           {
+             "core_node_name": "SRC_1",
+             "role": "source"
+           },
+           {
+             "core_node_name": "STG_1",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_2",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_3",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "DST_1",
+             "role": "destination"
+           },
+           {
+             "core_node_name": "DST_2",
+             "role": "destination"
+           },
+           {
+             "core_node_name": "DST_9",
+             "role": "destination"
+           }
+         ]
        }
-  2  GET /api/processes/1/routing-nodes
+  2  GET /api/process-nodes
+  3  GET /api/processes/1/station-counters
+  4  GET /api/processes
+  5  GET /api/processes/1/routing-nodes
+  6  GET /api/processes/1/composer
+-- notice: success "Saved"
 -- sheet closed
--- routing warning "", error ""
+-- settings notice "", routing error ""
 
-## Settings › Routing set: × STG_3 out of Staging (DELETE, and the warning it answers)
-  1  DELETE /api/processes/1/routing-nodes/105
-  2  GET /api/processes/1/routing-nodes
--- sheet closed
--- routing warning "STG_3 is still named by Style A.", error ""
-
-## Settings › Routing set: click STG_1, already in Staging (the picker takes it out)
-  1  DELETE /api/processes/1/routing-nodes/103
-  2  GET /api/processes/1/routing-nodes
--- sheet closed
--- routing warning "STG_1 is still named by Style A.", error ""
-
-## Settings › Routing set: Turn all 1 on (Staging)
-  1  PATCH /api/processes/1/routing-nodes/106
+## Settings › Routing set: × STG_3 out of Staging, Save (the one write takes it out, and says its warning)
+  1  PUT /api/processes/1/routing-nodes
        {
-         "enabled": true
+         "nodes": [
+           {
+             "core_node_name": "GRP_A",
+             "role": "source"
+           },
+           {
+             "core_node_name": "SRC_1",
+             "role": "source"
+           },
+           {
+             "core_node_name": "STG_1",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_2",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "DST_1",
+             "role": "destination"
+           },
+           {
+             "core_node_name": "DST_2",
+             "role": "destination"
+           }
+         ],
+         "remove": [
+           {
+             "core_node_name": "STG_3",
+             "role": "staging"
+           }
+         ]
        }
-  2  GET /api/processes/1/routing-nodes
-  3  GET /api/processes
-  4  GET /api/processes/1/composer
-  5  GET /api/processes/1/styles
-  6  GET /api/process-nodes
-  7  GET /api/processes/1/station-counters
-  8  GET /api/processes/1/counting-slots
-  9  GET /api/processes/1/catid-health
- 10  GET /api/processes/1/presets
- 11  GET /api/processes/1/auto-reorder
+  2  GET /api/process-nodes
+  3  GET /api/processes/1/station-counters
+  4  GET /api/processes
+  5  GET /api/processes/1/routing-nodes
+  6  GET /api/processes/1/composer
+-- notice: success "Saved"
+-- sheet closed
+-- settings notice "STG_3 is still named by Style A.", routing error ""
+
+## Settings › Routing set: STG_1 clicked in Staging, Save (STG_1 was picked: the click takes it out)
+  1  PUT /api/processes/1/routing-nodes
+       {
+         "nodes": [
+           {
+             "core_node_name": "GRP_A",
+             "role": "source"
+           },
+           {
+             "core_node_name": "SRC_1",
+             "role": "source"
+           },
+           {
+             "core_node_name": "STG_2",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_3",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "DST_1",
+             "role": "destination"
+           },
+           {
+             "core_node_name": "DST_2",
+             "role": "destination"
+           }
+         ],
+         "remove": [
+           {
+             "core_node_name": "STG_1",
+             "role": "staging"
+           }
+         ]
+       }
+  2  GET /api/process-nodes
+  3  GET /api/processes/1/station-counters
+  4  GET /api/processes
+  5  GET /api/processes/1/routing-nodes
+  6  GET /api/processes/1/composer
+-- notice: success "Saved"
+-- sheet closed
+-- settings notice "STG_1 is still named by Style A.", routing error ""
+
+## Settings › Routing set: Turn all 1 on (Staging), Save
+  1  PUT /api/processes/1/routing-nodes
+       {
+         "nodes": [
+           {
+             "core_node_name": "GRP_A",
+             "role": "source"
+           },
+           {
+             "core_node_name": "SRC_1",
+             "role": "source"
+           },
+           {
+             "core_node_name": "STG_1",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_2",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_3",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "STG_9",
+             "role": "staging"
+           },
+           {
+             "core_node_name": "DST_1",
+             "role": "destination"
+           },
+           {
+             "core_node_name": "DST_2",
+             "role": "destination"
+           }
+         ]
+       }
+  2  GET /api/process-nodes
+  3  GET /api/processes/1/station-counters
+  4  GET /api/processes
+  5  GET /api/processes/1/routing-nodes
+  6  GET /api/processes/1/composer
+-- notice: success "Saved"
 -- sheet closed

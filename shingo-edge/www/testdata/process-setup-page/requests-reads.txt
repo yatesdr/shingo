@@ -14,9 +14,6 @@
  11  GET /api/core-nodes
 -- sheet closed
 
-## the screens tab clicked
--- sheet closed
-
 ## the presets tab clicked
   1  GET /api/processes/1/routing-nodes
   2  GET /api/process-nodes

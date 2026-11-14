@@ -28,14 +28,6 @@ ok   Keep editing keeps the draft and its row, on Styles
 ok   and the address bar says Styles
 ok   Discard leaves the draft and lands there
 
-## F4: the Operator screens tab out of a recipe draft
-ok   an untouched draft leaves without asking, and lands there
-ok   a changed draft asks first, the draft still on screen
-ok   the question is Back's
-ok   Keep editing keeps the draft and its row, on Styles
-ok   and the address bar says Styles
-ok   Discard leaves the draft and lands there
-
 ## F4: #tab=settings typed in the address bar out of a recipe draft
 ok   an untouched draft leaves without asking, and lands there
 ok   a changed draft asks first, the draft still on screen
@@ -102,7 +94,7 @@ main: "" · buttons ["Change…","Change…","Change…","+ New style","Set up�
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
 
 ## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)
-# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Settings"]
   · positions: "none yet" → Add positions [primary]
   · routing: "none yet" → Set the routing set
   ✓ parts: "11 parts" → Change…
@@ -110,7 +102,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# positions claimed · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+# positions claimed · lands on setup · tabs ["Setup*","Styles","Settings"]
   ✓ positions: "16 positions" → Change…
   · routing: "none yet" → Set the routing set [primary]
   ✓ parts: "11 parts" → Change…
@@ -118,7 +110,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and a routing set · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+# and a routing set · lands on setup · tabs ["Setup*","Styles","Settings"]
   ✓ positions: "16 positions" → Change…
   ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
   ✓ parts: "11 parts" → Change…
@@ -126,7 +118,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Settings"]
   ✓ positions: "16 positions" → Change…
   ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
   ✓ parts: "11 parts" → Change…
@@ -134,7 +126,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · screen: "Screen A · not run yet" → Open the screen
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Settings"]
   ✓ positions: "16 positions" → Change…
   ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
   ✓ parts: "11 parts" → Change…
@@ -142,17 +134,17 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · screen: "Screen A · not run yet" → Open the screen [primary]
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · 1 recipe" → Change…
-# run once (active style set) · lands on flows · tabs ["Styles*","Operator screens","Settings"]
+# run once (active style set) · lands on flows · tabs ["Styles*","Settings"]
 # HMI setup on with no recipe, never run · lands on setup
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "on · no recipe yet" (warn) → New recipe
 
 ## where a #tab= link lands (the Recipes tab went to HMI setup on Settings)
-  #tab=presets → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
-  #tab=recipes → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
-  #tab=presets;preset=7 → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
-  #tab=settings → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
-  #tab=setup → tab flows · tabs ["Styles*","Operator screens","Settings"] · hash "?process=1#style=1"
+  #tab=presets → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=recipes → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=presets;preset=7 → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
+  #tab=settings → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=setup → tab flows · tabs ["Styles*","Settings"] · hash "?process=1#style=1"
   Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from 1 recipe New recipe Name Shape Applied to Drift Saved Recipe One v1 mixed 0 parts in step — Apply to parts… ⋯ Quality hold off: finished goods go to their"
 
 ## the Setup tab's actions, from a new process with positions (each on a fresh page)
@@ -168,4 +160,4 @@ New style: "New style — a part this process runs: name it, then draw its flow.
     pressed: "Show on map" aria-expanded=false · the map "" · S.add.map false
   from Press A, an Edge with no map: sections ["The process","Positions and routing set","The part set"] · map block not drawn
 ok   a screen name left blank is the process's name
-#    then it opens on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+#    then it opens on setup · tabs ["Setup*","Styles","Settings"]

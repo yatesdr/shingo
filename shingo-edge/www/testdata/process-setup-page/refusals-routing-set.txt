@@ -3,185 +3,176 @@
 # innermost element); the sheet; the page's message state; any rejection the page left unhandled.
 
 ## Routing set: add SRC_2 (POST)
-# writes, in order: POST /api/processes/1/routing-nodes
-### POST /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound source
-    new text: #pd-stbody div.pd-refusal: the Edge refused it
-    new text: … and 76 more runs (the tab redrew)
+# writes, in order: PUT /api/processes/1/routing-nodes
+### PUT /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
-### POST /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound source
-    new text: #pd-stbody div.pd-refusal: Server error (500)
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
-### POST /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound source
-    new text: #pd-stbody div.pd-refusal: No answer from the server
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
-### POST /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Nothing below is the set — it is what could not be read.
-    new text: #pd-stbody span.pd-dim: a flow's inbound source
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: routingError="Nothing below is the set — it is what could not be read."
+    state: bar.refusal="Not saved."
     unhandled rejection: none
 
 ## Routing set: add DST_9 (PATCH adopts)
-# writes, in order: PATCH /api/processes/1/routing-nodes/109
-### PATCH /api/processes/1/routing-nodes/109  ←  400 {"error"} (writeError)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's outbound destination
-    new text: #pd-stbody div.pd-refusal: the Edge refused it
-    new text: … and 77 more runs (the tab redrew)
+# writes, in order: PUT /api/processes/1/routing-nodes
+### PUT /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
-### PATCH /api/processes/1/routing-nodes/109  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's outbound destination
-    new text: #pd-stbody div.pd-refusal: Server error (500)
-    new text: … and 77 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
-### PATCH /api/processes/1/routing-nodes/109  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's outbound destination
-    new text: #pd-stbody div.pd-refusal: No answer from the server
-    new text: … and 77 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
-### PATCH /api/processes/1/routing-nodes/109  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Nothing below is the set — it is what could not be read.
-    new text: #pd-stbody span.pd-dim: a flow's outbound destination
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: routingError="Nothing below is the set — it is what could not be read."
+    state: bar.refusal="Not saved."
     unhandled rejection: none
 
 ## Routing set: × STG_3 (DELETE)
-# writes, in order: DELETE /api/processes/1/routing-nodes/105
-### DELETE /api/processes/1/routing-nodes/105  ←  400 {"error"} (writeError)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: #pd-stbody div.pd-refusal: the Edge refused it
-    new text: … and 76 more runs (the tab redrew)
+# writes, in order: PUT /api/processes/1/routing-nodes
+### PUT /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
-### DELETE /api/processes/1/routing-nodes/105  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: #pd-stbody div.pd-refusal: Server error (500)
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
-### DELETE /api/processes/1/routing-nodes/105  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: #pd-stbody div.pd-refusal: No answer from the server
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
-### DELETE /api/processes/1/routing-nodes/105  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Nothing below is the set — it is what could not be read.
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: routingError="Nothing below is the set — it is what could not be read."
+    state: bar.refusal="Not saved."
     unhandled rejection: none
 
 ## Routing set: click STG_1 (DELETE)
-# writes, in order: DELETE /api/processes/1/routing-nodes/103
-### DELETE /api/processes/1/routing-nodes/103  ←  400 {"error"} (writeError)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: #pd-stbody div.pd-refusal: the Edge refused it
-    new text: … and 76 more runs (the tab redrew)
+# writes, in order: PUT /api/processes/1/routing-nodes
+### PUT /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
-### DELETE /api/processes/1/routing-nodes/103  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: #pd-stbody div.pd-refusal: Server error (500)
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
-### DELETE /api/processes/1/routing-nodes/103  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: #pd-stbody div.pd-refusal: No answer from the server
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
-### DELETE /api/processes/1/routing-nodes/103  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Nothing below is the set — it is what could not be read.
-    new text: #pd-stbody span.pd-dim: a flow's inbound or outbound staging
-    new text: #pd-stbody span.pd-dim: · POS_B1, POS_B2, POS_B3, POS_B4 are back positions and always available
-    new text: … and 76 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: routingError="Nothing below is the set — it is what could not be read."
+    state: bar.refusal="Not saved."
     unhandled rejection: none
 
 ## Routing set: Turn all 1 on (Staging)
-# writes, in order: PATCH /api/processes/1/routing-nodes/106
-### PATCH /api/processes/1/routing-nodes/106  ←  400 {"error"} (writeError)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Switching STG_9 on was refused: the Edge refused it
-    new text: … and 53 more runs (the tab redrew)
+# writes, in order: PUT /api/processes/1/routing-nodes
+### PUT /api/processes/1/routing-nodes  ←  400 {"error"} (writeError)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Switching STG_9 on was refused: the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
-### PATCH /api/processes/1/routing-nodes/106  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Switching STG_9 on was refused: Server error (500)
-    new text: … and 53 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  500, no body (chi Recoverer)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Switching STG_9 on was refused: Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
-### PATCH /api/processes/1/routing-nodes/106  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Switching STG_9 on was refused: No answer from the server
-    new text: … and 53 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: routingError="Switching STG_9 on was refused: No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
-### PATCH /api/processes/1/routing-nodes/106  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/routing-nodes
-    new text: #pd-stbody div.pd-refusal: Nothing below is the set — it is what could not be read.
-    new text: … and 46 more runs (the tab redrew)
+### PUT /api/processes/1/routing-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
+    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: routingError="Nothing below is the set — it is what could not be read."
+    state: bar.refusal="Not saved."
     unhandled rejection: none

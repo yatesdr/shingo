@@ -47,11 +47,13 @@ ok   GRP_Q first with A_PLAIN and DST_7 under it, Z_PLAIN last
 ## census #3: a source added in Settings is offered on the Styles tab
 ok   POS_A5's Inbound source offers SRC_2
 
-## P0 :3746: a refused routing-set add is drawn, not cleared by the re-read
-ok   the page says "the Edge refused it"
+## P0 :3746: a refused routing-set save is said, and the name picked stays
+ok   the bar says "the Edge refused it"
+ok   SRC_2 is still picked
 
-## P0 :3626: a refused Turn all on is drawn, not cleared by the re-read
-ok   the page says "the Edge refused it"
+## P0 :3626: a refused Turn all on is said, and the names stay picked
+ok   the bar says "the Edge refused it"
+ok   the switched-off names stay picked
 
 ## P0 :5368: a refused Save settings keeps the typed draft
 ok   the page says "the Edge refused it"
@@ -86,11 +88,6 @@ ok   both rows stay on screen
 ok   Save again sends one write, with both rows
 
 ## ruling 5: + New style from Recipe One, its CATID refused, then pressed again
-ok   the refusal is said
-ok   pressed again, nothing is made twice
-ok   pressed again, the failed step is sent
-
-## ruling 5 (same chain class): Add operator screen, its positions refused, then pressed again
 ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
