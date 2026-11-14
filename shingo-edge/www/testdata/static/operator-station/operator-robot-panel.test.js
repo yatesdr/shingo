@@ -873,6 +873,45 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     eq(h.panelStreams().length, 3, 'this screen\'s own stream reconnecting tries it again');
 }
 
+// ── 12b. A Core outage that ends with no order change: the panel comes back on
+// the first view whose Core copies are current again (the board's "as of"
+// gone: view.bins.as_of, view.catalog.as_of), with no timer.
+{
+    const orders = { 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] };
+    const withFeeds = (binsAsOf, catalogAsOf) => {
+        const v = cellView(orders);
+        v.bins = binsAsOf ? { known: true, as_of: binsAsOf } : { known: true };
+        if (catalogAsOf) v.catalog = { known: true, as_of: catalogAsOf };
+        return v;
+    };
+    const h = await shownPage(withFeeds(null, null));
+    eq(h.visible(), true, 'shown, Core copies current');
+    // Core goes quiet: the board's copies pass 150 s and it says "as of".
+    await h.setView(withFeeds('2026-11-14T11:57:00Z', '2026-11-14T11:57:00Z'));
+    eq(h.visible(), true, 'an "as of" alone does not hide the panel: the stream says when Core\'s link is down');
+    h.frame({ available: false });
+    await h.flush();
+    eq([h.visible(), h.panelStreams().length], [false, 1], 'Core\'s link down: hidden');
+    h.mark();
+    await h.setView(withFeeds('2026-11-14T11:57:00Z', '2026-11-14T11:58:00Z'));
+    await h.advance(120000);
+    eq([h.panelStreams().length, h.counts.panelTimers], [1, 0], 'still stale, two minutes on: no retry and no timer');
+    // Core answers: the bins come back current first; the catalog still old.
+    await h.setView(withFeeds(null, '2026-11-14T11:58:00Z'));
+    eq(h.panelStreams().length, 1, 'one copy current, one still old: still stale, no retry');
+    await h.setView(withFeeds(null, null));
+    eq(h.panelStreams().length, 2, 'the first view with every copy current tries the panel again, the orders unchanged');
+    h.frame({ available: true });
+    await h.flush();
+    eq(h.visible(), true, 'and it is back');
+    // Current to current is no flip: a feed refused for another reason (no
+    // capability) is not retried by every fresh view.
+    h.frame({ available: false });
+    await h.flush();
+    await h.setView(withFeeds(null, null));
+    eq(h.panelStreams().length, 2, 'a fresh view after a fresh view is no flip: no retry');
+}
+
 // ── 13. A drawing that does not load is tried again only by the same triggers.
 {
     const h = bootPage({ view: cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }), importFails: true });

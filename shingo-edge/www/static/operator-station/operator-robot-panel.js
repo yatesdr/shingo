@@ -20,9 +20,10 @@
 //   - {available: false} on the panel's stream (no live robot feed at this
 //     Edge, or its Core link down: U9's one signal) hides it. The panel is
 //     tried again when the screen's robot orders change (an order gets or
-//     loses a robot, or moves status), when this screen's own event stream
-//     reconnects (robotPanelLinkBack), or on a toggle press. Nothing retries on
-//     a timer: hidden is zero work.
+//     loses a robot, or moves status), when the view's Core copies turn
+//     current again (coreStale: the board's "as of" goes), when this screen's
+//     own event stream reconnects (robotPanelLinkBack), or on a toggle press.
+//     Nothing retries on a timer: hidden is zero work.
 //   - HIDDEN, WHATEVER THE CAUSE, IS ZERO WORK: the drawing's stream is closed,
 //     its comet loop stopped, its timers cleared, and nothing writes to it
 //     (operator-robot-map.js hide). Pinned by operator-robot-panel.test.js.
@@ -100,6 +101,19 @@ function cellScreen(view) {
     return !!view && !isBoard(claimedNodes());
 }
 
+// coreStale says the view's copies of Core's feeds are old: the board's own
+// "Bins as of" / "Catalog as of" (view.bins.as_of, view.catalog.as_of, set by
+// the Edge's stampStationBins and stampStationCatalog through
+// engine.CurrentAt). A copy is current while a heartbeat ack confirmed it
+// within engine.FeedAsOfAfter (150 s): the rule the panel's {available} reads
+// for Core's link (U9). Every board is nudged when a copy crosses it either
+// way, so the first view after Core answers again is current. A view holding
+// neither copy says nothing either way (false).
+function coreStale(view) {
+    return !!view && !!((view.bins && view.bins.as_of) || (view.catalog && view.catalog.as_of));
+}
+let lastStale = false;
+
 function tapHidden(orders) {
     return !!tapHeld && orders.every(function (o) { return tapHeld[o.id]; });
 }
@@ -110,7 +124,9 @@ function tapHidden(orders) {
 export function syncRobotPanel(view) {
     lastView = view;
     const orders = robotOrders(view);
-    if (heldKey !== null && heldKey !== ordersKey(orders)) heldKey = null;
+    const stale = coreStale(view);
+    if (heldKey !== null && (heldKey !== ordersKey(orders) || (lastStale && !stale))) heldKey = null;
+    lastStale = stale;
     if (tapHeld && !tapHidden(orders)) tapHeld = null;
     const want = cellScreen(view) && enabled && orders.length > 0 && !tapHeld && heldKey === null;
     if (want) show(view, orders);
