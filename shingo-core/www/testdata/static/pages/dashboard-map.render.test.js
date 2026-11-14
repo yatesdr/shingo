@@ -930,8 +930,12 @@ test(async function intentAndFrozenLanes() {
     drive(m, [{ id: 'AMR-F', from: [0, 0] }]);
     paint(m);
     const lines = intents(m).map(function (n) { return n.attrs.points; });
-    check('a staged order draws its intent line source -> delivery along route C (the one-way stretch backwards)',
-        lines.indexOf('0,0 0,0 2,-1 14,-1 16,0 16,0') >= 0, JSON.stringify(lines));
+    // The route model (lead decision D9): directed, weighed by the distance
+    // driven. Route C is stored one way, toward SMN_05, so SMN_05 -> PLN_02
+    // is A. Before the route model this line ran C backwards
+    // (0,0 0,0 2,-1 14,-1 16,0 16,0).
+    check('a staged order draws its intent line source -> delivery along route A, the route model\'s way (D9)',
+        lines.indexOf('0,0 0,0 0,-2 16,-2 16,0 16,0') >= 0, JSON.stringify(lines));
     check('an intent with no network route is a straight hint', lines.indexOf('30,-10 0,0') >= 0, JSON.stringify(lines));
     const it = intents(m)[0];
     check('intent: unfilled, 0.34 opacity', it.attrs.fill === 'none' && it.attrs['stroke-opacity'] === '0.34',

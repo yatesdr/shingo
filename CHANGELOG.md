@@ -36,6 +36,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - While a screen's robot panel is open, the Edge watches that screen's driving orders and passes it each robot's position and route as Core sends them, named by the screen's own order; with no panel open it watches nothing and sends nothing
 - The robot panel is told whether the live feed is there: not before Core names the live topic, and not once Core has gone unheard as long as the screens' "as of" waits
 - The robot panel's map is the Edge's copy of Core's plant map, fetched once and answered "unchanged" until Core's map changes
+- The robot map's dashed line for an order not yet driving follows the lanes only the way robots may drive them, as the fleet plans, instead of running a one-way lane backwards
 
 ## v0.7.0 — 2026-11-13
 

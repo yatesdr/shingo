@@ -56,7 +56,8 @@ import {
   makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord, cubicLength, laneKey,
   cubicPoint, CUBIC_SAMPLES
 } from '/static/shared/scene-geom.js';
-import { sceneNet } from '/static/shared/scene-net.js';
+import { sceneNet, sceneRoute } from '/static/shared/scene-net.js';
+import { hopsWorld } from '/static/shared/scene-path.js';
 import { createSceneView, svgNode } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
 
@@ -1003,13 +1004,30 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     return 'fetch';
   }
 
-  // World→screen polyline from `r` (a robot, or an intent line's source) to a
-  // target node, routed on the network; a straight two-point hint when the
-  // network does not connect them.
+  // World→screen polyline from robot `r` to a target node, routed on the
+  // network; a straight two-point hint when the network does not connect them.
   function legPts(r, node) {
     var w = routeWorld(r.x, r.y, node);
     return w ? w.map(function (p) { return proj(p[0], p[1]); })
       : [proj(r.x, r.y), proj(node.x, node.y)];
+  }
+
+  // intentPts is an intent line, world→screen: order o's source place, the
+  // route model's way from its source to its delivery along the stored rows
+  // (shared/scene-net.js sceneRoute, lead decision D9: directed, weighed by
+  // the distance driven), its delivery place. With no way there, a straight
+  // two-point hint: an intent line is not a robot's route, so the hint stays.
+  // An order node named as a scene point is that point; any other is its
+  // place on the map (src, dst).
+  function intentPts(o, src, dst) {
+    var net = sceneNet(scene);
+    var a = net.resolve(String(o.source_node || '')) || src;
+    var b = net.resolve(String(o.delivery_node || '')) || dst;
+    var seq = sceneRoute(scene, a, b);
+    var w = seq ? hopsWorld(scene, seq) : null;
+    var s = proj(src.x, src.y), d = proj(dst.x, dst.y);
+    if (!w) return [s, d];
+    return [s].concat(w.map(function (p) { return proj(p[0], p[1]); }), [d]);
   }
 
   // laneVisible: a working robot's route draws as a static lane only where a
@@ -1321,7 +1339,7 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
       // Pre-dispatch / staged: a dashed intent line at most (no comet, no robot
       // needed). Calmed like the comets — only when quiet or focused.
       if (INTENT_PHASE[o.status]) {
-        if (src && dst && calmOK) routeLines.push({ key: 'intent:' + o.order_id, kind: 'intent', pts: legPts(src, dst), dimmed: dimmed });
+        if (src && dst && calmOK) routeLines.push({ key: 'intent:' + o.order_id, kind: 'intent', pts: intentPts(o, src, dst), dimmed: dimmed });
         return;
       }
 

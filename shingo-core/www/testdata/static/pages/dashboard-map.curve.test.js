@@ -103,7 +103,7 @@ function load() {
     const file = path.join(SRC_DIR, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
     const INJECT = '  __export({ buildGraph: buildGraph,' +
-        ' lanes: function () { return sceneNet(scene).lanes; },' +
+        ' lanes: function () { return sceneNet(scene).lanes; }, scene: function () { return scene; },' +
         ' computeView: computeView, routeWorld: routeWorld,' +
         ' shortestPath: shortestPath, nearestTNode: nearestTNode,' +
         ' setEdges: function (v) { sceneEdges = v; },' +
@@ -126,6 +126,7 @@ function load() {
     // weighed its graph with.
     exported.cubicPoint = shared('scene-geom.js').cubicPoint;
     exported.cubicLength = shared('scene-geom.js').cubicLength;
+    exported.sceneRoute = shared('scene-net.js').sceneRoute;
     return exported;
 }
 
@@ -538,53 +539,47 @@ console.log('routes');
     check('a route over a straight lane is its vertices only', r.length === 4, 'points ' + r.length);
 })();
 
-// --- route vectors: today's shortestPath over the synthetic route scene ---
+// --- route vectors: the route model over the synthetic route scene --------
 //
-// THE ROUTE THE MAP DRAWS TODAY, recorded vertex by vertex on
-// shared/testdata/js/route-scene.json, the scene the Edge's two routers are
-// pinned on too (composer-model.test.js, processes-desktop.route.test.js).
-// Three ways run from SMN_05 to PLN_02: A straight and two-way (20 m), C
-// straight and stored ONE WAY toward SMN_05 (16.47 m), B two cubic hops
-// (16 m of chord, 21.6 m of arc). This map weighs the arc and adds every row
-// both ways (buildGraph), so it takes C from SMN_05 and drives the one-way
-// stretch backwards. RDS plans the directed answer, A.
+// THE ROUTE THE MAP DRAWS AN INTENT LINE ALONG, vertex by vertex, on
+// shared/testdata/js/route-scene.json, the scene the Edge's routers are
+// pinned on too (composer-model.test.js, processes-desktop.route.test.js),
+// through the page's own adaptation of /api/map/edges (sceneOfRows). Three
+// ways run from SMN_05 to PLN_02: A straight and two-way (20 m), C straight
+// and stored ONE WAY toward SMN_05 (16.47 m), B two cubic hops (16 m of chord,
+// 21.6 m of arc). The route model (shared/scene-net.js sceneRoute, lead
+// decision D9) keeps the stored direction and weighs the arc, so it takes A,
+// as RDS plans.
 //
-// These pins hold TODAY's undirected answers. The change to the directed
-// route model flips the ones marked "against the stored direction", on
-// purpose, in the commit that makes it.
+// THREE ANSWERS FLIPPED ON PURPOSE (D9, 2026-11-14) when the map moved onto
+// the route model: the two this map drove against the stored direction while
+// its graph was undirected (SMN_05 -> PLN_02 along C, LM931 -> LM932 straight
+// back up C), and a vertex to itself, which was [itself] and is no route.
 
 console.log('route vectors (synthetic route scene)');
 
 (function routeVectorsOnTheSyntheticScene() {
     // The scene as GET /api/map/edges serves it (route-scene.js).
     const RS = require('./route-scene.js');
-    const scene = RS.scene, at = RS.at;
+    const at = RS.at;
     const m = load();
     m.setEdges(RS.edgeRows());
     m.buildGraph();
-    // A vertex carries no name, only its place; every vertex of this scene
-    // sits on its own point, so the place names it.
-    function vertexOf(name) { return m.nearestTNode(at[name].x, at[name].y); }
-    function nameOf(i) {
-        const t = m.tnodes()[i];
-        const p = scene.points.find(function (q) { return q.x === t.x && q.y === t.y; });
-        return p ? p.name : '?';
-    }
     function walk(a, b) {
-        const seq = m.shortestPath(vertexOf(a), vertexOf(b));
-        return seq ? seq.map(nameOf).join(' ') : null;
+        const seq = m.sceneRoute(m.scene(), a, b);
+        return seq ? seq.join(' ') : null;
     }
     [
-        // [from, to, today's vertices, why]
-        ['SMN_05', 'PLN_02', 'SMN_05 LM931 LM932 PLN_02', 'C, against the stored direction on all three hops'],
+        // [from, to, the route model's vertices, why]
+        ['SMN_05', 'PLN_02', 'SMN_05 LM911 LM912 PLN_02', 'A: C is stored the other way (was C, against it: D9)'],
         ['PLN_02', 'SMN_05', 'PLN_02 LM932 LM931 SMN_05', 'C, with the stored direction'],
-        ['LM931', 'LM932', 'LM931 LM932', 'against the stored direction (directed: the 24.5 m loop via A)'],
+        ['LM931', 'LM932', 'LM931 SMN_05 LM911 LM912 PLN_02 LM932', 'the 24.5 m loop via A (was straight back up C: D9)'],
         ['LM921', 'LM911', 'LM921 SMN_05 LM911', 'a curved hop, then a straight one'],
         ['LM911', 'PLN_02', 'LM911 LM912 PLN_02', 'A: undirected and directed agree'],
         ['LM912', 'SMN_05', 'LM912 LM911 SMN_05', 'A: undirected and directed agree'],
         ['LM941', 'LM942', 'LM941 LM942', 'the island, inside itself'],
         ['LM921', 'LM941', null, 'the island is unreachable'],
-        ['LM921', 'LM921', 'LM921', 'a vertex to itself'],
+        ['LM921', 'LM921', null, 'a vertex to itself is no route (was [LM921]: D9)'],
     ].forEach(function (v) {
         const got = walk(v[0], v[1]);
         check(v[0] + ' -> ' + v[1] + ': ' + (v[2] === null ? 'no route' : v[2]) + ' (' + v[3] + ')',
