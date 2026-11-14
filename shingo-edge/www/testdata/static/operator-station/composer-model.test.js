@@ -1526,6 +1526,45 @@ test('via: at most four, evenly spaced', () => {
     assert.deepStrictEqual(got, ['LM00', 'LM05', 'LM10', 'LM15']);
 });
 
+// TODAY'S WALK ON THE SHARED ROUTE SCENE (shared/testdata/js/route-scene.json),
+// the scene Core's map and the desktop's route are pinned on too. Three ways run
+// from SMN_05 to PLN_02: A straight and two-way (20 m), C straight and stored ONE
+// WAY toward SMN_05 (16.47 m), B two cubic hops (16 m of chord, 21.6 m of arc).
+// The walk adds every edge both ways (sceneIndex) and weighs `len`, which the
+// Edge sends as the CHORD (station_composer.go sceneDerived), so it takes B and
+// offers LM921. Weighed by arc it would take C; honouring direction too, A.
+// These pin today's answers; the change to the shared route model flips them on
+// purpose in the commit that makes it.
+function routeSceneMap(drop) {
+    const scene = JSON.parse(fs.readFileSync(
+        path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js', 'route-scene.json'), 'utf8'));
+    const m = { revision: 'synthetic', points: {}, edges: [] };
+    for (const p of scene.points) m.points[p.name] = { class: p.class, x: p.x, y: p.y };
+    for (const e of scene.segments) {
+        if (drop && drop(e)) continue;
+        const a = m.points[e.from], b = m.points[e.to];
+        const edge = { from: e.from, to: e.to, len: Math.hypot(b.x - a.x, b.y - a.y) };
+        if (e.h) edge.h = e.h.slice();
+        m.edges.push(edge);
+    }
+    return m;
+}
+function routeSceneState(map) {
+    return M.init({
+        styleId: 7, positions: POSITIONS, routing: ROUTING, groups: GROUPS, scene: map,
+        claims: FIXTURES.styles['7'].claims, flowspec: FLOWSPEC,
+    });
+}
+
+test('via (route scene): chords, not arcs — the curved B way, LM921', () => {
+    assert.deepStrictEqual(M.viaWaypoints(routeSceneState(routeSceneMap()), 'PLN_01'), ['LM921']);
+});
+
+test('via (route scene, no B): both ways round — the one-way C stretch, driven backwards', () => {
+    const noB = routeSceneMap(e => !!e.h);
+    assert.deepStrictEqual(M.viaWaypoints(routeSceneState(noB), 'PLN_01'), ['LM931', 'LM932']);
+});
+
 // ═══ one definition of "a part needs a position" ═════════════════════════════
 
 // THE MODEL'S ANSWER MUST BE THE SERVER'S. The operator sees this finding
