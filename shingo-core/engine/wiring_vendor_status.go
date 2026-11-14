@@ -210,10 +210,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	// pill on the node tile. On any other status the ETA is left nil
 	// (Edge doesn't render pills on pre-in-transit statuses and treats
 	// terminal statuses as pill-hidden — see operator-render.js).
+	//
+	// The robot rides every one of these. The waybill names the robot on its
+	// first assignment only (above), so a robot the fleet changed afterwards
+	// reached orders.robot_id and Core's board and never the station; this
+	// carries Core's robot to it on the order's next transition.
 	update := &protocol.OrderUpdate{
 		OrderUUID: order.EdgeUUID,
 		Status:    string(newStatus),
 		Detail:    fmt.Sprintf("fleet state: %s", ev.NewStatus),
+		RobotID:   effectiveRobotID,
 	}
 	if newStatus == dispatch.StatusFaulted {
 		// The Edge board shows this string to an operator. "fleet state: FAILED"

@@ -4,6 +4,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -241,6 +242,56 @@ func TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot(t *testing.T) {
 	}
 	if got2.VendorOrderID != got1.VendorOrderID {
 		t.Errorf("vendor_order_id changed on narrow write: was %q, now %q (should be untouched)", got1.VendorOrderID, got2.VendorOrderID)
+	}
+}
+
+// robotsOnUpdates lists every order.update the outbox holds for one order, in
+// send order, as "status/robot".
+func robotsOnUpdates(t *testing.T, db *store.DB, edgeUUID string) []string {
+	t.Helper()
+	outbox, err := db.ListPendingOutbox(500)
+	if err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	var out []string
+	for _, msg := range outbox {
+		if msg.MsgType != protocol.TypeOrderUpdate {
+			continue
+		}
+		var env protocol.Envelope
+		var u protocol.OrderUpdate
+		if json.Unmarshal(msg.Payload, &env) != nil || json.Unmarshal(env.Payload, &u) != nil {
+			continue
+		}
+		if u.OrderUUID == edgeUUID {
+			out = append(out, u.Status+"/"+u.RobotID)
+		}
+	}
+	return out
+}
+
+// THE ROBOT RIDES EVERY STATUS UPDATE. The waybill names the robot on its first
+// assignment only, so a robot the fleet changed afterwards (AMB-42 -> AMB-99
+// here, with the move to staged) was written to orders.robot_id and the station
+// was never told. Every vendor-status update carries Core's robot, including a
+// transition whose event names none (Case D: the FINISHED here), and so does the
+// completion notice.
+func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
+	t.Parallel()
+	db, eng, sim, order := dispatchRetrieveOrderWithRobot(t)
+
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
+	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-99")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	delivered := testdb.AssertOrderStatus(t, db, "rid-order-1", "delivered")
+	if _, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(delivered, delivered.StationID, "confirmed", 1); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+
+	got := strings.Join(robotsOnUpdates(t, db, order.EdgeUUID), " ")
+	want := "in_transit/AMB-42 staged/AMB-99 delivered/AMB-99 confirmed/AMB-99"
+	if got != want {
+		t.Errorf("order.update robots, in send order:\n got  %s\n want %s", got, want)
 	}
 }
 
