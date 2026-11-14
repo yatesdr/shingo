@@ -4378,11 +4378,20 @@ function clearSelected() {
     drawFlows();
 }
 
-async function openSettings() {
+// openSettings reads what Settings draws and draws it. kept is a re-read
+// under an open draft (refreshProcess): the sections in it keep their drafts,
+// and the rest are taken as saved.
+async function openSettings(kept) {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
     await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots(),
         loadCatidItems(), loadPLCs(), loadPresets(), loadAutoReorder()]);
+    if (kept && S.stShell) {
+        takeSettingsRead(kept);
+        drawSettings();
+        S.stShell.page.rebase(Object.keys(SETTINGS_SECTIONS).filter(n => !(n in kept)));
+        return;
+    }
     // THE DRAFTS: each screen's positions, each routing role, the part set
     // (pick-a-part U5: the parts the floor may run), saved by the one Save.
     settingsPickers();
@@ -5004,6 +5013,9 @@ async function bindLoaderBoard(key) {
         S.loaderGaps = (S.loaderGaps || []).filter(g => loaderKeyOf(g) !== key);
     }
     await reloadStations();
+    // The new screen's positions, read: a row whose list was never read is
+    // not offered for editing (screenRow).
+    if (out.ok && bodyOf(out).station_id) await refreshStationNodes(Number(bodyOf(out).station_id));
     await refreshProcess();
 }
 
@@ -5272,9 +5284,11 @@ async function savePositions(d) {
     S.posWarned = null;
     const gains = st => d[st.id].filter(n => stored(st.id).indexOf(n) < 0).length;
     screens.sort((a, b) => gains(b) - gains(a));
+    let landed = false;
     for (const st of screens) {
         const out = await send('PUT', '/api/operator-stations/' + st.id + '/claimed-nodes', { nodes: want[st.id] }, NO_NOTICE);
-        if (!out.ok) return doorOut(out, st.name + ': ');
+        if (!out.ok) return Object.assign(doorOut(out, st.name + ': '), { landed: landed });
+        landed = true;
         const kept = Array.isArray(bodyOf(out).kept) ? bodyOf(out).kept : [];
         if (kept.length) S.saveNotes.push(keptPositionsSentence(kept));
     }
@@ -5492,7 +5506,9 @@ const REORDER_KEYS = ['auto_reorder_switch_hmi'];
 
 const pickKeys = (o, keys) => Object.fromEntries(keys.map(k => [k, (o || {})[k]]));
 
-// doorOut is a door's answer as settingsPage reads an own save's.
+// doorOut is a door's answer as settingsPage reads an own save's. A section
+// that writes through several doors adds landed: whether any write before the
+// refusal went through (afterSettingsSave reads back only what was written).
 const doorOut = (out, lead) => (out.ok ? { ok: true } : { ok: false, shown: !!out.shown, error: (lead || '') + (out.error || 'refused') });
 
 // processSection is a section over some of S.settings' keys.
@@ -5575,12 +5591,14 @@ const SETTINGS_SECTIONS = {
         },
         save: async d => {
             const was = curtainDraft();
+            let landed = false;
             for (const n of (S.curtainNodes || [])) {
                 const c = d[n.id];
                 if (!c || JSON.stringify(c) === JSON.stringify(was[n.id])) continue;
                 const out = await send('POST', '/api/process-nodes/' + n.id + '/curtain-setting',
                     B().nodeCurtain(c.enabled, c.plc, c.tag, c.safe), NO_NOTICE);
-                if (!out.ok) return doorOut(out, posName(n) + ': ');
+                if (!out.ok) return Object.assign(doorOut(out, posName(n) + ': '), { landed: landed });
+                landed = true;
             }
             return { ok: true };
         },
@@ -5657,29 +5675,50 @@ async function afterSettingsSave(out) {
     for (const n of Object.keys(SETTINGS_SECTIONS)) if (failed(n)) kept[n] = SETTINGS_SECTIONS[n].read();
     S._tagCache = {};
     const wrote = n => out.own[n] && out.own[n].ok;
-    await Promise.all([loadCurtainNodes(), loadStationCounters(), reloadProcesses(),
-        wrote('positions') ? refreshProcessStationNodes() : null,
+    // WHAT A SAVE WROTE IS WHAT IT READS BACK. A section that wrote re-reads
+    // what its doors move, and nothing else: one part picked is its write and
+    // the part set's read, not every list on the page. A refused section
+    // wrote something only where its save says so (landed: the screens and
+    // the curtains are one door each, and the ones before the refusal stand).
+    const sent = (...names) => names.some(n => out.own[n] && (out.own[n].ok || out.own[n].landed));
+    await Promise.all([
+        // The live positions: the curtain and Counted at drafts are built on them.
+        sent('positions', 'curtain', 'counted') ? loadCurtainNodes() : null,
+        // A counter's row says which positions it counts.
+        sent('positions', 'counted') ? loadStationCounters() : null,
+        // The process rows carry its settings, its quality hold, the station
+        // switch and the list's Curtain column.
+        sent('process', 'gate', 'hold', 'reorder', 'curtain') ? reloadProcesses() : null,
+        sent('positions') ? refreshProcessStationNodes() : null,
         wrote('routing') ? loadRouting() : null,
         wrote('parts') ? loadProcessPayloads(S.processID).then(codes => { S.partSet = codes; }) : null,
         wrote('reorder') ? loadAutoReorder() : null]);
     // A position or a routing name moved is the Styles tab's too: its pickers
     // and its picture read the composer.
-    if (wrote('positions') || wrote('routing')) {
+    if (sent('positions') || wrote('routing')) {
         const res = await send('GET', '/api/processes/' + S.processID + '/composer');
         if (res.ok) { takeComposer(res.body); S.graph = null; }
     }
-    S.settings = settingsDraft();
-    const keepPickers = {};
-    if (failed('positions')) for (const st of stationsOf(S.processID)) keepPickers[screenKey(st.id)] = true;
-    if (failed('routing')) for (const g of ROUTING_GROUPS) keepPickers[routeKey(g[0])] = true;
-    if (failed('parts')) keepPickers[PART_SET_PICKER] = true;
-    settingsPickers(true, keepPickers);
-    for (const n of Object.keys(kept)) SETTINGS_SECTIONS[n].put(kept[n]);
+    takeSettingsRead(kept);
     S.settingsError = '';
     S.settingsNotice = S.saveNotes.join(' ');
     S.saveNotes = [];
     drawSettings();
     S.stShell.page.rebase(Object.keys(SETTINGS_SECTIONS).filter(n => !failed(n)));
+}
+
+// takeSettingsRead rebuilds Settings' drafts from what was just read, and
+// puts back the drafts in kept ({section: its draft}): a failed section's
+// after a save, a section not saved yet under a re-read (refreshProcess).
+// The caller rebases the rest.
+function takeSettingsRead(kept) {
+    S.settings = settingsDraft();
+    const keepPickers = {};
+    if ('positions' in kept) for (const st of stationsOf(S.processID)) keepPickers[screenKey(st.id)] = true;
+    if ('routing' in kept) for (const g of ROUTING_GROUPS) keepPickers[routeKey(g[0])] = true;
+    if ('parts' in kept) keepPickers[PART_SET_PICKER] = true;
+    settingsPickers(true, keepPickers);
+    for (const n of Object.keys(kept)) SETTINGS_SECTIONS[n].put(kept[n]);
 }
 
 function stField(label, sub, control) {
@@ -6414,11 +6453,10 @@ async function reloadStations() {
 }
 
 // The positions one screen claims, re-read from the server rather than assumed
-// from what was just sent. S.stationNodes arrives with the page and nothing
-// refreshes it, so a screen whose positions were set here went on reporting
-// "nothing claimed" on D4 until the page was reloaded.
-// Every screen of the current process, so D4 and the screen sheet both draw
-// what the server actually holds rather than what the page happened to ship.
+// from what was just sent. S.stationNodes arrives with the page, so without a
+// re-read a screen whose positions were set here went on drawing the old list
+// until the page was reloaded. Every screen of the current process, so each
+// screen's row on Settings draws what the server holds.
 async function refreshProcessStationNodes() {
     await Promise.all(stationsOf(S.processID).map(st => refreshStationNodes(st.id)));
 }
@@ -7056,6 +7094,13 @@ async function openRunningSheet(st, id, from) {
 // and the composer block, then redraw the tab the engineer is on. One path, so
 // no screen can be left showing what it read before the write.
 async function refreshProcess() {
+    // SETTINGS KEEPS WHAT IS NOT SAVED YET over the re-read: a screen renamed
+    // in its sheet, a loader given a screen or a recipe applied is no reason
+    // to drop a pick or a typed value the engineer has not saved.
+    const kept = {};
+    if (S.tab === 'settings' && S.stShell) {
+        for (const n of S.stShell.page.dirtySections()) kept[n] = SETTINGS_SECTIONS[n].read();
+    }
     await reloadProcesses();
     const res = await send('GET', '/api/processes/' + S.processID + '/composer');
     if (res.ok) {
@@ -7072,13 +7117,13 @@ async function refreshProcess() {
         S.styles = S.styles.filter(s => s.process_id !== S.processID)
             .concat(Array.isArray(rows) ? rows : []);
     }
-    S.settings = settingsDraft();
+    if (S.tab !== 'settings') S.settings = settingsDraft();
     // A RECIPE DRAFT STAYS (F4): a write from the rail's ⋯ (a rename, a
     // clone) is no way out of it, and re-selecting a style dropped it unasked.
     if (S.tab === 'flows' && S.shapeDraft) drawFlows();
     else if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
     else if (S.tab === 'setup') drawSetup();
-    else await openSettings();
+    else await openSettings(kept);
 }
 
 // rebuildStaleFlow rebuilds the open style's flow from the composer block

@@ -35,8 +35,7 @@
          "safe_value": false
        }
   6  GET /api/process-nodes
-  7  GET /api/processes/1/station-counters
-  8  GET /api/processes
+  7  GET /api/processes
 -- notice: success "Saved"
 -- sheet closed
 -- settings error "", notice ""

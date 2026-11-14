@@ -19,10 +19,9 @@
        }
   3  GET /api/process-nodes
   4  GET /api/processes/1/station-counters
-  5  GET /api/processes
-  6  GET /api/operator-stations/11/claimed-nodes
-  7  GET /api/operator-stations/12/claimed-nodes
-  8  GET /api/processes/1/composer
+  5  GET /api/operator-stations/11/claimed-nodes
+  6  GET /api/operator-stations/12/claimed-nodes
+  7  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
 
@@ -60,10 +59,9 @@
        }
   4  GET /api/process-nodes
   5  GET /api/processes/1/station-counters
-  6  GET /api/processes
-  7  GET /api/operator-stations/11/claimed-nodes
-  8  GET /api/operator-stations/12/claimed-nodes
-  9  GET /api/processes/1/composer
+  6  GET /api/operator-stations/11/claimed-nodes
+  7  GET /api/operator-stations/12/claimed-nodes
+  8  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
 
@@ -74,13 +72,14 @@
          "process_id": 1
        }
   2  GET /api/operator-stations
-  3  GET /api/processes
-  4  GET /api/processes/1/composer
-  5  GET /api/processes/1/styles
-  6  GET /api/process-nodes
-  7  GET /api/processes/1/station-counters
-  8  GET /api/processes/1/counting-slots
-  9  GET /api/processes/1/catid-health
- 10  GET /api/processes/1/presets
- 11  GET /api/processes/1/auto-reorder
+  3  GET /api/operator-stations/32/claimed-nodes
+  4  GET /api/processes
+  5  GET /api/processes/1/composer
+  6  GET /api/processes/1/styles
+  7  GET /api/process-nodes
+  8  GET /api/processes/1/station-counters
+  9  GET /api/processes/1/counting-slots
+ 10  GET /api/processes/1/catid-health
+ 11  GET /api/processes/1/presets
+ 12  GET /api/processes/1/auto-reorder
 -- sheet closed

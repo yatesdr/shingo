@@ -3757,7 +3757,7 @@ async function settingsSectionsPins(h) {
         o = o || {};
         const writes = [];
         let sw = { shown_on_station: false, positions: 4, switched_off: 0, flips: [] };
-        const ctx = loadPage({
+        const ctx = loadPage(Object.assign(o.stations ? { stations: o.stations, stationNodes: o.stationNodes } : {}, {
             allowSheet: true, hash: '#tab=settings',
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
@@ -3771,10 +3771,11 @@ async function settingsSectionsPins(h) {
                 }
                 return okJSON({ ok: true });
             },
-        });
+        }));
         return Object.assign(ctx, { writes: writes });
     };
     const prov = ctx => (findIn(ctx.root, '.prov')[0] || {}).textContent || '';
+    const switched = (ctx, key) => (ctx.root.innerHTML.match(new RegExp('data-st="' + key + '" role="switch" aria-checked="(true|false)"')) || [])[1];
     const lineRow = html => (html.match(/<b class="pd-arstate">.*?<\/button>/) || [''])[0];
 
     await pin('Settings draws its sections in setup order, and a jump list of the same', async () => {
@@ -3830,6 +3831,28 @@ async function settingsSectionsPins(h) {
         for (let i = 0; i < 3; i++) await settle();
         const want = [{ method: 'POST', url: '/api/processes/1/auto-reorder-station', body: { shown: true } }];
         if (JSON.stringify(ctx.writes) !== JSON.stringify(want)) throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
+    });
+
+    // A sheet that saves over Settings re-reads the process (refreshProcess):
+    // what Settings has not saved yet stays, and the bar still says so.
+    await pin('a screen renamed in its sheet keeps what Settings has not saved', async () => {
+        const ctx = page({ stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }], stationNodes: { 10: [] } });
+        await settle();
+        const was = switched(ctx, 'flow_composer_enabled');
+        click(ctx.root, ctx.doc, { act: 'st-toggle', st: 'flow_composer_enabled' });
+        await settle();
+        const picked = switched(ctx, 'flow_composer_enabled');
+        if (!was || picked === was) throw new Error('setup: the switch did not move: ' + was + ' -> ' + picked);
+        click(ctx.root, ctx.doc, { act: 'screen-edit', station: '10' });
+        await settle();
+        if (!ctx.sheet().open) throw new Error('setup: the screen sheet did not open');
+        ctx.sheet().ok();
+        for (let i = 0; i < 3; i++) await settle();
+        if (!ctx.writes.some(w => w.method === 'PUT' && w.url === '/api/operator-stations/10')) {
+            throw new Error('setup: the sheet wrote ' + JSON.stringify(ctx.writes));
+        }
+        if (switched(ctx, 'flow_composer_enabled') !== picked) throw new Error('the switch went back when the sheet saved');
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('the bar forgot the draft: ' + prov(ctx));
     });
 
     // A repeated name is the same recipe changing: the table lists the newest

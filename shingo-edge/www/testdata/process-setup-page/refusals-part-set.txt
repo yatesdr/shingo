@@ -63,7 +63,7 @@
 ## Settings › Parts: + PART-13
 # writes, in order: PUT /api/processes/1/payloads
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 12
     new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
     new text: .pd-sheet span.prov.dirty: Unsaved changes
@@ -71,7 +71,7 @@
     state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 12
     new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
     new text: .pd-sheet span.prov.dirty: Unsaved changes
@@ -79,7 +79,7 @@
     state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 12
     new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
     new text: .pd-sheet span.prov.dirty: Unsaved changes
@@ -87,9 +87,8 @@
     state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 12
-    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
     new text: .pd-sheet div.set-refusal: Not saved.
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
@@ -102,7 +101,7 @@
 ## Settings › Parts: × PART-11
 # writes, in order: PUT /api/processes/1/payloads
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 10
     new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
     new text: .pd-sheet span.prov.dirty: Unsaved changes
@@ -110,7 +109,7 @@
     state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 10
     new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
     new text: .pd-sheet span.prov.dirty: Unsaved changes
@@ -118,7 +117,7 @@
     state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 10
     new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
     new text: .pd-sheet span.prov.dirty: Unsaved changes
@@ -126,9 +125,8 @@
     state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes
+    then: nothing
     new text: #pd-stbody span.pd-dim: 10
-    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
     new text: .pd-sheet div.set-refusal: Not saved.
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out

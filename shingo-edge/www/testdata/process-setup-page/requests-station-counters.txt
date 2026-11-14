@@ -38,7 +38,6 @@
        }
   3  GET /api/process-nodes
   4  GET /api/processes/1/station-counters
-  5  GET /api/processes
 -- notice: success "Saved"
 -- sheet closed
 
@@ -65,7 +64,6 @@
        }
   8  GET /api/process-nodes
   9  GET /api/processes/1/station-counters
- 10  GET /api/processes
 -- notice: success "Saved"
 -- sheet closed
 
@@ -86,7 +84,6 @@
        }
   3  GET /api/process-nodes
   4  GET /api/processes/1/station-counters
-  5  GET /api/processes
 -- notice: success "Saved"
 -- sheet closed
 
@@ -107,7 +104,6 @@
        }
   3  GET /api/process-nodes
   4  GET /api/processes/1/station-counters
-  5  GET /api/processes
 -- notice: success "Saved"
 -- sheet closed
 

@@ -36,11 +36,8 @@
            }
          ]
        }
-  2  GET /api/process-nodes
-  3  GET /api/processes/1/station-counters
-  4  GET /api/processes
-  5  GET /api/processes/1/routing-nodes
-  6  GET /api/processes/1/composer
+  2  GET /api/processes/1/routing-nodes
+  3  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
 -- settings notice "", routing error ""
@@ -83,11 +80,8 @@
            }
          ]
        }
-  2  GET /api/process-nodes
-  3  GET /api/processes/1/station-counters
-  4  GET /api/processes
-  5  GET /api/processes/1/routing-nodes
-  6  GET /api/processes/1/composer
+  2  GET /api/processes/1/routing-nodes
+  3  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
 -- settings notice "", routing error ""
@@ -128,11 +122,8 @@
            }
          ]
        }
-  2  GET /api/process-nodes
-  3  GET /api/processes/1/station-counters
-  4  GET /api/processes
-  5  GET /api/processes/1/routing-nodes
-  6  GET /api/processes/1/composer
+  2  GET /api/processes/1/routing-nodes
+  3  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
 -- settings notice "STG_3 is still named by Style A.", routing error ""
@@ -173,11 +164,8 @@
            }
          ]
        }
-  2  GET /api/process-nodes
-  3  GET /api/processes/1/station-counters
-  4  GET /api/processes
-  5  GET /api/processes/1/routing-nodes
-  6  GET /api/processes/1/composer
+  2  GET /api/processes/1/routing-nodes
+  3  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
 -- settings notice "STG_1 is still named by Style A.", routing error ""
@@ -220,10 +208,7 @@
            }
          ]
        }
-  2  GET /api/process-nodes
-  3  GET /api/processes/1/station-counters
-  4  GET /api/processes
-  5  GET /api/processes/1/routing-nodes
-  6  GET /api/processes/1/composer
+  2  GET /api/processes/1/routing-nodes
+  3  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed
