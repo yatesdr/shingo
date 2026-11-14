@@ -177,12 +177,13 @@ func TestRecipeAdvanced_IsFlowAdvancedLessWhatARecipeMayNotSay(t *testing.T) {
 	want := keys(FlowAdvanced{})
 	// refill_by is NOT on this list (2026-11-05): a recipe that
 	// cannot say which robot fetches the empty mints every floor-built style
-	// as Robot 1, whatever the press is.
-	for _, k := range []string{"allowed_payload_codes", "auto_request_payload", "sequence"} {
+	// as Robot 1, whatever the press is. The carry-over IS: it is a Tool
+	// change position's, and a group marks none.
+	for _, k := range []string{"allowed_payload_codes", "auto_request_payload", "sequence", "changeover_carryover_disposition"} {
 		delete(want, k)
 	}
 	if got := keys(RecipeAdvanced{}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RecipeAdvanced keys %v, want FlowAdvanced's less the three %v", got, want)
+		t.Errorf("RecipeAdvanced keys %v, want FlowAdvanced's less the four %v", got, want)
 	}
 
 	var g RecipeAdvanced
@@ -194,7 +195,7 @@ func TestRecipeAdvanced_IsFlowAdvancedLessWhatARecipeMayNotSay(t *testing.T) {
 		case reflect.Int:
 			f.SetInt(3)
 		case reflect.String:
-			f.SetString("keep_lineside")
+			f.SetString("x")
 		}
 	}
 	var a FlowAdvanced

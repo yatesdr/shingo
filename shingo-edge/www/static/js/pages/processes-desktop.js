@@ -1501,13 +1501,13 @@ const GROUP_FIELDS = ['paired_core_node', 'second_paired_core_node', 'inbound_st
 const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 
 // What a group's Advanced may say: FlowAdvanced less the part fields, the
-// loader board's order and the reorder point's source (row 4,
-// domain.RecipeAdvanced), in that type's order. The press hardware — which
-// robot fetches the empty — is IN (2026-11-05): without it every style the
-// floor built from a recipe minted Robot 1.
+// loader board's order and the carry-over (domain.RecipeAdvanced), in that
+// type's order. The press hardware — which robot fetches the empty — is IN
+// (2026-11-05): without it every style the floor built from a recipe minted
+// Robot 1. The carry-over is OUT: it is a Tool change position's, and a group
+// marks none.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
-    'changeover_carryover_disposition', 'keep_staged_node', 'refill_by',
-    'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
+    'keep_staged_node', 'refill_by', 'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
 // floor" and the running-style line say it with, per mode.
@@ -1669,17 +1669,15 @@ function groupsBody(groups) {
 }
 
 // recipeAdvanced is a group's Advanced as a recipe may say it: GROUP_ADV_KEYS
-// that carry a value, by domain.ClaimHas's rule (the carry-over's blank or
-// replace and the refill's Robot 1 are no opinion), and only those flowspec
-// draws for the ★ cell's mode
-// and role — the server refuses the others (D26).
+// that carry a value, by domain.ClaimHas's rule (the refill's Robot 1 is no
+// opinion), and only those flowspec draws for the ★ cell's mode and role —
+// the server refuses the others (D26).
 function recipeAdvanced(a, head) {
     const out = {};
     for (const key of GROUP_ADV_KEYS) {
         const v = a[key];
-        const set = key === 'changeover_carryover_disposition' ? !!v && v !== 'replace'
-            : key === 'refill_by' ? !!v && v !== 'clearing_robot'
-                : Array.isArray(v) ? v.length > 0 : Boolean(v);
+        const set = key === 'refill_by' ? !!v && v !== 'clearing_robot'
+            : Array.isArray(v) ? v.length > 0 : Boolean(v);
         if (!set) continue;
         if (head && S.model && S.model.cells[head] && !M().advancedShows(S.model, head, key)) continue;
         out[key] = v;
@@ -1902,7 +1900,6 @@ function groupAdvSummary(g) {
     const a = recipeAdvanced(g.advanced || {}, g.of);
     const out = Object.keys(a).map(key => {
         const v = a[key];
-        if (key === 'changeover_carryover_disposition') return W(key) + ' ' + (CARRYOVER[v] || v);
         // The sheet says it as a choice of robot, so the card does too.
         if (key === 'refill_by') return refillRobot(v) + ' supplies';
         if (typeof v === 'boolean') return W(key) + ' on';

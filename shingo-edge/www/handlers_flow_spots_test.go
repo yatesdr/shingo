@@ -447,6 +447,34 @@ func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
 	}
 }
 
+// TestFlowMint_ARecipeGroupCarriesNoCarryOver: carry-over is a Tool change
+// position's second value (domain.ClearanceTreatmentAtNode reads it only for
+// a position the claim marks), and a recipe group cannot mark one. A group
+// that said "keep at the line" laid it on every claim of its slot, and the
+// claim validator refuses a carry-over on a claim that marks nothing, so the
+// station's Go was refused for a recipe the desktop had saved.
+func TestFlowMint_ARecipeGroupCarriesNoCarryOver(t *testing.T) {
+	f := newPress6(t)
+	flow := strings.Replace(press6GroupedJSON, `"advanced":{"reorder_point":1,"auto_reorder":true}`,
+		`"advanced":{"reorder_point":1,"auto_reorder":true,"changeover_carryover_disposition":"keep_lineside"}`, 1)
+	id, err := f.db.CreateFlowPreset(processes.FlowPresetInput{ProcessID: f.processID, Name: "Two spot, keep at the line",
+		FlowJSON: flow, CreatedBy: "test"})
+	must(t, err, "store the grouped recipe")
+	bodies := mintBodies(t, f.station, map[string]mintArgs{"unmoved": {id, press6Pair, nil}})
+	resp := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", bodies["unmoved"], nil)
+	got := flowBody(t, resp)
+	if resp.StatusCode != http.StatusOK || got["minted"] != true {
+		t.Fatalf("mint = %d %v, want a minted style: a group's carry-over is not a recipe setting", resp.StatusCode, got)
+	}
+	claims, err := f.db.ListStyleNodeClaims(int64(got["style_id"].(float64)))
+	must(t, err, "claims")
+	for _, c := range claims {
+		if c.ChangeoverCarryoverDisposition != domain.CarryoverReplace {
+			t.Errorf("%s minted carry-over %q, want the default %q", c.CoreNodeName, c.ChangeoverCarryoverDisposition, domain.CarryoverReplace)
+		}
+	}
+}
+
 // An archived version is not an enabled recipe: its pairings are no longer
 // known, so a spot that only it paired is refused.
 func TestFlowMint_AnArchivedRecipeGrantsNothing(t *testing.T) {

@@ -75,21 +75,27 @@ type RecipeGroup struct {
 // the wrong robot to the supermarket. The engineer says it once, on the recipe,
 // and the mint lays it on every claim the group makes.
 //
-// EVERY FIELD IS OMITTED AT ITS ZERO, the carry-over disposition included:
-// zero is the minted default for each of them (blank reads as replace), and a
-// group that says nothing about a field says nothing on the wire.
+// NO CARRY-OVER. The carry-over disposition is a Tool change position's
+// second value: it is read only for a position the claim marks
+// (ClearanceTreatmentAtNode), and a group's Advanced marks none. A group that
+// said it laid it on every claim of its slot, marked or not, and the claim
+// validator refuses a carry-over on a claim that marks nothing, so the
+// station's Go was refused for a recipe the desktop had saved. A stored group
+// that still says it is read without it.
+//
+// EVERY FIELD IS OMITTED AT ITS ZERO: zero is the minted default for each of
+// them, and a group that says nothing about a field says nothing on the wire.
 type RecipeAdvanced struct {
-	ReorderPoint          int                  `json:"reorder_point,omitempty"`
-	AutoReorder           bool                 `json:"auto_reorder,omitempty"`
-	LinesideSoftThreshold int                  `json:"lineside_soft_threshold,omitempty"`
-	AutoPush              bool                 `json:"auto_push,omitempty"`
-	CarryoverDisposition  CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	KeepStagedNode        string               `json:"keep_staged_node,omitempty"`
-	RefillBy              protocol.RefillBy    `json:"refill_by,omitempty"`
-	AutoConfirm           bool                 `json:"auto_confirm,omitempty"`
-	CurtainRequired       bool                 `json:"curtain_required,omitempty"`
-	StrictPack            bool                 `json:"strict_pack,omitempty"`
-	PackTolerancePct      int                  `json:"pack_tolerance_pct,omitempty"`
+	ReorderPoint          int               `json:"reorder_point,omitempty"`
+	AutoReorder           bool              `json:"auto_reorder,omitempty"`
+	LinesideSoftThreshold int               `json:"lineside_soft_threshold,omitempty"`
+	AutoPush              bool              `json:"auto_push,omitempty"`
+	KeepStagedNode        string            `json:"keep_staged_node,omitempty"`
+	RefillBy              protocol.RefillBy `json:"refill_by,omitempty"`
+	AutoConfirm           bool              `json:"auto_confirm,omitempty"`
+	CurtainRequired       bool              `json:"curtain_required,omitempty"`
+	StrictPack            bool              `json:"strict_pack,omitempty"`
+	PackTolerancePct      int               `json:"pack_tolerance_pct,omitempty"`
 }
 
 // recipePartKeys are the Advanced keys that would put a part on a recipe.
@@ -210,8 +216,8 @@ func SlotGroups(slots []Slot, groups []RecipeGroup) []*RecipeGroup {
 }
 
 // LayOver writes a group's Advanced onto a minted cell's, whose defaults are
-// already in a: every field the group carries, and the carry-over disposition
-// only when it names one.
+// already in a: every field the group carries. The carry-over stays the
+// minted default (no carry-over, above).
 func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.ReorderPoint, a.AutoReorder = g.ReorderPoint, g.AutoReorder
 	a.LinesideSoftThreshold, a.AutoPush = g.LinesideSoftThreshold, g.AutoPush
@@ -219,9 +225,6 @@ func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.RefillBy = g.RefillBy
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
 	a.PackTolerancePct = g.PackTolerancePct
-	if g.CarryoverDisposition != "" {
-		a.CarryoverDisposition = g.CarryoverDisposition
-	}
 }
 
 // groupRefusal is a save refused for its groups, in the engineer's words.
@@ -441,9 +444,6 @@ var advancedFields = []struct {
 	{flowspec.AutoReorder, func(a RecipeAdvanced) bool { return a.AutoReorder }},
 	{flowspec.LinesideSoftThreshold, func(a RecipeAdvanced) bool { return a.LinesideSoftThreshold != 0 }},
 	{flowspec.AutoPush, func(a RecipeAdvanced) bool { return a.AutoPush }},
-	{flowspec.ChangeoverCarryoverDisposition, func(a RecipeAdvanced) bool {
-		return a.CarryoverDisposition != "" && a.CarryoverDisposition != CarryoverReplace
-	}},
 	{flowspec.KeepStagedNode, func(a RecipeAdvanced) bool { return a.KeepStagedNode != "" }},
 	{flowspec.RefillBy, func(a RecipeAdvanced) bool { return a.RefillBy.OrDefault() != protocol.RefillByClearingRobot }},
 	{flowspec.AutoConfirm, func(a RecipeAdvanced) bool { return a.AutoConfirm }},
