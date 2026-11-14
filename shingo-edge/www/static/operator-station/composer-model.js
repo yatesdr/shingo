@@ -2610,16 +2610,6 @@ function fieldLabel(state, field) { return fieldWord(state, field); }
 // body that agrees with the server by construction — error rows 11 and 12 of
 // the pick-a-part brief.
 
-// flowSaveBody is POST /processes/{id}/flow/save as the station sends it. No
-// source_preset_id: the station has never sent one, which is why a gated-off
-// HMI save is refused (engine.gateRefusal).
-function flowSaveBody(styleId, cells, fingerprint, stationId) {
-    return {
-        to_style_id: styleId, cells: cells, fingerprint: fingerprint,
-        station_id: stationId,
-    };
-}
-
 // mintBody is POST /processes/{id}/flow/mint (and flow/preview's mint form):
 // the engineer's recipe and the parts the operator picked, in tap order. The
 // station sends codes only; the server places them (brief U3, R-M). overrides
@@ -2665,7 +2655,7 @@ function savedBody(styleId, stationId) {
         presetCells, presetMoved, spotsLit, spotsTap, spotsChips, spotsUnmove, spotsInert, spotsPicture,
         shapeDiff, orderSentences, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, positionChoices,
-        flowSaveBody, mintBody, savedBody,
+        mintBody, savedBody,
     };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

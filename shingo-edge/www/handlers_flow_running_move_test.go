@@ -30,25 +30,18 @@ import (
 // engine.refuseRunningPositionMove out of the bins copy and the two position
 // sets, and a stub never runs it.
 //
-// AND AT BOTH DOORS, because they are the same route. The handler decides
-// source from the session and never from the body (owner ruling R1): an admin
-// session is a person on the desktop, no session is the kiosk on the floor.
-// S3's Q4 makes the composer GATE apply to the HMI alone, and this refusal is
-// not that gate — it is about what the press is running, which is true whoever
-// is typing. A refusal that reached one screen and not the other would be a
-// rule an engineer could walk around by using the other window.
+// Saving a flow is the desktop's alone, behind login: the station mints and
+// never saves. This refusal is not HMI setup's gate (which refuses only the
+// station's writes); it is about what the press is running, which is true
+// whoever is typing.
 
-func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
+func TestSaveFlow_RunningPositionMoveRefusesByName(t *testing.T) {
 	db := testdb.Open(t)
 	seeded := testdb.SeedPlant(t, db, scenefixtures.A(), "Press A1")
 
-	// The routing set is derived and adopted (a flow naming an un-adopted
-	// destination is refused before anything else looks at it) and the gate is
-	// opened, which is what a save through the HMI door needs.
+	// The routing set is derived and adopted: a flow naming an un-adopted
+	// destination is refused before anything else looks at it.
 	testdb.SeedRoutingSet(t, db, seeded.ProcessID, "test")
-	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
-		t.Fatalf("open the gate: %v", err)
-	}
 
 	process, err := db.GetProcess(seeded.ProcessID)
 	if err != nil {
@@ -124,25 +117,16 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 	_ = style
 	want := leaving + " holds BIN-1. Move the bin in Core first (Bins → Move to " + free + "), then change the position here."
 
-	for _, door := range []struct {
-		name   string
-		cookie *http.Cookie
-	}{
-		{"the HMI (no session — the kiosk on the floor)", nil},
-		{"the desktop (an admin session)", authCookie(t, h)},
-	} {
-		resp := doRequest(t, router, "POST",
-			"/api/processes/"+itoa(seeded.ProcessID)+"/flow/save", body, door.cookie)
-		assertStatus(t, resp, http.StatusConflict)
-		got := flowBody(t, resp)
-		msg, _ := got["error"].(string)
-		if !strings.Contains(msg, want) {
-			t.Errorf("%s: the refusal reads %q;\n  it has to name the style and both positions: %q",
-				door.name, msg, want)
-		}
-		if got["stale"] == true {
-			t.Errorf("%s: the refusal came back as stale; the fingerprint matched and the move is the reason", door.name)
-		}
+	resp := doRequest(t, router, "POST",
+		"/api/processes/"+itoa(seeded.ProcessID)+"/flow/save", body, authCookie(t, h))
+	assertStatus(t, resp, http.StatusConflict)
+	got := flowBody(t, resp)
+	msg, _ := got["error"].(string)
+	if !strings.Contains(msg, want) {
+		t.Errorf("the refusal reads %q;\n  it has to name the style and both positions: %q", msg, want)
+	}
+	if got["stale"] == true {
+		t.Error("the refusal came back as stale; the fingerprint matched and the move is the reason")
 	}
 
 	// AND NOTHING MOVED. A refusal that had written half the flow first would
@@ -152,11 +136,11 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 		t.Fatalf("ListStyleNodeClaims after: %v", err)
 	}
 	if len(after) != len(stored) {
-		t.Fatalf("the running style has %d positions after two refused saves, had %d", len(after), len(stored))
+		t.Fatalf("the running style has %d positions after a refused save, had %d", len(after), len(stored))
 	}
 	for i := range after {
 		if after[i].CoreNodeName != stored[i].CoreNodeName {
-			t.Errorf("position %d is %q after two refused saves, was %q",
+			t.Errorf("position %d is %q after a refused save, was %q",
 				i, after[i].CoreNodeName, stored[i].CoreNodeName)
 		}
 	}

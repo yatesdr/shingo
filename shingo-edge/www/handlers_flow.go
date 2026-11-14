@@ -177,22 +177,18 @@ func (h *Handlers) apiSaveFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
 		return
 	}
-	// WHO SAVED THIS, AND FROM WHERE — decided here, from the authenticated
-	// caller, and never from the body (owner ruling R1).
-	//
-	// Both surfaces POST this route. An admin session is a person on the
-	// desktop; no session is a station on the floor, which is what the kiosk
-	// is. The station is still required and still has to belong to the
-	// process either way: a flow is saved AT a press, and the desktop says
-	// which one it is looking at.
+	// WHO SAVED THIS — decided here, from the signed-in caller, and never
+	// from the body (owner ruling R1). The route is behind login: only the
+	// desktop saves a flow, so the author is the session's person. The
+	// station is still required and still has to belong to the process: a
+	// flow is saved AT a press, and the desktop says which one it is looking
+	// at.
 	//
 	// This is the routing set's rule applied to a second write. A body that
 	// declared its own source would be a page deciding authorship, and
 	// flowSaveBody deliberately has nowhere to put one.
-	source, calledBy := domain.ClaimSourceHMI, station.Name
-	if user, ok := h.sessions.getUser(r); ok && user != "" {
-		source, calledBy = domain.ClaimSourceAdmin, user
-	}
+	calledBy, _ := h.sessions.getUser(r)
+	source := domain.ClaimSourceAdmin
 	// PRESET PROVENANCE, WHEN THIS SAVE IS AN APPLY (U10). Both or neither: a
 	// row that says "preset 42, version nothing" is provenance nobody can
 	// read, and half-writing it is worse than not recording it.

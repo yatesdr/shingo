@@ -13,7 +13,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/scenefixtures"
-	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/service"
 	"shingoedge/store"
@@ -57,7 +56,6 @@ func stationBodies(t *testing.T, fixture map[string]any) map[string]map[string]a
 const M = require(%q);
 const f = require(%q);
 process.stdout.write(JSON.stringify({
-  'save': M.flowSaveBody(f.styleID, f.cells, f.fingerprint, f.stationID),
   'mint': M.mintBody(f.presetID, f.codes, f.stationID),
 }));
 `, filepath.ToSlash(modulePath), filepath.ToSlash(fixturePath))
@@ -87,65 +85,6 @@ func gatedOffPlant(t *testing.T) (*store.DB, testdb.SeededPlant) {
 		t.Fatalf("shut the gate: %v", err)
 	}
 	return db, seeded
-}
-
-// TestFlowSave_GatedOffStationBodyIsRefused is the statement of today: the
-// station's save body, edited flow and all, is a 403 on a cell whose gate is
-// shut. The floor does not author flows there, and nothing the station sends
-// says otherwise.
-func TestFlowSave_GatedOffStationBodyIsRefused(t *testing.T) {
-	db, seeded := gatedOffPlant(t)
-	h, router := realFlowRouter(t, db)
-	_ = h
-
-	process, err := db.GetProcess(seeded.ProcessID)
-	if err != nil {
-		t.Fatalf("GetProcess: %v", err)
-	}
-	// A style that is NOT running and HAS a flow: the edit the gate exists to
-	// refuse. (The running style would be refused for moving, a different 409.)
-	var styleID int64
-	for _, id := range seeded.Styles {
-		if process.ActiveStyleID != nil && *process.ActiveStyleID == id {
-			continue
-		}
-		claims, err := db.ListStyleNodeClaims(id)
-		if err != nil {
-			t.Fatalf("ListStyleNodeClaims: %v", err)
-		}
-		if len(claims) > 0 {
-			styleID = id
-			break
-		}
-	}
-	if styleID == 0 {
-		t.Fatal("plant A has no idle style with a flow — this test has nothing to edit")
-	}
-	stored, err := db.ListStyleNodeClaims(styleID)
-	if err != nil {
-		t.Fatalf("ListStyleNodeClaims: %v", err)
-	}
-	var cells []domain.FlowCell
-	for _, c := range stored {
-		cells = append(cells, domain.Collapse(c))
-	}
-	pid := itoa(seeded.ProcessID)
-	pv := doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/preview",
-		map[string]any{"to_style_id": styleID}, nil)
-	fingerprint, _ := flowBody(t, pv)["fingerprint"].(string)
-	if fingerprint == "" {
-		t.Fatal("the preview returned no fingerprint; the save would be refused as stale, not gated")
-	}
-
-	bodies := stationBodies(t, map[string]any{
-		"styleID": styleID, "cells": cells, "fingerprint": fingerprint,
-		"stationID": seeded.Stations["screen-a4"],
-	})
-	resp := doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/save", bodies["save"], nil)
-	assertStatus(t, resp, http.StatusForbidden)
-	if _, has := bodies["save"]["source_preset_id"]; has {
-		t.Error("the station's save body names a preset; the gate's carve-out reading is no longer the statement of today")
-	}
 }
 
 // TestFlowMint_SetupGatesTheStationsMint: the station's mint body — a recipe

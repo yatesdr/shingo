@@ -120,7 +120,7 @@ func TestFlowPreview_StatusMapping(t *testing.T) {
 // TestFlowSave_StatusMappingAndOnePublish: gate off is 403 with the named
 // message; the seam's gates 409; stale 409 with stale:true; a validation
 // refusal 422 with findings; success 200 with the engine's result, the
-// station's NAME stamped as called_by, and EXACTLY ONE per-process publish —
+// session's person stamped as called_by, and EXACTLY ONE per-process publish —
 // none on any refusal.
 func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
@@ -174,29 +174,22 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 		t.Fatalf("a refused save published %v; a refusal has no side effects", got)
 	}
 
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(nil), nil)
+	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(nil), authCookie(t, h))
 	assertStatus(t, resp, http.StatusOK)
 	if b := flowBody(t, resp); b["fingerprint"] != "def" || b["written"] != float64(2) || b["deleted"] != float64(1) {
 		t.Errorf("200 body = %v, want the engine's result", b)
 	}
 	last := stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
-	if last.CalledBy != "Press 400" || last.Fingerprint != "abc" || last.ToStyleID != 7 {
-		t.Errorf("SaveFlow request = %+v, want the station's NAME as called_by and the body's fields", last)
+	if last.CalledBy != "testadmin" || last.Fingerprint != "abc" || last.ToStyleID != 7 {
+		t.Errorf("SaveFlow request = %+v, want the session's person as called_by and the body's fields", last)
 	}
 	rec.waitFor(t, []int64{1})
 }
 
-// TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller (owner ruling R1).
-//
-// Both surfaces POST the same route, and until now both stamped
-// domain.ClaimSourceHMI with the station's name — so a claim could not say
-// which screen wrote it, and the HMI's set-up card could not say where a flow
-// came from. The fix keeps the rule that made the routing origin right: the
-// SERVER decides authorship, and nothing in the body declares it.
-//
-// The authenticated caller is the evidence. An admin session is a person on
-// the desktop; no session is a station on the floor. One route, one engine
-// call, a `source` argument.
+// TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller (owner ruling R1): the
+// SERVER decides authorship, and nothing in the body declares it. The route is
+// behind login (TestRouter_FlowSaveIsBehindLogin) — only the desktop saves a
+// flow — so the author is the session's person, stamped admin.
 func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
 	db := dbOf(h)
@@ -212,23 +205,11 @@ func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	}
 	body := map[string]any{"to_style_id": 7, "cells": []any{}, "fingerprint": "abc", "station_id": stationID}
 
-	// No session: the station saved it.
-	resp := doRequest(t, router, "POST", "/api/processes/1/flow/save", body, nil)
+	// A person on the desktop saved it.
+	cookie := authCookie(t, h)
+	resp := doRequest(t, router, "POST", "/api/processes/1/flow/save", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	last := stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
-	if last.Source != domain.ClaimSourceHMI {
-		t.Errorf("an unauthenticated save stamped source %q, want %q — that is a station on the floor",
-			last.Source, domain.ClaimSourceHMI)
-	}
-	if last.CalledBy != "Press 400" {
-		t.Errorf("called_by = %q, want the station's name", last.CalledBy)
-	}
-
-	// An admin session: a person on the desktop saved it.
-	cookie := authCookie(t, h)
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	last = stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
 	if last.Source != domain.ClaimSourceAdmin {
 		t.Errorf("an authenticated save stamped source %q, want %q — that is the desktop", last.Source, domain.ClaimSourceAdmin)
 	}
@@ -243,12 +224,12 @@ func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	for k, v := range body {
 		lie[k] = v
 	}
-	lie["source"] = domain.ClaimSourceAdmin
+	lie["source"] = domain.ClaimSourceHMI
 	lie["called_by"] = "not me"
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", lie, nil)
+	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", lie, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	last = stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
-	if last.Source != domain.ClaimSourceHMI || last.CalledBy != "Press 400" {
+	if last.Source != domain.ClaimSourceAdmin || last.CalledBy != "testadmin" {
 		t.Errorf("the body changed the authorship: source %q called_by %q", last.Source, last.CalledBy)
 	}
 }

@@ -145,7 +145,7 @@ func TestFlowSave_APartTakenOffLeavesTheStyle(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTakenOffFixture(t)
-			_, router := realFlowRouter(t, f.db)
+			h, router := realFlowRouter(t, f.db)
 			preview := map[string]any{"to_style_id": f.styleID, "cells": f.cells}
 			save := map[string]any{"to_style_id": f.styleID, "cells": f.cells, "station_id": f.stationID}
 			if tc.takenOff {
@@ -160,7 +160,7 @@ func TestFlowSave_APartTakenOffLeavesTheStyle(t *testing.T) {
 			}
 			save["fingerprint"] = fp
 
-			resp = doRequest(t, router, "POST", f.path("save"), save, nil)
+			resp = doRequest(t, router, "POST", f.path("save"), save, authCookie(t, h))
 			assertStatus(t, resp, http.StatusOK)
 
 			after, err := f.db.ListStyleNodeClaims(f.styleID)

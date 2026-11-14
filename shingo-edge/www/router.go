@@ -345,13 +345,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/catid-health", h.apiCatidHealthSummary)
 			r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 			r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
-			// The flow composer: preview a draft (read-only, allowed with the
-			// gate off) and save it (refused 403 unless the process's flow
-			// composer is enabled). Shop floor, like the changeover routes.
+			// The flow composer's preview: read-only, allowed with the gate
+			// off. Shop floor: the station's composer previews (preflight)
+			// before it mints. Saving a flow is the desktop's, behind login
+			// (the admin group below).
 			r.Post("/processes/{id}/flow/preview", h.apiPreviewFlow)
-			r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
 			// The mint: a style from (recipe, parts), resolved or minted — the
-			// floor's one write (pick-a-part U3). Shop floor, beside save.
+			// floor's one write (pick-a-part U3).
 			r.Post("/processes/{id}/flow/mint", h.apiMintFlow)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
@@ -458,6 +458,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// The desktop composer's one read (U9 SPEC §4). Everything else
 				// the Processes page needs already had a door.
 				r.Get("/processes/{id}/composer", h.apiProcessComposer)
+				// Save a style's flow. Only the desktop's Processes page calls
+				// it; the station previews and mints, and never saves. HMI
+				// setup does not gate it: the gate refuses the station's
+				// writes (engine gateRefusal), and this is a person's.
+				r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
 				// Flow presets (U10). Admin-gated: naming a flow is an
 				// engineer's act on the desktop, and the floor never names
 				// one. Apply is deliberately absent — the desktop applies
