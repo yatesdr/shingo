@@ -414,7 +414,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 
 /* ── minimap (whole-plant overview, bottom-right of the map region) ── */
-/* pointer-events:none set on the SVG itself; this box is just the frame. */
+/* The minimap <svg> is both the frame and the click target. */
 .map-minimap {
   position: absolute;
   bottom: 0.9rem;

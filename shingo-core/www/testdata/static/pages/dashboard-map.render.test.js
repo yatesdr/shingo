@@ -846,15 +846,42 @@ test(async function theMinimap() {
         bots.map(drawList).join(' | '));
     check('a viewport rectangle on top', mm.children[2].tag === 'rect' && mm.children.length === 3);
 
+    // Built ONCE (U2, 2026-11-14; was rebuilt on every render, against its own
+    // comment). A build attaches a new network layer to the minimap; count them.
+    let builds = 0;
+    const attach = mm.insertBefore;
+    mm.insertBefore = function (c, ref) {
+        if (c.tag === 'g' && c.attrs.opacity === '0.3') builds++;
+        return attach.call(this, c, ref);
+    };
     drive(m, [{ id: 'AMR-A', from: [0.5, 0.3], to: [0.7, 0.4] }]);
     paint(m);
-    check('the static layer is REBUILT on every render (a new element), not kept',
-        m.minimapEl() === mm && mm.children[0] !== net);
+    for (let i = 0; i < 4; i++) { m.onRobotUpdate([frameOf('AMR-A', [0.7, 0.4])]); paint(m); }
+    check('the static layer is built ONCE: five more renders build no network and keep every element',
+        m.minimapEl() === mm && builds === 0 && mm.children[0] === net && net.children.length === 19 &&
+        lines.every(function (l, i) { return net.children[i] === l; }), builds + ' builds');
+    const moved = mm.children[1].children[0];
+    check('...while the robot dots follow the robots on the dynamic path',
+        mm.children[1].children.length === 2 && moved.attrs.cx === '0.7' && moved.attrs.cy === '-0.4',
+        drawList(moved));
 
     await setOrders(m, [order(9, 'delivered', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
     drive(m, [{ id: 'AMR-A', from: [0.7, 0.4], to: [0.9, 0.5] }]);
     paint(m);
     check('hidden with no active order', mm.style.display === 'none', mm.style.display);
+
+    // ...and rebuilt when what it draws changes: the scene, or the turn.
+    await m.loadEdges();
+    m.onRobotUpdate([frameOf('AMR-A', [0.9, 0.5])]);
+    paint(m);
+    check('a scene reload rebuilds the network once', builds === 1 && mm.children[0] !== net && mm.children.length === 3,
+        builds + ' builds');
+    m.wireViewControls();
+    m.ids['map-rotate'].listeners.click[0]({});
+    const turned = mm.children[0].children.filter(function (k) { return k.tag === 'line'; })
+        .map(function (l) { return [l.attrs.x1, l.attrs.y1, l.attrs.x2, l.attrs.y2].join(' '); });
+    check('a quarter turn rebuilds it once, turned: SMN_05-LM921 now runs 0 0 0 8',
+        builds === 2 && turned.indexOf('0 0 0 8') >= 0 && mm.children.length === 3, builds + ' builds ' + JSON.stringify(turned));
 });
 
 // ═══ 8. the intent line and the frozen lane ═════════════════════════════════

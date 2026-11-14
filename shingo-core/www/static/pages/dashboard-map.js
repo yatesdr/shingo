@@ -795,11 +795,15 @@ import {
   var routeCache = {};      // "s:d" -> array of tnode indices (cleared on rebuild)
   var graphScale = 0;       // median edge length (world units); also the local
                             // scale that drives marker/label sizing
+  var sceneRev = 0;         // bumped by every buildGraph, which every scene load
+                            // runs (loadPoints via buildNodeIndex, loadEdges);
+                            // keys the minimap's static layer (syncMinimap)
 
   function isTravel(cls) { return cls === 'LocationMark' || cls === 'GeneralLocation'; }
 
   function buildGraph() {
     tnodes = []; tadj = []; routeCache = {}; graphScale = 0;
+    sceneRev++;
     var byKey = {}, lens = [];
     function vertex(name, x, y) {
       var k = name ? String(name).toLowerCase() : '@' + x + ',' + y;
@@ -1266,23 +1270,33 @@ import {
   }
 
   // ── minimap (persistent small overview, bottom-right of .map-region) ──
-  // The minimap SVG has a FIXED viewBox = the full plant. Only the robot dots
-  // and the viewport rect change — those are updated cheaply by tickEase and
-  // render() without rebuilding the static network layer.
+  // The minimap SVG has a FIXED viewBox = the full plant. Its static layer, the
+  // travel network and the scene's point dots, is built once per scene, turn
+  // and full-plant view: syncMinimap keys it on all three (minimapBuiltFor)
+  // and builds it only when the key changes. Every other render, like tickEase
+  // and the manual view controls, only refreshes the robot dots and the
+  // viewport rect (updateMinimapDynamic). The container's pixel size is not in
+  // the key: the viewBox scales the layer, so a resize draws nothing new.
+  // Pinned by the render pin theMinimap.
+  var minimapBuiltFor = '';
 
-  function rebuildMinimap() {
+  function syncMinimap() {
     if (!fullPlantView) return;
     var region = document.querySelector('.map-region');
     if (!region) return;
     if (!minimapEl) {
       // Clickable: click-to-jump centers the main view on the clicked spot.
-      // Robot dots + viewport rect inside stay pointer-events:none (CSS) so the
-      // click always resolves against the minimap surface.
+      // A click on a dot or the viewport rect inside bubbles up to this
+      // listener, and jumpToWorld reads the point off the minimap's own CTM,
+      // so a click anywhere on it jumps there.
       minimapEl = svgEl('svg', { class: 'map-minimap' });
       minimapEl.addEventListener('click', function (e) { jumpToWorld(e.clientX, e.clientY); });
       region.appendChild(minimapEl);
     }
     var fp = fullPlantView;
+    var builtFor = sceneRev + '|' + turnDeg + '|' + fp.minX + ' ' + fp.minY + ' ' + fp.w + ' ' + fp.h;
+    if (builtFor === minimapBuiltFor) { updateMinimapDynamic(); return; }
+    minimapBuiltFor = builtFor;
     minimapEl.setAttribute('viewBox', fp.minX + ' ' + fp.minY + ' ' + fp.w + ' ' + fp.h);
     minimapEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     while (minimapEl.firstChild) minimapEl.removeChild(minimapEl.firstChild);
@@ -1328,7 +1342,8 @@ import {
     updateMinimapDynamic();
   }
 
-  // Called from tickEase (viewport rect) and render() (robot dots + rect).
+  // Called from syncMinimap on every render (robot dots + rect), and from
+  // tickEase, startEase and applyManualView as the view moves.
   function updateMinimapDynamic() {
     if (!minimapEl || !minimapViewportRect) return;
     // Hide the minimap at full-plant view (idle); it adds no context when the
@@ -1687,7 +1702,7 @@ import {
     renderClassLegend();
     renderLegend(); // live fleet counts track every robot/order tick
     renderRail();
-    rebuildMinimap(); // rebuild static network layer + robot dots + viewport rect
+    syncMinimap(); // robot dots + viewport rect; the network only when the scene, turn or plant changed
   }
 
   // drawAisles paints the travel network — the faint connective tissue under
