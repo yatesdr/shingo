@@ -161,11 +161,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			refused = err
 		}
 	case dispatch.StatusDispatched:
-		// Fleet shouldn't actually report Dispatched — the dispatcher
-		// writes that status itself after backend.CreateOrder returns.
-		// If we see it from MapState, log and skip rather than silently
-		// re-writing the status.
-		e.logFn("engine: unexpected fleet-reported Dispatched for order %d, skipping", order.ID)
+		// The dispatcher writes dispatched itself after backend.CreateOrder
+		// returns, and the fleet's CREATED / TOBEDISPATCHED that follow map
+		// to it and take the same-status path above. Here Core is somewhere
+		// else and the fleet has gone back to an unassigned state (an order
+		// it re-dispatches after RUNNING): Core does not move, so this
+		// REFUSES like the arms above. It used to log and fall through, and
+		// the push below then told the station `dispatched` while Core held
+		// in_transit, the very announcement the rule below forbids.
+		// Pinned by TestVendorStatus_UnassignedAfterRunningTellsTheStationNothing.
+		refused = fmt.Errorf("unexpected fleet-reported Dispatched, skipping")
 	case dispatch.StatusFailed, dispatch.StatusCancelled:
 		// Handled by the post-mapping switch below.
 	case dispatch.StatusFaulted:
@@ -188,7 +193,13 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// rather than silently bypassing the state machine. A mapped
 		// status outside the typed-method list signals an adapter
 		// mismatch that needs investigation, not a generic DB write.
+		//
+		// And it is a refusal, like the arms above: the push below used to
+		// tell the station a status Core never wrote (the simulator maps a
+		// state it does not define to the word "unknown"). Pinned by
+		// TestVendorStatus_UnmappedStateTellsTheStationNothing.
 		e.logFn("engine: unknown mapped status %q for order %d (vendor=%q); skipping write — adapter MapState may be out of sync with dispatch.Status* constants", newStatus, order.ID, ev.NewStatus)
+		refused = fmt.Errorf("unknown mapped status %q", newStatus)
 	}
 	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)

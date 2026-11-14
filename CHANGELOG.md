@@ -22,6 +22,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - The Edge keeps each order's robot, from the robot's first waybill and from any status update that names one
 - Core names the order's robot on each fleet status update it sends, so a robot changed after the first waybill reaches the station at the order's next step
 - Core sees RDS move an order to another robot while the order stays in one state, and records the new robot and the swap on the mission's timeline
+- When RDS reports a moving order unassigned again, the station is no longer told it went back to dispatched; Core keeps its status and tells it nothing
 
 ## v0.7.0 — 2026-11-13
 
