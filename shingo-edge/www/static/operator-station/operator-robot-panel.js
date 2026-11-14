@@ -24,6 +24,10 @@
 //     current again (coreStale: the board's "as of" goes), when this screen's
 //     own event stream reconnects (robotPanelLinkBack), or on a toggle press.
 //     Nothing retries on a timer: hidden is zero work.
+//   - A HIDDEN PAGE (document.hidden: the tablet's screen off, another tab)
+//     hides it like any cause, and the page shown again shows it again (lead
+//     ruling on U10, 5). A panel under a modal or the flow panel keeps
+//     working: the page is shown, and that was accepted.
 //   - HIDDEN, WHATEVER THE CAUSE, IS ZERO WORK: the drawing's stream is closed,
 //     its comet loop stopped, its timers cleared, and nothing writes to it
 //     (operator-robot-map.js hide). Pinned by operator-robot-panel.test.js.
@@ -128,7 +132,7 @@ export function syncRobotPanel(view) {
     if (heldKey !== null && (heldKey !== ordersKey(orders) || (lastStale && !stale))) heldKey = null;
     lastStale = stale;
     if (tapHeld && !tapHidden(orders)) tapHeld = null;
-    const want = cellScreen(view) && enabled && orders.length > 0 && !tapHeld && heldKey === null;
+    const want = cellScreen(view) && enabled && orders.length > 0 && !tapHeld && heldKey === null && !document.hidden;
     if (want) show(view, orders);
     else hide();
     renderToggle();
@@ -182,6 +186,12 @@ function onUnavailable() {
     heldKey = ordersKey(robotOrders(lastView));
     hide();
 }
+
+// The page hidden or shown again: the panel goes or comes back by the same
+// rule (syncRobotPanel reads document.hidden).
+document.addEventListener('visibilitychange', function () {
+    if (lastView) syncRobotPanel(lastView);
+});
 
 // robotPanelLinkBack: this screen's own event stream connected again
 // (operator.js, the bus's connected). A panel {available: false} held is

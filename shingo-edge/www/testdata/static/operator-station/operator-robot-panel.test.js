@@ -241,6 +241,7 @@ function bootPage(opts) {
     }
     h.dispatch = dispatch;
     h.becomeVisible = function () { document.hidden = false; document.visibilityState = 'visible'; (docListeners.visibilitychange || []).forEach(fn => fn({})); };
+    h.becomeHidden = function () { document.hidden = true; document.visibilityState = 'hidden'; (docListeners.visibilitychange || []).forEach(fn => fn({})); };
 
     // the clock: every timer and every animation frame, run when the pin says.
     let timers = [], timerSeq = 0, frames = [];
@@ -962,6 +963,38 @@ await zeroWork('{available: false} first', async h => {
     await h.flush();
     h.frame({ available: false });
 });
+
+// ── 14b. A hidden page is a hide cause (lead ruling on U10, 5): the stream
+// closed and the timers stopped while the page is hidden, whatever the board
+// does meanwhile; the page shown again shows the panel again.
+{
+    const h = await shownPage(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }));
+    await drive(h, [pos(501, 'AMR-07', 12, 0, PATH_WEST, 0)], 1, 2000);
+    h.vsync(3000);
+    ok(h.panelTimersPending() > 0 && h.cometLayer().children.length === 10, 'the page shown: the panel is working (a comet, the lost timer)');
+    h.becomeHidden();
+    await h.flush();
+    eq([h.openPanelStream(), h.visible(), h.panelTimersPending()], [null, false, 0], 'the page hidden: the stream closed, the panel hidden, no timer');
+    h.mark();
+    const pendingFrames = h.framesPending();
+    for (let i = 0; i < 6; i++) {
+        h.fireBus('material-refresh', { action: 'nudge' });
+        await h.advance(10000);
+        h.vsync(5000 + i * 33);
+    }
+    await h.setView(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')], 4: [order(502, 'dispatched', 'AMR-08', 'PLN_04')] }));
+    eq({ open: h.openPanelStream() !== null, rafAsks: h.counts.rafAsks, timersArmed: h.counts.panelTimers, framesPending: pendingFrames,
+        writes: h.counts.writes, sceneGets: h.counts.sceneGets, imports: h.counts.imports },
+    { open: false, rafAsks: 0, timersArmed: 0, framesPending: 0, writes: 0, sceneGets: 0, imports: 0 },
+    'a minute with the page hidden, a new robot order included: zero work');
+    h.becomeVisible();
+    await h.flush();
+    eq(h.panelStreams().filter(s => !s.closed).length, 1, 'the page shown again: the panel opens its stream again');
+    h.frame({ available: true });
+    h.frame(frameOf([pos(501, 'AMR-07', 30, 0, PATH_WEST, 0), pos(502, 'AMR-08', 40, 10, null, 0)]));
+    await h.flush();
+    eq([h.visible(), h.rows()], [true, ['AMR-07', 'AMR-08']], 'and draws again from the next positions');
+}
 
 // ── 15. The source: no route of its own, nothing from Core's map, today's comets.
 {
