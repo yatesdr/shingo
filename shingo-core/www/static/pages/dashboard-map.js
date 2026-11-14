@@ -42,8 +42,8 @@
 // which on a chord runs up to 24% short of the distance actually driven.
 //
 // THE DECISION IS THE HANDLES, NOT THE CLASS NAME. In the scene these counts
-// were taken from (377 segments; Springfield had 807 directed rows on
-// 2026-11-14), className said "DegenerateBezier" on 264; 171 of those sit
+// were taken from (377 segments, an older read; the scene has grown since),
+// className said "DegenerateBezier" on 264; 171 of those sit
 // within a centimetre of their chord (a cubic spelling a straight line), 93
 // bow further, and 58 bow more than 10 cm. The scene holds exactly TWO
 // BezierPaths, both at 0.17 m. Meanwhile "StraightPath" segments carry no

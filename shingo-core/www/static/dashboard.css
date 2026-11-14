@@ -180,28 +180,33 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 .map-svg { width: 100%; height: 100%; display: block; background: var(--map-floor, #131a24); }
 
-/* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
- * they scale with the map; CSS here owns colors, opacity, and animation.
- * Per-shape fills/strokes are set as SVG attributes in JS — do NOT set `fill`
- * on those classes, a CSS fill overrides the presentation attribute. */
+/* Sizes (radius, stroke, font) are set in user units by the map's script
+ * (pages/dashboard-map.js and the shared scene modules it draws with:
+ * shared/scene-view.js, shared/comet-layer.js) so they scale with the map;
+ * CSS here owns colors, opacity, and animation. Per-shape fills/strokes are
+ * set as SVG attributes in JS — do NOT set `fill` on those classes, a CSS fill
+ * overrides the presentation attribute. */
 
-/* Backdrop: faint grid + corner brackets frame the floor. Grid stroke-width is
- * set in JS user units — a CSS width would not scale with the map. */
+/* Backdrop: a faint grid under the floor (scene-view.js drawBackdrop; the
+ * corner brackets that once framed it are gone). Grid stroke-width is set in
+ * JS user units — a CSS width would not scale with the map. */
 .map-grid { stroke: rgba(255, 255, 255, 0.05); }
 
-/* Travel network: the scene's synced path segments and receded waypoint dots.
- * Lines carry the structure, so they sit a step brighter than the dots. */
+/* Travel network: the scene's synced path segments, one line per physical
+ * lane. Travel points draw no dot, so nothing draws .map-node-travel now; nor
+ * .map-node-hot: an order's node takes the accent on its own glyph
+ * (scene-view.js drawNodeGlyph). */
 .map-aisle { stroke: var(--map-aisle, #56698a); stroke-linecap: round; stroke-opacity: 0.82; }
 .map-node-travel { fill: var(--map-node, #7e92b3); }
-/* Order source/destination highlight ring (status-colored in JS). */
 .map-node-hot { opacity: 0.95; }
 
-/* Routes are comet-only: no standing line. The comet (a bright leading arrow +
- * fading tail, built in JS) carries the route and lives on .map-comet-layer — a
- * separate <svg> overlaid on the map, rebuilt only when the set of comets
- * changes, which the scene's own redraws never touch. The layer ignores pointer
- * events so robot clicks reach the scene. .map-route-base is drawn by nothing
- * now: the reduced-motion fallback lane is .map-route-frozen. */
+/* A moving robot's route is a comet (a bright leading arrow + fading tail,
+ * built in shared/comet-layer.js) on .map-comet-layer — a separate <svg>
+ * overlaid on the map, rebuilt only when the set of comets changes, which the
+ * scene's own redraws never touch. The layer ignores pointer events so robot
+ * clicks reach the scene. A standing line is drawn only where a comet cannot
+ * carry the route (.map-route-frozen) or nothing drives yet
+ * (.map-route-intent), below. .map-route-base is drawn by nothing now. */
 .map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .map-route-base { stroke-linecap: round; stroke-linejoin: round; }
 .map-comet-head { stroke: none; }
@@ -211,8 +216,9 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 .map-comet-head-hollow { fill: none; }
 
 /* Route states — all STATIC (no flow); only a moving robot animates.
- * Intent lines recede to neutral aisle steel (structure recedes); frozen and
- * blocked lanes carry their status hue inline at low opacity. */
+ * Intent lines recede to neutral aisle steel (structure recedes); a frozen
+ * lane carries its status hue inline at low opacity, a blocked robot's in
+ * neutral grey (the robot's glyph carries the block). */
 .map-route-intent {
   stroke-linecap: round;
   stroke-dasharray: 2 6;

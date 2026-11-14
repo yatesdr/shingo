@@ -4,20 +4,25 @@
 // physical lane.
 //
 // Pure geometry. Numbers in, numbers or an SVG path string out — no DOM, no
-// fetch, no module state. Extracted from Core's pages/dashboard-map.js, which
-// still owns viewport easing, pan/zoom, comets, the minimap and the SSE feeds;
-// none of that is here, because a read-only scene view needs none of it.
+// fetch, no module state. Extracted from Core's pages/dashboard-map.js. The
+// shared scene modules are built on it: scene-net.js (a scene's network and
+// the route model), scene-path.js (a robot's path drawn along the rows),
+// scene-view.js (the retained drawing) and comet-layer.js (the comets). The
+// robot map keeps its viewport easing, pan/zoom, minimap and SSE feeds.
 //
-// SHARED, under docs/shared-layer-promotion.md. Core's map and the Edge's
-// station cell picture project the same plant, and the desktop renderer that
-// follows the station picture draws the same press from the same rows. A
-// disagreement reaches the floor: an operator and an engineer looking at the
-// same cell from two surfaces would see two different presses, and a route
-// weighed on one surface would not be the route drawn on the other. Both
-// sides compute the projection and the coordinate predicate today; the cubic
-// arithmetic travels with them because the file is one unit and a seam down
-// the middle of it is the seam this promotion removes. Dependencies: none.
-// Lockstep: a change to any of these is a change both surfaces want at once.
+// SHARED, under docs/shared-layer-promotion.md. Core's robot map and its
+// localization board and the Edge's desktop process map project the same
+// plant from the same rows. A disagreement reaches the floor: an operator and
+// an engineer looking at the same aisle from two surfaces would see two
+// different floors. (The Edge's station cell picture, operator-flow.js,
+// imports none of this: it draws a schematic from point coordinates.) Routes
+// are not this file's: the route model is scene-net.js and a driving robot's
+// route is RDS's path drawn by scene-path.js, and both weigh or draw a curved
+// row with the cubic arithmetic here, so a route lies on the aisle drawn under
+// it. The cubic arithmetic travels with the projection because the file is
+// one unit and a seam down the middle of it is the seam this promotion
+// removes. Dependencies: none. Lockstep: a change to any of these is a change
+// every surface wants at once.
 //
 // THE AGREEMENT TEST is scene-geom.vectors.json beside this file: the output
 // of the Core copy this was promoted from, recorded at the promoting commit
@@ -145,17 +150,18 @@ export function cubicPathD(p0, c1, c2, p3) {
         ' ' + c2[0] + ' ' + c2[1] + ' ' + p3[0] + ' ' + p3[1];
 }
 
-// laneKey collapses the two directed entries of one physical lane onto one key.
+// laneKey collapses the directed rows of one physical lane onto one key.
 //
-// The travel graph is stored directed but driven both ways, so it holds a
-// reciprocal entry for most segments and a straight walk of the adjacency
-// lists visits those lanes twice: Springfield's 405 directed edges are 212
-// physical lanes. Drawing both entries double-strokes every aisle, and any
-// per-lane tally built the same way double-counts the network.
+// A scene stores one row per direction a robot may drive a lane: most lanes
+// both ways, so two rows, and some one way only (a robot may not drive those
+// back). A walk of the rows straight through visits a two-way lane twice;
+// drawing both double-strokes the aisle, and any per-lane tally built the same
+// way double-counts the network.
 //
-// The a<b ordering is not arbitrary — it is what makes the surviving entry the
-// one whose handles were stored in the a→b direction, so the control points
-// project across in the order the path string wants them.
+// The key is symmetric — laneKey(a, b) === laneKey(b, a) — so it says only
+// which rows are one lane. Which row of a lane survives a dedup is whichever
+// the caller reaches first, and the caller turns that row's handles to run the
+// way it draws the lane (scene-net.js laneList).
 export function laneKey(a, b) {
     return a < b ? a + '_' + b : b + '_' + a;
 }

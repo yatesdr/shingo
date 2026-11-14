@@ -41,7 +41,7 @@ var corePageBudgets = map[string]struct {
 	"cycle-time.html":            {18, 72 << 10},  // 16, 66151
 	"dashboard-display.html":     {11, 27 << 10},  // 9, 24489
 	"dashboard-frame.html":       {18, 72 << 10},  // 16, 66151
-	"dashboard-map.html":         {15, 82 << 10},  // 13, 75830 at sm/u5-shared: the map's scene machinery in four shared modules, +8.4 KB gzipped on 67411 (modules compressed apart)
+	"dashboard-map.html":         {15, 83 << 10},  // 13, 77071 at sm/u5-shared: the map's scene machinery in four shared modules, +9.7 KB gzipped on 67411 (modules compressed apart)
 	"dashboard-node-report.html": {10, 42 << 10},  // 8, 38352
 	"dashboard.html":             {19, 81 << 10},  // 17, 75297
 	"demand-episode.html":        {18, 72 << 10},  // 16, 66151
