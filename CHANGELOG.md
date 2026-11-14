@@ -38,6 +38,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - The robot panel's map is the Edge's copy of Core's plant map, fetched once and answered "unchanged" until Core's map changes
 - The robot map's dashed line for an order not yet driving follows the lanes only the way robots may drive them, as the fleet plans, instead of running a one-way lane backwards
 - The robot map draws a driving robot's comet and stopped-robot line along the route the fleet planned for it; a robot with no planned route draws neither, rather than a guess
+- The robot map's comets ask the browser for a frame only when they are about to draw one, about 30 a second instead of every screen refresh, with the same look
 
 ## v0.7.0 — 2026-11-13
 

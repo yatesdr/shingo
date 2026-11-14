@@ -9,8 +9,9 @@
 // hidden or the map is off screen. Pinned there, in
 // dashboard-map.render.test.js: the draw lists theCarryCometAtHalfLap,
 // theFetchCometAtHalfLap, theHeadTurnsTheCorner and theEndsFade, and the loop's
-// cost thirtyDrawnFramesASecond, aSkippedFrameIsSkippedNotSlowed,
-// noCometWorkWhileHidden, noCometWorkWhileOffScreen and noCometWorkWithNoComets.
+// cost thirtyDrawnFramesASecond, askForAFrameOnlyToDrawOne,
+// aSkippedFrameIsSkippedNotSlowed, noCometWorkWhileHidden,
+// noCometWorkWhileOffScreen and noCometWorkWithNoComets.
 //
 // ONE LAYER PER createCometLayer, its state its own: a page that made two would
 // run two loops, never one loop for both.
@@ -108,6 +109,13 @@ function pointAt(pts, meas, f) {
 
 var COMET_FRAME_MS = 1000 / 30;
 var COMET_FRAME_SLACK_MS = 1;
+// Between slots the loop waits on a timer, not on display frames: closer to
+// the next slot than COMET_TIMER_MIN_MS it asks for a frame at once, and
+// otherwise it wakes COMET_WAKE_MS before the slot to ask for one. The wait is
+// measured from the frame's timestamp, so the early wake covers the time the
+// frame had already run and a timer that runs a little late.
+var COMET_TIMER_MIN_MS = 8;
+var COMET_WAKE_MS = 6;
 
 // createCometLayer is the comet layer over the map drawn in `host` (the
 // element the scene's <svg> lives in): the layer is put in host's parent,
@@ -128,19 +136,34 @@ export function createCometLayer(host) {
   var cometState = [];      // live comet geometry + dot elements, positioned each frame by rAF
   var cometRAF = 0;         // requestAnimationFrame handle for the comet positioner loop
 
-  // tickComets is the comet loop: one call per display frame, drawing at most
-  // 30 of them a second. Where a dot sits is a function of the frame's own
-  // timestamp, never of how many frames were drawn, so a skipped frame is
-  // skipped, not slowed, and after a pause the comets come back where the clock
-  // says. The 1 ms slack is for a 60 Hz display, whose second frame lands a hair
-  // under 1000/30 ms after the first.
+  // tickComets is the comet loop, drawing at most 30 frames a second. Where a
+  // dot sits is a function of the frame's own timestamp, never of how many
+  // frames were drawn, so a skipped frame is skipped, not slowed, and after a
+  // pause the comets come back where the clock says. The 1 ms slack is for a
+  // 60 Hz display, whose second frame lands a hair under 1000/30 ms after the
+  // first.
+  //
+  // IT ASKS FOR A FRAME ONLY WHEN IT IS ABOUT TO DRAW ONE. It used to ask on
+  // every display refresh and skip the draw in most of them, which halved the
+  // drawing but not the frames: every frame asked for is a full main-thread
+  // frame, in which the browser restyles every running CSS animation on the
+  // page (the header's connection dot, the robots' halos). So after a drawn
+  // frame the loop waits on a timer until just before the next 30 fps slot,
+  // then asks for the frame that draws it. Measured on the perf rig
+  // (2026-11-14, a variant of this shape against the every-refresh loop, both
+  // drawing 30 frames a second): frames asked for 57 -> 29 a second, style
+  // recalculations 61 -> 32 (work/map-machinery-attack-2026-11-14/perf/
+  // PERF-core-map-steps2-3.md). Pinned: askForAFrameOnlyToDrawOne.
   //
   // The loop runs only while there is something to see (cometsMayRun): a comet,
-  // a visible page, the map on screen. Otherwise it stops re-arming, and
-  // startComets arms it again from sync, visibilitychange or the map's
-  // IntersectionObserver (wirePause).
+  // a visible page, the map on screen. Otherwise it stops re-arming,
+  // stopComets cancels the frame or the timer it is waiting on, and
+  // startComets arms it again, once (never beside a frame or a timer already
+  // pending), from sync, visibilitychange or the map's IntersectionObserver
+  // (wirePause).
   var cometDrawnAt = -Infinity; // timestamp of the last drawn frame
   var mapOnScreen = true;       // until the IntersectionObserver says otherwise
+  var cometTimer = 0;           // the timer the loop waits on between slots
   function cometsMayRun() { return cometState.length > 0 && !document.hidden && mapOnScreen; }
   function tickComets(now) {
     cometRAF = 0;
@@ -149,10 +172,21 @@ export function createCometLayer(host) {
       cometDrawnAt = now;
       placeComets(now);
     }
-    cometRAF = requestAnimationFrame(tickComets);
+    var wait = cometDrawnAt + COMET_FRAME_MS - COMET_FRAME_SLACK_MS - now;
+    if (wait > COMET_TIMER_MIN_MS) cometTimer = setTimeout(wakeComets, wait - COMET_WAKE_MS);
+    else cometRAF = requestAnimationFrame(tickComets);
   }
-  function startComets() { if (!cometRAF && cometsMayRun()) cometRAF = requestAnimationFrame(tickComets); }
-  function stopComets() { if (cometRAF) { cancelAnimationFrame(cometRAF); cometRAF = 0; } }
+  function wakeComets() {
+    cometTimer = 0;
+    if (!cometRAF && cometsMayRun()) cometRAF = requestAnimationFrame(tickComets);
+  }
+  function startComets() {
+    if (!cometRAF && !cometTimer && cometsMayRun()) cometRAF = requestAnimationFrame(tickComets);
+  }
+  function stopComets() {
+    if (cometRAF) { cancelAnimationFrame(cometRAF); cometRAF = 0; }
+    if (cometTimer) { clearTimeout(cometTimer); cometTimer = 0; }
+  }
 
   // wireCometPause stops the comet loop while the page is hidden or the map is
   // scrolled off screen, and restarts it when either comes back. Without

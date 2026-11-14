@@ -176,9 +176,14 @@ function load(opts) {
     // Every element the page creates, in order, so a pin can count what a
     // render built.
     const made = [];
-    // Timers run when the pin says (runTimers), not on a clock.
+    // Timers run when the pin says (runTimers), or when a display refresh
+    // reaches them (vsync): each is due its delay after the frame time last
+    // run (displayNow), as a browser's would be after the frame that set it.
     let timerSeq = 0;
     let timers = [];
+    let displayNow = 0;
+    // Every frame the page asks for, counted.
+    let frameAsks = 0;
 
     const ctx = {
         console: console,
@@ -216,9 +221,9 @@ function load(opts) {
         },
         setInterval() { return 0; },
         clearInterval() {},
-        setTimeout(fn) { timerSeq++; timers.push({ id: timerSeq, fn: fn }); return timerSeq; },
+        setTimeout(fn, ms) { timerSeq++; timers.push({ id: timerSeq, fn: fn, due: displayNow + (ms || 0) }); return timerSeq; },
         clearTimeout(id) { timers = timers.filter(function (t) { return t.id !== id; }); },
-        requestAnimationFrame(fn) { frameSeq++; frames.push({ id: frameSeq, fn: fn }); return frameSeq; },
+        requestAnimationFrame(fn) { frameAsks++; frameSeq++; frames.push({ id: frameSeq, fn: fn }); return frameSeq; },
         cancelAnimationFrame(id) { frames = frames.filter(function (f) { return f.id !== id; }); },
         fetch(url) {
             let body = [];
@@ -279,12 +284,29 @@ function load(opts) {
     // frame runs the frames queued so far, at `now`. A frame queued while one
     // runs waits for the next call, as a browser's would.
     m.frame = function (now) {
+        displayNow = now;
         const due = frames;
         frames = [];
         due.forEach(function (f) { f.fn(now); });
         return due.length;
     };
     m.pendingFrames = function () { return frames.length; };
+    // vsync is one display refresh at `now`: the timers due by then run first,
+    // earliest first, then the frames asked for so far, as a browser serves a
+    // frame asked for from a timer at the next refresh.
+    m.vsync = function (now) {
+        for (;;) {
+            const next = timers.filter(function (t) { return t.due <= now; })
+                .sort(function (a, b) { return a.due - b.due || a.id - b.id; })[0];
+            if (!next) break;
+            timers = timers.filter(function (t) { return t !== next; });
+            displayNow = next.due;
+            next.fn();
+        }
+        return m.frame(now);
+    };
+    m.pendingTimers = function () { return timers.length; };
+    m.frameAsks = function () { return frameAsks; };
     // runTimers runs the timers set so far (the wheel's settle, for one).
     m.runTimers = function () {
         const due = timers;
@@ -587,18 +609,22 @@ test(async function theEndsFade() {
     const want = ['0.833', '0.510', '0.240', '0.023', '0.084', '0.150', '0.184', '0.186', '0.156', '0.094'];
     check('just after the wrap: the head fades in from the robot, the tail fades out at the far end',
         JSON.stringify(op) === JSON.stringify(want), JSON.stringify(op));
-    m.frame(5700);
+    m.vsync(5700);
     check('near the end of the lap the head fades out', m.cometLayer().children[0].attrs.opacity === '0.500',
         m.cometLayer().children[0].attrs.opacity);
-    check('the loop re-arms itself every frame while a comet exists', m.pendingFrames() === 1,
-        'pending ' + m.pendingFrames());
+    // It used to ask for a frame on every display refresh; it now waits on a
+    // timer for the next 30 fps slot (the flat bug "the 30 fps cap still
+    // requested a frame every vsync", fixed 2026-11-14).
+    check('the loop stays armed while a comet exists: a timer waits for the next slot, no frame asked for yet',
+        m.pendingTimers() === 1 && m.pendingFrames() === 0, 'timers ' + m.pendingTimers() + ', frames ' + m.pendingFrames());
 });
 
 // ═══ 4b. the comet loop's cost ══════════════════════════════════════════════
 //
-// The loop runs on every display frame but DRAWS at most 30 a second, and not
-// at all while nobody can see it. A drawn frame sets the head's transform
-// exactly once, so counting those sets counts the frames that did work.
+// The loop DRAWS at most 30 frames a second, asks for a frame only when it is
+// about to draw one, and does nothing while nobody can see it. A drawn frame
+// sets the head's transform exactly once, so counting those sets counts the
+// frames that did work; the harness counts the frames asked for.
 
 function countHeadDraws(m) {
     const head = m.cometLayer().children[0];
@@ -608,9 +634,9 @@ function countHeadDraws(m) {
     return function () { return n; };
 }
 
-// One second of display frames at hz, timestamps t0 + i * 1000 / hz.
+// One second of display refreshes at hz, timestamps t0 + i * 1000 / hz.
 function runDisplay(m, hz, t0) {
-    for (let i = 0; i < hz; i++) m.frame(t0 + i * 1000 / hz);
+    for (let i = 0; i < hz; i++) m.vsync(t0 + i * 1000 / hz);
 }
 
 // What a comet built at the same time draws on its very first frame at `now`:
@@ -628,8 +654,10 @@ test(async function thirtyDrawnFramesASecond() {
         const draws = countHeadDraws(m);
         runDisplay(m, hz, 0);
         check('a ' + hz + ' Hz display: 30 of its ' + hz + ' frames draw', draws() === 30, draws() + ' drawn');
-        check('...and the loop still re-arms on every display frame', m.pendingFrames() === 1,
-            'pending ' + m.pendingFrames());
+        // Was "the loop still re-arms on every display frame": that was the
+        // flat bug (the 30 fps cap still requested a frame every vsync).
+        check('...and the loop is still armed at the end: one frame or one timer waiting',
+            m.pendingFrames() + m.pendingTimers() === 1, 'frames ' + m.pendingFrames() + ', timers ' + m.pendingTimers());
     }
     const m = await oneComet('carry');
     const draws = countHeadDraws(m);
@@ -641,15 +669,15 @@ test(async function aSkippedFrameIsSkippedNotSlowed() {
     const m = await oneComet('carry');
     m.frame(2990);
     const at2990 = layerList(m);
-    m.frame(3000);
-    check('a frame 10 ms after a drawn one draws nothing', JSON.stringify(layerList(m)) === JSON.stringify(at2990));
-    m.frame(3030);
+    m.vsync(3000);
+    check('a refresh 10 ms after a drawn frame draws nothing', JSON.stringify(layerList(m)) === JSON.stringify(at2990));
+    m.vsync(3030);
     const fresh = await drawnFreshAt(3030);
     check('the next drawn frame puts every dot where the clock says, as a first frame at that time would',
         JSON.stringify(layerList(m)) === JSON.stringify(fresh), '\n' + layerList(m).join('\n'));
 
     const run = await oneComet('carry');
-    for (let i = 0; i <= 180; i++) run.frame(i * 1000 / 60);
+    for (let i = 0; i <= 180; i++) run.vsync(i * 1000 / 60);
     check('three seconds at 60 Hz, half of them skipped, ends on the half-lap look',
         JSON.stringify(layerList(run)) === JSON.stringify(await drawnFreshAt(3000)), '\n' + layerList(run).join('\n'));
 });
@@ -662,22 +690,30 @@ test(async function noCometWorkWhileHidden() {
     m.wireCometPause();
     m.frame(1000);
     const shown = layerList(m);
+    check('after a drawn frame the loop waits on a timer, with no frame asked for',
+        m.pendingTimers() === 1 && m.pendingFrames() === 0, 'timers ' + m.pendingTimers() + ', frames ' + m.pendingFrames());
     m.doc.hidden = true;
     m.fireDoc('visibilitychange');
-    check('hidden: the loop stops, no frame queued', m.pendingFrames() === 0, 'pending ' + m.pendingFrames());
+    check('hidden mid-wait: the loop stops, its timer cancelled, nothing armed',
+        m.pendingFrames() === 0 && m.pendingTimers() === 0, 'frames ' + m.pendingFrames() + ', timers ' + m.pendingTimers());
     m.syncCometLayer(SAME_SET, 1);
     check('...a render while hidden arms nothing and moves no dot',
-        m.pendingFrames() === 0 && JSON.stringify(layerList(m)) === JSON.stringify(shown), 'pending ' + m.pendingFrames());
+        m.pendingFrames() === 0 && m.pendingTimers() === 0 && JSON.stringify(layerList(m)) === JSON.stringify(shown),
+        'frames ' + m.pendingFrames() + ', timers ' + m.pendingTimers());
     m.doc.hidden = false;
     m.fireDoc('visibilitychange');
-    check('shown again: one frame queued', m.pendingFrames() === 1, 'pending ' + m.pendingFrames());
+    check('shown again: one frame queued, and no timer beside it', m.pendingFrames() === 1 && m.pendingTimers() === 0,
+        'frames ' + m.pendingFrames() + ', timers ' + m.pendingTimers());
     m.frame(3000);
     check('...and it draws where the clock says, not where the comet stopped',
         JSON.stringify(layerList(m)) === JSON.stringify(half), '\n' + layerList(m).join('\n'));
     m.doc.hidden = true;
-    m.frame(3100);
-    check('a frame that lands after the tab hides, before the event, draws nothing and does not re-arm',
-        m.pendingFrames() === 0 && JSON.stringify(layerList(m)) === JSON.stringify(half), 'pending ' + m.pendingFrames());
+    const asked = m.frameAsks();
+    m.vsync(3100);
+    check('a timer and a refresh that land after the tab hides, before the event, ask for no frame, draw nothing and do not re-arm',
+        m.frameAsks() === asked && m.pendingFrames() === 0 && m.pendingTimers() === 0 &&
+        JSON.stringify(layerList(m)) === JSON.stringify(half),
+        (m.frameAsks() - asked) + ' asked, frames ' + m.pendingFrames() + ', timers ' + m.pendingTimers());
 });
 
 test(async function noCometWorkWhileOffScreen() {
@@ -690,11 +726,14 @@ test(async function noCometWorkWhileOffScreen() {
     if (!io) return;
     o.frame(1000);
     io.cb([{ isIntersecting: false }]);
-    check('off screen: the loop stops', o.pendingFrames() === 0, 'pending ' + o.pendingFrames());
+    check('off screen mid-wait: the loop stops, its timer cancelled', o.pendingFrames() === 0 && o.pendingTimers() === 0,
+        'frames ' + o.pendingFrames() + ', timers ' + o.pendingTimers());
     o.syncCometLayer(SAME_SET, 1);
-    check('...and a render arms nothing', o.pendingFrames() === 0, 'pending ' + o.pendingFrames());
+    check('...and a render arms nothing', o.pendingFrames() === 0 && o.pendingTimers() === 0,
+        'frames ' + o.pendingFrames() + ', timers ' + o.pendingTimers());
     io.cb([{ isIntersecting: true }]);
-    check('back on screen: one frame queued', o.pendingFrames() === 1, 'pending ' + o.pendingFrames());
+    check('back on screen: one frame queued, and no timer beside it', o.pendingFrames() === 1 && o.pendingTimers() === 0,
+        'frames ' + o.pendingFrames() + ', timers ' + o.pendingTimers());
     o.frame(3000);
     check('...drawing where the clock says', JSON.stringify(layerList(o)) === JSON.stringify(half));
 });
@@ -704,6 +743,36 @@ test(async function noCometWorkWithNoComets() {
     e.syncCometLayer([], 1);
     check('no comets: the queued frame is cancelled, not run to find nothing',
         e.pendingFrames() === 0 && e.cometLayer().children.length === 0, 'pending ' + e.pendingFrames());
+    const w = await oneComet('carry');
+    w.frame(1000);
+    w.syncCometLayer([], 1);
+    check('...and no comets mid-wait cancels the timer the loop was waiting on',
+        w.pendingFrames() === 0 && w.pendingTimers() === 0, 'frames ' + w.pendingFrames() + ', timers ' + w.pendingTimers());
+});
+
+// The flat bug "the 30 fps cap still requested a frame every vsync" (fixed
+// 2026-11-14): every frame asked for is a full main-thread frame, in which
+// the browser restyles every running CSS animation on the page, so a loop
+// that asks on every refresh and draws on half of them still costs every
+// refresh. The loop asks for a frame only when its next slot is close.
+test(async function askForAFrameOnlyToDrawOne() {
+    for (const hz of [60, 120]) {
+        const m = await oneComet('carry');
+        const draws = countHeadDraws(m);
+        const asked = m.frameAsks();
+        runDisplay(m, hz, 0);
+        check('a ' + hz + ' Hz display: at most 30 frames asked for in a second, and 30 drawn',
+            m.frameAsks() - asked <= 30 && draws() === 30, (m.frameAsks() - asked) + ' asked, ' + draws() + ' drawn');
+    }
+    const m = await oneComet('carry');
+    m.frame(1000);
+    m.syncCometLayer(SAME_SET, 1);
+    check('a render while the loop waits on its timer asks for no frame and sets no second timer',
+        m.pendingFrames() === 0 && m.pendingTimers() === 1, 'frames ' + m.pendingFrames() + ', timers ' + m.pendingTimers());
+    m.vsync(1000 + 2000 / 60);
+    check('...and the timer it waited on brings the next frame, drawn at the next slot',
+        JSON.stringify(layerList(m)) === JSON.stringify(await drawnFreshAt(1000 + 2000 / 60)) && m.pendingTimers() === 1,
+        'timers ' + m.pendingTimers());
 });
 
 // ═══ 5. click-to-focus ══════════════════════════════════════════════════════
