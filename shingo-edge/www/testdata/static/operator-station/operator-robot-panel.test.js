@@ -607,6 +607,20 @@ function tap(h, under) {
     eq(h.rows(), ['AMR-01', 'AMR-02'], 'one row each; the robot leaving for the supermarket has no ETA to this screen');
 }
 
+// ── 5b. A leg leaving the cell, first seen past its pickup: hollow by Core's
+// inference (nearer its source), solid once the station says it departed.
+{
+    const leaving = extra => cellView({ 2: [order(651, 'in_transit', 'AMR-05', 'SMN_01', Object.assign({ order_type: 'store', source_node: 'PLN_02' }, extra))] });
+    const away = ['N20_20', 'N10_20', 'N0_20', 'N0_30', 'N0_40', 'SMN_01'];
+    for (const [departed, head, label] of [[false, 'map-comet-head-hollow', 'not departed: Core\'s inference reads it fetching (nearer its source)'],
+        [true, 'map-comet-head', 'departed (carrying a bin away from the cell): the carry leg, solid']]) {
+        const h = await shownPage(leaving({ departed: departed }));
+        await drive(h, [pos(651, 'AMR-05', 20, 20, away, Math.PI)], -1, 2000);
+        h.vsync(3000);
+        eq(h.cometLayer().children[0].attrs['class'], head, 'a robot leaving the cell, seen first 18 m on: ' + label);
+    }
+}
+
 // ── 6. The crop: the cell and the robots, not the path; refit only when the set changes.
 {
     const h = await shownPage(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }));

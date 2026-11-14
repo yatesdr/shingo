@@ -512,11 +512,14 @@ export function createRobotMap(opts) {
         return rec.route;
     }
 
-    // orderLeg is Core's (dashboard-map.js orderLeg) without the board's
-    // `carrying`, which the stream does not carry: carrying once the robot
-    // has been at its source, or while it is nearer its delivery than its
-    // source; fetching otherwise.
+    // orderLeg is Core's (dashboard-map.js orderLeg). Core trusts the board's
+    // `carrying` first, which neither the view nor the stream carries; the
+    // station's own physical word stands in where it has one: a departed leg
+    // is carrying a bin away from the cell (docs/terminology.md, Departed).
+    // Then Core's inference: carrying once the robot has been at its source,
+    // or while it is nearer its delivery than its source; fetching otherwise.
     function orderLeg(net, o, r) {
+        if (o.departed) return 'carry';
         const src = nodeAt(net, o.source_node);
         if (!src || picked[o.id]) return 'carry';
         const pr = (net && net.scale > 0 ? net.scale : 1) * PICKUP_RADIUS;
