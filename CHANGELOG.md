@@ -45,6 +45,12 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - A cell operator screen shows its robots in a panel at the bottom right while one of its orders has a robot: Core's map, robots and comets around the cell, the cell's nodes marked, each robot's ETA; it goes when none does
 - The screen's ROBOTS button turns its panel off or on, remembered in that browser; a tap on the panel hides it until the next order gets a robot, and never presses what is under it
 - A robot the panel has heard nothing of for three robot polls fades where it was last seen and its line says Position lost; with no live robot feed the panel hides and does no work
+- A robot bringing a bin to the cell draws a solid (carrying) comet on the panel from its first comet, read from where the fleet's planned route ends, even when the panel first sees it mid-carry
+- After the live robot feed goes away, the panel comes back on the first view whose Core copies are current again, even when no order changed
+- A hidden screen (screen off, another tab) closes its panel's feed and timers, and opens them again when shown
+- An order whose robot sends no position within three robot polls shows a Position lost line on the panel, naming no robot
+- The station screen's footer says "Operator screen ready", not "Operator Station Ready"
+- Core's robot map and the station's robot panel take their map's look from one shared stylesheet and their moving test, calm limit and pickup radius from one shared module, with the same look and behaviour
 
 ## v0.7.0 — 2026-11-13
 
