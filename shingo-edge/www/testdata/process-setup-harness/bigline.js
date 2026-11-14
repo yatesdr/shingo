@@ -17,6 +17,20 @@
 // The page runs unmodified under page-harness.js, as for pins.js.
 'use strict';
 const H = require('./page-harness.js');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+// The press-index mode as the generated flowspec names it (flowspec-data.js,
+// from domain/flowspec and protocol/swap_mode.go): the fixture takes the name
+// from there rather than spelling a mode itself.
+const PRESS_INDEX = (() => {
+    const w = {};
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', '..', 'static', 'operator-station', 'flowspec-data.js'), 'utf8'), { window: w });
+    const m = w.FLOWSPEC.modes.find(x => /press_index$/.test(x));
+    if (!m) throw new Error('flowspec-data.js names no press-index mode');
+    return m;
+})();
 
 // ── the line ─────────────────────────────────────────────────────────────────
 const MAIN = ['BPN_008', 'BPN_005', 'BPN_006BCD', 'BPN_006EFG', 'BPN_006HIJ', 'BPN_006KLM', 'BPN_006NOP',
@@ -67,7 +81,7 @@ function bigLine(o) {
     // its next carrier; the rest each work one or two positions.
     const pressPos = MAIN.filter(n => n !== 'BPN_008' && n !== 'BPN_005');
     const claim = (node, part, deck) => ({
-        core_node_name: node, role: 'produce', swap_mode: 'two_robot_press_index', payload_code: part,
+        core_node_name: node, role: 'produce', swap_mode: PRESS_INDEX, payload_code: part,
         paired_core_node: deck, inbound_source: 'BIG Buffer Zone', outbound_destination: 'BIG Unloader Zone',
     });
     const styles = [];
@@ -79,7 +93,7 @@ function bigLine(o) {
         if (i % 4 === 1) claims.push(claim(node.replace('BPN_006', 'BPN_009'), PARTS[(i * 3 + 1) % PARTS.length], 'BPN_008'));
         styles.push({
             id: i + 1, name: part + (claims.length > 1 ? ' (two spots)' : ''), catid: '', claim_count: claims.length,
-            claim_modes: ['two_robot_press_index'], last_run: i < 9 ? '11-' + pad(13 - (i % 9), 2) : null,
+            claim_modes: [PRESS_INDEX], last_run: i < 9 ? '11-' + pad(13 - (i % 9), 2) : null,
             claims: claims, advanced: i === 0 ? { BPN_007KLM: { refill_by: 'index_robot' } } : {},
         });
     }
@@ -114,7 +128,7 @@ function bigLine(o) {
     for (const [name, versions, spots] of recipes) {
         for (let v = versions; v >= 1; v--) {
             presets.push({ id: ++rid, name: 'Big Index - ' + name, version: v,
-                shape: spots.map(n => ({ core_node_name: n, role: 'produce', swap_mode: 'two_robot_press_index', payload_code: '',
+                shape: spots.map(n => ({ core_node_name: n, role: 'produce', swap_mode: PRESS_INDEX, payload_code: '',
                     paired_core_node: n.startsWith('BPN_009') ? 'BPN_008' : 'BPN_005', inbound_source: 'BIG Buffer Zone',
                     outbound_destination: 'BIG Unloader Zone' })), members: [] });
         }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/protocol"
 	"shingo/shared/scenefixtures"
 )
 
@@ -52,7 +53,6 @@ func BigLineParts() []string {
 // BigLinePlant is the big line as a scenefixtures plant, for SeedPlant with
 // process name "BIG-PRESS". Style 1 runs.
 func BigLinePlant() scenefixtures.Plant {
-	strp := func(s string) *string { return &s }
 	i64 := func(n int64) *int64 { return &n }
 	parts := BigLineParts()
 	p := scenefixtures.Plant{Plant: "bigline", Note: "Press 6's shape, every name invented"}
@@ -75,6 +75,18 @@ func BigLinePlant() scenefixtures.Plant {
 			})
 		}
 	}
+	bigLineStyles(&p, parts)
+	bigLineNodes(&p)
+	for i, code := range parts {
+		p.PayloadCatalog = append(p.PayloadCatalog, scenefixtures.CatalogEntry{ID: int64(i + 1), Code: code, Name: "Synthetic " + code, UOPCapacity: 200})
+		p.Payloads = append(p.Payloads, scenefixtures.Payload{ID: int64(i + 1), Code: code})
+		p.PayloadBinTypes = append(p.PayloadBinTypes, scenefixtures.PayloadBinType{PayloadID: int64(i + 1), BinTypeID: 1, BinTypeCode: "BIG-CART"})
+	}
+	return p
+}
+
+// bigLineStyles adds the line's 13 styles and their claims.
+func bigLineStyles(p *scenefixtures.Plant, parts []string) {
 	// 13 styles. Style 1 works BPN_007KLM decked by BPN_008; the others each
 	// work one press position, every fourth a second one beside it.
 	var press []string
@@ -110,11 +122,16 @@ func BigLinePlant() scenefixtures.Plant {
 		for _, nd := range nodes {
 			claimID++
 			p.StyleNodeClaims = append(p.StyleNodeClaims, scenefixtures.StyleNodeClaim{
-				ID: claimID, StyleID: int64(i + 1), CoreNodeName: nd[0], Role: "produce", SwapMode: "two_robot_press_index",
+				ID: claimID, StyleID: int64(i + 1), CoreNodeName: nd[0], Role: "produce", SwapMode: string(protocol.SwapModeTwoRobotPressIndex),
 				PayloadCode: part, PairedCoreNode: nd[1], InboundSource: BigLineSource, OutboundDestination: BigLineDestination,
 			})
 		}
 	}
+}
+
+// bigLineNodes adds the plant's 108 nodes.
+func bigLineNodes(p *scenefixtures.Plant) {
+	strp := func(s string) *string { return &s }
 	// 108 plant nodes: four groups, their members, the line's positions, and
 	// the rest of a plant.
 	nid := int64(0)
@@ -154,10 +171,4 @@ func BigLinePlant() scenefixtures.Plant {
 	for i := 1; len(p.Nodes) < 108; i++ {
 		node(fmt.Sprintf("BXN_%03d", i), "storage", "")
 	}
-	for i, code := range parts {
-		p.PayloadCatalog = append(p.PayloadCatalog, scenefixtures.CatalogEntry{ID: int64(i + 1), Code: code, Name: "Synthetic " + code, UOPCapacity: 200})
-		p.Payloads = append(p.Payloads, scenefixtures.Payload{ID: int64(i + 1), Code: code})
-		p.PayloadBinTypes = append(p.PayloadBinTypes, scenefixtures.PayloadBinType{PayloadID: int64(i + 1), BinTypeID: 1, BinTypeCode: "BIG-CART"})
-	}
-	return p
 }
