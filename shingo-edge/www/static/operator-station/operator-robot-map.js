@@ -14,8 +14,9 @@
 // order's status hue, it is moving when its position moved within 5 s, a
 // comet runs only while it is (motion means motion), a faulted order's robot
 // draws its path as a static grey lane and the fault flare, the busy-floor
-// calm stops the comets past 12 moving robots, and the leg (fetch hollow,
-// carry solid) is orderLeg's.
+// calm stops the comets past 12 moving robots. The leg (fetch hollow, carry
+// solid) is the panel's own orderLeg, since Core's reads the board's
+// `carrying`, which the panel does not have.
 //
 // LIMITED TO THIS SCREEN'S ORDERS. The page hands over the orders that have
 // a robot (robotOrders); the stream carries a position for each of them that
@@ -349,7 +350,7 @@ export function createRobotMap(opts) {
                 list.map(function (r) { return r.rec.robot; }).join(',');
             if (!fit || fit.key !== key) refit(net, key, pts, FIT_SLACK, roomFor(list));
             else if (list.some(function (r) { return !inside(proj(r.rec.x, r.rec.y)); })) refit(net, key, pts, LEAVE_SLACK, fit.margins);
-            let routes = drawFrame(net, cell, list);
+            let routes = drawFrame(net, cell, list, names);
             // A chip cut at an edge widens the crop on that side, but never past
             // the whole plant: robots knotted tighter than the chips can stack
             // keep their crop, and the chips that cannot fit are cut.
@@ -359,7 +360,7 @@ export function createRobotMap(opts) {
                 const before = fit;
                 refit(net, key, pts, fit.slack, widen(fit.margins, over));
                 if (fit.s < plantScale(pts, before.margins)) { fit = before; break; }
-                routes = drawFrame(net, cell, list);
+                routes = drawFrame(net, cell, list, names);
             }
             comets.sync(routes, ROBOT_PX / fit.s, fit.view);
         }
@@ -461,7 +462,7 @@ export function createRobotMap(opts) {
 
     // drawFrame puts one frame on the scene view and answers the comets it
     // wants.
-    function drawFrame(net, cell, list) {
+    function drawFrame(net, cell, list, names) {
         const v = fit.view, s = fit.s;
         const robotR = ROBOT_PX / s, nodeR = NODE_PX / s, fontS = FONT_PX / s;
         const reduce = reducedMotion();
@@ -478,7 +479,7 @@ export function createRobotMap(opts) {
             const pts = route.map(function (p) { return proj(p[0], p[1]); });
             const color = look.status[r.o.status];
             if (!reduce && !blocked && r.moving && quiet) {
-                const leg = orderLeg(net, r.o, r.rec);
+                const leg = orderLeg(net, r.o, r.rec, names);
                 cometRoutes.push({ pts: pts, color: color, leg: leg, sig: r.o.id + '>' + leg + '>' + r.o.status });
             } else if (blocked || reduce) {
                 lines.push({ key: 'lane:' + r.o.id, kind: 'frozen', pts: pts, color: blocked ? look.idle : color });
@@ -512,17 +513,29 @@ export function createRobotMap(opts) {
         return rec.route;
     }
 
-    // orderLeg is Core's (dashboard-map.js orderLeg). Core trusts the board's
-    // `carrying` first, which neither the view nor the stream carries; the
-    // station's own physical word stands in where it has one: a departed leg
-    // is carrying a bin away from the cell (docs/terminology.md, Departed).
-    // Then Core's inference: carrying once the robot has been at its source,
-    // or while it is nearer its delivery than its source; fetching otherwise.
-    function orderLeg(net, o, r) {
+    // orderLeg is the panel's own, beside Core's (dashboard-map.js orderLeg):
+    // the inputs differ. Core trusts the board's `carrying` (the robot's lift)
+    // first, which neither the view nor the stream carries. The panel reads,
+    // in order:
+    //   - RDS's remaining path, which ends where the robot is going: for an
+    //     order coming to one of this screen's nodes, a path whose last point
+    //     lies within the pickup radius of that node is the carry leg (lead
+    //     ruling on U10, item 1: a robot first seen mid-carry drew hollow);
+    //   - departed, the station's word for a leg carrying a bin away from the
+    //     cell (docs/terminology.md, Departed);
+    //   - then Core's inference: carrying once the robot has been at its
+    //     source, or while it is nearer its delivery than its source;
+    //     fetching otherwise.
+    function orderLeg(net, o, r, names) {
+        const pr = (net && net.scale > 0 ? net.scale : 1) * PICKUP_RADIUS;
+        if (names[o.delivery_node]) {
+            const dst = nodeAt(net, o.delivery_node);
+            const end = r.path && r.path.length ? nodeAt(net, r.path[r.path.length - 1]) : null;
+            if (dst && end && dist2(end, dst) <= pr * pr) return 'carry';
+        }
         if (o.departed) return 'carry';
         const src = nodeAt(net, o.source_node);
         if (!src || picked[o.id]) return 'carry';
-        const pr = (net && net.scale > 0 ? net.scale : 1) * PICKUP_RADIUS;
         const ds = dist2(r, src);
         if (ds <= pr * pr) { picked[o.id] = true; return 'carry'; }
         const dst = nodeAt(net, o.delivery_node);

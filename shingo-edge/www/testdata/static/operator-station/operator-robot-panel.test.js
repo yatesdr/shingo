@@ -559,7 +559,7 @@ function tap(h, under) {
     const comets = h.cometLayer().children;
     eq([comets.length, comets[0].tagName, comets.slice(1).every(c => c.tagName === 'circle')], [10, 'polygon', true],
         'one comet: Core\'s head and nine dots (shared/comet-layer.js)');
-    eq(comets[0].attrs['class'], 'map-comet-head', 'nearer its delivery than its source: the carry leg, solid (Core\'s orderLeg)');
+    eq(comets[0].attrs['class'], 'map-comet-head', 'its path ends at the cell node it brings to: the carry leg, solid');
     // The comet runs along RDS's path from the robot: its first dot is past the
     // robot on the bottom row.
     // At half a lap (display time 3000 ms of a 6000 ms lap) the head is half
@@ -595,7 +595,9 @@ function tap(h, under) {
     const v = cellView({ 2: [order(601, 'in_transit', 'AMR-01', 'SMN_01', { order_type: 'store', source_node: 'PLN_02', eta: '2026-11-14T12:04:00Z' })],
         3: [order(602, 'in_transit', 'AMR-02', 'PLN_03', { sibling_order_id: 601 })] });
     const h = await shownPage(v);
-    await drive(h, [pos(601, 'AMR-01', 40, 22, ['N40_20', 'N30_20'], Math.PI), pos(602, 'AMR-02', 4, 0, PATH_WEST, 0)], 1, 2000);
+    // AMR-02 is still on its way to its source: RDS's path ends at SMN_01.
+    await drive(h, [pos(601, 'AMR-01', 40, 22, ['N40_20', 'N30_20'], Math.PI),
+        pos(602, 'AMR-02', 4, 0, ['N0_0', 'N0_10', 'N0_20', 'N0_30', 'N0_40', 'SMN_01'], 0)], 1, 2000);
     h.vsync(3000);
     eq(robotGroups(h).map(g => g.attrs['data-robot']), ['AMR-01', 'AMR-02'], 'a swap draws both robots');
     const vb = viewBox(h);
@@ -618,6 +620,30 @@ function tap(h, under) {
         await drive(h, [pos(651, 'AMR-05', 20, 20, away, Math.PI)], -1, 2000);
         h.vsync(3000);
         eq(h.cometLayer().children[0].attrs['class'], head, 'a robot leaving the cell, seen first 18 m on: ' + label);
+    }
+}
+
+// ── 5c. A robot coming to the cell, first seen mid-carry (flat bug: it drew a
+// hollow comet). RDS's remaining path ends where the robot is going: at the
+// cell node it brings to, it is carrying, from its first comet; ending away
+// from the cell, the old rule reads it (here fetching: nearer its source).
+{
+    const coming = cellView({ 3: [order(661, 'in_transit', 'AMR-06', 'PLN_03')] });
+    const cases = [
+        [['N10_30', 'N20_30', 'N30_30', 'N40_30', 'N40_20', 'PLN_03'], 'map-comet-head', 'its path ends at PLN_03, the node it brings to: carrying, solid from its first comet'],
+        [['N10_30', 'N0_30', 'N0_40', 'SMN_01'], 'map-comet-head-hollow', 'its path ends at its source, away from the cell: fetching, hollow'],
+    ];
+    for (const [path, head, label] of cases) {
+        const h = await shownPage(coming);
+        // Seen first at (10, 30): 11 m from its source, 31 m from PLN_03, so
+        // Core's inference alone reads it fetching.
+        h.frame(frameOf([pos(661, 'AMR-06', 10, 30, path, 0)]));
+        await h.advance(2000);
+        eq(h.cometLayer() ? h.cometLayer().children.length : 0, 0, 'one position: not seen moving, no comet yet');
+        h.frame(frameOf([pos(661, 'AMR-06', 11, 30, path, 0)]));
+        await h.flush();
+        h.vsync(3000);
+        eq(h.cometLayer().children[0].attrs['class'], head, 'a robot first seen 11 m past its source: ' + label);
     }
 }
 
