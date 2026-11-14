@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/backoff"
+	"shingo/protocol/clock"
 	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingocore/config"
@@ -81,12 +82,16 @@ type Client struct {
 	// in NewClient.
 	openEphemeral func(brokers []string, topic string) ephemeralReader
 	// attemptEphemeral is one create-and-verify of the ephemeral topic
-	// (attemptEphemeral), and ephemeralRetry the wait between attempts while
-	// it does not verify (ephemeralRetryEvery). Fields so a test can stand in
-	// a broker that is silent, then answers, and count the attempts. Set once,
-	// in NewClient.
+	// (attemptEphemeral), ephemeralRetry the wait between attempts while it
+	// does not verify (ephemeralRetryEvery), and ephemeralClock the clock that
+	// wait is timed on: the wall clock (clock.Real), never the sim clock,
+	// because the broker it waits on is real (docs/dev-env/sim.md: Kafka
+	// backoff stays wall). Fields so a test can stand in a broker that is
+	// silent, then answers, count the attempts, and step the waits itself on a
+	// manual clock instead of sleeping through them. Set once, in NewClient.
 	attemptEphemeral func(brokers []string, timeout time.Duration, topic string) error
 	ephemeralRetry   time.Duration
+	ephemeralClock   clock.Clock
 }
 
 type kafkaState struct {
@@ -116,6 +121,7 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 		},
 		attemptEphemeral: attemptEphemeral,
 		ephemeralRetry:   ephemeralRetryEvery,
+		ephemeralClock:   clock.Real(),
 	}
 }
 

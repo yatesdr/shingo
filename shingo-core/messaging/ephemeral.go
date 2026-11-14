@@ -322,12 +322,13 @@ func (c *Client) ensureEphemeral(state *kafkaState, topic string, brokers []stri
 			log.Printf("messaging: ephemeral topic %s not verified (%v): the live robot feed is off; trying again every %s",
 				topic, err, c.ephemeralRetry)
 		}
-		timer := time.NewTimer(c.ephemeralRetry)
+		// The wait is the client's clock's (ephemeralClock: the wall clock in
+		// production). A wait cut short by stop leaves its timer to the
+		// runtime, which frees an unreferenced timer before it fires (Go 1.23+).
 		select {
 		case <-stop:
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-c.ephemeralClock.After(c.ephemeralRetry):
 		}
 	}
 }
