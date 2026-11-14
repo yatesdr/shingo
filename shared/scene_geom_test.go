@@ -22,3 +22,31 @@ func TestSceneGeomAgreesWithTheRecordedVectors(t *testing.T) {
 	}
 	t.Logf("scene-geom agreement: %s", out)
 }
+
+// TestSceneNetRoutesAsTheDesktopDoes runs scene-net.test.js: the scene network
+// and the route model of shared/scene-net.js on the synthetic route scene. The
+// route vectors are the desktop process map's (TestProcessesDesktopRouteJS),
+// with the dead-end destination fixed; the lane list is the order and
+// orientation Core's robot map has always drawn its aisles in.
+func TestSceneNetRoutesAsTheDesktopDoes(t *testing.T) {
+	runSceneJS(t, "scene-net.test.js")
+}
+
+// TestScenePathDrawsRDSPath runs scene-path.test.js: shared/scene-path.js
+// drawing a robot's path along the stored rows (lead decision D6).
+func TestScenePathDrawsRDSPath(t *testing.T) {
+	runSceneJS(t, "scene-path.test.js")
+}
+
+func runSceneJS(t *testing.T, script string) {
+	t.Helper()
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skipf("node not on PATH; skipping %s", script)
+	}
+	out, err := exec.Command(nodePath, filepath.Join("testdata", "js", script)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s failed:\n%s\nerror: %v", script, out, err)
+	}
+	t.Logf("%s: %s", script, out)
+}
