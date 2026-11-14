@@ -192,6 +192,10 @@ body {
 /* PULL FULL FROM HOME — the loader's buffer-chain header action. Teal so it reads
    as a loader/logistics action, distinct from CHANGEOVER (orange) / CUTOVER (green). */
 .os-header-btn.pull-full-home { background: #1f6b5a; color: #fff; }
+/* AUTO-REORDER ON/OFF — the line's switch, where Processes shows it. Off is
+   amber, the tile chip's colour: the line asks for nothing on its own. */
+.os-header-btn.auto-reorder { background: #2d4060; }
+.os-header-btn.auto-reorder.off { background: #ffd98a; color: #1a1204; }
 
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */

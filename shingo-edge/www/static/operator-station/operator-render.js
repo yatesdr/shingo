@@ -136,7 +136,7 @@ export function renderHeader() {
     if (view.auto_reorder_switch) {
         const on = !!view.auto_reorder_switch.on;
         headerActions.appendChild(headerBtn(on ? 'AUTO-REORDER: ON' : 'AUTO-REORDER: OFF',
-            'auto-reorder', () => confirmAutoReorderFlip(!on)));
+            'auto-reorder' + (on ? '' : ' off'), () => confirmAutoReorderFlip(!on)));
     }
 
     headerActions.appendChild(headerBtn('REFRESH', 'refresh', loadViewRef));
@@ -1006,7 +1006,8 @@ function createNodeButton(entry) {
     // The position's automatic ask is held: paused after a cancel, off after
     // the line went idle, switched off by a person, or a count that cannot be
     // the claim's. Amber like the keeper's
-    // chip, under it when both show; the sentence is the server's
+    // chip, below the tile's name (and the keeper's chip); the sentence is the
+    // server's
     // (auto_reorder_note), shown on hover. Informational: REQUEST asks as ever.
     if (entry.auto_reorder_note) {
         const words = {
@@ -1019,9 +1020,8 @@ function createNodeButton(entry) {
             className: 'os-node-alarm',
             textContent: words[entry.auto_reorder_hold] || 'AUTO-REORDER HELD',
         });
-        ar.style.cssText = 'position:absolute;left:4px;font-size:11px;' +
-            'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a;' +
-            'top:' + (entry.keep_staged_note ? '26px' : '4px');
+        ar.style.cssText = 'position:absolute;left:4px;top:32px;font-size:11px;' +
+            'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a';
         ar.title = entry.auto_reorder_note;
         btn.appendChild(ar);
     }
