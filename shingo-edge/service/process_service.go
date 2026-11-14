@@ -268,11 +268,57 @@ func (s *ProcessService) RoutingSet(processID int64) ([]domain.RoutingNode, erro
 	return s.db.RoutingSet(processID)
 }
 
-// PutRoutingNodes writes a whole list of (name, role) rows in the order given,
-// adopting rows that already exist and never deleting one the list omits. The
-// rule and its reasons live with the write: store.DB.PutRoutingNodes.
-func (s *ProcessService) PutRoutingNodes(kinds domain.CoreNodeKinds, processID int64, rows []domain.RoutingNodeInput, calledBy string) error {
-	return s.db.PutRoutingNodes(kinds, processID, rows, calledBy)
+// PutRoutingNodes is the routing set's one write: rows added or adopted and
+// remove taken out (by name and role), all of it or none of it
+// (store.DB.PutRoutingNodes). It returns what each removal orphans, as the
+// single-row DeleteRoutingNode does: a warning, never a refusal.
+//
+// THE WARNINGS READ AS IF THE REMOVALS RAN ONE BY ONE, in the order given,
+// which is what the sheet's one DELETE per name used to say: each removal's
+// recipes are the ones it orphans on the set the removals before it left.
+func (s *ProcessService) PutRoutingNodes(kinds domain.CoreNodeKinds, processID int64, rows, remove []domain.RoutingNodeInput, calledBy string) ([]domain.RoutingRemoval, error) {
+	if len(remove) == 0 {
+		_, err := s.db.PutRoutingNodes(kinds, processID, rows, nil, calledBy)
+		return nil, err
+	}
+	presets, err := s.db.ListFlowPresets(processID, false)
+	if err != nil {
+		return nil, err
+	}
+	positions, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	before, err := s.db.ListRoutingNodes(processID)
+	if err != nil {
+		return nil, err
+	}
+	gone, err := s.db.PutRoutingNodes(kinds, processID, rows, remove, calledBy)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.RoutingRemoval, 0, len(gone))
+	cur := before
+	for _, g := range gone {
+		next := make([]domain.RoutingNode, 0, len(cur))
+		for _, r := range cur {
+			if r.CoreNodeName != g.Name || r.Role != g.Role {
+				next = append(next, r)
+			}
+		}
+		recipes := domain.RecipeOrphans(presets, positions, positions, cur, next)
+		if recipes == nil {
+			recipes = []string{}
+		}
+		styles := g.Styles
+		if styles == nil {
+			styles = []string{}
+		}
+		out = append(out, domain.RoutingRemoval{Recipes: recipes, Styles: styles,
+			Warning: domain.RoutingRemovalWarning(g.Name, g.Role, recipes, styles)})
+		cur = next
+	}
+	return out, nil
 }
 
 // ── The process part set ────────────────────────────────────────────

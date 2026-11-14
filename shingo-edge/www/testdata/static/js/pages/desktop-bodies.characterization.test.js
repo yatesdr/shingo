@@ -124,6 +124,10 @@ check('processCreate: the defaults are decisions, spelled',
     B.processCreate({ name: 'Press 2', description: '', group_id: 0 }),
     { name: 'Press 2', description: '', counter_plc_name: '', counter_tag_name: '', counter_enabled: false, changeover_auto_arm: 'auto', group_id: null });
 
+check('routingSet: the names taken out ride the same write, name and role',
+    B.routingSet([{ core_node_name: 'SMN_010', role: 'source' }], [{ core_node_name: 'DN_001', role: 'destination', id: 9 }]),
+    { nodes: [{ core_node_name: 'SMN_010', role: 'source' }], remove: [{ core_node_name: 'DN_001', role: 'destination' }] });
+
 check('routingSet: the list order is the sequence, and the body does not number it',
     B.routingSet([
         { core_node_name: 'SMN_010', role: 'source' },

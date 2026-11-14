@@ -163,10 +163,11 @@ func TestSetNodes_DropsARoutingRowThatBecomesAPosition(t *testing.T) {
 	testutil.MustNoErr(t, err, "CreateProcess")
 	id, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "Screen R"})
 	testutil.MustNoErr(t, err, "CreateOperatorStation")
-	testutil.MustNoErr(t, db.PutRoutingNodes(domain.CoreNodeKinds{}, pid, []domain.RoutingNodeInput{
+	_, err = db.PutRoutingNodes(domain.CoreNodeKinds{}, pid, []domain.RoutingNodeInput{
 		{CoreNodeName: "PLN_02", Role: domain.RoutingRoleStaging},
 		{CoreNodeName: "STG_KEEP", Role: domain.RoutingRoleStaging},
-	}, "eng"), "PutRoutingNodes")
+	}, nil, "eng")
+	testutil.MustNoErr(t, err, "PutRoutingNodes")
 
 	if _, err := svc.SetNodes(id, []string{"PLN_01", "PLN_02"}); err != nil {
 		t.Fatalf("SetNodes: %v", err)

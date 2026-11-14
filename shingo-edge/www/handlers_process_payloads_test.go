@@ -195,3 +195,71 @@ func TestProcessRoutingNodes_PutRefusesAPositionByName(t *testing.T) {
 		t.Error("the refusal carries no sentence")
 	}
 }
+
+// THE NAMES TAKEN OUT RIDE THE SAME WRITE (the Edit sheet's one PUT): they go
+// in the transaction that adds the rest, each answered with what it orphans as
+// the single-row DELETE answers it, and a body refused anywhere takes nothing
+// out.
+func TestProcessRoutingNodes_PutTakesOutWhatItNamesInTheSameWrite(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	pid := payloadProcess(t, db, "ROUTING-PUT-OUT")
+	for _, r := range []domain.RoutingNodeInput{
+		{ProcessID: pid, CoreNodeName: "RS-SRC", Role: domain.RoutingRoleSource, Enabled: true},
+		{ProcessID: pid, CoreNodeName: "RS-GONE", Role: domain.RoutingRoleDestination, Enabled: true},
+	} {
+		if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, r); err != nil {
+			t.Fatalf("seed %s: %v", r.CoreNodeName, err)
+		}
+	}
+	sid, err := db.CreateStyle("STYLE-OUT", "", pid)
+	if err != nil {
+		t.Fatalf("style: %v", err)
+	}
+	if _, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, domain.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "PY_01", Role: "produce", SwapMode: "sequential", PayloadCode: "PART-OUT",
+		InboundSource: "RS-SRC", OutboundDestination: "RS-GONE",
+	}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	names := func() map[string]bool {
+		t.Helper()
+		rows, err := db.ListRoutingNodes(pid)
+		if err != nil {
+			t.Fatalf("ListRoutingNodes: %v", err)
+		}
+		out := map[string]bool{}
+		for _, r := range rows {
+			out[r.CoreNodeName] = true
+		}
+		return out
+	}
+	put := func(nodes []map[string]any) *http.Response {
+		return doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/routing-nodes", map[string]any{
+			"nodes":  nodes,
+			"remove": []map[string]any{{"core_node_name": "RS-GONE", "role": "destination"}},
+		}, cookie)
+	}
+
+	// Refused at a position: RS-GONE stays, and RS-NEW never lands.
+	resp := put([]map[string]any{{"core_node_name": "RS-NEW", "role": "destination"}, {"core_node_name": "PY_01", "role": "staging"}})
+	assertStatus(t, resp, http.StatusConflict)
+	if got := names(); !got["RS-GONE"] || got["RS-NEW"] {
+		t.Errorf("a refused body changed the set: %v", got)
+	}
+
+	resp = put([]map[string]any{{"core_node_name": "RS-NEW", "role": "destination"}})
+	assertStatus(t, resp, http.StatusOK)
+	if got := names(); got["RS-GONE"] || !got["RS-NEW"] || !got["RS-SRC"] {
+		t.Errorf("after the write the set is %v, want RS-SRC and RS-NEW", got)
+	}
+	warnings, _ := decodeBody(t, resp)["warnings"].([]any)
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want the one removal's", warnings)
+	}
+	if w, _ := warnings[0].(string); w != `Removed RS-GONE. Styles still routing through it (1): "STYLE-OUT".` {
+		t.Errorf("the removal's warning reads %q", w)
+	}
+}

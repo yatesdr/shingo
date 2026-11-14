@@ -8106,21 +8106,6 @@ async function submitEditProcess() {
 
     const sel = S.sets[PROC_SET].sel;
     if (S.add.station) e.lists[S.add.station] = sel.positions.slice();
-    if (e.routingRead) {
-        for (const g of ROUTING_GROUPS) {
-            for (const nm of before.routing[g[0]].slice()) {
-                if (sel[g[0]].indexOf(nm) >= 0) continue;
-                const have = (S.routing || []).find(r => r.core_node_name === nm && r.role === g[0]);
-                if (have) {
-                    const out = await send('DELETE', '/api/processes/' + p.id + '/routing-nodes/' + have.id, null, NO_NOTICE);
-                    if (!out.ok) { stop('Taking ' + nm + ' out of ' + g[1], out); return; }
-                    if (bodyOf(out).warning) said_.push(bodyOf(out).warning);
-                }
-                before.routing[g[0]] = before.routing[g[0]].filter(x => x !== nm);
-                done.push(nm + ' taken out of ' + g[1]);
-            }
-        }
-    }
 
     for (const st of e.screens) {
         const want = B().stationNodes(e.lists[st.id] || []).nodes;
@@ -8142,9 +8127,22 @@ async function submitEditProcess() {
         const now = {};
         for (const g of ROUTING_GROUPS) now[g[0]] = sel[g[0]].slice();
         if (JSON.stringify(now) !== JSON.stringify(before.routing)) {
+            // ONE WRITE FOR THE WHOLE SET: the names taken out ride with the
+            // names kept and added, and the server writes them in one
+            // transaction, all or nothing. After the screens' positions, which
+            // take a name that became a position out of the set themselves (a
+            // removal of a row already gone is nothing to do), so a name moving
+            // from a position into the set is not refused as still a position.
+            const remove = [];
+            for (const g of ROUTING_GROUPS) {
+                for (const nm of before.routing[g[0]]) {
+                    if (sel[g[0]].indexOf(nm) < 0) remove.push({ core_node_name: nm, role: g[0] });
+                }
+            }
             const out = await send('PUT', '/api/processes/' + p.id + '/routing-nodes',
-                B().routingSet(setRoutingRows(PROC_SET)), NO_NOTICE);
+                B().routingSet(setRoutingRows(PROC_SET), remove), NO_NOTICE);
             if (!out.ok) { stop('Its routing set', out); return; }
+            for (const w of (bodyOf(out).warnings || [])) said_.push(w);
             before.routing = now;
             done.push('its routing set written');
             said_.push('The routing set was saved.');
