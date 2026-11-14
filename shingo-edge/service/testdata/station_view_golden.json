@@ -26,7 +26,8 @@
     "identity_none": false,
     "changeover_auto_arm": "auto",
     "flow_composer_enabled": false,
-    "created_at": "<ts>"
+    "created_at": "<ts>",
+    "auto_reorder_switch_hmi": false
   },
   "active_changeover": {
     "id": 1,

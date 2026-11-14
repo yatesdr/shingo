@@ -10,7 +10,8 @@
   7  GET /api/processes/1/catid-health
   8  GET /api/plcs
   9  GET /api/processes/1/presets
- 10  GET /api/core-nodes
+ 10  GET /api/processes/1/auto-reorder
+ 11  GET /api/core-nodes
 -- sheet closed
 
 ## the screens tab clicked
@@ -26,7 +27,8 @@
   7  GET /api/processes/1/catid-health
   8  GET /api/plcs
   9  GET /api/processes/1/presets
- 10  GET /api/core-nodes
+ 10  GET /api/processes/1/auto-reorder
+ 11  GET /api/core-nodes
 -- sheet closed
 
 ## window focus on the Styles tab (refreshRail)

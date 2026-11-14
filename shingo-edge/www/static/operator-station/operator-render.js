@@ -130,7 +130,45 @@ export function renderHeader() {
         }
     }
 
+    // The line's auto-reorder switch, where Processes shows it on the station
+    // (view.auto_reorder_switch). The server refuses turning it on without a
+    // readable counter and says why.
+    if (view.auto_reorder_switch) {
+        const on = !!view.auto_reorder_switch.on;
+        headerActions.appendChild(headerBtn(on ? 'AUTO-REORDER: ON' : 'AUTO-REORDER: OFF',
+            'auto-reorder', () => confirmAutoReorderFlip(!on)));
+    }
+
     headerActions.appendChild(headerBtn('REFRESH', 'refresh', loadViewRef));
+}
+
+// confirmAutoReorderFlip asks before switching the line's auto-reorder: off
+// stops every automatic ask at the line until someone turns it back on here or
+// in Processes; on lets them start again.
+function confirmAutoReorderFlip(turnOn) {
+    const view = getView();
+    const sid = view.station.id;
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title',
+        textContent: (turnOn ? 'Turn auto-reorder on for ' : 'Turn auto-reorder off for ') + view.process.name + '?' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: turnOn ? 'Positions ask for material on their own again.'
+            : 'No position asks for material on its own until someone turns it back on. REQUEST still asks.' }));
+    const confirm = el('button', { className: 'os-co-picker-btn' + (turnOn ? '' : ' danger'),
+        textContent: turnOn ? 'TURN ON' : 'TURN OFF' });
+    confirm.addEventListener('click', async () => {
+        overlay.remove();
+        const ok = await postAction('/api/operator-stations/' + sid + '/auto-reorder', { on: turnOn }, loadViewRef);
+        if (ok) showToast('Auto-reorder ' + (turnOn ? 'on' : 'off'), 'success');
+    });
+    panel.appendChild(confirm);
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    showOverlay(overlay);
 }
 
 // CHANGEOVER OPENS THE PICK-A-PART MODAL on every station (pick-a-part U4):

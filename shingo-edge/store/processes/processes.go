@@ -43,7 +43,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var createdAt string
 	var groupID sql.NullInt64
 	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled,
-		&p.IdentityTagName, &p.IdentityNone, &p.IdentityWarlinkManaged, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
+		&p.IdentityTagName, &p.IdentityNone, &p.IdentityWarlinkManaged, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt, &p.AutoReorderSwitchHMI); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
@@ -55,7 +55,8 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 }
 
 const processSelect = `id, name, description, active_style_id, target_style_id, counter_plc_name, counter_tag_name, counter_enabled,
-	identity_tag_name, identity_none, identity_warlink_managed, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
+	identity_tag_name, identity_none, identity_warlink_managed, changeover_auto_arm, group_id, flow_composer_enabled, created_at,
+	auto_reorder_switch_hmi`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {

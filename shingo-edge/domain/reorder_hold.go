@@ -169,3 +169,42 @@ func countHeld(c *NodeClaim, count int) ReorderHeld {
 func clockTime(t time.Time) string {
 	return t.Local().Format("15:04")
 }
+
+// AutoReorderFlip is one flip of a line's auto-reorder switch, as
+// auto_reorder_flips records it: which way, who, from where (Processes or the
+// station), and when (the engine's clock).
+type AutoReorderFlip struct {
+	ID        int64     `json:"id"`
+	ProcessID int64     `json:"process_id"`
+	TurnedOn  bool      `json:"turned_on"`
+	By        string    `json:"by"`
+	Source    string    `json:"source"`
+	At        time.Time `json:"at"`
+}
+
+// Where a flip of the switch came from (AutoReorderFlip.Source).
+const (
+	FlipFromProcesses = "processes"
+	FlipFromStation   = "station"
+)
+
+// SwitchedOffOnTiles reports whether a person has switched auto-reorder off
+// at any of a board's positions, from the runtime rows its tiles hold.
+func SwitchedOffOnTiles(tiles []StationNodeView) bool {
+	for _, t := range tiles {
+		if t.Runtime != nil && t.Runtime.ReorderHold == ReorderHoldPersonOff {
+			return true
+		}
+	}
+	return false
+}
+
+// AutoReorderSwitch is a line's switch as Processes shows it: whether the
+// station shows it, how many of the line's positions a person has switched off
+// of how many, and the last flips.
+type AutoReorderSwitch struct {
+	ShownOnStation bool              `json:"shown_on_station"`
+	Positions      int               `json:"positions"`
+	SwitchedOff    int               `json:"switched_off"`
+	Flips          []AutoReorderFlip `json:"flips"`
+}

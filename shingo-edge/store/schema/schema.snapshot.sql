@@ -1,3 +1,5 @@
+CREATE INDEX idx_auto_reorder_flips_process ON auto_reorder_flips(process_id, id DESC);
+
 CREATE UNIQUE INDEX idx_catid_holds_open
     ON catid_holds(process_id, catid, process_node_id, payload_code, last_bin_id, last_left_at) WHERE resolved_at IS NULL;
 
@@ -53,6 +55,15 @@ CREATE TABLE admin_users (
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE auto_reorder_flips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id  INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    turned_on   INTEGER NOT NULL,
+    by          TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    at          TEXT NOT NULL
 );
 
 CREATE TABLE bin_returns (
@@ -749,7 +760,12 @@ CREATE TABLE processes (
     -- process_routing_nodes below; the backfill re-derives only while it is
     -- off, so a reviewed set is never silently re-seeded.
     flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    -- auto_reorder_switch_hmi: the station board shows this line's
+    -- auto-reorder switch (engine FlipAutoReorder from the station). Off
+    -- until an engineer allows it in Processes. After created_at, where the
+    -- v52 ALTER puts it.
+    auto_reorder_switch_hmi INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE production_tick_cursor (

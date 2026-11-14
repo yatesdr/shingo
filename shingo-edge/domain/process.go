@@ -84,6 +84,10 @@ type Process struct {
 	// Add-process does not turn it on.
 	FlowComposerEnabled bool      `json:"flow_composer_enabled"`
 	CreatedAt           time.Time `json:"created_at"`
+	// AutoReorderSwitchHMI: the station board shows this line's auto-reorder
+	// switch (engine FlipAutoReorder from the station refuses without it). An
+	// engineer allows it in Processes; off on every process until then.
+	AutoReorderSwitchHMI bool `json:"auto_reorder_switch_hmi"`
 }
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.

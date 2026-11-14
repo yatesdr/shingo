@@ -1934,11 +1934,12 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 <!-- generated: shingo-edge/store/schema/schema.snapshot.sql -->
 
-44 tables.
+45 tables.
 
 | Table | Columns | Primary key | References |
 |---|---|---|---|
 | [`admin_users`](#edge-admin_users) | 4 | `id` |  |
+| [`auto_reorder_flips`](#edge-auto_reorder_flips) | 6 | `id` | [`processes`](#edge-processes) |
 | [`bin_returns`](#edge-bin_returns) | 7 | `order_uuid` |  |
 | [`catid_holds`](#edge-catid_holds) | 16 | `id` |  |
 | [`changeover_node_tasks`](#edge-changeover_node_tasks) | 11 | `id` | [`orders`](#edge-orders), [`process_changeovers`](#edge-process_changeovers), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
@@ -1968,7 +1969,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`process_nodes`](#edge-process_nodes) | 16 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
 | [`process_payloads`](#edge-process_payloads) | 4 | `id` | [`processes`](#edge-processes) |
 | [`process_routing_nodes`](#edge-process_routing_nodes) | 10 | `id` | [`processes`](#edge-processes) |
-| [`processes`](#edge-processes) | 15 | `id` | [`process_groups`](#edge-process_groups), [`styles`](#edge-styles) |
+| [`processes`](#edge-processes) | 16 | `id` | [`process_groups`](#edge-process_groups), [`styles`](#edge-styles) |
 | [`production_tick_cursor`](#edge-production_tick_cursor) | 3 | `id` |  |
 | [`release_paperwork`](#edge-release_paperwork) | 4 | `order_id`, `kind` |  |
 | [`reporting_points`](#edge-reporting_points) | 8 | `id` | [`styles`](#edge-styles) |
@@ -1991,6 +1992,17 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `username` | `TEXT` | yes |  | unique |
 | `password_hash` | `TEXT` | yes |  |  |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |
+
+#### Edge: `auto_reorder_flips`
+
+| Column | Type | Not null | Default | Key |
+|---|---|---|---|---|
+| `id` | `INTEGER` | yes |  | PK autoincrement |
+| `process_id` | `INTEGER` | yes |  | → `processes(id) ON DELETE CASCADE` |
+| `turned_on` | `INTEGER` | yes |  |  |
+| `by` | `TEXT` | yes |  |  |
+| `source` | `TEXT` | yes |  |  |
+| `at` | `TEXT` | yes |  |  |
 
 #### Edge: `bin_returns`
 
@@ -2510,6 +2522,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `group_id` | `INTEGER` |  |  | → `process_groups(id) ON DELETE SET NULL` |  |
 | `flow_composer_enabled` | `INTEGER` | yes | `0` |  | flow_composer_enabled gates the HMI flow composer for this process. OFF until the engineer has reviewed the routing set derived into process_routing_nodes below; the backfill re-derives only while it is off, so a reviewed set is never silently re-seeded. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
+| `auto_reorder_switch_hmi` | `INTEGER` | yes | `0` |  | auto_reorder_switch_hmi: the station board shows this line's auto-reorder switch (engine FlipAutoReorder from the station). Off until an engineer allows it in Processes. After created_at, where the v52 ALTER puts it. |
 
 #### Edge: `production_tick_cursor`
 

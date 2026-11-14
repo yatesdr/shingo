@@ -76,4 +76,5 @@
   7  GET /api/processes/1/counting-slots
   8  GET /api/processes/1/catid-health
   9  GET /api/processes/1/presets
+ 10  GET /api/processes/1/auto-reorder
 -- sheet closed

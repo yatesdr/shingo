@@ -210,7 +210,8 @@ func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, disp engine.Release
 	s.lastReleaseOrderDisposition = &d
 	return s.orderMgr.ReleaseOrder(orderID, nil, "", nil)
 }
-func (s *stubEngine) ResumeKeepStaged(int64) error { return nil }
+func (s *stubEngine) ResumeKeepStaged(int64) error                      { return nil }
+func (s *stubEngine) FlipAutoReorder(int64, bool, string, string) error { return nil }
 func (s *stubEngine) SendBack(int64) (*engine.SendBackResult, error) {
 	return &engine.SendBackResult{}, nil
 }

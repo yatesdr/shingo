@@ -54,7 +54,12 @@ CREATE TABLE IF NOT EXISTS processes (
     -- process_routing_nodes below; the backfill re-derives only while it is
     -- off, so a reviewed set is never silently re-seeded.
     flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    -- auto_reorder_switch_hmi: the station board shows this line's
+    -- auto-reorder switch (engine FlipAutoReorder from the station). Off
+    -- until an engineer allows it in Processes. After created_at, where the
+    -- v52 ALTER puts it.
+    auto_reorder_switch_hmi INTEGER NOT NULL DEFAULT 0
 );
 
 -- deleted_at is a SOFT DELETE, and it is a foreign-key decision before it is

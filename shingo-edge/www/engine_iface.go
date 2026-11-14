@@ -131,6 +131,7 @@ type EngineOrchestration interface {
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ResumeKeepStaged(nodeID int64) error
+	FlipAutoReorder(processID int64, on bool, by, source string) error
 	SendBack(nodeID int64) (*engine.SendBackResult, error)
 	CancelSendBack(nodeID int64) (int, error)
 	ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)

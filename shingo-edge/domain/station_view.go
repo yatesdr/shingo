@@ -302,6 +302,11 @@ type OperatorStationView struct {
 	ActiveChangeover *Changeover       `json:"active_changeover,omitempty"`
 	StationTask      *StationTask      `json:"station_task,omitempty"`
 	Nodes            []StationNodeView `json:"nodes"`
+	// AutoReorderSwitch is the line's auto-reorder switch as the board's
+	// header draws it: nil unless Processes shows it on the station
+	// (Process.AutoReorderSwitchHMI). The board posts its flip to
+	// /operator-stations/{id}/auto-reorder.
+	AutoReorderSwitch *StationAutoReorderSwitch `json:"auto_reorder_switch,omitempty"`
 	// CellVersion is the cell picture's version, and the picture itself is NOT
 	// here (owner ruling 4, 2026-09-17: "maps don't change often, especially
 	// near process nodes… why is this info flying over the wire so much?").
@@ -731,4 +736,11 @@ func (v StationNodeView) MarshalJSON() ([]byte, error) {
 type ReleasePurpose struct {
 	Purpose string `json:"purpose"`
 	Ready   bool   `json:"ready"`
+}
+
+// StationAutoReorderSwitch is the switch on the board: On is false when a
+// person has switched the line's auto-reorder off at any of the board's
+// positions (SwitchedOffOnTiles).
+type StationAutoReorderSwitch struct {
+	On bool `json:"on"`
 }

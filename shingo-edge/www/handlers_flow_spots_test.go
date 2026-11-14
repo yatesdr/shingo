@@ -58,7 +58,7 @@ type press6 struct {
 func newPress6(t *testing.T) press6 {
 	t.Helper()
 	db := testdb.Open(t)
-	pid, err := db.CreateProcess("Press 6", "press 6", "", "", false)
+	pid, err := db.CreateProcess("Press 6", "press 6", "PRESS6", "PRESS6_COUNT", true) // a counter: its recipes arm auto-reorder
 	must(t, err, "process")
 	f := press6{db: db, processID: pid, nodes: map[string]int64{}}
 	f.station, err = db.CreateOperatorStation(stations.Input{ProcessID: pid, Code: "press-6", Name: "Press 6 Operator Screen", Enabled: true})

@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v50–v51. Core has no migration; the two go in either order.
+Deploy: Edge v50–v52. Core has no migration; the two go in either order.
 
 - A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
 - A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
@@ -29,6 +29,10 @@ Deploy: Edge v50–v51. Core has no migration; the two go in either order.
 - That off ends when the line counts a part after the stop, or on REQUEST
 - A cancel the Edge sends no longer expires on its way to Core
 - The hour is `demand.idle_cancel_after` in the Edge config
+- Processes Settings has an Auto-reorder card: switch a line's auto-reorder off or on, and choose whether its station shows the switch
+- The station board shows AUTO-REORDER ON/OFF where Processes allows it; every flip is listed with who, where and when
+- Auto-reorder cannot be turned on at a line with no counter, or one whose counter cannot be read now
+- A Processes save that turns auto-reorder on at a line with no counter is refused and says why
 
 ## v0.7.0 — 2026-11-13
 

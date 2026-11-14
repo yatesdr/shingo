@@ -292,6 +292,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// The cell picture, fetched when the version on the view stops
 			// matching the one the page holds. See apiStationCellPicture.
 			r.Get("/operator-stations/{id}/cell", h.apiStationCellPicture)
+			// The line's auto-reorder switch from the board, where Processes
+			// shows it there (handlers_auto_reorder.go). Shop floor: no login.
+			r.Post("/operator-stations/{id}/auto-reorder", h.apiStationFlipAutoReorder)
 
 			// Process node operations (material request, release, produce, bin ops)
 			r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
@@ -450,6 +453,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// clears the containment destination on the process's produce
 				// claims (the claims stay the storage; the divert reads them).
 				r.Post("/processes/{id}/containment-setting", h.apiProcessContainmentSetting)
+				// The line's auto-reorder switch: the read, the flip, and
+				// whether the station shows it (handlers_auto_reorder.go).
+				r.Get("/processes/{id}/auto-reorder", h.apiGetAutoReorderSwitch)
+				r.Post("/processes/{id}/auto-reorder", h.apiFlipAutoReorder)
+				r.Post("/processes/{id}/auto-reorder-station", h.apiSetAutoReorderSwitchHMI)
 
 				// Routing set — the nodes a process may route through that are
 				// not its positions (handlers_routing_nodes.go).

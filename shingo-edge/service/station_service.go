@@ -744,6 +744,12 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		view.Nodes = append(view.Nodes, tile)
 	}
 
+	// The line's auto-reorder switch, where Processes shows it on the station:
+	// on unless a person has switched it off at one of this board's positions,
+	// read from the runtime rows the tiles already hold.
+	if process.AutoReorderSwitchHMI {
+		view.AutoReorderSwitch = &domain.StationAutoReorderSwitch{On: !domain.SwitchedOffOnTiles(view.Nodes)}
+	}
 	view.Serves = s.servedRows(view.Nodes)
 	view.Family = s.familiesForBoard(view.Nodes)
 	// After the served pass: it stamps a stage 2's partial and full parts.

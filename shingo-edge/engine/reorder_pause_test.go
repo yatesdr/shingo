@@ -181,6 +181,9 @@ func TestGo_TurningAutoReorderOnInProcesses(t *testing.T) {
 	testutil.MustNoErr(t, err, "read the node")
 	_, err = db.DB.Exec(`UPDATE style_node_claims SET auto_reorder=0 WHERE id=?`, claimID)
 	testutil.MustNoErr(t, err, "turn the claim off")
+	// Arming needs the line's counter (TestArming_ProcessesRefusesTurningItOnWithNoCounter).
+	_, err = db.DB.Exec(`UPDATE processes SET counter_plc_name='PLC1', counter_tag_name='COUNT', counter_enabled=1 WHERE id=?`, node.ProcessID)
+	testutil.MustNoErr(t, err, "give the line a counter")
 
 	save := func(on bool) {
 		t.Helper()
