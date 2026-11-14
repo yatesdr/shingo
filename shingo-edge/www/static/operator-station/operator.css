@@ -192,6 +192,11 @@ body {
 /* PULL FULL FROM HOME — the loader's buffer-chain header action. Teal so it reads
    as a loader/logistics action, distinct from CHANGEOVER (orange) / CUTOVER (green). */
 .os-header-btn.pull-full-home { background: #1f6b5a; color: #fff; }
+/* ROBOTS — the robot panel's toggle (operator-robot-panel.js). A toggle, not an
+   act: no fill of its own; on, its outline is the accent (an active UI state);
+   off, the outline recedes and the word dims. */
+.os-header-btn.robots { background: var(--os-surface); border: 2px solid var(--os-accent); }
+.os-header-btn.robots[aria-pressed="false"] { border-color: var(--os-border); color: var(--os-text-muted); }
 
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */
@@ -1793,3 +1798,95 @@ body.os-pc-active #os-footer { display: none; }
     border-color: var(--accent-solid);
     color: var(--on-accent-solid);
 }
+
+/* ===== The robot panel (operator-robot-panel.js, operator-robot-map.js) =====
+   This screen's robots on the plant map, bottom right over the board: fixed
+   page furniture on the chrome rung, under the modals, the toasts and the flow
+   panel. 360 px wide, the map 216 tall (5:3), then one 24 px line per two
+   robots: on a 1280 x 800 screen it covers under a third of the board's width
+   and, with one or two robots, about a third of its height; on the 1024-wide
+   kiosk fit it stays inside the grid with twelve robots. The whole panel is
+   one tap target (a tap hides it), far past --os-touch-min.
+
+   THE MAP IS CORE'S LOOK. The rules below for the shared scene classes
+   (shared/scene-view.js, shared/comet-layer.js) copy the robot map's
+   (shingo-core/www/static/dashboard.css), scoped to the panel: colours,
+   opacity and the two pulses; sizes are set in user units by the script.
+   Do not set `fill` here on a class the script fills: a CSS fill beats the
+   presentation attribute. */
+.os-robot-panel {
+    position: fixed;
+    right: var(--sp-3);
+    bottom: calc(var(--os-footer-h) + var(--sp-3));
+    width: 360px;
+    z-index: var(--z-chrome);
+    background: var(--map-floor);
+    border: 1px solid var(--os-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.os-robot-panel[hidden] { display: none; }
+.os-rp-map { position: relative; height: 216px; }
+.os-rp-scene { position: absolute; inset: 0; }
+.os-robot-panel .map-svg { width: 100%; height: 100%; display: block; background: var(--map-floor); }
+.os-robot-panel .map-grid { stroke: rgba(255, 255, 255, 0.05); }
+.os-robot-panel .map-aisle { stroke: var(--map-aisle); stroke-linecap: round; stroke-opacity: 0.82; }
+.os-robot-panel .map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.os-robot-panel .map-comet-head { stroke: none; }
+.os-robot-panel .map-comet-head-hollow { fill: none; }
+.os-robot-panel .map-route-frozen { stroke-linecap: round; stroke-linejoin: round; }
+.os-robot-panel .map-robot-halo { opacity: 0.16; animation: map-halo 2.6s ease-in-out infinite; }
+@keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
+.os-robot-panel .map-robot { stroke: rgba(255, 255, 255, 0.55); }
+/* A robot whose position is lost: the faded disc. */
+.os-robot-panel .map-robot.is-offline { opacity: 0.55; }
+.os-robot-panel .map-robot-core { fill: #070a0f; }
+.os-robot-panel .map-chip-leader { stroke: rgba(255, 255, 255, 0.18); }
+.os-robot-panel .map-chip { fill: rgba(7, 10, 15, 0.9); stroke-opacity: 0.7; }
+.os-robot-panel .map-robot-label {
+    fill: #dbe4ee;
+    text-anchor: middle;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.os-robot-panel .map-robot-fault-flare { animation: map-fault-flare 1.1s ease-in-out infinite; }
+@keyframes map-fault-flare { 0%, 100% { opacity: 0.30; } 50% { opacity: 0.65; } }
+/* Core silences the halo's pulse under reduced motion and leaves the fault
+   flare (an open owner question, LEAD-NOTES open item 3); so does the panel. */
+@media (prefers-reduced-motion: reduce) { .os-robot-panel .map-robot-halo { animation: none; } }
+
+/* One row per robot: its status dot, its id, its words (the ETA, Arrived, a
+   fault's word, or Position lost). Two to a line. */
+.os-rp-rows {
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--sp-2);
+    padding: var(--sp-1) var(--sp-2);
+    border-top: 1px solid var(--os-border);
+    background: var(--os-surface);
+    font-size: var(--font-sm);
+}
+.os-rp-rows:empty { display: none; }
+.os-rp-row { display: flex; align-items: center; gap: var(--sp-2); height: 24px; min-width: 0; white-space: nowrap; }
+.os-rp-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--map-robot-idle); }
+.os-rp-dot--dispatched { background: var(--status-dispatched-dot); }
+.os-rp-dot--in_transit { background: var(--status-in-transit-dot); }
+.os-rp-dot--staged { background: var(--status-staged-dot); }
+.os-rp-dot--faulted { background: var(--status-blocked-dot); }
+.os-rp-id {
+    flex: 0 1 auto;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-weight: var(--fw-bold);
+    color: var(--os-text);
+}
+.os-rp-words { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--os-text-muted); }
+.os-rp-row.is-lost .os-rp-dot { opacity: 0.55; }
+.os-rp-row.is-lost .os-rp-words { color: var(--status-faulted-ink); }

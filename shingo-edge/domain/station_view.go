@@ -615,7 +615,7 @@ type stationBinState struct {
 }
 
 // stationOrder is a tile's order as the station's JSON carries it: the keys
-// the glass reads and no other, but robot_id, which the robot panel reads
+// the glass reads and no other, robot_id among them for the robot panel
 // (domain.Order has some forty; the board polls every tile's orders, which is
 // why robot_id is omitted while empty). The Go tile keeps the whole Order for the engine and
 // the Production page's template. Pinned by
@@ -642,8 +642,9 @@ type stationOrder struct {
 	// a faulted order as "ROBOT IN TRANSIT" for the whole grace window.
 	FaultLine string `json:"fault_line"`
 	// RobotID is the robot Core assigned (Order.RobotID), absent until there
-	// is one. The one key here the glass does not read yet: the station's
-	// robot panel (shared-map build) reads it.
+	// is one. The robot panel reads it for whether an order has a robot at
+	// all (operator-robot-panel.js robotOrders); the robot it draws is the one
+	// the position stream names, since this one can be stale (LEAD-NOTES D14).
 	RobotID string `json:"robot_id,omitempty"`
 }
 

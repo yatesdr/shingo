@@ -42,6 +42,9 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - On the robot map, a robot parked between two close bays sits on the nearer one, and only that bay shows as taken
 - The Processes page's "robot drives via" picker offers waypoints along the way a robot may drive: one-way lanes only in their own direction, a bowed aisle by its real length
 - The Processes page no longer draws the routing set on a plant map (Show on map, in Settings and on the process sheet); the lists and the "robot drives via" picker are unchanged
+- A cell operator screen shows its robots in a panel at the bottom right while one of its orders has a robot: Core's map, robots and comets around the cell, the cell's nodes marked, each robot's ETA; it goes when none does
+- The screen's ROBOTS button turns its panel off or on, remembered in that browser; a tap on the panel hides it until the next order gets a robot, and never presses what is under it
+- A robot the panel has heard nothing of for three robot polls fades where it was last seen and its line says Position lost; with no live robot feed the panel hides and does no work
 
 ## v0.7.0 — 2026-11-13
 

@@ -233,8 +233,8 @@ func fullOrder() domain.Order {
 // stationOrderKeys are the keys of a tile's order row on the station's JSON:
 // the ones the glass reads (operator-modal.js, operator-window-state.js,
 // operator-render.js, operator-board-model.js, operator-state.js,
-// operator-util.js), and robot_id, which the station's robot panel reads
-// (shared-map build) and nothing on the glass reads yet. The rest of
+// operator-util.js, operator-robot-panel.js, operator-robot-map.js): robot_id
+// is the robot panel's (whether an order has a robot at all). The rest of
 // domain.Order stays on the Go tile for the engine and the Production page's
 // template.
 var stationOrderKeys = []string{
