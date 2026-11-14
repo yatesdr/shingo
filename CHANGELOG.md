@@ -27,6 +27,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - The wall boards' green connection dot pulses as before without repainting the page every frame, and holds still on a screen set to reduce motion
 - The robot map's route comets move as before at up to 30 frames a second, and stop while the tab is hidden or the map is off screen
 - The robot map's minimap draws the plant's lanes once, not again on every robot update
+- Core no longer builds the live robot feed when no open page is listening for it
 
 ## v0.7.0 — 2026-11-13
 

@@ -429,22 +429,26 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			// fault. See RobotOrderLine.
 			RobotOrderLine
 		}
-		// Once per broadcast, not once per robot — and not at all when nobody
-		// would receive it. This costs a ListActiveOrders plus a history read,
-		// and the event that carries it fires on every fleet change, which on a
-		// running plant is most 2-second ticks. Without the guard a Core with no
-		// browser open anywhere still paid for it around the clock. Broadcast to
-		// zero receivers is already a no-op; this makes BUILDING the payload one
-		// too. "Receivers", not "clients" (LC8): a tab filtered to other topics
-		// (/events?topics=system-status) is connected but is never sent this.
 		// Every tick, receivers or not: an onset is only as good as the poll
 		// that saw it, and a tab opened after a fault must still be told
 		// which alarm began with it.
 		onsets.observe(ev.Robots, clock.Now().UTC())
-		var orderLines map[string]RobotOrderLine
-		if h.HasSubscriber("robot-update") {
-			orderLines = buildRobotOrderLines(eng.OrderService(), eng.AppConfig())
+		// Nothing below runs when nobody would receive the frame: not the
+		// order lines (a ListActiveOrders plus a history read), not a robotJSON
+		// per robot, not the marshal. The event fires on every fleet change,
+		// which on a running plant is most 2-second ticks, so without this a
+		// Core with no browser open anywhere paid for all of it around the
+		// clock. LC8 guarded only the order lines; the frame was still built
+		// and marshalled for nobody until 2026-11-14. "Receivers", not
+		// "clients" (LC8): a tab filtered to other topics
+		// (/events?topics=system-status) is connected but is never sent this.
+		// Pinned by TestPinSSE_RobotFeedBuilds and
+		// TestPinSSE_RobotFeedSeesOnsetsWithNoReceiver.
+		if !h.HasSubscriber("robot-update") {
+			return
 		}
+		// Once per broadcast, not once per robot.
+		orderLines := buildRobotOrderLines(eng.OrderService(), eng.AppConfig())
 		out := make([]robotJSON, len(ev.Robots))
 		for i, r := range ev.Robots {
 			out[i] = robotJSON{
