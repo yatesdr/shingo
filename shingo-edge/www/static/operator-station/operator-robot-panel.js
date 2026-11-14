@@ -27,11 +27,12 @@
 //     its comet loop stopped, its timers cleared, and nothing writes to it
 //     (operator-robot-map.js hide). Pinned by operator-robot-panel.test.js.
 //
-// WHY THE DRAWING IS LOADED LATE. The map, its comets and the four shared
-// scene modules under them are about 20 kB gzipped that most screens never
-// need (no robot order, or a board). They load on the first show and are held
-// for the page's life; a load that fails is tried again by the same triggers
-// as {available: false}, never once per view refresh.
+// WHY THE DRAWING IS LOADED LATE. The map (operator-robot-map.js) and the five
+// shared scene modules under it are about 33 kB gzipped (measured 2026-11-14)
+// that most screens never need (no robot order, or a board). They load on the
+// first show, by their hashed URLs, and are held for the page's life; a load
+// that fails is tried again by the same triggers as {available: false}, never
+// once per view refresh. This file is what every cell screen pays at boot.
 
 import { stationID } from './operator-util.js';
 import { claimedNodes } from './operator-state.js';
