@@ -75,6 +75,7 @@ type leg struct {
 	waitKind string
 	steps    bool // an Edge-authored step plan (a plan-less staged leg is lane-held)
 	core     bool // authored by Core
+	released bool // a person's RELEASE is pressed for this wait (an intent on the row)
 }
 
 var parked = leg{status: protocol.StatusStaged, waitKind: protocol.WaitKindStation, steps: true}
@@ -88,15 +89,18 @@ func (l *idleLine) addLegs(t *testing.T, legs ...leg) []int64 {
 		id, err := l.db.CreateOrder("idle-leg-"+string(rune('a'+i)), orders.TypeComplex, &l.nodeID, false, 1,
 			"ALN_IDLE", "", "SYN_MARKET", protocol.Height{}, false, "PANEL-I", "", "")
 		testutil.MustNoErr(t, err, "create a leg")
-		steps, author := "", "edge"
+		steps, author, intent := "", "edge", ""
 		if g.steps {
 			steps = `[{"action":"wait","node":"ALN_IDLE"}]`
 		}
 		if g.core {
 			author = "core"
 		}
-		_, err = l.db.DB.Exec(`UPDATE orders SET status=?, wait_kind=?, steps_json=?, authored_by=? WHERE id=?`,
-			string(g.status), g.waitKind, steps, author, id)
+		if g.released {
+			intent = `{"station_wait":1}`
+		}
+		_, err = l.db.DB.Exec(`UPDATE orders SET status=?, wait_kind=?, steps_json=?, authored_by=?, release_intent=? WHERE id=?`,
+			string(g.status), g.waitKind, steps, author, intent, id)
 		testutil.MustNoErr(t, err, "shape the leg")
 		ids = append(ids, id)
 	}
@@ -183,6 +187,7 @@ func TestIdleCancel_WhatItLeavesAlone(t *testing.T) {
 		{name: "the partner is moving", ago: 2 * time.Hour, legs: []leg{parked, moving}},
 		{name: "no robot has reached it", ago: 2 * time.Hour, legs: []leg{{status: protocol.StatusQueued, steps: true}}},
 		{name: "a leg Core wrote", ago: 2 * time.Hour, legs: []leg{parked, {status: protocol.StatusStaged, waitKind: protocol.WaitKindStation, steps: true, core: true}}},
+		{name: "a person has released it, held waiting for Core", ago: 2 * time.Hour, legs: []leg{parked, {status: protocol.StatusStaged, waitKind: protocol.WaitKindStation, steps: true, released: true}}},
 		{name: "held at a lane gate", ago: 2 * time.Hour, legs: []leg{{status: protocol.StatusStaged}}},
 		{name: "at a wait Core releases", ago: 2 * time.Hour, legs: []leg{{status: protocol.StatusStaged, waitKind: protocol.WaitKindVacate, steps: true}}},
 		{name: "a changeover is open", ago: 2 * time.Hour, legs: []leg{parked}, setup: func(t *testing.T, l *idleLine) {

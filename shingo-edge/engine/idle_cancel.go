@@ -177,7 +177,8 @@ func (e *Engine) sendBackParked(node *processes.Node, g parkedGroup, since, now 
 		e.logFn("idle-cancel: node %s: read its runtime row: %v — nothing sent back", node.Name, err)
 		return
 	}
-	if now.Sub(latest(since, rt.ReorderGoAt)) < idle {
+	since = latest(since, rt.ReorderGoAt)
+	if now.Sub(since) < idle {
 		return // someone said go here within the hour
 	}
 	for _, id := range g.orderIDs {
@@ -196,7 +197,7 @@ func (e *Engine) sendBackParked(node *processes.Node, g parkedGroup, since, now 
 			e.logFn("idle-cancel: node %s: cancel order %d: %v", node.Name, id, err)
 			continue
 		}
-		e.logFn("idle-cancel: node %s: order %d sent back — the line has counted no part since %s",
+		e.logFn("idle-cancel: node %s: order %d sent back — nothing has happened at the line since %s (its last part, changeover end or go)",
 			node.Name, id, since.Format(time.RFC3339))
 	}
 	e.nudgeBoards()
@@ -266,10 +267,14 @@ func parkedGroupOf(legs []*storeorders.Order) (parkedGroup, bool) {
 
 // parkedLeg reports whether an order is a robot parked at a station wait for a
 // person's RELEASE, on a row this Edge authored: staged, at a wait the station
-// advances, not held at a lane gate Core owns.
+// advances, not held at a lane gate Core owns, and not released already. A
+// release pressed for this wait leaves an intent on the row until Core stages
+// the leg again (orders.release_intent): a leg whose release is held, waiting
+// for Core, is the system's wait, not a person's (sim, 2026-11-14: a pair the
+// sim operator released, held at G3 after an Edge restart, was sent back).
 func parkedLeg(o *storeorders.Order) bool {
 	return o != nil && o.Status == protocol.StatusStaged && protocol.IsStationWaitKind(o.WaitKind) &&
-		!o.LaneHeld && o.AuthoredBy == storeorders.AuthoredByEdge
+		!o.LaneHeld && o.AuthoredBy == storeorders.AuthoredByEdge && o.ReleaseIntent == ""
 }
 
 // latest is the later of two times; a zero time is earlier than any.
