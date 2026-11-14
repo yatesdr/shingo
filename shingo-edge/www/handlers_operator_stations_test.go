@@ -37,6 +37,7 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	r.Route("/api", func(r chi.Router) {
 		// ── Public API (shop floor) ────────────────────────
 		r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
+		r.Get("/operator-stations/{id}/scene", h.apiStationScene)
 
 		r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
 		r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)

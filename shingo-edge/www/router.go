@@ -292,6 +292,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// The cell picture, fetched when the version on the view stops
 			// matching the one the page holds. See apiStationCellPicture.
 			r.Get("/operator-stations/{id}/cell", h.apiStationCellPicture)
+			// The robot panel's map, fetched once when the panel is first
+			// shown, 304 while the scene is unchanged. See apiStationScene.
+			r.Get("/operator-stations/{id}/scene", h.apiStationScene)
 
 			// Process node operations (material request, release, produce, bin ops)
 			r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)

@@ -64,6 +64,9 @@ type stubEngine struct {
 	groups        map[string][]string    // group membership the stub's StationService is wired with
 	plantWide     bool                   // core is Core's plant-wide list (NodeListResponse.PlantWide)
 	loaders       service.LoaderResolver // nil: unwired, so no node is a shared loader window
+	// sceneGeometry is the geometry cache the stub's StationService reads;
+	// nil: nothing held.
+	sceneGeometry *domain.SceneGeometry
 	orderMgr      *orders.Manager
 	// plcMgr is what PLCManager returns: nil unless a test puts a manager
 	// (with a seeded tag cache) here.
@@ -466,6 +469,9 @@ func (s *stubEngine) StationService() *service.StationService {
 	}
 	if s.loaders != nil {
 		svc.SetLoaderResolver(s.loaders)
+	}
+	if g := s.sceneGeometry; g != nil {
+		svc.SetSceneGeometryResolver(func() *domain.SceneGeometry { return g })
 	}
 	return svc
 }

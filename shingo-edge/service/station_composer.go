@@ -446,6 +446,35 @@ func (s *StationService) composerMap() *domain.ComposerMap {
 	if memo == nil || len(g.Points) == 0 {
 		return nil
 	}
+	return sceneMap(g, memo.Edges)
+}
+
+// SceneGeometry is the geometry cache, as the resolver hands it: nil before
+// the first complete response and while Core holds no scene.
+func (s *StationService) SceneGeometry() *domain.SceneGeometry {
+	if s.sceneGeometry == nil {
+		return nil
+	}
+	return s.sceneGeometry()
+}
+
+// SceneMap is g in the shared scene shape (LEAD-NOTES D11) for the operator
+// station's robot panel (GET /api/operator-stations/{id}/scene): composerMap's
+// builder, so every edge endpoint is placed, WITHOUT the lengths. No shared
+// module reads `len` (D11), and on the S0 fixture they would add about a
+// quarter to the map (TestStationScene_TheSharedShapeWholeAndNoLength logs
+// both). Nil when g holds no point.
+func SceneMap(g *domain.SceneGeometry) *domain.ComposerMap {
+	if g == nil || len(g.Points) == 0 {
+		return nil
+	}
+	return sceneMap(g, nil)
+}
+
+// sceneMap builds the map from g. lens, when not nil, is the cache's memo
+// (sceneDerived), one entry per g.Edges, and each edge carries its length;
+// nil leaves every length off.
+func sceneMap(g *domain.SceneGeometry, lens []domain.ComposerEdge) *domain.ComposerMap {
 	m := &domain.ComposerMap{
 		// The revision is READ: D3's caption says "plant map from Core ·
 		// revision <rev>" (processes-desktop.js:1493), which is how an
@@ -473,11 +502,11 @@ func (s *StationService) composerMap() *domain.ComposerMap {
 	for i, e := range g.Edges {
 		place(e.From, e.FromX, e.FromY)
 		place(e.To, e.ToX, e.ToY)
-		m.Edges = append(m.Edges, domain.ComposerMapEdge{
-			From: e.From, To: e.To,
-			Len:     memo.Edges[i].Len,
-			Handles: e.Handles,
-		})
+		edge := domain.ComposerMapEdge{From: e.From, To: e.To, Handles: e.Handles}
+		if lens != nil {
+			edge.Len = lens[i].Len
+		}
+		m.Edges = append(m.Edges, edge)
 	}
 	return m
 }
