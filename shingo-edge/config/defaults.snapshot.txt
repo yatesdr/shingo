@@ -22,6 +22,7 @@ demand.hysteresis_percent = <unset>
 line_id = 
 logging.stderr_subsystems = [edge_handler engine heartbeat orders plant_claims plc production_ticks protocol release]
 messaging.dispatch_topic = shingo.dispatch
+messaging.ephemeral_topic = shingo.ephemeral
 messaging.kafka.brokers = <empty>
 messaging.orders_topic = shingo.orders
 messaging.outbox_drain_interval = 5s

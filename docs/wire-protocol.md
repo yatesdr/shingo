@@ -737,6 +737,56 @@ The bodies are `RobotWatch` and `RobotPositions` (`protocol/ephemeral.go`). Each
       "orders":[{"order_uuid":"…","robot_id":"AMR-01","x":12.5,"y":-3.25,"heading":1.5708,"path":["LM7","LM31","AP32"]}]}}
 ```
 
+The registry below is generated from the readers' registrations: each type is read by the one side whose
+composition root registers it behind `router.ReadEphemeral`.
+
+<!-- generated: protocol/ephemeral.go EphemeralTypes -->
+
+| Type | Constant | Direction | Payload | TTL |
+|---|---|---|---|---|
+| `robot.watch` | `TypeRobotWatch` | Edge → Core | [`RobotWatch`](#robotwatch) | 10 s |
+| `robot.positions` | `TypeRobotPositions` | Core → Edge | [`RobotPositions`](#robotpositions) | 10 s |
+
+<!-- /generated -->
+
+##### RobotWatch
+
+<!-- generated: protocol struct RobotWatch -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `station_id` | string |  | StationID is the watching Edge's station uid. Core keys the watch on the envelope's source station and drops a watch whose StationID is another. |
+| `order_uuids` | string[] |  | OrderUUIDs are the Core order uuids this Edge's operator stations are showing, together, sorted and each once. Core honours only the ones whose order is this station's. Every watch replaces the one before it. |
+
+<!-- /generated -->
+
+##### RobotPositions
+
+<!-- generated: protocol struct RobotPositions -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `t` | timestamp |  | T is when Core's robot poll sampled the fleet (Core's clock, UTC, millisecond precision). |
+| `interval_ms` | integer |  | IntervalMS is Core's robot poll interval, so a reader can count the updates it missed. |
+| `orders` | [`RobotPosition`](#robotposition)[] |  | Orders is one entry per watched order of this station that the fleet holds on a robot (IsVendorTracked) and whose robot this poll listed connected. Any other is left out rather than sent stale; [] when none is. |
+
+<!-- /generated -->
+
+##### RobotPosition
+
+<!-- generated: protocol struct RobotPosition -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `order_uuid` | string |  | OrderUUID is the watched order's Core uuid. |
+| `robot_id` | string |  | RobotID is the robot Core holds the order on (orders.robot_id), read on this poll: the live robot, not the one an earlier message named. |
+| `x` | float |  | X and Y are the robot's position in the scene's frame, metres. |
+| `y` | float |  | See `x`. |
+| `heading` | float |  | Heading is the robot's heading, radians, as the fleet reports it. |
+| `path` | string[] | omitempty | Path is the route the fleet has left the robot to drive, as scene point names, the robot's current point first. Absent when there is none to draw: no plan, an id the scene cannot name, or no synced scene. |
+
+<!-- /generated -->
+
 #### Node bins feed
 
 The bins at the nodes an edge's operator stations draw, held by the edge as a copy. The edge owns the watch

@@ -102,6 +102,10 @@ type Engine struct {
 	// feeds is what this Edge holds of each Core feed and what the last
 	// heartbeat ack said about Core (feeds.go).
 	feeds feedBook
+	// robotWatch is the live robot feed: the orders each operator station is
+	// showing, the topic Core names, and the latest position per order
+	// (robot_watch.go).
+	robotWatch robotWatch
 	// asks is the asks sent and not yet answered, and the kinds Core answers
 	// (ask.go); askAppliers is what each kind's answer applies beyond its rows.
 	asks        askBook
@@ -519,6 +523,10 @@ func (e *Engine) Start() {
 	e.startCatidMonitor()
 
 	e.startIntentWorker()
+
+	// The live robot feed's sender: idle (no timer) until Core names the
+	// ephemeral topic and an operator station shows an order.
+	e.startRobotWatchLoop(protocol.RobotWatchInterval)
 
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
