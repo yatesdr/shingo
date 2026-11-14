@@ -65,8 +65,9 @@ type RobotStatus struct {
 	// bookkeeping rather than a route. Pinned by
 	// TestGetRobotsStatus_UnfinishedPath.
 	//
-	// The ids become scene point names further up in Core, not here: that
-	// needs the synced scene, which this package never sees.
+	// The ids become scene point names further up in Core
+	// (scenesync.PointIndex), not here: that needs the synced scene, which
+	// this package never sees.
 	UnfinishedPath []string `json:"unfinished_path"`
 	// UndispatchableReason is RDS's own account of why a robot is not taking
 	// work. mapRobotStatus used to hardcode Suspended: false behind a
