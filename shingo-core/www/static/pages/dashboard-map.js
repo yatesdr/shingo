@@ -18,25 +18,32 @@
 // chevron with heading, a pulsing halo, and a monospace name chip. Robot color tracks
 // order status (saturated lifecycle hue while on an active job); a delivered/confirmed
 // robot still moving, or any idle robot in motion, shows neutral grey — green only at
-// rest. Charge/park bays recede to quiet outlines; they light up only when a robot docks.
+// rest. A charge or park bay is drawn only while a robot stands on it or an order
+// names it.
 //
 // Routes follow the aisles. The travel network is the scene's real
 // connectivity — drivable path segments (SEER advanced curves) served by
-// /api/map/edges — and each robot→destination route is the lit shortest path
-// along it. Nothing is derived from point proximity (a derived graph invented
-// links through walls); with no synced edges the network is simply empty and
-// routes fall back to a straight robot→destination hint line.
+// /api/map/edges, each stored in the direction robots may drive it. A driving
+// robot's route is the path RDS planned for it (the frame's `path`), drawn
+// along those segments; with no path, or one the scene cannot draw, it draws
+// no route at all (lead decisions D6, D10). An order not yet driving draws a
+// dashed intent line along the route model's way (shared/scene-net.js,
+// directed, weighed by the distance driven: D9), or a straight hint where the
+// network does not join its ends. Nothing is derived from point proximity (a
+// derived graph invented links through walls); with no synced edges the
+// network is simply empty.
 //
 // A curved segment is DRAWN CURVED and WEIGHED CURVED. SEER states each
 // segment's shape with two cubic-Bezier handles, which arrive as
 // ctrl1_x/ctrl1_y/ctrl2_x/ctrl2_y; the map used to drop them and draw the
 // chord, which at Springfield paints a lane up to 1.30 m from the one the
 // robot drives (LM10-LM113, off a 7.17 m chord), so the fleet visibly leaves
-// the network as painted. The same handles fix the Dijkstra weight, which on
-// a chord runs up to 24% short of the distance actually driven.
+// the network as painted. The same handles fix the route model's weight,
+// which on a chord runs up to 24% short of the distance actually driven.
 //
-// THE DECISION IS THE HANDLES, NOT THE CLASS NAME. className says
-// "DegenerateBezier" on 264 of Springfield's 377 segments; 171 of those sit
+// THE DECISION IS THE HANDLES, NOT THE CLASS NAME. In the scene these counts
+// were taken from (377 segments; Springfield had 807 directed rows on
+// 2026-11-14), className said "DegenerateBezier" on 264; 171 of those sit
 // within a centimetre of their chord (a cubic spelling a straight line), 93
 // bow further, and 58 bow more than 10 cm. The scene holds exactly TWO
 // BezierPaths, both at 0.17 m. Meanwhile "StraightPath" segments carry no
@@ -53,11 +60,10 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
 // the comets over it. This page keeps what decides what is drawn: its orders,
 // legs, focus, calm rule, legends and rail.
 import {
-  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord, cubicLength, laneKey,
-  cubicPoint, CUBIC_SAMPLES
+  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord
 } from '/static/shared/scene-geom.js';
-import { sceneNet, sceneRoute } from '/static/shared/scene-net.js';
-import { hopsWorld } from '/static/shared/scene-path.js';
+import { sceneNet, sceneRoute, nearestVertex } from '/static/shared/scene-net.js';
+import { pathWorld, hopsWorld } from '/static/shared/scene-path.js';
 import { createSceneView, svgNode } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
 
@@ -165,9 +171,13 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
   var minimapEl = null;           // persistent minimap <svg> inside .map-region
   var minimapViewportRect = null; // viewport indicator rect inside the minimap
   var minimapRobotGroup = null;   // robot-dots <g> inside the minimap
-  // Above this many active routes, the ambient view calms to dim lines (no
-  // comets) so a busy floor doesn't become 20 arrows fighting for attention;
-  // clicking a robot still lights its comet. Tune to taste.
+  // Above this many moving orders (render's movingComets: each order moving
+  // with its robot seen moving, counted per order, path or not), the ambient
+  // view calms: no comets and no intent lines, just the robots (a lane still
+  // draws where laneVisible says), so a busy floor doesn't become 20 arrows
+  // fighting for attention. Clicking a robot lights its comet and its intent
+  // line again. Pinned: twelveCometsThenNone, countedPerOrderNotPerRobot,
+  // theCalmCountsMovingOrdersPathOrNot.
   var COMET_LIMIT = 12;
 
   // ── manual view: wheel-zoom + drag-pan break auto-follow ────────────
@@ -314,7 +324,11 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
       station: r.station || r.CurrentStation || '',
       // The alarm Core judged to have begun with this robot's fault (sse.go
       // faultAlarm); never the robot's whole alarm list.
-      faultAlarm: r.fault_alarm || null
+      faultAlarm: r.fault_alarm || null,
+      // The route RDS has planned for the robot, as the scene's point names,
+      // its current point first; `path` on both the frame and /api/robots
+      // (lowercase there too), and absent when there is none.
+      path: Array.isArray(r.path) ? r.path : []
     };
   }
 
@@ -661,9 +675,7 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     points.forEach(function (p) {
       if (isFinite(p.pos_x) && isFinite(p.pos_y)) { wx.push(p.pos_x); wy.push(p.pos_y); }
     });
-    tnodes.forEach(function (t) {
-      if (t.orphan) { wx.push(t.x); wy.push(t.y); }
-    });
+    orphans.forEach(function (t) { wx.push(t.x); wy.push(t.y); });
     // No scene at all: fall back to robot positions
     if (!wx.length) {
       Object.keys(robots).forEach(function (k) {
@@ -713,7 +725,8 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
       roiMinX = fullPlantView.minX; roiMinY = fullPlantView.minY;
       roiW = fullPlantView.w; roiH = fullPlantView.h;
     } else {
-      // Active: include each active order's robot + source + delivery + route.
+      // Active: include each active order's robot + source + delivery + the
+      // robot's route, as RDS planned it (robotRoute, lead decision D10).
       var roiSx = [], roiSy = [];
       activeOrds.forEach(function (o) {
         var rbt = robots[o.robot_id];
@@ -724,13 +737,11 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
         if (sn) { var ss = proj(sn.x, sn.y); roiSx.push(ss[0]); roiSy.push(ss[1]); }
         var dn = findNode(o.delivery_node);
         if (dn) { var ds = proj(dn.x, dn.y); roiSx.push(ds[0]); roiSy.push(ds[1]); }
-        if (rbt && dn) {
-          var rworld = routeWorld(rbt.x, rbt.y, dn);
-          if (rworld) {
-            rworld.forEach(function (w) {
-              var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
-            });
-          }
+        var rworld = rbt ? robotRoute(rbt) : null;
+        if (rworld) {
+          rworld.forEach(function (w) {
+            var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
+          });
         }
       });
       if (!roiSx.length) { roiSx = fsx.slice(); roiSy = fsy.slice(); }
@@ -796,23 +807,27 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     return nodeIndex[String(name).toLowerCase()] || null;
   }
 
-  // ── travel graph (the scene's real connectivity) ────────────────────
-  // The graph is exactly the drivable path segments synced from the fleet
-  // (SEER advanced curves, GET /api/map/edges). Vertices key by endpoint
-  // instance name so curves meeting at a point share a vertex; endpoints with
-  // a name but no synced scene point are flagged as orphans — "missing"
-  // points that still join the network via the curve's own coordinates.
+  // ── the scene's network ────────────────────────────────────────────
+  // The network is exactly the drivable path segments synced from the fleet
+  // (SEER advanced curves, GET /api/map/edges), adapted once per load to the
+  // shared scene shape (sceneOfRows) and read by shared/scene-net.js: its
+  // vertices, its rows by the direction a robot may drive them, its lanes.
+  // Endpoints with a name but no synced scene point are orphans — "missing"
+  // points that still join the network via the curve's own coordinates, and
+  // that still count toward the plant's extent (computeView).
   // Deliberately NO proximity-derived fallback: a guessed graph draws
   // plausible-but-wrong aisles (through walls); honest emptiness is better.
-  var tnodes = [];          // [{x, y, orphan}] world coords of graph vertices
-  var tadj = [];            // adjacency: tadj[i] = [{n, w}]
-  var routeCache = {};      // "s:d" -> array of tnode indices (cleared on rebuild)
   var scene = sceneOfRows([]); // sceneEdges as the shared scene shape (sceneOfRows)
-  var graphScale = 0;       // median edge length (world units); also the local
-                            // scale that drives marker/label sizing
+  var orphans = [];         // [{x, y}]: the vertices no scene point names, world
+  var graphScale = 0;       // median row length (scene-net's scale, world units);
+                            // also the local scale that drives marker/label sizing
   var sceneRev = 0;         // bumped by every buildGraph, which every scene load
                             // runs (loadPoints via buildNodeIndex, loadEdges);
                             // keys the minimap's static layer (syncMinimap)
+  // pathTally.misses counts the robot paths this page could not draw because
+  // a hop has no stored row in its direction (scene-path.js pathWorld), once
+  // per robot frame. Read by the render pins.
+  var pathTally = { misses: 0 };
 
   function isTravel(cls) { return cls === 'LocationMark' || cls === 'GeneralLocation'; }
 
@@ -825,15 +840,15 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
   // (a scene point by the same name is not consulted, as the graph never has),
   // and two spellings of one name are one point, spelled as first seen,
   // because this map has always matched names without case. A row end with no
-  // name is a point named by its place, '@x,y'. A row with a coordinate that
-  // is no number is left out whole.
+  // name is a point named by its place, '@x,y', and marked anon. A row with a
+  // coordinate that is no number is left out whole.
   function sceneOfRows(rows) {
     var points = {}, edges = [], byKey = {};
     function end(name, x, y) {
       var k = name ? String(name).toLowerCase() : '@' + x + ',' + y;
       if (byKey[k] === undefined) {
         byKey[k] = name ? String(name) : k;
-        points[byKey[k]] = { x: +x, y: +y, class: '' };
+        points[byKey[k]] = name ? { x: +x, y: +y, class: '' } : { x: +x, y: +y, class: '', anon: true };
       }
       return byKey[k];
     }
@@ -848,124 +863,33 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     return { points: points, edges: edges };
   }
 
+  // buildGraph reads the network again from sceneEdges, and the orphans
+  // against the scene points loaded so far (nodeIndex): both loads run it.
   function buildGraph() {
-    tnodes = []; tadj = []; routeCache = {}; graphScale = 0;
     scene = sceneOfRows(sceneEdges);
     sceneRev++;
-    var byKey = {}, lens = [];
-    function vertex(name, x, y) {
-      var k = name ? String(name).toLowerCase() : '@' + x + ',' + y;
-      if (byKey[k] === undefined) {
-        byKey[k] = tnodes.length;
-        var orphan = !!name && !nodeIndex[String(name).toLowerCase()];
-        tnodes.push({ x: x, y: y, orphan: orphan });
-      }
-      return byKey[k];
-    }
-    function addEdge(a, b, w, c) {
-      tadj[a] = tadj[a] || [];
-      if (!tadj[a].some(function (e) { return e.n === b; })) tadj[a].push({ n: b, w: w, c: c || null });
-    }
-    sceneEdges.forEach(function (e) {
-      if (!isFinite(e.from_x) || !isFinite(e.from_y) || !isFinite(e.to_x) || !isFinite(e.to_y)) return;
-      var a = vertex(e.from_name, e.from_x, e.from_y);
-      var b = vertex(e.to_name, e.to_x, e.to_y);
-      if (a === b) return;
-      // The handles, when the scene states a shape. All four or none: three
-      // coordinates describe no cubic. Core already rejects SEER's all-zero
-      // "no handles" pair, so a real coordinate here is real geometry.
-      var c = null;
-      if (isCoord(e.ctrl1_x) && isCoord(e.ctrl1_y) && isCoord(e.ctrl2_x) && isCoord(e.ctrl2_y)) {
-        c = [e.ctrl1_x, e.ctrl1_y, e.ctrl2_x, e.ctrl2_y];
-      }
-      var w = c ? cubicLength(tnodes[a], c, tnodes[b]) : Math.sqrt(dist2(tnodes[a], tnodes[b]));
-      if (!(w > 0)) return;
-      lens.push(w);
-      // Curves are stored directed; for display routing robots drive them
-      // either way, so the graph is undirected. The reverse handle order is
-      // swapped with it — the same curve read end-to-start — so whichever
-      // direction the renderer picks up, it draws the shape SEER authored.
-      addEdge(a, b, w, c);
-      addEdge(b, a, w, c && [c[2], c[3], c[0], c[1]]);
+    var net = sceneNet(scene);
+    graphScale = net.scale;
+    orphans = [];
+    net.names.forEach(function (n) {
+      if (!scene.points[n].anon && !nodeIndex[n.toLowerCase()]) orphans.push(net.at[n]);
     });
-    for (var i = 0; i < tnodes.length; i++) if (!tadj[i]) tadj[i] = [];
-    lens.sort(function (a, b) { return a - b; });
-    graphScale = lens[Math.floor(lens.length / 2)] || 0;
   }
 
-  function nearestTNode(wx, wy) {
-    var best = -1, bd = Infinity, q = { x: wx, y: wy };
-    for (var i = 0; i < tnodes.length; i++) {
-      var d = dist2(tnodes[i], q);
-      if (d < bd) { bd = d; best = i; }
+  // robotRoute is robot r's route, world [[x, y], ...]: the path RDS planned
+  // for it (r.path, current point first) drawn along the stored rows from the
+  // robot's projection onto its first hop (shared/scene-path.js pathWorld,
+  // lead decisions D6 and D10). null when it has no path, is at its last
+  // point, or a hop has no stored row in its direction (counted in
+  // pathTally): then the robot draws no route at all. Worked out once per
+  // robot frame and scene, as computeView and render both ask: each frame is
+  // a new robot object (mergeRobot), and each scene load bumps sceneRev.
+  function robotRoute(r) {
+    if (r.routeRev !== sceneRev) {
+      r.routeRev = sceneRev;
+      r.route = pathWorld(scene, r, r.path, pathTally);
     }
-    return best;
-  }
-
-  // Dijkstra over the travel graph. Small graphs (a few hundred nodes), so a
-  // plain O(V^2) scan is fine; results are cached per start/dest node pair.
-  function shortestPath(s, d) {
-    if (s < 0 || d < 0) return null;
-    if (s === d) return [s];
-    var key = s + ':' + d;
-    if (routeCache[key]) return routeCache[key];
-    var n = tnodes.length, dist = new Array(n), prev = new Array(n), seen = new Array(n);
-    for (var i = 0; i < n; i++) { dist[i] = Infinity; prev[i] = -1; seen[i] = false; }
-    dist[s] = 0;
-    for (var k = 0; k < n; k++) {
-      var u = -1, ud = Infinity;
-      for (var t = 0; t < n; t++) { if (!seen[t] && dist[t] < ud) { ud = dist[t]; u = t; } }
-      if (u < 0 || u === d) break;
-      seen[u] = true;
-      var edges = tadj[u] || [];
-      for (var e = 0; e < edges.length; e++) {
-        var nd = dist[u] + edges[e].w;
-        if (nd < dist[edges[e].n]) { dist[edges[e].n] = nd; prev[edges[e].n] = u; }
-      }
-    }
-    if (dist[d] === Infinity) { routeCache[key] = null; return null; }
-    var path = [], c = d;
-    while (c !== -1) { path.unshift(c); c = prev[c]; }
-    routeCache[key] = path;
-    return path;
-  }
-
-  // World-space route polyline robot -> aisle network -> destination, or null
-  // if the graph can't connect them (caller falls back to a straight line).
-  //
-  // A CURVED HOP IS SAMPLED ALONG ITS BEZIER, with the same handles the aisle
-  // under it is drawn with. Joining the vertices alone drew the chord, so a
-  // comet, a frozen lane or an intent line cut straight across every bowed
-  // lane while the network beneath it curved away.
-  function routeWorld(rx, ry, dest) {
-    if (tnodes.length < 2) return null;
-    var s = nearestTNode(rx, ry), d = nearestTNode(dest.x, dest.y);
-    var seq = shortestPath(s, d);
-    if (!seq) return null;
-    var pts = [[rx, ry]];
-    for (var i = 0; i < seq.length; i++) {
-      var to = tnodes[seq[i]];
-      var c = i > 0 ? hopHandles(seq[i - 1], seq[i]) : null;
-      if (c) {
-        var from = tnodes[seq[i - 1]];
-        for (var k = 1; k < CUBIC_SAMPLES; k++) {
-          var q = cubicPoint(from, c, to, k / CUBIC_SAMPLES);
-          pts.push([q.x, q.y]);
-        }
-      }
-      pts.push([to.x, to.y]);
-    }
-    pts.push([dest.x, dest.y]);
-    return pts;
-  }
-
-  // hopHandles returns the handles of the graph edge a -> b, oriented a to b
-  // (buildGraph stores the reverse entry with its pair swapped), or null for a
-  // straight segment.
-  function hopHandles(a, b) {
-    var edges = tadj[a] || [];
-    for (var i = 0; i < edges.length; i++) if (edges[i].n === b) return edges[i].c;
-    return null;
+    return r.route;
   }
 
   // ── leg-aware routing helpers ──────────────────────────────────────
@@ -1002,14 +926,6 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
       if (dxd * dxd + dyd * dyd < dxs * dxs + dys * dys) return 'carry';
     }
     return 'fetch';
-  }
-
-  // World→screen polyline from robot `r` to a target node, routed on the
-  // network; a straight two-point hint when the network does not connect them.
-  function legPts(r, node) {
-    var w = routeWorld(r.x, r.y, node);
-    return w ? w.map(function (p) { return proj(p[0], p[1]); })
-      : [proj(r.x, r.y), proj(node.x, node.y)];
   }
 
   // intentPts is an intent line, world→screen: order o's source place, the
@@ -1095,23 +1011,15 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     // Static layer: travel network + all scene point dots
     var netG = svgNode('g', { opacity: '0.3' });
     var sw = (graphScale > 0 ? graphScale : Math.max(fp.w, fp.h) * 0.01) * 0.06;
-    if (tnodes.length > 1) {
-      var seen = {};
-      for (var ai = 0; ai < tadj.length; ai++) {
-        var edges = tadj[ai] || [];
-        for (var ei = 0; ei < edges.length; ei++) {
-          var bi = edges[ei].n;
-          var ekey = laneKey(ai, bi);
-          if (seen[ekey]) continue; seen[ekey] = true;
-          var mpa = proj(tnodes[ai].x, tnodes[ai].y);
-          var mpb = proj(tnodes[bi].x, tnodes[bi].y);
-          netG.appendChild(svgNode('line', {
-            x1: mpa[0], y1: mpa[1], x2: mpb[0], y2: mpb[1],
-            stroke: cssVar('--map-aisle', '#45566e'), 'stroke-width': sw
-          }));
-        }
-      }
-    }
+    // Each physical lane once, as the aisles draw it, but as a chord.
+    sceneNet(scene).lanes.forEach(function (lane) {
+      var mpa = proj(lane.a.x, lane.a.y);
+      var mpb = proj(lane.b.x, lane.b.y);
+      netG.appendChild(svgNode('line', {
+        x1: mpa[0], y1: mpa[1], x2: mpb[0], y2: mpb[1],
+        stroke: cssVar('--map-aisle', '#45566e'), 'stroke-width': sw
+      }));
+    });
     var dotR = sw * 1.2;
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
@@ -1198,11 +1106,12 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
       // coordinate sits a hair off the curve endpoint they serve — otherwise
       // the ring floats beside its node with its own dot, which reads sloppy.
       // Half a typical edge length is close enough to mean "same node".
-      if (cls === 'ActionPoint' && graphScale > 0 && tnodes.length) {
-        var ni = nearestTNode(wx, wy);
-        if (ni >= 0) {
-          var nd = Math.sqrt(dist2(tnodes[ni], { x: wx, y: wy }));
-          if (nd > 0 && nd <= graphScale * 0.5) { wx = tnodes[ni].x; wy = tnodes[ni].y; }
+      if (cls === 'ActionPoint' && graphScale > 0) {
+        var nv = nearestVertex(scene, wx, wy);
+        if (nv) {
+          var at = sceneNet(scene).at[nv];
+          var nd = Math.sqrt(dist2(at, { x: wx, y: wy }));
+          if (nd > 0 && nd <= graphScale * 0.5) { wx = at.x; wy = at.y; }
         }
       }
       var hot = !!(hotNodes[String(p.point_name || '').toLowerCase()] ||
@@ -1296,16 +1205,22 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
 
     // ── routes ────────────────────────────────────────────────────────
     // Three honest visual states, so the map shows what's REALLY happening:
-    //  • Moving, working order → an animated comet along the robot's CURRENT LEG
-    //    (source until pickup, then delivery — see orderLeg). Fetch legs draw
-    //    hollow/empty dots, carry legs solid/loaded, so loaded-vs-empty reads at
-    //    a glance. The comet lives on a PERSISTENT overlay (comets.sync below)
-    //    so it glides continuously instead of restarting each SSE tick.
-    //  • Blocked/faulted, or reduced-motion → a faint STATIC lane, no flow (see
-    //    laneVisible). Motion means motion: a stationary robot never animates,
-    //    and a robot standing still draws no line at all.
-    //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most;
-    //    nothing is driving that leg yet.
+    //  • Moving, working order → an animated comet along the path RDS planned
+    //    for the robot (robotRoute, lead decision D10). Fetch legs draw
+    //    hollow/empty dots, carry legs solid/loaded (orderLeg), so
+    //    loaded-vs-empty reads at a glance. The comet lives on a PERSISTENT
+    //    overlay (comets.sync below) so it glides continuously instead of
+    //    restarting each SSE tick.
+    //  • Blocked/faulted, or reduced-motion → a faint STATIC lane along that
+    //    same path, no flow (see laneVisible). Motion means motion: a
+    //    stationary robot never animates, and a robot standing still draws no
+    //    line at all.
+    //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most,
+    //    along the route model's way (intentPts); nothing is driving that leg
+    //    yet.
+    // A robot with no path RDS planned, or one this scene cannot draw, draws
+    // no comet and no lane: no estimate stands in for it. Its glyph, focus
+    // ring and lit destination are drawn as ever.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var MOVING_PHASE = { dispatched: 1, in_transit: 1, reshuffling: 1 };
     var INTENT_PHASE = { pending: 1, queued: 1, acknowledged: 1, submitted: 1, staged: 1 };
@@ -1315,9 +1230,11 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     orders.forEach(function (o) { liveOrderIds[o.order_id] = 1; });
     Object.keys(pickedUpByOrder).forEach(function (id) { if (!liveOrderIds[id]) delete pickedUpByOrder[id]; });
 
-    // Count the comets that would actually animate first, so the busy-floor calm
-    // (more than COMET_LIMIT moving orders → no comets and no intent lines, just
-    // robots, unless one is focused) keys off real motion.
+    // Count the moving orders first, so the busy-floor calm (more than
+    // COMET_LIMIT moving orders → no comets and no intent lines, just robots,
+    // unless one is focused) keys off real motion: an order moving with a
+    // robot seen moving, whether or not its path can be drawn (lead decision
+    // D10 keeps this count as it was).
     var movingComets = 0;
     orders.forEach(function (o) {
       if (!MOVING_PHASE[o.status]) return;
@@ -1350,10 +1267,12 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
 
       var blocked = (o.status === 'blocked' || o.status === 'faulted');
       var leg = orderLeg(o, r, src);
-      var legNode = (leg === 'fetch' && src) ? src : (dst || src);
-      if (!legNode) return;
       var color = STATUS_COLOR[o.status] || '#888';
-      var pts = legPts(r, legNode);
+      // The route is RDS's path and nothing else: it neither needs nor ends
+      // at the order's nodes.
+      var route = robotRoute(r);
+      if (!route) return;
+      var pts = route.map(function (p) { return proj(p[0], p[1]); });
 
       var wantComet = !reduceMotion && !blocked && isMoving(r) && calmOK;
       if (wantComet) {

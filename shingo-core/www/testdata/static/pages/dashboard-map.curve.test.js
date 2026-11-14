@@ -50,11 +50,11 @@ function check(name, cond, detail) {
 // Same injection technique as dashboard-map.stall.test.js: dashboard-map.js is
 // an IIFE, so one __export call goes in just before it closes rather than
 // stripping the wrapper and changing scoping for every `var` in the file.
-// tnodes/tadj/sceneEdges/points are REASSIGNED inside the module, and so is
-// `proj` (computeView reconfigures it for the plant's orientation), so all of
-// them are handed out through accessors — an exported reference would go stale
-// the first time buildGraph ran and every assertion after that would read the
-// old graph, or the old projection.
+// scene/sceneEdges/points are REASSIGNED inside the module, and so is `proj`
+// (computeView reconfigures it for the plant's orientation), so all of them
+// are handed out through accessors — an exported reference would go stale the
+// first time buildGraph ran and every assertion after that would read the old
+// scene, or the old projection.
 //
 // The geometry and the drawing are shared/'s now (scene-geom.js, scene-net.js,
 // scene-view.js). vm runs a SCRIPT, not a module, so shared-modules.js loads
@@ -102,14 +102,16 @@ function load() {
 
     const file = path.join(SRC_DIR, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
+    // net is the page's scene network (scene-net.js), read from the page's
+    // own adaptation of the rows; robotRoute and intentPts are the page's two
+    // route drawings, a driving robot's (RDS's path) and an intent line's.
     const INJECT = '  __export({ buildGraph: buildGraph,' +
         ' lanes: function () { return sceneNet(scene).lanes; }, scene: function () { return scene; },' +
-        ' computeView: computeView, routeWorld: routeWorld,' +
-        ' shortestPath: shortestPath, nearestTNode: nearestTNode,' +
+        ' net: function () { return sceneNet(scene); },' +
+        ' computeView: computeView, robotRoute: robotRoute, intentPts: intentPts,' +
         ' setEdges: function (v) { sceneEdges = v; },' +
         ' setPoints: function (v) { points = v; },' +
         ' proj: function (x, y) { return proj(x, y); },' +
-        ' tnodes: function () { return tnodes; }, tadj: function () { return tadj; },' +
         ' graphScale: function () { return graphScale; } });\n})();\n';
     const src = raw.replace(/\}\)\(\);\s*$/, INJECT);
     if (src === raw) {
@@ -198,6 +200,9 @@ function drawnFor(m, edges) {
 }
 
 // --- the weight ----------------------------------------------------------
+//
+// The weight is the route model's (shared/scene-net.js): one per stored row,
+// in that row's direction, over the page's own adaptation of the rows.
 
 console.log('edge weight');
 
@@ -205,8 +210,7 @@ console.log('edge weight');
     const m = load();
     m.setEdges([CURVED]);
     m.buildGraph();
-    const adj = m.tadj();
-    const w = adj[0][0].w;
+    const w = m.net().hop('LM10', 'LM113').len;
     const c = chord(CURVED);
     check('a bowed lane weighs MORE than its chord', w > c,
         'w=' + w.toFixed(4) + ' chord=' + c.toFixed(4));
@@ -223,20 +227,27 @@ console.log('edge weight');
     const m = load();
     m.setEdges([STRAIGHT]);
     m.buildGraph();
-    const w = m.tadj()[0][0].w;
+    const w = m.net().hop('LM100', 'AP102').len;
     check('a straight aisle weighs exactly its chord',
         Math.abs(w - chord(STRAIGHT)) < 1e-9,
         'w=' + w + ' chord=' + chord(STRAIGHT));
 })();
 
+// Rewritten when the graph became directed (lead decision D9): it handed one
+// stored row and read the reverse entry the undirected graph made up, which
+// no longer exists. Both directions now come from two stored rows.
 (function bothDirectionsWeighTheSame() {
     const m = load();
+    m.setEdges([CURVED, reverseOf(CURVED)]);
+    m.buildGraph();
+    const there = m.net().hop('LM10', 'LM113'), back = m.net().hop('LM113', 'LM10');
+    check('a lane stored both ways weighs the same each way, each from its own row',
+        !!there && !!back && Math.abs(there.len - back.len) < 1e-12,
+        there && back ? there.len + ' vs ' + back.len : 'a row is missing');
     m.setEdges([CURVED]);
     m.buildGraph();
-    const adj = m.tadj();
-    check('the reverse edge carries the same weight',
-        Math.abs(adj[0][0].w - adj[1][0].w) < 1e-12,
-        adj[0][0].w + ' vs ' + adj[1][0].w);
+    check('...and a lane stored one way has no weight the other way: no hop',
+        m.net().hop('LM113', 'LM10') === null && !!m.net().hop('LM10', 'LM113'));
 })();
 
 // --- partial handles are not a curve -------------------------------------
@@ -254,8 +265,9 @@ console.log('handle completeness');
         const e = Object.assign({}, STRAIGHT, partial);
         m.setEdges([e]);
         m.buildGraph();
-        check('partial handle set ' + i + ' draws no curve', m.tadj()[0][0].c === null,
-            JSON.stringify(m.tadj()[0][0].c));
+        const hop = m.net().hop('LM100', 'AP102');
+        check('partial handle set ' + i + ' draws no curve', hop.h === null && !('h' in m.scene().edges[0]),
+            JSON.stringify(hop.h));
     });
 })();
 
@@ -267,7 +279,7 @@ console.log('handle completeness');
         const e = Object.assign({}, CURVED, { ctrl2_y: bad });
         m.setEdges([e]);
         m.buildGraph();
-        check('ctrl2_y=' + String(bad) + ' draws no curve', m.tadj()[0][0].c === null);
+        check('ctrl2_y=' + String(bad) + ' draws no curve', m.net().hop('LM10', 'LM113').h === null);
     });
 })();
 
@@ -368,11 +380,11 @@ console.log('drawAisles');
     };
     m.setEdges([lead, CURVED]);
     m.buildGraph();
-    const idx = { LM113: 0 };
+    const v0 = m.net().names[0];
     check('the fixture puts LM113 at vertex 0 (else this test proves nothing)',
-        Math.abs(m.tnodes()[idx.LM113].x - CURVED.to_x) < 1e-9 &&
-        Math.abs(m.tnodes()[idx.LM113].y - CURVED.to_y) < 1e-9,
-        JSON.stringify(m.tnodes()[0]));
+        v0 === 'LM113' && Math.abs(m.net().at[v0].x - CURVED.to_x) < 1e-9 &&
+        Math.abs(m.net().at[v0].y - CURVED.to_y) < 1e-9,
+        JSON.stringify(m.net().names));
 
     const svg = svgNode('svg');
     m.drawAisles(svg, 1);
@@ -486,11 +498,27 @@ console.log('projection');
 })();
 
 // --- routes ride the lane ------------------------------------------------
-// The comet, the frozen lane and the intent line all draw routeWorld's
-// polyline. It used to join the graph's VERTICES, so a route over LM10-LM113
-// drew the 7.17 m chord while the aisle beneath it bowed 1.30 m away.
+// The comet and the frozen lane draw a robot's RDS path (robotRoute, lead
+// decision D10), the intent line the route model's way (intentPts, D9); both
+// run hop by hop along the stored rows, a curved row sampled along its cubic.
+// A route once joined the graph's VERTICES, so a route over LM10-LM113 drew
+// the 7.17 m chord while the aisle beneath it bowed 1.30 m away.
 
 console.log('routes');
+
+// worstOffCurve is how far the farthest of pts lies from the cubic.
+function worstOffCurve(m, pts, from, c, to) {
+    let worst = 0;
+    pts.forEach(function (q) {
+        let best = Infinity;
+        for (let k = 0; k <= 200; k++) {
+            const p = m.cubicPoint(from, c, to, k / 200);
+            best = Math.min(best, Math.hypot(q[0] - p.x, q[1] - p.y));
+        }
+        worst = Math.max(worst, best);
+    });
+    return worst;
+}
 
 (function aRouteOverACurveFollowsTheCurve() {
     const m = load();
@@ -500,33 +528,37 @@ console.log('routes');
     const to = { x: CURVED.to_x, y: CURVED.to_y };
     const c = [CURVED.ctrl1_x, CURVED.ctrl1_y, CURVED.ctrl2_x, CURVED.ctrl2_y];
 
-    const fwd = m.routeWorld(from.x, from.y, to);
-    // Every point but the robot and destination ends is on the authored cubic.
-    let worst = 0;
-    for (let i = 1; i < fwd.length - 1; i++) {
-        let best = Infinity;
-        for (let k = 0; k <= 200; k++) {
-            const p = m.cubicPoint(from, c, to, k / 200);
-            best = Math.min(best, Math.hypot(fwd[i][0] - p.x, fwd[i][1] - p.y));
-        }
-        worst = Math.max(worst, best);
-    }
+    // A robot at LM10 driving its path LM10 -> LM113: every point of its route,
+    // ends included, is on the authored cubic.
+    const fwd = m.robotRoute({ x: from.x, y: from.y, path: ['LM10', 'LM113'] });
     check('a route over a curved lane has interior points, not just the chord',
-        fwd.length > 4, 'points ' + fwd.length);
+        !!fwd && fwd.length > 4, 'points ' + (fwd && fwd.length));
     check('every route point over a curved lane lies on the authored cubic',
-        worst < 0.02, 'worst off-curve ' + worst.toFixed(4) + ' m');
+        worstOffCurve(m, fwd, from, c, to) < 0.02, 'worst off-curve ' + worstOffCurve(m, fwd, from, c, to).toFixed(4) + ' m');
     // The bow is where the chord was wrong: the route must pass through it.
     const bow = m.cubicPoint(from, c, to, 0.5);
     const reach = Math.min.apply(null, fwd.map(function (p) { return Math.hypot(p[0] - bow.x, p[1] - bow.y); }));
     check('the route passes through the lane\'s bow, not across its chord',
         reach < 1e-9, 'closest ' + reach);
+    // The intent line rides it too (screen points, here [x, -y]).
+    const it = m.intentPts({ source_node: 'LM10', delivery_node: 'LM113' }, from, to)
+        .map(function (p) { return [p[0], -p[1]]; });
+    check('an intent line over the curved lane lies on the authored cubic too',
+        it.length > 4 && worstOffCurve(m, it, from, c, to) < 0.02, it.length + ' points');
 
-    // Driven the other way, the same lane: the reversed handle pair, so the
+    // REWRITTEN when the routes became directed (lead decisions D9, D10): this
+    // half drove the one stored row backwards on the undirected graph's
+    // made-up reverse entry. A lane stored one way is no route the other way;
+    // stored both ways, the way back rides its own row, the same curve, so the
     // quarter point going back is the three-quarter point going out.
-    const back = m.routeWorld(to.x, to.y, from);
+    check('a lane stored one way is no route against its direction',
+        m.robotRoute({ x: to.x, y: to.y, path: ['LM113', 'LM10'] }) === null);
+    m.setEdges([CURVED, reverseOf(CURVED), STRAIGHT, ONE_WAY]);
+    m.buildGraph();
+    const back = m.robotRoute({ x: to.x, y: to.y, path: ['LM113', 'LM10'] });
     const q3 = m.cubicPoint(from, c, to, 0.75);
-    const reachBack = Math.min.apply(null, back.map(function (p) { return Math.hypot(p[0] - q3.x, p[1] - q3.y); }));
-    check('a route driven against the stored direction rides the same curve',
+    const reachBack = back ? Math.min.apply(null, back.map(function (p) { return Math.hypot(p[0] - q3.x, p[1] - q3.y); })) : Infinity;
+    check('a route driven along the lane\'s other stored row rides the same curve',
         reachBack < 1e-9, 'closest ' + reachBack);
 })();
 
@@ -534,9 +566,12 @@ console.log('routes');
     const m = load();
     m.setEdges([CURVED, STRAIGHT, ONE_WAY]);
     m.buildGraph();
-    const r = m.routeWorld(STRAIGHT.from_x, STRAIGHT.from_y, { x: STRAIGHT.to_x, y: STRAIGHT.to_y });
-    // robot, LM100, AP102, destination — nothing sampled on a straight segment.
-    check('a route over a straight lane is its vertices only', r.length === 4, 'points ' + r.length);
+    const a = { x: STRAIGHT.from_x, y: STRAIGHT.from_y }, b = { x: STRAIGHT.to_x, y: STRAIGHT.to_y };
+    const r = m.intentPts({ source_node: 'LM100', delivery_node: 'AP102' }, a, b);
+    // source, LM100, AP102, delivery — nothing sampled on a straight segment.
+    check('an intent line over a straight lane is its vertices only', r.length === 4, 'points ' + r.length);
+    check('...and a robot\'s route along it is its two ends',
+        m.robotRoute({ x: a.x, y: a.y, path: ['LM100', 'AP102'] }).length === 2);
 })();
 
 // --- route vectors: the route model over the synthetic route scene --------
@@ -586,19 +621,22 @@ console.log('route vectors (synthetic route scene)');
             got === v[2], 'got ' + JSON.stringify(got));
     });
 
-    // routeWorld is the polyline drawn: the robot's own place, then the
-    // vertices, every curved hop sampled CUBIC_SAMPLES-1 times between its
-    // ends, then the destination's place. The ends snap to the NEAREST vertex.
-    const snapped = m.routeWorld(8.4, 0.3, { x: 16.2, y: 0.1 });
-    check('routeWorld snaps the robot to LM921 and the destination to PLN_02, over the curved hop',
-        snapped && snapped.length === 27 &&
+    // intentPts is the intent line drawn: the source's place, then the route
+    // model's vertices, every curved hop sampled CUBIC_SAMPLES-1 times
+    // between its ends, then the delivery's place. An order node not on the
+    // network snaps from its place (the destination over the vertices rows
+    // arrive at).
+    const snapped = m.intentPts({ source_node: '', delivery_node: '' }, { x: 8.4, y: 0.3 }, { x: 16.2, y: 0.1 });
+    check('an intent from (8.4, 0.3) to (16.2, 0.1) snaps to LM921 and PLN_02, over the curved hop: 27 points',
+        snapped.length === 27 &&
         snapped[1][0] === 8 && snapped[1][1] === 0 && snapped[25][0] === 16 && snapped[25][1] === 0,
-        snapped ? snapped.length + ' points, [1]=' + JSON.stringify(snapped[1]) + ' [25]=' + JSON.stringify(snapped[25]) : 'null');
-    const straight = m.routeWorld(at.SMN_05.x, at.SMN_05.y, at.PLN_02);
-    check('the straight route SMN_05 -> PLN_02 draws robot, four vertices, destination: 6 points',
-        straight && straight.length === 6, straight ? JSON.stringify(straight) : 'null');
-    check('no network route: routeWorld answers null (the caller draws a straight hint)',
-        m.routeWorld(at.LM921.x, at.LM921.y, at.LM941) === null);
+        snapped.length + ' points, [1]=' + JSON.stringify(snapped[1]) + ' [25]=' + JSON.stringify(snapped[25]));
+    const straight = m.intentPts({ source_node: 'SMN_05', delivery_node: 'PLN_02' }, at.SMN_05, at.PLN_02);
+    check('the intent SMN_05 -> PLN_02 draws source, four vertices (route A), delivery: 6 points',
+        straight.length === 6, JSON.stringify(straight));
+    const hint = m.intentPts({ source_node: 'LM921', delivery_node: 'LM941' }, at.LM921, at.LM941);
+    check('no network route: the intent line is the straight two-point hint',
+        hint.length === 2 && hint[0][0] === 8 && hint[1][0] === 30, JSON.stringify(hint));
 })();
 
 // --- helpers -------------------------------------------------------------

@@ -197,10 +197,6 @@ var sharedExportsNoImporter = map[string]string{
 	// station import those, and a page's own banner would use these.
 	"notice.js banner":      "the primitive under S5's two, read by testdata/components/notice.test.js",
 	"notice.js clearBanner": "the primitive under S5's two, read by testdata/components/notice.test.js",
-	// The route model and the path drawing, before the robot map moves onto
-	// them; read by testdata/js/scene-net.test.js and scene-path.test.js.
-	"scene-net.js nearestVertex": "placement, before the robot map imports it",
-	"scene-path.js pathWorld":    "RDS's path drawn, before the robot map imports it",
 }
 
 var (

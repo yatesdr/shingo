@@ -28,7 +28,7 @@ svg class=map-svg preserveAspectRatio=xMidYMid meet viewBox=-1.6999999999999993 
   path class=map-aisle d=M16 0C15 4 9 4 8 0 fill=none stroke-width=0.10771199999999999
   line class=map-aisle stroke-width=0.10771199999999999 x1=14 x2=2 y1=-1 y2=-1
   line class=map-aisle stroke-width=0.10771199999999999 x1=30 x2=34 y1=-10 y2=-10
-  polyline class=map-route-frozen fill=none points=0,0 0,0 2,-1 14,-1 16,0 16,0 stroke=#8b949e stroke-opacity=0.4 stroke-width=0.08228
+  polyline class=map-route-frozen fill=none points=0,0 0,-2 16,-2 16,0 stroke=#8b949e stroke-opacity=0.4 stroke-width=0.08228
   polyline class=map-route-intent fill=none points=12,-6 30,-7 stroke-opacity=0.34 stroke-width=0.059840000000000004
   polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
   polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
@@ -169,7 +169,7 @@ svg class=map-svg preserveAspectRatio=xMidYMid meet viewBox=-1.6999999999999993 
   path class=map-aisle d=M16 0C15 4 9 4 8 0 fill=none stroke-width=0.10771199999999999
   line class=map-aisle stroke-width=0.10771199999999999 x1=14 x2=2 y1=-1 y2=-1
   line class=map-aisle stroke-width=0.10771199999999999 x1=30 x2=34 y1=-10 y2=-10
-  polyline class=map-route-frozen fill=none points=0,0 0,0 2,-1 14,-1 16,0 16,0 stroke=#8b949e stroke-opacity=0.22 stroke-width=0.08228
+  polyline class=map-route-frozen fill=none points=0,0 0,-2 16,-2 16,0 stroke=#8b949e stroke-opacity=0.22 stroke-width=0.08228
   circle cx=8 cy=0 fill=#90a2bf r=0.2244
   circle cx=21 cy=-5 fill=#90a2bf r=0.2244
   circle class=map-node-charge cx=22 cy=-6 fill=none r=0.21317999999999998 stroke=#3c4a5e stroke-width=0.049367999999999995
@@ -305,7 +305,7 @@ svg class=map-svg preserveAspectRatio=xMidYMid meet viewBox=-28.24444444444444 -
   path class=map-aisle d=M0 16C-4 15 -4 9 0 8 fill=none stroke-width=0.191488
   line class=map-aisle stroke-width=0.191488 x1=1 x2=1 y1=14 y2=2
   line class=map-aisle stroke-width=0.191488 x1=10 x2=10 y1=30 y2=34
-  polyline class=map-route-frozen fill=none points=0,0 0,0 1,2 1,14 0,16 0,16 stroke=#8b949e stroke-opacity=0.22 stroke-width=0.14627555555555555
+  polyline class=map-route-frozen fill=none points=0,0 2,0 2,16 0,16 stroke=#8b949e stroke-opacity=0.22 stroke-width=0.14627555555555555
   circle cx=0 cy=8 fill=#90a2bf r=0.3989333333333333
   circle cx=5 cy=21 fill=#90a2bf r=0.3989333333333333
   circle class=map-node-charge cx=6 cy=22 fill=none r=0.37898666666666664 stroke=#3c4a5e stroke-width=0.08776533333333333

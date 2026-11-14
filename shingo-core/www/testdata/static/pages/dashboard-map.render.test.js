@@ -52,6 +52,14 @@ const RS = require('./route-scene.js');
 const POINT_ROWS = RS.pointRows();
 const EDGE_ROWS = RS.edgeRows();
 
+// RDS's planned paths for the stand-in robots, as scene names, the current
+// point first (the robot-update frame's `path`). A driving robot's route is
+// its path and nothing else (lead decision D10). PATH_A is route A, the
+// directed way from SMN_05 to PLN_02, the one RDS plans; PATH_ISLAND is the
+// island's one row from LM941, a stand-in path for a robot on the island.
+const PATH_A = ['SMN_05', 'LM911', 'LM912', 'PLN_02'];
+const PATH_ISLAND = ['LM941', 'LM942'];
+
 // --- a small recording DOM -------------------------------------------------
 //
 // An element is a tree node that keeps its tag and every attribute set on it,
@@ -243,7 +251,7 @@ function load(opts) {
         ' lastCometSig: function () { return comets.sig(); }, cometLayer: function () { return comets.layer(); },' +
         ' cometState: function () { return comets.state(); }, minimapEl: function () { return minimapEl; },' +
         ' proj: function (x, y) { return proj(x, y); }, graphScale: function () { return graphScale; },' +
-        ' sceneView: function () { return sceneView; },' +
+        ' sceneView: function () { return sceneView; }, pathMisses: function () { return pathTally.misses; },' +
         ' STATUS_COLOR: STATUS_COLOR, IDLE_MOVE_COLOR: IDLE_MOVE_COLOR });\n})();\n';
     const src = raw.replace(/\}\)\(\);\s*$/, INJECT);
     if (src === raw) {
@@ -308,14 +316,17 @@ async function setOrders(m, orders) {
 
 // drive feeds each robot twice, `from` then `to`, a second apart, through the
 // page's SSE handler: a displacement past the jitter threshold is motion, and
-// a robot fed the same place twice is standing still.
+// a robot fed the same place twice is standing still. A robot given a `path`
+// carries it on both frames, as Core sends it on every one.
 function drive(m, robots) {
-    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.from); }));
+    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.from, 0, r.path); }));
     m.clock.t += 1000;
-    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.to || r.from, r.angle); }));
+    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.to || r.from, r.angle, r.path); }));
 }
-function frameOf(id, at, angle) {
-    return { vehicle_id: id, state: 'busy', x: at[0], y: at[1], angle: angle || 0, charging: false, connected: true };
+function frameOf(id, at, angle, path) {
+    const f = { vehicle_id: id, state: 'busy', x: at[0], y: at[1], angle: angle || 0, charging: false, connected: true };
+    if (path) f.path = path.slice();
+    return f;
 }
 
 // paint runs the scheduled render, the way the page's coalescing runs it.
@@ -371,9 +382,9 @@ test(async function cometSetSignature() {
         order(12, 'staged', 'AMR-D', 'LM911', 'LM912', false),
     ]);
     drive(m, [
-        { id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3] },
+        { id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3], path: PATH_A },
         // 4.5 m short of its source, nearer the source than the delivery: fetch.
-        { id: 'AMR-B', from: [25, 10], to: [25.5, 10] },
+        { id: 'AMR-B', from: [25, 10], to: [25.5, 10], path: PATH_ISLAND },
         { id: 'AMR-C', from: [14, 1] },                       // standing still
         { id: 'AMR-E', from: [8, 0], to: [8.5, 0] },          // moving, no order
     ]);
@@ -391,28 +402,31 @@ test(async function cometSetSignature() {
         cls(c[1][0]) === 'map-comet-head' && c[1][1].attrs.fill === '#34c3e0',
         drawList(c[0][0]) + ' | ' + drawList(c[1][0]));
     const route = m.cometState()[1].pts.map(function (p) { return p.join(','); }).join(' ');
-    check('AMR-A\'s comet runs SMN_05 -> LM931 -> LM932 -> PLN_02, the one-way stretch backwards',
-        route === '0.5,-0.3 0,0 2,-1 14,-1 16,0 16,0', route);
+    // RDS's path (lead decision D10), from the robot's projection onto its
+    // first hop, SMN_05 -> LM911 (D6). Before D10 the comet ran the map's own
+    // undirected route, C backwards (0.5,-0.3 0,0 2,-1 14,-1 16,0 16,0).
+    check('AMR-A\'s comet runs its path, SMN_05 -> LM911 -> LM912 -> PLN_02, from its projection onto the first hop',
+        route === '0,-0.3 0,-2 16,-2 16,0', route);
 
     // Motion alone refreshes geometry; the dots are the same elements.
     const before = m.cometLayer().children.slice();
     const sig = m.lastCometSig();
     drive(m, [
-        { id: 'AMR-A', from: [0.5, 0.3], to: [0.7, 0.4] },
-        { id: 'AMR-B', from: [25.5, 10], to: [26, 10] },
+        { id: 'AMR-A', from: [0.5, 0.3], to: [0.7, 0.4], path: PATH_A },
+        { id: 'AMR-B', from: [25.5, 10], to: [26, 10], path: PATH_ISLAND },
     ]);
     paint(m);
     const after = m.cometLayer().children;
     check('a move keeps the signature and every dot element',
         m.lastCometSig() === sig && after.length === before.length &&
         after.every(function (x, i) { return x === before[i]; }), m.lastCometSig() + ' vs ' + sig);
-    check('...and the comet\'s geometry follows the robot',
-        m.cometState()[1].pts[0].join(',') === '0.7,-0.4', JSON.stringify(m.cometState()[1].pts[0]));
+    check('...and the comet\'s geometry follows the robot: it starts at the robot\'s new projection (D6)',
+        m.cometState()[1].pts[0].join(',') === '0,-0.4', JSON.stringify(m.cometState()[1].pts[0]));
 
     // AMR-B reaches its source: the leg latches to carry and the set rebuilds.
     drive(m, [
-        { id: 'AMR-A', from: [0.7, 0.4], to: [0.9, 0.5] },
-        { id: 'AMR-B', from: [26, 10], to: [27, 10] },
+        { id: 'AMR-A', from: [0.7, 0.4], to: [0.9, 0.5], path: PATH_A },
+        { id: 'AMR-B', from: [26, 10], to: [27, 10], path: PATH_ISLAND },
     ]);
     paint(m);
     const flipped = comets(m);
@@ -428,8 +442,8 @@ test(async function cometSetSignature() {
     ]);
     const held = m.cometLayer().children.slice();
     drive(m, [
-        { id: 'AMR-A', from: [0.9, 0.5], to: [1.1, 0.6] },
-        { id: 'AMR-B', from: [27, 10], to: [27.2, 10] },
+        { id: 'AMR-A', from: [0.9, 0.5], to: [1.1, 0.6], path: PATH_A },
+        { id: 'AMR-B', from: [27, 10], to: [27.2, 10], path: PATH_ISLAND },
     ]);
     paint(m);
     check('a status change rebuilds the set in the new status colour',
@@ -439,11 +453,12 @@ test(async function cometSetSignature() {
 
 // ═══ 3. the 12-robot calm rule ══════════════════════════════════════════════
 
+// fleet is n robots driving along LM911 -> LM912, each with that path.
 function fleet(n) {
     const out = [];
     for (let i = 1; i <= n; i++) {
         const id = 'AMR-' + String(i).padStart(2, '0');
-        out.push({ id: id, from: [i, 2], to: [i + 0.2, 2] });
+        out.push({ id: id, from: [i, 2], to: [i + 0.2, 2], path: ['LM911', 'LM912', 'PLN_02'] });
     }
     return out;
 }
@@ -487,6 +502,25 @@ test(async function countedPerOrderNotPerRobot() {
     paint(m);
     check('7 robots carrying 14 moving orders is past the limit: no comets', comets(m).length === 0,
         'got ' + comets(m).length);
+});
+
+// Lead decision D10 keeps the calm rule's count as it was: a moving order
+// counts whether or not its robot's path can be drawn.
+test(async function theCalmCountsMovingOrdersPathOrNot() {
+    const m = await boot();
+    const r13 = fleet(13);
+    delete r13[12].path; // AMR-13 is driving with no path RDS planned
+    await setOrders(m, workOrders(r13, 401));
+    drive(m, r13);
+    paint(m);
+    check('13 moving orders, one of them with no path to draw, is past the limit: no comets', comets(m).length === 0,
+        'got ' + comets(m).length);
+    click(m, robotGroup(m, 'AMR-13'));
+    paint(m);
+    check('...and focusing the robot with no path lights no comet, but it wears its focus ring',
+        comets(m).length === 0 && m.focusRobot() === 'AMR-13' &&
+        findAll(robotGroup(m, 'AMR-13'), function (n) { return cls(n) === 'map-robot-focus'; }).length === 1,
+        comets(m).length + ' comets, focus ' + m.focusRobot());
 });
 
 // ═══ 4. the comet's look, frame by frame ════════════════════════════════════
@@ -683,9 +717,9 @@ async function twoWorking(opts) {
         order(14, 'staged', 'AMR-G', 'LM911', 'LM912', false),
     ]);
     drive(m, [
-        { id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3] },
-        { id: 'AMR-B', from: [25, 10], to: [25.5, 10] },
-        { id: 'AMR-F', from: [0, 0] },
+        { id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3], path: PATH_A },
+        { id: 'AMR-B', from: [25, 10], to: [25.5, 10], path: PATH_ISLAND },
+        { id: 'AMR-F', from: [0, 0], path: PATH_A },
     ]);
     paint(m);
     return m;
@@ -927,7 +961,7 @@ test(async function intentAndFrozenLanes() {
         order(15, 'queued', '', 'LM941', 'SMN_05', false),
         order(13, 'blocked', 'AMR-F', 'SMN_05', 'PLN_02', true),
     ]);
-    drive(m, [{ id: 'AMR-F', from: [0, 0] }]);
+    drive(m, [{ id: 'AMR-F', from: [0, 0], path: PATH_A }]);
     paint(m);
     const lines = intents(m).map(function (n) { return n.attrs.points; });
     // The route model (lead decision D9): directed, weighed by the distance
@@ -941,21 +975,110 @@ test(async function intentAndFrozenLanes() {
     check('intent: unfilled, 0.34 opacity', it.attrs.fill === 'none' && it.attrs['stroke-opacity'] === '0.34',
         drawList(it));
     const f = frozen(m);
-    check('a blocked order draws one frozen lane, neutral grey, along route C',
+    // RDS's path (lead decision D10), ending at its last point. Before D10 the
+    // lane ran the map's own route to the order's node, C backwards
+    // (0,0 0,0 2,-1 14,-1 16,0 16,0).
+    check('a blocked order draws one frozen lane, neutral grey, along its robot\'s path (D10)',
         f.length === 1 && f[0].attrs.stroke === m.IDLE_MOVE_COLOR && f[0].attrs.fill === 'none' &&
-        f[0].attrs['stroke-opacity'] === '0.4' && f[0].attrs.points === '0,0 0,0 2,-1 14,-1 16,0 16,0',
+        f[0].attrs['stroke-opacity'] === '0.4' && f[0].attrs.points === '0,0 0,-2 16,-2 16,0',
         f.map(drawList).join(' | '));
 });
 
 test(async function reducedMotionDrawsLanesNotComets() {
     const m = await boot({ reduceMotion: true });
     await setOrders(m, [order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
-    drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3] }]);
+    drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3], path: PATH_A }]);
     paint(m);
     const f = frozen(m);
-    check('reduced motion: no comet, a frozen lane in the status colour instead',
+    check('reduced motion: no comet, a frozen lane in the status colour instead, along the path (D10)',
         comets(m).length === 0 && f.length === 1 && f[0].attrs.stroke === m.STATUS_COLOR.in_transit &&
-        f[0].attrs.points === '0.5,-0.3 0,0 2,-1 14,-1 16,0 16,0', f.map(drawList).join(' | '));
+        f[0].attrs.points === '0,-0.3 0,-2 16,-2 16,0', f.map(drawList).join(' | '));
+});
+
+// ═══ 8b. a driving robot's route is RDS's path (lead decisions D6, D10) ═════
+//
+// Its comet and its frozen lane follow the path RDS planned, the frame's
+// `path`, along the stored rows. Nothing stands in for a path the page cannot
+// draw: no straight line, no route of the map's own. The robot is drawn as
+// ever.
+
+test(async function noPathNoRoute() {
+    console.log('a driving robot\'s route is RDS\'s path');
+    const m = await boot();
+    await setOrders(m, [
+        order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true),
+        order(13, 'blocked', 'AMR-F', 'SMN_05', 'PLN_02', true),
+    ]);
+    drive(m, [
+        { id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3] },
+        { id: 'AMR-F', from: [0, 0] },
+    ]);
+    paint(m);
+    check('no path: a moving robot on a working order draws no comet, a blocked one no frozen lane',
+        comets(m).length === 0 && frozen(m).length === 0, comets(m).length + ' comets, ' + frozen(m).length + ' lanes');
+    check('...nor any other line in its place',
+        findAll(m.scene(), function (n) { return /^map-route/.test(cls(n)); }).length === 0);
+    check('...and no path is not a miss', m.pathMisses() === 0, String(m.pathMisses()));
+    click(m, robotGroup(m, 'AMR-A'));
+    paint(m);
+    check('...while both robots are drawn, and a click still focuses one, ring and all',
+        !!robotGroup(m, 'AMR-F') && m.focusRobot() === 'AMR-A' &&
+        findAll(robotGroup(m, 'AMR-A'), function (n) { return cls(n) === 'map-robot-focus'; }).length === 1);
+});
+
+test(async function aHopWithNoRowIsNoRoute() {
+    const m = await boot();
+    await setOrders(m, [order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
+    // Route C from SMN_05: every hop runs against the one row stored for it.
+    const C_BACKWARDS = ['SMN_05', 'LM931', 'LM932', 'PLN_02'];
+    drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3], path: C_BACKWARDS }]);
+    paint(m);
+    check('a path with a hop no stored row runs is no route at all: no comet, no lane',
+        comets(m).length === 0 && frozen(m).length === 0 && !!robotGroup(m, 'AMR-A'), comets(m).length + ' comets');
+    check('...counted, once for the robot frame', m.pathMisses() === 1, String(m.pathMisses()));
+    m.render();
+    check('...not again for a render of the same frame', m.pathMisses() === 1, String(m.pathMisses()));
+    m.onRobotUpdate([frameOf('AMR-A', [0.6, 0.35], 0, C_BACKWARDS)]);
+    paint(m);
+    check('...and again for the next frame', m.pathMisses() === 2, String(m.pathMisses()));
+});
+
+test(async function aOneWayStretchIsDrawnInItsStoredDirection() {
+    const m = await boot();
+    await setOrders(m, [order(11, 'in_transit', 'AMR-C', 'PLN_02', 'SMN_05', true)]);
+    // AMR-C drives route C the way it is stored, halfway along PLN_02 -> LM932.
+    drive(m, [{ id: 'AMR-C', from: [15.6, 0.2], to: [15, 0.5], path: ['PLN_02', 'LM932', 'LM931', 'SMN_05'] }]);
+    paint(m);
+    const pts = m.cometState().length ? m.cometState()[0].pts.map(function (p) { return p.join(','); }).join(' ') : null;
+    check('a one-way stretch is drawn in its stored direction, from the robot on: PLN_02 -> LM932 -> LM931 -> SMN_05',
+        comets(m).length === 1 && pts === '15,-0.5 14,-1 2,-1 0,0', pts);
+});
+
+test(async function aOneNamePathDrawsNothing() {
+    // Reduced motion, so any route would show as a lane.
+    const m = await boot({ reduceMotion: true });
+    await setOrders(m, [order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
+    drive(m, [{ id: 'AMR-A', from: [16, 0.3], to: [16, 0.1], path: ['PLN_02'] }]);
+    paint(m);
+    check('a one-name path (the robot at its last point) draws nothing: no lane, no comet, no miss',
+        frozen(m).length === 0 && comets(m).length === 0 && m.pathMisses() === 0 && !!robotGroup(m, 'AMR-A'));
+});
+
+test(async function theFrameTakesInThePath() {
+    // AMR-A's path runs route B, whose two curves bow 3 m south of the line
+    // SMN_05 - PLN_02; its robot, source and delivery all sit on that line.
+    async function frameWith(path) {
+        const m = await boot();
+        await setOrders(m, [order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
+        drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3], path: path }]);
+        paint(m);
+        return m.view();
+    }
+    const without = await frameWith(null);
+    const along = await frameWith(['SMN_05', 'LM921', 'PLN_02']);
+    check('an active order\'s frame takes in its robot\'s path (D10): the view reaches down to the bow',
+        along.minY + along.h >= 3 && along.minY + along.h > without.minY + without.h,
+        JSON.stringify(viewNums(along)) + ' vs ' + JSON.stringify(viewNums(without)));
 });
 
 // ═══ 9. the whole scene, as drawn ═══════════════════════════════════════════
@@ -968,7 +1091,9 @@ test(async function reducedMotionDrawsLanesNotComets() {
 // whose name chips de-collide down to a leader line, and an idle robot driving
 // away from a delivered order. Three states: as fed, AMR-A focused, and then
 // turned a quarter. Recorded at c0739799, the tree before the scene was
-// retained (dashboard-map.scene.golden.txt). Regenerate it only in a commit
+// retained (dashboard-map.scene.golden.txt), and regenerated once since, on
+// purpose: AMR-F's frozen lane follows its RDS path (lead decision D10, the
+// three map-route-frozen lines, nothing else). Regenerate it only in a commit
 // that changes the look on purpose, and say so there:
 //
 //     node dashboard-map.render.test.js --update-scene-golden
@@ -1031,9 +1156,9 @@ async function glyphFloor() {
     ].concat(staged));
     function feed(t) {
         const list = [
-            robotFrame('AMR-A', t ? [0.5, 0.3] : [0.3, 0.2], { state: 'busy', angle: 0.3 }),
-            robotFrame('AMR-B', t ? [25.5, 10] : [25, 10], { state: 'busy' }),
-            robotFrame('AMR-F', [0, 0]),
+            robotFrame('AMR-A', t ? [0.5, 0.3] : [0.3, 0.2], { state: 'busy', angle: 0.3, path: PATH_A }),
+            robotFrame('AMR-B', t ? [25.5, 10] : [25, 10], { state: 'busy', path: PATH_ISLAND }),
+            robotFrame('AMR-F', [0, 0], { path: PATH_A }),
             robotFrame('AMR-E', [12, 8], { state: 'error' }),
             robotFrame('AMR-C', [22.05, 6.02]),
             robotFrame('AMR-K', [28, 2], { charging: true }),
@@ -1130,8 +1255,8 @@ function sameAsFresh(m) {
 function tick(m, k) {
     m.clock.t += 1000;
     m.onRobotUpdate([
-        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3 }),
-        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy' }),
+        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3, path: PATH_A }),
+        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy', path: PATH_ISLAND }),
         robotFrame('AMR-I', [8.5 + 0.1 * k, 6], { angle: 1.2 }),
     ]);
     paint(m);
@@ -1320,13 +1445,14 @@ test(async function robotsChangeShapeInTheirOwnGroup() {
 test(async function aLaneFollowsItsRobotInPlace() {
     const m = await boot({ reduceMotion: true });
     await setOrders(m, [order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true)]);
-    drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3] }]);
+    drive(m, [{ id: 'AMR-A', from: [0.3, 0.2], to: [0.5, 0.3], path: PATH_A }]);
     paint(m);
     const lane = frozen(m)[0];
-    drive(m, [{ id: 'AMR-A', from: [0.5, 0.3], to: [0.7, 0.4] }]);
+    drive(m, [{ id: 'AMR-A', from: [0.5, 0.3], to: [0.7, 0.4], path: PATH_A }]);
     paint(m);
+    // Its path (D10) from the robot's projection onto the first hop (D6).
     check('under reduced motion the frozen lane is the same element, its points following the robot',
-        frozen(m).length === 1 && frozen(m)[0] === lane && lane.attrs.points === '0.7,-0.4 0,0 2,-1 14,-1 16,0 16,0',
+        frozen(m).length === 1 && frozen(m)[0] === lane && lane.attrs.points === '0,-0.4 0,-2 16,-2 16,0',
         drawList(lane));
     const same = sameAsFresh(m);
     check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
@@ -1344,8 +1470,8 @@ function writes(m) { return PANELS.map(function (id) { return m.ids[id].writes; 
 // nothing a legend or the rail says about them changes.
 function moveInPlace(m, k) {
     m.onRobotUpdate([
-        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3 }),
-        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy' }),
+        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3, path: PATH_A }),
+        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy', path: PATH_ISLAND }),
         robotFrame('AMR-I', [8.5 + 0.1 * k, 6], { angle: 1.2 }),
     ]);
     paint(m);

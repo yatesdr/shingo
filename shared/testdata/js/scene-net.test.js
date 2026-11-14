@@ -156,6 +156,13 @@ console.log('the route model: a dead end (the flat bug fixed)');
         walk('SMN_05', 'DEAD_1', spur) === 'SMN_05 LM911 LM912 DEAD_1', walk('SMN_05', 'DEAD_1', spur));
     check('as a start it has no way out, so it starts from its nearest vertex with one, LM912',
         walk('DEAD_1', 'SMN_05', spur) === 'LM912 LM911 SMN_05', walk('DEAD_1', 'SMN_05', spur));
+    // A place beside it, 0.2 m off, as a destination snaps to the dead end
+    // (the vertices rows arrive at); the desktop's pool was LM912 and the rest.
+    const near = { x: 18, y: 4.2 };
+    check('a place beside the dead end, as a destination, snaps to it; as a start, to LM912',
+        JSON.stringify(sceneRoute(spur, 'SMN_05', near)) === '["SMN_05","LM911","LM912","DEAD_1"]' &&
+        JSON.stringify(sceneRoute(spur, near, 'SMN_05')) === '["LM912","LM911","SMN_05"]',
+        JSON.stringify(sceneRoute(spur, 'SMN_05', near)) + ' / ' + JSON.stringify(sceneRoute(spur, near, 'SMN_05')));
 })();
 
 console.log('what is not a row');
