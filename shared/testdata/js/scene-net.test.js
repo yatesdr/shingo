@@ -5,11 +5,12 @@
 // processes-desktop.js travelGraph/graphNodeFor/route is directed and weighs
 // arcs, and its answers on this scene are pinned by TestProcessesDesktopRouteJS
 // (shingo-edge/www/testdata/static/js/pages/processes-desktop.route.test.js).
-// Every one of those vectors is here with the same answer, so the model
-// agrees with the desktop, except the one case named below: the desktop snaps
-// a destination over the vertices with a row LEAVING them, so a dead end, which
-// rows only arrive at, snapped away from itself. When the desktop map is
-// removed these vectors live on here.
+// Every one of those vectors is here with the same answer (its adjacency
+// vertex by vertex, its arc weight, its seven routes and its three
+// graphNodeFor ends), so the model agrees with the desktop, except the one case
+// named below: the desktop snaps a destination over the vertices with a row
+// LEAVING them, so a dead end, which rows only arrive at, snapped away from
+// itself. When the desktop map is removed these vectors live on here.
 //
 // THE LANES ARE CORE's AISLES. Core's robot map drew every physical lane once,
 // in buildGraph's vertex order, each from its earlier vertex, and its
@@ -66,6 +67,12 @@ console.log('the network');
     check('directed: a hop only where a row is stored',
         !!net.hop('LM931', 'SMN_05') && net.hop('SMN_05', 'LM931') === null &&
         !!net.hop('PLN_02', 'LM932') && net.hop('LM932', 'PLN_02') === null);
+    // The desktop's travelGraph adjacency, vertex by vertex: the rows leaving a
+    // vertex, in the order they are stored (the order a tie is broken in).
+    const leaving = function (n) { return (net.out[n] || []).map(function (r) { return r.to; }).join(' '); };
+    check('the rows leaving a vertex are its stored rows, in stored order: LM931 SMN_05; SMN_05 LM911 LM921; PLN_02 LM912 LM932 LM921',
+        leaving('LM931') === 'SMN_05' && leaving('SMN_05') === 'LM911 LM921' && leaving('PLN_02') === 'LM912 LM932 LM921',
+        [leaving('LM931'), leaving('SMN_05'), leaving('PLN_02')].join(' / '));
     const arc = net.hop('SMN_05', 'LM921');
     check('a curved row weighs its arc, not its chord (8)', arc.len > 10.79 && arc.len < 10.81, String(arc.len));
     check('...and carries its handles in its own direction',
