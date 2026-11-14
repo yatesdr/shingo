@@ -41,7 +41,7 @@ var corePageBudgets = map[string]struct {
 	"cycle-time.html":            {18, 72 << 10},  // 16, 66151
 	"dashboard-display.html":     {11, 27 << 10},  // 9, 24489
 	"dashboard-frame.html":       {18, 72 << 10},  // 16, 66151
-	"dashboard-map.html":         {16, 84 << 10},  // 14, 78022 at sm/u6-consumers: sceneOfRows moved to components/scene-rows.js, shared with the localization board (+1 request, +951 B gz); 13, 77071 at sm/u5-shared
+	"dashboard-map.html":         {17, 86 << 10},  // combined at the shared-map rebase of sm/u10-panel: scene-rows.js (U6) + scene-view.css (U10) on 13, 77071; the measured row lands in its own commit at the rebase tip
 	"dashboard-node-report.html": {10, 42 << 10},  // 8, 38352
 	"dashboard.html":             {19, 81 << 10},  // 17, 75297
 	"demand-episode.html":        {18, 72 << 10},  // 16, 66151
