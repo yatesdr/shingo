@@ -355,7 +355,7 @@ const COUNTER_ROUTES = route([
     ['POST', /^\/api\/processes\/1\/station-counters$/, () => ({ id: 52 })],
     ['PUT', /^\/api\/station-counters\/\d+$/, OK],
     ['DELETE', /^\/api\/station-counters\/\d+$/, OK],
-    ['PUT', /^\/api\/process-nodes\/\d+\/counted-at$/, OK],
+    ['PUT', /^\/api\/processes\/1\/counted-at$/, OK],
 ]);
 const MISC_ROUTES = route([
     ['POST', /^\/api\/loader-boards$/, () => ({ station_id: 32 })],
@@ -415,19 +415,33 @@ const scSheet = (label, tag) => async page => {
     page.byId('sc-tag').value = tag;
     await pressOK(page);
 };
-// Counted at is an exception list under Position settings: + Add a position,
-// the position, then its counter in the row that appears.
-const countedAt = (node, value) => async page => {
+// Counted at is an exception list under Position settings and a draft: + Add a
+// position ticks one or more positions, Escape closes the list and each gets a
+// row at the process's only station counter; value, when given, is a row's
+// select changed after. Save settings writes every changed row at once.
+const countedAdd = nodes => async page => {
     page.click('root', { act: 'ca-add' });
     await page.settle();
-    const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(node));
-    if (!pick) throw new Error('+ Add a position under Counted at offers no ' + node);
-    pick.click();
+    for (const node of nodes) {
+        const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(node));
+        if (!pick) throw new Error('+ Add a position under Counted at offers no ' + node);
+        pick.click();
+        await page.settle();
+    }
+    page.key('Escape');
     await page.settle();
+};
+const countedAt = (node, value) => async page => {
+    await countedAdd([node])(page);
+    if (value === undefined) return;
     const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === String(node));
     if (!sel) throw new Error('Settings draws no Counted at for ' + node);
     sel.value = value;
     page.fire(sel, 'change');
+    await page.settle();
+};
+const saveSettings = async page => {
+    page.click('root', { act: 'st-save' });
     await page.settle();
 };
 Object.assign(D, {
@@ -439,17 +453,22 @@ Object.assign(D, {
         page.click('root', rootButton(page, 'sc-edit', { sc: 51 }));
         await scSheet('Station 1b', 'S1.Count')(page);
     } },
-    scCountedAt: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: countedAt(201, '51') },
+    scCountedAt: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
+        await countedAt(201)(page);
+        await saveSettings(page);
+    } },
+    // A row's New station counter…: the counter is made in its sheet, the row
+    // counts at it in the draft, and Save settings writes the binding.
     scCountedAtNew: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
         await countedAt(202, 'new')(page);
         await scSheet('Station 3', 'S3.Count')(page);
+        await saveSettings(page);
     } },
-    // Two positions counted at Station 1, each through Counted at's + Add:
-    // the card's Change positions… checklist was a second editor of the same
-    // binding and is gone.
+    // Two positions in one + Add, one row each at Station 1: one save, one
+    // write, one reload (owner ruling 2026-11-14, REPORT-slice1).
     scCountedAtTwo: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
-        await countedAt(201, '51')(page);
-        await countedAt(202, '51')(page);
+        await countedAdd([201, 202])(page);
+        await saveSettings(page);
     } },
     scDelete: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
         page.click('root', rootButton(page, 'sc-delete', { sc: 51 }));
@@ -566,9 +585,9 @@ async function pinRequests() {
     await requests('requests-station-counters.txt', [
         ['Settings › + Add station counter: Station 2 on S2.Count', D.scNew],
         ['Settings › Station 1 › Edit: Station 1b', D.scEdit],
-        ['Settings › Position settings › Counted at › + Add a position: POS_A1, at Station 1 (the select\'s change)', D.scCountedAt],
-        ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count, then the bind)', D.scCountedAtNew],
-        ['Settings › Position settings › Counted at › + Add a position: POS_A1 then POS_A2, each at Station 1', D.scCountedAtTwo],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A1 (at Station 1, the only counter), then Save settings', D.scCountedAt],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count), then Save settings', D.scCountedAtNew],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A1 and POS_A2 in one pick, then Save settings', D.scCountedAtTwo],
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
@@ -716,9 +735,9 @@ async function pinRefusals() {
     await refusals('refusals-station-counters.txt', [
         specOf('+ Add station counter', D.scNew, { again: true }),
         specOf('Edit Station 1', D.scEdit, { again: true }),
-        specOf('Counted at › + Add: POS_A1 at Station 1', D.scCountedAt),
-        specOf('Counted at › + Add: POS_A2, New station counter… (the create, then the bind)', D.scCountedAtNew, { again: true }),
-        specOf('Counted at › + Add: POS_A1 then POS_A2 at Station 1 (two binds)', D.scCountedAtTwo),
+        specOf('Counted at › + Add: POS_A1, Save settings', D.scCountedAt),
+        specOf('Counted at › + Add: POS_A2, New station counter…, Save settings', D.scCountedAtNew),
+        specOf('Counted at › + Add: POS_A1 and POS_A2 in one pick, Save settings (one write)', D.scCountedAtTwo),
         specOf('Remove Station 1', D.scDelete, { again: true }),
     ]);
     await refusals('refusals-positions.txt', [

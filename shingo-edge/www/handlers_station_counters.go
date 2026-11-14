@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"shingoedge/engine"
+	"shingoedge/store/counters"
 )
 
 // handlers_station_counters.go — the station counters and "counted at" (admin).
@@ -155,22 +156,31 @@ func (h *Handlers) apiStationCountables(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, out)
 }
 
-// apiSetCountedAt binds a position to a station counter, or (null) back to the
-// production counter.
+// apiSetCountedAt is Position settings' Counted at save: every binding it
+// changed, in one write, {"bindings": [{"node_id": …, "line_counter_id": …}]}
+// (line_counter_id null: back to the production counter). All or nothing: a
+// refused binding is a 400 with its sentence, and binds none.
 func (h *Handlers) apiSetCountedAt(w http.ResponseWriter, r *http.Request) {
-	nodeID, err := parseID(r, "id")
+	processID, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
 	var req struct {
-		LineCounterID *int64 `json:"line_counter_id"`
+		Bindings []struct {
+			NodeID        int64  `json:"node_id"`
+			LineCounterID *int64 `json:"line_counter_id"`
+		} `json:"bindings"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.orchestration.SetCountedAt(nodeID, req.LineCounterID); err != nil {
+	bindings := make([]counters.NodeCounter, 0, len(req.Bindings))
+	for _, b := range req.Bindings {
+		bindings = append(bindings, counters.NodeCounter{NodeID: b.NodeID, CounterID: b.LineCounterID})
+	}
+	if err := h.orchestration.SetCountedAtMany(processID, bindings); err != nil {
 		writeStationCounterError(w, err)
 		return
 	}

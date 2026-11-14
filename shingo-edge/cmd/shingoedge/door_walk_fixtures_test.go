@@ -274,8 +274,8 @@ func routeFixtures() map[string]routeFixture {
 		"DELETE /api/station-counters/{id}": {want: 200, req: on(func(w *walk) (string, any) {
 			return "/api/station-counters/" + id(w.freshStationCounter()), nil
 		})},
-		"PUT /api/process-nodes/{id}/counted-at": {want: 200, req: on(func(w *walk) (string, any) {
-			return pn(w) + "/counted-at", map[string]any{"line_counter_id": nil}
+		"PUT /api/processes/{id}/counted-at": {want: 200, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/counted-at", map[string]any{"bindings": []map[string]any{{"node_id": w.pressNode, "line_counter_id": nil}}}
 		})},
 		// The walk's hold is on a CATID only a claimless style runs: the Charge
 		// would land on no cart, so it is refused and the hold stays open.

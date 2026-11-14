@@ -216,12 +216,7 @@ func stationCounterName(lc counters.LineCounter) string {
 }
 
 // SetCountedAt binds a position to a station counter (nil: back to the
-// production counter). Refused for a counter of another process, and for a
-// position that a loader, a produce claim or an A/B pair holds under any live
-// style, or that no live style claims as consume. The move is logged with the
-// parts in the line at the station counter it binds to or leaves (its card's
-// number, ≈ and measured): they change counter, and net against the cart's
-// run-out (TestCountedAt_BindMidRunNetsWithinTheLine).
+// production counter): SetCountedAtMany with one binding.
 func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
@@ -230,28 +225,67 @@ func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 	if node == nil {
 		return fmt.Errorf("no position %d", nodeID)
 	}
-	to := "the production counter"
-	if counterID != nil {
-		lc, err := e.db.GetLineCounter(*counterID)
-		if err != nil {
-			return err
-		}
-		if lc == nil || lc.ProcessID != node.ProcessID {
-			return refused("station counter %d is not a counter of %s's process", *counterID, node.Name)
-		}
-		if err := e.countableAtAStation(node.ProcessID, node.CoreNodeName, node.Name); err != nil {
-			return err
-		}
-		to = fmt.Sprintf("station counter %d (%s)", lc.ID, tagsWords(lc.TagName, lc.TagName2))
+	return e.SetCountedAtMany(node.ProcessID, []counters.NodeCounter{{NodeID: nodeID, CounterID: counterID}})
+}
+
+// SetCountedAtMany writes a process's bindings in one transaction, all of them
+// or none: Position settings' Counted at saves every row it changed at once.
+// Each binding is refused for a position of another process, a counter of
+// another process, and a position that a loader, a produce claim or an A/B
+// pair holds under any live style, or that no live style claims as consume
+// (countableRule, over one read of the process's claims). Every refusal is
+// found before anything is written; the first is the one said. Each move is
+// logged with where it comes from and goes to: the parts in the line at the
+// station counter it binds to or leaves change counter, and net against the
+// cart's run-out (TestCountedAt_BindMidRunNetsWithinTheLine).
+func (e *Engine) SetCountedAtMany(processID int64, bindings []counters.NodeCounter) error {
+	if len(bindings) == 0 {
+		return nil
 	}
-	from := "the production counter"
-	if node.LineCounterID != nil {
-		from = fmt.Sprintf("station counter %d", *node.LineCounterID)
-	}
-	if err := e.db.SetNodeLineCounter(nodeID, counterID); err != nil {
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
 		return err
 	}
-	e.logFn("counted at: %s moves from %s to %s", node.Name, from, to)
+	byID := make(map[int64]processes.Node, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	styles, byStyle, err := e.liveClaimsByNode(processID)
+	if err != nil {
+		return err
+	}
+	moves := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		node, ok := byID[b.NodeID]
+		if !ok {
+			return refused("position %d is not a live position of this process", b.NodeID)
+		}
+		to := "the production counter"
+		if b.CounterID != nil {
+			lc, err := e.db.GetLineCounter(*b.CounterID)
+			if err != nil {
+				return err
+			}
+			if lc == nil || lc.ProcessID != processID {
+				return refused("station counter %d is not a counter of %s's process", *b.CounterID, node.Name)
+			}
+			if err := countableRule(styles, byStyle, node.CoreNodeName, node.Name); err != nil {
+				return err
+			}
+			to = fmt.Sprintf("station counter %d (%s)", lc.ID, tagsWords(lc.TagName, lc.TagName2))
+		}
+		from := "the production counter"
+		if node.LineCounterID != nil {
+			from = fmt.Sprintf("station counter %d", *node.LineCounterID)
+		}
+		moves = append(moves, fmt.Sprintf("counted at: %s moves from %s to %s", node.Name, from, to))
+	}
+	if err := e.db.SetNodeLineCounters(bindings); err != nil {
+		return err
+	}
+	for _, m := range moves {
+		e.logFn("%s", m)
+	}
 	return nil
 }
 
@@ -273,15 +307,6 @@ func (e *Engine) StationCountables(processID int64) (map[int64]error, error) {
 		out[n.ID] = countableRule(styles, byStyle, n.CoreNodeName, n.Name)
 	}
 	return out, nil
-}
-
-// countableAtAStation applies the binding's rules to one position.
-func (e *Engine) countableAtAStation(processID int64, coreNode, name string) error {
-	styles, byStyle, err := e.liveClaimsByNode(processID)
-	if err != nil {
-		return err
-	}
-	return countableRule(styles, byStyle, coreNode, name)
 }
 
 // liveClaimsByNode is the process's live styles, in name order, and their live

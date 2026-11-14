@@ -205,7 +205,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CreateStationCounter",
 		"DeleteStationCounter",
 		"ListStationCounters",
-		"SetCountedAt",
+		"SetCountedAtMany",
 		// Added 2026-11-07 (precise counting P2): the station card's dry run,
 		// the binding's rules without the write; one read for the whole line
 		// since 2026-11-14, GET /api/processes/{id}/countable.

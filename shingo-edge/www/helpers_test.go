@@ -349,9 +349,13 @@ func (s *stubEngine) UpdateStationCounter(_ int64, label, tagName string, tagNam
 	return nil
 }
 func (s *stubEngine) DeleteStationCounter(int64) error { return nil }
-func (s *stubEngine) SetCountedAt(nodeID int64, _ *int64) error {
-	if nodeID != 1 {
-		return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
+
+// SetCountedAtMany: only position 1 may be bound; any other refuses the lot.
+func (s *stubEngine) SetCountedAtMany(_ int64, bindings []counters.NodeCounter) error {
+	for _, b := range bindings {
+		if b.NodeID != 1 {
+			return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
+		}
 	}
 	return nil
 }

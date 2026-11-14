@@ -91,7 +91,7 @@ const COUNTER_ROUTES = route([
     ['GET', /^\/api\/processes\/1\/countable$/, () => Object.fromEntries(T.FX.server.processNodes
         .filter(n => n.process_id === 1).map(n => [n.id, { countable: true, refusal: '' }]))],
     ['POST', /^\/api\/processes\/1\/station-counters$/, () => ({ id: 52 })],
-    ['PUT', /^\/api\/process-nodes\/\d+\/counted-at$/, OK],
+    ['PUT', /^\/api\/processes\/1\/counted-at$/, OK],
 ]);
 // A Core node list in Core's map order, with a group, a typed node and two
 // nodes with no type (Core sends '' for a plain node).
@@ -461,28 +461,42 @@ resume('ruling 5: Add process, its positions refused, then pressed again', {
     drive: page => T.DRIVE.addProcess.drive(page),
     once: /^POST \/api\/(processes|operator-stations)$/, step: /^PUT \/api\/operator-stations\/31\/claimed-nodes$/,
 });
-resume('ruling 5: Counted at → New station counter, its binding refused, then pressed again', {
-    open: { hash: '#tab=settings', extra: COUNTER_ROUTES, answer: refuse('PUT', '/api/process-nodes/202/counted-at', REFUSED) },
-    drive: async page => {
-        // Counted at is an exception list under Position settings: + Add a
-        // position, then the position; its row carries the counter.
-        const findSel = () => page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === '202');
-        if (!findSel()) {
-            page.click('root', { act: 'ca-add' });
-            await page.settle();
-            const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === '202');
-            if (pick) { pick.click(); await page.settle(); }
-        }
-        const sel = findSel();
-        if (!sel) throw new Error('Settings draws no Counted at for 202');
-        sel.value = 'new';
-        page.fire(sel, 'change');
+// Counted at is a draft saved by Save settings, every changed row in one
+// write: a refused save keeps its rows on screen, and Save again sends the
+// same one write.
+block({
+    title: 'Counted at: a refused save keeps its rows, and Save again sends the same one write',
+    open: () => ({ hash: '#tab=settings', extra: COUNTER_ROUTES, answer: refuse('PUT', '/api/processes/1/counted-at', REFUSED) }),
+    act: async page => {
+        page.click('root', { act: 'ca-add' });
         await page.settle();
-        page.byId('sc-label').value = 'Station 3';
-        page.byId('sc-tag').value = 'S3.Count';
-        await pressOK(page);
+        for (const v of ['201', '202']) {
+            const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === v);
+            if (!pick) throw new Error('+ Add a position under Counted at offers no ' + v);
+            pick.click();
+            await page.settle();
+        }
+        page.key('Escape');
+        await page.settle();
+        page.click('root', { act: 'st-save' });
+        await page.settle();
+        const first = page.S.settingsError;
+        const rows = page.root.querySelectorAll('select[data-countedat]').length;
+        const from = page.mark();
+        page.click('root', { act: 'st-save' });
+        await page.settle();
+        return { first: first, rows: rows, again: writes(page.since(from)) };
     },
-    once: /^POST \/api\/processes\/1\/station-counters$/, step: /^PUT \/api\/process-nodes\/202\/counted-at$/,
+    checks: [
+        r => ['the refusal is said', r.first.indexOf(MSG) >= 0, 'settingsError ' + JSON.stringify(r.first)],
+        r => ['both rows stay on screen', r.rows === 2, r.rows + ' rows'],
+        r => {
+            const ca = r.again.filter(c => /^PUT \/api\/processes\/1\/counted-at$/.test(lineOf(c)));
+            return ['Save again sends one Counted at write with both rows', ca.length === 1 &&
+                JSON.stringify((ca[0].body || {}).bindings) === '[{"node_id":201,"line_counter_id":51},{"node_id":202,"line_counter_id":51}]',
+                ca.map(c => lineOf(c) + ' ' + JSON.stringify(c.body)).join(' · ') || 'no Counted at write'];
+        },
+    ],
 });
 resume('ruling 5: + New style from Recipe One, its CATID refused, then pressed again', {
     open: { answer: refuse('PUT', '/api/styles/9', REFUSED) },

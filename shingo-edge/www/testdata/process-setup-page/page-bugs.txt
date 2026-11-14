@@ -80,10 +80,10 @@ ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
-## ruling 5: Counted at → New station counter, its binding refused, then pressed again
+## Counted at: a refused save keeps its rows, and Save again sends the same one write
 ok   the refusal is said
-ok   pressed again, nothing is made twice
-ok   pressed again, the failed step is sent
+ok   both rows stay on screen
+ok   Save again sends one Counted at write with both rows
 
 ## ruling 5: + New style from Recipe One, its CATID refused, then pressed again
 ok   the refusal is said

@@ -111,7 +111,6 @@ const S = {
     pickers: {},         // every open node picker, by key — see pickerInit
     sets: {},            // every set picker's four buckets, by its picker's key — see setInit
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
-    countedPick: 0,      // the position Counted at's + Add picked, its counter not yet chosen
     stMap: null,         // Settings' map shown or put away: {pid, shown} — see stMapShown
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
     add: null,           // the process sheet's own non-text draft: {groupID, map, edit, station, before}
@@ -5407,6 +5406,7 @@ async function loadCurtainNodes() {
         .filter(n => n.process_id === S.processID)
         .sort((a, b) => (a.sequence - b.sequence) || String(a.name).localeCompare(String(b.name)));
     S.curtain = curtainDraft();
+    S.counted = countedDraft();
 }
 
 // loadLivePositions reads every live position on this Edge, every process's,
@@ -5523,12 +5523,26 @@ async function positionRemovalsAsked(stationID, baseline, want, state) {
     return true;
 }
 
+// THE COUNTED-AT DRAFT. S.counted is each position's station counter id, 0 for
+// the production counter, and -1 for one + Add picked whose counter is not
+// chosen yet. Saved with the rest by Save settings: every row it changed, in
+// one write (PUT …/counted-at), which binds all of them or none.
+function countedDraft() {
+    const out = {};
+    for (const n of (S.curtainNodes || [])) out[n.id] = n.line_counter_id || 0;
+    return out;
+}
+
+function countedDirty() {
+    return !!S.counted && JSON.stringify(S.counted) !== JSON.stringify(countedDraft());
+}
+
 function curtainDirty() {
     return !!S.curtain && JSON.stringify(S.curtain) !== JSON.stringify(curtainDraft());
 }
 
 function settingsDirty() {
-    return (!!S.settings && JSON.stringify(S.settings) !== JSON.stringify(settingsDraft())) || curtainDirty();
+    return (!!S.settings && JSON.stringify(S.settings) !== JSON.stringify(settingsDraft())) || curtainDirty() || countedDirty();
 }
 
 // THE WRITE-THROUGH SECTIONS SAY SO. Positions, the routing set and the part
@@ -5706,8 +5720,8 @@ async function loadStationCounters() {
 
 // openStationCounter is the station counter's editor: its label, its tag and
 // an optional second tag (the process's counter PLC; the counter counts the
-// two tags' sum), with the rule. bindNode, when given, is a position counted
-// at the new counter once it saves.
+// two tags' sum), with the rule. bindNode, when given, is the Counted at row
+// whose draft counts at the new counter once it is made.
 function openStationCounter(id, bindNode) {
     const p = process() || {};
     const c = (S.stationCounters || []).find(x => x.id === id) || { label: '', tag_name: '', tag_name_2: '' };
@@ -5728,15 +5742,12 @@ function openStationCounter(id, bindNode) {
             const url = id ? '/api/station-counters/' + id : '/api/processes/' + S.processID + '/station-counters';
             // A new counter is made once per sheet: its binding refused is
             // resumed, not a second counter (ruling 5).
-            const chain = chainMade();
-            const out = chain.counter || await send(id ? 'PUT' : 'POST', url, body, NO_NOTICE);
+            const out = await send(id ? 'PUT' : 'POST', url, body, NO_NOTICE);
             if (!out.ok) { sheetStatus(said(out), true); return; }
-            if (!id) chain.counter = out;
-            if (!id && bindNode && bodyOf(out).id) {
-                const b = await send('PUT', '/api/process-nodes/' + bindNode + '/counted-at', { line_counter_id: bodyOf(out).id }, NO_NOTICE);
-                if (!b.ok) { chainHalf(afterStationChange); sheetStatus(said(b), true); return; }
-            }
-            chainDone();
+            // From a Counted at row's "New station counter…": the counter is
+            // made now, and the row counts at it in the draft; the binding is
+            // written by Save settings with the rest.
+            if (!id && bindNode && bodyOf(out).id) S.counted[bindNode] = Number(bodyOf(out).id);
             closeSheet();
             await afterStationChange();
             // A new counter counts nothing yet: the positions it counts are
@@ -5751,22 +5762,21 @@ function openStationCounter(id, bindNode) {
 
 async function afterStationChange() {
     S._tagCache = {};
+    const counted = S.counted;
     await Promise.all([loadStationCounters(), loadCurtainNodes(), loadCountingSlots(), loadCatidItems()]);
+    keepDraft(S.counted, counted);
     drawSettings();
 }
 
-// setCountedAt binds a position to a station counter ('' = the production
-// counter, 'new' = make one and bind it).
-async function setCountedAt(nodeID, value) {
+// setCountedAt is a Counted at row's select: the counter its draft counts at
+// ('0' the production counter, 'new' to make one for it).
+function setCountedAt(nodeID, value) {
     if (value === 'new') {
         openStationCounter(0, nodeID);
         return;
     }
-    const out = await send('PUT', '/api/process-nodes/' + nodeID + '/counted-at',
-        { line_counter_id: value ? Number(value) : null }, NO_NOTICE);
-    S.settingsError = out.ok ? '' : said(out);
-    if (out.ok && S.countedPick === nodeID) S.countedPick = 0;
-    await afterStationChange();
+    S.counted[nodeID] = Number(value) || 0;
+    drawSettings();
 }
 
 // countedAtField is a position's "Counted at": the production counter, one of
@@ -5774,8 +5784,9 @@ async function setCountedAt(nodeID, value) {
 function counterName(c) { return window.StationCard ? window.StationCard.nameOf(c) : c.label || c.tag_name; }
 
 function countedAtField(n) {
-    const at = n.line_counter_id || 0;
-    const opts = '<option value=""' + (at ? '' : ' selected') + '>Production counter</option>' +
+    const at = S.counted[n.id] || 0;
+    const opts = (at === -1 ? '<option value="-1" selected disabled>Choose a counter</option>' : '') +
+        '<option value="0"' + (at === 0 ? ' selected' : '') + '>Production counter</option>' +
         (S.stationCounters || []).map(c => '<option value="' + c.id + '"' + (at === c.id ? ' selected' : '') + '>' +
             esc(counterName(c)) + '</option>').join('') +
         '<option value="new">New station counter…</option>';
@@ -5837,19 +5848,19 @@ function curtainExceptions(nodes) {
 }
 
 // countedAtExceptions: the positions counted at a station counter instead of
-// the production counter, each with the counter it is counted at; a position
-// just picked by + Add sits here until a counter is chosen for it. Its
-// counter and its × write at once (PUT …/counted-at), as they always have.
+// the production counter, each with its counter, from the draft (countedDraft):
+// a position + Add picked sits here, its counter to choose when the process has
+// more than one. Saved by Save settings.
 function countedAtExceptions(nodes) {
-    const bound = nodes.filter(n => n.line_counter_id || n.id === S.countedPick);
-    const at = nodes.length - nodes.filter(n => n.line_counter_id).length;
+    const bound = nodes.filter(n => (S.counted[n.id] || 0) !== 0);
+    const at = nodes.length - bound.length;
     return exceptionList({
         id: 'counted', label: 'Counted at', sub: 'where a position’s strokes count',
         summary: (at === nodes.length ? 'all ' + nodes.length : countOf(at, nodes.length, 'position')) + ' at the production counter',
         rows: bound.map(n => ({
             name: posName(n),
             cells: [countedAtField(n)],
-            remove: n.line_counter_id ? { act: 'ca-off', node: n.id } : { act: 'ca-cancel', node: n.id },
+            remove: { act: 'ca-off', node: n.id },
         })),
         add: bound.length < nodes.length ? { label: '+ Add a position', act: 'ca-add' } : null,
     });
@@ -5868,19 +5879,42 @@ function positionFacts(nodes) {
 }
 
 // openPositionPicker is + Add's list: the shared picker over this process's
-// positions, one picked at a time; a position the setting cannot take is
-// greyed with why (why(n), '' for none).
-function openPositionPicker(btn, nodes, why, onPick) {
+// positions; a position the setting cannot take is greyed with why (why(n), ''
+// for none). One at a time, or with multi several: each tick is one position,
+// there is no tick-all, and what is ticked is handed to onPick as the list
+// closes (Escape, a press outside).
+function openPositionPicker(btn, nodes, why, onPick, multi) {
     const pop = $('pd-stpop');
     if (!pop) return;
     pop.innerHTML = '';
-    showPop(pop, btn);
     const rows = nodes.map(n => {
         const r = { value: String(n.id), label: posName(n) };
         const no = why(n);
         if (no) r.reason = no;
         return r;
     });
+    if (multi) {
+        let picked = [];
+        // A TICK IS INSIDE THE LIST. The shell redraws its rows on a tick, so
+        // the row clicked is out of the document by the time the click reaches
+        // the page's closer (boot: a click outside every .pd-pop closes it),
+        // and closest('.pd-pop') reads it as a click outside: the list closed
+        // after the first tick. Its clicks stop at the list while it is open.
+        const inside = e => e.stopPropagation();
+        pop.addEventListener('click', inside);
+        openLayer(pop, { kind: 'popover', anchor: btn, focus: false, onClose: w => {
+            pop.removeEventListener('click', inside);
+            if (w !== 'close') closePop();
+            if (picked.length) onPick(picked.map(Number));
+        } });
+        mountPicker(pop, null, () => rows, {
+            multi: true, open: true, chips: false, placeholder: 'find positions',
+            onChange: v => { picked = v.slice(); },
+        });
+        placePopover(pop, btn);
+        return;
+    }
+    showPop(pop, btn);
     mountPicker(pop, null, () => rows, {
         open: true, chips: false, placeholder: 'find a position',
         onChange: v => {
@@ -5903,19 +5937,23 @@ function openCurtainAdd(btn) {
     });
 }
 
-// openCountedAdd: + Add under Counted at, over the positions at the production
-// counter, each refused one greyed with the binding's own sentence (the dry
-// run, read as the list opens).
+// openCountedAdd: + Add under Counted at, over the positions the draft counts
+// at the production counter, each refused one greyed with the binding's own
+// sentence (the dry run, read as the list opens). Several in one pick, one row
+// each, all at the same counter: the process's only station counter, or one
+// to choose per row when it has several (or none yet: New station counter…).
 async function openCountedAdd(btn) {
     await loadStationVerdicts();
     const v = S.stationVerdicts || {};
-    const free = (S.curtainNodes || []).filter(n => !n.line_counter_id);
+    const free = (S.curtainNodes || []).filter(n => !(S.counted[n.id] || 0));
+    const counters = S.stationCounters || [];
+    const at = counters.length === 1 ? counters[0].id : -1;
     openPositionPicker(btn, free,
         n => (v[n.id] ? (v[n.id].countable ? '' : v[n.id].refusal) : 'not checked: the dry run could not be read'),
-        id => {
-            S.countedPick = id;
+        ids => {
+            for (const id of ids) S.counted[id] = at;
             drawSettings();
-        });
+        }, true);
 }
 
 // The positions one screen holds, read fresh, or null when the read failed.
@@ -5936,7 +5974,7 @@ async function readStationNodes(stationID) {
 // KEEPS the Settings drafts. refreshProcess would reset them, and a curtain or
 // a name typed but not yet saved is not the add's to throw away.
 async function afterPositionsChanged(stationID) {
-    const settings = S.settings, curtain = S.curtain;
+    const settings = S.settings, curtain = S.curtain, counted = S.counted;
     S.settingsError = '';
     await refreshStationNodes(stationID);
     const res = await send('GET', '/api/processes/' + S.processID + '/composer');
@@ -5946,7 +5984,14 @@ async function afterPositionsChanged(stationID) {
     }
     await loadCurtainNodes();
     S.settings = settings;
-    for (const id of Object.keys(curtain || {})) if (S.curtain[id]) S.curtain[id] = curtain[id];
+    keepDraft(S.curtain, curtain);
+    keepDraft(S.counted, counted);
+}
+
+// keepDraft puts a draft's entries back over a fresh read, for the positions
+// still there: a re-read is not the edit's to throw away.
+function keepDraft(fresh, was) {
+    for (const id of Object.keys(was || {})) if (id in fresh) fresh[id] = was[id];
 }
 
 // A RARELY CHANGED SETTING IS ONE ROW (33-settings-pages.md rule 7): its
@@ -6351,11 +6396,27 @@ async function saveSettings() {
             if (!cu.ok) { fail(cu); break; }
         }
     }
-    // A refused curtain edit keeps its draft on screen, so the engineer fixes
-    // the one field instead of re-entering the node.
+    // COUNTED AT: every row the draft changed, in one write that binds all of
+    // them or none. A row whose counter is not chosen yet stops the save.
+    if (!stopped() && countedDirty()) {
+        const was = countedDraft();
+        const open = (S.curtainNodes || []).filter(n => S.counted[n.id] === -1).map(posName);
+        if (open.length) {
+            S.settingsError = 'Choose a counter for ' + open.join(', ') + ' under Counted at.';
+        } else {
+            const bindings = (S.curtainNodes || []).filter(n => S.counted[n.id] !== was[n.id])
+                .map(n => ({ node_id: n.id, line_counter_id: S.counted[n.id] || null }));
+            const ca = await send('PUT', '/api/processes/' + S.processID + '/counted-at', { bindings: bindings }, NO_NOTICE);
+            if (!ca.ok) fail(ca);
+        }
+    }
+    // A refused curtain or Counted at edit keeps its draft on screen, so the
+    // engineer fixes the one field instead of re-entering the node.
     const keepCurtain = stopped() ? S.curtain : null;
+    const keepCounted = stopped() ? S.counted : null;
     await loadCurtainNodes();
     if (keepCurtain) S.curtain = keepCurtain;
+    if (keepCounted) S.counted = keepCounted;
     S._tagCache = {};
     await loadStationCounters();
     await reloadProcesses();
@@ -9469,8 +9530,7 @@ function onClick(e) {
                 return;
             }
             case 'ca-add': void openCountedAdd(btn); return;
-            case 'ca-off': void setCountedAt(Number(btn.dataset.node), ''); return;
-            case 'ca-cancel': S.countedPick = 0; drawSettings(); return;
+            case 'ca-off': setCountedAt(Number(btn.dataset.node), '0'); return;
             case 'cu-val': {
                 const d = S.curtain[btn.dataset.node];
                 if (d) d.safe = btn.dataset.val === 'true';
@@ -9485,7 +9545,7 @@ function onClick(e) {
             case 'ar-shown': flipAutoReorder('/auto-reorder-station', { shown: btn.dataset.shown === '1' }); return;
             case 'st-group': openGroupPicker(btn); return;
         case 'st-holddest': openContainmentPicker(btn); return;
-            case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.settingsError = ''; drawSettings(); return;
+            case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.counted = countedDraft(); S.settingsError = ''; drawSettings(); return;
             case 'st-save': saveSettings(); return;
             case 'st-ident': {
                 const mode = btn.dataset.mode;

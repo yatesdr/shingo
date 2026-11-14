@@ -18,7 +18,7 @@ func stationDo(t *testing.T, method, path, body string) (int, string) {
 	r.Post("/api/processes/{id}/station-counters", h.apiCreateStationCounter)
 	r.Put("/api/station-counters/{id}", h.apiUpdateStationCounter)
 	r.Delete("/api/station-counters/{id}", h.apiDeleteStationCounter)
-	r.Put("/api/process-nodes/{id}/counted-at", h.apiSetCountedAt)
+	r.Put("/api/processes/{id}/counted-at", h.apiSetCountedAt)
 	r.Get("/api/processes/{id}/countable", h.apiStationCountables)
 	r.Get("/api/processes/{id}/counting-slots", h.apiCountingSlots)
 	rec := httptest.NewRecorder()
@@ -47,10 +47,10 @@ func TestStationCounterRoutes(t *testing.T) {
 	if code, _ := stationDo(t, http.MethodDelete, "/api/station-counters/7", ""); code != http.StatusOK {
 		t.Errorf("delete = %d", code)
 	}
-	if code, _ := stationDo(t, http.MethodPut, "/api/process-nodes/1/counted-at", `{"line_counter_id":7}`); code != http.StatusOK {
+	if code, _ := stationDo(t, http.MethodPut, "/api/processes/1/counted-at", `{"bindings":[{"node_id":1,"line_counter_id":7}]}`); code != http.StatusOK {
 		t.Errorf("bind = %d", code)
 	}
-	if code, body := stationDo(t, http.MethodPut, "/api/process-nodes/2/counted-at", `{"line_counter_id":7}`); code != http.StatusBadRequest || !strings.Contains(body, "no live style consumes") {
+	if code, body := stationDo(t, http.MethodPut, "/api/processes/1/counted-at", `{"bindings":[{"node_id":1,"line_counter_id":7},{"node_id":2,"line_counter_id":7}]}`); code != http.StatusBadRequest || !strings.Contains(body, "no live style consumes") {
 		t.Errorf("bind refused = %d %s", code, body)
 	}
 	// The dry run: every position of the process in one read.
