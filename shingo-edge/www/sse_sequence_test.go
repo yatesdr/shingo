@@ -25,6 +25,9 @@ type sseFrame struct {
 	event string
 	id    string
 	data  string
+	// wire is the frame's bytes as written, its blank line included (the
+	// hub writes LF framing, so each line is its text and one byte).
+	wire int
 }
 
 // sseFrames opens url and streams parsed frames until ctx ends.
@@ -46,6 +49,7 @@ func sseFrames(t *testing.T, ctx context.Context, url string) <-chan sseFrame {
 		var f sseFrame
 		for sc.Scan() {
 			line := sc.Text()
+			f.wire += len(line) + 1
 			switch {
 			case line == "":
 				if f.event != "" {
@@ -246,6 +250,14 @@ func TestSSE_RobotPosReachesOnlyItsOwnStationsClient(t *testing.T) {
 	for name, ch := range clients {
 		if _, ok := nextFrame(t, ch, "connected", 2*time.Second); !ok {
 			t.Fatalf("%s: no connected frame", name)
+		}
+	}
+	// A panel's first frame is its station's {available}: false on a hub no
+	// robot stream is wired to (openRobotPos).
+	for _, panel := range []string{"panel 3", "panel 4"} {
+		topic := map[string]string{"panel 3": "robot-pos.3", "panel 4": "robot-pos.4"}[panel]
+		if f, ok := nextFrame(t, clients[panel], topic, 2*time.Second); !ok || f.data != `{"available":false}` {
+			t.Fatalf("%s: first frame %+v (%v), want %s {\"available\":false}", panel, f, ok, topic)
 		}
 	}
 	hub.Broadcast(SSEEvent{Type: "robot-pos.3", Data: map[string]int{"n": 1}})

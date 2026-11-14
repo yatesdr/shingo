@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,13 @@ var lossySSETopics = map[string]bool{
 // no topics, the shared bus's durable stream included, never takes one.
 // Pinned by TestSSE_RobotPosFamilyIsOneStationExactly and
 // TestSSE_RobotPosReachesOnlyItsOwnStationsClient.
+//
+// ONE STATE FRAME RIDES IT, {available} (D12), and that is the one exception
+// to the rule above lossySSETopics. It is also every connect's first frame,
+// written before the stream reads its queues (openRobotPos), so a panel that
+// connects starts from the truth; a later change is lost only to a panel whose
+// lossy queue is full, sixteen frames (half a minute of positions) behind, and
+// that panel's positions have already gone lost by its own rule (D13).
 const robotPosTopicPrefix = "robot-pos."
 
 // robotPosTopic is operator station stationID's robot-pos topic.
@@ -207,6 +215,17 @@ type EventHub struct {
 	// toucher marks a station's screen online (StationService.Touch). Set
 	// once, before serving (SetStationToucher).
 	toucher func(stationID int64)
+	// robotPos is told of every robot-pos client (robot_stream.go). Set once,
+	// before serving (NewRouter); nil tells nobody and says {available:false}.
+	robotPos robotPosStreams
+}
+
+// robotPosStreams is what HandleSSE tells of a client that names a robot-pos
+// topic: opened when it registers, returning its first {available}, and
+// closed when it goes.
+type robotPosStreams interface {
+	opened(stationID int64) (available bool)
+	closed(stationID int64)
 }
 
 // NewEventHub creates a new EventHub.
@@ -454,6 +473,8 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	// after an edge restart trigger a hard-reload on the client, and the seq
 	// the client starts at.
 	fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"seq\":%d}\n\n", serverInstance, start)
+	panels := h.openRobotPos(w, client.topics)
+	defer h.closeRobotPos(panels)
 	flusher.Flush()
 
 	keepalive := time.NewTicker(h.keepalive)
@@ -501,6 +522,38 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			h.touch(station)
 		}
+	}
+}
+
+// openRobotPos tells the robot stream of each robot-pos topic the client
+// named, after it registered, and writes each one's first frame, {available},
+// before the stream reads its queues, so a panel starts from the truth however
+// full its queue later gets. It returns the stations for closeRobotPos.
+func (h *EventHub) openRobotPos(w http.ResponseWriter, topics map[string]bool) []int64 {
+	var stations []int64
+	for t := range topics {
+		if id, ok := robotPosStation(t); ok {
+			stations = append(stations, id)
+		}
+	}
+	slices.Sort(stations)
+	for _, id := range stations {
+		available := false
+		if h.robotPos != nil {
+			available = h.robotPos.opened(id)
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", robotPosTopic(id), robotPosAvailable(available))
+	}
+	return stations
+}
+
+// closeRobotPos tells the robot stream the client's robot-pos topics went.
+func (h *EventHub) closeRobotPos(stations []int64) {
+	if h.robotPos == nil {
+		return
+	}
+	for _, id := range stations {
+		h.robotPos.closed(id)
 	}
 }
 

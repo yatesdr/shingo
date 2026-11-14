@@ -42,6 +42,9 @@ func TestNewRouter_CoalescesAQuarterSecond(t *testing.T) {
 	if got := h.specChangeWindow; got != 250*time.Millisecond {
 		t.Errorf("the router's plant-claims window is %v, want 250ms", got)
 	}
+	if got := h.eventHub.robotPos.(*robotStream).window; got != 250*time.Millisecond {
+		t.Errorf("the robot stream's recompute window is %v, want the nudge's 250ms", got)
+	}
 }
 
 // TestNewRouter_WithCoalescingWindowsSetsEach: each window lands on its own
@@ -53,5 +56,8 @@ func TestNewRouter_WithCoalescingWindowsSetsEach(t *testing.T) {
 	}
 	if got := h.specChangeWindow; got != 11*time.Millisecond {
 		t.Errorf("plant-claims window = %v, want the option's 11ms", got)
+	}
+	if got := h.eventHub.robotPos.(*robotStream).window; got != 7*time.Millisecond {
+		t.Errorf("robot stream window = %v, want the nudge's 7ms", got)
 	}
 }
