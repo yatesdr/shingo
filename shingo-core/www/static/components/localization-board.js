@@ -1175,8 +1175,9 @@ export function createBoard(root, opts) {
 // selection. Sorted by vehicle id so the list is stable across the 2s SSE
 // refreshes that could otherwise retrigger it.
 //
-// /api/robots returns fleet.RobotStatus with NO json tags, so Go marshals the
-// field names verbatim — VehicleID in PascalCase, not vehicle_id. The SSE
+// /api/robots returns fleet.RobotStatus, which tags only its route fields
+// ("path"), so Go marshals every other field name verbatim — VehicleID in
+// PascalCase, not vehicle_id. The SSE
 // position feed is a different code path that snake-cases; do not assume the
 // two agree.
 function populateRobotFilter(sel, state) {
