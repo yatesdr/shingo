@@ -5,8 +5,10 @@
 // purpose. Run under plain Node via the Go wrapper dashboard_map_render_test.go.
 // Exit 0 on pass, 1 on any assertion failure.
 //
-// THE PAGE RUNS FOR REAL: dashboard-map.js and shared/scene-geom.js, its own
-// data loads over a stubbed fetch, its own SSE handler (onRobotUpdate), its
+// THE PAGE RUNS FOR REAL: dashboard-map.js and the shared scene modules it
+// imports (shared/scene-geom.js, scene-net.js, scene-view.js, comet-layer.js,
+// each loaded once as a browser's module map loads it: shared-modules.js), its
+// own data loads over a stubbed fetch, its own SSE handler (onRobotUpdate), its
 // own render() through its own requestAnimationFrame coalescing, its own click
 // and wheel listeners. What is stubbed is the DOM (an element here is a little
 // tree that records every attribute set on it), the clock (Date.now is a
@@ -30,6 +32,7 @@ const vm = require('vm');
 // (TestStaticTree_HoldsNoTestJS); the code it reads stays in www/static.
 const SRC_DIR = path.join(__dirname, '..', '..', '..', 'static', 'pages');
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', 'shared');
+const SM = require(path.join(SHARED_DIR, 'testdata', 'js', 'shared-modules.js'));
 
 let failures = 0;
 const pending = [];
@@ -120,19 +123,9 @@ function drawList(n) {
 //
 // Same injection technique as dashboard-map.curve.test.js: the module is an
 // IIFE, so one __export call goes in just before it closes. Everything the
-// module REASSIGNS (view, focusRobot, turnDeg, the comet state, proj) is handed
-// out through an accessor; a reference would go stale on the first render.
-
-function loadSceneGeom(ctx) {
-    const raw = fs.readFileSync(path.join(SHARED_DIR, 'scene-geom.js'), 'utf8');
-    const src = raw.replace(/^export /mg, '');
-    if (src === raw) {
-        throw new Error('shared/scene-geom.js no longer declares its exports as ' +
-            '"export function"/"export var" at line start, which this harness strips to ' +
-            'run it as a script; update loadSceneGeom in dashboard-map.render.test.js');
-    }
-    vm.runInContext(src, ctx);
-}
+// module REASSIGNS (view, focusRobot, turnDeg, proj) is handed out through an
+// accessor; a reference would go stale on the first render. The comet layer's
+// own state is read through its accessors (sig, layer, state).
 
 function load(opts) {
     opts = opts || {};
@@ -237,28 +230,30 @@ function load(opts) {
     let exported = null;
     ctx.__export = function (o) { exported = o; };
     vm.createContext(ctx);
-    loadSceneGeom(ctx);
 
     const raw = fs.readFileSync(path.join(SRC_DIR, 'dashboard-map.js'), 'utf8');
-    const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
-    const INJECT = '  __export({ render: render, syncCometLayer: syncCometLayer,' +
+    const INJECT = '  __export({ render: render,' +
+        ' syncCometLayer: function (routes, robotR) { comets.sync(routes, robotR, view); },' +
         ' onRobotUpdate: onRobotUpdate, loadPoints: loadPoints, loadEdges: loadEdges, loadOrders: loadOrders,' +
-        ' wireViewControls: wireViewControls, wireCometPause: wireCometPause,' +
+        ' wireViewControls: wireViewControls, wireCometPause: function () { comets.wirePause(); },' +
         ' view: function () { return view; }, viewTarget: function () { return viewTarget; },' +
         ' fullPlantView: function () { return fullPlantView; },' +
         ' focusRobot: function () { return focusRobot; }, turnDeg: function () { return turnDeg; },' +
         ' userView: function () { return userView; },' +
-        ' lastCometSig: function () { return lastCometSig; }, cometLayer: function () { return cometLayer; },' +
-        ' cometState: function () { return cometState; }, minimapEl: function () { return minimapEl; },' +
+        ' lastCometSig: function () { return comets.sig(); }, cometLayer: function () { return comets.layer(); },' +
+        ' cometState: function () { return comets.state(); }, minimapEl: function () { return minimapEl; },' +
         ' proj: function (x, y) { return proj(x, y); }, graphScale: function () { return graphScale; },' +
         ' sceneView: function () { return sceneView; },' +
         ' STATUS_COLOR: STATUS_COLOR, IDLE_MOVE_COLOR: IDLE_MOVE_COLOR });\n})();\n';
-    const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
-    if (src === stripped) {
+    const src = raw.replace(/\}\)\(\);\s*$/, INJECT);
+    if (src === raw) {
         throw new Error('dashboard-map.js no longer ends in the "})();" IIFE close this ' +
             'harness injects before; update the injection in dashboard-map.render.test.js');
     }
-    vm.runInContext(src, ctx);
+    // The page's imports of the shared scene modules are bound to them, loaded
+    // once into this realm; its other imports (dom.js, clock.js, bus.js) are
+    // the stand-ins above.
+    SM.runPage(ctx, src, SM.realm(ctx), null, 'dashboard-map.js');
     if (!exported) throw new Error('__export was not reached inside dashboard-map.js');
 
     const m = exported;

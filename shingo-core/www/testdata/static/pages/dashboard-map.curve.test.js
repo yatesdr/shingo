@@ -56,23 +56,12 @@ function check(name, cond, detail) {
 // the first time buildGraph ran and every assertion after that would read the
 // old graph, or the old projection.
 //
-// The geometry itself now lives in shared/scene-geom.js. vm runs a SCRIPT,
-// not a module, so BOTH files have their ES module syntax stripped and are
-// evaluated into ONE context: scene-geom's top-level declarations become
-// context globals, and dashboard-map.js's stripped imports then resolve to them
-// through the ordinary scope chain — the same single set of bindings the
-// browser's module loader hands it.
-function loadSceneGeom(ctx) {
-    const file = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js');
-    const raw = fs.readFileSync(file, 'utf8');
-    const src = raw.replace(/^export /mg, '');
-    if (src === raw) {
-        throw new Error('shared/scene-geom.js no longer declares its exports as ' +
-            '"export function"/"export var" at line start, which this harness strips to ' +
-            'run it as a script; update loadSceneGeom in dashboard-map.curve.test.js');
-    }
-    vm.runInContext(src, ctx);
-}
+// The geometry and the drawing are shared/'s now (scene-geom.js, scene-net.js,
+// scene-view.js). vm runs a SCRIPT, not a module, so shared-modules.js loads
+// each shared file once into the page's context, as a browser's module map
+// does, and binds the page's imports to them: the page and the assertions
+// below hold the very same functions.
+const SM = require(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js', 'shared-modules.js'));
 
 function load() {
     const ctx = {
@@ -107,18 +96,14 @@ function load() {
     let exported = null;
     ctx.__export = function (o) { exported = o; };
     vm.createContext(ctx);
-    loadSceneGeom(ctx);
+    // drawAisles is the scene view's own (scene-view.js, not exported): the
+    // aisle drawing alone, handed the lanes the page draws.
+    const shared = SM.realm(ctx, null, { 'scene-view.js': ['drawAisles'] });
 
     const file = path.join(SRC_DIR, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
-    // /g, not one shot: dashboard-map.js imports from two modules now, and a
-    // non-global strip would leave the second `import` in a script vm cannot
-    // parse — a failure that reads as a syntax error, not as a stale harness.
-    const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
-    // drawAisles is the scene view's: it takes the graph and the projector it
-    // draws with, here the page's own.
     const INJECT = '  __export({ buildGraph: buildGraph,' +
-        ' drawAisles: function (svg, nodeR) { drawAisles(svg, { vertices: tnodes, adj: tadj }, nodeR, proj); },' +
+        ' lanes: function () { return sceneNet(scene).lanes; },' +
         ' computeView: computeView, routeWorld: routeWorld,' +
         ' shortestPath: shortestPath, nearestTNode: nearestTNode,' +
         ' setEdges: function (v) { sceneEdges = v; },' +
@@ -126,18 +111,21 @@ function load() {
         ' proj: function (x, y) { return proj(x, y); },' +
         ' tnodes: function () { return tnodes; }, tadj: function () { return tadj; },' +
         ' graphScale: function () { return graphScale; } });\n})();\n';
-    const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
-    if (src === stripped) {
+    const src = raw.replace(/\}\)\(\);\s*$/, INJECT);
+    if (src === raw) {
         throw new Error('dashboard-map.js no longer ends in the "})();" IIFE close this ' +
             'harness injects before; update the injection in dashboard-map.curve.test.js');
     }
-    vm.runInContext(src, ctx);
+    SM.runPage(ctx, src, shared, null, 'dashboard-map.js');
     if (!exported) throw new Error('__export was not reached inside dashboard-map.js');
-    // cubicPoint/cubicLength are scene-geom's now. Taken off the context rather
-    // than re-require()d, so what the assertions measure is the very binding
-    // dashboard-map.js weighed its graph with.
-    exported.cubicPoint = ctx.cubicPoint;
-    exported.cubicLength = ctx.cubicLength;
+    exported.drawAisles = function (svg, nodeR) {
+        shared('scene-view.js').drawAisles(svg, exported.lanes(), nodeR, exported.proj);
+    };
+    // cubicPoint/cubicLength are scene-geom's. Taken from the realm the page
+    // runs in, so what the assertions measure is the very binding the page
+    // weighed its graph with.
+    exported.cubicPoint = shared('scene-geom.js').cubicPoint;
+    exported.cubicLength = shared('scene-geom.js').cubicLength;
     return exported;
 }
 

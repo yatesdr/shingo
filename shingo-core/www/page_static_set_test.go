@@ -41,7 +41,7 @@ var corePageBudgets = map[string]struct {
 	"cycle-time.html":            {18, 72 << 10},  // 16, 66151
 	"dashboard-display.html":     {11, 27 << 10},  // 9, 24489
 	"dashboard-frame.html":       {18, 72 << 10},  // 16, 66151
-	"dashboard-map.html":         {11, 72 << 10},  // 9, 67052 at sm/u3-retain: the robot map's retained scene view, +3.4 KB gzipped
+	"dashboard-map.html":         {14, 80 << 10},  // 12, 74383 at sm/u5-shared: the scene view and comets move to shared/ beside scene-net.js, +7.0 KB gzipped (three modules compressed apart)
 	"dashboard-node-report.html": {10, 42 << 10},  // 8, 38352
 	"dashboard.html":             {19, 81 << 10},  // 17, 75297
 	"demand-episode.html":        {18, 72 << 10},  // 16, 66151

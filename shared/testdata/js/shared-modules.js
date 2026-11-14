@@ -55,8 +55,12 @@ function bindImports(src, real, name) {
 
 // realm returns load(file or '/static/shared/<file>'), the exports of that
 // shared file, run once in `ctx` (a fresh vm context when none is given).
-function realm(ctx, real) {
+// reach names, per file, functions of its own that a test reads as if they
+// were exported ({'scene-view.js': ['drawAisles']}); a name the file does not
+// declare fails the load.
+function realm(ctx, real, reach) {
     real = real || SCENE;
+    reach = reach || {};
     if (!ctx) ctx = {};
     if (!vm.isContext(ctx)) vm.createContext(ctx);
     const cache = {};
@@ -68,6 +72,7 @@ function realm(ctx, real) {
         let src = bindImports(fs.readFileSync(path.join(SHARED, file), 'utf8'), real, '__shared');
         src = src.replace(EXPORT_RE, function (m, kw, n) { names.push(n); return kw + ' ' + n; });
         if (!names.length) throw new Error('shared/' + file + ' declares no "export function/const/let/var/class" this loader can read');
+        (reach[file] || []).forEach(function (n) { names.push(n); });
         const fn = vm.runInContext('(function (__shared) {\'use strict\';' + src + '\nreturn { ' + names.join(', ') + ' };\n})', ctx,
             { filename: file });
         cache[file] = fn(load);
