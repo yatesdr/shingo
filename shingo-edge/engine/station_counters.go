@@ -255,33 +255,63 @@ func (e *Engine) SetCountedAt(nodeID int64, counterID *int64) error {
 	return nil
 }
 
-// StationCountable applies the binding's rules to a position without binding
-// it: nil when a station counter may count it, else its refusal
-// (*StationCounterRefused). The station card's dry run: it reads, never
-// writes.
-func (e *Engine) StationCountable(nodeID int64) error {
-	node, err := e.db.GetProcessNode(nodeID)
+// StationCountables applies the binding's rules to every live position of a
+// process without binding any: keyed by position id, nil where a station
+// counter may count it, else its refusal (*StationCounterRefused). The station
+// card's dry run, in one read for the whole line: it reads, never writes.
+func (e *Engine) StationCountables(processID int64) (map[int64]error, error) {
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if node == nil {
-		return fmt.Errorf("no position %d", nodeID)
+	styles, byStyle, err := e.liveClaimsByNode(processID)
+	if err != nil {
+		return nil, err
 	}
-	return e.countableAtAStation(node.ProcessID, node.CoreNodeName, node.Name)
+	out := make(map[int64]error, len(nodes))
+	for _, n := range nodes {
+		out[n.ID] = countableRule(styles, byStyle, n.CoreNodeName, n.Name)
+	}
+	return out, nil
 }
 
-// countableAtAStation applies the binding's rules to every live style's claim
-// at the position, not only the one the active style resolves: a binding that
-// holds today must hold under the style the process changes to next.
+// countableAtAStation applies the binding's rules to one position.
 func (e *Engine) countableAtAStation(processID int64, coreNode, name string) error {
-	styles, err := e.db.ListStylesByProcess(processID)
+	styles, byStyle, err := e.liveClaimsByNode(processID)
 	if err != nil {
 		return err
 	}
+	return countableRule(styles, byStyle, coreNode, name)
+}
+
+// liveClaimsByNode is the process's live styles, in name order, and their live
+// claims keyed [style id][core node name], in one query
+// (processes.ClaimsByNodeForStyles).
+func (e *Engine) liveClaimsByNode(processID int64) ([]processes.Style, map[int64]map[string]*processes.NodeClaim, error) {
+	styles, err := e.db.ListStylesByProcess(processID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := make([]int64, len(styles))
+	for i, s := range styles {
+		ids[i] = s.ID
+	}
+	byStyle, err := processes.ClaimsByNodeForStyles(e.db.DB, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	return styles, byStyle, nil
+}
+
+// countableRule is the binding's rules on one position, over every live
+// style's claim at it, not only the one the active style resolves: a binding
+// that holds today must hold under the style the process changes to next. The
+// first refusal in style-name order is the one said.
+func countableRule(styles []processes.Style, byStyle map[int64]map[string]*processes.NodeClaim, coreNode, name string) error {
 	consume := 0
 	for _, s := range styles {
-		c, err := e.db.GetStyleNodeClaimByNode(s.ID, coreNode)
-		if err != nil || c == nil {
+		c := byStyle[s.ID][coreNode]
+		if c == nil {
 			continue
 		}
 		switch {

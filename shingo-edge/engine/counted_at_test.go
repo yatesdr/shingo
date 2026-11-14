@@ -20,8 +20,10 @@ func TestCountedAt_NothingBindsWithoutTheSave(t *testing.T) {
 	a := r.consume("NB-1", "", "simple", true)
 	b := r.consume("NB-2", "", "simple", true)
 	lc := stationCounter(t, r.db, r.pid)
+	verdicts, err := r.eng.StationCountables(r.pid)
+	testutil.MustNoErr(t, err, "the dry run")
 	for _, n := range []int64{a, b} {
-		testutil.MustNoErr(t, r.eng.StationCountable(n), "the dry run")
+		testutil.MustNoErr(t, verdicts[n], "the dry run")
 	}
 	later := r.consume("NB-3", "", "simple", true)
 	r.stationClick(lc, 3)

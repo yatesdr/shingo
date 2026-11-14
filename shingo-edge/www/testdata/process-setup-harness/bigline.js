@@ -146,7 +146,8 @@ function serverFor(FX, log) {
         ['GET', /^\/api\/operator-stations$/, () => FX.page.stations],
         ['GET', /^\/api\/operator-stations\/\d+\/claimed-nodes$/, u => FX.page.stationNodes[id(u, /stations\/(\d+)\//)] || []],
         ['GET', /^\/api\/process-nodes$/, () => FX.server.processNodes],
-        ['GET', /^\/api\/process-nodes\/\d+\/countable$/, () => ({ countable: true, refusal: '' })],
+        ['GET', /^\/api\/processes\/\d+\/countable$/, () => Object.fromEntries(FX.server.processNodes
+            .map(n => [n.id, { countable: true, refusal: '' }]))],
         ['GET', /^\/api\/core-nodes$/, () => FX.server.coreNodes],
         ['GET', /^\/api\/plcs$/, () => [{ name: 'PLC_BIG', connected: true }]],
         ['GET', /^\/api\/payload-catalog$/, () => FX.server.payloadCatalog],

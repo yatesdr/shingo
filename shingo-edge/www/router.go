@@ -510,7 +510,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Put("/station-counters/{id}", h.apiUpdateStationCounter)
 				r.Delete("/station-counters/{id}", h.apiDeleteStationCounter)
 				r.Put("/process-nodes/{id}/counted-at", h.apiSetCountedAt)
-				r.Get("/process-nodes/{id}/countable", h.apiStationCountable)
+				r.Get("/processes/{id}/countable", h.apiStationCountables)
 				// The Counting block's MES slots.
 				r.Get("/processes/{id}/counting-slots", h.apiCountingSlots)
 				r.Get("/styles/{id}/delete-impact", h.apiStyleDeleteImpact)

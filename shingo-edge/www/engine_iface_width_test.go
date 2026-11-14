@@ -207,9 +207,9 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ListStationCounters",
 		"SetCountedAt",
 		// Added 2026-11-07 (precise counting P2): the station card's dry run,
-		// GET /api/process-nodes/{id}/countable, the binding's rules without
-		// the write.
-		"StationCountable",
+		// the binding's rules without the write; one read for the whole line
+		// since 2026-11-14, GET /api/processes/{id}/countable.
+		"StationCountables",
 		// Added 2026-11-07 (precise counting P5), narrowed 2026-11-08 to the
 		// Counting block's MES slots (decision 55 deleted the end of the
 		// line): GET /api/processes/{id}/counting-slots.

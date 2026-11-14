@@ -13,8 +13,8 @@
 //
 // A counter's positions are a checklist opened by Change positions…: one box
 // per position of the process, each greyed with its refusal when the
-// binding's rules refuse it (the dry run, GET
-// /api/process-nodes/{id}/countable). The boxes are the bindings, except that
+// binding's rules refuse it (the dry run, one read for the whole process: GET
+// /api/processes/{id}/countable). The boxes are the bindings, except that
 // the process's only station counter, while it counts no position yet, starts
 // with its countable unbound positions ticked. Nothing binds until the
 // checklist's save, which sends one PUT …/counted-at per box that differs from

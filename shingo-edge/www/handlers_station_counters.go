@@ -121,24 +121,38 @@ func (h *Handlers) apiCountingSlots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"slots": slots})
 }
 
-// apiStationCountable is the station card's dry run on one position:
-// {"countable": true}, or false with the refusal's sentence. It binds nothing.
-func (h *Handlers) apiStationCountable(w http.ResponseWriter, r *http.Request) {
-	nodeID, err := parseID(r, "id")
+// apiStationCountables is the station card's dry run on every live position of
+// a process, in one read: {"<position id>": {"countable": true, "refusal": ""}},
+// or countable false with the refusal's sentence. It binds nothing.
+func (h *Handlers) apiStationCountables(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	err = h.orchestration.StationCountable(nodeID)
-	var refusal *engine.StationCounterRefused
-	switch {
-	case err == nil:
-		writeJSON(w, map[string]any{"countable": true, "refusal": ""})
-	case errors.As(err, &refusal):
-		writeJSON(w, map[string]any{"countable": false, "refusal": refusal.Sentence})
-	default:
+	verdicts, err := h.orchestration.StationCountables(processID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
+	type verdict struct {
+		Countable bool   `json:"countable"`
+		Refusal   string `json:"refusal"`
+	}
+	out := make(map[int64]verdict, len(verdicts))
+	for id, v := range verdicts {
+		var refusal *engine.StationCounterRefused
+		switch {
+		case v == nil:
+			out[id] = verdict{Countable: true}
+		case errors.As(v, &refusal):
+			out[id] = verdict{Refusal: refusal.Sentence}
+		default:
+			writeError(w, http.StatusInternalServerError, v.Error())
+			return
+		}
+	}
+	writeJSON(w, out)
 }
 
 // apiSetCountedAt binds a position to a station counter, or (null) back to the

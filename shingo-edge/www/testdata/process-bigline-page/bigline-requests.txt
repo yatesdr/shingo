@@ -45,7 +45,7 @@ GET /api/processes/1/catid-health  12 B
 GET /api/plcs  37 B
 GET /api/processes/1/presets  4719 B
 GET /api/processes/1/auto-reorder  69 B
-23 × GET /api/process-nodes/{id}/countable  713 B
+GET /api/processes/1/countable  875 B
 GET /api/core-nodes  4755 B
 POST /api/processes/1/flow/preview  53 B
--- 38 requests, 34034 B of answers
+-- 16 requests, 34196 B of answers

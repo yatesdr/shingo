@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,14 @@ func TestBigLinePagePins(t *testing.T) {
 	}
 	if len(got) == 0 {
 		t.Fatal("the big-line pins produced no golden; the harness has drifted")
+	}
+	// NO VIEW ASKS ONCE PER POSITION (the build brief's Pi rule). bigline.js
+	// folds a per-position URL into one "N × …/{id}/…" line, so such a line in
+	// any view is the cost growing with the line.
+	for _, line := range strings.Split(got["bigline-requests.txt"], "\n") {
+		if strings.Contains(line, " × ") && strings.Contains(line, "/{id}/") {
+			t.Errorf("a view makes one request per position: %s", strings.TrimSpace(line))
+		}
 	}
 	dir := filepath.Join("testdata", "process-bigline-page")
 	names := make([]string, 0, len(got))

@@ -256,6 +256,11 @@ func TestBind_Refusals(t *testing.T) {
 	pair := bindNode(t, eng, pid, style, "B-PAIR", "consume", "simple", "B-PARTNER")
 	unclaimed := bindNode(t, eng, pid, style, "B-NONE", "", "", "")
 
+	// The station card's dry run reads the whole line at once, and must say
+	// for each position what binding it says.
+	verdicts, err := eng.StationCountables(pid)
+	testutil.MustNoErr(t, err, "the dry run")
+	testutil.MustNoErr(t, verdicts[ok], "the dry run on a consume position")
 	testutil.MustNoErr(t, eng.SetCountedAt(ok, &lc.ID), "a consume position")
 	for name, c := range map[string]struct {
 		node int64
@@ -267,8 +272,12 @@ func TestBind_Refusals(t *testing.T) {
 		"claimed by no live style":         {unclaimed, "no live style consumes"},
 	} {
 		err := eng.SetCountedAt(c.node, &lc.ID)
-		if s := refusedSentence(t, err); !strings.Contains(s, c.want) {
+		s := refusedSentence(t, err)
+		if !strings.Contains(s, c.want) {
 			t.Errorf("%s: %q, want %q", name, s, c.want)
+		}
+		if dry := refusedSentence(t, verdicts[c.node]); dry != s {
+			t.Errorf("%s: the dry run says %q, the binding %q", name, dry, s)
 		}
 	}
 	otherProc, err := eng.db.CreateProcess("OTHER", "", "plc", "MES_Other.Prod_Counter_01", true)

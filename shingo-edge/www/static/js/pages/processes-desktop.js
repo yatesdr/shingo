@@ -5661,17 +5661,14 @@ async function loadCatidItems() {
     S.catidItems = res.ok ? ((res.body || {}).items || []) : [];
 }
 
-// loadStationVerdicts reads the binding's dry run for each of the process's
-// positions while it has a station counter; a position whose read failed is
-// greyed as not checked.
+// loadStationVerdicts reads the binding's dry run for every position of the
+// process, in one read, while it has a station counter. A failed read leaves
+// every position greyed as not checked.
 async function loadStationVerdicts() {
     S.stationVerdicts = {};
     if (!(S.stationCounters || []).length) return;
-    await Promise.all((S.curtainNodes || []).map(async n => {
-        // A failed read leaves the position greyed: not checked yet.
-        const res = await send('GET', '/api/process-nodes/' + n.id + '/countable');
-        if (res.ok) S.stationVerdicts[n.id] = res.body;
-    }));
+    const res = await send('GET', '/api/processes/' + S.processID + '/countable');
+    if (res.ok && res.body) S.stationVerdicts = res.body;
 }
 
 // saveStationPositions is a card's save: one PUT …/counted-at per box that

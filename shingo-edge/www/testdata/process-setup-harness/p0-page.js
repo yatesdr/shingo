@@ -349,7 +349,9 @@ const STYLE_ROUTES = route([
 const COUNTER = { id: 51, label: 'Station 1', tag_name: 'S1.Count', tag_name_2: '', last_poll_at: '', ratio: null, strokes_since_click: 0, stopped: false };
 const COUNTER_ROUTES = route([
     ['GET', /^\/api\/processes\/1\/station-counters$/, () => [COUNTER]],
-    ['GET', /^\/api\/process-nodes\/\d+\/countable$/, () => ({ countable: true })],
+    // The dry run, one read for the whole process: every position countable.
+    ['GET', /^\/api\/processes\/1\/countable$/, () => Object.fromEntries(T.FX.server.processNodes
+        .filter(n => n.process_id === 1).map(n => [n.id, { countable: true, refusal: '' }]))],
     ['POST', /^\/api\/processes\/1\/station-counters$/, () => ({ id: 52 })],
     ['PUT', /^\/api\/station-counters\/\d+$/, OK],
     ['DELETE', /^\/api\/station-counters\/\d+$/, OK],
