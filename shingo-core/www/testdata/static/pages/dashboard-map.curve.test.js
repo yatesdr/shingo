@@ -564,35 +564,13 @@ console.log('routes');
 
 console.log('route vectors (synthetic route scene)');
 
-function routeScene() {
-    const file = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js', 'route-scene.json');
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
-
-// The scene as GET /api/map/edges serves it (domain.SceneEdge): one row per
-// stored segment, the handles as four fields or none.
-function sceneEdgeRows(scene) {
-    const at = {};
-    scene.points.forEach(function (p) { at[p.name] = p; });
-    return scene.segments.map(function (s, i) {
-        const a = at[s.from], b = at[s.to];
-        const row = {
-            id: i + 1, area_name: 'AREA', instance_name: s.from + '-' + s.to,
-            class_name: s.h ? 'DegenerateBezier' : 'StraightPath',
-            from_name: s.from, to_name: s.to, from_x: a.x, from_y: a.y, to_x: b.x, to_y: b.y,
-        };
-        if (s.h) { row.ctrl1_x = s.h[0]; row.ctrl1_y = s.h[1]; row.ctrl2_x = s.h[2]; row.ctrl2_y = s.h[3]; }
-        return row;
-    });
-}
-
 (function routeVectorsOnTheSyntheticScene() {
-    const scene = routeScene();
+    // The scene as GET /api/map/edges serves it (route-scene.js).
+    const RS = require('./route-scene.js');
+    const scene = RS.scene, at = RS.at;
     const m = load();
-    m.setEdges(sceneEdgeRows(scene));
+    m.setEdges(RS.edgeRows());
     m.buildGraph();
-    const at = {};
-    scene.points.forEach(function (p) { at[p.name] = p; });
     // A vertex carries no name, only its place; every vertex of this scene
     // sits on its own point, so the place names it.
     function vertexOf(name) { return m.nearestTNode(at[name].x, at[name].y); }

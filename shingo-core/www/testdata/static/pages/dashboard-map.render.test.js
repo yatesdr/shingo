@@ -42,28 +42,10 @@ function check(name, cond, detail) {
 
 // --- the scene -------------------------------------------------------------
 
-const SCENE = JSON.parse(fs.readFileSync(path.join(SHARED_DIR, 'testdata', 'js', 'route-scene.json'), 'utf8'));
-const AT = {};
-SCENE.points.forEach(function (p) { AT[p.name] = p; });
-
-// As GET /api/map/points serves them (domain.ScenePoint).
-const POINT_ROWS = SCENE.points.map(function (p, i) {
-    return {
-        id: i + 1, area_name: 'AREA', instance_name: p.name, class_name: p.class,
-        point_name: p.name, label: '', pos_x: p.x, pos_y: p.y,
-    };
-});
-// As GET /api/map/edges serves them (domain.SceneEdge).
-const EDGE_ROWS = SCENE.segments.map(function (s, i) {
-    const a = AT[s.from], b = AT[s.to];
-    const row = {
-        id: i + 1, area_name: 'AREA', instance_name: s.from + '-' + s.to,
-        class_name: s.h ? 'DegenerateBezier' : 'StraightPath',
-        from_name: s.from, to_name: s.to, from_x: a.x, from_y: a.y, to_x: b.x, to_y: b.y,
-    };
-    if (s.h) { row.ctrl1_x = s.h[0]; row.ctrl1_y = s.h[1]; row.ctrl2_x = s.h[2]; row.ctrl2_y = s.h[3]; }
-    return row;
-});
+// As GET /api/map/points and GET /api/map/edges serve them (route-scene.js).
+const RS = require('./route-scene.js');
+const POINT_ROWS = RS.pointRows();
+const EDGE_ROWS = RS.edgeRows();
 
 // --- a small recording DOM -------------------------------------------------
 //

@@ -1,9 +1,10 @@
 // localization-board.test.js — the board's pure logic, run under node.
 //
-// The DOM half (viewport, drawing, rail) is exercised by hand against the real
-// page; what is asserted here is the part that would be WRONG SILENTLY: the key
-// the client joins state to geometry with, and the shape of the distribution
-// the panel draws.
+// What is asserted here is the part that would be WRONG SILENTLY: the key the
+// client joins state to geometry with, the shape of the distribution the panel
+// draws, and (at the end, through createBoard) the lanes as drawn on a
+// synthetic scene. The rest of the DOM half (viewport gestures, rail, panel) is
+// exercised by hand against the real page.
 
 const fs = require('fs');
 const path = require('path');
@@ -41,10 +42,21 @@ function load() {
     // evaluated in its own context and handed in, so the board is tested
     // against the real helper rather than a copy of it.
     const pc = loadPlantclock();
+    // The DOM half is reached only through createBoard (the lane pins below);
+    // document builds its SVG, window takes its drag listeners, and fetch is
+    // the robot filter's /api/robots read, answered with no robots.
     const ctx = { console: console, Math: Math, Number: Number, Map: Map, Set: Set, Date: Date,
-        addDays: pc.addDays, plantDate: pc.plantDate, serverNow: function () { return Date.now(); } };
+        addDays: pc.addDays, plantDate: pc.plantDate, serverNow: function () { return Date.now(); },
+        document: { createElementNS: function (ns, name) { return svgEl(name); } },
+        window: { addEventListener: function () {} },
+        fetch: function () { return Promise.resolve({ json: function () { return Promise.resolve([]); } }); } };
     vm.createContext(ctx);
-    vm.runInContext(src + '\n__out = { histPath: histPath, serverLaneKey: serverLaneKey, ' +
+    // The stripped scene-geom import (makeProjector, cubicPathD, laneKey): the
+    // real shared file, its exports stripped to declarations in this context,
+    // as dashboard-map.curve.test.js loads it.
+    const geom = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js');
+    vm.runInContext(fs.readFileSync(geom, 'utf8').replace(/^export /mg, ''), ctx);
+    vm.runInContext(src + '\n__out = { createBoard: createBoard, histPath: histPath, serverLaneKey: serverLaneKey, ' +
         'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
         'annotationVerdict: annotationVerdict, ' +
         'seedMainRange: seedMainRange, seedCompareDays: seedCompareDays, ' +
@@ -403,8 +415,146 @@ console.log('verdict marks');
         }), JSON.stringify(m.VERDICT_TOKEN));
 })();
 
-if (failures) {
-    console.error('\n' + failures + ' check(s) failed');
-    process.exit(1);
+// --- the lanes, as drawn ---------------------------------------------------
+//
+// The board's floor plan on the synthetic route scene (route-scene.js, the
+// scene the robot map's pins draw), recorded at the tree before it moves onto
+// the shared scene layer with the same look. Driven through createBoard, the
+// page's own entry, with its edge and board fetches handed in (opts.fetchEdges
+// and opts.fetchBoard) and no board loaded, so every lane reads "no data".
+
+// A recording SVG element: tag, attributes (data-* mirrored into dataset, as
+// a browser does), children, and the two lookups the board makes of its map.
+function svgEl(name) {
+    const n = {
+        tag: name, attrs: {}, dataset: {}, children: [], parentNode: null, textContent: '',
+        classList: { add: function () {}, remove: function () {} },
+        setAttribute: function (k, v) {
+            this.attrs[k] = String(v);
+            if (k.indexOf('data-') === 0) {
+                this.dataset[k.slice(5).replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); })] = String(v);
+            }
+        },
+        getAttribute: function (k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; },
+        appendChild: function (c) { c.parentNode = this; this.children.push(c); return c; },
+        removeChild: function (c) { this.children.splice(this.children.indexOf(c), 1); c.parentNode = null; return c; },
+        get firstChild() { return this.children[0] || null; },
+        addEventListener: function () {},
+        getBoundingClientRect: function () { return { left: 0, top: 0, width: 900, height: 560 }; },
+        descendants: function () {
+            const out = [];
+            (function walk(x) { x.children.forEach(function (c) { out.push(c); walk(c); }); })(this);
+            return out;
+        },
+        querySelector: function (sel) {
+            const id = /^#(.+)$/.exec(sel);
+            return id ? this.descendants().find(function (c) { return c.attrs.id === id[1]; }) || null : null;
+        },
+        querySelectorAll: function (sel) {
+            const a = /^\[([\w-]+)\]$/.exec(sel);
+            return a ? this.descendants().filter(function (c) { return a[1] in c.attrs; }) : [];
+        },
+    };
+    return n;
 }
-console.log('\nall checks passed');
+
+// boardOn mounts a board over `rows` and loads it.
+async function boardOn(rows) {
+    const map = svgEl('svg');
+    const els = { '#lb-map': map };
+    const root = {
+        set innerHTML(v) { /* the board's markup; its elements are the stand-ins below */ },
+        querySelector: function (sel) {
+            if (!els[sel]) {
+                els[sel] = {
+                    value: '', hidden: false, disabled: false, textContent: '', innerHTML: '', dataset: {},
+                    options: [{ value: '' }], addEventListener: function () {},
+                };
+            }
+            return els[sel];
+        },
+    };
+    const board = m.createBoard(root, {
+        fetchEdges: function () { return Promise.resolve(rows); },
+        fetchBoard: function () { return Promise.resolve(null); },
+    });
+    await board.load();
+    return { board: board, map: map };
+}
+
+async function lanePins() {
+    console.log('lanes as drawn (synthetic route scene)');
+    const RS = require('./route-scene.js');
+    const b = await boardOn(RS.edgeRows());
+    const rows = b.board._laneRows();
+    check('15 stored rows collapse onto 9 lanes, keyed by scene-geom\'s laneKey, in first-appearance order',
+        JSON.stringify(rows.map(function (r) { return r.key; })) === JSON.stringify([
+            'LM911_SMN_05', 'LM911_LM912', 'LM912_PLN_02', 'LM932_PLN_02', 'LM931_LM932',
+            'LM931_SMN_05', 'LM921_SMN_05', 'LM921_PLN_02', 'LM941_LM942']),
+        JSON.stringify(rows.map(function (r) { return r.key; })));
+    const twin = rows.find(function (r) { return r.key === 'LM921_PLN_02'; });
+    check('the FIRST stored row of a lane is the one kept (PLN_02>LM921, listed before its twin)',
+        twin && twin.edge.from_name === 'PLN_02' && twin.edge.to_name === 'LM921',
+        twin && twin.edge.instance_name);
+    check('no board loaded: no lane has state', rows.every(function (r) { return r.st === null; }));
+    check('orientation comes from the edges\' endpoints: this scene is wider than tall, unrotated',
+        b.board._state.rotate90 === false);
+
+    const world = b.map.children[0];
+    const zones = world.children[0], lanes = world.children[1];
+    check('the map draws one world group: an empty zones group, then the lanes (no board: no reflectors)',
+        b.map.children.length === 1 && world.attrs.id === 'lb-world' && world.children.length === 2 &&
+        zones.attrs['class'] === 'lb-zones' && zones.children.length === 0 && lanes.attrs['class'] === 'lb-lanes',
+        world.children.map(function (c) { return c.attrs['class']; }).join(','));
+    check('two paths per lane, the click target first, then the mark', lanes.children.length === 18 &&
+        lanes.children.every(function (p, i) { return p.tag === 'path' && p.attrs['class'] === (i % 2 ? 'lb-lane' : 'lb-lane-hit'); }),
+        lanes.children.map(function (p) { return p.attrs['class']; }).join(','));
+    const marks = lanes.children.filter(function (p, i) { return i % 2 === 1; });
+    const want = ['M0 0L0 -2', 'M0 -2L16 -2', 'M16 -2L16 0', 'M16 0L14 -1', 'M14 -1L2 -1', 'M2 -1L0 0',
+        'M0 0C1 4 7 4 8 0', 'M16 0C15 4 9 4 8 0', 'M30 -10L34 -10'];
+    check('each lane is drawn from its kept row: a straight one as M..L, a curved one as the projected cubic',
+        JSON.stringify(marks.map(function (p) { return p.attrs.d; })) === JSON.stringify(want),
+        JSON.stringify(marks.map(function (p) { return p.attrs.d; })));
+    const scale = b.board._state.scale;
+    check('a mark: unfilled, round-capped, no-data grey, 1.3 px held at screen size, keyed by its lane',
+        marks.every(function (p, i) {
+            return p.attrs.fill === 'none' && p.attrs['stroke-linecap'] === 'round' &&
+                p.attrs.stroke === 'var(--text-muted)' && p.attrs.opacity === '1' && p.attrs['data-w'] === '1.3' &&
+                p.attrs['stroke-width'] === (1.3 / scale).toFixed(4) && p.attrs['data-lane'] === rows[i].key;
+        }), marks.map(function (p) { return JSON.stringify(p.attrs); })[0]);
+    check('a click target: the same path, transparent, 14 px, hit on its stroke',
+        lanes.children.filter(function (p, i) { return i % 2 === 0; }).every(function (p, i) {
+            return p.attrs.d === marks[i].attrs.d && p.attrs.stroke === 'transparent' && p.attrs['data-w'] === '14' &&
+                p.attrs['pointer-events'] === 'stroke' && p.attrs['data-lane'] === rows[i].key;
+        }));
+
+    // The curve test reads ctrl1_x and ctrl2_x only. A row carrying those two
+    // and no y draws a cubic whose handle y is NaN. /api/map/edges never sends
+    // one today (Core writes the four handles together), but it is the board's
+    // rule, and it is not the robot map's (all four or none, isCoord).
+    const half = Object.assign({}, RS.edgeRows()[9]);
+    delete half.ctrl1_y; delete half.ctrl2_y;
+    const hb = await boardOn([half]);
+    const d = hb.map.children[0].children[1].children[1].attrs.d;
+    check('a row with ctrl1_x and ctrl2_x but no y draws a cubic with NaN handles', d === 'M0 0C1 NaN 7 NaN 8 0', d);
+
+    const tall = RS.edgeRows().map(function (r) {
+        return Object.assign({}, r, { from_x: r.from_y, from_y: r.from_x, to_x: r.to_y, to_y: r.to_x });
+    });
+    const tb = await boardOn(tall);
+    check('the same edges transposed (taller than wide) draw rotated', tb.board._state.rotate90 === true);
+}
+
+(async function () {
+    try {
+        await lanePins();
+    } catch (e) {
+        failures++;
+        console.log('  FAIL the lane pins threw\n       ' + (e && e.stack || e));
+    }
+    if (failures) {
+        console.error('\n' + failures + ' check(s) failed');
+        process.exit(1);
+    }
+    console.log('\nall checks passed');
+})();
