@@ -83,9 +83,24 @@ function el(tag) {
             const sib = this.parentNode.children;
             return sib[sib.indexOf(this) + 1] || null;
         },
+        // innerHTML is not parsed: the markup is kept as written, and every
+        // write is counted, so a pin can say what a legend shows and how often
+        // the page rewrote it.
+        html: '', writes: 0, parsed: {},
         set innerHTML(v) {
             this.children.forEach(function (c) { c.parentNode = null; });
             this.children = [];
+            this.html = String(v);
+            this.writes++;
+            this.parsed = {};
+        },
+        // querySelector answers for markup written with innerHTML: one stand-in
+        // per class selector the markup holds, new on every write, as a browser
+        // parses new elements each time.
+        querySelector(sel) {
+            const name = sel.replace(/^\./, '');
+            if (this.html.indexOf('class="' + name + '"') < 0) return null;
+            return this.parsed[sel] || (this.parsed[sel] = el('button'));
         },
         addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
     };
@@ -153,6 +168,16 @@ function load(opts) {
     const recenter = el('button');
     const rotate = el('button');
     const ids = { 'map-svg-wrap': host, 'map-recenter': recenter, 'map-rotate': rotate };
+    // The header legend, the map key and the rail, as the template holds them.
+    ['map-legend', 'map-class-legend', 'rail-motion-list', 'rail-activity-list'].forEach(function (id) {
+        ids[id] = el(id === 'map-legend' ? 'span' : id === 'map-class-legend' ? 'div' : 'ul');
+    });
+    // Every element the page creates, in order, so a pin can count what a
+    // render built.
+    const made = [];
+    // Timers run when the pin says (runTimers), not on a clock.
+    let timerSeq = 0;
+    let timers = [];
 
     const ctx = {
         console: console,
@@ -176,7 +201,7 @@ function load(opts) {
                 return null;
             },
             querySelectorAll() { return []; },
-            createElementNS(ns, name) { return el(name); },
+            createElementNS(ns, name) { const e = el(name); made.push(e); return e; },
             addEventListener(t, fn) { (docListeners[t] = docListeners[t] || []).push(fn); },
         },
         window: {
@@ -190,13 +215,14 @@ function load(opts) {
         },
         setInterval() { return 0; },
         clearInterval() {},
-        setTimeout() { return 0; },
-        clearTimeout() {},
+        setTimeout(fn) { timerSeq++; timers.push({ id: timerSeq, fn: fn }); return timerSeq; },
+        clearTimeout(id) { timers = timers.filter(function (t) { return t.id !== id; }); },
         requestAnimationFrame(fn) { frameSeq++; frames.push({ id: frameSeq, fn: fn }); return frameSeq; },
         cancelAnimationFrame(id) { frames = frames.filter(function (f) { return f.id !== id; }); },
         fetch(url) {
             let body = [];
-            if (url === '/api/map/points') body = POINT_ROWS;
+            // opts.extraPoints: more synthetic points, served after the route scene's.
+            if (url === '/api/map/points') body = POINT_ROWS.concat(opts.extraPoints || []);
             else if (url === '/api/map/edges') body = EDGE_ROWS;
             else if (url.indexOf('/api/board/orders?dashboard=') === 0) body = data.orders;
             return Promise.resolve({ ok: true, json() { return Promise.resolve(JSON.parse(JSON.stringify(body))); } });
@@ -255,6 +281,17 @@ function load(opts) {
         return due.length;
     };
     m.pendingFrames = function () { return frames.length; };
+    // runTimers runs the timers set so far (the wheel's settle, for one).
+    m.runTimers = function () {
+        const due = timers;
+        timers = [];
+        due.forEach(function (t) { t.fn(); });
+        return due.length;
+    };
+    // made: every element the page has created, in order. madeSince(n) is
+    // the ones after the first n.
+    m.made = made;
+    m.madeSince = function (n) { return made.slice(n); };
     // scene is the drawn map: the <svg> render() put in the host.
     m.scene = function () { return host.children[0] || null; };
     return m;
@@ -919,6 +956,135 @@ test(async function reducedMotionDrawsLanesNotComets() {
     check('reduced motion: no comet, a frozen lane in the status colour instead',
         comets(m).length === 0 && f.length === 1 && f[0].attrs.stroke === m.STATUS_COLOR.in_transit &&
         f[0].attrs.points === '0.5,-0.3 0,0 2,-1 14,-1 16,0 16,0', f.map(drawList).join(' | '));
+});
+
+// ═══ 9. the whole scene, as drawn ═══════════════════════════════════════════
+//
+// Every element of the drawn map in paint order, and the header legend, the
+// map key and the rail, for a floor that uses every glyph the page draws: a
+// snapped and an unsnapped action point, occupied, empty and hot bays, two
+// palette classes, moving robots on each leg, a blocked one, an errored one,
+// charging, paused, offline and docked robots, a stack of six staged robots
+// whose name chips de-collide down to a leader line, and an idle robot driving
+// away from a delivered order. Three states: as fed, AMR-A focused, and then
+// turned a quarter. Recorded at c0739799, the tree before the scene was
+// retained (dashboard-map.scene.golden.txt). Regenerate it only in a commit
+// that changes the look on purpose, and say so there:
+//
+//     node dashboard-map.render.test.js --update-scene-golden
+
+const SCENE_GOLDEN = path.join(__dirname, 'dashboard-map.scene.golden.txt');
+const UPDATE_SCENE_GOLDEN = process.argv.indexOf('--update-scene-golden') >= 0;
+
+// sceneList spells the drawn map in paint order: each element depth-first as
+// its draw list (and its text), indented by depth. A layer group
+// (g[data-layer]) only orders paint and is not spelled; its children sit at
+// its own depth, so a scene grouped into layers spells the same as a flat one.
+function sceneList(root) {
+    const out = [];
+    (function visit(n, depth) {
+        const layer = n.tag === 'g' && n.getAttribute('data-layer') !== null;
+        if (!layer) out.push('  '.repeat(depth) + drawList(n) + (n.textContent ? ' "' + n.textContent + '"' : ''));
+        n.children.forEach(function (c) { visit(c, layer ? depth : depth + 1); });
+    })(root, 0);
+    return out;
+}
+
+function pointRow(id, name, klass, x, y) {
+    return { id: id, area_name: 'AREA', instance_name: name, class_name: klass, point_name: name, label: '', pos_x: x, pos_y: y };
+}
+// One of each node glyph, inside the route scene's extent so the plant frame
+// is the route scene's. graphScale there is 4 m, so an action point snaps
+// within 2 m of a network vertex, and a robot within 2 m of a bay stands on
+// it (the first such bay in point order). Every bay below is more than 2 m
+// from every robot but the one named.
+const GLYPH_POINTS = [
+    pointRow(101, 'AP_01', 'ActionPoint', 8.3, 0.2), // 0.36 m off LM921: drawn on it
+    pointRow(102, 'AP_02', 'ActionPoint', 21, 5),    // 5.8 m from any vertex: drawn where it is
+    pointRow(103, 'CP_01', 'ChargePoint', 22, 6),    // AMR-C stands on it: drawn
+    pointRow(104, 'CP_02', 'ChargePoint', 26, 6),    // empty: not drawn
+    pointRow(105, 'PK_01', 'ParkPoint', 24, 3),      // AMR-P stands on it: drawn
+    pointRow(106, 'PK_02', 'ParkPoint', 30, 7),      // empty but order 17's destination: drawn, accented
+    pointRow(107, 'PK_03', 'ParkPoint', 32, 7),      // empty: not drawn
+    pointRow(108, 'SH_01', 'Shelf', 12, 6),          // its own class colour; order 17's source: accented
+    pointRow(109, 'RK_01', 'Rack', 10, 6),           // another class colour
+];
+
+function robotFrame(id, at, extra) {
+    return Object.assign({ vehicle_id: id, state: 'ready', x: at[0], y: at[1], angle: 0, charging: false }, extra || {});
+}
+
+// glyphFloor boots the page on the route scene plus GLYPH_POINTS and feeds
+// it the floor above, two robot frames a second apart, then paints.
+async function glyphFloor() {
+    const m = await boot({ extraPoints: GLYPH_POINTS });
+    m.wireViewControls();
+    const staged = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].map(function (s, i) {
+        return order(21 + i, 'staged', 'AMR-' + s, 'LM911', 'LM912', false);
+    });
+    await setOrders(m, [
+        order(9, 'in_transit', 'AMR-A', 'SMN_05', 'PLN_02', true),
+        order(10, 'dispatched', 'AMR-B', 'LM941', 'LM942', false),
+        order(13, 'blocked', 'AMR-F', 'SMN_05', 'PLN_02', true),
+        order(17, 'queued', '', 'SH_01', 'PK_02', false),
+        order(30, 'delivered', 'AMR-I', 'RK_01', 'AP_02', false),
+    ].concat(staged));
+    function feed(t) {
+        const list = [
+            robotFrame('AMR-A', t ? [0.5, 0.3] : [0.3, 0.2], { state: 'busy', angle: 0.3 }),
+            robotFrame('AMR-B', t ? [25.5, 10] : [25, 10], { state: 'busy' }),
+            robotFrame('AMR-F', [0, 0]),
+            robotFrame('AMR-E', [12, 8], { state: 'error' }),
+            robotFrame('AMR-C', [22.05, 6.02]),
+            robotFrame('AMR-K', [28, 2], { charging: true }),
+            robotFrame('AMR-P', [24.03, 3.01], { state: 'paused' }),
+            robotFrame('AMR-O', [30, 4], { state: 'offline' }),
+            robotFrame('AMR-I', t ? [8.5, 6] : [8, 6], { angle: 1.2 }),
+        ];
+        ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].forEach(function (s) { list.push(robotFrame('AMR-' + s, [20, 2])); });
+        m.onRobotUpdate(list);
+    }
+    feed(0);
+    m.clock.t += 1000;
+    feed(1);
+    paint(m);
+    return m;
+}
+
+function sceneRecord(m, title) {
+    return ['== ' + title].concat(sceneList(m.scene()),
+        ['-- header legend', m.ids['map-legend'].html,
+            '-- map key', m.ids['map-class-legend'].html,
+            '-- rail: active', m.ids['rail-motion-list'].html,
+            '-- rail: activity', m.ids['rail-activity-list'].html]);
+}
+
+async function glyphFloorRecord() {
+    const m = await glyphFloor();
+    const out = sceneRecord(m, 'as fed');
+    click(m, robotGroup(m, 'AMR-A'));
+    paint(m);
+    out.push.apply(out, sceneRecord(m, 'AMR-A focused'));
+    m.ids['map-rotate'].listeners.click[0]({});
+    out.push.apply(out, sceneRecord(m, 'turned a quarter, AMR-A still focused'));
+    return { m: m, text: out.join('\n') + '\n' };
+}
+
+test(async function theWholeSceneAsDrawn() {
+    console.log('the whole scene');
+    const rec = await glyphFloorRecord();
+    if (UPDATE_SCENE_GOLDEN) {
+        fs.writeFileSync(SCENE_GOLDEN, rec.text);
+        console.log('  wrote ' + SCENE_GOLDEN);
+        return;
+    }
+    const want = fs.readFileSync(SCENE_GOLDEN, 'utf8').split('\n');
+    const got = rec.text.split('\n');
+    let at = 0;
+    while (at < want.length && at < got.length && want[at] === got[at]) at++;
+    check('the scene, legend, map key and rail are drawn as recorded in ' + path.basename(SCENE_GOLDEN),
+        at === want.length && at === got.length,
+        'first difference at line ' + (at + 1) + '\n  golden: ' + want[at] + '\n  page:   ' + got[at]);
 });
 
 // --- run -------------------------------------------------------------------

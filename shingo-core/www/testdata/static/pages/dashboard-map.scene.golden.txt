@@ -1,0 +1,412 @@
+== as fed
+svg class=map-svg preserveAspectRatio=xMidYMid meet viewBox=-1.6999999999999993 -15.51875 37.4 21.0375
+  line class=map-grid stroke-width=0.044879999999999996 x1=0 x2=0 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=2.992 x2=2.992 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=5.984 x2=5.984 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=8.975999999999999 x2=8.975999999999999 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=11.968 x2=11.968 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=14.96 x2=14.96 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=17.952 x2=17.952 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=20.944000000000003 x2=20.944000000000003 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=23.936000000000003 x2=23.936000000000003 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=26.928000000000004 x2=26.928000000000004 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=29.920000000000005 x2=29.920000000000005 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=32.912000000000006 x2=32.912000000000006 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-14.96 y2=-14.96
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-11.968 y2=-11.968
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-8.975999999999999 y2=-8.975999999999999
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-5.983999999999999 y2=-5.983999999999999
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-2.991999999999999 y2=-2.991999999999999
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=8.881784197001252e-16 y2=8.881784197001252e-16
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=2.992000000000001 y2=2.992000000000001
+  line class=map-aisle stroke-width=0.10771199999999999 x1=0 x2=0 y1=0 y2=-2
+  line class=map-aisle stroke-width=0.10771199999999999 x1=0 x2=2 y1=0 y2=-1
+  path class=map-aisle d=M0 0C1 4 7 4 8 0 fill=none stroke-width=0.10771199999999999
+  line class=map-aisle stroke-width=0.10771199999999999 x1=0 x2=16 y1=-2 y2=-2
+  line class=map-aisle stroke-width=0.10771199999999999 x1=16 x2=16 y1=-2 y2=0
+  line class=map-aisle stroke-width=0.10771199999999999 x1=16 x2=14 y1=0 y2=-1
+  path class=map-aisle d=M16 0C15 4 9 4 8 0 fill=none stroke-width=0.10771199999999999
+  line class=map-aisle stroke-width=0.10771199999999999 x1=14 x2=2 y1=-1 y2=-1
+  line class=map-aisle stroke-width=0.10771199999999999 x1=30 x2=34 y1=-10 y2=-10
+  polyline class=map-route-frozen fill=none points=0,0 0,0 2,-1 14,-1 16,0 16,0 stroke=#8b949e stroke-opacity=0.4 stroke-width=0.08228
+  polyline class=map-route-intent fill=none points=12,-6 30,-7 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  polyline class=map-route-intent fill=none points=0,-2 0,-2 16,-2 16,-2 stroke-opacity=0.34 stroke-width=0.059840000000000004
+  circle cx=8 cy=0 fill=#90a2bf r=0.2244
+  circle cx=21 cy=-5 fill=#90a2bf r=0.2244
+  circle class=map-node-charge cx=22 cy=-6 fill=none r=0.21317999999999998 stroke=#3c4a5e stroke-width=0.049367999999999995
+  polygon fill=#6b7a90 fill-opacity=0.4 points=22.03015936,-6.1507968 21.90449536,-5.97989376 21.98492032,-5.97989376 21.96984064,-5.8492032 22.09550464,-6.02010624 22.01507968,-6.02010624
+  circle cx=24 cy=-3 fill=#7e92b3 fill-opacity=0.55 r=0.19074
+  circle cx=30 cy=-7 fill=#7e92b3 fill-opacity=0.55 r=0.19074 stroke=#7c7cf0 stroke-width=0.10098 style=filter: drop-shadow(0 0 0.25px rgba(124,124,240,0.55))
+  circle cx=12 cy=-6 fill=#f0883e fill-opacity=0.7 r=0.20196 stroke=#7c7cf0 stroke-width=0.10098 style=filter: drop-shadow(0 0 0.25px rgba(124,124,240,0.55))
+  circle cx=10 cy=-6 fill=#79c0ff fill-opacity=0.7 r=0.20196
+  g class=map-robot-hit data-robot=AMR-A
+    circle class=map-robot-halo cx=0.5 cy=-0.3 fill=#34c3e0 r=0.5049
+    g transform=translate(0.5,-0.3) rotate(-17.188733853924695)
+      polygon class=map-robot fill=#34c3e0 points=0.374,0 -0.3179,0.26927999999999996 -0.15708,0 -0.3179,-0.26927999999999996 stroke-width=0.059840000000000004
+    circle class=map-robot-core cx=0.5 cy=-0.3 r=0.08228
+  g class=map-robot-hit data-robot=AMR-B
+    circle class=map-robot-halo cx=25.5 cy=-10 fill=#4f9bff r=0.5049
+    g transform=translate(25.5,-10) rotate(0)
+      polygon class=map-robot fill=#4f9bff points=0.374,0 -0.3179,0.26927999999999996 -0.15708,0 -0.3179,-0.26927999999999996 stroke-width=0.059840000000000004
+    circle class=map-robot-core cx=25.5 cy=-10 r=0.08228
+  g class=map-robot-hit data-robot=AMR-F
+    circle class=map-robot-fault-flare cx=0 cy=0 fill=#f85149 r=0.8976
+    circle class=map-robot cx=0 cy=0 fill=#f85149 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-E
+    circle class=map-robot-fault-flare cx=12 cy=-8 fill=#f85149 r=0.8976
+    circle class=map-robot-halo cx=12 cy=-8 fill=#f85149 r=0.5049
+    circle class=map-robot cx=12 cy=-8 fill=#f85149 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-C
+    circle class=map-robot cx=22 cy=-6 fill=#e3b341 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-K
+    circle class=map-robot cx=28 cy=-2 fill=#e3b341 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-P
+    circle class=map-robot is-paused cx=24 cy=-3 fill=#8b949e r=0.23562 stroke-width=0.052360000000000004 style=stroke: #8b949e
+  g class=map-robot-hit data-robot=AMR-O
+    circle class=map-robot is-offline cx=30 cy=-4 fill=#66768f r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-I
+    circle class=map-robot-halo cx=8.5 cy=-6 fill=#8b949e r=0.5049
+    g transform=translate(8.5,-6) rotate(-68.75493541569878)
+      polygon class=map-robot fill=#8b949e points=0.374,0 -0.3179,0.26927999999999996 -0.15708,0 -0.3179,-0.26927999999999996 stroke-width=0.059840000000000004
+    circle class=map-robot-core cx=8.5 cy=-6 r=0.08228
+  g class=map-robot-hit data-robot=AMR-S1
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S2
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S3
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S4
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S5
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S6
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-A
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#34c3e0 stroke-width=0.019074 width=1.3351800000000003 x=-0.16759000000000013 y=-1.3579525000000001
+    circle cx=-0.00864000000000012 cy=-1.089327 fill=#34c3e0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=0.611265 y=-1.048 "AMR-A"
+  g class=map-robot-hit data-robot=AMR-B
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#4f9bff stroke-width=0.019074 width=1.3351800000000003 x=24.83241 y=-11.057952499999999
+    circle cx=24.99136 cy=-10.789327 fill=#4f9bff r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=25.611265 y=-10.748 "AMR-B"
+  g class=map-robot-hit data-robot=AMR-F
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#f85149 stroke-width=0.019074 width=1.3351800000000003 x=-0.6675900000000001 y=-0.6287874999999999
+    circle cx=-0.5086400000000001 cy=-0.3601619999999999 fill=#f85149 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=0.111265 y=-0.3188349999999999 "AMR-F"
+  g class=map-robot-hit data-robot=AMR-E
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#f85149 stroke-width=0.019074 width=1.3351800000000003 x=11.33241 y=-9.057952499999999
+    circle cx=11.49136 cy=-8.789327 fill=#f85149 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=12.111265 y=-8.748 "AMR-E"
+  g class=map-robot-hit data-robot=AMR-I
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#8b949e stroke-width=0.019074 width=1.3351800000000003 x=7.832409999999999 y=-7.0579525
+    circle cx=7.991359999999999 cy=-6.789327 fill=#8b949e r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=8.611265 y=-6.748 "AMR-I"
+  g class=map-robot-hit data-robot=AMR-S1
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-3.0579525000000003
+    circle cx=19.392811000000002 cy=-2.789327 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-2.748 "AMR-S1"
+  g class=map-robot-hit data-robot=AMR-S2
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-2.6287875
+    circle cx=19.392811000000002 cy=-2.360162 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-2.318835 "AMR-S2"
+  g class=map-robot-hit data-robot=AMR-S3
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-2.1996225
+    circle cx=19.392811000000002 cy=-1.930997 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-1.88967 "AMR-S3"
+  g class=map-robot-hit data-robot=AMR-S4
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-1.7704575
+    circle cx=19.392811000000002 cy=-1.5018319999999998 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-1.460505 "AMR-S4"
+  g class=map-robot-hit data-robot=AMR-S5
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-1.3412925
+    circle cx=19.392811000000002 cy=-1.072667 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-1.03134 "AMR-S5"
+  g class=map-robot-hit data-robot=AMR-S6
+    line class=map-chip-leader stroke-width=0.019074 x1=20 x2=20 y1=-2 y2=-0.8914639999999999
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-0.9121275
+    circle cx=19.392811000000002 cy=-0.6435019999999999 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-0.6021749999999999 "AMR-S6"
+-- header legend
+<span class="map-legend-item"><span class="map-legend-dot" style="background:#34c3e0"></span>In transit<span class="map-legend-count">2</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#15b8a0"></span>Staged<span class="map-legend-count">6</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f85149"></span>Blocked<span class="map-legend-count">1</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#e3b341"></span>Charging<span class="map-legend-count">2</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#8b949e"></span>Idle<span class="map-legend-count">1</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f85149"></span>Error<span class="map-legend-count">1</span></span>
+-- map key
+<button type="button" class="map-key-toggle" aria-expanded="false">▸ Map key</button><div class="map-key-items" hidden><span class="map-legend-item"><span class="map-legend-dot" style="background:#7e92b3"></span>Travel node</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#90a2bf"></span>Action point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:transparent;border:2px solid #3c4a5e"></span>Charge point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#7e92b3"></span>Park point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#79c0ff"></span>Rack</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f0883e"></span>Shelf</span></div>
+-- rail: active
+<li class="rail-row" style="border-left-color:#f85149"><span class="rail-row-id">AMR-F</span><span class="rail-row-arrow">→</span><span class="rail-row-node">PLN_02</span><span class="rail-row-status" style="color:#f85149">BLOCKED</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S1</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S2</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S3</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S4</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S5</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S6</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#34c3e0"><span class="rail-row-id">AMR-A</span><span class="rail-row-arrow">→</span><span class="rail-row-node">PLN_02</span><span class="rail-row-status" style="color:#34c3e0">moving</span></li><li class="rail-empty">+2 more</li>
+-- rail: activity
+<li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li>
+== AMR-A focused
+svg class=map-svg preserveAspectRatio=xMidYMid meet viewBox=-1.6999999999999993 -15.51875 37.4 21.0375
+  line class=map-grid stroke-width=0.044879999999999996 x1=0 x2=0 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=2.992 x2=2.992 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=5.984 x2=5.984 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=8.975999999999999 x2=8.975999999999999 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=11.968 x2=11.968 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=14.96 x2=14.96 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=17.952 x2=17.952 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=20.944000000000003 x2=20.944000000000003 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=23.936000000000003 x2=23.936000000000003 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=26.928000000000004 x2=26.928000000000004 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=29.920000000000005 x2=29.920000000000005 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=32.912000000000006 x2=32.912000000000006 y1=-15.51875 y2=5.518750000000001
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-14.96 y2=-14.96
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-11.968 y2=-11.968
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-8.975999999999999 y2=-8.975999999999999
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-5.983999999999999 y2=-5.983999999999999
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=-2.991999999999999 y2=-2.991999999999999
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=8.881784197001252e-16 y2=8.881784197001252e-16
+  line class=map-grid stroke-width=0.044879999999999996 x1=-1.6999999999999993 x2=35.7 y1=2.992000000000001 y2=2.992000000000001
+  line class=map-aisle stroke-width=0.10771199999999999 x1=0 x2=0 y1=0 y2=-2
+  line class=map-aisle stroke-width=0.10771199999999999 x1=0 x2=2 y1=0 y2=-1
+  path class=map-aisle d=M0 0C1 4 7 4 8 0 fill=none stroke-width=0.10771199999999999
+  line class=map-aisle stroke-width=0.10771199999999999 x1=0 x2=16 y1=-2 y2=-2
+  line class=map-aisle stroke-width=0.10771199999999999 x1=16 x2=16 y1=-2 y2=0
+  line class=map-aisle stroke-width=0.10771199999999999 x1=16 x2=14 y1=0 y2=-1
+  path class=map-aisle d=M16 0C15 4 9 4 8 0 fill=none stroke-width=0.10771199999999999
+  line class=map-aisle stroke-width=0.10771199999999999 x1=14 x2=2 y1=-1 y2=-1
+  line class=map-aisle stroke-width=0.10771199999999999 x1=30 x2=34 y1=-10 y2=-10
+  polyline class=map-route-frozen fill=none points=0,0 0,0 2,-1 14,-1 16,0 16,0 stroke=#8b949e stroke-opacity=0.22 stroke-width=0.08228
+  circle cx=8 cy=0 fill=#90a2bf r=0.2244
+  circle cx=21 cy=-5 fill=#90a2bf r=0.2244
+  circle class=map-node-charge cx=22 cy=-6 fill=none r=0.21317999999999998 stroke=#3c4a5e stroke-width=0.049367999999999995
+  polygon fill=#6b7a90 fill-opacity=0.4 points=22.03015936,-6.1507968 21.90449536,-5.97989376 21.98492032,-5.97989376 21.96984064,-5.8492032 22.09550464,-6.02010624 22.01507968,-6.02010624
+  circle cx=24 cy=-3 fill=#7e92b3 fill-opacity=0.55 r=0.19074
+  circle cx=30 cy=-7 fill=#7e92b3 fill-opacity=0.55 r=0.19074 stroke=#7c7cf0 stroke-width=0.10098 style=filter: drop-shadow(0 0 0.25px rgba(124,124,240,0.55))
+  circle cx=12 cy=-6 fill=#f0883e fill-opacity=0.7 r=0.20196 stroke=#7c7cf0 stroke-width=0.10098 style=filter: drop-shadow(0 0 0.25px rgba(124,124,240,0.55))
+  circle cx=10 cy=-6 fill=#79c0ff fill-opacity=0.7 r=0.20196
+  g class=map-robot-hit data-robot=AMR-A
+    circle class=map-robot-focus cx=0.5 cy=-0.3 fill=none r=0.6732 stroke-width=0.044879999999999996
+    circle class=map-robot-halo cx=0.5 cy=-0.3 fill=#34c3e0 r=0.5049
+    g transform=translate(0.5,-0.3) rotate(-17.188733853924695)
+      polygon class=map-robot fill=#34c3e0 points=0.374,0 -0.3179,0.26927999999999996 -0.15708,0 -0.3179,-0.26927999999999996 stroke-width=0.059840000000000004
+    circle class=map-robot-core cx=0.5 cy=-0.3 r=0.08228
+  g class=map-robot-hit data-robot=AMR-B
+    circle class=map-robot-halo cx=25.5 cy=-10 fill=#4f9bff r=0.5049
+    g transform=translate(25.5,-10) rotate(0)
+      polygon class=map-robot fill=#4f9bff points=0.374,0 -0.3179,0.26927999999999996 -0.15708,0 -0.3179,-0.26927999999999996 stroke-width=0.059840000000000004
+    circle class=map-robot-core cx=25.5 cy=-10 r=0.08228
+  g class=map-robot-hit data-robot=AMR-F
+    circle class=map-robot-fault-flare cx=0 cy=0 fill=#f85149 r=0.8976
+    circle class=map-robot cx=0 cy=0 fill=#f85149 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-E
+    circle class=map-robot-fault-flare cx=12 cy=-8 fill=#f85149 r=0.8976
+    circle class=map-robot-halo cx=12 cy=-8 fill=#f85149 r=0.5049
+    circle class=map-robot cx=12 cy=-8 fill=#f85149 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-C
+    circle class=map-robot cx=22 cy=-6 fill=#e3b341 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-K
+    circle class=map-robot cx=28 cy=-2 fill=#e3b341 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-P
+    circle class=map-robot is-paused cx=24 cy=-3 fill=#8b949e r=0.23562 stroke-width=0.052360000000000004 style=stroke: #8b949e
+  g class=map-robot-hit data-robot=AMR-O
+    circle class=map-robot is-offline cx=30 cy=-4 fill=#66768f r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-I
+    circle class=map-robot-halo cx=8.5 cy=-6 fill=#8b949e r=0.5049
+    g transform=translate(8.5,-6) rotate(-68.75493541569878)
+      polygon class=map-robot fill=#8b949e points=0.374,0 -0.3179,0.26927999999999996 -0.15708,0 -0.3179,-0.26927999999999996 stroke-width=0.059840000000000004
+    circle class=map-robot-core cx=8.5 cy=-6 r=0.08228
+  g class=map-robot-hit data-robot=AMR-S1
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S2
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S3
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S4
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S5
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-S6
+    circle class=map-robot cx=20 cy=-2 fill=#15b8a0 r=0.23562 stroke-width=0.052360000000000004
+  g class=map-robot-hit data-robot=AMR-A
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#34c3e0 stroke-width=0.019074 width=1.3351800000000003 x=-0.16759000000000013 y=-1.3579525000000001
+    circle cx=-0.00864000000000012 cy=-1.089327 fill=#34c3e0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=0.611265 y=-1.048 "AMR-A"
+  g class=map-robot-hit data-robot=AMR-B
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#4f9bff stroke-width=0.019074 width=1.3351800000000003 x=24.83241 y=-11.057952499999999
+    circle cx=24.99136 cy=-10.789327 fill=#4f9bff r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=25.611265 y=-10.748 "AMR-B"
+  g class=map-robot-hit data-robot=AMR-F
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#f85149 stroke-width=0.019074 width=1.3351800000000003 x=-0.6675900000000001 y=-0.6287874999999999
+    circle cx=-0.5086400000000001 cy=-0.3601619999999999 fill=#f85149 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=0.111265 y=-0.3188349999999999 "AMR-F"
+  g class=map-robot-hit data-robot=AMR-E
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#f85149 stroke-width=0.019074 width=1.3351800000000003 x=11.33241 y=-9.057952499999999
+    circle cx=11.49136 cy=-8.789327 fill=#f85149 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=12.111265 y=-8.748 "AMR-E"
+  g class=map-robot-hit data-robot=AMR-I
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#8b949e stroke-width=0.019074 width=1.3351800000000003 x=7.832409999999999 y=-7.0579525
+    circle cx=7.991359999999999 cy=-6.789327 fill=#8b949e r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=8.611265 y=-6.748 "AMR-I"
+  g class=map-robot-hit data-robot=AMR-S1
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-3.0579525000000003
+    circle cx=19.392811000000002 cy=-2.789327 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-2.748 "AMR-S1"
+  g class=map-robot-hit data-robot=AMR-S2
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-2.6287875
+    circle cx=19.392811000000002 cy=-2.360162 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-2.318835 "AMR-S2"
+  g class=map-robot-hit data-robot=AMR-S3
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-2.1996225
+    circle cx=19.392811000000002 cy=-1.930997 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-1.88967 "AMR-S3"
+  g class=map-robot-hit data-robot=AMR-S4
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-1.7704575
+    circle cx=19.392811000000002 cy=-1.5018319999999998 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-1.460505 "AMR-S4"
+  g class=map-robot-hit data-robot=AMR-S5
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-1.3412925
+    circle cx=19.392811000000002 cy=-1.072667 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-1.03134 "AMR-S5"
+  g class=map-robot-hit data-robot=AMR-S6
+    line class=map-chip-leader stroke-width=0.019074 x1=20 x2=20 y1=-2 y2=-0.8914639999999999
+    rect class=map-chip height=0.41327 rx=0.079475 stroke=#15b8a0 stroke-width=0.019074 width=1.532278 x=19.233861 y=-0.9121275
+    circle cx=19.392811000000002 cy=-0.6435019999999999 fill=#15b8a0 r=0.06358000000000001
+    text class=map-robot-label font-size=0.3179 x=20.111265 y=-0.6021749999999999 "AMR-S6"
+-- header legend
+<span class="map-legend-item"><span class="map-legend-dot" style="background:#34c3e0"></span>In transit<span class="map-legend-count">2</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#15b8a0"></span>Staged<span class="map-legend-count">6</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f85149"></span>Blocked<span class="map-legend-count">1</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#e3b341"></span>Charging<span class="map-legend-count">2</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#8b949e"></span>Idle<span class="map-legend-count">1</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f85149"></span>Error<span class="map-legend-count">1</span></span>
+-- map key
+<button type="button" class="map-key-toggle" aria-expanded="false">▸ Map key</button><div class="map-key-items" hidden><span class="map-legend-item"><span class="map-legend-dot" style="background:#7e92b3"></span>Travel node</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#90a2bf"></span>Action point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:transparent;border:2px solid #3c4a5e"></span>Charge point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#7e92b3"></span>Park point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#79c0ff"></span>Rack</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f0883e"></span>Shelf</span></div>
+-- rail: active
+<li class="rail-row" style="border-left-color:#f85149"><span class="rail-row-id">AMR-F</span><span class="rail-row-arrow">→</span><span class="rail-row-node">PLN_02</span><span class="rail-row-status" style="color:#f85149">BLOCKED</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S1</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S2</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S3</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S4</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S5</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S6</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#34c3e0"><span class="rail-row-id">AMR-A</span><span class="rail-row-arrow">→</span><span class="rail-row-node">PLN_02</span><span class="rail-row-status" style="color:#34c3e0">moving</span></li><li class="rail-empty">+2 more</li>
+-- rail: activity
+<li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li>
+== turned a quarter, AMR-A still focused
+svg class=map-svg preserveAspectRatio=xMidYMid meet viewBox=-28.24444444444444 -1.6999999999999993 66.48888888888888 37.4
+  line class=map-grid stroke-width=0.07978666666666664 x1=-26.595555555555556 x2=-26.595555555555556 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=-21.276444444444444 x2=-21.276444444444444 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=-15.957333333333333 x2=-15.957333333333333 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=-10.638222222222222 x2=-10.638222222222222 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=-5.319111111111111 x2=-5.319111111111111 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=0 x2=0 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=5.319111111111111 x2=5.319111111111111 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=10.638222222222222 x2=10.638222222222222 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=15.957333333333333 x2=15.957333333333333 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=21.276444444444444 x2=21.276444444444444 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=26.595555555555556 x2=26.595555555555556 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=31.91466666666667 x2=31.91466666666667 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=37.23377777777778 x2=37.23377777777778 y1=-1.6999999999999993 y2=35.7
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=0 y2=0
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=5.319111111111111 y2=5.319111111111111
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=10.638222222222222 y2=10.638222222222222
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=15.957333333333333 y2=15.957333333333333
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=21.276444444444444 y2=21.276444444444444
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=26.595555555555556 y2=26.595555555555556
+  line class=map-grid stroke-width=0.07978666666666664 x1=-28.24444444444444 x2=38.24444444444444 y1=31.91466666666667 y2=31.91466666666667
+  line class=map-aisle stroke-width=0.191488 x1=0 x2=2 y1=0 y2=0
+  line class=map-aisle stroke-width=0.191488 x1=0 x2=1 y1=0 y2=2
+  path class=map-aisle d=M0 0C-4 1 -4 7 0 8 fill=none stroke-width=0.191488
+  line class=map-aisle stroke-width=0.191488 x1=2 x2=2 y1=0 y2=16
+  line class=map-aisle stroke-width=0.191488 x1=2 x2=0 y1=16 y2=16
+  line class=map-aisle stroke-width=0.191488 x1=0 x2=1 y1=16 y2=14
+  path class=map-aisle d=M0 16C-4 15 -4 9 0 8 fill=none stroke-width=0.191488
+  line class=map-aisle stroke-width=0.191488 x1=1 x2=1 y1=14 y2=2
+  line class=map-aisle stroke-width=0.191488 x1=10 x2=10 y1=30 y2=34
+  polyline class=map-route-frozen fill=none points=0,0 0,0 1,2 1,14 0,16 0,16 stroke=#8b949e stroke-opacity=0.22 stroke-width=0.14627555555555555
+  circle cx=0 cy=8 fill=#90a2bf r=0.3989333333333333
+  circle cx=5 cy=21 fill=#90a2bf r=0.3989333333333333
+  circle class=map-node-charge cx=6 cy=22 fill=none r=0.37898666666666664 stroke=#3c4a5e stroke-width=0.08776533333333333
+  polygon fill=#6b7a90 fill-opacity=0.4 points=6.05361664,21.7319168 5.830213973333334,22.035744426666668 5.97319168,22.035744426666668 5.94638336,22.2680832 6.169786026666666,21.964255573333332 6.02680832,21.964255573333332
+  circle cx=3 cy=24 fill=#7e92b3 fill-opacity=0.55 r=0.3390933333333333
+  circle cx=7 cy=30 fill=#7e92b3 fill-opacity=0.55 r=0.3390933333333333 stroke=#7c7cf0 stroke-width=0.17951999999999999 style=filter: drop-shadow(0 0 0.44px rgba(124,124,240,0.55))
+  circle cx=6 cy=12 fill=#f0883e fill-opacity=0.7 r=0.35903999999999997 stroke=#7c7cf0 stroke-width=0.17951999999999999 style=filter: drop-shadow(0 0 0.44px rgba(124,124,240,0.55))
+  circle cx=6 cy=10 fill=#79c0ff fill-opacity=0.7 r=0.35903999999999997
+  g class=map-robot-hit data-robot=AMR-A
+    circle class=map-robot-focus cx=0.3 cy=0.5 fill=none r=1.1968 stroke-width=0.07978666666666666
+    circle class=map-robot-halo cx=0.3 cy=0.5 fill=#34c3e0 r=0.8976000000000001
+    g transform=translate(0.3,0.5) rotate(72.8112661460753)
+      polygon class=map-robot fill=#34c3e0 points=0.6648888888888889,0 -0.5651555555555555,0.47872 -0.2792533333333333,0 -0.5651555555555555,-0.47872 stroke-width=0.10638222222222223
+    circle class=map-robot-core cx=0.3 cy=0.5 r=0.14627555555555555
+  g class=map-robot-hit data-robot=AMR-B
+    circle class=map-robot-halo cx=10 cy=25.5 fill=#4f9bff r=0.8976000000000001
+    g transform=translate(10,25.5) rotate(90)
+      polygon class=map-robot fill=#4f9bff points=0.6648888888888889,0 -0.5651555555555555,0.47872 -0.2792533333333333,0 -0.5651555555555555,-0.47872 stroke-width=0.10638222222222223
+    circle class=map-robot-core cx=10 cy=25.5 r=0.14627555555555555
+  g class=map-robot-hit data-robot=AMR-F
+    circle class=map-robot-fault-flare cx=0 cy=0 fill=#f85149 r=1.5957333333333332
+    circle class=map-robot cx=0 cy=0 fill=#f85149 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-E
+    circle class=map-robot-fault-flare cx=8 cy=12 fill=#f85149 r=1.5957333333333332
+    circle class=map-robot-halo cx=8 cy=12 fill=#f85149 r=0.8976000000000001
+    circle class=map-robot cx=8 cy=12 fill=#f85149 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-C
+    circle class=map-robot cx=6 cy=22 fill=#e3b341 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-K
+    circle class=map-robot cx=2 cy=28 fill=#e3b341 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-P
+    circle class=map-robot is-paused cx=3 cy=24 fill=#8b949e r=0.41888 stroke-width=0.09308444444444446 style=stroke: #8b949e
+  g class=map-robot-hit data-robot=AMR-O
+    circle class=map-robot is-offline cx=4 cy=30 fill=#66768f r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-I
+    circle class=map-robot-halo cx=6 cy=8.5 fill=#8b949e r=0.8976000000000001
+    g transform=translate(6,8.5) rotate(21.24506458430122)
+      polygon class=map-robot fill=#8b949e points=0.6648888888888889,0 -0.5651555555555555,0.47872 -0.2792533333333333,0 -0.5651555555555555,-0.47872 stroke-width=0.10638222222222223
+    circle class=map-robot-core cx=6 cy=8.5 r=0.14627555555555555
+  g class=map-robot-hit data-robot=AMR-S1
+    circle class=map-robot cx=2 cy=20 fill=#15b8a0 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-S2
+    circle class=map-robot cx=2 cy=20 fill=#15b8a0 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-S3
+    circle class=map-robot cx=2 cy=20 fill=#15b8a0 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-S4
+    circle class=map-robot cx=2 cy=20 fill=#15b8a0 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-S5
+    circle class=map-robot cx=2 cy=20 fill=#15b8a0 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-S6
+    circle class=map-robot cx=2 cy=20 fill=#15b8a0 r=0.41888 stroke-width=0.09308444444444446
+  g class=map-robot-hit data-robot=AMR-A
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#34c3e0 stroke-width=0.03390933333333333 width=2.3736533333333334 x=-0.8868266666666667 y=-1.3808044444444443
+    circle cx=-0.6042488888888888 cy=-0.9032479999999999 fill=#34c3e0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=0.4978044444444444 y=-0.8297777777777777 "AMR-A"
+  g class=map-robot-hit data-robot=AMR-B
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#4f9bff stroke-width=0.03390933333333333 width=2.3736533333333334 x=8.813173333333333 y=23.619195555555557
+    circle cx=9.095751111111111 cy=24.096752 fill=#4f9bff r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=10.197804444444444 y=24.170222222222222 "AMR-B"
+  g class=map-robot-hit data-robot=AMR-F
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#f85149 stroke-width=0.03390933333333333 width=2.3736533333333334 x=-1.1868266666666667 y=-0.35488444444444445
+    circle cx=-0.9042488888888889 cy=0.12267199999999999 fill=#f85149 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=0.19780444444444442 y=0.19614222222222222 "AMR-F"
+  g class=map-robot-hit data-robot=AMR-E
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#f85149 stroke-width=0.03390933333333333 width=2.3736533333333334 x=6.813173333333333 y=10.119195555555555
+    circle cx=7.095751111111111 cy=10.596752 fill=#f85149 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=8.197804444444444 y=10.670222222222222 "AMR-E"
+  g class=map-robot-hit data-robot=AMR-I
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#8b949e stroke-width=0.03390933333333333 width=2.3736533333333334 x=4.813173333333333 y=6.619195555555555
+    circle cx=5.095751111111111 cy=7.0967519999999995 fill=#8b949e r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=6.1978044444444444 y=7.170222222222222 "AMR-I"
+  g class=map-robot-hit data-robot=AMR-S1
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#15b8a0 stroke-width=0.03390933333333333 width=2.7240497777777772 x=0.6379751111111114 y=18.119195555555557
+    circle cx=0.9205528888888892 cy=18.596752 fill=#15b8a0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=2.1978044444444444 y=18.670222222222222 "AMR-S1"
+  g class=map-robot-hit data-robot=AMR-S2
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#15b8a0 stroke-width=0.03390933333333333 width=2.7240497777777772 x=0.6379751111111114 y=18.882155555555556
+    circle cx=0.9205528888888892 cy=19.359712 fill=#15b8a0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=2.1978044444444444 y=19.43318222222222 "AMR-S2"
+  g class=map-robot-hit data-robot=AMR-S3
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#15b8a0 stroke-width=0.03390933333333333 width=2.7240497777777772 x=0.6379751111111114 y=19.645115555555556
+    circle cx=0.9205528888888892 cy=20.122671999999998 fill=#15b8a0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=2.1978044444444444 y=20.19614222222222 "AMR-S3"
+  g class=map-robot-hit data-robot=AMR-S4
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#15b8a0 stroke-width=0.03390933333333333 width=2.7240497777777772 x=0.6379751111111114 y=20.408075555555556
+    circle cx=0.9205528888888892 cy=20.885631999999998 fill=#15b8a0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=2.1978044444444444 y=20.95910222222222 "AMR-S4"
+  g class=map-robot-hit data-robot=AMR-S5
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#15b8a0 stroke-width=0.03390933333333333 width=2.7240497777777772 x=0.6379751111111114 y=21.171035555555555
+    circle cx=0.9205528888888892 cy=21.648591999999997 fill=#15b8a0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=2.1978044444444444 y=21.72206222222222 "AMR-S5"
+  g class=map-robot-hit data-robot=AMR-S6
+    line class=map-chip-leader stroke-width=0.03390933333333333 x1=2 x2=2 y1=20 y2=21.970730666666665
+    rect class=map-chip height=0.7347022222222223 rx=0.14128888888888888 stroke=#15b8a0 stroke-width=0.03390933333333333 width=2.7240497777777772 x=0.6379751111111114 y=21.933995555555555
+    circle cx=0.9205528888888892 cy=22.411551999999997 fill=#15b8a0 r=0.11303111111111111
+    text class=map-robot-label font-size=0.5651555555555555 x=2.1978044444444444 y=22.48502222222222 "AMR-S6"
+-- header legend
+<span class="map-legend-item"><span class="map-legend-dot" style="background:#34c3e0"></span>In transit<span class="map-legend-count">2</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#15b8a0"></span>Staged<span class="map-legend-count">6</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f85149"></span>Blocked<span class="map-legend-count">1</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#e3b341"></span>Charging<span class="map-legend-count">2</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#8b949e"></span>Idle<span class="map-legend-count">1</span></span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f85149"></span>Error<span class="map-legend-count">1</span></span>
+-- map key
+<button type="button" class="map-key-toggle" aria-expanded="false">▸ Map key</button><div class="map-key-items" hidden><span class="map-legend-item"><span class="map-legend-dot" style="background:#7e92b3"></span>Travel node</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#90a2bf"></span>Action point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:transparent;border:2px solid #3c4a5e"></span>Charge point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#7e92b3"></span>Park point</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#79c0ff"></span>Rack</span><span class="map-legend-item"><span class="map-legend-dot" style="background:#f0883e"></span>Shelf</span></div>
+-- rail: active
+<li class="rail-row" style="border-left-color:#f85149"><span class="rail-row-id">AMR-F</span><span class="rail-row-arrow">→</span><span class="rail-row-node">PLN_02</span><span class="rail-row-status" style="color:#f85149">BLOCKED</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S1</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S2</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S3</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S4</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S5</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#15b8a0"><span class="rail-row-id">AMR-S6</span><span class="rail-row-arrow">→</span><span class="rail-row-node">LM912</span><span class="rail-row-status" style="color:#15b8a0">staged</span></li><li class="rail-row" style="border-left-color:#34c3e0"><span class="rail-row-id">AMR-A</span><span class="rail-row-arrow">→</span><span class="rail-row-node">PLN_02</span><span class="rail-row-status" style="color:#34c3e0">moving</span></li><li class="rail-empty">+2 more</li>
+-- rail: activity
+<li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li><li class="rail-event" style="opacity:1.00">LM912 called for parts</li>
