@@ -719,17 +719,18 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 
 func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) {
 	var r RuntimeState
-	var updatedAt, linesideAt, holdAt string
+	var updatedAt, linesideAt, holdAt, goAt string
 	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch,
 		&r.LinesidePayloadCode, &r.LinesidePayloadKnown, &r.LinesideSource, &linesideAt, &r.RemainingUOPCached,
 		&r.PendingUOPDelta, &r.PendingUOPPayload, &r.ReleasedEmpty, &r.HoldStopped,
-		&r.ReorderHold, &holdAt, &r.ReorderHoldNote, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
+		&r.ReorderHold, &holdAt, &r.ReorderHoldNote, &goAt, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
 	}
 	r.UpdatedAt = helpers.ScanTime(updatedAt)
 	r.LinesideAt = helpers.ScanTime(linesideAt)
 	r.ReorderHoldAt = helpers.ScanTime(holdAt)
+	r.ReorderGoAt = helpers.ScanTime(goAt)
 	return r, nil
 }
 
@@ -769,7 +770,7 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 	}
 	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, reorder_hold, reorder_hold_at, reorder_hold_note,
+		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, reorder_hold, reorder_hold_at, reorder_hold_note, reorder_go_at,
 		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id IN (`+placeholders.String()+`)`, args...)
 	if err != nil {
@@ -808,7 +809,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, reorder_hold, reorder_hold_at, reorder_hold_note,
+		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, reorder_hold, reorder_hold_at, reorder_hold_note, reorder_go_at,
 		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {

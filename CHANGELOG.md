@@ -16,10 +16,14 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v50. Core has no migration; the two go in either order.
+Deploy: Edge v50–v51. Core has no migration; the two go in either order.
 
-- A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting; nothing holds one yet
+- A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
 - A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
+- A cancel Core sends, an abort on the Orders page, or a failed order pauses that position's auto-reorder for 10 minutes
+- When Core gives up on an order that waited too long, that position's auto-reorder goes off until someone says go
+- REQUEST, or turning auto-reorder on in Processes, ends a pause or an off at the position
+- Auto-reorder does not ask on a count that cannot be the part's (a press past two packs or below zero, a line past one pack); the tile says so
 
 ## v0.7.0 — 2026-11-13
 

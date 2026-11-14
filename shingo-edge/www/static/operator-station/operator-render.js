@@ -966,7 +966,8 @@ function createNodeButton(entry) {
     }
 
     // The position's automatic ask is held: paused after a cancel, off after
-    // the line went idle, or switched off by a person. Amber like the keeper's
+    // the line went idle, switched off by a person, or a count that cannot be
+    // the claim's. Amber like the keeper's
     // chip, under it when both show; the sentence is the server's
     // (auto_reorder_note), shown on hover. Informational: REQUEST asks as ever.
     if (entry.auto_reorder_note) {
@@ -974,6 +975,7 @@ function createNodeButton(entry) {
             paused: 'AUTO-REORDER PAUSED',
             off: 'AUTO-REORDER OFF',
             person_off: 'AUTO-REORDER SWITCHED OFF',
+            count: 'AUTO-REORDER: CHECK COUNT',
         };
         const ar = el('span', {
             className: 'os-node-alarm',

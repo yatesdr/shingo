@@ -50,3 +50,37 @@ func HoldReorder(db *sql.DB, processNodeID int64, kind domain.ReorderHold, at ti
 	}
 	return n > 0, nil
 }
+
+// goClears is the SET a go writes: it clears a hold ranked at or below an off
+// (a pause, an off) and leaves a person's off, which only a person clears, as
+// it is. Every expression reads the row as it was before the statement.
+var goClears = func() string {
+	cleared := reorderHoldRank + fmt.Sprintf(" <= %d", domain.ReorderHoldOff.Rank())
+	return `reorder_hold=CASE WHEN ` + cleared + ` THEN '' ELSE reorder_hold END,
+		reorder_hold_at=CASE WHEN ` + cleared + ` THEN '' ELSE reorder_hold_at END,
+		reorder_hold_note=CASE WHEN ` + cleared + ` THEN '' ELSE reorder_hold_note END`
+}()
+
+// GoReorder is a person saying go at a position: a REQUEST that passed its
+// refusals. It clears a pause or an off, leaves a person's off, and stamps the
+// position's last go (at, the engine's clock), in one statement.
+func GoReorder(db DBTX, processNodeID int64, at time.Time) error {
+	if _, err := db.Exec(`UPDATE process_node_runtime_states SET `+goClears+`, reorder_go_at=?
+		WHERE process_node_id=?`, at.UTC().Format(helpers.TimeLayout), processNodeID); err != nil {
+		return fmt.Errorf("go reorder on node %d: %w", processNodeID, err)
+	}
+	return nil
+}
+
+// GoReorderAtCoreNode is GoReorder at every live position of processID on
+// coreNode, in one statement: Processes turning a claim's auto-reorder on,
+// which names its position by core node.
+func GoReorderAtCoreNode(db DBTX, processID int64, coreNode string, at time.Time) error {
+	if _, err := db.Exec(`UPDATE process_node_runtime_states SET `+goClears+`, reorder_go_at=?
+		WHERE process_node_id IN (SELECT id FROM process_nodes
+		                          WHERE process_id=? AND core_node_name=? AND deleted_at IS NULL)`,
+		at.UTC().Format(helpers.TimeLayout), processID, coreNode); err != nil {
+		return fmt.Errorf("go reorder at %s on process %d: %w", coreNode, processID, err)
+	}
+	return nil
+}

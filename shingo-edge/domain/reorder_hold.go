@@ -3,6 +3,8 @@ package domain
 import (
 	"fmt"
 	"time"
+
+	"shingo/protocol"
 )
 
 // reorder_hold.go — why an armed position's automatic ask is held.
@@ -42,6 +44,10 @@ const (
 	// ReorderHoldPersonOff: a person switched auto-reorder off here. Only a
 	// person clears it.
 	ReorderHoldPersonOff ReorderHold = "person_off"
+	// ReorderHoldCount: the count at the position cannot be its claim's
+	// (countHeld). Decided from the count each time and never stored: it is
+	// not in ReorderHolds, so the one write refuses it.
+	ReorderHoldCount ReorderHold = "count"
 )
 
 // ReorderHolds is every kind that holds, lowest rank first. The rank the write
@@ -98,6 +104,14 @@ func AutoReorderHeld(c *NodeClaim, rt *RuntimeState, now time.Time) ReorderHeld 
 	if c == nil || rt == nil || !c.AutoReorder || c.IsLoaderNode() {
 		return ReorderHeld{}
 	}
+	if h := heldByRow(rt, now); h.Holds() {
+		return h
+	}
+	return countHeld(c, rt.RemainingUOPCached)
+}
+
+// heldByRow is the hold the runtime row carries, in force at now.
+func heldByRow(rt *RuntimeState, now time.Time) ReorderHeld {
 	note := rt.ReorderHoldNote
 	switch rt.ReorderHold {
 	case ReorderHoldNone:
@@ -108,17 +122,46 @@ func AutoReorderHeld(c *NodeClaim, rt *RuntimeState, now time.Time) ReorderHeld 
 			return ReorderHeld{}
 		}
 		return ReorderHeld{Hold: ReorderHoldPaused, Until: until,
-			Sentence: fmt.Sprintf("Auto-reorder is paused until %s: %s. REQUEST asks now.", clockTime(until), note)}
+			Sentence: fmt.Sprintf("Auto-reorder is paused until %s: %s. REQUEST asks now and ends the pause.", clockTime(until), note)}
 	case ReorderHoldOff:
 		return ReorderHeld{Hold: ReorderHoldOff,
-			Sentence: fmt.Sprintf("Auto-reorder is off: %s. REQUEST asks now.", note)}
+			Sentence: fmt.Sprintf("Auto-reorder is off: %s. REQUEST turns it back on.", note)}
 	case ReorderHoldPersonOff:
 		return ReorderHeld{Hold: ReorderHoldPersonOff,
 			Sentence: fmt.Sprintf("Auto-reorder was switched off here by %s at %s.", note, clockTime(rt.ReorderHoldAt))}
 	default:
 		return ReorderHeld{Hold: rt.ReorderHold,
-			Sentence: fmt.Sprintf("Auto-reorder is held (%q, which this Edge does not know). REQUEST asks now.", string(rt.ReorderHold))}
+			Sentence: fmt.Sprintf("Auto-reorder is held (%q, which this Edge does not know). REQUEST clears it.", string(rt.ReorderHold))}
 	}
+}
+
+// countHeld is the arming check: the sweep does not ask on a count that cannot
+// be this claim's, and says so. It refuses nothing: the claim still saves,
+// REQUEST still asks, and a corrected count lifts it.
+//
+//   - Produce: below 0, or past two packs. Two, not one: a strict-pack seat's
+//     set-aside parts are charged to the next cart when it binds, so a count
+//     can honestly run up to a pack past the pack.
+//   - Consume: past one pack. Below 0 still asks: a consume count runs
+//     negative honestly when the line draws more than was booked onto its
+//     cart, and that line needs material most.
+//
+// A claim whose pack is not known (0) is not checked: there is nothing to
+// measure the count against, and the sweep asks as it always has.
+func countHeld(c *NodeClaim, count int) ReorderHeld {
+	pack := c.UOPCapacity
+	if pack <= 0 {
+		return ReorderHeld{}
+	}
+	switch {
+	case c.Role == protocol.ClaimRoleProduce && (count < 0 || count > 2*pack):
+		return ReorderHeld{Hold: ReorderHoldCount, Sentence: fmt.Sprintf(
+			"Auto-reorder is not asking: a count of %d cannot be this part's at a pack of %d. Correct the count; REQUEST still asks.", count, pack)}
+	case c.Role == protocol.ClaimRoleConsume && count > pack:
+		return ReorderHeld{Hold: ReorderHoldCount, Sentence: fmt.Sprintf(
+			"Auto-reorder is not asking: a count of %d is more than a pack of %d. Correct the count; REQUEST still asks.", count, pack)}
+	}
+	return ReorderHeld{}
 }
 
 // clockTime is a time of day as the board shows one, in the Edge's zone.

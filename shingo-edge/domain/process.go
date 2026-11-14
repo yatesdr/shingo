@@ -304,10 +304,15 @@ type RuntimeState struct {
 	ReorderHold     ReorderHold `json:"-"`
 	ReorderHoldAt   time.Time   `json:"-"`
 	ReorderHoldNote string      `json:"-"`
-	ActiveOrderID   *int64      `json:"active_order_id,omitempty"`
-	StagedOrderID   *int64      `json:"staged_order_id,omitempty"`
-	ActivePull      bool        `json:"active_pull"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	// ReorderGoAt is the position's last go (the engine's clock; zero when
+	// never): a REQUEST, or Processes turning the claim's auto-reorder on.
+	// Written by store/processes.GoReorder, the statement that also clears a
+	// pause or an off.
+	ReorderGoAt   time.Time `json:"-"`
+	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
+	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
+	ActivePull    bool      `json:"active_pull"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // PartRecorded reports whether the seat records its cart's part: known (a

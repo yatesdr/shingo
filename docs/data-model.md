@@ -1964,7 +1964,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
 | [`process_changeovers`](#edge-process_changeovers) | 15 | `id` | [`processes`](#edge-processes), [`styles`](#edge-styles) |
 | [`process_groups`](#edge-process_groups) | 5 | `id` |  |
-| [`process_node_runtime_states`](#edge-process_node_runtime_states) | 31 | `id` | [`orders`](#edge-orders), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
+| [`process_node_runtime_states`](#edge-process_node_runtime_states) | 32 | `id` | [`orders`](#edge-orders), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
 | [`process_nodes`](#edge-process_nodes) | 16 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
 | [`process_payloads`](#edge-process_payloads) | 4 | `id` | [`processes`](#edge-processes) |
 | [`process_routing_nodes`](#edge-process_routing_nodes) | 10 | `id` | [`processes`](#edge-processes) |
@@ -2435,6 +2435,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `reorder_hold` | `TEXT` | yes | `''` |  | reorder_hold: the position's auto-reorder hold ('' none, 'paused', 'off', 'person_off'), ranked in that order; the one write (HoldReorder) never sets a kind below the one held. The demand sweep does not ask while it holds (domain.AutoReorderHeld). After hold_stopped, where the v50 ALTERs put the three hold columns. |
 | `reorder_hold_at` | `TEXT` | yes | `''` |  | reorder_hold_at: when the hold was set, the engine's clock ('' when never). A pause ends ten minutes after it. |
 | `reorder_hold_note` | `TEXT` | yes | `''` |  | reorder_hold_note: who or what set the hold, in the board's words. |
+| `reorder_go_at` | `TEXT` | yes | `''` |  | reorder_go_at: the position's last go, the engine's clock ('' when never): a REQUEST, or Processes turning a claim's auto-reorder on. The same statement clears a pause or an off (GoReorder). After reorder_hold_note, where the v51 ALTER puts it. |
 
 #### Edge: `process_nodes`
 

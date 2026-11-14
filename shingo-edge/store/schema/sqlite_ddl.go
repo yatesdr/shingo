@@ -689,7 +689,12 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     -- never). A pause ends ten minutes after it.
     reorder_hold_at TEXT NOT NULL DEFAULT '',
     -- reorder_hold_note: who or what set the hold, in the board's words.
-    reorder_hold_note TEXT NOT NULL DEFAULT ''
+    reorder_hold_note TEXT NOT NULL DEFAULT '',
+    -- reorder_go_at: the position's last go, the engine's clock ('' when
+    -- never): a REQUEST, or Processes turning a claim's auto-reorder on. The
+    -- same statement clears a pause or an off (GoReorder). After
+    -- reorder_hold_note, where the v51 ALTER puts it.
+    reorder_go_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS style_node_claims (

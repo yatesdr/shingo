@@ -102,7 +102,14 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// path seat the count when it arrives.
 		return m.handleDelivered(order, statusDetail, nil, nil, nil, nil, 0, "", false)
 	case ReplyError:
-		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
+		wasLive := !IsTerminal(order.Status)
+		if err := m.TransitionOrder(order.ID, StatusFailed, statusDetail); err != nil {
+			return err
+		}
+		if wasLive {
+			m.holdReorderAt(order, domain.ReorderHoldPaused, fmt.Sprintf("order %d failed (%s)", order.ID, statusDetail))
+		}
+		return nil
 	case ReplySkipped:
 		// "Work was never needed" terminal — distinct from ReplyError.
 		// The post-skip cleanup (advancing a linked changeover node task
@@ -137,6 +144,14 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		if wasLive && !m.siblingAlreadyEnded(order) {
 			m.emitter.EmitOrderCancelledByCore(order.ID, order.UUID, order.OrderType, statusDetail)
+		}
+		// Every live leg Core cancels holds its position, the dead leg and its
+		// partner alike: the toast is once per swap, the hold is per cancel,
+		// and the rank keeps the partner's pause from undoing the dead leg's
+		// off (holdOnCoreCancel).
+		if wasLive {
+			kind, note := holdOnCoreCancel(order.ID, statusDetail)
+			m.holdReorderAt(order, kind, note)
 		}
 		return nil
 	default:

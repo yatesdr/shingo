@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -814,5 +815,45 @@ func TestApiOrders_DecodeHelper_StringInsteadOfInt(t *testing.T) {
 	}
 	if err := json.Unmarshal(b, &target); err == nil {
 		t.Error("expected decode error for string-into-int64")
+	}
+}
+
+// TestApiOrders_AbortPausesThePositionsAutoReorder: the Orders page's abort is
+// the HMI abort door. It cancels the order and pauses its position's
+// auto-reorder (orders.Manager.AbortOrderByPerson), so the sweep does not ask
+// again a minute after a person said stop.
+func TestApiOrders_AbortPausesThePositionsAutoReorder(t *testing.T) {
+	t.Parallel()
+	h, r := newTestHandlers(t)
+	r.Post("/api/orders/{orderID}/abort", h.apiCancelOrder)
+	db := dbOf(h)
+	procID, err := db.CreateProcess("ABORT-PROC", "", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "ABORT_N",
+		Code: "A1", Name: "ABORT_N", Sequence: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err := db.EnsureProcessNodeRuntime(nodeID); err != nil {
+		t.Fatalf("ensure runtime: %v", err)
+	}
+	orderID, err := db.CreateOrder("abort-door", orders.TypeRetrieve, &nodeID, false, 1, "ABORT_N", "", "MARKET",
+		protocol.Height{}, false, "PART", "", "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	resp := doRequest(t, r, "POST", "/api/orders/"+strconv.FormatInt(orderID, 10)+"/abort", map[string]any{}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("abort: status %d", resp.StatusCode)
+	}
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if rt.ReorderHold != domain.ReorderHoldPaused {
+		t.Errorf("after a person's abort the position holds %q, want paused", rt.ReorderHold)
 	}
 }

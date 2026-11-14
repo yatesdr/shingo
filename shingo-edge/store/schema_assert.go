@@ -176,6 +176,8 @@ var requiredColumns = []requiredColumn{
 	{"process_node_runtime_states", "reorder_hold"},
 	{"process_node_runtime_states", "reorder_hold_at"},
 	{"process_node_runtime_states", "reorder_hold_note"},
+	// The position's last go (v51): scanRuntime SELECTs it.
+	{"process_node_runtime_states", "reorder_go_at"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

@@ -2559,6 +2559,32 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == len(v50Columns)
 			},
 		},
+		{
+			// v51 (2026-11-14): process_node_runtime_states.reorder_go_at,
+			// the position's last go (a REQUEST, or Processes turning a
+			// claim's auto-reorder on), on the engine's clock. '' on every
+			// existing row: no go recorded. Column-check guarded, like v49.
+			Version: 51,
+			Name:    "runtime_reorder_go_at",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'reorder_go_at'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_node_runtime_states ADD COLUMN reorder_go_at TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'reorder_go_at'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

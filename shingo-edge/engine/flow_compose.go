@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/domain/flowspec"
 	"shingoedge/engine/changeover"
@@ -944,6 +945,14 @@ func (e *Engine) saveFlowTx(tx *sql.Tx, process *processes.Process, style proces
 			return nil, nil, fmt.Errorf("%s: %w", c.cell.CoreNodeName, err)
 		}
 		result.Written++
+		// Turning a claim's auto-reorder on is a person saying go at its
+		// position (processes.GoReorderAtCoreNode), in the save's own
+		// transaction. Only the turn: a save that leaves it on says nothing.
+		if c.claim.AutoReorder && (c.prior == nil || !c.prior.AutoReorder) {
+			if err := processes.GoReorderAtCoreNode(tx, processID, c.cell.CoreNodeName, clock.Now()); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	for _, c := range draft.removed {
 		if err := processes.DeleteClaim(tx, c.ID); err != nil {

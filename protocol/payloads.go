@@ -336,6 +336,14 @@ type OrderCancel struct {
 // reason keeps the fail-closed peer-cancel behaviour.
 const CancelReasonAcceptHalfSwap = "accept_half_swap"
 
+// CancelReasonAbandonedPrefix opens the reason of a cancel made because an
+// order waited too long, not because anyone asked: Core's stuck-order sweep
+// (shingo-core/engine/reconciliation_service.go) writes "abandoned: stuck in
+// ..." and "abandoned: operator-gated staging ...". The Edge reads it on a
+// cancel Core sends and switches the position's auto-reorder off rather than
+// pausing it (shingo-edge/orders.holdOnCoreCancel).
+const CancelReasonAbandonedPrefix = "abandoned:"
+
 // OrderReceipt confirms delivery acceptance.
 type OrderReceipt struct {
 	// OrderUUID names the delivered order.

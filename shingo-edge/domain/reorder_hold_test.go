@@ -73,3 +73,38 @@ func TestReorderHold_Rank(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoReorderHeld_Count is the arming check's boundaries: produce holds
+// below 0 and past two packs, consume past one pack, nothing with no pack, and
+// a hold on the row wins over the count.
+func TestAutoReorderHeld_Count(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		role  protocol.ClaimRole
+		pack  int
+		count int
+		row   ReorderHold
+		want  ReorderHold
+	}{
+		{name: "produce at zero", role: protocol.ClaimRoleProduce, pack: 40, count: 0},
+		{name: "produce below zero", role: protocol.ClaimRoleProduce, pack: 40, count: -1, want: ReorderHoldCount},
+		{name: "produce at two packs", role: protocol.ClaimRoleProduce, pack: 40, count: 80},
+		{name: "produce past two packs", role: protocol.ClaimRoleProduce, pack: 40, count: 81, want: ReorderHoldCount},
+		{name: "consume below zero", role: protocol.ClaimRoleConsume, pack: 40, count: -1650},
+		{name: "consume at a pack", role: protocol.ClaimRoleConsume, pack: 40, count: 40},
+		{name: "consume past a pack", role: protocol.ClaimRoleConsume, pack: 40, count: 41, want: ReorderHoldCount},
+		{name: "no pack known", role: protocol.ClaimRoleProduce, count: 44640},
+		{name: "an off on the row wins", role: protocol.ClaimRoleProduce, pack: 40, count: 81, row: ReorderHoldOff, want: ReorderHoldOff},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &NodeClaim{Role: tc.role, SwapMode: protocol.SwapModeSingleRobot, AutoReorder: true, UOPCapacity: tc.pack}
+			rt := &RuntimeState{RemainingUOPCached: tc.count, ReorderHold: tc.row, ReorderHoldAt: now}
+			if got := AutoReorderHeld(c, rt, now); got.Hold != tc.want {
+				t.Fatalf("held by %q (%q), want %q", got.Hold, got.Sentence, tc.want)
+			}
+		})
+	}
+}
