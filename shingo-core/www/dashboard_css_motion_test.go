@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingo/shared"
 )
 
@@ -204,7 +205,10 @@ func cssRGBA(t *testing.T, v string) (shared.RGB, float64) {
 	if m == nil {
 		t.Fatalf("%q is not an rgba() this test reads", v)
 	}
-	n := func(s string) float64 { f, _ := strconv.ParseFloat(s, 64); return f }
+	n := func(s string) float64 {
+		f, err := strconv.ParseFloat(s, 64)
+		return testutil.Must(t, f, err, "rgba() component "+s)
+	}
 	return shared.RGB{R: n(m[1]), G: n(m[2]), B: n(m[3])}, n(m[4])
 }
 
@@ -214,8 +218,8 @@ func cssScale(t *testing.T, v string) float64 {
 	if m == nil {
 		t.Fatalf("transform %q is not a scale() this test reads", v)
 	}
-	f, _ := strconv.ParseFloat(m[1], 64)
-	return f
+	f, err := strconv.ParseFloat(m[1], 64)
+	return testutil.Must(t, f, err, "scale() factor "+m[1])
 }
 
 func cssRem(t *testing.T, v string) float64 {
