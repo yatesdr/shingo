@@ -370,39 +370,6 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 	}
 }
 
-// InputFromClaimUngated is InputFromClaim with every absent-means-untouched
-// column left ABSENT: the write a caller makes when it edits a few columns of
-// a stored claim and has no opinion about the rest.
-//
-// WHY IT IS NOT JUST "WRITE THE THREE COLUMNS". NodeClaimInput has two kinds
-// of field. The pointer-gated ones are absent-means-untouched, so a partial
-// caller simply leaves them nil. The rest are UNCONDITIONAL: an empty value is
-// written as empty, so a caller that names only its three columns blanks the
-// claim's part, its source and its destination. A partial write therefore has
-// to echo every unconditional column — and the echo is a list, and a list is a
-// thing to forget.
-//
-// It was forgotten. The replenishment page's reorder edit kept its own copy of
-// that list; five pointer-gated columns arrived after it was written, nobody
-// added them, and the copy that DID echo four of them wiped a press's
-// evacuation positions, its evacuation destination, its loader card and its
-// key route on a reorder-point change. Deriving the echo from InputFromClaim
-// means the unconditional columns cannot be forgotten, and nilling the gated
-// ones here — in one place, with a test that holds every pointer field nil —
-// means a new gated column cannot be silently echoed either.
-func InputFromClaimUngated(c NodeClaim) NodeClaimInput {
-	in := InputFromClaim(c)
-	in.ChangeoverEvacNodes = nil
-	in.ChangeoverCarryoverDisposition = nil
-	in.RefillBy = nil
-	in.KeyRoute = nil
-	in.KeyTask = nil
-	in.KeepStagedNode = nil
-	in.AutoReorder = nil
-	in.Sequence = nil
-	return in
-}
-
 // MaterializeClaim is the claim the store would hold after UpsertClaim(in):
 // an UPDATE of prior when there is one, an INSERT otherwise. It is the model
 // of the store's write, in memory, so a draft flow can be planned before it

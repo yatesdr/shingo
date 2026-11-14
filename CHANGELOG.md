@@ -33,6 +33,8 @@ Deploy: Edge v50–v52. Core has no migration; the two go in either order.
 - The station board shows AUTO-REORDER ON/OFF where Processes allows it; every flip is listed with who, where and when
 - Auto-reorder cannot be turned on at a line with no counter, or one whose counter cannot be read now
 - A Processes save that turns auto-reorder on at a line with no counter is refused and says why
+- The Edge's Replenishment page is gone: a position's reorder point and auto-reorder are set in Processes
+- Processes can clear a position's reorder point (to 0, which never orders)
 
 ## v0.7.0 — 2026-11-13
 

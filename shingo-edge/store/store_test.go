@@ -1738,13 +1738,13 @@ func TestUpsertClaim_StoresNoPairOnAModeThatNamesNone(t *testing.T) {
 				m.PairedCoreNode, m.SecondPairedCoreNode, tc.paired, tc.second)
 		}
 	}
-	// A row stored before the rule, re-saved as the replenishment page echoes it.
+	// A row stored before the rule, re-saved whole (every column echoed).
 	_, err := db.Exec(`UPDATE style_node_claims SET paired_core_node = 'TR-B', second_paired_core_node = 'TR-C'
 		WHERE style_id = ? AND core_node_name = 'TR'`, sid)
 	testutil.MustNoErr(t, err, "a stale row")
 	stale, err := db.GetStyleNodeClaimByNode(sid, "TR")
 	testutil.MustNoErr(t, err, "read the stale row")
-	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, domain.InputFromClaimUngated(*stale))
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, domain.InputFromClaim(*stale))
 	testutil.MustNoErr(t, err, "re-save the stale row")
 	if again, err := db.GetStyleNodeClaimByNode(sid, "TR"); err != nil || again.PairedCoreNode != "" || again.SecondPairedCoreNode != "" {
 		t.Errorf("a stale two_robot row re-saved holds %+v (%v), want no paired position", again, err)

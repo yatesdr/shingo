@@ -177,8 +177,7 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/orders/ingest":  {want: 400, req: at("/api/orders/ingest", map[string]any{"node": "PLN_01", "payload_code": "PART-W"})},
 
 		// ── admin: PLCs ──
-		"POST /api/plcs/read-tag":             {want: 500, req: at("/api/plcs/read-tag", map[string]any{"plc_name": "PLC-1", "tag_name": "T"})},
-		"PUT /api/replenishment/cell-reorder": {want: 400, req: at("/api/replenishment/cell-reorder", map[string]any{})},
+		"POST /api/plcs/read-tag": {want: 500, req: at("/api/plcs/read-tag", map[string]any{"plc_name": "PLC-1", "tag_name": "T"})},
 
 		// ── admin: processes ──
 		"POST /api/processes": {want: 200, req: on(func(w *walk) (string, any) {

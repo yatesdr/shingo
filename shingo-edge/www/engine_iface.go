@@ -271,12 +271,6 @@ type EngineOrchestration interface {
 	// Core's mirror loses it too. There is no qty edit.
 	AdminClearLinesideBucket(bucketID int64) error
 
-	// ── Cell auto-reorder (reorder point) admin ──────────────────────
-	// Backs the CELL half of the /replenishment admin page. The loader
-	// half was deleted: Core owns the loader UOP threshold and the Edge
-	// write path ended in a no-op stub. See engine/replenishment_admin.go.
-	UpdateCellReorder(engine.CellReorderInput) error
-
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)
 }

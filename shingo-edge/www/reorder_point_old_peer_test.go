@@ -13,10 +13,10 @@ import (
 // The reorder-point stamp left the claim, the reads and the bodies; an Edge
 // and a page on either side of a deploy still talk.
 //
-//   - An older page (a cached desktop build) still sends it: on the
-//     replenishment page's PUT as "source", and in a flow save's Advanced
-//     block as "reorder_point_source". Both bodies are taken and write the
-//     point and Auto reorder they carry.
+//   - An older desktop build still sends it, in a flow save's Advanced block
+//     as "reorder_point_source": the body is taken and writes the point and
+//     Auto reorder it carries. (The Replenishment page's PUT, the other
+//     sender, went with the page.)
 //   - An older page reading this Edge gets the reorder point and Auto reorder
 //     it draws, and nothing it needs is missing (its own defaults stand in
 //     for an absent key).
@@ -39,18 +39,6 @@ func TestReorderPoint_APeerEitherSideOfTheDeployStillTalks(t *testing.T) {
 	}
 	stored, err := f.db.GetStyleNodeClaimByNode(idle, "PLN_009")
 	must(t, err, "SYN-ONE's claim")
-
-	t.Run("an older replenishment page's Apply", func(t *testing.T) {
-		resp := doRequest(t, f.router, "PUT", "/api/replenishment/cell-reorder", map[string]any{
-			"claim_id": stored.ID, "reorder_point": 7, "source": "legacy", "auto_reorder": true,
-		}, cookie)
-		assertStatus(t, resp, http.StatusNoContent)
-		c, err := f.db.GetStyleNodeClaim(stored.ID)
-		must(t, err, "reread")
-		if c.ReorderPoint != 7 || !c.AutoReorder {
-			t.Errorf("after an older page's Apply: point %d auto %v, want 7 true", c.ReorderPoint, c.AutoReorder)
-		}
-	})
 
 	t.Run("an older desktop's flow save", func(t *testing.T) {
 		pv := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/preview",

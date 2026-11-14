@@ -21,11 +21,11 @@ import (
 // claims editor was found resetting board order and reorder provenance on every
 // save; six more columns arrived afterwards and did not get it.
 //
-// The reachable caller is the replenishment admin page: PUT
-// /api/replenishment/cell-reorder → UpdateCellReorder → processClaimToInput,
-// which reads the whole claim and re-sends a subset. Changing a reorder point
-// wiped the press's evacuation positions, its evacuation destination, the loader
-// card flag and the key route.
+// The caller that found it was the Replenishment page's reorder edit, which
+// read the whole claim and re-sent a subset: changing a reorder point wiped the
+// press's evacuation positions, its evacuation destination, the loader card flag
+// and the key route. The page is gone (Processes writes the point); the
+// contract stays, pinned for any partial writer below.
 // ---------------------------------------------------------------------------
 
 // fullyConfiguredClaim seeds a claim with every optional column set to a
@@ -80,31 +80,6 @@ func assertOptionalsSurvive(t *testing.T, db *store.DB, claimID int64, after str
 	if got.KeyTask != "load" {
 		t.Errorf("%s: key_task = %q, want load", after, got.KeyTask)
 	}
-}
-
-// TestUpdateCellReorder_LeavesUnmentionedColumnsAlone is the reachable defect:
-// an engineer changing a reorder point on the replenishment admin page must not
-// silently reconfigure the press.
-func TestUpdateCellReorder_LeavesUnmentionedColumnsAlone(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	claimID, _ := fullyConfiguredClaim(t, db)
-	eng := testEngine(t, db)
-
-	testutil.MustNoErr(t, eng.UpdateCellReorder(CellReorderInput{
-		ClaimID:      claimID,
-		ReorderPoint: 25,
-		AutoReorder:  true,
-	}), "update cell reorder")
-
-	// The edit itself must land.
-	got, err := db.GetStyleNodeClaim(claimID)
-	testutil.MustNoErr(t, err, "read claim back")
-	if got.ReorderPoint != 25 {
-		t.Fatalf("reorder_point = %d, want 25 — the edit under test did not apply", got.ReorderPoint)
-	}
-
-	assertOptionalsSurvive(t, db, claimID, "after a reorder-point edit")
 }
 
 // TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone is the contract itself,

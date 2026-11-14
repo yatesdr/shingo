@@ -228,7 +228,6 @@ Shingo Edge provides a browser-based interface for production line operators and
 | `/manual-message` | `manual-message.html` | Kafka Direct | login |
 | `/manual-order` | `manual-order.html` | Manual Order | login |
 | `/processes` | `processes.html` | Processes | login |
-| `/replenishment` | `replenishment.html` | Replenishment | login |
 
 <!-- /generated -->
 
@@ -262,8 +261,8 @@ operator sees at each.
 
 ### Auto-Reorder
 
-Each claim (a node's place in a style) carries a reorder point and an auto-reorder switch, set on
-`/replenishment`. Once a minute the level sweep (`(*Engine).sweepCellLevels`) reads each claim's remaining UOP
+Each claim (a node's place in a style) carries a reorder point and an auto-reorder switch, set in
+Processes (the reorder column's popover). Once a minute the level sweep (`(*Engine).sweepCellLevels`) reads each claim's remaining UOP
 against its level (`protocol.ClaimDemandLevel`): a consume claim breaches at or below its reorder point, a
 produce claim at or above its level. For a breached claim with auto-reorder on and nothing already coming to
 the node, the sweep asks for the bin. A consume claim with a reorder point of 0 never orders. The mechanism is

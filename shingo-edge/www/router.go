@@ -262,7 +262,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/manual-order", h.handleManualOrder)
 			r.Get("/manual-message", h.handleManualMessage)
 			r.Get("/diagnostics", h.handleDiagnostics)
-			r.Get("/replenishment", h.handleReplenishment)
 		})
 
 		// ── API routes ──────────────────────────────────────────
@@ -430,11 +429,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/plcs/all-tags/{name}", h.apiPLCAllTags)
 				r.Post("/plcs/read-tag", h.apiReadTag)
 				r.Get("/warlink/status", h.apiWarLinkStatus)
-
-				// Cell-side autoreorder. The loader-threshold routes that sat
-				// here were deleted with the dead Edge threshold surface —
-				// Core owns that value (engine/replenishment_admin.go).
-				r.Put("/replenishment/cell-reorder", h.apiUpdateCellReorder)
 
 				// Processes
 				r.Get("/processes", h.apiListProcesses)

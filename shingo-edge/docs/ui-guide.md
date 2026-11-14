@@ -3,7 +3,7 @@
 Verified against: 74c3eb77
 
 Shingo Edge serves its browser interface at `http://<host>:8081` (`web.port`). The navigation bar carries
-**Production**, an **Operations** menu (Orders, Changeover, Processes, Replenishment, Quality Containment) and,
+**Production**, an **Operations** menu (Orders, Changeover, Processes, Quality Containment) and,
 once logged in, an **Admin** menu (Kafka Direct, Config, Logs). Every page but the operator station display has
 a light/dark theme toggle in the bar; the station display is a fixed dark kiosk screen.
 
@@ -165,7 +165,6 @@ These pages require login.
 | `/manual-message` | `manual-message.html` | Kafka Direct | login |
 | `/manual-order` | `manual-order.html` | Manual Order | login |
 | `/processes` | `processes.html` | Processes | login |
-| `/replenishment` | `replenishment.html` | Replenishment | login |
 
 <!-- /generated -->
 
@@ -208,20 +207,13 @@ Opening a process gives four tabs:
   the admin's style switch for when the plant changed parts without shingo.
 - **Operator screens**: the HMIs that work this process, and its loader windows.
 - **Settings**: General, Production counter (the counter's PLC and tag), Changeover, HMI, Parts this process
-  runs, Quality hold (the containment destination), Styles, the Routing set, and Danger (delete the process).
+  runs, Quality hold (the containment destination), Auto-reorder (the line's switch, whether the station shows
+  it, and every flip), Styles, the Routing set, and Danger (delete the process). A position's reorder point
+  and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never orders.
 - **Recipes**: saved flow presets, and the flows found in this process's styles, to apply across styles.
 
 A process's production counter is its reporting point: the Edge keeps the reporting point that binds that tag
 to the active style in step whenever the process is saved or changes over, and PLC polling reads it from there.
-
-### Replenishment
-
-**Route:** `/replenishment`
-
-Cell auto-reorder, one row per claim across every style of every process (the active style flagged): process,
-style, node, payload, capacity, **Reorder At** and **AutoReorder**. **Apply** saves a row; **Clear** sets its
-reorder point to 0 and turns auto-reorder off. A reorder point of 0 never orders. How the level sweep decides is in
-[uop-threshold-replenishment.md](../../docs/uop-threshold-replenishment.md).
 
 ### Manual Order
 

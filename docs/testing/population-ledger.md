@@ -1230,3 +1230,57 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### DEAD — `TestUpdateCellReorder_AClaimNamingALane`
+- test: `TestUpdateCellReorder_AClaimNamingALane` · pkg `shingoedge/engine` · run `-run '^TestUpdateCellReorder_AClaimNamingALane$'` · `shingo-edge/engine/claim_leg_writers_test.go:117` @ `aea6321d` · tags `none`
+- code: DEAD (`engine.UpdateCellReorder` went with the Replenishment page it backed: the reorder-idle build, E5)
+- assertion map: a reorder edit of a claim naming a lane on any of five legs is refused → the same refusal at the one writer left, a flow save: `TestSaveFlow_ALaneOnEachLeg` (`claim_leg_writers_test.go`, unchanged) walks the composer's save over a lane on each leg.
+- mutation: none needed: the code under test is deleted, and the test no longer compiles against the tree.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestUpdateCellReorder_LeavesUnmentionedColumnsAlone`
+- test: `TestUpdateCellReorder_LeavesUnmentionedColumnsAlone` · pkg `shingoedge/engine` · run `-run '^TestUpdateCellReorder_LeavesUnmentionedColumnsAlone$'` · `shingo-edge/engine/claim_partial_update_test.go:88` @ `aea6321d` · tags `none`
+- code: DEAD (`engine.UpdateCellReorder` went with the Replenishment page: E5)
+- assertion map: a reorder-point edit through the page's door leaves every optional column as it was → the contract with no door: `TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone` and `TestClaimUpdate_ExplicitEmptyStillClears` (same file, unchanged). The file header now names the page as the history and the contract as what stays pinned.
+- mutation: none needed: the code under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestSaveFlow_ARestatedReorderPointLeavesThePreviewCurrent`
+- test: `TestSaveFlow_ARestatedReorderPointLeavesThePreviewCurrent` · pkg `shingoedge/engine` · run `-run '^TestSaveFlow_ARestatedReorderPointLeavesThePreviewCurrent$'` · `shingo-edge/engine/flow_restated_reorder_test.go:16` @ `aea6321d` · tags `none`
+- code: DEAD (its subject was the Replenishment page's Apply on an unchanged row; the page and its write are gone, E5, and the provenance stamp it once moved left in v48)
+- assertion map: none carried: there is no second writer of a claim's reorder point outside the flow save the preview belongs to.
+- mutation: none needed: the code under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestReplenishmentPage_AMintedStyleReadsOff`
+- test: `TestReplenishmentPage_AMintedStyleReadsOff` · pkg `shingoedge/www` · run `-run '^TestReplenishmentPage_AMintedStyleReadsOff$'` · `shingo-edge/www/handlers_flow_mint_test.go:238` @ `aea6321d` · tags `none`
+- code: DEAD (it read `/replenishment`, which is gone: E5)
+- assertion map: a minted style's claims render on the page as point 0, auto-reorder off, with Clear → not re-pinned on Processes: the reorder cell draws a claim from its own point and flag (`processes-desktop.js` `reorderCell`), and no test reads that cell for a minted style.
+- mutation: none needed: the page under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestInputFromClaimUngated_SpeaksNoGatedColumn`
+- test: `TestInputFromClaimUngated_SpeaksNoGatedColumn` · pkg `shingoedge/domain` · run `-run '^TestInputFromClaimUngated_SpeaksNoGatedColumn$'` · `shingo-edge/domain/flow_ungated_test.go:25` @ `aea6321d` · tags `none`
+- code: DEAD (`domain.InputFromClaimUngated` lost its only production caller, the Replenishment page's edit, and goes with it: E5)
+- assertion map: none carried: no partial writer of a whole claim remains. The store test that re-saved a stale row through it (`TestUpsertClaim_StoresNoPairOnAModeThatNamesNone`) re-saves it through `InputFromClaim`, the whole echo, and asserts the same thing.
+- mutation: none needed: the function under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn`
+- test: `TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn` · pkg `shingoedge/domain` · run `-run '^TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn$'` · `shingo-edge/domain/flow_ungated_test.go:59` @ `aea6321d` · tags `none`
+- code: DEAD (as the row above)
+- assertion map: none carried (as above).
+- mutation: none needed: the function under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

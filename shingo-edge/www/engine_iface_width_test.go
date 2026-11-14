@@ -107,6 +107,9 @@ func TestServiceAccessWidth(t *testing.T) {
 // /operator-stations/{id}/auto-reorder (the reorder-idle build brief, E4). An
 // orchestration verb because turning it on reads the engine's counter read
 // health. 94 entries. Not owner-approved yet: the stage report asks.)
+// (2026-11-14: -1, UpdateCellReorder, with the Replenishment page it backed
+// (the reorder-idle build brief, E5): Processes writes the reorder point and
+// auto-reorder, and the line's switch is FlipAutoReorder. 93 entries.)
 // (2026-10-23: 76 -> 78, SendBack and CancelSendBack, the owner's ruling in
 // the press tranche 2 brief: the tote press's SEND BACK and its CANCEL,
 // POST /process-nodes/{id}/send-back and /send-back/cancel.)
@@ -286,7 +289,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"SwitchNodeToTarget",
 		"SwitchOperatorStationToTarget",
 		"UndoSupplyRefusal",
-		"UpdateCellReorder",
 	}
 	var iface EngineOrchestration
 	assertInterfaceWidth(t, "EngineOrchestration", reflect.TypeOf(&iface).Elem(), want)

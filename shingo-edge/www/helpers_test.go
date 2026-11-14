@@ -448,10 +448,6 @@ func (s *stubEngine) SetProcessActiveStyle(processID int64, styleID *int64) erro
 	return err
 }
 
-// Cell-side replenishment admin (the loader half was deleted with the
-// dead Edge threshold surface).
-func (s *stubEngine) UpdateCellReorder(engine.CellReorderInput) error { return nil }
-
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so
 // handler tests exercise the full service → *store.DB → SQLite path.

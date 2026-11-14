@@ -2554,8 +2554,9 @@ function reorderCell(node) {
 const REORDER_WORDS = 'units in the bin when the next one is requested';
 
 // openReorderPop is the cell's popover: the point, Turn on (Set once it is
-// on), which writes the point and turns Auto reorder on at it, and Off. Each
-// is a draft edit, saved with Save style.
+// on), which writes the point and turns Auto reorder on at it, Off, and Clear
+// the point (0, the opt-out, and off). Each is a draft edit, saved with Save
+// style.
 function openReorderPop(btn, node) {
     const pop = $('pd-pop');
     if (!pop || !S.model) return;
@@ -2569,6 +2570,7 @@ function openReorderPop(btn, node) {
         '<button class="pd-btn primary" data-rp="set">' + (a.auto_reorder ? 'Set' : 'Turn on') + '</button></div>' +
         '<small>' + esc(REORDER_WORDS) + '</small>' +
         '<button data-rp="off" class="' + (a.auto_reorder ? '' : 'on') + '">' + esc(W('auto_reorder')) + ' off</button>' +
+        (a.reorder_point ? '<button data-rp="clear">Clear the point</button>' : '') +
         '<div class="none" data-rpnote></div></div>';
     showPop(pop, btn);
     placePopover(pop, btn);
@@ -2579,6 +2581,10 @@ function openReorderPop(btn, node) {
         if (e.stopPropagation) e.stopPropagation();
         if (!b) return;
         if (b.dataset.rp === 'off') { setReorder(node, null, false); return; }
+        // A point of 0 is the opt-out on either role (domain DemandLevel): the
+        // clear writes it and turns auto-reorder off with it, what the
+        // Replenishment page's blank point did before the page went.
+        if (b.dataset.rp === 'clear') { setReorder(node, 0, false); return; }
         const digits = String((pop.querySelector('[data-f="rp"]') || {}).value || '').replace(/[^0-9]/g, '');
         if (!Number(digits)) {
             const note = pop.querySelector('[data-rpnote]');

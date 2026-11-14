@@ -645,8 +645,7 @@ func (db *DB) migrate() error {
 	// Strategy: NULL out a pointer iff the referenced order's status is
 	// in the terminal set (confirmed, cancelled, failed, skipped). Live
 	// orders are left alone. Idempotent — runs every migrate(), no-op
-	// when there's nothing to clean. Default to apply mode here; the
-	// dry-run variant lives in the admin endpoint (handlers_api_replenishment).
+	// when there's nothing to clean. There is no dry-run variant.
 	db.Exec(`UPDATE process_node_runtime_states
 		SET active_order_id = NULL
 		WHERE active_order_id IN (
