@@ -9,9 +9,10 @@
 // costs).
 //
 // The aisles are a scene's lanes as scene-net.js lists them, each physical
-// lane once. Geometry is scene-geom's; this file only spells it as SVG.
+// lane once. Geometry is scene-geom's, a lane's shape too (laneSpec); this
+// file spells the rest as SVG.
 
-import { cubicPathD } from '/static/shared/scene-geom.js';
+import { laneSpec } from '/static/shared/scene-geom.js';
 
 var SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -43,7 +44,7 @@ export function svgNode(name, attrs) {
 // It reaches only what it is given: the host and the look (colours) at
 // creation (look: flare, accent, accentGlow), and per frame the view, the
 // projector, the marker sizes and the items, plus this file's svgNode and
-// scene-geom's cubicPathD, all pure.
+// scene-geom's laneSpec, all pure.
 export function createSceneView(host, look) {
   // routeRecs and robotRecs: syncKids' records of the two in-place layers.
   var svg = null, layers = null, baseKey = null, nodesKey = null, routeRecs = [], robotRecs = [];
@@ -173,29 +174,18 @@ function drawBackdrop(svg, view, unit) {
 // once, a lane stored one way only included: [{a: {x, y}, b: {x, y}, h}] in
 // world coordinates, h the handles turned to run from a to b, or null.
 //
-// A lane with handles draws as a cubic <path>; one without stays a <line>.
+// A lane with handles draws as a cubic <path>; one without stays a <line>
+// (scene-geom.js laneSpec, the lane shape the localization board draws too).
 // Both get the same map-aisle class and the same stroke width, so a bend
 // never reads as a different KIND of lane — only as the shape the fleet
-// actually drives. <path> needs fill:none explicitly: SVG's default fill is
+// actually drives. <path> carries fill:none (laneSpec): SVG's default fill is
 // black, and a filled aisle would blot the floor.
 function drawAisles(svg, lanes, nodeR, proj) {
   for (var i = 0; i < lanes.length; i++) {
-    var lane = lanes[i];
-    var pa = proj(lane.a.x, lane.a.y), pb = proj(lane.b.x, lane.b.y);
-    var ctl = lane.h;
-    if (ctl) {
-      var q1 = proj(ctl[0], ctl[1]), q2 = proj(ctl[2], ctl[3]);
-      svg.appendChild(svgNode('path', {
-        d: cubicPathD(pa, q1, q2, pb),
-        fill: 'none',
-        class: 'map-aisle', 'stroke-width': nodeR * 0.48
-      }));
-    } else {
-      svg.appendChild(svgNode('line', {
-        x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
-        class: 'map-aisle', 'stroke-width': nodeR * 0.48
-      }));
-    }
+    var shape = laneSpec(lanes[i], proj);
+    shape.attrs.class = 'map-aisle';
+    shape.attrs['stroke-width'] = nodeR * 0.48;
+    svg.appendChild(svgNode(shape.tag, shape.attrs));
   }
 }
 

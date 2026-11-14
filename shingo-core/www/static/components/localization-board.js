@@ -7,13 +7,21 @@
 // nothing the rest would render green.
 //
 // Geometry comes from /api/map/edges, the same endpoint the kiosk map reads,
-// and state from /api/robots/localization keyed by lane. Reciprocal edges are
-// deduped with laneKey() out of scene-geom.js — the extracted rule, which is
-// what that extraction was for — and joined to state with serverLaneKey(),
-// which mirrors Segment.Lane(). Both derive from the same two endpoint names,
-// so the client never parses the server's lane string back apart.
+// and state from /api/robots/localization keyed by lane. THE LANES ARE THE
+// ROBOT MAP's (lead decision D15): the rows become the shared scene as the map
+// reads them (components/scene-rows.js sceneOfRows), each physical lane is
+// drawn once as scene-net.js lists it (sceneNet(scene).lanes: Core's aisle
+// order, from the lane's earlier vertex, one-way lanes included), and drawn in
+// the shape scene-geom.js gives a lane (laneSpec: a cubic <path> through all
+// four handles, or a <line>). What is the board's own: the confidence colours
+// and weights, the click targets, the halos and the selection rim, and the
+// strokes held at screen size (rescaleStrokes). A lane is joined to state with
+// serverLaneKey(), which mirrors Segment.Lane(), over the lane's two endpoint
+// names, so the client never parses the server's lane string back apart.
 
-import { makeProjector, cubicPathD, laneKey } from '/static/shared/scene-geom.js';
+import { makeProjector, rotate90For, laneKey, laneSpec } from '/static/shared/scene-geom.js';
+import { sceneNet } from '/static/shared/scene-net.js';
+import { sceneOfRows } from '/static/components/scene-rows.js';
 import { formatTime, serverNow } from '/static/shared/clock.js';
 import { plantDate, addDays } from '/static/components/plantclock.js';
 
@@ -275,6 +283,7 @@ export function createBoard(root, opts) {
     const o = opts || {};
     const state = {
         edges: [], board: null,
+        scene: null,         // the edges as the shared scene shape (sceneOfRows), per load
         from: '', to: '',    // the main view's explicit day range; ISO dates
         compare: false,      // compare mode: one day against one day
         boardA: null,        // the "before" (day A) board in compare mode
@@ -578,6 +587,7 @@ export function createBoard(root, opts) {
             boardP
         ]);
         state.edges = edges || [];
+        state.scene = sceneOfRows(state.edges);
         if (state.compare && Array.isArray(boards)) {
             state.boardA = boards[0] || null;
             state.board = boards[1] || null;
@@ -600,8 +610,9 @@ export function createBoard(root, opts) {
         const minWx = Math.min.apply(null, xs), maxWx = Math.max.apply(null, xs);
         const minWy = Math.min.apply(null, ys), maxWy = Math.max.apply(null, ys);
         // Orientation from the FULL plant, never a zoomed region — an ROI that
-        // happens to be tall must not flip the map under the operator.
-        state.rotate90 = (maxWy - minWy) > (maxWx - minWx);
+        // happens to be tall must not flip the map under the operator
+        // (scene-geom.js rotate90For, the rule every scene map turns by).
+        state.rotate90 = rotate90For(minWx, maxWx, minWy, maxWy);
         state.proj = makeProjector(state.rotate90);
 
         const sx = [], sy = [];
@@ -620,33 +631,42 @@ export function createBoard(root, opts) {
         map.setAttribute('viewBox', '0 0 ' + cw + ' ' + ch);
     }
 
-    // laneRows collapses the directed edges onto physical lanes and joins them
-    // to state. 405 directed rows at Springfield are 212 pieces of floor, and
-    // drawing both entries double-strokes every aisle.
+    // laneRows is every physical lane once, as the robot map draws its aisles
+    // (scene-net.js sceneNet(scene).lanes, D15), joined to state. A lane
+    // stored both ways is two rows and one piece of floor; drawing both would
+    // double-stroke the aisle. key is laneKey over the lane's two names: the
+    // lane's identity here (data-lane, the selection).
     function laneRows() {
-        const byLane = new Map();
-        state.edges.forEach(function (e) {
-            // laneKey is the extracted dedup rule: 405 directed rows at
-            // Springfield are 212 pieces of floor, and drawing both entries
-            // double-strokes every aisle.
-            const k = laneKey(e.from_name || '', e.to_name || '');
-            if (!byLane.has(k)) byLane.set(k, e);
-        });
-        // The JOIN key is derived from the edge's OWN endpoint names, never by
+        // The JOIN key is derived from the lane's OWN endpoint names, never by
         // splitting the server's lane string. Endpoint names may contain a
         // hyphen, so parsing "LM10-LM48" back apart is a guess that works on
         // this plant's naming and breaks on the next one. Both keys come from
         // the same two names, so they cannot disagree.
         const stateByLane = new Map();
         if (state.board) state.board.lanes.forEach(function (l) { stateByLane.set(l.lane, l); });
-        const out = [];
-        byLane.forEach(function (e, k) {
-            out.push({
-                key: k, edge: e,
-                st: stateByLane.get(serverLaneKey(e.from_name || '', e.to_name || '')) || null
-            });
+        // EACH LANE RUNS AS ITS FIRST STORED ROW DOES, as the board has always
+        // drawn it. The shared lanes run from their earlier vertex, and a
+        // DASHED mark (blind; worse and not comparable in compare mode) drawn
+        // from the other end lays its dashes in other places along the lane —
+        // visible in before/after shots (U6, 2026-11-14), where nothing else
+        // moved. So a lane whose first stored row runs the other way is turned
+        // round: the same curve, its handles reversed (the shared lane's
+        // handles ARE that first row's, turned).
+        const firstFrom = {};
+        ((state.scene && state.scene.edges) || []).forEach(function (e) {
+            const k = laneKey(e.from, e.to);
+            if (!(k in firstFrom)) firstFrom[k] = e.from;
         });
-        return out;
+        return sceneNet(state.scene).lanes.map(function (lane) {
+            const key = laneKey(lane.from, lane.to);
+            const drawn = firstFrom[key] === lane.to
+                ? { from: lane.to, to: lane.from, a: lane.b, b: lane.a, h: lane.h && [lane.h[2], lane.h[3], lane.h[0], lane.h[1]] }
+                : lane;
+            return {
+                key: key, lane: drawn,
+                st: stateByLane.get(serverLaneKey(lane.from, lane.to)) || null
+            };
+        });
     }
 
     // verdictByLane builds the compare-mode colour key: one verdict per
@@ -715,13 +735,12 @@ export function createBoard(root, opts) {
         // lanes
         const lg = svg('g', { 'class': 'lb-lanes' });
         laneRows().forEach(function (row) {
-            const e = row.edge;
-            const a = P(e.from_x, e.from_y), b = P(e.to_x, e.to_y);
-            const curved = e.ctrl1_x !== null && e.ctrl1_x !== undefined &&
-                e.ctrl2_x !== null && e.ctrl2_x !== undefined;
-            const d = curved
-                ? cubicPathD(a, P(e.ctrl1_x, e.ctrl1_y), P(e.ctrl2_x, e.ctrl2_y), b)
-                : 'M' + a[0] + ' ' + a[1] + 'L' + b[0] + ' ' + b[1];
+            // THE LANE's SHAPE IS THE ROBOT MAP's (scene-geom.js laneSpec, D15):
+            // a cubic <path> through its four handles, a <line> when it has
+            // none. Each of the board's elements for the lane is that shape with
+            // the board's own stroke on it.
+            const shape = laneSpec(row.lane, P);
+            const laneEl = function (attrs) { return svg(shape.tag, Object.assign({}, shape.attrs, attrs)); };
             const band = row.st ? bandOf(row.st) : 'nodata';
             // COMPARE MODE replaces the band with the verdict: the question
             // the reader brought is "what changed between A and B", and a
@@ -742,8 +761,8 @@ export function createBoard(root, opts) {
             if (state.showChanges && row.st && row.st.changed && !dim) {
                 // Sky halo — DATA. A different category from selection, so a
                 // different hue; two marks sharing a hue was unreadable.
-                lg.appendChild(svg('path', {
-                    d: d, fill: 'none', stroke: 'var(--viz-sky)', opacity: 0.28,
+                lg.appendChild(laneEl({
+                    stroke: 'var(--viz-sky)', opacity: 0.28,
                     'stroke-width': 10, 'data-w': 10, 'stroke-linecap': 'round'
                 }));
             }
@@ -756,17 +775,16 @@ export function createBoard(root, opts) {
             // that reads like an accident to anyone changing the fill later, and
             // the whole element only exists to be hit.
             //
-            // Appended BEFORE the visible path so the mark still paints on top
+            // Appended BEFORE the visible mark so the mark still paints on top
             // and stays the thing that receives a click where it is actually
             // drawn; the target only picks up the misses either side of it.
-            lg.appendChild(svg('path', {
-                d: d, fill: 'none', stroke: 'transparent',
+            lg.appendChild(laneEl({
+                stroke: 'transparent',
                 'stroke-width': LANE_HIT_STROKE, 'data-w': LANE_HIT_STROKE,
                 'stroke-linecap': 'round', 'data-lane': row.key,
                 'pointer-events': 'stroke', 'class': 'lb-lane-hit'
             }));
-            const p = svg('path', {
-                d: d, fill: 'none',
+            const p = laneEl({
                 stroke: mark.token, opacity: dim ? 0.12 : 1,
                 'stroke-width': mark.stroke, 'data-w': mark.stroke,
                 'data-dash': mark.dash,
@@ -777,13 +795,13 @@ export function createBoard(root, opts) {
 
             if (state.selected === row.key) {
                 // Near-white rim — INTERFACE CHROME, not data.
-                lg.appendChild(svg('path', {
-                    d: d, fill: 'none', stroke: 'var(--viz-primary)', opacity: 0.9,
+                lg.appendChild(laneEl({
+                    stroke: 'var(--viz-primary)', opacity: 0.9,
                     'stroke-width': mark.stroke + 2.4, 'data-w': mark.stroke + 2.4,
                     'stroke-linecap': 'round', 'pointer-events': 'none'
                 }));
-                lg.appendChild(svg('path', {
-                    d: d, fill: 'none', stroke: mark.token,
+                lg.appendChild(laneEl({
+                    stroke: mark.token,
                     'stroke-width': mark.stroke, 'data-w': mark.stroke,
                     'data-dash': mark.dash,
                     'stroke-linecap': 'round', 'pointer-events': 'none'

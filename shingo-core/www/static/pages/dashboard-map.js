@@ -60,12 +60,13 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
 // the comets over it. This page keeps what decides what is drawn: its orders,
 // legs, focus, calm rule, legends and rail.
 import {
-  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord
+  makeProjector, turnedProjector, mapTurn, headingDeg, dist2
 } from '/static/shared/scene-geom.js';
 import { sceneNet, sceneRoute, nearestVertex } from '/static/shared/scene-net.js';
 import { pathWorld, hopsWorld } from '/static/shared/scene-path.js';
 import { createSceneView, svgNode } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
+import { sceneOfRows } from '/static/components/scene-rows.js';
 
 (function () {
   var body = document.body;
@@ -848,40 +849,10 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
 
   function isTravel(cls) { return cls === 'LocationMark' || cls === 'GeneralLocation'; }
 
-  // sceneOfRows is GET /api/map/edges as the shape every shared scene module
-  // reads (shared/scene-net.js: ComposerMap's): points name -> {x, y, class},
-  // edges [{from, to, h?}], one edge per stored row with its handles, all four
-  // or none. Built once per load, by buildGraph.
-  //
-  // A point is a row's END: its place is where the first row naming it puts it
-  // (a scene point by the same name is not consulted, as the graph never has),
-  // and two spellings of one name are one point, spelled as first seen,
-  // because this map has always matched names without case. A row end with no
-  // name is a point named by its place, '@x,y', and marked anon. A row with a
-  // coordinate that is no number is left out whole.
-  function sceneOfRows(rows) {
-    var points = {}, edges = [], byKey = {};
-    function end(name, x, y) {
-      var k = name ? String(name).toLowerCase() : '@' + x + ',' + y;
-      if (byKey[k] === undefined) {
-        byKey[k] = name ? String(name) : k;
-        points[byKey[k]] = name ? { x: +x, y: +y, class: '' } : { x: +x, y: +y, class: '', anon: true };
-      }
-      return byKey[k];
-    }
-    rows.forEach(function (e) {
-      if (!isFinite(e.from_x) || !isFinite(e.from_y) || !isFinite(e.to_x) || !isFinite(e.to_y)) return;
-      var edge = { from: end(e.from_name, e.from_x, e.from_y), to: end(e.to_name, e.to_x, e.to_y) };
-      if (isCoord(e.ctrl1_x) && isCoord(e.ctrl1_y) && isCoord(e.ctrl2_x) && isCoord(e.ctrl2_y)) {
-        edge.h = [e.ctrl1_x, e.ctrl1_y, e.ctrl2_x, e.ctrl2_y];
-      }
-      edges.push(edge);
-    });
-    return { points: points, edges: edges };
-  }
-
   // buildGraph reads the network again from sceneEdges, and the orphans
   // against the scene points loaded so far (nodeIndex): both loads run it.
+  // sceneOfRows (components/scene-rows.js) is the rows as the shared scene
+  // shape; the localization board reads its rows through it too.
   function buildGraph() {
     scene = sceneOfRows(sceneEdges);
     sceneRev++;

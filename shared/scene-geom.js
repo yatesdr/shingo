@@ -1,10 +1,10 @@
 // scene-geom.js — the drawing substrate under a scene view: the world→screen
 // projection, the cubic-Bezier arithmetic that makes a drawn aisle the DRIVEN
-// aisle, the orientation rule, and the key that decides what counts as one
-// physical lane.
+// aisle, the orientation rule, the key that decides what counts as one
+// physical lane, and the shape a lane is drawn as.
 //
-// Pure geometry. Numbers in, numbers or an SVG path string out — no DOM, no
-// fetch, no module state. Extracted from Core's pages/dashboard-map.js. The
+// Pure geometry. Numbers in, numbers, an SVG path string or an element's tag
+// and attributes out — no DOM, no fetch, no module state. Extracted from Core's pages/dashboard-map.js. The
 // shared scene modules are built on it: scene-net.js (a scene's network and
 // the route model), scene-path.js (a robot's path drawn along the rows),
 // scene-view.js (the retained drawing) and comet-layer.js (the comets). The
@@ -150,6 +150,19 @@ export function cubicLength(p0, c, p3) {
 export function cubicPathD(p0, c1, c2, p3) {
     return 'M' + p0[0] + ' ' + p0[1] + 'C' + c1[0] + ' ' + c1[1] +
         ' ' + c2[0] + ' ' + c2[1] + ' ' + p3[0] + ' ' + p3[1];
+}
+
+// laneSpec is how a scene map draws one lane: a lane of scene-net.js's lanes
+// ({a, b, h}: its two ends and its handles, or null, world) through a page's
+// projector, as {tag, attrs} — a cubic <path> through its handles (fill none:
+// SVG fills a path black by default), or a <line> when it has none. The
+// caller makes the element and adds its own class and stroke; the robot map's
+// aisles (scene-view.js drawAisles) and the localization board's lanes both
+// draw a lane through here, so a lane is one shape on both.
+export function laneSpec(lane, proj) {
+    var pa = proj(lane.a.x, lane.a.y), pb = proj(lane.b.x, lane.b.y), h = lane.h;
+    if (h) return { tag: 'path', attrs: { d: cubicPathD(pa, proj(h[0], h[1]), proj(h[2], h[3]), pb), fill: 'none' } };
+    return { tag: 'line', attrs: { x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1] } };
 }
 
 // laneKey collapses the directed rows of one physical lane onto one key.

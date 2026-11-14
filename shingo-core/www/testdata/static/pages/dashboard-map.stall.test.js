@@ -99,7 +99,11 @@ function load() {
         throw new Error('dashboard-map.js no longer ends in the "})();" IIFE close this ' +
             'harness injects before; update the injection in dashboard-map.stall.test.js');
     }
-    SM.runPage(ctx, src, SM.realm(ctx), null, 'dashboard-map.js');
+    const shared = SM.realm(ctx);
+    // The page's own rows-to-scene adapter (components/scene-rows.js, a Core
+    // module the page imports), its scene-geom import bound like the page's.
+    ctx.sceneOfRows = SM.moduleOf(ctx, shared, path.join(SRC_DIR, '..', 'components', 'scene-rows.js')).sceneOfRows;
+    SM.runPage(ctx, src, shared, null, 'dashboard-map.js');
     if (!exported) throw new Error('__export was not reached inside dashboard-map.js');
     return exported;
 }

@@ -88,4 +88,18 @@ function runPage(ctx, src, load, real, filename) {
     vm.runInContext(bindImports(src, real || SCENE, '__shared'), ctx, { filename: filename });
 }
 
-module.exports = { realm: realm, runPage: runPage, bindImports: bindImports, SCENE: SCENE, SHARED: SHARED };
+// moduleOf runs an ES module that is not shared/'s (a page's own component,
+// by its path on disk) in `ctx` once, as realm runs a shared file: its imports
+// of the shared files `load` runs bound to them, any other blanked, and its
+// exports returned. A page that imports it reads those names off ctx, since
+// runPage blanks that import: ctx.name = moduleOf(...).name.
+function moduleOf(ctx, load, file, real) {
+    const names = [];
+    let src = bindImports(fs.readFileSync(file, 'utf8'), real || SCENE, '__shared');
+    src = src.replace(EXPORT_RE, function (m, kw, n) { names.push(n); return kw + ' ' + n; });
+    if (!names.length) throw new Error(file + ' declares no "export function/const/let/var/class" this loader can read');
+    return vm.runInContext('(function (__shared) {\'use strict\';' + src + '\nreturn { ' + names.join(', ') + ' };\n})', ctx,
+        { filename: path.basename(file) })(load);
+}
+
+module.exports = { realm: realm, runPage: runPage, moduleOf: moduleOf, bindImports: bindImports, SCENE: SCENE, SHARED: SHARED };

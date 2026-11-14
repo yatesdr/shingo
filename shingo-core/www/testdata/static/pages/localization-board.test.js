@@ -51,11 +51,16 @@ function load() {
         window: { addEventListener: function () {} },
         fetch: function () { return Promise.resolve({ json: function () { return Promise.resolve([]); } }); } };
     vm.createContext(ctx);
-    // The stripped scene-geom import (makeProjector, cubicPathD, laneKey): the
-    // real shared file, its exports stripped to declarations in this context,
-    // as dashboard-map.curve.test.js loads it.
-    const geom = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js');
-    vm.runInContext(fs.readFileSync(geom, 'utf8').replace(/^export /mg, ''), ctx);
+    // The stripped imports, each the real file, its imports and exports
+    // stripped to declarations in this context: scene-geom (makeProjector,
+    // rotate90For, laneKey, laneSpec), scene-net (sceneNet) over it, and the
+    // robot map's rows-to-scene adapter (components/scene-rows.js sceneOfRows),
+    // which reads scene-geom's isCoord.
+    const strip = function (f) { return fs.readFileSync(f, 'utf8').replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, ''); };
+    const shared = path.join(SRC_DIR, '..', '..', '..', '..', 'shared');
+    vm.runInContext(strip(path.join(shared, 'scene-geom.js')), ctx);
+    vm.runInContext(strip(path.join(shared, 'scene-net.js')), ctx);
+    vm.runInContext(strip(path.join(SRC_DIR, '..', 'components', 'scene-rows.js')), ctx);
     vm.runInContext(src + '\n__out = { createBoard: createBoard, histPath: histPath, serverLaneKey: serverLaneKey, ' +
         'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
         'annotationVerdict: annotationVerdict, ' +
@@ -418,10 +423,12 @@ console.log('verdict marks');
 // --- the lanes, as drawn ---------------------------------------------------
 //
 // The board's floor plan on the synthetic route scene (route-scene.js, the
-// scene the robot map's pins draw), recorded at the tree before it moves onto
-// the shared scene layer with the same look. Driven through createBoard, the
-// page's own entry, with its edge and board fetches handed in (opts.fetchEdges
-// and opts.fetchBoard) and no board loaded, so every lane reads "no data".
+// scene the robot map's pins draw). Pinned by U1 as the board drew it, then
+// moved onto the robot map's lanes and lane shape with the same look (lead
+// decision D15, 2026-11-14; every check that changed says so). Driven through
+// createBoard, the page's own entry, with its edge and board fetches handed in
+// (opts.fetchEdges and opts.fetchBoard) and no board loaded, so every lane
+// reads "no data".
 
 // A recording SVG element: tag, attributes (data-* mirrored into dataset, as
 // a browser does), children, and the two lookups the board makes of its map.
@@ -487,15 +494,20 @@ async function lanePins() {
     const RS = require('./route-scene.js');
     const b = await boardOn(RS.edgeRows());
     const rows = b.board._laneRows();
-    check('15 stored rows collapse onto 9 lanes, keyed by scene-geom\'s laneKey, in first-appearance order',
+    // DECLARED CHANGE (lead decision D15, 2026-11-14): the lanes are the robot
+    // map's, sceneNet(scene).lanes, in Core's aisle order (by vertex, in the
+    // order the rows first name them). It was the first ROW per lane in row
+    // order: LM911_SMN_05, LM911_LM912, LM912_PLN_02, LM932_PLN_02,
+    // LM931_LM932, LM931_SMN_05, LM921_SMN_05, LM921_PLN_02, LM941_LM942.
+    check('15 stored rows are 9 lanes, the one-way ones included, keyed by scene-geom\'s laneKey, in the robot map\'s aisle order (D15)',
         JSON.stringify(rows.map(function (r) { return r.key; })) === JSON.stringify([
-            'LM911_SMN_05', 'LM911_LM912', 'LM912_PLN_02', 'LM932_PLN_02', 'LM931_LM932',
-            'LM931_SMN_05', 'LM921_SMN_05', 'LM921_PLN_02', 'LM941_LM942']),
+            'LM911_SMN_05', 'LM931_SMN_05', 'LM921_SMN_05', 'LM911_LM912', 'LM912_PLN_02', 'LM932_PLN_02',
+            'LM921_PLN_02', 'LM931_LM932', 'LM941_LM942']),
         JSON.stringify(rows.map(function (r) { return r.key; })));
     const twin = rows.find(function (r) { return r.key === 'LM921_PLN_02'; });
-    check('the FIRST stored row of a lane is the one kept (PLN_02>LM921, listed before its twin)',
-        twin && twin.edge.from_name === 'PLN_02' && twin.edge.to_name === 'LM921',
-        twin && twin.edge.instance_name);
+    check('a lane takes the handles of the FIRST row stored between its ends (PLN_02>LM921, listed before its twin)',
+        twin && twin.lane.from === 'PLN_02' && twin.lane.to === 'LM921' && JSON.stringify(twin.lane.h) === '[15,-4,9,-4]',
+        twin && JSON.stringify(twin.lane));
     check('no board loaded: no lane has state', rows.every(function (r) { return r.st === null; }));
     check('orientation comes from the edges\' endpoints: this scene is wider than tall, unrotated',
         b.board._state.rotate90 === false);
@@ -506,37 +518,61 @@ async function lanePins() {
         b.map.children.length === 1 && world.attrs.id === 'lb-world' && world.children.length === 2 &&
         zones.attrs['class'] === 'lb-zones' && zones.children.length === 0 && lanes.attrs['class'] === 'lb-lanes',
         world.children.map(function (c) { return c.attrs['class']; }).join(','));
-    check('two paths per lane, the click target first, then the mark', lanes.children.length === 18 &&
-        lanes.children.every(function (p, i) { return p.tag === 'path' && p.attrs['class'] === (i % 2 ? 'lb-lane' : 'lb-lane-hit'); }),
+    // DECLARED CHANGE (D15): a lane is drawn in the robot map's lane shape
+    // (scene-geom.js laneSpec): a cubic <path> through all four handles, a
+    // <line> for a straight lane. A straight lane was a <path d="M..L..">,
+    // which paints the same.
+    const shapeOf = function (p) {
+        return p.tag === 'line' ? 'line ' + [p.attrs.x1, p.attrs.y1, p.attrs.x2, p.attrs.y2].join(',') : 'path ' + p.attrs.d;
+    };
+    check('two elements per lane, the click target first, then the mark', lanes.children.length === 18 &&
+        lanes.children.every(function (p, i) { return p.attrs['class'] === (i % 2 ? 'lb-lane' : 'lb-lane-hit'); }),
         lanes.children.map(function (p) { return p.attrs['class']; }).join(','));
     const marks = lanes.children.filter(function (p, i) { return i % 2 === 1; });
-    const want = ['M0 0L0 -2', 'M0 -2L16 -2', 'M16 -2L16 0', 'M16 0L14 -1', 'M14 -1L2 -1', 'M2 -1L0 0',
-        'M0 0C1 4 7 4 8 0', 'M16 0C15 4 9 4 8 0', 'M30 -10L34 -10'];
-    check('each lane is drawn from its kept row: a straight one as M..L, a curved one as the projected cubic',
-        JSON.stringify(marks.map(function (p) { return p.attrs.d; })) === JSON.stringify(want),
-        JSON.stringify(marks.map(function (p) { return p.attrs.d; })));
+    // NOT CHANGED: each lane runs as its first stored row does, as the board
+    // always drew it. The shared lanes run from their earlier vertex; on this
+    // scene that turns SMN_05-LM931 round (stored one way only, LM931>SMN_05),
+    // and a dashed mark drawn the other way lays its dashes elsewhere, which
+    // the before/after shots showed (laneRows). So it is drawn 2,-1 -> 0,0 still.
+    const want = ['line 0,0,0,-2', 'line 2,-1,0,0', 'path M0 0C1 4 7 4 8 0', 'line 0,-2,16,-2', 'line 16,-2,16,0',
+        'line 16,0,14,-1', 'path M16 0C15 4 9 4 8 0', 'line 14,-1,2,-1', 'line 30,-10,34,-10'];
+    check('each lane is drawn in the robot map\'s lane shape: a straight one as a <line>, a curved one as the projected cubic (D15)',
+        JSON.stringify(marks.map(shapeOf)) === JSON.stringify(want), JSON.stringify(marks.map(shapeOf)));
     const scale = b.board._state.scale;
-    check('a mark: unfilled, round-capped, no-data grey, 1.3 px held at screen size, keyed by its lane',
+    check('a mark: unfilled where it is a path, round-capped, no-data grey, 1.3 px held at screen size, keyed by its lane',
         marks.every(function (p, i) {
-            return p.attrs.fill === 'none' && p.attrs['stroke-linecap'] === 'round' &&
+            return (p.tag === 'line' || p.attrs.fill === 'none') && p.attrs['stroke-linecap'] === 'round' &&
                 p.attrs.stroke === 'var(--text-muted)' && p.attrs.opacity === '1' && p.attrs['data-w'] === '1.3' &&
                 p.attrs['stroke-width'] === (1.3 / scale).toFixed(4) && p.attrs['data-lane'] === rows[i].key;
         }), marks.map(function (p) { return JSON.stringify(p.attrs); })[0]);
-    check('a click target: the same path, transparent, 14 px, hit on its stroke',
+    check('a click target: the same shape, transparent, 14 px, hit on its stroke',
         lanes.children.filter(function (p, i) { return i % 2 === 0; }).every(function (p, i) {
-            return p.attrs.d === marks[i].attrs.d && p.attrs.stroke === 'transparent' && p.attrs['data-w'] === '14' &&
+            return shapeOf(p) === shapeOf(marks[i]) && p.attrs.stroke === 'transparent' && p.attrs['data-w'] === '14' &&
                 p.attrs['pointer-events'] === 'stroke' && p.attrs['data-lane'] === rows[i].key;
         }));
 
-    // The curve test reads ctrl1_x and ctrl2_x only. A row carrying those two
-    // and no y draws a cubic whose handle y is NaN. /api/map/edges never sends
-    // one today (Core writes the four handles together), but it is the board's
-    // rule, and it is not the robot map's (all four or none, isCoord).
+    // A curved lane turned round: its first stored row runs LM921>SMN_05, from
+    // the later vertex (SMN_05 is named first), so the shared lane runs
+    // SMN_05>LM921 with its handles turned; the board draws it as the row, the
+    // same cubic it always drew (M8 0C7 4 1 4 0 0).
+    const rs = RS.edgeRows();
+    const cb = await boardOn([rs[0], rs[10]]);
+    const cm = cb.map.children[0].children[1].children;
+    check('a curved lane whose first stored row runs from its later vertex is drawn as that row, handles in its order',
+        shapeOf(cm[3]) === 'path M8 0C7 4 1 4 0 0', cm.map(shapeOf).join(' | '));
+
+    // DECLARED CHANGE (D15): handles are all four or none, as the robot map
+    // reads them (scene-rows.js sceneOfRows, isCoord). The board's own curve
+    // test read ctrl1_x and ctrl2_x only, so a row carrying those two and no y
+    // drew a cubic with NaN handles (M0 0C1 NaN 7 NaN 8 0). /api/map/edges
+    // never sends one (Core writes the four handles together); such a row is
+    // now a straight lane, as on the robot map.
     const half = Object.assign({}, RS.edgeRows()[9]);
     delete half.ctrl1_y; delete half.ctrl2_y;
     const hb = await boardOn([half]);
-    const d = hb.map.children[0].children[1].children[1].attrs.d;
-    check('a row with ctrl1_x and ctrl2_x but no y draws a cubic with NaN handles', d === 'M0 0C1 NaN 7 NaN 8 0', d);
+    const hm = hb.map.children[0].children[1].children[1];
+    check('a row with ctrl1_x and ctrl2_x but no y is a straight lane, not a cubic with NaN handles (D15)',
+        shapeOf(hm) === 'line 0,0,8,0', shapeOf(hm));
 
     const tall = RS.edgeRows().map(function (r) {
         return Object.assign({}, r, { from_x: r.from_y, from_y: r.from_x, to_x: r.to_y, to_y: r.to_x });
