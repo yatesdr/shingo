@@ -77,6 +77,51 @@ var lossySSETopics = map[string]bool{
 	"debug-log": true,
 }
 
+// robotPosTopicPrefix opens the one lossy FAMILY: robot-pos.<operatorStationID>,
+// the robot panel's live positions for one operator station (robot_stream.go,
+// LEAD-NOTES D12). A position is superseded by the next one two seconds later,
+// so a frame a full queue cannot take is shed like debug-log and never evicts.
+//
+// THE FAMILY IS THE PREFIX AND A STATION ID, NOTHING WIDER. robotPosStation
+// takes "robot-pos." followed by a positive decimal id exactly as
+// strconv.FormatInt writes it; "robot-pos", "robot-pos.", "robot-pos.0",
+// "robot-pos.007", "robot-pos.1.2" and "robot-positions" are not in it and stay
+// durable like every other name. And it is delivered only to a client that
+// named exactly that topic in ?topics= (sseClient.wants): a client that named
+// no topics, the shared bus's durable stream included, never takes one.
+// Pinned by TestSSE_RobotPosFamilyIsOneStationExactly and
+// TestSSE_RobotPosReachesOnlyItsOwnStationsClient.
+const robotPosTopicPrefix = "robot-pos."
+
+// robotPosTopic is operator station stationID's robot-pos topic.
+func robotPosTopic(stationID int64) string {
+	return robotPosTopicPrefix + strconv.FormatInt(stationID, 10)
+}
+
+// robotPosStation is the operator station a robot-pos topic names; false for
+// any other name (robotPosTopicPrefix).
+func robotPosStation(typ string) (int64, bool) {
+	rest, ok := strings.CutPrefix(typ, robotPosTopicPrefix)
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != rest {
+		return 0, false
+	}
+	return id, true
+}
+
+// lossySSETopic reports whether frames of this type ride the lossy queue: a
+// name in lossySSETopics, or one of the robot-pos family.
+func lossySSETopic(typ string) bool {
+	if lossySSETopics[typ] {
+		return true
+	}
+	_, ok := robotPosStation(typ)
+	return ok
+}
+
 // sseDebugTopic is delivered only to a client that connects with ?debug=1
 // (the Diagnostics page). Before, every /events client got every debug line:
 // Production, the station boards and Manual Order received a stream none of
@@ -102,10 +147,15 @@ type sseClient struct {
 	queued atomic.Int64
 }
 
-// wants reports whether the client takes frames of this type.
+// wants reports whether the client takes frames of this type. A robot-pos
+// topic only when the client named it (robotPosTopicPrefix): no topics means
+// every durable topic, not every station's positions.
 func (c *sseClient) wants(typ string) bool {
 	if typ == sseDebugTopic && !c.debug {
 		return false
+	}
+	if _, ok := robotPosStation(typ); ok {
+		return c.topics[typ]
 	}
 	return c.topics == nil || c.topics[typ]
 }
@@ -248,7 +298,7 @@ func (h *EventHub) Broadcast(evt SSEEvent) {
 	select {
 	case h.broadcast <- evt:
 	default:
-		if lossySSETopics[evt.Type] {
+		if lossySSETopic(evt.Type) {
 			return
 		}
 		log.Printf("sse: broadcast buffer full, lost %s event: evicting every client", evt.Type)
@@ -321,7 +371,7 @@ func (h *EventHub) fanOut(evt SSEEvent) {
 	h.mu.RLock()
 	evt.seq = h.seq.Add(1)
 	var stuck []*sseClient
-	lossy := lossySSETopics[evt.Type]
+	lossy := lossySSETopic(evt.Type)
 	for c := range h.clients {
 		if !c.wants(evt.Type) {
 			continue
