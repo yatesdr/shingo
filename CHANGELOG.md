@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- Core reads the route the fleet has planned for each driving robot, the route the robot map will draw
+
 ## v0.7.0 — 2026-11-13
 
 Deploy: Edge v49. Core has no migration; the two go in either order.

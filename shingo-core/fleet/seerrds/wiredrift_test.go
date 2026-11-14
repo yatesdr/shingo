@@ -78,9 +78,10 @@ var notCarried = map[string]map[string]string{
 		"changes":                 "RDS internal diff bookkeeping",
 		"src_release":             "RDS build string",
 		"remaining_time":          "RDS's own ETA; Core computes its own from mission telemetry",
-		"area_resources_occupied": "RDS traffic-control bookkeeping; nothing in Core consumes it",
-		"finished_path":           "route actually driven — WANTED, and deliberately deferred: it belongs with the per-traversal tier, which is not built",
-		"unfinished_path":         "route remaining — same as finished_path",
+		"area_resources_occupied": "RDS traffic-control bookkeeping (the 1-3 segments held right now, path_occupied); nothing in Core consumes it",
+		// unfinished_path LEFT this list on 2026-11-14: it is the route the
+		// Core map draws (rds.RobotStatus.UnfinishedPath).
+		"finished_path": "route already driven, ending at the current point that also opens unfinished_path; the map needs only the remaining route, and the per-traversal tier that would want this is not built",
 	},
 	"report[].basic_info": {
 		"current_group": "RDS dispatch grouping; robot_group is read from the scene instead",
