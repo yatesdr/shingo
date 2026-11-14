@@ -133,6 +133,10 @@ type EdgeRegistered struct {
 	StationID string `json:"station_id"`
 	// Message is a human-readable status message.
 	Message string `json:"message,omitempty"`
+	// EphemeralTopic is the ephemeral topic (ephemeral.go) Core has created
+	// and verified, as on EdgeHeartbeatAck.EphemeralTopic; absent when it has
+	// none. Every registration and every ack states it afresh.
+	EphemeralTopic string `json:"ephemeral_topic,omitempty"`
 }
 
 // EdgeHeartbeatAck acknowledges a heartbeat.
@@ -185,6 +189,13 @@ type EdgeHeartbeatAck struct {
 	// ack named it, and refuses the act otherwise: nil (absent) is a Core
 	// without the ask pair. Not sent to an Edge that sends no Feeds.
 	Asks []string `json:"asks,omitempty"`
+	// EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created
+	// and whose retention it read back and verified; absent when it has none.
+	// AN EDGE TOUCHES THE TOPIC ONLY WHILE THE LAST ACK OR REGISTRATION NAMED
+	// IT: absent from a later one (an older Core, or one that could not verify
+	// it) stops the Edge's reader and writer. Additive: an older Edge ignores
+	// the key and never reads the topic.
+	EphemeralTopic string `json:"ephemeral_topic,omitempty"`
 }
 
 // --- Order payloads: Edge -> Core ---
