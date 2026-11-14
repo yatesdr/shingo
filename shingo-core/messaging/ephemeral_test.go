@@ -35,40 +35,165 @@ func silentBroker(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-// A broker that accepts and never answers holds the ephemeral topic's
-// verification no longer than the probe timeout, as it holds ensureTopics
-// (TestEnsureTopics_ASilentBrokerDoesNotHoldIt), and a topic it could not
-// verify is not advertised, so no Edge is told to touch it.
-func TestEnsureEphemeralTopic_ASilentBrokerDoesNotHoldItAndIsNotAdvertised(t *testing.T) {
+// One attempt at the topic against a broker that accepts and never answers is
+// held no longer than the probe timeout, as ensureTopics is
+// (TestEnsureTopics_ASilentBrokerDoesNotHoldIt), and fails.
+func TestAttemptEphemeral_ASilentBrokerDoesNotHoldIt(t *testing.T) {
 	t.Parallel()
-	c := NewClient(&config.MessagingConfig{
-		Kafka:          config.KafkaConfig{Brokers: []string{silentBroker(t)}, DialTimeout: 300 * time.Millisecond},
+	done := make(chan error, 1)
+	go func() { done <- attemptEphemeral([]string{silentBroker(t)}, 300*time.Millisecond, "shingo.ephemeral") }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("an attempt against a silent broker verified the topic")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an attempt still waiting on a silent broker after 5 s; want it bounded by the 300 ms probe timeout")
+	}
+}
+
+// ephemeralBroker stands in for the broker's answers to the topic's attempts:
+// the first silent ones wait out the attempt's deadline and fail, the rest
+// verify (or, with silent < 0, none ever does). It counts the attempts.
+type ephemeralBroker struct {
+	mu       sync.Mutex
+	silent   int
+	attempts int
+}
+
+func (b *ephemeralBroker) attempt(_ []string, timeout time.Duration, _ string) error {
+	b.mu.Lock()
+	b.attempts++
+	n := b.attempts
+	b.mu.Unlock()
+	if b.silent < 0 || n <= b.silent {
+		time.Sleep(timeout)
+		return errors.New("i/o timeout")
+	}
+	return nil
+}
+
+func (b *ephemeralBroker) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.attempts
+}
+
+// retryingClient is a connected client whose topic attempts go to broker,
+// retried every 20 ms under a 100 ms deadline, with a reader counter.
+func retryingClient(t *testing.T, broker *ephemeralBroker) (c *Client, readers func() int) {
+	t.Helper()
+	c = NewClient(&config.MessagingConfig{
+		Kafka:          config.KafkaConfig{Brokers: []string{"b:1"}, DialTimeout: 100 * time.Millisecond},
 		EphemeralTopic: "shingo.ephemeral",
 	})
-	c.kafka = &kafkaState{readers: map[string]kafkaReader{}}
-	c.SubscribeEphemeral(func([]byte) { t.Error("a reader was started on a topic that never verified") })
-	done := make(chan struct{})
-	go func() {
-		c.mu.Lock()
-		c.connectEphemeralLocked()
-		c.mu.Unlock()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the ephemeral topic's verification still waiting on a silent broker after 5 s; want it bounded by the 300 ms probe timeout")
+	c.attemptEphemeral = broker.attempt
+	c.ephemeralRetry = 20 * time.Millisecond
+	var mu sync.Mutex
+	opened := 0
+	c.openEphemeral = func([]string, string) ephemeralReader {
+		mu.Lock()
+		opened++
+		mu.Unlock()
+		return newFakeEphemeralReader()
 	}
-	if got := c.EphemeralTopic(); got != "" {
-		t.Errorf("EphemeralTopic = %q after a verification that could not run, want \"\" (not advertised)", got)
+	c.SubscribeEphemeral(func([]byte) {})
+	t.Cleanup(c.Close)
+	return c, func() int { mu.Lock(); defer mu.Unlock(); return opened }
+}
+
+// connect is what Connect does for the topic, against a connection already
+// made; it reports how long Connect was held.
+func connect(c *Client) time.Duration {
+	start := time.Now()
+	c.mu.Lock()
+	c.kafka = &kafkaState{readers: map[string]kafkaReader{}}
+	c.startEphemeralLocked()
+	c.mu.Unlock()
+	return time.Since(start)
+}
+
+// A broker that is silent at Core's connect and answers later ends with the
+// topic advertised, read and written, and nothing waited on it: Connect is not
+// held, and while an attempt is waiting out its deadline the robot poll's
+// publish and the ack's read of the topic answer at once. It costs one attempt
+// per retry interval while unverified and none once verified.
+func TestEnsureEphemeral_ASilentThenAnsweringBrokerEndsAdvertised(t *testing.T) {
+	t.Parallel()
+	broker := &ephemeralBroker{silent: 2}
+	c, readers := retryingClient(t, broker)
+	if d := connect(c); d > 50*time.Millisecond {
+		t.Errorf("Connect was held %s for the ephemeral topic, want not at all", d)
 	}
 	env, err := protocol.NewEnvelope(protocol.TypeRobotPositions, protocol.Address{Role: protocol.RoleCore},
 		protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, &protocol.RobotPositions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.PublishEphemeral(env); !errors.Is(err, errNoEphemeralTopic) {
-		t.Errorf("PublishEphemeral with no verified topic = %v, want errNoEphemeralTopic", err)
+	time.Sleep(30 * time.Millisecond) // inside the first attempt's 100 ms deadline
+	start := time.Now()
+	topic, perr := c.EphemeralTopic(), c.PublishEphemeral(env)
+	if d := time.Since(start); d > 20*time.Millisecond {
+		t.Errorf("the ack's read and the poll's publish waited %s on an attempt, want at once", d)
+	}
+	if topic != "" || !errors.Is(perr, errNoEphemeralTopic) {
+		t.Errorf("during a silent attempt: topic %q, publish %v; want none named and errNoEphemeralTopic", topic, perr)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for c.EphemeralTopic() == "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("after %d attempts the topic is still not named, want it named on the third", broker.count())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := readers(); n != 1 {
+		t.Errorf("readers opened = %d once verified, want 1", n)
+	}
+	if err := c.PublishEphemeral(env); err != nil {
+		t.Errorf("publish once verified: %v", err)
+	}
+	if n := broker.count(); n != 3 {
+		t.Errorf("attempts = %d, want 3: two silent, one that verified", n)
+	}
+	time.Sleep(150 * time.Millisecond) // more than seven retry intervals
+	if n := broker.count(); n != 3 {
+		t.Errorf("attempts = %d after it verified, want still 3: none once verified", n)
+	}
+}
+
+// A broker that never verifies the topic means it is never named, read or
+// written, at one attempt per retry interval, and the attempts stop when the
+// client closes.
+func TestEnsureEphemeral_NeverVerifiedMeansNoReaderNoWriterNoName(t *testing.T) {
+	t.Parallel()
+	broker := &ephemeralBroker{silent: -1}
+	c, readers := retryingClient(t, broker)
+	c.ephemeralRetry = 50 * time.Millisecond
+	c.cfg.Kafka.DialTimeout = time.Millisecond
+	start := time.Now()
+	connect(c)
+	time.Sleep(330 * time.Millisecond)
+	elapsed := time.Since(start)
+	n := broker.count()
+	if most := 1 + int(elapsed/c.ephemeralRetry); n < 3 || n > most {
+		t.Errorf("%d attempts in %s at one every %s, want one at connect and one per interval (3 to %d)",
+			n, elapsed.Round(time.Millisecond), c.ephemeralRetry, most)
+	}
+	if c.EphemeralTopic() != "" || readers() != 0 {
+		t.Errorf("never verified: topic %q, %d readers; want none of either", c.EphemeralTopic(), readers())
+	}
+	c.mu.RLock()
+	link := c.kafka.ephemeral
+	c.mu.RUnlock()
+	if link != nil {
+		t.Error("never verified, and a writer's link is open")
+	}
+	c.Close()
+	closed := broker.count()
+	time.Sleep(150 * time.Millisecond)
+	if after := broker.count(); after > closed+1 {
+		t.Errorf("%d attempts after the client closed, want none (an attempt already running may finish)", after-closed)
 	}
 }
 

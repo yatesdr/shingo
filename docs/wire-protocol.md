@@ -71,7 +71,7 @@ for the class of data, not for what rides it (`protocol/ephemeral.go`).
 | Parameter | Value |
 |-----------|-------|
 | Created by | **Core**, at every connect: `CreateTopics` with 1 partition, RF 1, `retention.ms=60000`, `segment.ms=60000` (both: Kafka deletes whole closed segments only, so `retention.ms` alone keeps data until a 1 GiB segment rolls) |
-| Verified by | Core, straight after: it reads the topic's partitions and those two configs back and, where an existing topic disagrees, alters the configs and reads them again. A topic with more than one partition cannot be corrected and is not used. |
+| Verified by | Core, straight after: it reads the topic's partitions and those two configs back and, where an existing topic disagrees, alters the configs and reads them again. A topic with more than one partition cannot be corrected and is not used. Each attempt runs on its own goroutine, never under the messaging client's lock or on the robot poll, with every round trip under the broker-probe deadline; one that does not verify is tried again every minute (`ephemeralRetryEvery`) until one does, and then no more. |
 | Advertised | `EdgeRegistered.ephemeral_topic` and `EdgeHeartbeatAck.ephemeral_topic`, only once verified. The plant brokers auto-create topics, so no Edge may read or write the topic before Core has made it: an Edge touches it only while the last registration or ack named it, and only when that is the name its own config holds. |
 | Consumer group | **none**, on both sides; no offset is ever committed |
 | Start offset | **the last offset.** A reader that starts, or starts again after an outage, sees only what is published after it: nothing is replayed |

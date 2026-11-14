@@ -80,6 +80,13 @@ type Client struct {
 	// a field so a test can put a fake reader under the read loop. Set once,
 	// in NewClient.
 	openEphemeral func(brokers []string, topic string) ephemeralReader
+	// attemptEphemeral is one create-and-verify of the ephemeral topic
+	// (attemptEphemeral), and ephemeralRetry the wait between attempts while
+	// it does not verify (ephemeralRetryEvery). Fields so a test can stand in
+	// a broker that is silent, then answers, and count the attempts. Set once,
+	// in NewClient.
+	attemptEphemeral func(brokers []string, timeout time.Duration, topic string) error
+	ephemeralRetry   time.Duration
 }
 
 type kafkaState struct {
@@ -107,6 +114,8 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 		openEphemeral: func(brokers []string, topic string) ephemeralReader {
 			return newEphemeralReader(brokers, topic)
 		},
+		attemptEphemeral: attemptEphemeral,
+		ephemeralRetry:   ephemeralRetryEvery,
 	}
 }
 
@@ -156,10 +165,10 @@ func (c *Client) Connect() error {
 			BatchTimeout: writerBatchTimeout,
 		},
 	}
-	// After the durable topics and the writer: the live robot feed is
-	// optional, and a topic that will not verify leaves it off and the rest
-	// of the connection as it was.
-	c.connectEphemeralLocked()
+	// After the durable topics and the writer, and on its own goroutine: the
+	// live robot feed is optional, a topic that will not verify leaves it off
+	// and is tried again each minute, and none of it holds Connect.
+	c.startEphemeralLocked()
 	return nil
 }
 

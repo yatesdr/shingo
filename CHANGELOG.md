@@ -30,7 +30,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - Core no longer builds the live robot feed when no open page is listening for it
 - The robot map looks as before but no longer redraws the whole floor on every robot update: the aisles and nodes are drawn again only when the view, the scene, an order's nodes or a docked robot change, and the robots move in place, so a moving robot's glow pulses smoothly instead of restarting each update
 - The robot map's header counts, map key and side lists are rewritten only when what they show changes, not on every robot update
-- Core makes a short-lived Kafka topic, shingo.ephemeral (60 s retention), checks and corrects its settings, and only then tells the Edges about it
+- Core makes a short-lived Kafka topic, shingo.ephemeral (60 s retention), checks and corrects its settings, and only then tells the Edges about it; a broker that cannot answer at Core's start is tried again each minute
 - While a station shows an order's robot, Core sends it that robot's position and remaining route every robot poll; with nothing shown, Core does no work for it
 - An Edge uses the live robot topic only when Core names it and its own config names the same topic; an older Core or Edge sees nothing new
 

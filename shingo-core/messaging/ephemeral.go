@@ -8,8 +8,9 @@ package messaging
 // touch with their 7-day default (study S2), so the topic must exist with its
 // own settings before anything reads it: Core creates it before it advertises
 // it, and an Edge touches it only once advertised. A topic that cannot be
-// verified is not advertised, not read and not written, and the live robot
-// feed is off until a later connect verifies it.
+// verified is not advertised, not read and not written; Core tries it again
+// each minute, off its lock and off the robot poll, until one attempt
+// verifies (ensureEphemeral).
 
 import (
 	"context"
@@ -260,29 +261,75 @@ func ephemeralConfigOK(got map[string]string) bool {
 	return true
 }
 
-// connectEphemeralLocked verifies the configured ephemeral topic and, when it
-// verifies, opens its writer and (when a handler is subscribed) its reader.
-// Called by Connect with c.mu held; c.kafka is set. An empty
-// messaging.ephemeral_topic turns the feed off with nothing said; a topic that
-// does not verify is logged once per connect and left alone.
-func (c *Client) connectEphemeralLocked() {
+// ephemeralRetryEvery is how often Core tries the ephemeral topic again while
+// it is not verified: one bounded attempt a minute, off the client's lock and
+// off the robot poll, and none once one has verified. A minute is the Edges'
+// heartbeat: the ack after the attempt that verifies is the one that names it.
+const ephemeralRetryEvery = 60 * time.Second
+
+// attemptEphemeral is one create-and-verify of the topic against brokers,
+// every round trip under the broker-probe deadline (verifyEphemeralTopic).
+func attemptEphemeral(brokers []string, timeout time.Duration, topic string) error {
+	transport := &kafka.Transport{DialTimeout: timeout}
+	defer transport.CloseIdleConnections()
+	admin := &kafka.Client{Addr: kafka.TCP(brokers...), Timeout: timeout, Transport: transport}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return verifyEphemeralTopic(ctx, admin, topic)
+}
+
+// startEphemeralLocked starts ensureEphemeral for the connection Connect just
+// made. Called by Connect with c.mu held and c.kafka set; it waits on nothing,
+// so neither Connect nor anything behind the client's lock waits on the
+// broker for the ephemeral topic. An empty messaging.ephemeral_topic turns
+// the feed off with nothing said.
+func (c *Client) startEphemeralLocked() {
 	topic := c.cfg.EphemeralTopic
 	if topic == "" {
 		return
 	}
-	timeout := c.cfg.Kafka.DialTimeoutOr()
-	transport := &kafka.Transport{DialTimeout: timeout}
-	defer transport.CloseIdleConnections()
-	admin := &kafka.Client{Addr: kafka.TCP(c.cfg.Kafka.Brokers...), Timeout: timeout, Transport: transport}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	if err := verifyEphemeralTopic(ctx, admin, topic); err != nil {
-		log.Printf("messaging: ephemeral topic %s not verified (%v): the live robot feed is off until Core next connects", topic, err)
-		return
+	go c.ensureEphemeral(c.kafka, topic, c.cfg.Kafka.Brokers, c.cfg.Kafka.DialTimeoutOr(), c.stopChan)
+}
+
+// ensureEphemeral makes and verifies the topic for one connection (state): an
+// attempt at once, then one every retry interval while it does not verify,
+// each outside the client's lock and bounded by the probe deadline. The first
+// that verifies opens the topic's writer and reader and makes EphemeralTopic
+// name it, so the next registration or heartbeat ack advertises it; then it
+// stops. It stops too when the client closes or a reconnect replaces state. A
+// failure is logged when it first happens and when its reason changes, not on
+// every attempt.
+func (c *Client) ensureEphemeral(state *kafkaState, topic string, brokers []string, timeout time.Duration, stop <-chan struct{}) {
+	var said string
+	for {
+		err := c.attemptEphemeral(brokers, timeout, topic)
+		c.mu.Lock()
+		current := c.kafka == state
+		if err == nil && current && state.ephemeral == nil {
+			state.ephemeral = openEphemeralLink(topic, newEphemeralWriter(brokers))
+			c.startEphemeralReaderLocked()
+		}
+		c.mu.Unlock()
+		if !current {
+			return
+		}
+		if err == nil {
+			log.Printf("messaging: ephemeral topic %s verified (1 partition, retention.ms and segment.ms %s)", topic, ephemeralRetentionMS)
+			return
+		}
+		if err.Error() != said {
+			said = err.Error()
+			log.Printf("messaging: ephemeral topic %s not verified (%v): the live robot feed is off; trying again every %s",
+				topic, err, c.ephemeralRetry)
+		}
+		timer := time.NewTimer(c.ephemeralRetry)
+		select {
+		case <-stop:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
-	log.Printf("messaging: ephemeral topic %s verified (1 partition, retention.ms and segment.ms %s)", topic, ephemeralRetentionMS)
-	c.kafka.ephemeral = openEphemeralLink(topic, newEphemeralWriter(c.cfg.Kafka.Brokers))
-	c.startEphemeralReaderLocked()
 }
 
 // EphemeralTopic is the ephemeral topic this connection verified, "" when

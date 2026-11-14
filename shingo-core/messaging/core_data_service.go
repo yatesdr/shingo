@@ -164,7 +164,8 @@ func (s *CoreDataService) SetAskKinds(fn func() []string) { s.askKinds = fn }
 // SetEphemeralTopic injects the read of the ephemeral topic Core's messaging
 // client verified (Client.EphemeralTopic), which every registration and every
 // heartbeat ack names (protocol.EdgeHeartbeatAck.EphemeralTopic). Read at send
-// time, so a reconnect that verifies, or fails to, is what the next ack says.
+// time, so the attempt that verifies (at a connect or a minute-by-minute retry)
+// is what the next registration or ack says.
 // Set once at the composition root; unset names none, and no Edge then
 // touches the topic.
 func (s *CoreDataService) SetEphemeralTopic(fn func() string) { s.ephemeralTopic = fn }
