@@ -69,9 +69,14 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	// Vendor-state-domain mapping has already produced newStatus (a ShinGo
 	// status). Route through the typed lifecycle method matching the
-	// target ShinGo status — the vendor terminal-check at line 81 below
-	// guards against routing terminal vendor states through MarkInTransit/
-	// MarkStaged. Cancel/Fail are dispatched in the post-mapping switch.
+	// target ShinGo status. A terminal vendor state never reaches
+	// MarkInTransit/MarkStaged: rds.OrderState.CoreStatus maps FINISHED to
+	// delivered and STOPPED to cancelled. The vendor terminal checks
+	// (e.fleet.IsTerminalState(ev.NewStatus), at the refusal and after the
+	// station push below) only decide whether the post-mapping switch runs,
+	// which is where Cancel/Fail are dispatched. This comment used to credit
+	// the check, cited as "line 81 below", with keeping terminal states out
+	// of MarkInTransit/MarkStaged; it never did that, the mapping does.
 	lc := e.dispatcher.Lifecycle()
 
 	// The fault fields for this transition, shared between the lifecycle write
