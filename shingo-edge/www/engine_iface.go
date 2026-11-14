@@ -64,11 +64,12 @@ type ServiceAccess interface {
 	// subset Shingo gave a job to. Empty means "not received", never "the map
 	// is empty"; the key-route validator degrades to a warning on it.
 	//
-	// The scene's ADJACENCY rides the same sync and is cached beside this
-	// (engine.SceneAdjacency), but is deliberately not exposed here yet: its
-	// only consumer is the connectivity-filtered key-route picker, which is a
-	// named follow-up. An interface method with no caller is what this
-	// interface's width guard exists to prevent.
+	// The scene's undirected ADJACENCY is derivable beside this
+	// (engine.SceneAdjacency) and deliberately not exposed here: nothing on
+	// this server needs it, since the desktop's key-route picker walks the
+	// directed shared route model in the browser (shared/scene-net.js). An
+	// interface method with no caller is what this interface's width guard
+	// exists to prevent.
 	ScenePointNames() map[string]bool
 
 	// ── Service accessors ──────────────────────────────────────────

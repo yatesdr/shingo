@@ -933,8 +933,8 @@ function selectStyle(id) {
     const st = composerStyle(id);
     if (!st) {
         // NO SUCH STYLE, so no draft — and the last process's draft has to go
-        // with it. openProcess clears the graph and the routing set for the
-        // same reason; leaving the model behind drew one press's positions
+        // with it. openProcess clears the routing set for the same reason;
+        // leaving the model behind drew one press's positions
         // under another press's name, which only became reachable once a
         // process could be created with no parts at all.
         S.styleID = 0;

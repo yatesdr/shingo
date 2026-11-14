@@ -1104,9 +1104,11 @@ type NodeListResponse struct {
 	//
 	// NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the
 	// "absence is never a finding" guards read the full name set on every
-	// sync, so names are never left off. The coordinates and handles are what
-	// the station's cell picture draws from, and they are the bulk of the
-	// message — so Core stamps SceneRevision on every response and sends the
+	// sync, so names are never left off. The coordinates and handles are the
+	// Edge's geometry cache (the cell picture places its positions by the point
+	// coordinates; the desktop's key-route walk and the operator station's
+	// robot panel read the segments and handles too), and they are the bulk of
+	// the message — so Core stamps SceneRevision on every response and sends the
 	// geometry only when the request's revision does not match it. An Edge
 	// that received geometry keeps it (durably) and quotes the revision back.
 	ScenePoints []ScenePointInfo `json:"scene_points,omitempty"`

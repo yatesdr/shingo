@@ -50,7 +50,9 @@ import (
 //
 // The forks, and the pin for each:
 //
-//   - Map rides the desktop read only; the station draws no plant map.
+//   - Map rides the desktop read only, for its key-route walk. The station's
+//     robot panel draws the plant map from its own door, GET
+//     /api/operator-stations/{id}/scene (SceneMap), never from a composer read.
 //     TestComposerRead_DesktopByteBudget holds that the station read has no Map.
 //     (The station's collapsed Scene went with its flow editor, pick-a-part U4.)
 //   - ComposerStyle.Nodes and .Parts ride the PICKER scope only, and per-style
@@ -434,13 +436,16 @@ func (s *StationService) changeoverHistory(processID int64) (map[int64]string, [
 	return lastRun, recent
 }
 
-// composerMap is the geometry cache as D3 draws it, with each edge's length
-// alongside its shape. Nil when the cache is empty — the screen then says the
-// map has not arrived, which is true and is better than a plant drawn from
-// the node list with the positions guessed.
+// composerMap is the geometry cache in the shared scene shape (LEAD-NOTES
+// D11) for the desktop composer read, each edge with its straight-line length
+// alongside its shape. Its one reader is the desktop's key-route walk
+// (composer-model.js viaWaypoints, over shared/scene-net.js), which measures
+// each row from its points and reads no length; nothing draws it since the
+// routing-set map's drawing went (2026-11-14, tier A1). Nil when the cache is
+// empty — the key-route picker then says there is no plant map, which is true
+// and is better than a network guessed from the node list.
 //
-// Built from the same per-cache memo composerScene reads, so the lengths on
-// the two shapes are one computation and cannot disagree.
+// The lengths are sceneDerived's memo, worked out once per cache.
 func (s *StationService) composerMap() *domain.ComposerMap {
 	g, memo := s.sceneDerived()
 	if memo == nil || len(g.Points) == 0 {
@@ -476,9 +481,10 @@ func SceneMap(g *domain.SceneGeometry) *domain.ComposerMap {
 // nil leaves every length off.
 func sceneMap(g *domain.SceneGeometry, lens []domain.ComposerEdge) *domain.ComposerMap {
 	m := &domain.ComposerMap{
-		// The revision is READ: D3's caption says "plant map from Core ·
-		// revision <rev>" (processes-desktop.js:1493), which is how an
-		// engineer tells a stale cache from a current one.
+		// The cache's revision: which pull this is. The desktop's caption
+		// that showed it ("plant map from Core · revision <rev>") went with
+		// the routing-set map (2026-11-14); the robot panel's door answers
+		// it in this body and as its ETag (apiStationScene).
 		Revision: g.Revision,
 		Points:   make(map[string]domain.ComposerMapPoint, len(g.Points)),
 		Edges:    make([]domain.ComposerMapEdge, 0, len(g.Edges)),
@@ -819,8 +825,10 @@ func presetUse(members int) string {
 	return "used by " + strconv.Itoa(members) + " parts"
 }
 
-// sceneDerived returns the geometry cache and the adjacency derived from it,
-// computing the derivation once per cache rather than once per request.
+// sceneDerived returns the geometry cache and its memo: one ComposerEdge per
+// cache edge, in cache order, carrying that edge's straight-line length (a flat
+// edge list, not an adjacency), worked out once per cache rather than once per
+// request.
 //
 // Keyed by the cache's IDENTITY rather than its revision: two caches can
 // carry the same revision string, and a pointer cannot be wrong. The cache is

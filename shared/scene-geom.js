@@ -10,11 +10,13 @@
 // scene-view.js (the retained drawing) and comet-layer.js (the comets). The
 // robot map keeps its viewport easing, pan/zoom, minimap and SSE feeds.
 //
-// SHARED, under docs/shared-layer-promotion.md. Core's robot map and its
-// localization board and the Edge's desktop process map project the same
-// plant from the same rows. A disagreement reaches the floor: an operator and
-// an engineer looking at the same aisle from two surfaces would see two
-// different floors. (The Edge's station cell picture, operator-flow.js,
+// SHARED, under docs/shared-layer-promotion.md. Every surface that draws the
+// scene (Core's robot map and its localization board; the Edge's desktop
+// process map did until its drawing was removed, 2026-11-14) projects the same
+// plant from the same rows with this file, and the Edge's key-route picker
+// weighs rows with it (scene-net.js). A disagreement reaches the floor: an
+// operator and an engineer looking at the same aisle from two surfaces would
+// see two different floors. (The Edge's station cell picture, operator-flow.js,
 // imports none of this: it draws a schematic from point coordinates.) Routes
 // are not this file's: the route model is scene-net.js and a driving robot's
 // route is RDS's path drawn by scene-path.js, and both weigh or draw a curved

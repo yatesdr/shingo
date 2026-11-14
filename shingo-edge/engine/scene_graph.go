@@ -62,14 +62,18 @@ func (e *Engine) ScenePointNames() map[string]bool {
 	return out
 }
 
-// SceneAdjacency returns, for each point, the points reachable from it in one
-// segment.
+// SceneAdjacency returns, for each point, the points joined to it by one
+// segment, in either direction.
 //
-// UNDIRECTED. A scene edge is a drivable segment and the fleet routes over it
-// in whichever direction the plan needs; treating it as one-way would hide half
-// the neighbours of every point and offer a picker that omits the obvious
-// answer. Nothing here decides a direction of travel — that is the fleet's job
-// and this is a config-time question about what is connected to what.
+// UNDIRECTED, WHICH IS NOT HOW A ROBOT DRIVES. A scene stores one segment per
+// direction a robot may drive it: most lanes both ways, and some one way only
+// (study S3, 2026-11-14), and the fleet plans only along the stored direction.
+// So this answers "what is connected to what", never "where may a robot go".
+//
+// NO PRODUCTION CALLER (only its own tests): the key-route picker it was kept
+// for walks the directed shared route model in the browser instead
+// (shared/scene-net.js sceneRoute). Reported as dead, not deleted: no ruling
+// covers removing it.
 func (e *Engine) SceneAdjacency() map[string][]string {
 	edges := e.SceneEdges()
 	if len(edges) == 0 {

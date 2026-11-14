@@ -93,13 +93,16 @@ func TestComposerRead_DesktopByteBudget(t *testing.T) {
 
 	// THE STATION'S READ CARRIES NO MAP, so it is not on this budget and must
 	// not quietly acquire one — that is S2.5's rule, and it is the reason the
-	// two reads can have different budgets at all.
+	// two reads can have different budgets at all. The station's robot panel
+	// draws the plant map from its own door, GET
+	// /api/operator-stations/{id}/scene, fetched once and ETag'd, never from a
+	// composer read.
 	station, err := fx.svc.ComposerForStation(fx.processID)
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
 	if station.Map != nil {
-		t.Error("the station's composer read carries the plant map; no screen on the station draws one")
+		t.Error("the station's composer read carries the plant map; the robot panel takes it from /scene, never a composer read")
 	}
 }
 

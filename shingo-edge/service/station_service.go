@@ -202,10 +202,10 @@ type StationService struct {
 	// binNodesChanged runs when a rebuild moves the watched names.
 	binNodesChanged func()
 
-	// sceneMemo is composerScene's derived adjacency, computed once per
-	// geometry cache rather than per request; sceneMemoFor is the cache it
-	// was derived from. Guarded because one service serves every board's
-	// poll. See composerScene.
+	// sceneMemo is sceneDerived's per-edge lengths (a flat edge list, one
+	// entry per cache edge), computed once per geometry cache rather than per
+	// request; sceneMemoFor is the cache it was derived from. Guarded because
+	// one service serves every board's poll. See sceneDerived.
 	sceneMu      lockcheck.Mutex[lockorder.StationScene]
 	sceneMemoFor *domain.SceneGeometry
 	sceneMemo    *domain.ComposerScene

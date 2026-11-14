@@ -16,24 +16,27 @@ import (
 // of "has this object changed" is how two halves of a plant's history end up
 // answering the question differently.
 //
-// A LANE IS TWO ROWS. scene_edges stores every drivable lane twice, once per
-// direction, and RoboShop lets each direction be drawn separately — so the
-// fingerprint is computed over BOTH twins, order-independently, rather than
-// over whichever one the query returned first. Recording only one twin's
-// geometry would make the version row a coin flip on iteration order.
+// A LANE IS ONE ROW OR TWO. scene_edges stores one row per direction a robot
+// may drive a lane: most lanes both ways, so two rows, and some one way only,
+// so one (study S3, 2026-11-14). RoboShop lets each direction be drawn
+// separately — so a two-row lane's fingerprint is computed over BOTH twins,
+// order-independently, rather than over whichever one the query returned
+// first. Recording only one twin's geometry would make the version row a coin
+// flip on iteration order.
 //
-// Measured across Springfield's 193 reciprocal pairs on 2026-08-06: every
-// pair mirrors to 0.000000000000 m including its Bezier handles, none differs
-// in className, and none pairs a straight with a curve. So lane-grain is safe
-// — TODAY. TwinsAgree is what makes the day that stops being true a visible
-// event instead of a silent coin toss.
+// Measured across Springfield's reciprocal pairs on 2026-08-06 (the scene has
+// grown since; not re-measured): every pair mirrors to 0.000000000000 m
+// including its Bezier handles, none differs in className, and none pairs a
+// straight with a curve. So lane-grain is safe — TODAY. TwinsAgree is what
+// makes the day that stops being true a visible event instead of a silent coin
+// toss.
 //
 // THE BEHAVIOUR HALF OF THE HASH HAS NO INPUT, AND THAT IS A PROPERTY OF THE
 // TRANSPORT RATHER THAN A SHORTCUT. Measured against the live SPR scene:
-// RDS's /scene carries exactly ONE property on all 405 curves — bindRobotMap,
-// its own binding key — while the robot's .smap carries fourteen for the same
-// curves, including maxspeed on 91 of them, obstacle distances on 88, and
-// laser on one. RDS strips them.
+// RDS's /scene carries exactly ONE property on every curve — bindRobotMap,
+// its own binding key (re-checked 2026-11-14) — while the robot's .smap
+// carries fourteen for the same curves, including maxspeed on 91 of them,
+// obstacle distances on 88, and laser on one. RDS strips them.
 //
 // So a lane's DefHash covers shape and class and nothing else, and a tech who
 // halves a lane's maxspeed changes nothing this fingerprint can see. The fix
@@ -92,8 +95,7 @@ type LaneVersion struct {
 	// agree or when the lane is one-way.
 	Disagreement string
 	// Directed is how many rows scene_edges holds for this lane: 2 for a
-	// reciprocal pair, 1 for a genuinely one-way lane. Springfield has 193
-	// and 19 of them.
+	// reciprocal pair, 1 for a genuinely one-way lane. A plant has both.
 	Directed int
 }
 

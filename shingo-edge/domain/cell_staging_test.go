@@ -227,18 +227,18 @@ func TestBuildCellPicture_CarriesTheKeyRouteAndNoCoordinates(t *testing.T) {
 	}
 	for _, gone := range []string{`"lms"`, "LM_NEAR"} {
 		if strings.Contains(string(raw), gone) {
-			t.Errorf("the picture carries %s; LM geography belongs to the desktop's Map", gone)
+			t.Errorf("the picture carries %s; LM geography is the plant map's (the desktop's Map, "+
+				"the robot panel's /scene), not the picture's", gone)
 		}
 	}
 }
 
-// ── the LM points that ride the picture ──────────────────────────────────────
+// ── a lane two flows share ───────────────────────────────────────────────────
 //
-// THE STATION HAS NO PLANT MAP, and that is why these exist. The desktop's
-// ComposerMap is a hundred kilobytes of coordinates for a screen the station
-// never opens, so without LMs on the picture the HMI could draw a robot's path
-// only as a straight line between two cards. They ride the PICTURE — once per
-// fetch, when its version moves — and never the poll.
+// (This header used to read "the LM points that ride the picture", over a note
+// that the station has no plant map. No LM rides the picture, pinned just
+// above; and the station's robot panel draws the plant map from its own door,
+// GET /api/operator-stations/{id}/scene, never from the picture.)
 
 // TWO FLOWS PARKING AT ONE LANE ARE CAPTIONED FOR THE FIRST POSITION IN THE
 // PICTURE, every time. The cards were built off a map range over the claims,
