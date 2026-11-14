@@ -117,6 +117,7 @@ function load() {
     const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ buildGraph: buildGraph, drawAisles: drawAisles,' +
         ' computeView: computeView, routeWorld: routeWorld,' +
+        ' shortestPath: shortestPath, nearestTNode: nearestTNode,' +
         ' setEdges: function (v) { sceneEdges = v; },' +
         ' setPoints: function (v) { points = v; },' +
         ' proj: function (x, y) { return proj(x, y); },' +
@@ -544,6 +545,96 @@ console.log('routes');
     const r = m.routeWorld(STRAIGHT.from_x, STRAIGHT.from_y, { x: STRAIGHT.to_x, y: STRAIGHT.to_y });
     // robot, LM100, AP102, destination — nothing sampled on a straight segment.
     check('a route over a straight lane is its vertices only', r.length === 4, 'points ' + r.length);
+})();
+
+// --- route vectors: today's shortestPath over the synthetic route scene ---
+//
+// THE ROUTE THE MAP DRAWS TODAY, recorded vertex by vertex on
+// shared/testdata/js/route-scene.json, the scene the Edge's two routers are
+// pinned on too (composer-model.test.js, processes-desktop.route.test.js).
+// Three ways run from SMN_05 to PLN_02: A straight and two-way (20 m), C
+// straight and stored ONE WAY toward SMN_05 (16.47 m), B two cubic hops
+// (16 m of chord, 21.6 m of arc). This map weighs the arc and adds every row
+// both ways (buildGraph), so it takes C from SMN_05 and drives the one-way
+// stretch backwards. RDS plans the directed answer, A.
+//
+// These pins hold TODAY's undirected answers. The change to the directed
+// route model flips the ones marked "against the stored direction", on
+// purpose, in the commit that makes it.
+
+console.log('route vectors (synthetic route scene)');
+
+function routeScene() {
+    const file = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js', 'route-scene.json');
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+// The scene as GET /api/map/edges serves it (domain.SceneEdge): one row per
+// stored segment, the handles as four fields or none.
+function sceneEdgeRows(scene) {
+    const at = {};
+    scene.points.forEach(function (p) { at[p.name] = p; });
+    return scene.segments.map(function (s, i) {
+        const a = at[s.from], b = at[s.to];
+        const row = {
+            id: i + 1, area_name: 'AREA', instance_name: s.from + '-' + s.to,
+            class_name: s.h ? 'DegenerateBezier' : 'StraightPath',
+            from_name: s.from, to_name: s.to, from_x: a.x, from_y: a.y, to_x: b.x, to_y: b.y,
+        };
+        if (s.h) { row.ctrl1_x = s.h[0]; row.ctrl1_y = s.h[1]; row.ctrl2_x = s.h[2]; row.ctrl2_y = s.h[3]; }
+        return row;
+    });
+}
+
+(function routeVectorsOnTheSyntheticScene() {
+    const scene = routeScene();
+    const m = load();
+    m.setEdges(sceneEdgeRows(scene));
+    m.buildGraph();
+    const at = {};
+    scene.points.forEach(function (p) { at[p.name] = p; });
+    // A vertex carries no name, only its place; every vertex of this scene
+    // sits on its own point, so the place names it.
+    function vertexOf(name) { return m.nearestTNode(at[name].x, at[name].y); }
+    function nameOf(i) {
+        const t = m.tnodes()[i];
+        const p = scene.points.find(function (q) { return q.x === t.x && q.y === t.y; });
+        return p ? p.name : '?';
+    }
+    function walk(a, b) {
+        const seq = m.shortestPath(vertexOf(a), vertexOf(b));
+        return seq ? seq.map(nameOf).join(' ') : null;
+    }
+    [
+        // [from, to, today's vertices, why]
+        ['SMN_05', 'PLN_02', 'SMN_05 LM931 LM932 PLN_02', 'C, against the stored direction on all three hops'],
+        ['PLN_02', 'SMN_05', 'PLN_02 LM932 LM931 SMN_05', 'C, with the stored direction'],
+        ['LM931', 'LM932', 'LM931 LM932', 'against the stored direction (directed: the 24.5 m loop via A)'],
+        ['LM921', 'LM911', 'LM921 SMN_05 LM911', 'a curved hop, then a straight one'],
+        ['LM911', 'PLN_02', 'LM911 LM912 PLN_02', 'A: undirected and directed agree'],
+        ['LM912', 'SMN_05', 'LM912 LM911 SMN_05', 'A: undirected and directed agree'],
+        ['LM941', 'LM942', 'LM941 LM942', 'the island, inside itself'],
+        ['LM921', 'LM941', null, 'the island is unreachable'],
+        ['LM921', 'LM921', 'LM921', 'a vertex to itself'],
+    ].forEach(function (v) {
+        const got = walk(v[0], v[1]);
+        check(v[0] + ' -> ' + v[1] + ': ' + (v[2] === null ? 'no route' : v[2]) + ' (' + v[3] + ')',
+            got === v[2], 'got ' + JSON.stringify(got));
+    });
+
+    // routeWorld is the polyline drawn: the robot's own place, then the
+    // vertices, every curved hop sampled CUBIC_SAMPLES-1 times between its
+    // ends, then the destination's place. The ends snap to the NEAREST vertex.
+    const snapped = m.routeWorld(8.4, 0.3, { x: 16.2, y: 0.1 });
+    check('routeWorld snaps the robot to LM921 and the destination to PLN_02, over the curved hop',
+        snapped && snapped.length === 27 &&
+        snapped[1][0] === 8 && snapped[1][1] === 0 && snapped[25][0] === 16 && snapped[25][1] === 0,
+        snapped ? snapped.length + ' points, [1]=' + JSON.stringify(snapped[1]) + ' [25]=' + JSON.stringify(snapped[25]) : 'null');
+    const straight = m.routeWorld(at.SMN_05.x, at.SMN_05.y, at.PLN_02);
+    check('the straight route SMN_05 -> PLN_02 draws robot, four vertices, destination: 6 points',
+        straight && straight.length === 6, straight ? JSON.stringify(straight) : 'null');
+    check('no network route: routeWorld answers null (the caller draws a straight hint)',
+        m.routeWorld(at.LM921.x, at.LM921.y, at.LM941) === null);
 })();
 
 // --- helpers -------------------------------------------------------------
