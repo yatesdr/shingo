@@ -67,6 +67,12 @@ import { pathWorld, hopsWorld } from '/static/shared/scene-path.js';
 import { createSceneView, svgNode } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
 import { sceneOfRows } from '/static/components/scene-rows.js';
+// When a robot is moving, the calm's limit and the pickup radius: the same
+// numbers the Edge's robot panel reads (shared/robot-motion.js). MOVE_LINGER_MS
+// is also the stall pins' door (dashboard-map.stall.test.js reads it here).
+import {
+  COMET_LIMIT, MOVE_LINGER_MS, PICKUP_RADIUS, movedFrom, movingAt
+} from '/static/shared/robot-motion.js';
 
 (function () {
   var body = document.body;
@@ -172,14 +178,14 @@ import { sceneOfRows } from '/static/components/scene-rows.js';
   var minimapEl = null;           // persistent minimap <svg> inside .map-region
   var minimapViewportRect = null; // viewport indicator rect inside the minimap
   var minimapRobotGroup = null;   // robot-dots <g> inside the minimap
-  // Above this many moving orders (render's movingComets: each order moving
-  // with its robot seen moving, counted per order, path or not), the ambient
-  // view calms: no comets and no intent lines, just the robots (a lane still
-  // draws where laneVisible says), so a busy floor doesn't become 20 arrows
-  // fighting for attention. Clicking a robot lights its comet and its intent
-  // line again. Pinned: twelveCometsThenNone, countedPerOrderNotPerRobot,
+  // Above COMET_LIMIT moving orders (shared/robot-motion.js; render's
+  // movingComets: each order moving with its robot seen moving, counted per
+  // order, path or not), the ambient view calms: no comets and no intent
+  // lines, just the robots (a lane still draws where laneVisible says), so a
+  // busy floor doesn't become 20 arrows fighting for attention. Clicking a
+  // robot lights its comet and its intent line again. Pinned:
+  // twelveCometsThenNone, countedPerOrderNotPerRobot,
   // theCalmCountsMovingOrdersPathOrNot.
-  var COMET_LIMIT = 12;
 
   // ── manual view: wheel-zoom + drag-pan break auto-follow ────────────
   // Once the user zooms or pans, `userView` latches true and computeView()
@@ -202,8 +208,9 @@ import { sceneOfRows } from '/static/components/scene-rows.js';
   // LATCHED: once the robot reaches its source (bin pickup) during an order it is
   // "carrying" for the rest of that order; before that it is "fetching". Latch
   // per order_id, pruned when the order leaves the active set.
+  // "At the source" is within PICKUP_RADIUS median rows of it
+  // (shared/robot-motion.js).
   var pickedUpByOrder = {};   // order_id → true once the robot has reached source
-  var PICKUP_RADIUS = 0.9;    // × graphScale (world units) — "at the source node"
 
   // ── activity feed + status rail ────────────────────────────────────
   var activityFeed = [];   // [{text, level, ts}] — newest first
@@ -337,16 +344,13 @@ import { sceneOfRows } from '/static/components/scene-rows.js';
   // ProcBusiness) stays false for direct/manual moves, so a driving robot
   // would render as idle if we trusted flags alone. If the robot physically
   // displaced more than a jitter threshold between updates, it's moving;
-  // the state lingers briefly so turn pauses don't flicker disc/chevron.
-  var MOVE_LINGER_MS = 5000; // bridges brief stops (turns, order-cancel pauses) without flickering to a disc
+  // the state lingers briefly so turn pauses don't flicker disc/chevron. The
+  // jitter threshold and the linger are shared/robot-motion.js's (movedFrom,
+  // movingAt), the Edge's robot panel's too.
   function mergeRobot(rb) {
     var prev = robots[rb.id];
     rb.lastMoveAt = prev ? (prev.lastMoveAt || 0) : 0;
-    if (prev && isFinite(prev.x) && isFinite(rb.x)) {
-      var eps = (graphScale > 0) ? Math.max(graphScale * 0.02, 0.05) : 0.05;
-      var dx = rb.x - prev.x, dy = rb.y - prev.y;
-      if (dx * dx + dy * dy > eps * eps) rb.lastMoveAt = Date.now();
-    }
+    if (prev && isFinite(prev.x) && isFinite(rb.x) && movedFrom(prev, rb, graphScale)) rb.lastMoveAt = Date.now();
     robots[rb.id] = rb;
   }
   // DELIBERATELY Date.now(), not serverNow. lastMoveAt and the
@@ -357,7 +361,7 @@ import { sceneOfRows } from '/static/components/scene-rows.js';
   // browser stamp against a server now, which is the defect serverNow exists to
   // remove — pointed the other way.
   function isMoving(r) {
-    return (Date.now() - (r.lastMoveAt || 0)) < MOVE_LINGER_MS;
+    return movingAt(r.lastMoveAt, Date.now());
   }
 
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
@@ -888,6 +892,11 @@ import { sceneOfRows } from '/static/components/scene-rows.js';
   // carrying for the rest of the order. This fixes the reversed-arrow bug where
   // the comet always ran robot→delivery, i.e. opposite the AMR's motion on the
   // pickup leg.
+  //
+  // PER PAGE ON PURPOSE. The Edge's robot panel has its own orderLeg
+  // (operator-station/operator-robot-map.js): it has no board `carrying`, and
+  // reads RDS's path's end and the station's departed instead. The inputs
+  // differ, so the rule is not shared; the pickup radius is.
   function orderLeg(o, r, src) {
     // Authoritative physical signal first: the board carries `carrying` from the
     // robot's lift/jack state (BoardOrder.Carrying ← LiftHeight). A loaded robot is on

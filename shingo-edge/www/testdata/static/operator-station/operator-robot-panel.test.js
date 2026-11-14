@@ -973,8 +973,9 @@ await zeroWork('{available: false} first', async h => {
         '/static/shared/scene-path.js:pathWorld',
         '/static/shared/scene-view.js:createSceneView',
         '/static/shared/comet-layer.js:createCometLayer',
+        '/static/shared/robot-motion.js:COMET_LIMIT,PICKUP_RADIUS,movedFrom,movingAt',
         './operator-util.js:formatETA',
-    ], 'the drawing imports the shared scene, path, view and comet modules and the ETA words: no route model (sceneRoute), nothing of dashboard-map.js');
+    ], 'the drawing imports the shared scene, path, view, comet and motion modules and the ETA words: no route model (sceneRoute), nothing of dashboard-map.js');
     eq(/canvas|getContext|stroke-dasharray|animateMotion|<animate/.test(src), false, 'no canvas, no dash, no browser-driven motion: the comets are the shared layer\'s dots');
     const boot = fs.readFileSync(path.join(SRC_DIR, 'operator-robot-panel.js'), 'utf8');
     eq((boot.match(/\bimport\(/g) || []).length, 1, 'one import(): the drawing, loaded when the panel first shows');

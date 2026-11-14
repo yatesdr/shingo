@@ -70,18 +70,19 @@ func TestStationTemplate_NoComposerModelTag(t *testing.T) {
 // UI module here is a decision to make, not a convenience: add it to the list
 // with the reason.
 //
-// The five scene modules (scene-geom.js, scene-net.js, scene-path.js,
-// scene-view.js, comet-layer.js) are the robot panel's map and comets, the
-// same machinery Core's robot map draws with (LEAD-NOTES D6, D10, D11). They
-// are reached through operator-robot-panel.js's one import() of
+// The six scene modules (scene-geom.js, scene-net.js, scene-path.js,
+// scene-view.js, comet-layer.js, robot-motion.js) are the robot panel's map,
+// comets and moving test, the same machinery Core's robot map draws with
+// (LEAD-NOTES D6, D10, D11; the owner's one machinery in shared/). They are
+// reached through operator-robot-panel.js's one import() of
 // operator-robot-map.js, so they load the first time a cell screen shows its
 // panel, not at boot (operator-robot-panel.test.js holds that).
 func TestStationBoot_SharedFiles(t *testing.T) {
 	t.Parallel()
 	want := []string{"/static/shared/bus.js", "/static/shared/clock.js", "/static/shared/comet-layer.js",
 		"/static/shared/dom.js", "/static/shared/esc.js", "/static/shared/notice.js",
-		"/static/shared/scene-geom.js", "/static/shared/scene-net.js", "/static/shared/scene-path.js",
-		"/static/shared/scene-view.js"}
+		"/static/shared/robot-motion.js", "/static/shared/scene-geom.js", "/static/shared/scene-net.js",
+		"/static/shared/scene-path.js", "/static/shared/scene-view.js"}
 	reach := staticAssets().ImportMap(stationEntry)
 	if len(reach) == 0 {
 		t.Fatalf("the import closure of %s is empty: the handler no longer serves the entry", stationEntry)

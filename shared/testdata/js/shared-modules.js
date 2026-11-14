@@ -24,7 +24,7 @@ const path = require('path');
 const vm = require('vm');
 
 const SHARED = path.join(__dirname, '..', '..');
-const SCENE = ['scene-geom.js', 'scene-net.js', 'scene-path.js', 'scene-view.js', 'comet-layer.js'];
+const SCENE = ['scene-geom.js', 'scene-net.js', 'scene-path.js', 'scene-view.js', 'comet-layer.js', 'robot-motion.js'];
 
 const IMPORT_RE = /^import\s*\{([^}]*)\}\s*from\s*'([^']+)';[ \t]*$/gm;
 const ANY_IMPORT_RE = /^import[\s\S]*?from\s*'[^']+';[ \t]*$/gm;

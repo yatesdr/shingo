@@ -141,3 +141,47 @@ func sceneSheetClasses(css string) map[string]bool {
 	}
 	return out
 }
+
+// TestRobotMotionSaysWhenARobotMoves runs robot-motion.test.js:
+// shared/robot-motion.js's moving test (the jitter threshold and the linger),
+// which Core's robot map and the Edge's robot panel both read.
+func TestRobotMotionSaysWhenARobotMoves(t *testing.T) {
+	runSceneJS(t, "robot-motion.test.js")
+}
+
+// TestRobotMotion_OneDefinitionForBothSurfaces: neither page that draws a
+// scene defines the calm's limit, the linger or the pickup radius of its own,
+// and both take the moving test from shared/robot-motion.js (owner: one
+// machinery in shared/; lead ruling on U10, 4). orderLeg stays per page: its
+// inputs differ (Core reads the board's carrying), and each copy says so.
+func TestRobotMotion_OneDefinitionForBothSurfaces(t *testing.T) {
+	t.Parallel()
+	own := regexp.MustCompile(`(?m)^\s*(?:var|let|const)\s+(COMET_LIMIT|MOVE_LINGER_MS|PICKUP_RADIUS)\b`)
+	imp := regexp.MustCompile(`(?s)import\s*\{([^}]*)\}\s*from\s*'/static/shared/robot-motion\.js'`)
+	for _, page := range []string{
+		filepath.Join("..", "shingo-core", "www", "static", "pages", "dashboard-map.js"),
+		filepath.Join("..", "shingo-edge", "www", "static", "operator-station", "operator-robot-map.js"),
+	} {
+		b, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatalf("read %s: %v", page, err)
+		}
+		src := string(b)
+		for _, m := range own.FindAllStringSubmatch(src, -1) {
+			t.Errorf("%s declares its own %s: it is shared/robot-motion.js's", page, m[1])
+		}
+		m := imp.FindStringSubmatch(src)
+		if m == nil {
+			t.Errorf("%s does not import shared/robot-motion.js", page)
+			continue
+		}
+		for _, want := range []string{"COMET_LIMIT", "PICKUP_RADIUS", "movedFrom", "movingAt"} {
+			if !regexp.MustCompile(`\b` + want + `\b`).MatchString(m[1]) {
+				t.Errorf("%s does not take %s from shared/robot-motion.js", page, want)
+			}
+		}
+		if !strings.Contains(src, "function orderLeg(") {
+			t.Errorf("%s has no orderLeg of its own: the leg is per page (its inputs differ)", page)
+		}
+	}
+}

@@ -9,14 +9,14 @@
 // stored rows by shared/scene-path.js pathWorld, the comets shared/
 // comet-layer.js's dots. Nothing comes from Core's dashboard-map.js, and the
 // panel works out no route: an empty path, or one with a hop the scene has
-// no row for, is no route and no comet. What the page decides it decides as
-// Core's map does (named where it is copied): a robot's colour is its
-// order's status hue, it is moving when its position moved within 5 s, a
-// comet runs only while it is (motion means motion), a faulted order's robot
-// draws its path as a static grey lane and the fault flare, the busy-floor
-// calm stops the comets past 12 moving robots. The leg (fetch hollow, carry
-// solid) is the panel's own orderLeg, since Core's reads the board's
-// `carrying`, which the panel does not have.
+// no row for, is no route and no comet. The look is shared/scene-view.css,
+// and when a robot is moving, the busy-floor calm and the pickup radius are
+// shared/robot-motion.js, both Core's map's too. What the page decides it
+// decides as Core's map does: a robot's colour is its order's status hue, a
+// comet runs only while it is moving (motion means motion), a faulted order's
+// robot draws its path as a static grey lane and the fault flare. The leg
+// (fetch hollow, carry solid) is the panel's own orderLeg, since Core's reads
+// the board's `carrying`, which the panel does not have.
 //
 // LIMITED TO THIS SCREEN'S ORDERS. The page hands over the orders that have
 // a robot (robotOrders); the stream carries a position for each of them that
@@ -61,6 +61,7 @@ import { sceneNet } from '/static/shared/scene-net.js';
 import { pathWorld } from '/static/shared/scene-path.js';
 import { createSceneView } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
+import { COMET_LIMIT, PICKUP_RADIUS, movedFrom, movingAt } from '/static/shared/robot-motion.js';
 import { formatETA } from './operator-util.js';
 
 // The map's box in CSS px (operator.css .os-robot-panel, .os-rp-map), read
@@ -74,12 +75,8 @@ const NODE_PX = 5;
 const FONT_PX = 12;
 // Position lost after this many intervals with no position (D13).
 const LOST_AFTER = 3;
-// Core's robot map (dashboard-map.js MOVE_LINGER_MS, COMET_LIMIT,
-// PICKUP_RADIUS): moving while its position moved this recently, no comets
-// past this many moving robots, at its source within this many median rows.
-const MOVE_LINGER_MS = 5000;
-const COMET_LIMIT = 12;
-const PICKUP_RADIUS = 0.9;
+// When a robot is moving (movedFrom, movingAt), the calm's COMET_LIMIT and the
+// PICKUP_RADIUS are shared/robot-motion.js's, Core's robot map's too.
 // The crop: the set padded by FIT_SLACK of its extent on every side, by
 // LEAVE_SLACK when a robot has left it; never narrower than MIN_PLANT of the
 // plant's larger extent (Core's map keeps 55% of it; the panel is a crop), or
@@ -257,11 +254,11 @@ export function createRobotMap(opts) {
         }
         const now = Date.now();
         const net = scene ? sceneNet(scene) : null;
-        const eps = net && net.scale > 0 ? Math.max(net.scale * 0.02, 0.05) : 0.05;
+        const scale = net ? net.scale : 0;
         (d.orders || []).forEach(function (p) {
             if (!p || !isCoord(p.x) || !isCoord(p.y)) return;
             const rec = recs[p.order_id] || (recs[p.order_id] = { lastMoveAt: 0, interval: 0 });
-            if (isCoord(rec.x) && dist2(rec, p) > eps * eps) rec.lastMoveAt = now;
+            if (isCoord(rec.x) && movedFrom(rec, p, scale)) rec.lastMoveAt = now;
             rec.robot = String(p.robot_id || '');
             rec.x = p.x;
             rec.y = p.y;
@@ -303,7 +300,7 @@ export function createRobotMap(opts) {
             if (!rec || !rec.robot || seen[rec.robot]) return;
             seen[rec.robot] = true;
             const lost = rec.interval > 0 && now - rec.seenAt > LOST_AFTER * rec.interval;
-            out.push({ o: o, rec: rec, lost: lost, moving: !lost && now - rec.lastMoveAt < MOVE_LINGER_MS });
+            out.push({ o: o, rec: rec, lost: lost, moving: !lost && movingAt(rec.lastMoveAt, now) });
         });
         return out.sort(function (a, b) { return a.rec.robot < b.rec.robot ? -1 : a.rec.robot > b.rec.robot ? 1 : 0; });
     }
