@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"shingoedge/domain"
 	"shingoedge/engine"
-	"shingoedge/store/counters"
 )
 
 // handlers_station_counters.go — the station counters and "counted at" (admin).
@@ -176,9 +176,9 @@ func (h *Handlers) apiSetCountedAt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	bindings := make([]counters.NodeCounter, 0, len(req.Bindings))
+	bindings := make([]domain.NodeCounter, 0, len(req.Bindings))
 	for _, b := range req.Bindings {
-		bindings = append(bindings, counters.NodeCounter{NodeID: b.NodeID, CounterID: b.LineCounterID})
+		bindings = append(bindings, domain.NodeCounter{NodeID: b.NodeID, CounterID: b.LineCounterID})
 	}
 	if err := h.orchestration.SetCountedAtMany(processID, bindings); err != nil {
 		writeStationCounterError(w, err)

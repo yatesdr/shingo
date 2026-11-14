@@ -13,6 +13,7 @@ import (
 	"errors"
 	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -237,16 +238,9 @@ func DeleteLineCounter(db *sql.DB, id int64) (int64, error) {
 	return unbound, tx.Commit()
 }
 
-// SetNodeLineCounter binds a position to a station counter (nil unbinds it).
-// The rules are the engine's (SetCountedAt); this is the write. It reports
-// whether the binding changed; the store's wrapper publishes the node
-// generation (processes.BumpNodeGeneration) when it did.
 // NodeCounter is one binding: a position and the station counter it is
 // counted at (nil: the production counter).
-type NodeCounter struct {
-	NodeID    int64
-	CounterID *int64
-}
+type NodeCounter = domain.NodeCounter
 
 // execer is *sql.DB or *sql.Tx: SetNodeLineCounter runs alone or inside the
 // many-binding write's transaction (store.DB.SetNodeLineCounters).
@@ -254,6 +248,10 @@ type execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
+// SetNodeLineCounter binds a position to a station counter (nil unbinds it).
+// The rules are the engine's (SetCountedAt); this is the write. It reports
+// whether the binding changed; the store's wrapper publishes the node
+// generation (processes.BumpNodeGeneration) when it did.
 func SetNodeLineCounter(db execer, nodeID int64, counterID *int64) (bool, error) {
 	res, err := db.Exec(`UPDATE process_nodes SET line_counter_id = ? WHERE id = ? AND line_counter_id IS NOT ?`,
 		counterID, nodeID, counterID)

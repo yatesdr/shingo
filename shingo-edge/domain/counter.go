@@ -35,3 +35,10 @@ type ReportingPoint struct {
 	WarlinkManaged bool       `json:"warlink_managed"`
 	ProcessID      int64      `json:"process_id"`
 }
+
+// NodeCounter is one Counted at binding: a position and the station counter
+// it is counted at (nil: the production counter).
+type NodeCounter struct {
+	NodeID    int64
+	CounterID *int64
+}

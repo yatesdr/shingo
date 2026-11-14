@@ -204,7 +204,7 @@ type EngineOrchestration interface {
 	DeleteStationCounter(id int64) error
 	// SetCountedAtMany writes a process's bindings in one transaction, all or
 	// none (Position settings' Counted at save).
-	SetCountedAtMany(processID int64, bindings []counters.NodeCounter) error
+	SetCountedAtMany(processID int64, bindings []domain.NodeCounter) error
 	// StationCountables is the binding's rules on every live position of a
 	// process, binding nothing, keyed by position id (nil: countable): the
 	// station card's dry run greys a refused box with its sentence.
