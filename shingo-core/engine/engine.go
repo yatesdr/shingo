@@ -301,27 +301,6 @@ func New(c Config) *Engine {
 		_, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, "auto_confirm_timeout", 0)
 		return err
 	}
-	// abandonOrder cancels a stuck order via the standard teardown and
-	// cascades to its two-robot sibling so a swap tears down as a unit
-	// (CancelOrder is idempotent if the sibling is already terminal).
-	//
-	// UNCODED. protocol.TermAbandoned describes this exactly and buckets as
-	// FAILED, which is right for a plain stuck-order sweep and wrong for the
-	// other shape that arrives here: a swept dig leg carries
-	// ReshuffleLegFailedDetail and reads as cancelled today, because its demand
-	// re-plans. One closure cannot tell them apart and the caller
-	// (reconciliation_service.go, where legReason is chosen) is where that would
-	// be decided. Coding it moves dashboard counts, so it is its own change.
-	e.reconciliation.abandonOrder = func(order *orders.Order, reason string) error {
-		lc := e.dispatcher.Lifecycle()
-		lc.CancelOrder(order, order.StationID, reason, dispatch.CancelCause{})
-		if sibUUID, serr := e.db.OrderSiblingUUID(order.ID); serr == nil && sibUUID != "" {
-			if sib, gerr := e.db.GetOrderByUUID(sibUUID); gerr == nil && sib != nil {
-				lc.CancelOrder(sib, sib.StationID, reason, dispatch.CancelCause{})
-			}
-		}
-		return nil
-	}
 	// advanceCompound re-drives a compound (reshuffle) parent stranded in
 	// `reshuffling` with all children terminal — the liveness backstop. Late-bound
 	// (e.dispatcher is created in Start()); the closure reads it at call time.

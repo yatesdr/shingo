@@ -122,18 +122,18 @@ func (d *Dispatcher) SweepStalledChapters() ChapterSweepResult {
 		// reshuffling").
 		//
 		// But `staged` is also the OPERATOR's word for a robot staged at a
-		// station wait, and those rows are the abandon sweep's: AbandonStuckOrders
-		// selects `staged` and exempts exactly IsGateStaged, so the ownership
-		// line is already drawn there in one spelling. This filter reads the
-		// same predicate off the same row, and a staged parent this pass does
-		// not recognize falls through untouched.
+		// station wait, and those rows are a person's: they wait on RELEASE (and
+		// the Edge's idle rule sends back an Edge-authored one at a line idle past
+		// its hour). This filter reads IsGateStaged, the owner line, off the row,
+		// and a staged parent this pass does not recognize falls through
+		// untouched.
 		parent, pErr := d.db.GetOrder(parentID)
 		if pErr != nil || parent == nil {
 			log.Printf("chapter floor: could not reload parent %d: %v (holding)", parentID, pErr)
 			continue
 		}
 		if parent.Status == protocol.StatusStaged && !IsGateStaged(parent) {
-			continue // an operator-staged row: AbandonStuckOrders owns it
+			continue // an operator-staged row: a person owns it
 		}
 		legs, lErr := d.db.ListChildOrders(parentID)
 		if lErr != nil {

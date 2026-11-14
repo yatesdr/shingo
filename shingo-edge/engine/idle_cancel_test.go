@@ -160,8 +160,9 @@ func TestIdleCancel_TheHourSendsBackAParkedPairAndSwitchesOff(t *testing.T) {
 		testutil.MustNoErr(t, json.Unmarshal(raw, &env), "decode a cancel")
 		var p protocol.OrderCancel
 		testutil.MustNoErr(t, json.Unmarshal(env.Payload, &p), "decode its payload")
-		if p.Reason != protocol.CancelReasonLineIdle || !env.ExpiresAt.IsZero() {
-			t.Errorf("cancel for %s: reason %q, exp %v; want %q and no expiry", p.OrderUUID, p.Reason, env.ExpiresAt, protocol.CancelReasonLineIdle)
+		if p.Reason != protocol.CancelReasonLineIdle || p.Actor != protocol.CancelActorEdge || !env.ExpiresAt.IsZero() {
+			t.Errorf("cancel for %s: reason %q, actor %q, exp %v; want %q, the Edge's, no expiry",
+				p.OrderUUID, p.Reason, p.Actor, env.ExpiresAt, protocol.CancelReasonLineIdle)
 		}
 		sent++
 	}

@@ -56,7 +56,7 @@ import (
 // bin appends its drop here (redriveVacateOrder; the lifting order's own row
 // is asked too, RedriveVacateOnLift).
 //
-// ── WHAT ENDS A HOLD (the abandon sweep's bound) ────────────────────────────
+// ── WHAT ENDS A HOLD ────────────────────────────────────────────────────────
 //
 //   - the lift: EventBinEnteredTransit re-drives the holds that name the bin
 //     (RedriveVacateOnLift), and the 60 s floor (SweepLaneWaiters) re-reads all
@@ -70,8 +70,7 @@ import (
 //     this leg (HandleSwapPeerTerminal). Until it does, or for a lifter whose
 //     end the death rule does not cover, the row says CauseVacateLifterGone;
 //   - the Core hard release, and this order's own end.
-// The abandon sweep exempts a held leg (CoreOwnsWaitAt); nothing above is a
-// timer.
+// Nothing above is a timer, and nothing else ends a held leg on one.
 
 // heldDrop is one drop a release must keep: its index in the plan and the
 // stamp as it will be persisted.

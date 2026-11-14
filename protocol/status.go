@@ -210,7 +210,11 @@ const (
 	TermStructural TermCode = "structural"
 	// TermUnknownType: no planner is registered for the order type.
 	TermUnknownType TermCode = "unknown_type"
-	// TermAbandoned: reconciliation gave up on an order stuck past its window.
+	// TermAbandoned: the system gave up on an order that waited past its window:
+	// today the Edge's idle rule (OrderCancel.Actor = CancelActorEdge), which
+	// sends back robots parked at a line that has counted nothing for its hour.
+	// Core's own stuck-order sweep, which this described, filed its cancels
+	// uncoded and was removed.
 	TermAbandoned TermCode = "abandoned"
 	// TermOperatorCancelled: a human cancelled it. Deliberate, not a failure.
 	TermOperatorCancelled TermCode = "operator_cancelled"
@@ -544,7 +548,7 @@ func (s Status) IsVendorActive() bool { return IsVendorActive(s) }
 //
 //   - IsRuntimeStuckCandidate excludes faulted deliberately (it is a grace-period
 //     state and its own timer is supposed to end it), so no anomaly was raised.
-//   - IsStuckSweepCandidate excludes it, so no sweep touched it.
+//   - No sweep cancelled it (Core's stuck sweep excluded it; that sweep is gone).
 //   - BlocksChangeoverStart INCLUDES it — see the reasoning there — so it went on
 //     blocking changeovers at its node, permanently.
 //
@@ -627,16 +631,13 @@ func CanHoldWait(s Status) bool {
 // waiting on children — has its own watchdog). Used by reconciliation's
 // stuck-order detector.
 //
-// QUEUED IS IN THIS SET AND NOT IN IsStuckSweepCandidate, and the split is the
-// whole point.
-//
-// Being flagged here means "a person should look at this". Being in the sweep
-// set means "cancel it on a timer". A queued order waiting on material must get
-// the first and must not get the second: demand does not evaporate, so
-// cancelling it would delete the ask while the need is still real — and, since
-// c3abe1dc, would also hand the window straight back to a replenishment that
-// would recreate it. The config comment on AbandonStuck states the same rule
-// from the sweep's side.
+// BEING FLAGGED HERE MEANS "A PERSON SHOULD LOOK AT THIS", and nothing more:
+// Core cancels no order on a timer (its stuck-order sweep was removed; the
+// Edge's idle rule sends back only robots parked at a line that has counted
+// nothing for its hour). A queued order waiting on material must be flagged and
+// must not be cancelled: demand does not evaporate, so cancelling it would
+// delete the ask while the need is still real — and, since c3abe1dc, would also
+// hand the window straight back to a replenishment that would recreate it.
 //
 // It was in NEITHER set until 2026-08-03, which made `queued` the least
 // observable state in the system — no sweep, no anomaly, nothing. Springfield
@@ -660,25 +661,6 @@ func IsRuntimeStuckCandidate(s Status) bool {
 
 // IsRuntimeStuckCandidate is the method form.
 func (s Status) IsRuntimeStuckCandidate() bool { return IsRuntimeStuckCandidate(s) }
-
-// IsStuckSweepCandidate reports whether the DESTRUCTIVE AbandonStuckOrders sweep may
-// auto-cancel an order that has sat past its timeout. This is the runtime, the-vendor-
-// has-it-but-nothing-is-moving set: dispatched (handed to the fleet, the robot may never
-// have started) and staged (a robot parked holding a bin). It deliberately EXCLUDES
-// in_transit (an actively moving robot is not stuck) and ALL pre-dispatch waiting states
-// (pending/queued) — demand is operator-driven and never evaporates, so
-// a waiting order holds INDEFINITELY and is never abandoned on a timer.
-//
-// Narrower than both IsVendorActive (which also includes in_transit) and the informational
-// IsRuntimeStuckCandidate (which flags stale pre-dispatch / in_transit orders for the
-// health board but must NEVER drive a cancel). Kept as its own predicate precisely because
-// "worth surfacing as stale" and "safe to auto-cancel" are different questions.
-func IsStuckSweepCandidate(s Status) bool {
-	return s == StatusDispatched || s == StatusStaged
-}
-
-// IsStuckSweepCandidate is the method form.
-func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
 
 // (IsOperatorVisible was deleted 2026-09-26: zero production callers. It
 // claimed to drive "edge ListActive, threshold demand pages, manual-message
@@ -731,8 +713,8 @@ func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
 //     never emits acknowledged (fleet/seerrds never mentions it) and Core's
 //     vendor ladder starts at dispatched. Nothing is moving. They must also
 //     never block for a second, independent reason: NOTHING REAPS THEM.
-//     AbandonStuckOrders is scoped to {dispatched, staged}, no Core reconciler
-//     or Edge ticker transitions them, and this HMI exposes no operator order
+//     Core cancels no order on a timer, no Core reconciler or Edge ticker
+//     transitions them, and this HMI exposes no operator order
 //     cancel — so blocking here would lock an operator out of changeover until
 //     somebody restarted Edge. THEY ARE ALSO CANCELLED, and originally they
 //     were not: the reasoning above stops at "must not block" and was allowed
@@ -888,7 +870,6 @@ var (
 	waitingStatusSQLList               = buildStatusSQLList(IsWaiting)
 	canHoldWaitStatusSQLList           = buildStatusSQLList(CanHoldWait)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
-	stuckSweepStatusSQLList            = buildStatusSQLList(IsStuckSweepCandidate)
 )
 
 // need a population the named projectors above do not already spell.
@@ -969,8 +950,3 @@ func CanHoldWaitStatusSQLList() string { return canHoldWaitStatusSQLList }
 // that should be watched for stale updated_at — excludes faulted,
 // delivered, reshuffling per the predicate's doc.
 func RuntimeStuckCandidateStatusSQLList() string { return runtimeStuckCandidateStatusSQLList }
-
-// StuckSweepStatusSQLList returns 'dispatched','staged' — the runtime states the
-// destructive AbandonStuckOrders sweep may auto-cancel. Excludes in_transit and all
-// pre-dispatch waiting (demand is operator-driven). Use in `status IN (StuckSweepStatusSQLList())`.
-func StuckSweepStatusSQLList() string { return stuckSweepStatusSQLList }

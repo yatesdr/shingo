@@ -26,8 +26,8 @@ import (
 // built the answer on the dissolve path (54c60fee); the gate was left asking the
 // pre-ruling version one file over. So a stale claim suppressed the dig forever:
 // re-refused every pass, "somebody is coming" every pass, with a releaser that was
-// not coming — and a gate-staged dweller is exempt from the abandon sweep by name,
-// so nothing else in the plant ever ends that wait.
+// not coming — and no timer ends a gate-staged dweller, so nothing else in the
+// plant ever ends that wait.
 //
 // ── AND WHAT THE FIX IS NOT ───────────────────────────────────────────────
 //

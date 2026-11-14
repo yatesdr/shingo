@@ -49,8 +49,9 @@ import (
 // WITHIN A PASS it runs first (reconcileDemand), and for each group writes off
 // at its position before it cancels: the level pass after it reads the off and
 // asks for nothing, and the keep-staged keeper after it sees the cancels. The
-// cancels go through AbortOrderWithReason, the door every Edge cancel takes,
-// with protocol.CancelReasonLineIdle; the cancel never expires on the wire.
+// cancels go through AbortOrderAsEdge, the door every Edge cancel takes,
+// with protocol.CancelReasonLineIdle and protocol.CancelActorEdge, so Core
+// files them as the Edge's and not a person's; the cancel never expires.
 //
 // A PART AFTER A STOP ENDS AN OFF. The rule remembers, per line, whether the
 // line was stopped (silent for the idle hour) at the last pass; the first part
@@ -193,7 +194,7 @@ func (e *Engine) sendBackParked(node *processes.Node, g parkedGroup, since, now 
 		return
 	}
 	for _, id := range g.orderIDs {
-		if err := e.orderMgr.AbortOrderWithReason(id, protocol.CancelReasonLineIdle); err != nil {
+		if err := e.orderMgr.AbortOrderAsEdge(id, protocol.CancelReasonLineIdle); err != nil {
 			e.logFn("idle-cancel: node %s: cancel order %d: %v", node.Name, id, err)
 			continue
 		}

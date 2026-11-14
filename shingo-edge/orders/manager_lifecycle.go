@@ -219,6 +219,20 @@ func (m *Manager) AbortOrder(orderID int64) error {
 // partner leg alone (the accepted half-swap) where any other reason cascades
 // the cancel. It is also the local transition detail, so the HMI shows it.
 func (m *Manager) AbortOrderWithReason(orderID int64, reason string) error {
+	return m.abortOrder(orderID, reason, "")
+}
+
+// AbortOrderAsEdge is AbortOrderWithReason for a cancel the Edge decided
+// itself, not a person at it (engine/idle_cancel.go): the cancel carries
+// protocol.CancelActorEdge, so Core files it abandoned rather than an
+// operator's. An older Core ignores the field.
+func (m *Manager) AbortOrderAsEdge(orderID int64, reason string) error {
+	return m.abortOrder(orderID, reason, protocol.CancelActorEdge)
+}
+
+// abortOrder is the one cancel door: the cancel queued first, then the row
+// ended (AbortOrderWithReason's doc).
+func (m *Manager) abortOrder(orderID int64, reason, actor string) error {
 	m.DebugLog.Log("abort: id=%d reason=%q", orderID, reason)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
@@ -235,6 +249,7 @@ func (m *Manager) AbortOrderWithReason(orderID int64, reason string) error {
 	if err := m.sender.Queue(protocol.TypeOrderCancel, &protocol.OrderCancel{
 		OrderUUID: order.UUID,
 		Reason:    reason,
+		Actor:     actor,
 	}); err != nil {
 		return fmt.Errorf("enqueue cancel message: %w", err)
 	}

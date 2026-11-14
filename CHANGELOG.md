@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v50–v52. Core has no migration; the two go in either order.
+Deploy: Edge v50–v52 first, at every Edge of the plant. Core has no migration, and goes only after every Edge there runs this release: until then Core's old timers are what end a dead Edge's waits.
 
 - A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
 - A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
@@ -35,6 +35,9 @@ Deploy: Edge v50–v52. Core has no migration; the two go in either order.
 - A Processes save that turns auto-reorder on at a line with no counter is refused and says why
 - The Edge's Replenishment page is gone: a position's reorder point and auto-reorder are set in Processes
 - Processes can clear a position's reorder point (to 0, which never orders)
+- Core no longer cancels a waiting order on a timer; `staging.abandon_stuck` and `abandon_stuck_operator_gated` are ignored and said so at start
+- A robot left waiting at a line with no counter, or at a dead Edge, waits for a person to cancel it in Core
+- Core files the Edge's idle cancel as abandoned, the system's, not as a person's cancel
 
 ## v0.7.0 — 2026-11-13
 

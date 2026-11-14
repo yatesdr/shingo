@@ -25,7 +25,7 @@ const (
 
 // CoreOwnsWaitAt reports whether the wait an order is parked at is CORE's to
 // advance: coreOwnsWait over a stored plan, for callers outside this package
-// (the hard-release button, www/helpers.go) and the abandon sweep. An
+// (the hard-release button, www/helpers.go). An
 // unreadable plan, or an order parked at no wait, answers FALSE: nothing should
 // offer a Core override for a wait it cannot identify.
 func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
@@ -41,8 +41,7 @@ func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
 
 // coreOwnsWait is THE answer to "whose turn is it at this wait". Every guard
 // that keys on the owner asks it and nothing else: the station release refusal
-// (HandleOrderRelease), the abandon sweep's exemption (through CoreOwnsWaitAt),
-// the hard-release button and HardReleaseStagedOrder's own refusal, and the
+// (HandleOrderRelease), the hard-release button and HardReleaseStagedOrder's own refusal, and the
 // owner stationPoint reports to the station.
 //
 // Two questions, answered by two different things (ruled 2026-10-18):

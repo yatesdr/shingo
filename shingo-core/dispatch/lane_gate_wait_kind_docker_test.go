@@ -148,7 +148,7 @@ func TestWaitKind_FenceHoldsBothWaysOnOneCoordinatedPlan(t *testing.T) {
 	}
 	if !containsOrder(cands, order.ID) {
 		t.Fatal("the lane evaluator cannot see an order parked at ITS wait. Nothing else advances a " +
-			"lane wait, so the robot dwells until the abandon sweep")
+			"lane wait, so the robot dwells until a person finds it")
 	}
 
 	// And the station is now refused.
@@ -235,7 +235,7 @@ func TestWaitKind_ValveAuthoredOrdersAreUnmoved(t *testing.T) {
 	}
 	if IsGateStaged(sealed) {
 		t.Error("a sealed order still reads as gate-staged. wait_index has moved past the plan's only " +
-			"wait, so there is no wait to be parked at — the abandon sweep would exempt it forever")
+			"wait, so there is no wait to be parked at — every owner guard would read it as Core's forever")
 	}
 }
 

@@ -1199,16 +1199,18 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	// order. See CancelOrderWithCascade for why both orderings matter and why
 	// they are in tension.
 	//
-	// CODED AS OPERATOR, WITHOUT A NAME, and the gap is Edge's to close.
-	// protocol.OrderCancel carries {OrderUUID, Reason} and nothing else, so Core
-	// knows a station asked and not who at it. Every Edge sender of this message
-	// is an operator door — the abort button (handlers_api_orders.go), the
-	// changeover abandon / cancel / start paths — so "a person did this" is true
-	// today and the code says so. If Edge ever sends a machine-originated cancel,
-	// this line is the one that becomes a lie, and the fix is an actor field on
-	// OrderCancel rather than a guess here.
-	d.CancelOrderWithCascade(order, stationID, p.Reason,
-		CancelCause{Code: protocol.TermOperatorCancelled})
+	// CODED BY WHO DECIDED IT. Every Edge door but one is a person's — the abort
+	// button, the changeover abandon / cancel / start paths — and sends no
+	// actor: operator_cancelled, without a name (Core knows a station asked, not
+	// who at it). The Edge's idle rule, which sends back robots parked at a line
+	// that has counted nothing for its hour, says so with
+	// protocol.CancelActorEdge: abandoned, the machine's. An older Edge sends no
+	// actor and every cancel reads as a person's, as it always did.
+	cause := CancelCause{Code: protocol.TermOperatorCancelled}
+	if p.Actor == protocol.CancelActorEdge {
+		cause = CancelCause{Code: protocol.TermAbandoned} // the station itself: "system:"+station
+	}
+	d.CancelOrderWithCascade(order, stationID, p.Reason, cause)
 	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
 }
 

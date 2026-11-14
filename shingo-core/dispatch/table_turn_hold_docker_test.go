@@ -216,7 +216,7 @@ func TestTableTurn_PressDuringTheTurn(t *testing.T) {
 	}
 	held := prReload(t, r.db, o.ID)
 	if !CoreOwnsWaitAt(held.StepsJSON, held.WaitIndex) {
-		t.Fatal("a held leg is not Core's: the abandon sweep would not exempt it, and a second press would go")
+		t.Fatal("a held leg is not Core's: the station could release it, and a second press would go")
 	}
 	if kinds := stagedKinds(t, r, o.EdgeUUID); len(kinds) == 0 || kinds[len(kinds)-1] != WaitKindTurn {
 		t.Errorf("the station was told %v, want the last to be %q", kinds, WaitKindTurn)

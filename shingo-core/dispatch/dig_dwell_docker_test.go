@@ -194,8 +194,8 @@ func TestDwell_LiftsAndWaitsAtTheShallowestSlot(t *testing.T) {
 	}
 	if steps[1].WaitLane != dug.ID {
 		t.Fatalf("leg 1's wait names lane %d, want the DUG lane %d. A wait naming no lane — or the wrong "+
-			"one — is invisible to every evaluator and to the 60-second floor while being exempt from the "+
-			"abandon sweep: unbounded, unreleasable and silent, with a bin in the gripper",
+			"one — is invisible to every evaluator and to the 60-second floor with no timer to "+
+			"end it: unbounded, unreleasable and silent, with a bin in the gripper",
 			steps[1].WaitLane, dug.ID)
 	}
 	if steps[1].Node != dugSlots[0].Name {
@@ -387,7 +387,7 @@ func TestDwell_ClosedDestinationWaitsWithACauseAndWakesOnAGroupSlot(t *testing.T
 	// (b) THE OWNER IS A REAL LANE, AND THE FLOOR CAN SEE IT.
 	if lane := laneOfGateWait(held); lane != dug.ID {
 		t.Fatalf("the dweller's wait names lane %d, want the dug lane %d — a zero here is the silent trap: "+
-			"exempt from the abandon sweep, invisible to every evaluator and dropped by the floor",
+			"ended by no timer, invisible to every evaluator and dropped by the floor",
 			lane, dug.ID)
 	}
 	waiters, err := d.laneWaiters()

@@ -1134,9 +1134,9 @@ func TestApplyReuseCompatibleBinsShortcut_SkipsWithoutAnOptIn(t *testing.T) {
 // CONSUME NEVER SKIPS. Empty is the desired state at a produce position — the
 // press fills it — but at a consume position the line needs parts, and the
 // changeover swap is what puts a full bin there for the start of the new style.
-// Nothing automatic would catch it: auto_reorder is 0 on every live claim at
-// both plants and Hopkinsville sets no reorder point at all. Same ruling the
-// owner made for the sequential reuse-skip on 2026-08-28.
+// Nothing automatic would catch it: most positions have auto-reorder off, and
+// one that has it cannot ask while the changeover holds its cell. Same ruling
+// the owner made for the sequential reuse-skip on 2026-08-28.
 func TestApplyReuseCompatibleBinsShortcut_ConsumeNeverSkips(t *testing.T) {
 	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}

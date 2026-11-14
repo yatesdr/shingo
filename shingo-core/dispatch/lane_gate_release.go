@@ -1107,9 +1107,9 @@ func (d *Dispatcher) laneGateRetrieveCause(sourceNode *nodes.Node, order *orders
 // — exactly what every retrieve did before this existed.
 //
 // A bin that has left the LANE is an error, not a rebind: there is no slot here to
-// bind to. The order stays parked and the stuck-order sweep bounds it (it is in a
-// sweep-eligible state by construction — see the commit for why a wedged gate
-// order can never be in_transit). A second give-up path keyed on the same
+// bind to. The order stays parked for a person, and Diagnostics flags it stuck
+// after 30 minutes (it is staged by construction — see the commit for why a
+// wedged gate order can never be in_transit). A second give-up path keyed on the same
 // condition would be a second writer for one fact.
 func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot *nodes.Node, moved bool, err error) {
 	named, err := d.db.GetNodeByDotName(order.SourceNode)

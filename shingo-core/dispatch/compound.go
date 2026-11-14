@@ -240,8 +240,8 @@ func compoundGenerations(children []*orders.Order) (open []*orders.Order, supers
 // the other direction. An operator cancelling a compound cancels its legs, and
 // reading those as a chapter ending would return the parent to the acquiring
 // set — resurrecting work a human stopped. So the cancel arm reads the marker,
-// not the status; the sweep is included by giving its cancel the marker rather
-// than by widening the test (AbandonStuckOrders).
+// not the status. (Core's stuck-order sweep, which was given the marker rather
+// than a wider test, is gone; nothing cancels a leg on a timer now.)
 //
 // AND A CONFIG FAULT IS NOT CONGESTION. A leg that failed because somebody
 // configured a node that is not there does not end a chapter, because there is
@@ -1257,7 +1257,7 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// original pickup against a still-buried bin (re-reshuffle / livelock risk);
 	// a plain-retrieve parent that "completed" would be wrongly marked Confirmed
 	// though its retrieve never ran. A cancelled leg reaches here from the
-	// AbandonStuck sweep, a fleet-fault sibling teardown, or (with the liveness
+	// fleet-fault sibling teardown, a person's cancel, or (with the liveness
 	// backstop) a lone cancelled last child. SKIPPED stays success — a skipped
 	// leg is a moot no-op, not an incomplete one. Revisit if a legitimately
 	// skippable-but-cancelled leg is ever introduced.
@@ -1638,9 +1638,9 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 // caller to dispose of". This is that caller. A leg left at `dispatched` with no
 // vendor order is worse than a failed one: nothing tracks it (loadActiveOrders
 // selects on a non-empty vendor_order_id), no re-drive selects it, and the
-// abandon sweep DOES cover `dispatched` — so the quiet ending is a cancelled
-// child an hour later, which fails the parent anyway, just slower and with no
-// trace of why.
+// nothing ends a `dispatched` order on a timer — so the quiet ending is a child
+// dispatched until a person finds it, which fails the parent no sooner and with
+// no trace of why.
 //
 // `queued` under fleet_unavailable is the rollback: the fleet-refusal edge
 // (dispatched → queued, C1.1.3) and the same door the plain path uses

@@ -219,24 +219,22 @@ func TestStagedParent_DissolverNotRefused(t *testing.T) {
 	}
 }
 
-// TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep pins the widening's
+// TestStagedParent_OperatorStagedRow_StaysWithAPerson pins the widening's
 // other edge: `staged` is also the OPERATOR's word for a robot staged at a
-// station wait, and those rows belong to AbandonStuckOrders — which selects
-// `staged` and exempts exactly IsGateStaged, drawing the ownership line in one
-// spelling. The watchdog's Go-side filter reads the same predicate so the two
-// passes never both own a row.
+// station wait, and those rows are a person's: they wait on RELEASE. The
+// watchdog's Go-side filter reads IsGateStaged, the owner line, so it never
+// acts on a row a person owns.
 //
 // MUTATION (verified): delete the filter's `continue`. The sweep counts this row
-// as a stalled chapter and dissolves a robot-holding wait the abandon sweep was
-// pacing — two policies on one row.
-func TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep(t *testing.T) {
+// as a stalled chapter and dissolves a robot-holding wait a person owes a
+// RELEASE.
+func TestStagedParent_OperatorStagedRow_StaysWithAPerson(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// A staged row with NO lane wait — no steps_json, so not gate-staged — and a
-	// quiet open child. This is the abandon sweep's population, not the
-	// watchdog's.
+	// quiet open child. This is a person's population, not the watchdog's.
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.Status = protocol.StatusStaged
 	})
@@ -251,8 +249,8 @@ func TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep(t *testing.T) {
 
 	if r := d.SweepStalledChapters(); r.Dissolved+r.Waiting+r.Residue != 0 {
 		t.Fatalf("watchdog returned %+v on an OPERATOR-staged row — `staged` is two populations and "+
-			"this one is AbandonStuckOrders' (it selects staged and exempts IsGateStaged); two "+
-			"passes both acting on one row is two policies", r)
+			"this one is a person's (it waits on RELEASE); the watchdog dissolving it takes a "+
+			"robot-holding wait from them", r)
 	}
 	_ = child
 }

@@ -72,8 +72,8 @@ func TestDirectSingleLegSwap_LeavesTheProcessNodeBlank(t *testing.T) {
 // and linked neither, which silently switched off every protection that keys
 // off the pair: the starvation hold (so the removal leg pulls the line's bin
 // with nothing committed to replace it — the ALN_003 strand), the peer-death
-// unwind (one leg dies, the other keeps flying), and the abandon sweep's
-// cascade.
+// unwind (one leg dies, the other keeps flying), and the cascade of a cancel
+// to the partner.
 //
 // The process node matters just as much and is the easier half to forget:
 // the hold reads the leg's role by comparing its steps against that node, and

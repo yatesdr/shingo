@@ -228,7 +228,7 @@ var statusWaitClasses = map[protocol.Status]struct {
 			"so no order waits in it"},
 	protocol.StatusStaged: {classCoreWait, PopGateStaged,
 		"a robot parked at a wait point. A LANE wait is Core's and is floored here; an OPERATOR " +
-			"wait on the same status is human-owned and bounded by AbandonStuckOrders' longer timeout. " +
+			"wait on the same status is human-owned and waits for a person's RELEASE. " +
 			"A VACATE hold (PopVacateHeld) is Core's too and floored on the same tick. The status cannot tell " +
 			"them apart — the wait step and its next drop can (coreOwnsWait), which is why the " +
 			"population is derived from the step and not from this column"},
@@ -237,7 +237,7 @@ var statusWaitClasses = map[protocol.Status]struct {
 
 	protocol.StatusSubmitted:    {classVendorHeld, "", "handed to the vendor, awaiting acknowledgement; the poller drives it"},
 	protocol.StatusAcknowledged: {classVendorHeld, "", "the vendor has it; the poller drives it"},
-	protocol.StatusDispatched:   {classVendorHeld, "", "the fleet has the job; poller-driven, and the stuck sweep bounds it"},
+	protocol.StatusDispatched:   {classVendorHeld, "", "the fleet has the job; poller-driven, and no timer ends it"},
 	protocol.StatusInTransit:    {classVendorHeld, "", "a robot is moving; not a wait"},
 
 	protocol.StatusDelivered: {classHumanOwned, "", "awaiting confirmation; AutoConfirmStuckDeliveredOrders bounds it"},

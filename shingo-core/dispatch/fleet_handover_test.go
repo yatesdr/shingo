@@ -116,8 +116,8 @@ func TestHandover_UnclaimableOrderNeverReachesTheFleet(t *testing.T) {
 // CAS wins, the fleet refuses. The status is deliberately NOT rolled back:
 // re-queueing an order the fleet just refused invites a re-dispatch loop against
 // a fleet that is saying no. The order is left `dispatched` for its caller to
-// fail, and `dispatched` is a stuck-sweep candidate (protocol.IsStuckSweepCandidate)
-// so it is recoverable even if the caller's own write fails.
+// fail. If the caller's own write fails, Diagnostics flags it stuck after 30
+// minutes for a person; nothing ends it on a timer.
 func TestHandover_CreateFailureLeavesTheOrderClaimedAndDoesNotRollBack(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

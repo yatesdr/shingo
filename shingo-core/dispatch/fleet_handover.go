@@ -303,9 +303,9 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 	// 2. COMMIT. The order is claimed; this is where a robot is actually spent.
 	if _, err := d.backend.CreateOrder(req); err != nil {
 		// The status is NOT rolled back. The order is `dispatched` with no fleet
-		// job, which the caller turns into a failure, and which the stuck sweep
-		// catches independently if the caller's own write fails
-		// (IsStuckSweepCandidate covers dispatched).
+		// job, which the caller turns into a failure. If the caller's own write
+		// fails, nothing ends it on a timer: Diagnostics flags it stuck after 30
+		// minutes (active_order_stuck) for a person.
 		log.Printf("dispatch: order %d claimed but the fleet refused the create: %v (nothing is moving; "+
 			"the order is left claimed for its caller to fail)", order.ID, err)
 		return err

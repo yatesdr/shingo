@@ -1817,6 +1817,7 @@ Requests cancellation of an in-progress order.
 |---|---|---|---|
 | `order_uuid` | string |  | OrderUUID names the order to cancel. |
 | `reason` | string |  | Reason is the human-readable cancellation reason, or CancelReasonAcceptHalfSwap. |
+| `actor` | string | omitempty | Actor says who decided the cancel when it was not a person at the station: CancelActorEdge for the Edge's own idle rule. Empty is a person, every door before that rule, and Core codes it operator_cancelled; with CancelActorEdge it codes it abandoned. Additive: an older Core ignores it and codes every cancel a person's, as it always has. |
 
 <!-- /generated -->
 

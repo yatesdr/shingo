@@ -155,8 +155,9 @@ func (e *Engine) Start() {
 	// bindings in demand_registry exactly as they are.
 	e.startDemandReconciler()
 
-	// Start periodic reconciliation logging and auto-confirm
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered, e.cfg.Staging.AbandonStuck, e.cfg.Staging.AbandonStuckOperatorGated)
+	// Start periodic reconciliation logging and auto-confirm.
+	e.sayRetiredAbandonKeys()
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
 
 	// ETA medians cache — initial refresh + 10-min background refresh.
 	// Errors are logged but non-fatal: a cold-start failure leaves the
@@ -567,5 +568,15 @@ func (e *Engine) reportMemberLegs() {
 		}
 		e.logFn("engine:   claim %s / %s at %s: %s = %s, a member of %s%s",
 			l.Process, l.Style, l.Node, l.Leg, l.Name, l.Group, home)
+	}
+}
+
+// sayRetiredAbandonKeys logs, once at start, a config file that still sets the
+// retired stuck-order abandon keys: the reconciliation loop no longer runs the
+// abandon, and the value does nothing.
+func (e *Engine) sayRetiredAbandonKeys() {
+	if s := e.cfg.Staging; s.AbandonStuck > 0 || s.AbandonStuckOperatorGated > 0 {
+		e.logFn("engine: staging.abandon_stuck (%s) and staging.abandon_stuck_operator_gated (%s) are set and ignored: Core cancels no waiting order on a timer; the Edge sends back robots parked at a line idle past its hour",
+			s.AbandonStuck, s.AbandonStuckOperatorGated)
 	}
 }

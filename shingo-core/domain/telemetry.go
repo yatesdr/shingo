@@ -703,7 +703,7 @@ const (
 var coreCancelPrefixes = []string{
 	"reshuffle dissolved:",                // dispatch.ReshuffleDissolveDetail / ReshuffleLegFailedDetail (compound.go)
 	"reshuffle withdrawn:",                // reshuffleWithdrawnDetail (compound.go)
-	"abandoned:",                          // reconciliation stuck-order sweep (engine/reconciliation_service.go)
+	"abandoned:",                          // a wait given up: Core's old stuck sweep (uncoded rows), the Edge's idle rule
 	"coordinated swap ",                   // a swap leg unwound with its dead peer (dispatch/swap_peer.go), pre-code rows
 	"retired: restore-blockers subsystem", // one-off retirement sweep (store/orders.go)
 }

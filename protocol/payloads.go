@@ -326,7 +326,18 @@ type OrderCancel struct {
 	// Reason is the human-readable cancellation reason, or
 	// CancelReasonAcceptHalfSwap.
 	Reason string `json:"reason"`
+	// Actor says who decided the cancel when it was not a person at the
+	// station: CancelActorEdge for the Edge's own idle rule. Empty is a person,
+	// every door before that rule, and Core codes it operator_cancelled; with
+	// CancelActorEdge it codes it abandoned. Additive: an older Core ignores it
+	// and codes every cancel a person's, as it always has.
+	Actor string `json:"actor,omitempty"`
 }
+
+// CancelActorEdge is OrderCancel.Actor on a cancel the Edge decided itself, not
+// a person at it: the robots it sends back from a line idle past its hour
+// (shingo-edge/engine/idle_cancel.go).
+const CancelActorEdge = "edge"
 
 // CancelReasonAcceptHalfSwap marks a supply-leg cancel where the operator
 // explicitly ACCEPTED the half-swap: the fleet-committed partner evac must NOT
