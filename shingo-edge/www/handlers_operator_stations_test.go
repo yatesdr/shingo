@@ -37,6 +37,7 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	r.Route("/api", func(r chi.Router) {
 		// ── Public API (shop floor) ────────────────────────
 		r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
+		r.Get("/operator-stations/{id}/cell", h.apiStationCellPicture)
 		r.Get("/operator-stations/{id}/scene", h.apiStationScene)
 
 		r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
@@ -349,6 +350,40 @@ func TestOperatorStations_GetOperatorStationView_NotFound(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/operator-stations/999999/view", nil, nil)
 	assertStatus(t, resp, http.StatusNotFound)
 	assertJSONPath(t, resp, "error", "station not found")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cell picture — GET /api/operator-stations/{id}/cell
+// DB call sites: CellPictureForStation (→ GetOperatorStation, GetProcess,
+//                the live claims)
+// ═══════════════════════════════════════════════════════════════════════
+
+// TestOperatorStations_CellPicture_NoSuchStationIs404: a station that is not
+// there is 404, as on /view and /scene beside it, not 500. It answered 500:
+// CellPictureForStation passed the store's sql.ErrNoRows up as an error, so
+// the door's "no such station" branch was never reached (flat bug, found by
+// U9's read, 2026-11-14). A real station still gets its picture, and an id
+// that is not one is 400.
+func TestOperatorStations_CellPicture_NoSuchStationIs404(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	sid := seedOperatorStation(t, db, seedProcess(t, db, "CellLine"), "OS-CELL-1", "CellStation")
+
+	resp := doRequest(t, router, "GET", "/api/operator-stations/999999/cell", nil, nil)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertJSONPath(t, resp, "error", "no such station")
+
+	ok := doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/cell", nil, nil)
+	assertStatus(t, ok, http.StatusOK)
+	var pic map[string]json.RawMessage
+	decodeJSON(t, ok, &pic)
+	if _, has := pic["positions"]; !has {
+		t.Errorf("a real station's picture has no positions field: %v", pic)
+	}
+
+	bad := doRequest(t, router, "GET", "/api/operator-stations/bad/cell", nil, nil)
+	assertStatus(t, bad, http.StatusBadRequest)
 }
 
 // ═══════════════════════════════════════════════════════════════════════

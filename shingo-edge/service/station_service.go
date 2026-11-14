@@ -948,8 +948,16 @@ func (s *StationService) curtainedNodes() map[curtainKey]processes.Node {
 //
 // Fail-open, like every other enrichment: a failed read draws less of the
 // picture, never no picture.
+//
+// NO SUCH STATION IS (nil, nil), which the door answers 404. The store answers
+// a missing row with sql.ErrNoRows, never a nil station, and this used to pass
+// that up as an error, so the door answered 500 (pinned by
+// TestOperatorStations_CellPicture_NoSuchStationIs404).
 func (s *StationService) CellPictureForStation(stationID int64) (*domain.CellPicture, error) {
 	station, err := s.db.GetOperatorStation(stationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
