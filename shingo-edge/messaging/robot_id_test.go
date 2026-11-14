@@ -45,7 +45,10 @@ func TestHandleOrderWaybill_StoresTheRobotItNames(t *testing.T) {
 	if got := robotOf(t, db, id); got != "AMR-07" {
 		t.Fatalf("after the assignment waybill: robot %q, want AMR-07", got)
 	}
-	o, _ := db.GetOrder(id)
+	o, err := db.GetOrder(id)
+	if err != nil {
+		t.Fatalf("read order: %v", err)
+	}
 	if o.WaybillID == nil || *o.WaybillID != "W1" {
 		t.Errorf("waybill_id = %v, want W1 (the robot rides the waybill's own statement)", o.WaybillID)
 	}
