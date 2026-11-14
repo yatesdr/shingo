@@ -8,4 +8,4 @@ Counted at, with one station counter, says: all 23 at the production counter
 parts in the part set: 46
 recipe versions listed: 12
 save bar: yes
-markup written, characters: 18576
+markup written, characters: 18767

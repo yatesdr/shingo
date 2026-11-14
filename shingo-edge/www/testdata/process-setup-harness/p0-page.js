@@ -126,6 +126,8 @@ function stateLine(page) {
         ['routingError', S.routingError], ['routingWarning', S.routingWarning],
         ['presets.error', S.presets && S.presets.error], ['shapeDraft.refusal', S.shapeDraft && S.shapeDraft.refusal],
         ['partPop.note', S.partPop && S.partPop.note], ['papply.status', S.papply && S.papply.status],
+        // Settings' save outcome is the shared bar's (shared/settings.js).
+        ['bar.refusal', S.stShell && S.stShell.pid === S.processID && S.stShell.page.state.refusal],
     ].filter(x => x[1]);
     return f.length ? 'state: ' + f.map(x => x[0] + '=' + JSON.stringify(x[1])).join(', ') : 'state: no message set';
 }
@@ -440,8 +442,11 @@ const countedAt = (node, value) => async page => {
     page.fire(sel, 'change');
     await page.settle();
 };
+// Save is the shared settings page's bar (shared/settings.js): its own button.
 const saveSettings = async page => {
-    page.click('root', { act: 'st-save' });
+    const b = page.root.querySelector('[data-set="save"]');
+    if (!b) throw new Error('Settings draws no Save');
+    b.click();
     await page.settle();
 };
 Object.assign(D, {

@@ -23,4 +23,4 @@
 ## item 5: CELL-TWIN, CATID 6001 in "TWIN" and "TWIN " (item5-*.txt): the list, then its Settings
   #pd-catid on the page: no
   CELL-TWIN: <span class="chip chip-warn pd-hcount" data-act="open-settings" data-process="1" title="1 to look at, on Settings">1</span>
-  Settings, text as drawn: #pd-root span: CATID 6001 is in TWIN and TWIN
+  Settings, text as drawn: #pd-stbody span: CATID 6001 is in TWIN and TWIN

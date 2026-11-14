@@ -899,6 +899,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }
 
+/* Settings' shell (settingsShell): the sections are drawn in its body, so the
+   first one is the body's first child, not the sheet's. */
+.pd-settings > .pd-stbody > .pd-sect:first-child { border-top: 0; padding-top: 0; }
+
 /* Settings · Position settings: a light curtain's row fits the value column.
    A PLC name is short; a tag is a struct path and keeps the wider box. */
 .pd-settings .exc-rows .pd-combo[data-combo="plc"] .pd-inp { width: 130px; }

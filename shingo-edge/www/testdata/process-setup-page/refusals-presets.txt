@@ -107,7 +107,7 @@
     pressed again: POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets · GET /api/processes/1/auto-reorder → sheet: closed
 ### POST /api/processes/1/flow/save  ←  409 {"error", stale:true} (a stale fingerprint)
     then: POST /api/processes/1/flow/preview · POST /api/processes/1/flow/save · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/presets · GET /api/processes/1/auto-reorder
-    new text: #pd-root div.pd-notice: Saved to 1 part.
+    new text: #pd-stbody div.pd-notice: Saved to 1 part.
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsNotice="Saved to 1 part."

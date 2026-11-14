@@ -521,7 +521,7 @@ const DRIVE = {
             cu('tag');
             page.click('root', { act: 'cu-val', node: String(n.id), val: val });
         }
-        page.click('root', { act: 'st-save' });
+        (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
         await page.settle();
     } },
     screenEdit: { drive: async page => {

@@ -81,9 +81,9 @@ ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
 ## Counted at: a refused save keeps its rows, and Save again sends the same one write
-ok   the refusal is said
+ok   the refusal is said on the bar
 ok   both rows stay on screen
-ok   Save again sends one Counted at write with both rows
+ok   Save again sends one write, with both rows
 
 ## ruling 5: + New style from Recipe One, its CATID refused, then pressed again
 ok   the refusal is said

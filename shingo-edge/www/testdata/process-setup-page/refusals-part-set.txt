@@ -64,21 +64,21 @@
 # writes, in order: PUT /api/processes/1/payloads
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: #pd-stbody div.pd-refusal: the Edge refused it
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: Server error (500)
+    new text: #pd-stbody div.pd-refusal: Server error (500)
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-root div.pd-refusal: No answer from the server
+    new text: #pd-stbody div.pd-refusal: No answer from the server
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"
@@ -95,21 +95,21 @@
 # writes, in order: PUT /api/processes/1/payloads
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: #pd-stbody div.pd-refusal: the Edge refused it
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="the Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: Server error (500)
+    new text: #pd-stbody div.pd-refusal: Server error (500)
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-root div.pd-refusal: No answer from the server
+    new text: #pd-stbody div.pd-refusal: No answer from the server
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="No answer from the server"

@@ -49,6 +49,7 @@ import { toast } from '/static/shared/notice.js';
 import { mountPicker, nodePicker, nodeRows, nodeSource } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { exceptionList, countOf } from '/static/shared/exceptions.js';
+import { settingsPage } from '/static/shared/settings.js';
 const NO_NOTICE = { notice: false };
 
 const M = () => window.ComposerModel;
@@ -111,6 +112,7 @@ const S = {
     pickers: {},         // every open node picker, by key — see pickerInit
     sets: {},            // every set picker's four buckets, by its picker's key — see setInit
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
+    stShell: null,       // Settings' shell for one visit: {pid, top, sheet, body, page} (settingsShell)
     stMap: null,         // Settings' map shown or put away: {pid, shown} — see stMapShown
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
     add: null,           // the process sheet's own non-text draft: {groupID, map, edit, station, before}
@@ -5525,24 +5527,169 @@ async function positionRemovalsAsked(stationID, baseline, want, state) {
 
 // THE COUNTED-AT DRAFT. S.counted is each position's station counter id, 0 for
 // the production counter, and -1 for one + Add picked whose counter is not
-// chosen yet. Saved with the rest by Save settings: every row it changed, in
-// one write (PUT …/counted-at), which binds all of them or none.
+// chosen yet. Saved with the rest (SETTINGS_SECTIONS.counted): every row it
+// changed, in one write (PUT …/counted-at), which binds all of them or none.
 function countedDraft() {
     const out = {};
     for (const n of (S.curtainNodes || [])) out[n.id] = n.line_counter_id || 0;
     return out;
 }
 
-function countedDirty() {
-    return !!S.counted && JSON.stringify(S.counted) !== JSON.stringify(countedDraft());
+// ── Settings' one Save (shared/settings.js) ─────────────────────────────────
+//
+// THE SHARED SETTINGS PAGE OWNS THE BAR. Its sections are the drafts, one per
+// door the server has: each says how it reads, is put back by Discard, is
+// checked before anything is sent, and saves. A save runs every dirty section
+// in this order, each on its own; the outcome says which saved and which did
+// not (settingsPage), and Settings then reads back once (afterSettingsSave).
+const PROCESS_KEYS = ['name', 'description', 'group_id', 'counter_plc_name', 'counter_tag_name', 'counter_enabled',
+    'identity_tag_name', 'identity_none', 'changeover_auto_arm'];
+const GATE_KEYS = ['flow_composer_enabled'];
+const HOLD_KEYS = ['quality_hold_enabled', 'quality_hold_destination'];
+
+const pickKeys = (o, keys) => Object.fromEntries(keys.map(k => [k, (o || {})[k]]));
+
+// doorOut is a door's answer as settingsPage reads an own save's.
+const doorOut = (out, lead) => (out.ok ? { ok: true } : { ok: false, shown: !!out.shown, error: (lead || '') + (out.error || 'refused') });
+
+// processSection is a section over some of S.settings' keys.
+function processSection(label, keys, save, validate) {
+    return {
+        label: label,
+        keys: keys,
+        read: () => pickKeys(S.settings, keys),
+        put: v => { S.settings = Object.assign({}, S.settings, v); },
+        write(v) { this.put(v); drawSettings(); },
+        validate: validate,
+        save: save,
+    };
 }
 
-function curtainDirty() {
-    return !!S.curtain && JSON.stringify(S.curtain) !== JSON.stringify(curtainDraft());
+const SETTINGS_SECTIONS = {
+    process: processSection('line, counter and changeover', PROCESS_KEYS, async () =>
+        doorOut(await send('PUT', '/api/processes/' + S.processID, B().processSettings(process(), S.settings), NO_NOTICE))),
+    gate: processSection('operator setup', GATE_KEYS, async d =>
+        doorOut(await send('PATCH', '/api/processes/' + S.processID, B().processGate(d.flow_composer_enabled), NO_NOTICE))),
+    // QUALITY HOLD rides its own door: the switch stamps or clears the
+    // containment route on the process's produce claims.
+    hold: processSection('quality hold', HOLD_KEYS, async d =>
+        doorOut(await send('POST', '/api/processes/' + S.processID + '/containment-setting',
+            B().processContainment(d.quality_hold_enabled, d.quality_hold_destination), NO_NOTICE)),
+    d => (d.quality_hold_enabled && !d.quality_hold_destination
+        ? { quality_hold_destination: 'Pick a containment destination before switching the quality hold on.' } : null)),
+    // THE LIGHT-CURTAIN INTERLOCK rides its own door per position: only the
+    // positions whose four fields moved are sent, in order, stopping at the
+    // first refusal. A curtain switched on needs both pointers and a chosen
+    // release value, refused here before the round trip and by the server
+    // regardless.
+    curtain: {
+        label: 'light curtain',
+        read: () => S.curtain || {},
+        put: v => { S.curtain = v; },
+        write(v) { this.put(v); drawSettings(); },
+        validate: d => {
+            const out = {};
+            for (const n of (S.curtainNodes || [])) {
+                const c = d[n.id];
+                if (!c || !c.enabled) continue;
+                if (!String(c.plc || '').trim() || !String(c.tag || '').trim()) {
+                    out['curtain-' + n.id] = posName(n) + ': a PLC and a tag are needed for its light curtain.';
+                } else if (c.safe === null) {
+                    out['curtain-' + n.id] = posName(n) + ': pick which reading releases, TRUE or FALSE.';
+                }
+            }
+            return Object.keys(out).length ? out : null;
+        },
+        save: async d => {
+            const was = curtainDraft();
+            for (const n of (S.curtainNodes || [])) {
+                const c = d[n.id];
+                if (!c || JSON.stringify(c) === JSON.stringify(was[n.id])) continue;
+                const out = await send('POST', '/api/process-nodes/' + n.id + '/curtain-setting',
+                    B().nodeCurtain(c.enabled, c.plc, c.tag, c.safe), NO_NOTICE);
+                if (!out.ok) return doorOut(out, posName(n) + ': ');
+            }
+            return { ok: true };
+        },
+    },
+    counted: {
+        label: 'counted at',
+        read: () => S.counted || {},
+        put: v => { S.counted = v; },
+        write(v) { this.put(v); drawSettings(); },
+        validate: d => {
+            const open = (S.curtainNodes || []).filter(n => d[n.id] === -1).map(posName);
+            return open.length ? { counted: 'Choose a counter for ' + open.join(', ') + ' under Counted at.' } : null;
+        },
+        save: async d => {
+            const was = countedDraft();
+            const bindings = (S.curtainNodes || []).filter(n => (d[n.id] || 0) !== (was[n.id] || 0))
+                .map(n => ({ node_id: n.id, line_counter_id: d[n.id] || null }));
+            return doorOut(await send('PUT', '/api/processes/' + S.processID + '/counted-at', { bindings: bindings }, NO_NOTICE));
+        },
+    },
+};
+
+// settingsShell is Settings for one visit to one process: the app bar's place,
+// the body drawSettings redraws, the shared bar and the popover, drawn once,
+// with one settingsPage over them. The bar and the save's outcome live outside
+// the body, so a redraw (every pick is one) keeps them.
+//
+// THE BASELINE IS WHAT IS STORED, and the edits come back after it: a visit to
+// another tab keeps a half-made change, and the bar still calls it unsaved.
+function settingsShell() {
+    const sh = S.stShell;
+    if (sh && sh.pid === S.processID && root().contains(sh.sheet)) return sh;
+    // BUILT AS ELEMENTS, not one markup string: the shared page keeps
+    // references to its bar and its buttons, and so does this shell.
+    const make = (tag, cls, attrs, text) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        for (const k of Object.keys(attrs || {})) e.setAttribute(k, attrs[k]);
+        if (text) e.textContent = text;
+        return e;
+    };
+    root().innerHTML = '';
+    const top = root().appendChild(make('div', 'pd-stbar', { id: 'pd-stbar' }));
+    const sheet = root().appendChild(make('div', 'pd-sheet pd-settings set-ui'));
+    const body = sheet.appendChild(make('div', 'pd-stbody', { id: 'pd-stbody' }));
+    const bar = sheet.appendChild(make('div', 'set-savebar pd-savebar'));
+    bar.appendChild(make('span', 'prov', null, 'No unsaved changes'));
+    bar.appendChild(make('button', 'pd-btn', { 'data-set': 'discard', type: 'button' }, 'Discard'));
+    bar.appendChild(make('button', 'pd-btn primary', { 'data-set': 'save', type: 'button' }, 'Save'));
+    const pop = sheet.appendChild(make('div', 'pd-pop', { id: 'pd-stpop' }));
+    pop.hidden = true;
+    const edits = { settings: S.settings, curtain: S.curtain, counted: S.counted };
+    S.settings = settingsDraft();
+    S.curtain = curtainDraft();
+    S.counted = countedDraft();
+    // A REFUSAL STOPS THE WRITES AFTER IT (ruling 3): the parts after it are
+    // not sent and stay unsaved, and the bar says which.
+    const page = settingsPage(sheet, { sections: SETTINGS_SECTIONS, stopOnFailure: true, afterSave: afterSettingsSave });
+    if (edits.settings) S.settings = edits.settings;
+    if (edits.curtain) S.curtain = edits.curtain;
+    if (edits.counted) S.counted = edits.counted;
+    S.stShell = { pid: S.processID, top: top, sheet: sheet, body: body, page: page };
+    return S.stShell;
 }
 
-function settingsDirty() {
-    return (!!S.settings && JSON.stringify(S.settings) !== JSON.stringify(settingsDraft())) || curtainDirty() || countedDirty();
+// afterSettingsSave reads back once what a save wrote: the positions (curtain
+// and counted at), the station counters and the process list. A section that
+// saved takes what was read as its new baseline; one that was refused keeps
+// its draft on screen, so the engineer fixes the one field instead of
+// re-entering it.
+async function afterSettingsSave(out) {
+    const failed = n => !!(out.own[n] && !out.own[n].ok);
+    const kept = {};
+    for (const n of Object.keys(SETTINGS_SECTIONS)) if (failed(n)) kept[n] = SETTINGS_SECTIONS[n].read();
+    S._tagCache = {};
+    await Promise.all([loadCurtainNodes(), loadStationCounters(), reloadProcesses()]);
+    S.settings = settingsDraft();
+    for (const n of Object.keys(kept)) SETTINGS_SECTIONS[n].put(kept[n]);
+    S.settingsError = '';
+    S.settingsNotice = '';
+    drawSettings();
+    S.stShell.page.rebase(Object.keys(SETTINGS_SECTIONS).filter(n => !failed(n)));
 }
 
 // THE WRITE-THROUGH SECTIONS SAY SO. Positions, the routing set and the part
@@ -6189,55 +6336,43 @@ function drawSettings() {
     // drawSettings replaces it wholesale, so every switch flip, auto-arm pick
     // and map zoom threw the routing set and the map — both at the foot of a
     // sheet twice the viewport — back off the top of the screen.
-    const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
+    const shell = settingsShell();
+    const body = shell.body;
+    const wasAt = shell.sheet.scrollTop || 0;
     // And the set picker's list keeps its own: every tick there is a write and
     // a redraw, and a list that jumped back to its top on each would make an
     // engineer scroll down to the next name every time.
     const listAt = (() => { const l = $('npk-' + ST_SET); const b = l && l.querySelector('.picker-list'); return b ? b.scrollTop : 0; })();
-    root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        healthSection() + general + counter + setSection() + positions + partsSect + more + danger +
-        '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
-        (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
-        '<button class="pd-btn" data-act="st-discard"' + (settingsDirty() ? '' : ' disabled') + '>Discard</button>' +
-        '<button class="pd-btn primary" data-act="st-save"' + (settingsDirty() ? '' : ' disabled') +
-        '>Save settings</button></div>' +
+    shell.top.innerHTML = appbar();
+    body.innerHTML = healthSection() + general + counter + setSection() + positions + partsSect + more + danger +
         (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
-        (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '') +
-        '<div class="pd-pop" id="pd-stpop" hidden></div></div>';
+        (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '');
 
-    for (const el of root().querySelectorAll('select[data-st]')) {
-        el.addEventListener('change', () => {
-            S.settings[el.dataset.st] = el.value;
-            markSettingsBar();
-        });
+    // A typed value is the draft at once; the shared page marks the bar on the
+    // same input, after this listener.
+    for (const el of body.querySelectorAll('select[data-st]')) {
+        el.addEventListener('change', () => { S.settings[el.dataset.st] = el.value; });
     }
-    for (const el of root().querySelectorAll('[data-st]')) {
+    for (const el of body.querySelectorAll('[data-st]')) {
         if (el.tagName !== 'INPUT') continue;
-        el.addEventListener('input', () => {
-            S.settings[el.dataset.st] = el.value;
-            markSettingsBar();
-        });
+        el.addEventListener('input', () => { S.settings[el.dataset.st] = el.value; });
     }
-    for (const el of root().querySelectorAll('input[data-cn]')) {
-        el.addEventListener('input', () => {
-            S.curtain[el.dataset.cn][el.dataset.cf] = el.value;
-            markSettingsBar();
-        });
+    for (const el of body.querySelectorAll('input[data-cn]')) {
+        el.addEventListener('input', () => { S.curtain[el.dataset.cn][el.dataset.cf] = el.value; });
     }
-    for (const el of root().querySelectorAll('select[data-countedat]')) {
+    for (const el of body.querySelectorAll('select[data-countedat]')) {
         el.addEventListener('change', () => setCountedAt(Number(el.dataset.countedat), el.value));
     }
     bindPickers();
-    bindCombos(root());
-    if (wasAt) {
-        const box = root().querySelector('.pd-sheet');
-        if (box) box.scrollTop = wasAt;
-    }
+    bindCombos(body);
+    if (wasAt) shell.sheet.scrollTop = wasAt;
     if (listAt) {
         const l = $('npk-' + ST_SET);
         const b = l && l.querySelector('.picker-list');
         if (b) b.scrollTop = listAt;
     }
+    // A draft changed from code (a pick, a switch) is the bar's to mark too.
+    shell.page.update();
 }
 
 // bindCombos wires the curtain's per-node typeahead fields. The list is FILTERED BY
@@ -6325,109 +6460,6 @@ function bindCombos(container) {
 
 // The save bar alone, so typing a name does not redraw the field under the
 // caret and put the cursor back at the start.
-function markSettingsBar() {
-    const bar = root().querySelector('.pd-savebar');
-    if (!bar) return;
-    const d = settingsDirty();
-    bar.querySelector('.prov').className = 'prov' + (d ? ' dirty' : '');
-    bar.querySelector('.prov').textContent = d ? 'Unsaved changes' : 'No unsaved changes';
-    bar.querySelector('[data-act="st-save"]').disabled = !d;
-    bar.querySelector('[data-act="st-discard"]').disabled = !d;
-}
-
-// TWO DOORS, AND THAT IS THE SERVER'S SHAPE, NOT A CHOICE MADE HERE. PUT
-// /processes/{id} takes the process; the flow-composer gate has its own PATCH
-// because it is flipped from its own control after a review, never alongside a
-// name edit (router.go). Saving both from one screen means calling both.
-async function saveSettings() {
-    const before = settingsDraft();
-    const body = B().processSettings(process(), S.settings);
-    // A DEAD EDGE STOPPED THIS HALFWAY (P0 bug, :5306): the PUT's rejection
-    // left the function after it had cleared both messages and before it drew,
-    // so Save settings did nothing on screen. The writes and the re-reads
-    // after them go through the door, and its sentence is the refusal.
-    // REFUSED IS ITS OWN FLAG, not an empty message: a lapsed session's 401
-    // is said on the notice and leaves settingsError empty, and it must stop
-    // the writes after it as any refusal does (ruling 3).
-    let refused = false;
-    const fail = out => { refused = true; S.settingsError = said(out); };
-    const stopped = () => refused || !!S.settingsError;
-    S.settingsError = '';
-    S.settingsNotice = '';
-    const res = await send('PUT', '/api/processes/' + S.processID, body, NO_NOTICE);
-    if (!res.ok) fail(res);
-    if (!stopped() && S.settings.flow_composer_enabled !== before.flow_composer_enabled) {
-        const g = await send('PATCH', '/api/processes/' + S.processID, B().processGate(S.settings.flow_composer_enabled), NO_NOTICE);
-        if (!g.ok) fail(g);
-    }
-    // QUALITY HOLD rides its own door too (the gate's pattern): the toggle
-    // stamps/clears the containment route on the process's produce claims, so
-    // it only fires when its two fields actually moved.
-    if (!stopped() && (S.settings.quality_hold_enabled !== before.quality_hold_enabled ||
-        S.settings.quality_hold_destination !== before.quality_hold_destination)) {
-        if (S.settings.quality_hold_enabled && !S.settings.quality_hold_destination) {
-            S.settingsError = 'Pick a containment destination before enabling the quality hold.';
-        } else {
-            const c = await send('POST', '/api/processes/' + S.processID + '/containment-setting',
-                B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination), NO_NOTICE);
-            if (!c.ok) fail(c);
-        }
-    }
-    // THE LIGHT-CURTAIN INTERLOCK rides its own door per node: the settings
-    // live on the node, and only the nodes whose four fields moved are sent.
-    // An enabled node needs both pointers and a chosen release value - refused
-    // here so the engineer fixes it before the round trip, and refused by the
-    // server regardless.
-    if (!stopped() && curtainDirty()) {
-        const was = curtainDraft();
-        for (const n of (S.curtainNodes || [])) {
-            const d = S.curtain[n.id];
-            if (!d || JSON.stringify(d) === JSON.stringify(was[n.id])) continue;
-            if (d.enabled && (!d.plc.trim() || !d.tag.trim())) {
-                S.settingsError = n.name + ': a PLC name and a tag name are required when the curtain interlock is enabled.';
-                break;
-            }
-            if (d.enabled && d.safe === null) {
-                S.settingsError = n.name + ': choose which curtain tag value allows the release (TRUE or FALSE) before enabling the interlock.';
-                break;
-            }
-            const cu = await send('POST', '/api/process-nodes/' + n.id + '/curtain-setting',
-                B().nodeCurtain(d.enabled, d.plc, d.tag, d.safe), NO_NOTICE);
-            if (!cu.ok) { fail(cu); break; }
-        }
-    }
-    // COUNTED AT: every row the draft changed, in one write that binds all of
-    // them or none. A row whose counter is not chosen yet stops the save.
-    if (!stopped() && countedDirty()) {
-        const was = countedDraft();
-        const open = (S.curtainNodes || []).filter(n => S.counted[n.id] === -1).map(posName);
-        if (open.length) {
-            S.settingsError = 'Choose a counter for ' + open.join(', ') + ' under Counted at.';
-        } else {
-            const bindings = (S.curtainNodes || []).filter(n => S.counted[n.id] !== was[n.id])
-                .map(n => ({ node_id: n.id, line_counter_id: S.counted[n.id] || null }));
-            const ca = await send('PUT', '/api/processes/' + S.processID + '/counted-at', { bindings: bindings }, NO_NOTICE);
-            if (!ca.ok) fail(ca);
-        }
-    }
-    // A refused curtain or Counted at edit keeps its draft on screen, so the
-    // engineer fixes the one field instead of re-entering the node.
-    const keepCurtain = stopped() ? S.curtain : null;
-    const keepCounted = stopped() ? S.counted : null;
-    await loadCurtainNodes();
-    if (keepCurtain) S.curtain = keepCurtain;
-    if (keepCounted) S.counted = keepCounted;
-    S._tagCache = {};
-    await loadStationCounters();
-    await reloadProcesses();
-    // A REFUSED SAVE KEEPS WHAT WAS TYPED (P0 :5368), as a refused curtain
-    // keeps its draft above: the draft was rebuilt from the stored process, so
-    // the typed name, group and auto-arm were gone with the refusal.
-    if (!stopped()) S.settings = settingsDraft();
-    if (!stopped()) S.settingsNotice = 'Saved.';
-    drawSettings();
-}
-
 async function reloadProcesses() {
     const res = await send('GET', '/api/processes');
     if (!res.ok) return;
@@ -9545,8 +9577,6 @@ function onClick(e) {
             case 'ar-shown': flipAutoReorder('/auto-reorder-station', { shown: btn.dataset.shown === '1' }); return;
             case 'st-group': openGroupPicker(btn); return;
         case 'st-holddest': openContainmentPicker(btn); return;
-            case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.counted = countedDraft(); S.settingsError = ''; drawSettings(); return;
-            case 'st-save': saveSettings(); return;
             case 'st-ident': {
                 const mode = btn.dataset.mode;
                 S.settings.identity_none = mode === 'none';

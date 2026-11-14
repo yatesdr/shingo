@@ -27,19 +27,7 @@
 
 ## Settings › Position settings › Counted at › + Add a position: POS_A1 (at Station 1, the only counter), then Save settings
   1  GET /api/processes/1/countable
-  2  PUT /api/processes/1
-       {
-         "name": "Press A",
-         "description": "synthetic press",
-         "counter_plc_name": "PLC_A",
-         "counter_tag_name": "CountA",
-         "counter_enabled": true,
-         "identity_tag_name": "",
-         "identity_none": false,
-         "changeover_auto_arm": "auto",
-         "group_id": 3
-       }
-  3  PUT /api/processes/1/counted-at
+  2  PUT /api/processes/1/counted-at
        {
          "bindings": [
            {
@@ -48,9 +36,10 @@
            }
          ]
        }
-  4  GET /api/process-nodes
-  5  GET /api/processes/1/station-counters
-  6  GET /api/processes
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/station-counters
+  5  GET /api/processes
+-- notice: success "Saved"
 -- sheet closed
 
 ## Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count), then Save settings
@@ -65,19 +54,7 @@
   4  GET /api/process-nodes
   5  GET /api/processes/1/counting-slots
   6  GET /api/processes/1/catid-health
-  7  PUT /api/processes/1
-       {
-         "name": "Press A",
-         "description": "synthetic press",
-         "counter_plc_name": "PLC_A",
-         "counter_tag_name": "CountA",
-         "counter_enabled": true,
-         "identity_tag_name": "",
-         "identity_none": false,
-         "changeover_auto_arm": "auto",
-         "group_id": 3
-       }
-  8  PUT /api/processes/1/counted-at
+  7  PUT /api/processes/1/counted-at
        {
          "bindings": [
            {
@@ -86,26 +63,15 @@
            }
          ]
        }
-  9  GET /api/process-nodes
- 10  GET /api/processes/1/station-counters
- 11  GET /api/processes
+  8  GET /api/process-nodes
+  9  GET /api/processes/1/station-counters
+ 10  GET /api/processes
+-- notice: success "Saved"
 -- sheet closed
 
 ## Settings › Position settings › Counted at › + Add a position: POS_A1 and POS_A2 in one pick, then Save settings
   1  GET /api/processes/1/countable
-  2  PUT /api/processes/1
-       {
-         "name": "Press A",
-         "description": "synthetic press",
-         "counter_plc_name": "PLC_A",
-         "counter_tag_name": "CountA",
-         "counter_enabled": true,
-         "identity_tag_name": "",
-         "identity_none": false,
-         "changeover_auto_arm": "auto",
-         "group_id": 3
-       }
-  3  PUT /api/processes/1/counted-at
+  2  PUT /api/processes/1/counted-at
        {
          "bindings": [
            {
@@ -118,9 +84,10 @@
            }
          ]
        }
-  4  GET /api/process-nodes
-  5  GET /api/processes/1/station-counters
-  6  GET /api/processes
+  3  GET /api/process-nodes
+  4  GET /api/processes/1/station-counters
+  5  GET /api/processes
+-- notice: success "Saved"
 -- sheet closed
 
 ## Settings › Station 1 › Remove

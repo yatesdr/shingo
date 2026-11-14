@@ -6,21 +6,21 @@
 # writes, in order: POST /api/payload-catalog/sync
 ### POST /api/payload-catalog/sync  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: The catalog sync failed: the Edge refused it.
+    new text: #pd-stbody div.pd-refusal: The catalog sync failed: the Edge refused it.
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="The catalog sync failed: the Edge refused it."
     unhandled rejection: none
 ### POST /api/payload-catalog/sync  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: The catalog sync failed: Server error (500).
+    new text: #pd-stbody div.pd-refusal: The catalog sync failed: Server error (500).
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="The catalog sync failed: Server error (500)."
     unhandled rejection: none
 ### POST /api/payload-catalog/sync  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-root div.pd-refusal: The catalog sync failed: No answer from the server.
+    new text: #pd-stbody div.pd-refusal: The catalog sync failed: No answer from the server.
     new text: … and 53 more runs (the tab redrew)
     sheet: closed
     state: settingsError="The catalog sync failed: No answer from the server."

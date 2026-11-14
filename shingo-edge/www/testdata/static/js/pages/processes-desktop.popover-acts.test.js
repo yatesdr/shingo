@@ -58,6 +58,7 @@ function classList() {
         add: (...cs) => cs.forEach(c => set.add(c)),
         remove: (...cs) => cs.forEach(c => set.delete(c)),
         contains: c => set.has(c),
+        toggle: (c, on) => { const want = on === undefined ? !set.has(c) : !!on; if (want) set.add(c); else set.delete(c); return want; },
         all: () => [...set],
         clear: () => set.clear(),
     };
@@ -96,7 +97,6 @@ function makeElement(id) {
     const el = {
         id: id || '',
         hidden: false,
-        innerHTML: '',
         style: {},
         dataset: {},
         classList: classList(),
@@ -122,6 +122,12 @@ function makeElement(id) {
             (this.listeners[type] = this.listeners[type] || []).push(fn);
         },
         appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
+        insertBefore(c, ref) {
+            c.parentNode = this;
+            const i = ref ? this.children.indexOf(ref) : -1;
+            if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
+            return c;
+        },
         contains(x) { for (let n = x; n; n = n.parentNode) if (n === this) return true; return false; },
         querySelector: () => null,
         querySelectorAll: () => [],
@@ -131,6 +137,15 @@ function makeElement(id) {
             return null;
         },
     };
+    // ITS MARKUP IS ITS STRING, THEN WHAT WAS BUILT INTO IT. A page that
+    // builds part of a tab as elements (Settings' shell: the shared bar and
+    // its body) is read by the pins as a browser serialises it.
+    let own = '';
+    Object.defineProperty(el, 'innerHTML', {
+        configurable: true,
+        get: () => own + el.children.filter(c => c && c._made).map(serializeMade).join(''),
+        set: v => { own = String(v); },
+    });
     return el;
 }
 
@@ -339,12 +354,13 @@ function sheetParts(doc, scrim) {
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
 function loadShared(deps) {
     const mods = { 'notice.js': { toast: deps.toast } };
-    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js']) {
+    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js', 'settings.js']) {
         const names = [];
         const binds = [];
         const src = fs.readFileSync(path.join(SHARED_DIR, file), 'utf8')
             .replace(/^import\s*\{([^}]*)\}\s*from\s*'\/static\/shared\/([\w.-]+)';[ \t]*$/gm, (m, list, from) => {
-                binds.push('const {' + list + '} = __mods[' + JSON.stringify(from) + '];');
+                // `a as b` is `a: b` in a destructuring pattern.
+                binds.push('const {' + list.replace(/\b([\w$]+)\s+as\s+([\w$]+)/g, '$1: $2') + '} = __mods[' + JSON.stringify(from) + '];');
                 return '';
             })
             .replace(/^export\s+(async\s+function|function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm, (m, kw, name) => { names.push(name); return kw + ' ' + name; });
@@ -352,7 +368,7 @@ function loadShared(deps) {
             { filename: file })(mods);
     }
     return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js'],
-        mods['exceptions.js']);
+        mods['exceptions.js'], mods['settings.js']);
 }
 
 // ── the page, booted for real ────────────────────────────────────────────────
@@ -500,7 +516,7 @@ function loadPage(loadOpts) {
         nodePicker: shared.nodePicker, nodeSource: shared.nodeSource, nodeWhy: shared.nodeWhy,
         partPicker: shared.partPicker, partSource: shared.partSource,
         mountPicker: shared.mountPicker, nodeRows: shared.nodeRows,
-        exceptionList: shared.exceptionList, countOf: shared.countOf,
+        exceptionList: shared.exceptionList, countOf: shared.countOf, settingsPage: shared.settingsPage,
     });
     // The sheets' writes build their bodies through the real body module.
     win.DesktopBodies = require(path.join(SRC_DIR, 'desktop-bodies.js'));
@@ -2190,9 +2206,12 @@ async function mainAsync() {
         }
     });
 
-    await pin('Save settings says "Saved."', async () => {
+    // SETTINGS' SAVE IS THE SHARED BAR'S (shared/settings.js): nothing changed
+    // is nothing to send, and one change is its one section's write, then
+    // "Saved" on the notice.
+    await pin('Save sends only what changed, then says "Saved"', async () => {
         const puts = [];
-        const { root, doc } = loadPage({
+        const { root, doc, win } = loadPage({
             hash: '#tab=settings',
             fetch: (url, init) => {
                 if (url === '/api/processes/1' && init && init.method === 'PUT') {
@@ -2203,11 +2222,22 @@ async function mainAsync() {
             },
         });
         await settle();
-        click(root, doc, { act: 'st-save' });
+        const save = findIn(root, '[data-set="save"]')[0];
+        if (!save) throw new Error('Settings draws no Save on its bar');
+        if (!save.disabled) throw new Error('Save is enabled with nothing changed');
+        save.click();
         await settle();
-        if (puts.length !== 1) throw new Error('setup: Save settings did not PUT once: ' + puts.length);
-        const want = '<div class="pd-notice">Saved.</div>';
-        if (root.innerHTML.indexOf(want) < 0) throw new Error('Save settings drew no ' + want);
+        if (puts.length) throw new Error('Save with nothing changed sent ' + puts.length + ' PUT');
+        click(root, doc, { act: 'st-arm', arm: 'prompt' });
+        await settle();
+        if (save.disabled) throw new Error('Save is still disabled after the auto-arm changed');
+        save.click();
+        await settle();
+        if (puts.length !== 1) throw new Error('Save sent ' + puts.length + ' PUT for one change');
+        if (JSON.parse(puts[0]).changeover_auto_arm !== 'prompt') throw new Error('the PUT carried ' + puts[0]);
+        if (!win.notices.some(n => n.message === 'Saved' && n.level === 'success')) {
+            throw new Error('no "Saved" on the notice: ' + JSON.stringify(win.notices));
+        }
     });
 
     await pin('Save as recipe names the recipe it saved and where it is', async () => {
@@ -3088,7 +3118,7 @@ async function mainAsync() {
             }
         }
         const css = fs.readFileSync(path.join(SRC_DIR, '..', '..', 'css', 'processes-desktop.css'), 'utf8');
-        if (/\.pd-pill/.test(css)) throw new Error('processes-desktop.css still styles .pd-pill');
+        if (/\.pd-pill\b/.test(css)) throw new Error('processes-desktop.css still styles .pd-pill');
     });
 
     await recipeGroupPins({ pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs });

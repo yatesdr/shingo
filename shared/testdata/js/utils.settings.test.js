@@ -465,6 +465,62 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         eq(shownOnly.state.refusal, 'Not saved.', 'one part only, shown: nothing after "Not saved."');
     }
 
+    // ─── afterSave and rebase: a page whose sections have their own doors ──
+    // reads back once after a save (the Processes page's Settings), and
+    // re-baselines the sections that saved from what it read.
+    {
+        const draft = { a: 'one', b: 'two' };
+        let readBacks = 0;
+        let seen = null;
+        const page = u.settingsPage(mk('div', 'set-ui'), {
+            sections: {
+                a: { read: () => ({ v: draft.a }), save: () => Promise.resolve({ ok: true }) },
+                b: { read: () => ({ v: draft.b }), save: () => Promise.resolve({ ok: false, error: 'refused' }) },
+            },
+            afterSave: async (out) => {
+                readBacks++;
+                seen = out;
+                draft.a = draft.a.toUpperCase();   // the server normalised it
+                page.rebase(Object.keys(out.own).filter((n) => out.own[n].ok));
+            },
+        });
+        draft.a = 'uno';
+        draft.b = 'dos';
+        page.update();
+        const out = await page.save();
+        eq(readBacks, 1, 'afterSave runs once per save');
+        eq(seen === out, true, 'afterSave is handed the outcome');
+        eq(JSON.stringify(page.dirtySections()), '["b"]', 'the section that saved is clean as read back; the refused one stays dirty');
+        page.rebase();
+        eq(page.isDirty(), false, 'rebase() with no names takes every section as saved');
+        const failing = u.settingsPage(mk('div', 'set-ui'), {
+            sections: { a: { read: () => ({ v: draft.a }), save: () => Promise.resolve({ ok: true }) } },
+            afterSave: () => Promise.reject(new Error('read failed')),
+        });
+        draft.a = 'eins';
+        failing.update();
+        const bad = await failing.save();
+        eq(bad.ok, false, 'a read-back that fails is a failed save');
+        assert(/reading back failed: read failed/.test(failing.state.refusal), 'and says so: ' + JSON.stringify(failing.state.refusal));
+    }
+
+    // ─── stopOnFailure: the own saves stop at the first that fails ────────
+    {
+        const d = { a: 1, b: 1, c: 1 };
+        const sent = [];
+        const sec = (n, ok) => ({ label: n, read: () => ({ v: d[n] }),
+            save: () => { sent.push(n); return Promise.resolve(ok ? { ok: true } : { ok: false, error: 'refused' }); } });
+        const page = u.settingsPage(mk('div', 'set-ui'), { stopOnFailure: true,
+            sections: { a: sec('a', true), b: sec('b', false), c: sec('c', true) } });
+        d.a = 2; d.b = 2; d.c = 2;
+        page.update();
+        const out = await page.save();
+        eq(JSON.stringify(sent), '["a","b"]', 'after b fails, c is not sent');
+        eq(JSON.stringify(page.dirtySections()), '["b","c"]', 'the failed one and the one not sent stay dirty');
+        eq(out.own.c && out.own.c.skipped, true, 'the outcome marks c skipped');
+        eq(page.state.refusal, 'A saved; b failed: refused; c not sent.', 'and says it: ' + JSON.stringify(page.state.refusal));
+    }
+
     // ─── the default save door: http.js's send, the notice off ────────────
     // Core's settings page (shingo-core/www/static/pages/config.js) and the
     // Edge's (shingo-edge/www/static/js/pages/config.js) both save through

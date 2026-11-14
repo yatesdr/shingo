@@ -478,24 +478,22 @@ block({
         }
         page.key('Escape');
         await page.settle();
-        page.click('root', { act: 'st-save' });
+        (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
         await page.settle();
-        const first = page.S.settingsError;
+        // The save's outcome is the shared bar's (shared/settings.js).
+        const first = page.S.stShell.page.state.refusal;
         const rows = page.root.querySelectorAll('select[data-countedat]').length;
         const from = page.mark();
-        page.click('root', { act: 'st-save' });
+        (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
         await page.settle();
         return { first: first, rows: rows, again: writes(page.since(from)) };
     },
     checks: [
-        r => ['the refusal is said', r.first.indexOf(MSG) >= 0, 'settingsError ' + JSON.stringify(r.first)],
+        r => ['the refusal is said on the bar', r.first.toLowerCase().indexOf(MSG.toLowerCase()) >= 0, 'refusal ' + JSON.stringify(r.first)],
         r => ['both rows stay on screen', r.rows === 2, r.rows + ' rows'],
-        r => {
-            const ca = r.again.filter(c => /^PUT \/api\/processes\/1\/counted-at$/.test(lineOf(c)));
-            return ['Save again sends one Counted at write with both rows', ca.length === 1 &&
-                JSON.stringify((ca[0].body || {}).bindings) === '[{"node_id":201,"line_counter_id":51},{"node_id":202,"line_counter_id":51}]',
-                ca.map(c => lineOf(c) + ' ' + JSON.stringify(c.body)).join(' · ') || 'no Counted at write'];
-        },
+        r => ['Save again sends one write, with both rows', r.again.length === 1 && /^PUT \/api\/processes\/1\/counted-at$/.test(lineOf(r.again[0])) &&
+            JSON.stringify((r.again[0].body || {}).bindings) === '[{"node_id":201,"line_counter_id":51},{"node_id":202,"line_counter_id":51}]',
+            r.again.map(c => lineOf(c) + ' ' + JSON.stringify(c.body)).join(' · ') || 'no write'],
     ],
 });
 resume('ruling 5: + New style from Recipe One, its CATID refused, then pressed again', {
