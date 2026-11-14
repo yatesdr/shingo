@@ -8581,8 +8581,8 @@ function recipesHTML() {
     // BUTTON, not just a ⋯, so it gets the room for one: the table is
     // `table-layout: fixed`, so a cell does not grow to its contents, it cuts
     // them.
-    const presetCols = '<colgroup><col style="width:32%"><col style="width:22%">' +
-        '<col style="width:16%"><col style="width:12%"><col style="width:18%"></colgroup>';
+    const presetCols = '<colgroup><col style="width:32%"><col style="width:20%">' +
+        '<col style="width:16%"><col style="width:14%"><col style="width:18%"></colgroup>';
     const table = presets.length
         ? '<table class="pd-tbl pd-presettbl">' + presetCols +
         '<thead><tr><th>Recipe</th><th>Spots</th><th>Applied to</th><th>Saved</th><th></th></tr></thead><tbody>' +

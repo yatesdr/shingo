@@ -809,7 +809,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    named from a shape carries the mode word and its positions, so it is long by
    construction: left to wrap it broke after the positions and orphaned `v1` on
    a second line. Ellipsised, with the full name in the cell's own title. */
-.pd-presettbl td.pn, .pd-presettbl td.pd-spots, .pd-presettbl td.pd-saved { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Saved wraps rather than cut: who saved a recipe is half its value. */
+.pd-presettbl td.pn, .pd-presettbl td.pd-spots { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* The Shape column. CHIPS NEVER WRAP (SPEC §2): a shape over six positions
    ellipsises its list instead of growing the row, because a table whose row
