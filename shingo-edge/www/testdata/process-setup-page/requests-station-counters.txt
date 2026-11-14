@@ -10,7 +10,6 @@
   3  GET /api/process-nodes
   4  GET /api/processes/1/counting-slots
   5  GET /api/processes/1/catid-health
-  6  GET /api/processes/1/countable
 -- sheet closed
 
 ## Settings › Station 1 › Edit: Station 1b
@@ -24,58 +23,57 @@
   3  GET /api/process-nodes
   4  GET /api/processes/1/counting-slots
   5  GET /api/processes/1/catid-health
-  6  GET /api/processes/1/countable
 -- sheet closed
 
 ## Settings › Position settings › Counted at › + Add a position: POS_A1, at Station 1 (the select's change)
-  1  PUT /api/process-nodes/201/counted-at
+  1  GET /api/processes/1/countable
+  2  PUT /api/process-nodes/201/counted-at
        {
          "line_counter_id": 51
        }
-  2  GET /api/processes/1/station-counters
-  3  GET /api/process-nodes
-  4  GET /api/processes/1/counting-slots
-  5  GET /api/processes/1/catid-health
-  6  GET /api/processes/1/countable
+  3  GET /api/processes/1/station-counters
+  4  GET /api/process-nodes
+  5  GET /api/processes/1/counting-slots
+  6  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count, then the bind)
-  1  POST /api/processes/1/station-counters
+  1  GET /api/processes/1/countable
+  2  POST /api/processes/1/station-counters
        {
          "label": "Station 3",
          "tag_name": "S3.Count",
          "tag_name_2": ""
        }
-  2  PUT /api/process-nodes/202/counted-at
+  3  PUT /api/process-nodes/202/counted-at
        {
          "line_counter_id": 52
+       }
+  4  GET /api/processes/1/station-counters
+  5  GET /api/process-nodes
+  6  GET /api/processes/1/counting-slots
+  7  GET /api/processes/1/catid-health
+-- sheet closed
+
+## Settings › Position settings › Counted at › + Add a position: POS_A1 then POS_A2, each at Station 1
+  1  GET /api/processes/1/countable
+  2  PUT /api/process-nodes/201/counted-at
+       {
+         "line_counter_id": 51
        }
   3  GET /api/processes/1/station-counters
   4  GET /api/process-nodes
   5  GET /api/processes/1/counting-slots
   6  GET /api/processes/1/catid-health
   7  GET /api/processes/1/countable
--- sheet closed
-
-## Settings › Position settings › Counted at › + Add a position: POS_A1 then POS_A2, each at Station 1
-  1  PUT /api/process-nodes/201/counted-at
+  8  PUT /api/process-nodes/202/counted-at
        {
          "line_counter_id": 51
        }
-  2  GET /api/processes/1/station-counters
-  3  GET /api/process-nodes
-  4  GET /api/processes/1/counting-slots
-  5  GET /api/processes/1/catid-health
-  6  GET /api/processes/1/countable
-  7  PUT /api/process-nodes/202/counted-at
-       {
-         "line_counter_id": 51
-       }
-  8  GET /api/processes/1/station-counters
-  9  GET /api/process-nodes
- 10  GET /api/processes/1/counting-slots
- 11  GET /api/processes/1/catid-health
- 12  GET /api/processes/1/countable
+  9  GET /api/processes/1/station-counters
+ 10  GET /api/process-nodes
+ 11  GET /api/processes/1/counting-slots
+ 12  GET /api/processes/1/catid-health
 -- sheet closed
 
 ## Settings › Station 1 › Remove
@@ -84,5 +82,4 @@
   3  GET /api/process-nodes
   4  GET /api/processes/1/counting-slots
   5  GET /api/processes/1/catid-health
-  6  GET /api/processes/1/countable
 -- sheet closed

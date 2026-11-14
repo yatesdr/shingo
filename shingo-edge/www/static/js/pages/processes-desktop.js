@@ -4651,7 +4651,6 @@ async function openSettings() {
     if (!S.routing) await loadRouting();
     await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots(),
         loadCatidItems(), loadPLCs(), loadPresets(), loadAutoReorder()]);
-    await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
     // reads it; Add-process wrote it once and, until this, the only other
@@ -5666,12 +5665,11 @@ async function loadCatidItems() {
 }
 
 // loadStationVerdicts reads the binding's dry run for every position of the
-// process, in one read, while it has a station counter, or when force (Counted
-// at's + Add, which may bind a position to a counter not made yet). A failed
+// process, in one read. Its one reader is Counted at's + Add, so it is read
+// when that list opens, fresh each time (a bind changes the answers). A failed
 // read leaves every position greyed as not checked.
-async function loadStationVerdicts(force) {
+async function loadStationVerdicts() {
     S.stationVerdicts = {};
-    if (!force && !(S.stationCounters || []).length) return;
     const res = await send('GET', '/api/processes/' + S.processID + '/countable');
     if (res.ok && res.body) S.stationVerdicts = res.body;
 }
@@ -5754,7 +5752,6 @@ function openStationCounter(id, bindNode) {
 async function afterStationChange() {
     S._tagCache = {};
     await Promise.all([loadStationCounters(), loadCurtainNodes(), loadCountingSlots(), loadCatidItems()]);
-    await loadStationVerdicts();
     drawSettings();
 }
 
@@ -5908,9 +5905,9 @@ function openCurtainAdd(btn) {
 
 // openCountedAdd: + Add under Counted at, over the positions at the production
 // counter, each refused one greyed with the binding's own sentence (the dry
-// run, read once for the process if it has not been).
+// run, read as the list opens).
 async function openCountedAdd(btn) {
-    if (!Object.keys(S.stationVerdicts || {}).length) await loadStationVerdicts(true);
+    await loadStationVerdicts();
     const v = S.stationVerdicts || {};
     const free = (S.curtainNodes || []).filter(n => !n.line_counter_id);
     openPositionPicker(btn, free,
@@ -6361,7 +6358,6 @@ async function saveSettings() {
     if (keepCurtain) S.curtain = keepCurtain;
     S._tagCache = {};
     await loadStationCounters();
-    await loadStationVerdicts();
     await reloadProcesses();
     // A REFUSED SAVE KEEPS WHAT WAS TYPED (P0 :5368), as a refused curtain
     // keeps its draft above: the draft was rebuilt from the stored process, so
