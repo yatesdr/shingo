@@ -83,6 +83,8 @@ type feedBook struct {
 	// stale is, per aged feed (feedRow.aged), whether the copy was past
 	// FeedAsOfAfter when last looked at (crossingsLocked).
 	stale map[string]bool
+	// ackObserver is told after every ack (SetCoreAckObserver); nil for none.
+	ackObserver func()
 }
 
 // feedAged is who is told when a held copy's age crosses FeedAsOfAfter:
@@ -339,6 +341,18 @@ func (e *Engine) LastCoreAck() (local, server time.Time) {
 	return e.feeds.lastAck, e.feeds.lastServerTS
 }
 
+// SetCoreAckObserver installs fn, called after every heartbeat ack is taken
+// (OnCoreAck): after LastCoreAck has moved, outside the book's lock, on the
+// ack's goroutine, so it must not block. It is how a reader of the Core link
+// learns the ack arrived without polling LastCoreAck; the www robot stream
+// says {available} from it. nil removes it. Pinned by
+// TestOnCoreAck_TellsTheObserverAfterTheAckMoved.
+func (e *Engine) SetCoreAckObserver(fn func()) {
+	e.feeds.mu.Lock()
+	e.feeds.ackObserver = fn
+	e.feeds.mu.Unlock()
+}
+
 // persistedRow is the feed_copy row for a hold, with the digest and body left
 // out where they do not persist.
 func persistedRow(key string, h *feedHold) store.FeedCopy {
@@ -463,7 +477,8 @@ func (e *Engine) CoreSpeaksFeeds() bool {
 // OnCoreAck takes Core's answer to a heartbeat: whether Core speaks feeds,
 // for each feed whose digest equals the one held, the confirmation, the
 // plant-claims digests Core holds for this station (feeds_claims.go), the bins
-// watch digest, the ask kinds, and the ephemeral topic Core names.
+// watch digest, the ask kinds, and the ephemeral topic Core names; then it
+// tells the ack observer (SetCoreAckObserver).
 func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	if ack == nil {
 		return
@@ -489,6 +504,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 		}
 	}
 	board, containment := e.feeds.crossingsLocked(now)
+	observer := e.feeds.ackObserver
 	e.feeds.mu.Unlock()
 	e.announceCrossings(board, containment)
 	for _, row := range persist {
@@ -502,6 +518,9 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	// Core's verified ephemeral topic, or none (an older Core, or one that
 	// could not verify it), which closes the live robot feed (robot_watch.go).
 	e.OfferEphemeralTopic(ack.EphemeralTopic)
+	if observer != nil {
+		observer()
+	}
 	if gap {
 		e.reconcileAfterGap(reconcile)
 	}
