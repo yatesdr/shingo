@@ -793,6 +793,43 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     eq(h.rows(), ['AMR-07'], 'a position again: no longer lost');
 }
 
+// ── 9b. An order with a robot that never gets a position (flat gap: it was
+// never said). Lost 3 x the interval after the panel opened, or after the
+// order was handed over if later; before any frame the interval is Core's
+// poll cadence (2000 ms, robotPollInterval), after one the stream's own. The
+// row says Position lost and names no robot: the stored one may be stale
+// (D14).
+{
+    const h = await shownPage(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }));
+    const opened = h.map().inspect().openedAt;
+    await h.advance(opened + 6000 - h.now());
+    eq(h.rowEls().length, 0, 'no frame yet, three of Core\'s polls since the panel opened: not lost yet');
+    await h.advance(2);
+    const li = h.rowEls()[0];
+    eq([h.rowEls().length, li && li.className, li && li.children[1].textContent, li && li.children[2].textContent],
+        [1, 'os-rp-row is-lost', '', 'Position lost'], 'past three polls with no position: a row saying Position lost, naming no robot');
+    eq([robotGroups(h).length, h.panel().textContent.indexOf('AMR-07')], [0, -1], 'no robot drawn, and the stored robot named nowhere (D14)');
+    eq(h.panelTimersPending(), 0, 'lost: no timer left for it');
+    // Its robot is heard from: the row is the robot's.
+    h.frame({ t: '2026-11-14T12:00:10.000Z', interval_ms: 1000, orders: [pos(501, 'AMR-07', 12, 0, PATH_WEST, 0)] });
+    await h.flush();
+    eq(h.rows(), ['AMR-07'], 'a first position: the row names the robot the stream named');
+    // A second order handed over long after the panel opened, never heard
+    // from: counted from its own handover, on the stream's interval (1000 ms).
+    await h.setView(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')], 4: [order(502, 'dispatched', 'AMR-08', 'PLN_04')] }));
+    const listed = h.map().inspect().listedAt[502];
+    eq(h.rowEls().length, 1, 'handed over a long while after the panel opened: not lost at once');
+    const keep = () => h.frame({ t: '2026-11-14T12:00:20.000Z', interval_ms: 1000, orders: [pos(501, 'AMR-07', 12, 0, PATH_WEST, 0)] });
+    while (h.now() < listed + 2999) { keep(); await h.advance(Math.min(900, listed + 2999 - h.now())); }
+    keep();
+    await h.flush();
+    eq(h.rows(), ['AMR-07'], 'just under three of the stream\'s intervals since its handover: not lost yet');
+    await h.advance(2);
+    keep();
+    await h.flush();
+    eq(h.rows(), ['AMR-07', 'Position lost'], 'past three intervals: its row says Position lost, after the robots drawn');
+}
+
 // ── 10. A tap hides it, and the tap never reaches the control under it.
 {
     const h = await shownPage(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }));

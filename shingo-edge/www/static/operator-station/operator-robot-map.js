@@ -49,8 +49,12 @@
 //
 // POSITION LOST: an order with no position for 3 x interval_ms (D3, D13)
 // draws its robot faded where it was last seen, no route and no comet, and
-// its row says so. One timer, armed only while the panel shows, wakes the
-// panel at the first such deadline.
+// its row says so. An order with a robot that has had no position at all
+// since the panel opened (or since it was handed over, the later) goes lost
+// the same way, on Core's poll cadence until a frame says the interval: its
+// row says Position lost and names no robot (D14; lead ruling on U10, 6).
+// One timer, armed only while the panel shows, wakes the panel at the first
+// such deadline.
 //
 // HIDDEN IS ZERO WORK (hide): the stream closed, the comet loop stopped, the
 // timer cleared, the positions forgotten, and nothing written to the panel
@@ -75,6 +79,13 @@ const NODE_PX = 5;
 const FONT_PX = 12;
 // Position lost after this many intervals with no position (D13).
 const LOST_AFTER = 3;
+// The interval an order with a robot is waited on before its first position,
+// when this page has not had a frame to read interval_ms from: Core's robot
+// poll cadence, `robotPollInterval` in shingo-core/engine/engine_background.go,
+// the value robot.positions carries as interval_ms
+// (protocol.RobotPositions.IntervalMS). The protocol holds no constant for it;
+// the Go wrapper of this file's pins names the symbol (EXPIRY by symbol).
+const CORE_POLL_MS = 2000;
 // When a robot is moving (movedFrom, movingAt), the calm's COMET_LIMIT and the
 // PICKUP_RADIUS are shared/robot-motion.js's, Core's robot map's too.
 // The crop: the set padded by FIT_SLACK of its extent on every side, by
@@ -185,6 +196,10 @@ export function createRobotMap(opts) {
     let rowsKey = null;
     let boxW = MAP_W, boxH = MAP_H;
     const tally = { misses: 0 };
+    // openedAt is when the stream opened; listedAt, order id -> when the order
+    // was first handed over with a robot since then; lastInterval the latest
+    // interval_ms a frame said, held for the page's life.
+    let openedAt = 0, listedAt = {}, lastInterval = 0;
 
     function show(v, o) {
         view = v;
@@ -192,6 +207,8 @@ export function createRobotMap(opts) {
         if (es) return;
         es = new EventSource('/events?topics=' + topic);
         es.addEventListener(topic, onFrame);
+        openedAt = Date.now();
+        noteListed(o);
         loadScene();
     }
 
@@ -199,8 +216,15 @@ export function createRobotMap(opts) {
         view = v;
         orders = o;
         if (!es) return;
+        noteListed(o);
         prune();
         if (revealed) draw();
+    }
+
+    // noteListed notes when each order was first handed over while shown.
+    function noteListed(o) {
+        const now = Date.now();
+        o.forEach(function (ord) { if (!listedAt[ord.id]) listedAt[ord.id] = now; });
     }
 
     function hide() {
@@ -209,6 +233,7 @@ export function createRobotMap(opts) {
         available = false;
         recs = {};
         picked = {};
+        listedAt = {};
         fit = null;
         if (revealed) {
             revealed = false;
@@ -268,6 +293,7 @@ export function createRobotMap(opts) {
             rec.seenAt = now;
             if (d.interval_ms > 0) rec.interval = d.interval_ms;
         });
+        if (d.interval_ms > 0) lastInterval = d.interval_ms;
         if (revealed) draw();
     }
 
@@ -282,13 +308,27 @@ export function createRobotMap(opts) {
         draw();
     }
 
-    // prune forgets the positions and the pickup latches of orders that no
-    // longer have a robot here.
+    // prune forgets the positions, the pickup latches and the listing times of
+    // orders that no longer have a robot here.
     function prune() {
         const live = {};
         orders.forEach(function (o) { live[o.id] = true; });
-        Object.keys(recs).forEach(function (id) { if (!live[id]) delete recs[id]; });
-        Object.keys(picked).forEach(function (id) { if (!live[id]) delete picked[id]; });
+        [recs, picked, listedAt].forEach(function (m) {
+            Object.keys(m).forEach(function (id) { if (!live[id]) delete m[id]; });
+        });
+    }
+
+    // neverSeen is the orders with a robot that have had no position since the
+    // panel opened, each with when it goes lost: 3 x the interval after the
+    // panel opened or the order was handed over, the later. The interval is
+    // the stream's last interval_ms, or Core's poll cadence before any frame.
+    // Its row names no robot: the robot is the stream's to name (D14).
+    function neverSeen(now) {
+        const interval = lastInterval || CORE_POLL_MS;
+        return orders.filter(function (o) { return !recs[o.id]; }).map(function (o) {
+            const due = Math.max(openedAt, listedAt[o.id] || openedAt) + LOST_AFTER * interval;
+            return { o: o, due: due, lost: now > due };
+        });
     }
 
     // shown is the robots drawn: each order with a position, once per robot,
@@ -361,8 +401,9 @@ export function createRobotMap(opts) {
             }
             comets.sync(routes, ROBOT_PX / fit.s, fit.view);
         }
-        drawRows(list, names);
-        armLost(list, now);
+        const unseen = neverSeen(now);
+        drawRows(list, names, unseen);
+        armLost(list, now, unseen);
     }
 
     // roomFor is the px each side of the crop keeps clear around the set, for
@@ -608,12 +649,16 @@ export function createRobotMap(opts) {
         return d.empty ? '' : d.text;
     }
 
-    // drawRows writes one row per robot drawn: its status dot, its id, its
-    // words; written only when one of them changed.
-    function drawRows(list, names) {
+    // drawRows writes one row per robot drawn (its status dot, its id, its
+    // words), then one per order whose robot was never seen and has gone lost
+    // (its dot and Position lost, no robot named); written only when one of
+    // them changed.
+    function drawRows(list, names, unseen) {
         const items = list.map(function (r) {
             return { robot: r.rec.robot, status: r.o.status, lost: r.lost, words: r.lost ? 'Position lost' : etaWords(r.o, names) };
-        });
+        }).concat(unseen.filter(function (u) { return u.lost; }).map(function (u) {
+            return { robot: '', status: u.o.status, lost: true, words: 'Position lost' };
+        }));
         const key = JSON.stringify(items);
         if (key === rowsKey) return;
         rowsKey = key;
@@ -636,14 +681,16 @@ export function createRobotMap(opts) {
         });
     }
 
-    // armLost wakes the panel when the first robot drawn would go lost.
-    function armLost(list, now) {
+    // armLost wakes the panel when the first robot drawn, or the first order
+    // still waiting on its first position, would go lost.
+    function armLost(list, now, unseen) {
         if (lostTimer) { clearTimeout(lostTimer); lostTimer = 0; }
         if (!es) return;
         let next = Infinity;
         list.forEach(function (r) {
             if (!r.lost && r.rec.interval > 0) next = Math.min(next, r.rec.seenAt + LOST_AFTER * r.rec.interval);
         });
+        unseen.forEach(function (u) { if (!u.lost) next = Math.min(next, u.due); });
         if (next < Infinity) lostTimer = setTimeout(onLost, Math.max(0, next - now) + 1);
     }
 
@@ -658,7 +705,8 @@ export function createRobotMap(opts) {
         hide: hide,
         // inspect is for the pins: what the panel holds, never written to.
         inspect: function () {
-            return { root: root, fits: fits, fit: fit, misses: tally.misses, comets: comets, open: !!es, revealed: revealed };
+            return { root: root, fits: fits, fit: fit, misses: tally.misses, comets: comets, open: !!es, revealed: revealed,
+                openedAt: openedAt, listedAt: Object.assign({}, listedAt) };
         },
     };
 }
