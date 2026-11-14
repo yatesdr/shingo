@@ -25,9 +25,10 @@ func TestSceneGeomAgreesWithTheRecordedVectors(t *testing.T) {
 
 // TestSceneNetRoutesAsTheDesktopDoes runs scene-net.test.js: the scene network
 // and the route model of shared/scene-net.js on the synthetic route scene. The
-// route vectors are the desktop process map's (TestProcessesDesktopRouteJS),
-// with the dead-end destination fixed; the lane list is the order and
-// orientation Core's robot map has always drawn its aisles in.
+// route vectors are the Edge desktop process map's, whose drawing and own
+// route pin were removed (2026-11-14), with the dead-end destination fixed;
+// the lane list is the order and orientation Core's robot map has always drawn
+// its aisles in.
 func TestSceneNetRoutesAsTheDesktopDoes(t *testing.T) {
 	runSceneJS(t, "scene-net.test.js")
 }

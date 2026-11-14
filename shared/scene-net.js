@@ -177,13 +177,14 @@ export function nearestVertex(scene, x, y) {
 // destination). Of two at the same distance the one whose first such row is
 // stored first wins.
 //
-// THE DESKTOP's ROUTER, WITH ONE FLAT BUG FIXED. processes-desktop.js
-// travelGraph/graphNodeFor/route is this model, pinned by
-// TestProcessesDesktopRouteJS on the route scene, and these answers are those
-// pins' answers. Except: the desktop snaps both ends over the vertices with a
-// row LEAVING them, so a destination only rows arrive at (a dead end) snapped
-// away from itself to its nearest neighbour with a way out. Here a destination
-// snaps over the vertices rows arrive at. Pinned with the desktop's vectors in
+// THE DESKTOP's ROUTER, WITH ONE FLAT BUG FIXED. The Edge desktop process
+// map's travelGraph/graphNodeFor/route was this model, pinned on the route
+// scene by TestProcessesDesktopRouteJS until that map's drawing was removed
+// (2026-11-14), and these answers are those pins' answers. Except: the desktop
+// snapped both ends over the vertices with a row LEAVING them, so a
+// destination only rows arrive at (a dead end) snapped away from itself to its
+// nearest neighbour with a way out. Here a destination snaps over the vertices
+// rows arrive at. The desktop's vectors live on in
 // shared/testdata/js/scene-net.test.js.
 //
 // Dijkstra over a binary heap ordered by distance and then by the order a

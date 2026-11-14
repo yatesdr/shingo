@@ -17,9 +17,6 @@
 import { renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
-import {
-    makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
-} from '/static/shared/scene-geom.js';
 import { sceneRoute } from '/static/shared/scene-net.js';
 // THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
 // this page puts up is an entry on it — see pageSheet, showSheet and showPop.
@@ -95,7 +92,6 @@ const S = {
     routing: null,       // D3's rows — every one, the disabled backfills included
     routingError: '',    // the server's refusal, by name
     routingWarning: '',  // what the last removal orphans, by name
-    graph: null,         // the travel graph, built once per map
     settings: null,      // D5's draft; nothing is written until Save settings
     settingsError: '',
     settingsNotice: '',   // a success, which is not a refusal and is not drawn as one
@@ -103,17 +99,14 @@ const S = {
     flowSaved: null,     // {styleID, at}: the last Save flow, which the bar names until the next edit
     sheet: null,         // the open sheet: {handle} (its layer entry), and {run} for the apply modal's own OK
     menuFrom: null,      // the control the open popover menu hangs off: a sheet a row opens returns focus there
-    mapZoom: 1,
-    plantMap: null,      // the Edge's plant map on the list, for Add process: read when that sheet opens
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
     coreNodes: null,     // Core's node list as the Edge sent it (NODES' rows), null until read
     pickers: {},         // every open node picker, by key — see pickerInit
     sets: {},            // every set picker's four buckets, by its picker's key — see setInit
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
-    stMap: null,         // Settings' map shown or put away: {pid, shown} — see stMapShown
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
-    add: null,           // the process sheet's own non-text draft: {groupID, map, edit, station, before}
+    add: null,           // the process sheet's own non-text draft: {groupID, edit, station, before}
     partPop: null,       // the open part popover: {node, q, note, catalogFailed}
     partSet: null,       // the STORED half of the open process's part set; null = not read
     newStyle: null,      // the New style sheet's Spots step: {recipe, moves, sel} — see drawNewSpots
@@ -688,14 +681,11 @@ async function openSettingsAt(heading) {
 async function openProcess(id) {
     S.processID = id;
     S.tab = 'flows';
-    // Everything derived from the last process goes with it: a travel graph
-    // built from another plant's map, or another press's routing rows, would
-    // draw one process's routes on another's picture.
-    S.graph = null;
+    // Everything derived from the last process goes with it: another press's
+    // routing rows would be read as this one's.
     S.routing = null;
     S.routingError = '';
     S.routingWarning = '';
-    S.mapZoom = 1;
     // The routing pickers go with the routing set: they are write-through onto
     // THIS process's rows, and one left behind would post another press's name
     // into this one.
@@ -3088,7 +3078,7 @@ function routingFieldOf(kind) {
 // its picker is empty for a reason nothing on this page can fix, and it says
 // that instead of the generic line.
 function pickerEmptyWord(kind) {
-    if (String(kind).split(':')[0] === 'via' && !mapOf()) return 'No plant map on this Edge yet';
+    if (String(kind).split(':')[0] === 'via' && !(S.composer && S.composer.map)) return 'No plant map on this Edge yet';
     if (kind === 'position') return 'No free position on this station to move to';
     const note = S.model ? M().routingNote(S.model, routingFieldOf(kind), 0) : '';
     return note || 'Nothing to choose here yet.';
@@ -3504,451 +3494,21 @@ function sayDropped(node, before, after) {
     toast((M().modeLabels()[now.mode] || now.mode) + ' does not use ' + gone.join(', ') + ': dropped from ' + node + '.', 'info');
 }
 
-// ── D3 · Routing set on the map (SPEC §2 D3) ─────────────────────────────────
+// ── D3 · the routing set's roles, and the key route's waypoints ──────────────
 //
-// The routing set was a list of names. It is the set of places this press may
-// draw bins from, park them at and send them to, and every one of those is
-// somewhere — so the screen is the plant, with the names beside it.
+// The routing set is the places this press may draw bins from, stage them at
+// and send them to, picked by name off one list in four buckets (setInit).
 //
-// VIEW AND ADOPT, NEVER EDIT (SPEC §3). Nothing here writes geometry; the map
-// is Core's, cached by U4, and the only writes are the routing set's own:
-// enable, adopt, add. A backfill row nobody ruled on shows amber with Adopt,
-// which is the whole reason origin is stored.
-//
-// The projection is shared/scene-geom.js — Core's map, the station's cell
-// picture and this screen project the same plant with the same function, so a
-// route weighed on one surface is the route drawn on the others.
+// IT HAS NO PLANT MAP ANY MORE. Settings and the process sheet drew the set,
+// its two route legs and the press on Core's plant behind Show on map; that
+// drawing was removed (2026-11-14, the shared-map brief's tier A1). Its data
+// stays: the composer read still carries the ComposerMap, the key-route walk's
+// network.
 
-const AISLE_FIT_PAD = 3;        // metres of plant left around the fitted region
-const LABEL_PAD = 56;           // screen px kept clear for the marks' labels
-
-// mapOf is the open process's map, from its composer read. ON THE LIST it is
-// the one Add process read when it opened (S.plantMap): the composer the list
-// still holds is the last process opened, so the sheet's map — whether Show
-// on map was drawn at all — hung on where the engineer had been.
-function mapOf() {
-    if (!S.processID) return S.plantMap || null;
-    return (S.composer && S.composer.map) || null;
-}
-
-// The travel graph: adjacency over the cache's edges, weighted by the DRIVEN
-// length — the cubic's arc length on a bowed lane, not its chord, because a
-// chord is up to a quarter short and makes the shortest path prefer a route
-// the robot does not find shorter (shared/scene-geom.js).
-function travelGraph() {
-    if (S.graph) return S.graph;
-    const m = mapOf();
-    const adj = {};
-    if (!m) { S.graph = adj; return adj; }
-    // An edge names its endpoints; the map places them. The server guarantees
-    // every endpoint is in points (composerMap), so this cannot miss — and it
-    // is why the edge no longer ships a second copy of the coordinates.
-    for (const e of m.edges || []) {
-        const p0 = m.points[e.from], p3 = m.points[e.to];
-        if (!p0 || !p3) continue;
-        const len = e.h ? cubicLength(p0, e.h, p3) : Math.sqrt(dist2(p0, p3));
-        (adj[e.from] = adj[e.from] || []).push({ to: e.to, len: len, e: e });
-    }
-    S.graph = adj;
-    return adj;
-}
-
-// A node name is placed at its GeneralLocation — the join rule the server's
-// LocateCellPosition states. The TRAVEL graph, though, runs between the
-// robot's approach points, and no row joins a bin location to the point a
-// robot stands at to serve it. So the graph entry for a name is the nearest
-// graph node to its placement: measured rather than guessed from a spelling,
-// and it is the same answer the fleet reaches by driving there.
-function graphNodeFor(name) {
-    const m = mapOf();
-    if (!m || !name) return '';
-    const adj = travelGraph();
-    if (adj[name]) return name;
-    const p = m.points[name];
-    if (!p) return '';
-    let best = '', bestD = Infinity;
-    for (const g of Object.keys(adj)) {
-        const q = m.points[g];
-        if (!q) continue;
-        const d = dist2(p, q);
-        if (d < bestD) { bestD = d; best = g; }
-    }
-    return best;
-}
-
-// Dijkstra. Small graphs — Hopkinsville is 383 points — walked twice a draw.
-function route(a, b) {
-    if (!a || !b || a === b) return null;
-    const adj = travelGraph();
-    const dist = {}, prev = {}, seen = {};
-    dist[a] = 0;
-    const pq = [[0, a]];
-    while (pq.length) {
-        pq.sort((x, y) => x[0] - y[0]);
-        const head = pq.shift();
-        const d = head[0], u = head[1];
-        if (u === b) break;
-        if (seen[u]) continue;
-        seen[u] = true;
-        for (const edge of adj[u] || []) {
-            const nd = d + edge.len;
-            if (nd < (dist[edge.to] === undefined ? Infinity : dist[edge.to])) {
-                dist[edge.to] = nd;
-                prev[edge.to] = edge;
-                pq.push([nd, edge.to]);
-            }
-        }
-    }
-    if (dist[b] === undefined) return null;
-    const path = [];
-    let u = b;
-    while (u !== a) {
-        const edge = prev[u];
-        if (!edge) return null;
-        path.unshift(edge.e);
-        u = edge.e.from;
-    }
-    return path;
-}
-
-// NGRP membership, from the PICTURE. It used to come off ComposerScene, which
-// this read no longer carries: Scene and Map are the same network and a payload
-// must not carry both, so the desktop takes Map. The membership map was never
-// scene geometry anyway — CellPicture.Groups is the one copy, and both
-// surfaces already have the picture.
-function membersOfGroup(name) {
-    const g = S.composer.cell.groups;
-    return g[name] || [];
-}
-
-// The region the view is fitted to: the press's positions and the members of
-// every group in the routing set. The rest of the plant is drawn behind it and
-// runs off the edges, which is what "the rest of the plant faint" means.
-// The rows the set actually HAS. A disabled row is a decision nobody has made
-// — it is not in the set, the composer is not offered it, and the map must not
-// draw it or fit itself around it. Both readers below took `S.routing` whole,
-// so every backfilled-but-unadopted name on a migrated press was drawn as a
-// dashed group and pulled the view out to include it, while its chip was
-// (correctly) absent — and clicking that box called flashRoutingRow, which
-// found no chip and did nothing. The section's own comment says the map is the
-// read-back; this is what makes that true.
-function enabledRouting() {
-    return (S.routing || []).filter(r => r.enabled);
-}
-
-// ── what the map is a map OF ────────────────────────────────────────────────
-//
-// THE PAGE'S SCOPE IS THE SAVED PROCESS; A SHEET'S IS THE SELECTION BEING MADE
-// (owner ruling 5, 2026-09-17: the map becomes the read-back inside Add
-// process). An engineer creating a cell has picked five positions and three
-// supermarkets and has nothing to look at but three lists of names — which is
-// the state the routing set's own tab was built to fix for a MIGRATED process
-// and never did for a new one.
-//
-// A SCOPE RATHER THAN A SECOND DRAWING, because the drawing is the thing worth
-// reusing: the aisles, the group boxes, the role marks, the label placement
-// and the two route legs are all already right, and a copy of them for the
-// sheet would be the second-renderer problem this file has fixed twice.
-function pageMapScope() {
-    return {
-        positions: S.composer.cell.positions.map(p => p.core_node_name),
-        routing: enabledRouting(),
-    };
-}
-
-// sheetMapScope reads the pickers, which are the only place the answer lives:
-// nothing has been written yet, and the whole point of the read-back is to show
-// the engineer what they have picked BEFORE it is.
-function sheetMapScope() {
-    return {
-        positions: setValue(PROC_SET, 'positions'),
-        routing: setRoutingRows(PROC_SET).map(r => Object.assign(r, { enabled: true })),
-    };
-}
-
-function fitRegion(m, scope) {
-    const names = [];
-    for (const n of scope.positions) names.push(n);
-    for (const r of scope.routing) {
-        names.push(r.core_node_name);
-        for (const mem of membersOfGroup(r.core_node_name)) names.push(mem);
-    }
-    const pts = names.map(n => m.points[n]).filter(Boolean);
-    if (!pts.length) return null;
-    return {
-        x0: Math.min.apply(null, pts.map(p => p.x)) - AISLE_FIT_PAD,
-        x1: Math.max.apply(null, pts.map(p => p.x)) + AISLE_FIT_PAD,
-        y0: Math.min.apply(null, pts.map(p => p.y)) - AISLE_FIT_PAD,
-        y1: Math.max.apply(null, pts.map(p => p.y)) + AISLE_FIT_PAD,
-    };
-}
-
-// The WHOLE plant's bounds decide the orientation, never the fitted region: a
-// region that happens to be tall must not flip the map under the engineer
-// (shared/scene-geom.js, rotate90For).
-function plantProjector(m) {
-    const xs = [], ys = [];
-    for (const k of Object.keys(m.points)) { xs.push(m.points[k].x); ys.push(m.points[k].y); }
-    return makeProjector(rotate90For(
-        Math.min.apply(null, xs), Math.max.apply(null, xs),
-        Math.min.apply(null, ys), Math.max.apply(null, ys)));
-}
-
-// Every caller has checked mapOf() first: with no map there is no frame to
-// draw into.
-function drawMap(w, h, scope) {
-    const m = mapOf();
-    scope = scope || pageMapScope();
-    const project = plantProjector(m);
-    const region = fitRegion(m, scope);
-    const corners = region
-        ? [project(region.x0, region.y0), project(region.x1, region.y0),
-        project(region.x0, region.y1), project(region.x1, region.y1)]
-        : Object.keys(m.points).map(k => project(m.points[k].x, m.points[k].y));
-    const sx = corners.map(c => c[0]), sy = corners.map(c => c[1]);
-    const rx0 = Math.min.apply(null, sx), rx1 = Math.max.apply(null, sx);
-    const ry0 = Math.min.apply(null, sy), ry1 = Math.max.apply(null, sy);
-    // The fit leaves a margin in SCREEN space, not a fraction of the region: a
-    // position's label is drawn 11 px outside its square and is the same 11 px
-    // whatever the plant measures, so a percentage shrink either wastes half
-    // the frame on a long plant or clips the labels on a short one.
-    const k = Math.min((w - 2 * LABEL_PAD) / (rx1 - rx0), (h - 2 * LABEL_PAD) / (ry1 - ry0)) * S.mapZoom;
-    const ox = (w - (rx1 - rx0) * k) / 2, oy = (h - (ry1 - ry0) * k) / 2;
-    const T = (x, y) => { const s = project(x, y); return [ox + (s[0] - rx0) * k, oy + (s[1] - ry0) * k]; };
-    const Tp = n => { const p = m.points[n]; return p ? T(p.x, p.y) : null; };
-    const edgeD = e => {
-        const a = Tp(e.from), d = Tp(e.to);
-        if (!a || !d) return '';
-        if (!e.h) return 'M' + a[0] + ' ' + a[1] + 'L' + d[0] + ' ' + d[1];
-        return cubicPathD(a, T(e.h[0], e.h[1]), T(e.h[2], e.h[3]), d);
-    };
-
-    let s = '';
-    // Every drivable segment, ONCE PER PHYSICAL LANE. The graph is stored
-    // directed and driven both ways, so a straight walk double-strokes every
-    // aisle (shared/scene-geom.js, laneKey).
-    const drawn = {};
-    for (const e of m.edges) {
-        const key = laneKey(e.from, e.to);
-        if (drawn[key]) continue;
-        drawn[key] = true;
-        s += '<path class="mp-edge" d="' + edgeD(e) + '"/>';
-    }
-
-    // The two trips the routing set implies: Robot 1 out with a new bin,
-    // Robot 2 home with the old one.
-    const legs = routeLegs(scope);
-    const pathD = p => p.map(edgeD).join('');
-    if (legs.supply) s += '<path class="mp-route r1" d="' + pathD(legs.supply) + '"/>';
-    if (legs.back) s += '<path class="mp-route r2" d="' + pathD(legs.back) + '"/>';
-
-    for (const n of waypointNames()) {
-        const p = Tp(n);
-        if (!p) continue;
-        s += '<circle class="mp-key" cx="' + p[0] + '" cy="' + p[1] + '" r="4"/>' +
-            '<text class="mp-keyt" x="' + (p[0] + 7) + '" y="' + (p[1] - 5) + '">' + esc(n) + '</text>';
-    }
-
-    // EVERY NAME IN THE SET IS ON THE MAP, and until now most of them were not.
-    //
-    // This loop drew a dashed rectangle around a GROUP's members and did
-    // `if (!mem.length) continue` for everything else — so a routing row that
-    // is a plain node rather than an NGRP group was drawn NOWHERE. At
-    // Hopkinsville the 4x2's whole routing set is plain nodes (SMN_015..021 as
-    // source and destination, SLN_09..013 as staging), so the map showed its
-    // five ALN positions and nothing at all besides: "I do not see the nodes
-    // marked as inbound staging", and "I still don't see the sourcing nodes
-    // flowing to the nodes above it". Both were this line.
-    //
-    // ONE MARK PER NAME, NOT PER ROW. A buffer is legitimately both a source
-    // and a destination (domain/routing_set.go) and at that press seven names
-    // are exactly that — two rows at one point would be two marks on top of
-    // each other, so the roles are collected and the mark says all of them.
-    const ROLE_SHORT = { source: 'in', staging: 'stage', destination: 'out' };
-    const roles = {};
-    for (const r of scope.routing) {
-        if (!roles[r.core_node_name]) roles[r.core_node_name] = [];
-        if (roles[r.core_node_name].indexOf(r.role) < 0) roles[r.core_node_name].push(r.role);
-    }
-    for (const name of Object.keys(roles)) {
-        // The order material moves, whatever order the rows arrived in, so a
-        // name in two roles always reads "in/out" and never "out/in".
-        const mine = ROUTING_GROUPS.map(g => g[0]).filter(role => roles[name].indexOf(role) >= 0);
-        const word = mine.map(role => ROLE_SHORT[role] || role).join('/');
-        // A group is its members' bounding box; a plain node is its own point.
-        const mem = membersOfGroup(name).map(Tp).filter(Boolean);
-        const cls = 'mp-rt ' + mine.join(' ');
-        if (mem.length) {
-            const gx = mem.map(p => p[0]), gy = mem.map(p => p[1]);
-            const x0 = Math.min.apply(null, gx) - 14, y0 = Math.min.apply(null, gy) - 14;
-            const x1 = Math.max.apply(null, gx) + 14, y1 = Math.max.apply(null, gy) + 14;
-            s += '<rect class="mp-grp ' + mine.join(' ') + '" x="' + x0 + '" y="' + y0 +
-                '" width="' + (x1 - x0) + '" height="' + (y1 - y0) + '" rx="8" data-mapname="' + esc(name) + '"/>' +
-                '<text class="mp-grpt" x="' + x0 + '" y="' + (y0 - 8) + '">' +
-                esc(name) + ' · ' + esc(word) + '</text>';
-            // A group's members carry its roles too, so they take the role's
-            // colour (the set picker's bucket colour), as its box does.
-            for (const p of mem) {
-                s += '<rect class="mp-smn ' + mine.join(' ') + '" x="' + (p[0] - 5) + '" y="' + (p[1] - 5) +
-                    '" width="10" height="10" rx="2"/>';
-            }
-            continue;
-        }
-        const pt = Tp(name);
-        if (!pt) continue;   // a name Core's map has no point for — see the derive's report
-        // A CIRCLE, because the press's own positions are squares. The shape
-        // says "this is somewhere material comes from or goes to"; the colour
-        // says which, and the word under it says it in letters for anyone who
-        // cannot separate the two hues.
-        s += '<circle class="' + cls + '" cx="' + pt[0] + '" cy="' + pt[1] + '" r="6" ' +
-            'data-mapname="' + esc(name) + '"/>' +
-            '<text class="mp-rtt" x="' + pt[0] + '" y="' + (pt[1] - 11) + '" text-anchor="middle">' +
-            esc(name) + '</text>' +
-            '<text class="mp-rtr" x="' + pt[0] + '" y="' + (pt[1] + 18) + '" text-anchor="middle">' +
-            esc(word) + '</text>';
-    }
-
-    // THE PRESS, AND ITS LABELS OFF EACH OTHER.
-    //
-    // A press's positions are about 1.7 m apart, which at plant scale is a few
-    // pixels: at Hopkinsville PLN_04/PLN_06 and PLN_01/PLN_03 land within 6 px
-    // of each other and their labels sat on top of each other, unreadable.
-    //
-    // The side used to be chosen by CellPosition.Kind, which is not a place —
-    // it says whether a position is a partner slot for any style, and all four
-    // of those are Kind "front", so all four labels went right at their own y.
-    // Nor is a front/back ROW the answer here: this map is rotated to lie the
-    // supply run along the wide axis, and the press comes out as a near-
-    // vertical line of six marks rather than two rows of three.
-    //
-    // So the labels are PLACED, not sided: each one takes the first of four
-    // offsets (right-up, right-down, left-up, left-down) whose box clears every
-    // label already placed. It is a few marks on one press — the quadratic cost
-    // is nothing, and it is the only rule that keeps working whichever way the
-    // map is turned.
-    const positions = scope.positions.map(n => ({ core_node_name: n }));
-    const live = {};
-    if (S.model) for (const n of Object.keys(S.model.cells)) if (S.model.cells[n].on) live[n] = true;
-    for (const lab of placeMapLabels(positions, Tp)) {
-        s += '<rect class="mp-pos' + (live[lab.name] ? ' on' : '') + '" x="' + (lab.x - 6) + '" y="' + (lab.y - 6) +
-            '" width="12" height="12" rx="2" data-mapname="' + esc(lab.name) + '"/>' +
-            '<text class="mp-post" x="' + lab.lx + '" y="' + lab.ly + '" text-anchor="' + lab.anchor + '">' +
-            esc(lab.name) + '</text>';
-    }
-
-    // The press's own name, above its rows — the map says which press this is
-    // without the engineer reading position ids to find out.
-    const placed = positions.map(pos => Tp(pos.core_node_name)).filter(Boolean);
-    if (placed.length) {
-        const p = process();
-        const lx = placed.reduce((a, q) => a + q[0], 0) / placed.length;
-        const ly = Math.min.apply(null, placed.map(q => q[1]));
-        s += '<text class="mp-grpt" x="' + lx + '" y="' + (ly - 22) + '" text-anchor="middle">' +
-            esc((p ? p.name : '').toUpperCase()) + '</text>';
-    }
-
-    return '<svg viewBox="0 0 ' + w + ' ' + h + '" id="pd-map">' + s + '</svg>';
-}
-
-// routeLegs picks the pair of trips the map draws: whatever the flow on screen
-// actually says. The first live cell's source to where its new bin waits, and
-// the position itself back out to where its old bin goes. A group is entered
-// at one of its members, because a group is not a place a robot drives to.
-// placeMapLabels puts each press label somewhere it does not sit on another.
-//
-// Four candidate offsets per mark, in order — right-up, right-down, left-up,
-// left-down — and the first whose box clears every box already placed wins. If
-// all four collide (three marks in a 12 px huddle), the last is taken and
-// pushed a row further down, which is worse than ideal and still readable.
-//
-// The box is estimated rather than measured: getBBox() needs the element in
-// the document and these are built as a string. 5.4 px per character at the
-// 9 px mono the labels use, and a 12 px line.
-const MAP_LABEL_CH = 5.4;
-const MAP_LABEL_H = 12;
-
-function placeMapLabels(positions, Tp) {
-    const out = [];
-    const placed = [];
-    const hits = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
-    for (const pos of positions) {
-        const n = pos.core_node_name;
-        const p = Tp(n);
-        if (!p) continue;
-        const w = n.length * MAP_LABEL_CH;
-        let chosen = null;
-        for (const [dx, dy] of [[11, -6], [11, 6], [-11, -6], [-11, 6]]) {
-            const lx = p[0] + dx, ly = p[1] + 3.5 + dy;
-            const box = {
-                x0: dx > 0 ? lx : lx - w, x1: dx > 0 ? lx + w : lx,
-                y0: ly - MAP_LABEL_H, y1: ly + 3,
-            };
-            if (placed.every(q => !hits(box, q))) {
-                chosen = { lx: lx, ly: ly, anchor: dx > 0 ? 'start' : 'end', box: box };
-                break;
-            }
-        }
-        if (!chosen) {
-            // Every side taken. Drop it a line rather than draw it on a
-            // neighbour: an offset label is readable, an overlapped one is not.
-            const lx = p[0] + 11, ly = p[1] + 3.5 + 6 + MAP_LABEL_H;
-            chosen = {
-                lx: lx, ly: ly, anchor: 'start',
-                box: { x0: lx, x1: lx + w, y0: ly - MAP_LABEL_H, y1: ly + 3 },
-            };
-        }
-        placed.push(chosen.box);
-        out.push({ name: n, x: p[0], y: p[1], lx: chosen.lx, ly: chosen.ly, anchor: chosen.anchor });
-    }
-    return out;
-}
-
-function routeLegs(scope) {
-    const out = { supply: null, back: null };
-    const oneOf = name => membersOfGroup(name)[0] || name;
-    // THE FLOW ON SCREEN, when there is one: the first live cell's source to
-    // where its new bin waits, and the position itself back out to where its
-    // old bin goes.
-    if (S.model) {
-        const n = Object.keys(S.model.cells).find(k => S.model.cells[k].on && S.model.cells[k].mode);
-        if (n) {
-            const c = S.model.cells[n];
-            const park = c.staging || c.paired || n;
-            out.supply = route(graphNodeFor(oneOf(c.source)), graphNodeFor(park));
-            out.back = route(graphNodeFor(n), graphNodeFor(oneOf(c.dest)));
-            return out;
-        }
-    }
-    // NO FLOW YET, WHICH IS THE ADD-PROCESS CASE AND THE WHOLE POINT OF THE
-    // READ-BACK. A cell being created has no claims to read a trip off, so the
-    // legs are drawn between what has been PICKED: the first source in to the
-    // first position, and that position back out to the first destination.
-    //
-    // THE FIRST OF EACH, because the first is the one that matters — the lowest
-    // sequence of a role is the default every new position opens on
-    // (composer-model's defaultRouting), so these two lines are the trips this
-    // cell will actually make unless somebody changes them.
-    if (!scope || !scope.positions.length) return out;
-    const roleFirst = role => {
-        const r = scope.routing.find(x => x.role === role);
-        return r ? r.core_node_name : '';
-    };
-    const src = roleFirst('source'), dst = roleFirst('destination');
-    const pos = scope.positions[0];
-    if (src) out.supply = route(graphNodeFor(oneOf(src)), graphNodeFor(pos));
-    if (dst) out.back = route(graphNodeFor(pos), graphNodeFor(oneOf(dst)));
-    return out;
-}
-
-// The waypoints the composer offers, and the dots on the map: the LM points
-// along the supply path, evenly spaced, at most four.
-//
-// ONE WALK, AND NOW THAT IS TRUE. This comment said it while reading
-// routeLegs() — the desktop's own cubic-arc route, which is a DRAWING — so the
-// dots on the map and the options in the picker came from two different
-// searches over two different graphs. The drawing stays the desktop's; which
-// points are offered is a choice, and the model makes it once for both
-// surfaces.
+// waypointNames is the waypoints the composer offers for the first live
+// position with a mode: the LM points along its supply path, evenly spaced, at
+// most four, from the model's walk over the shared route model
+// (composer-model.js viaWaypoints). Settings' Waypoints line reads it.
 function waypointNames() {
     if (!S.model) return [];
     const n = Object.keys(S.model.cells).find(k => S.model.cells[k].on && S.model.cells[k].mode);
@@ -3984,9 +3544,9 @@ function isPositionRow(name) {
 // Now one checklist answers all four. The bucket chosen above it says what a
 // tick does, the bucket's names sit under it as removable tokens (the picker's
 // chips), and a row already in another bucket carries that bucket's tag. Each
-// bucket has one colour, the map's (.mp-pos, .mp-rt, .mp-grp): the page's text
-// colour for positions, Robot 1's for inbound, the map's orange class colour
-// for staging, Robot 2's for outbound.
+// bucket has one colour: the page's text colour for positions, Robot 1's for
+// inbound, an orange node-class colour (--map-class-5) for staging, Robot 2's
+// for outbound.
 //
 // THE RULES ARE THE BUCKETS', NOT THE LIST'S. A position is a plain node (a
 // group is its members, one box each); a routing role takes a group too. A
@@ -4155,15 +3715,6 @@ const ROLE_EVIDENCE = {
 // used to carry it — with a switch, a provenance line and a members line per
 // name — went with the per-row switches (owner, 2026-09-16 second pass).
 
-// mapSubject is what the map is a map OF: the press, by the name an engineer
-// calls it. The station's name when the process has one, because that is the
-// name on the floor; the process's otherwise.
-function mapSubject() {
-    const p = process();
-    const st = p ? stationsOf(p.id)[0] : null;
-    return (st && st.name) || (p && p.name) || 'this process';
-}
-
 // ── the routing set, in Settings (owner ruling 2026-09-16) ───────────────────
 //
 // THE ROUTING SET HAD A TAB, AND CREATION IS NOT REVIEW. That tab was built to
@@ -4171,8 +3722,7 @@ function mapSubject() {
 // switch, the evidence line under a name — and every one of those is a REVIEW,
 // which is what Settings is for. Making a routing set is three short lists on
 // the Add-process sheet and is over in a minute. So the review lives here,
-// beside the gate it is the precondition for, and the map beside it is a
-// read-back rather than the only way in.
+// beside the gate it is the precondition for.
 //
 // THREE ROLES, NOT ONE SET OF NAMES, because composer-model's defaultRouting
 // picks a cell's source and destination by lowest sequence PER ROLE: source,
@@ -4414,31 +3964,15 @@ async function rsAllOn(role) {
     await refreshProcess();
 }
 
-// stMapShown: whether Settings' map is drawn. THE TOGGLE BELONGS TO THE TAB, so
-// a redraw (every tick here is one) keeps it, and to the process, so the next
-// process opens with its map put away.
-function stMapShown() {
-    if (!S.stMap || S.stMap.pid !== S.processID) S.stMap = { pid: S.processID, shown: false };
-    return S.stMap.shown;
-}
-
 function setSection() {
     stSetReady();
     const way = waypointNames();
-    const m = mapOf();
-    const shown = !!m && stMapShown();
     // THE HEADING DESCRIBES THE SET, and the server's summary sentence does
     // not: it counts the rows a backfill derived, a true answer to a narrower
     // question, read above the whole set as though it described it.
     return '<div class="pd-sect"><h2>Positions and routing set</h2>' +
         '<span class="pd-dim">where this process works, and where it may draw bins from, stage them, and send them</span>' +
         SAVED_AS_YOU_PICK +
-        // THE MAP WAITS BEHIND SHOW ON MAP, as it does on the process sheet: a
-        // 520 px drawing of the plant under the buckets put the parts and
-        // everything after them a screen further down, for a read-back an
-        // engineer looks at now and then (HOP, 2026-11-12).
-        (m ? '<span class="pd-spacer"></span><button type="button" class="pd-maptoggle" data-act="st-showmap" ' +
-            'aria-controls="pd-rsmapbox" aria-expanded="' + shown + '">' + (shown ? 'Hide map' : 'Show on map') + '</button>' : '') +
         '</div>' +
         (routingUnread() ? '<div class="pd-refusal">' + esc(S.routingError ||
             'The routing set could not be read.') + '</div>' : '') +
@@ -4452,37 +3986,7 @@ function setSection() {
         'material through, and operators are offered these and never the plant. There is nothing to switch ' +
         'on: a name in the list is set up. A recipe follows the one name in a role; with several, it ' +
         'keeps the one it was saved with. Taking one out warns what it leaves behind. Whether ' +
-        'operators may change flows at all is the HMI setup row below.</p>' +
-        // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
-        // process's own positions and routing names (pageMapScope, fitRegion),
-        // and a click on a name flashes that name's token. It is not an
-        // input: a click on a dot could only guess at the role, and the
-        // buckets above are the engineer saying it. It is drawn only while
-        // shown. With no map there is nothing to read back, so there is no
-        // toggle, frame, zoom or caption either.
-        (!m ? '<p class="pd-note">No plant map on this Edge yet. Core sends it with the ' +
-            'node list; until then the lists above are the whole routing set.</p>'
-            : shown ? routingMap(m) : '');
-}
-
-// ROUTING_MAP_W x ROUTING_MAP_H is the Settings map's drawing: the process
-// sheet's read-back size (sheetMapSvg), so the two draw a press at one scale,
-// and 340 high so the map, shown, leaves the sections under it in reach on a
-// 900 px screen. The frame takes the drawing's aspect (.pd-rsmap).
-const ROUTING_MAP_W = 900;
-const ROUTING_MAP_H = 340;
-
-// The caption's key is the set picker's buckets, each in its colour (the
-// buckets' --bk), so a mark on the map and a token in the list read alike.
-function routingMap(m) {
-    const key = BUCKETS.map(b => '<span class="mp-leg ' + b[0] + '"><i></i>' + esc(b[1]) + '</span>').join('');
-    return '<div class="pd-map pd-rsmap" id="pd-rsmapbox">' + drawMap(ROUTING_MAP_W, ROUTING_MAP_H) +
-        '<div class="cap">' + key + '<span>' + esc(mapSubject()) + ' · ' +
-        esc('plant map from Core · revision ' + m.revision) +
-        ' · paths: Robot 1 supply, Robot 2 return</span></div>' +
-        '<div class="zoom"><button data-act="rs-zoom" data-z="in">+</button>' +
-        '<button data-act="rs-zoom" data-z="out">&minus;</button>' +
-        '<button data-act="rs-zoom" data-z="home">&#8962;</button></div></div>';
+        'operators may change flows at all is the HMI setup row below.</p>';
 }
 
 // PUTTING A NAME IN A ROLE AND TAKING IT OUT, and there is no third state.
@@ -4558,7 +4062,7 @@ async function loadRouting() {
     const res = await send('GET', '/api/processes/' + S.processID + '/routing-nodes', undefined, NO_NOTICE);
     // A READ THAT FAILED IS NOT AN EMPTY SET. This swallowed !res.ok into {},
     // so a 500 or a dropped connection drew three roles of "nothing picked
-    // yet", an empty summary and a map with only the press — indistinguishable
+    // yet" and an empty summary — indistinguishable
     // from a process that genuinely has no routing set, and permanently so,
     // because S.routing was then [] rather than null and openSettings never
     // retried. An engineer could have "re-added" names that were already
@@ -4575,31 +4079,6 @@ async function loadRouting() {
     const rows = Array.isArray(view) ? view : (view.rows || view.routing_nodes || []);
     S.routing = rows;
     S.routingError = '';
-}
-
-// Clicking a name on the map FLASHES ITS ROW, and that is the whole of it.
-//
-// It used to ADD the name, in the role the map implied — a group sources and
-// receives, a press position stages — and that implication is a guess the
-// engineer can make better than the drawing can: they say the role by which of
-// the three lists they put the name in. SPEC's "clicking a map group or node
-// adds it" is superseded (owner ruling 2026-09-16).
-//
-// A name with no row — a front position, or any of the plant drawn faint
-// behind the press — flashes nothing. The map is most of a plant this press
-// has no business in, and a sentence for every faint dot is noise.
-function flashRoutingRow(name) {
-    // The token, because the token is the set now — the rows this used to
-    // find went with the per-row switches. A token is drawn for the open
-    // bucket only, so the first bucket that holds the name is opened.
-    const set = S.sets[ST_SET];
-    const holder = set && BUCKETS.map(b => b[0]).find(b => set.sel[b].indexOf(name) >= 0);
-    if (holder && holder !== set.active) setBucket(ST_SET, holder);
-    const drop = root().querySelector('.picker-chip [data-drop="' + CSS.escape(name) + '"]');
-    const chip = drop && drop.closest('.picker-chip');
-    if (!chip) return;
-    chip.scrollIntoView({ block: 'nearest' });
-    chip.classList.add('flash');
 }
 
 // The bar's problem line, clicked: the finding's position becomes the
@@ -5138,7 +4617,6 @@ function onAdvClick(e) {
         processSheetScreen(Number(act.dataset.station));
         return;
     }
-    if (act && act.dataset.act === 'add-showmap') { e.stopPropagation(); toggleSheetMap(); return; }
     if (act && act.dataset.act === 'newstyle-parts') { e.stopPropagation(); closeSheet(); void openSettingsAt('Parts'); return; }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
@@ -5933,10 +5411,7 @@ async function afterPositionsChanged(stationID) {
     S.settingsError = '';
     await refreshStationNodes(stationID);
     const res = await send('GET', '/api/processes/' + S.processID + '/composer');
-    if (res.ok) {
-        takeComposer(res.body);
-        S.graph = null;
-    }
+    if (res.ok) takeComposer(res.body);
     await loadCurtainNodes();
     S.settings = settings;
     for (const id of Object.keys(curtain || {})) if (S.curtain[id]) S.curtain[id] = curtain[id];
@@ -6104,9 +5579,9 @@ function drawSettings() {
             '<button class="pd-btn danger" data-act="st-delete">Delete ' + esc(S.settings.name) + '…</button>');
 
     // WHERE THE ENGINEER WAS SURVIVES THE REDRAW. .pd-sheet is the scroller and
-    // drawSettings replaces it wholesale, so every switch flip, auto-arm pick
-    // and map zoom threw the routing set and the map — both at the foot of a
-    // sheet twice the viewport — back off the top of the screen.
+    // drawSettings replaces it wholesale, so every switch flip and auto-arm
+    // pick threw the routing set, at the foot of a sheet twice the viewport,
+    // back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     // And the set picker's list keeps its own: every tick there is a write and
     // a redraw, and a list that jumped back to its top on each would make an
@@ -6419,8 +5894,7 @@ function sheetEl() {
 // identifies a node by its name — SMN_029, PLK_H1 — because that is how the
 // fleet, the PLC and the floor refer to it. Finding that name as a dot on a
 // 383-point plant is the wrong way round, and it is why the routing set was
-// hard to author. Every place this page asks for nodes is this one component;
-// the map beside it is a read-back and not an input.
+// hard to author. Every place this page asks for nodes is this one component.
 //
 // ONE COMPONENT, EVERY HOST: the Add-process sheet's four lists, the operator
 // screen's positions, and Settings' three role lists. Each is the shared node
@@ -6995,7 +6469,6 @@ async function refreshProcess() {
     const res = await send('GET', '/api/processes/' + S.processID + '/composer');
     if (res.ok) {
         takeComposer(res.body);
-        S.graph = null;
         if (S.tab !== 'flows') S.flowStale = true;
     }
     const styles = await send('GET', '/api/processes/' + S.processID + '/styles');
@@ -7620,99 +7093,6 @@ async function loadProcessPayloads(processID) {
     return Array.isArray(res.body) ? res.body : [];
 }
 
-// ── the sheet's map read-back (owner ruling 5, 2026-09-17) ──────────────────
-//
-// THE PICTURE OF WHAT HAS BEEN PICKED, inside the sheet that picks it. An
-// engineer creating a cell chooses five positions and three supermarkets off
-// three lists of names and, until this, had nothing to check them against —
-// the routing set's own map tab is for a process that already exists. Same
-// drawing, scoped to the selection: the aisles, the group boxes, the role
-// marks, and the two route legs the first picks imply.
-//
-// IT IS A READ-BACK AND NOT A CONTROL. Nothing on it is clickable: the lists
-// are where a name is added or removed, and a second door onto the same
-// decision is how pickOnMap came to post one group as both a source and a
-// destination.
-const SHEET_MAP_ID = 'pd-sheetmap';
-
-// No map, no toggle and no frame: a frame around "nothing here" is a drawing
-// of nothing.
-//
-// BEHIND "SHOW ON MAP", AND SO ONE SCREEN AT 900 PX WITH A MAP TOO (U2). Drawn
-// open it was 290 px under the part set, and the sheet scrolled on every Edge
-// with a plant map. The toggle sits on the routing set's heading, which keeps
-// its height; shown, the map is the sheet's full width under the three roles
-// (it was drawn in the 230 px label column). It is drawn only while shown.
-function sheetMapToggle() {
-    // On the list the map is read as the sheet opens (loadSheetMap): until it
-    // lands, the heading holds the place the toggle goes.
-    if (!mapOf()) return S.processID ? '' : '<span class="pd-maptoggleslot" id="pd-addmaptoggle"></span>';
-    return '<button type="button" class="pd-maptoggle" data-act="add-showmap" aria-controls="pd-sheetmapbox" ' +
-        'aria-expanded="false">Show on map</button>';
-}
-
-function sheetMapField() {
-    if (!mapOf()) return '';
-    return '<div class="pd-sheetmapbox" id="pd-sheetmapbox" hidden>' +
-        '<div class="pd-map pd-sheetmap" id="' + SHEET_MAP_ID + '"></div>' +
-        '<p class="pd-note">The aisles Core knows, the names you have picked, and the two trips ' +
-        'the first of each role implies — a robot in from the first inbound name, and back out to the ' +
-        'first outbound one. Nothing here is a control; the lists above are.</p></div>';
-}
-
-// loadSheetMap reads the Edge's plant map for Add process opened on the list,
-// once, as the sheet opens; no timer and no re-read. THE MAP IS ONE PER EDGE
-// (composerMap is the same block in every process's composer read), so the
-// read the picture makes is made for the first process on the list and only
-// its map is kept. An Edge with no process yet has no read to make, and the
-// sheet says nothing about a map, as it does when Core has sent none. When it
-// lands on the same sheet, the toggle and the map's box go in place: the
-// sheet's fields are not rebuilt (the pickers hold a caret and ticks).
-async function loadSheetMap(add) {
-    const first = S.processes[0];
-    if (!first) return;
-    const res = await send('GET', '/api/processes/' + first.id + '/composer', null, NO_NOTICE);
-    if (S.add !== add || S.processID) return;
-    S.plantMap = (res.ok && (bodyOf(res) || {}).map) || null;
-    S.graph = null;
-    const toggle = document.getElementById('pd-addmaptoggle');
-    const slot = document.getElementById('pd-addmapslot');
-    if (!S.plantMap || !toggle || !slot) return;
-    toggle.innerHTML = sheetMapToggle();
-    slot.innerHTML = sheetMapField();
-}
-
-// toggleSheetMap is Show on map's press: the map shown and drawn, or hidden.
-function toggleSheetMap() {
-    if (!S.add) return;
-    S.add.map = !S.add.map;
-    const box = $('pd-sheetmapbox');
-    const btn = sheetEl().querySelector('[data-act="add-showmap"]');
-    if (box) box.hidden = !S.add.map;
-    if (btn) {
-        btn.setAttribute('aria-expanded', S.add.map ? 'true' : 'false');
-        btn.textContent = S.add.map ? 'Hide map' : 'Show on map';
-    }
-    redrawSheetMap();
-    if (S.add.map && box && box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
-}
-
-function sheetMapSvg() {
-    const scope = sheetMapScope();
-    if (!scope.positions.length && !scope.routing.length) {
-        return '<div class="pd-nomap">Pick a position and a supermarket and they are drawn here.</div>';
-    }
-    return drawMap(900, 340, scope);
-}
-
-// Redrawn on every pick while shown, in place: the sheet's fields are not
-// rebuilt (the pickers hold a caret and a scroll position), so this replaces
-// one element's contents the way redrawPicker does.
-function redrawSheetMap() {
-    const box = document.getElementById(SHEET_MAP_ID);
-    if (box) box.innerHTML = S.add && S.add.map ? sheetMapSvg() : '';
-}
-
 function openAddProcess() {
     processSheet(null);
 }
@@ -7761,13 +7141,10 @@ async function openEditProcess(at, q) {
 // process (edit: what openEditProcess read).
 function processSheet(edit, at, q) {
     const pid = edit ? edit.p.id : 0;
-    // map: the read-back shown (Show on map). station: the screen the
-    // Positions bucket is on. before: what each write is measured against,
-    // moved forward as each one lands, so a press after a refusal resumes.
-    S.add = { groupID: edit ? (edit.p.group_id || 0) : 0, map: false, edit: edit };
-    // On the list, nothing of the last process's map comes with the sheet:
-    // not its map, its travel graph or its zoom. The sheet reads the Edge's.
-    if (!S.processID) { S.plantMap = null; S.graph = null; S.mapZoom = 1; }
+    // station: the screen the Positions bucket is on. before: what each write
+    // is measured against, moved forward as each one lands, so a press after a
+    // refusal resumes.
+    S.add = { groupID: edit ? (edit.p.group_id || 0) : 0, edit: edit };
     const positions = () => setValue(PROC_SET, 'positions');
     let sel;
     if (edit) {
@@ -7811,7 +7188,6 @@ function processSheet(edit, at, q) {
                 for (const g of ROUTING_GROUPS) set.sel[g[0]] = set.sel[g[0]].filter(n => positions().indexOf(n) < 0);
                 if (edit && S.add.station) edit.lists[S.add.station] = positions();
             }
-            redrawSheetMap();
         },
     });
     if (q) S.pickers[PROC_SET].q = q;
@@ -7832,8 +7208,8 @@ function processSheet(edit, at, q) {
     }
     // ONE SCREEN AT 900 PX (F16): the screen's name sits with the process's,
     // the positions and the routing set are one list in four buckets that
-    // scrolls in its own box, the notes Settings carries are not repeated
-    // here, and the map read-back waits behind Show on map (U2).
+    // scrolls in its own box, and the notes Settings carries are not repeated
+    // here.
     const body = '<div class="pd-addproc">' +
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
         sheetField('Name', 'what this process is called here', 'name', edit ? edit.p.name : '') +
@@ -7843,11 +7219,10 @@ function processSheet(edit, at, q) {
         esc(group ? group.name : 'Ungrouped') + '<i class="car"></i></button></div></div>' +
         screenField +
 
-        '<span id="pd-sheetset"></span><div class="pd-sec"><div class="pd-lbl">Positions and routing set' + sheetMapToggle() + '</div></div>' +
+        '<span id="pd-sheetset"></span><div class="pd-sec"><div class="pd-lbl">Positions and routing set</div></div>' +
         (edit && !edit.routingRead ? '<p class="pd-note pd-warn">This process’s routing set could not be read, so ' +
             'Save leaves it alone. Reload the page to change it.</p>' : '') +
         setField(PROC_SET) +
-        '<div id="pd-addmapslot">' + sheetMapField() + '</div>' +
 
         '<span id="pd-sheetparts"></span><div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
         pickerField(PART_SET_PICKER, 'Parts this process runs', 'the catalog is Core’s') +
@@ -7865,7 +7240,6 @@ function processSheet(edit, at, q) {
             body, 'Create', submitAddProcess, false);
         loadLivePositions().then(() => redrawPicker(PROC_SET));
     }
-    if (!S.processID) void loadSheetMap(S.add);
     // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the two
     // up-front checks clear this way: a refusal from the write chain is the
     // record of what was already made, and typing must not erase it.
@@ -9569,20 +8943,6 @@ function onClick(e) {
                 return;
             case 'sheet-cancel': closeSheet(); return;
             case 'sheet-ok': runSheet(); return;
-            case 'rs-zoom': {
-                const z = btn.dataset.z;
-                S.mapZoom = z === 'in' ? Math.min(4, S.mapZoom * 1.4)
-                    : z === 'out' ? Math.max(0.4, S.mapZoom / 1.4) : 1;
-                drawSettings();
-                return;
-            }
-            // Show on map / Hide map: Settings' read-back drawn or put away.
-            // It opens at the fit (zoom 1), framing this process's names.
-            case 'st-showmap':
-                if (!stMapShown()) S.mapZoom = 1;
-                S.stMap.shown = !S.stMap.shown;
-                drawSettings();
-                return;
             case 'open-flows': openProcess(Number(btn.dataset.process)); return;
             case 'open-settings': openProcessAt(Number(btn.dataset.process), 'settings'); return;
             case 'rs-all-on': void rsAllOn(btn.dataset.role); return;
@@ -9601,8 +8961,6 @@ function onClick(e) {
             default: break;
         }
     }
-    const mapEl = e.target.closest && e.target.closest('[data-mapname]');
-    if (mapEl && S.tab === 'settings') { flashRoutingRow(mapEl.dataset.mapname); return; }
     if (tab) { tabTo(tab.dataset.tab); return; }
     // A preset row expands its member list; a second click closes it.
     const presetRowEl = e.target.closest && e.target.closest('[data-preset]');

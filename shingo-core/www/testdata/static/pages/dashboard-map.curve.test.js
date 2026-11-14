@@ -577,8 +577,9 @@ function worstOffCurve(m, pts, from, c, to) {
 // --- route vectors: the route model over the synthetic route scene --------
 //
 // THE ROUTE THE MAP DRAWS AN INTENT LINE ALONG, vertex by vertex, on
-// shared/testdata/js/route-scene.json, the scene the Edge's routers are
-// pinned on too (composer-model.test.js, processes-desktop.route.test.js),
+// shared/testdata/js/route-scene.json, the scene the shared route model and
+// the Edge's key-route walk are pinned on too (scene-net.test.js,
+// composer-model.test.js),
 // through the page's own adaptation of /api/map/edges (sceneOfRows). Three
 // ways run from SMN_05 to PLN_02: A straight and two-way (20 m), C straight
 // and stored ONE WAY toward SMN_05 (16.47 m), B two cubic hops (16 m of chord,

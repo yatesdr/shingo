@@ -284,8 +284,8 @@ Four tokens, theme-invariant, in `:root`:
 
 | Token | Value | What it is |
 |---|---|---|
-| `--robot-1` | `#22c9ae` | Robot 1 — its chevrons and words on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
-| `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
+| `--robot-1` | `#22c9ae` | Robot 1 — its chevrons, words and key-route strip on the cell picture, its trips on the station composer, its chevrons in a swap-mode glyph; the desktop set picker's Inbound bucket borrows it |
+| `--robot-2` | `#8a7bff` | Robot 2 — the same things for the second robot; the desktop set picker's Outbound bucket borrows it |
 | `--robot-3` | `#f2b84b` | Robot 3 — the trip an index press's own robot makes to its back position (refill set to Robot 3): its chevrons, its words, its in glyph |
 | `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph — on the station; the desktop Processes page, which follows the light theme, draws these through `--os-station` mapped to `--text-strong` |
 

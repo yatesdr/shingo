@@ -2,15 +2,15 @@
 // on the synthetic route scene (route-scene.json, beside this file).
 //
 // THE ROUTE MODEL's VECTORS ARE THE DESKTOP's (lead decision D9). The Edge's
-// processes-desktop.js travelGraph/graphNodeFor/route is directed and weighs
-// arcs, and its answers on this scene are pinned by TestProcessesDesktopRouteJS
-// (shingo-edge/www/testdata/static/js/pages/processes-desktop.route.test.js).
-// Every one of those vectors is here with the same answer (its adjacency
-// vertex by vertex, its arc weight, its seven routes and its three
-// graphNodeFor ends), so the model agrees with the desktop, except the one case
-// named below: the desktop snaps a destination over the vertices with a row
-// LEAVING them, so a dead end, which rows only arrive at, snapped away from
-// itself. When the desktop map is removed these vectors live on here.
+// desktop process map routed with a directed, arc-weighed travelGraph /
+// graphNodeFor / route, and its answers on this scene were pinned by
+// TestProcessesDesktopRouteJS. That map's drawing was removed (2026-11-14, the
+// shared-map brief's tier A1) and its pin with it; every one of its vectors is
+// here with the same answer (its adjacency vertex by vertex, its arc weight,
+// its seven routes and its three graphNodeFor ends), so the model agrees with
+// the desktop, except the one case named below: the desktop snapped a
+// destination over the vertices with a row LEAVING them, so a dead end, which
+// rows only arrive at, snapped away from itself.
 //
 // THE LANES ARE CORE's AISLES. Core's robot map drew every physical lane once,
 // in buildGraph's vertex order, each from its earlier vertex, and its
@@ -104,7 +104,7 @@ console.log('the lanes');
         JSON.stringify(l2));
 })();
 
-console.log('the route model: the desktop\'s vectors (TestProcessesDesktopRouteJS)');
+console.log('the route model: the removed desktop map\'s vectors (TestProcessesDesktopRouteJS)');
 [
     // [from, to, the desktop's answer as vertices, why]
     ['SMN_05', 'PLN_02', 'SMN_05 LM911 LM912 PLN_02', 'A: C is one-way the other way, B is longer by arc'],

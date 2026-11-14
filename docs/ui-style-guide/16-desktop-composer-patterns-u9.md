@@ -197,14 +197,3 @@ beside it: every action such a button could take guesses at something the
 engineer has not said (a part, a free back position, removal over placement),
 and parts are never prefilled. Each field keeps its own picker, and taking an
 unplaced part off the flow is a control on the unplaced part's own chip.
-
-### The map is a screen, not a widget
-
-The routing set is drawn on the plant. Two rules generalize from it: the
-projection is **always** `shared/scene-geom.js` (Core's map, the station's cell
-picture and this screen project the same plant with the same function, so a
-route weighed on one surface is the route drawn on the others), and the
-orientation decision is made over the **whole plant**, never over the region
-being framed — a region that happens to be tall must not flip the map under the
-person reading it. Fit margins are in screen pixels, not a fraction of the
-region: a label is drawn 11 px outside its mark whatever the plant measures.
