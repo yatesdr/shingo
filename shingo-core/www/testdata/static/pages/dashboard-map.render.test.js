@@ -1190,8 +1190,8 @@ function pointRow(id, name, klass, x, y) {
 // One of each node glyph, inside the route scene's extent so the plant frame
 // is the route scene's. graphScale there is 4 m, so an action point snaps
 // within 2 m of a network vertex, and a robot within 2 m of a bay stands on
-// it (the first such bay in point order). Every bay below is more than 2 m
-// from every robot but the one named.
+// it (the nearest such bay: aRobotDocksOnTheNearestBay). Every bay below is
+// more than 2 m from every robot but the one named.
 const GLYPH_POINTS = [
     pointRow(101, 'AP_01', 'ActionPoint', 8.3, 0.2), // 0.36 m off LM921: drawn on it
     pointRow(102, 'AP_02', 'ActionPoint', 21, 5),    // 5.8 m from any vertex: drawn where it is
@@ -1400,6 +1400,30 @@ test(async function oneNodesBuildPerBayChange() {
         nodesHanded() + ' handed for ' + nodes.children.length + ', ' + baseHanded() + ' to the base');
     const same = sameAsFresh(m);
     check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
+});
+
+// A robot docks on the NEAREST bay in range, and lights only that one (flat
+// bug, fixed 2026-11-14: dockOf took the first bay within half a graphScale in
+// point order, and bayOccupied lit every bay in that radius). Two park bays
+// 1.5 m apart, closer than half the scene's 4 m graphScale.
+test(async function aRobotDocksOnTheNearestBay() {
+    const m = await boot({ extraPoints: [
+        pointRow(201, 'PK_A', 'ParkPoint', 24, 3),
+        pointRow(202, 'PK_B', 'ParkPoint', 25.5, 3),
+    ] });
+    // 0.04 m from PK_B, 1.47 m from PK_A, which comes first in point order.
+    m.onRobotUpdate([robotFrame('AMR-P', [25.47, 3.02], { state: 'paused' })]);
+    paint(m);
+    const disc = robotGroup(m, 'AMR-P').children[0];
+    const b = m.proj(25.5, 3), a = m.proj(24, 3);
+    check('a robot at rest beside two bays sits on the nearer one\'s centre',
+        disc.attrs.cx === String(b[0]) && disc.attrs.cy === String(b[1]), drawList(disc));
+    const nodes = layerOf(m, 'nodes');
+    const drawnAt = function (p) {
+        return nodes.children.filter(function (c) { return c.attrs.cx === String(p[0]) && c.attrs.cy === String(p[1]); }).length;
+    };
+    check('...and only that bay draws as taken: the other is empty, so not drawn',
+        drawnAt(b) === 1 && drawnAt(a) === 0, drawnAt(b) + ' at PK_B, ' + drawnAt(a) + ' at PK_A');
 });
 
 test(async function oneBaseBuildPerSceneLoad() {

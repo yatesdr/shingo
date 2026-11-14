@@ -362,29 +362,46 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
   // dead-on their bay point, so proximity within half a typical edge length
   // is the test; an explicit charging flag (REST payload) wins outright.
-  // bayOccupied: a robot stands on the bay at (x, y), by dockOf's own distance.
-  // With no network to scale by there is no judging it, and every bay draws.
-  function bayOccupied(x, y) {
-    if (!(graphScale > 0)) return true;
-    var lim = Math.pow(graphScale * 0.5, 2);
-    for (var k in robots) {
-      var r = robots[k];
-      if (!isFinite(r.x) || !isFinite(r.y)) continue;
-      var dx = x - r.x, dy = y - r.y;
-      if (dx * dx + dy * dy <= lim) return true;
+  //
+  // THE NEAREST BAY, not the first one in range (flat bug, fixed 2026-11-14):
+  // dockOf took the first bay within the radius in point order, and
+  // bayOccupied lit every bay in it, so where two bays sit closer than half
+  // an edge a robot 0.03 m from one docked on the other, 1.99 m away, and
+  // both drew as taken. Pinned by the render pin aRobotDocksOnTheNearestBay.
+  //
+  // bayNear is the bay nearest robot r within half a graphScale, the first of
+  // equals in point order, or null.
+  function bayNear(r) {
+    if (!bays.length || !(graphScale > 0) || !isFinite(r.x) || !isFinite(r.y)) return null;
+    var lim = Math.pow(graphScale * 0.5, 2), best = null, bd = Infinity;
+    for (var i = 0; i < bays.length; i++) {
+      var dx = bays[i].x - r.x, dy = bays[i].y - r.y, d = dx * dx + dy * dy;
+      if (d <= lim && d < bd) { bd = d; best = bays[i]; }
     }
-    return false;
+    return best;
+  }
+
+  // dockedBays is every bay a robot stands on (each robot's bayNear).
+  function dockedBays() {
+    var out = [];
+    for (var k in robots) {
+      var b = bayNear(robots[k]);
+      if (b) out.push(b);
+    }
+    return out;
+  }
+
+  // bayOccupied: a robot stands on the bay at (x, y), the bay it is nearest
+  // (dockedBays, as given, else worked out). With no network to scale by
+  // there is no judging it, and every bay draws.
+  function bayOccupied(x, y, docked) {
+    if (!(graphScale > 0)) return true;
+    return (docked || dockedBays()).some(function (b) { return b.x === x && b.y === y; });
   }
 
   function dockOf(r) {
     if (r.charging) return { kind: 'charge', x: r.x, y: r.y };
-    if (!bays.length || !(graphScale > 0)) return null;
-    var lim = Math.pow(graphScale * 0.5, 2);
-    for (var i = 0; i < bays.length; i++) {
-      var dx = bays[i].x - r.x, dy = bays[i].y - r.y;
-      if (dx * dx + dy * dy <= lim) return bays[i];
-    }
-    return null;
+    return bayNear(r);
   }
 
   // A robot at rest is one disc, one size, whatever its state (HOP,
@@ -1096,7 +1113,7 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
   // An occupied bay draws under its robot; a bay an order names draws as any
   // hot node. Called by the scene view only when render's nodesKey changes.
   function nodeFacts() {
-    var out = [];
+    var out = [], docked = dockedBays();
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       var cls = classOf(p);
@@ -1117,7 +1134,7 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
       var hot = !!(hotNodes[String(p.point_name || '').toLowerCase()] ||
         hotNodes[String(p.label || '').toLowerCase()] ||
         hotNodes[String(p.instance_name || '').toLowerCase()]);
-      if ((cls === 'ChargePoint' || cls === 'ParkPoint') && !hot && !bayOccupied(wx, wy)) return;
+      if ((cls === 'ChargePoint' || cls === 'ParkPoint') && !hot && !bayOccupied(wx, wy, docked)) return;
       var n = { x: wx, y: wy, hot: hot };
       if (cls === 'ActionPoint') { n.kind = 'action'; n.fill = NODE_ACTION_COLOR; }
       else if (cls === 'ChargePoint') { n.kind = 'charge'; n.ring = CHARGE_RING; n.fill = cssVar('--map-bay-glyph', '#6b7a90'); }
@@ -1136,7 +1153,8 @@ import { createCometLayer } from '/static/shared/comet-layer.js';
     return Object.keys(hotNodes).filter(function (k) { return hotNodes[k]; }).sort().join(',');
   }
   function occupiedKey() {
-    return bays.map(function (b) { return bayOccupied(b.x, b.y) ? '1' : '0'; }).join('');
+    var docked = dockedBays();
+    return bays.map(function (b) { return bayOccupied(b.x, b.y, docked) ? '1' : '0'; }).join('');
   }
 
   // robotFact is what robotSpec and chipSpecs draw for one robot.
