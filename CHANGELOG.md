@@ -24,6 +24,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - Core sees RDS move an order to another robot while the order stays in one state, and records the new robot and the swap on the mission's timeline
 - When RDS reports a moving order unassigned again, the station is no longer told it went back to dispatched; Core keeps its status and tells it nothing
 - An Edge order no longer reads as just updated each time Core repeats its status, so the stuck-order check counts from its last real change
+- The wall boards' green connection dot pulses as before without repainting the page every frame, and holds still on a screen set to reduce motion
 
 ## v0.7.0 — 2026-11-13
 

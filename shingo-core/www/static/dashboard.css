@@ -63,20 +63,39 @@ html, body {
 }
 .dash-clock { font-variant-numeric: tabular-nums; }
 
-/* Live-connection dot. Green pulsing = connected, red = dropped. */
+/* Live-connection dot. Green pulsing = connected, red = dropped.
+ *
+ * The pulse is a ring on ::after that grows and fades with transform and
+ * opacity only, so the compositor runs it: no main-thread repaint per frame.
+ * It is the box-shadow pulse it replaced, frame for frame: the ring is a disc
+ * the dot's size scaled to 2.1 / 0.9 (the old 0.6rem spread on each side of a
+ * 0.9rem dot) while it fades from 0.6 alpha to nothing over the first 70% of
+ * each 2s. It sits above the dot, not below it, and is the dot's own green, so
+ * inside the dot it changes no pixel. Pinned by
+ * TestKioskConnDotPulseIsCompositedAndHonoursReducedMotion. */
 .dash-conn {
+  position: relative;
   width: 0.9rem;
   height: 0.9rem;
   border-radius: 50%;
   background: var(--dash-muted);
   display: inline-block;
 }
-.dash-conn-ok { background: #2ea043; box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6); animation: dash-pulse 2s infinite; }
+.dash-conn-ok { background: #2ea043; }
+.dash-conn-ok::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(46, 160, 67, 0.6);
+  pointer-events: none;
+  animation: dash-pulse 2s infinite;
+}
 .dash-conn-down { background: #f85149; }
 @keyframes dash-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6); }
-  70% { box-shadow: 0 0 0 0.6rem rgba(46, 160, 67, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+  0% { transform: scale(1); opacity: 1; }
+  70% { transform: scale(2.3333); opacity: 0; }
+  100% { transform: scale(1); opacity: 0; }
 }
 
 /* ── Body / table ─────────────────────────────────────────────────── */
@@ -240,9 +259,12 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Comets are skipped in JS under reduced-motion (routes show as static dim
-   * lines); the halo pulse is the only CSS animation left to silence. */
+  /* Comets are skipped in JS under reduced-motion (routes show as static
+   * lanes). Silenced here: the robot halo pulse and the header connection-dot
+   * pulse (a still green dot, as the dot looks between pulses). Not silenced:
+   * the fault flare and the new-row flash. */
   .map-robot-halo { animation: none; }
+  .dash-conn-ok::after { animation: none; display: none; }
 }
 
 .map-legend { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
