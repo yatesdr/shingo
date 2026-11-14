@@ -24,6 +24,25 @@ const MAIN = ['BPN_008', 'BPN_005', 'BPN_006BCD', 'BPN_006EFG', 'BPN_006HIJ', 'B
     'BPN_009HIJ', 'BPN_009KLM', 'BPN_009NOP', 'BPN_006PAL', 'BPN_005PAL', 'BPN_008PAL', 'BPN_009PAL'];
 const UNL = ['BUN_002', 'BUN_005'];
 const CURTAINS = ['BPN_006PAL', 'BPN_009PAL'];
+
+// bigMap is a plant-sized map, as Core sends it: plant A's scene has 383
+// points and 635 lanes. Every node of the line is a point; the rest are lane
+// marks (BLM_###), and each lane joins neighbours on a grid, some curved.
+function bigMap(core) {
+    const names = core.filter(c => c.node_type !== 'NGRP').map(c => c.name);
+    for (let i = 1; names.length < 383; i++) names.push('BLM_' + String(i).padStart(3, '0'));
+    const at = i => ({ x: (i % 20) * 3.5, y: Math.floor(i / 20) * 3.5 });
+    const points = Object.fromEntries(names.map((n, i) => [n, Object.assign({ class: n.startsWith('BLM_') ? 'LocationMark' : 'ActionPoint' }, at(i))]));
+    const edges = [];
+    for (let i = 0; edges.length < 635; i = (i + 1) % names.length) {
+        const j = (i + 1 + (edges.length % 3) * 19) % names.length;
+        const a = at(i), b = at(j);
+        const e = { from: names[i], to: names[j], len: Math.round(Math.hypot(a.x - b.x, a.y - b.y) * 100) / 100 };
+        if (edges.length % 4 === 0) e.h = [a.x + 1, a.y + 0.5, b.x - 1, b.y - 0.5];
+        edges.push(e);
+    }
+    return { revision: 'map-big', points: points, edges: edges };
+}
 const SRC = ['BSM_038', 'BSM_039', 'BSM_040', 'BSM_041'];
 const DST = ['BUN_002', 'BUN_003', 'BUN_004', 'BUN_005'];
 const pad = (n, w) => String(n).padStart(w, '0');
@@ -114,8 +133,7 @@ function bigLine(o) {
             styles: styles, routing: routingNodes.map(r => ({ core_node_name: r.core_node_name, role: r.role, sequence: r.sequence })),
             routing_off: {}, presets: [], palette: PARTS.slice(),
             cell: { positions: cellPositions, geometry: true, groups: { 'BIG Buffer Zone': SRC, 'BIG Unloader Zone': DST } },
-            map: { revision: 'map-big', points: Object.fromEntries(core.filter(c => c.node_type !== 'NGRP')
-                .map((c, i) => [c.name, { class: 'point', x: (i % 12) * 4, y: Math.floor(i / 12) * 4 }])) },
+            map: bigMap(core),
         },
         server: {
             processNodes: processNodes, coreNodes: core, routingNodes: routingNodes, partSet: PARTS.slice(),
