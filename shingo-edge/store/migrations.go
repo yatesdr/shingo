@@ -2529,7 +2529,45 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// v50 (2026-11-14): the position's auto-reorder hold on
+			// process_node_runtime_states: reorder_hold (the kind, '' none),
+			// reorder_hold_at (the engine's clock, '' when never) and
+			// reorder_hold_note (who or what set it). '' on every existing
+			// row, which holds nothing. Each column guarded, as v43.
+			Version: 50,
+			Name:    "runtime_reorder_hold",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v50Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(c.add); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name IN ('reorder_hold', 'reorder_hold_at', 'reorder_hold_note')`).Scan(&n)
+				return err == nil && n == len(v50Columns)
+			},
+		},
 	}
+}
+
+// v50Columns are v50's runtime-row columns, each with its ADD (run only where
+// missing).
+var v50Columns = []struct{ column, add string }{
+	{"reorder_hold", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold TEXT NOT NULL DEFAULT ''"},
+	{"reorder_hold_at", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold_at TEXT NOT NULL DEFAULT ''"},
+	{"reorder_hold_note", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold_note TEXT NOT NULL DEFAULT ''"},
 }
 
 // refillByAndOneToolChange is v47's body (see its entry).

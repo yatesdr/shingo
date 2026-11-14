@@ -16,6 +16,11 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Edge v50. Core has no migration; the two go in either order.
+
+- A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting; nothing holds one yet
+- A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
+
 ## v0.7.0 — 2026-11-13
 
 Deploy: Edge v49. Core has no migration; the two go in either order.

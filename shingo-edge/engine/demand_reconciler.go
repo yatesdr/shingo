@@ -284,6 +284,14 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	if !breached || !claim.AutoReorder {
 		return
 	}
+	// A HOLD AT THE POSITION — a pause after a cancel, a line gone idle, a
+	// person's off — decided by the one decider the station view reads too,
+	// from the runtime row this pass already read: no statement, and the
+	// dedup read below is not made for a held position.
+	if held := domain.AutoReorderHeld(claim, runtime, e.reconcilerClock().Now()); held.Holds() {
+		e.debugFn("demand_sweep: node %s below its level, but its auto-reorder is held: %s", node.Name, held.Sentence)
+		return
+	}
 
 	// THE DEDUP IS THE NODE — not the episode, and not the origin.
 	//

@@ -965,6 +965,27 @@ function createNodeButton(entry) {
         btn.appendChild(ks);
     }
 
+    // The position's automatic ask is held: paused after a cancel, off after
+    // the line went idle, or switched off by a person. Amber like the keeper's
+    // chip, under it when both show; the sentence is the server's
+    // (auto_reorder_note), shown on hover. Informational: REQUEST asks as ever.
+    if (entry.auto_reorder_note) {
+        const words = {
+            paused: 'AUTO-REORDER PAUSED',
+            off: 'AUTO-REORDER OFF',
+            person_off: 'AUTO-REORDER SWITCHED OFF',
+        };
+        const ar = el('span', {
+            className: 'os-node-alarm',
+            textContent: words[entry.auto_reorder_hold] || 'AUTO-REORDER HELD',
+        });
+        ar.style.cssText = 'position:absolute;left:4px;font-size:11px;' +
+            'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a;' +
+            'top:' + (entry.keep_staged_note ? '26px' : '4px');
+        ar.title = entry.auto_reorder_note;
+        btn.appendChild(ar);
+    }
+
     // The line moved onto this sequential position before its bin arrived:
     // its strokes are logged until the bin lands. Informational; the sentence
     // is the server's (count_waits).

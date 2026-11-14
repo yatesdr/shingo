@@ -182,6 +182,13 @@ type StationNodeView struct {
 	// <node>'s bin lands." Its strokes are logged (decision 55: no cart of the
 	// part stands there). Empty otherwise.
 	CountWaits string `json:"count_waits,omitempty"`
+	// AutoReorderHold and AutoReorderNote are what holds this position's
+	// automatic ask, decided by AutoReorderHeld, the decider the demand sweep
+	// reads, from the runtime row and the claim the view already holds: the
+	// kind (the board's chip label) and the sentence (its hover), verbatim.
+	// Empty when nothing holds it.
+	AutoReorderHold ReorderHold `json:"auto_reorder_hold,omitempty"`
+	AutoReorderNote string      `json:"auto_reorder_note,omitempty"`
 	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
 	// position: non-empty when some producing claim names this node as its
 	// containment destination, and carries that claim's OutboundDestination —

@@ -1964,7 +1964,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
 | [`process_changeovers`](#edge-process_changeovers) | 15 | `id` | [`processes`](#edge-processes), [`styles`](#edge-styles) |
 | [`process_groups`](#edge-process_groups) | 5 | `id` |  |
-| [`process_node_runtime_states`](#edge-process_node_runtime_states) | 28 | `id` | [`orders`](#edge-orders), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
+| [`process_node_runtime_states`](#edge-process_node_runtime_states) | 31 | `id` | [`orders`](#edge-orders), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
 | [`process_nodes`](#edge-process_nodes) | 16 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
 | [`process_payloads`](#edge-process_payloads) | 4 | `id` | [`processes`](#edge-processes) |
 | [`process_routing_nodes`](#edge-process_routing_nodes) | 10 | `id` | [`processes`](#edge-processes) |
@@ -2432,6 +2432,9 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `released_empty` | `INTEGER` | yes | `0` |  | released_empty: the bound carrier was released as empty (RELEASE EMPTY, an underpack, a release declaring 0). It is not charged afterwards: a consume tick drains the pile, then is held for the next carrier of the part. Set by the release's count write, cleared when the carrier leaves or another carrier binds. After the v17 column, where the v19 ALTERs put both. |
 | `placed_seq` | `INTEGER` |  |  |  | placed_seq: the placement stamp of the landing this seat last bound (Core's bin_placement_seq). The landing's bind refuses one not newer, so a redelivered or overtaken landing binds nothing. Kept by every leave; a person's bind leaves it as it is. NULL until the first landing. After released_empty, where the v20 ALTER puts it. |
 | `hold_stopped` | `INTEGER` | yes | `0` |  | hold_stopped: a produce seat's pile would have passed one pack and was thrown away whole; the seat sets nothing aside until another cart binds here or a person enters a count (a Core lifecycle message never clears it). After placed_seq, where the v49 ALTER puts it. |
+| `reorder_hold` | `TEXT` | yes | `''` |  | reorder_hold: the position's auto-reorder hold ('' none, 'paused', 'off', 'person_off'), ranked in that order; the one write (HoldReorder) never sets a kind below the one held. The demand sweep does not ask while it holds (domain.AutoReorderHeld). After hold_stopped, where the v50 ALTERs put the three hold columns. |
+| `reorder_hold_at` | `TEXT` | yes | `''` |  | reorder_hold_at: when the hold was set, the engine's clock ('' when never). A pause ends ten minutes after it. |
+| `reorder_hold_note` | `TEXT` | yes | `''` |  | reorder_hold_note: who or what set the hold, in the board's words. |
 
 #### Edge: `process_nodes`
 

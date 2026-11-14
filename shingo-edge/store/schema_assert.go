@@ -171,6 +171,11 @@ var requiredColumns = []requiredColumn{
 	// The produce seat's stop flag (v49): scanRuntime SELECTs it and every
 	// seat-guarded write names it, so a missing column kills every tick.
 	{"process_node_runtime_states", "hold_stopped"},
+	// The position's auto-reorder hold (v50): scanRuntime SELECTs all three,
+	// so a missing column kills every runtime-row read.
+	{"process_node_runtime_states", "reorder_hold"},
+	{"process_node_runtime_states", "reorder_hold_at"},
+	{"process_node_runtime_states", "reorder_hold_note"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

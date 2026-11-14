@@ -293,11 +293,21 @@ type RuntimeState struct {
 	// one pack (D2) and sets nothing aside until another cart binds here or a
 	// person enters a count (D3, U1). Written with the hold, under the engine's
 	// count lock; a Core lifecycle message never clears it.
-	HoldStopped   bool      `json:"hold_stopped,omitempty"`
-	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
-	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
-	ActivePull    bool      `json:"active_pull"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	HoldStopped bool `json:"hold_stopped,omitempty"`
+	// ReorderHold, ReorderHoldAt and ReorderHoldNote are the position's
+	// auto-reorder hold (reorder_hold.go): its kind, when it was set (the
+	// engine's clock; zero when never), and who or what set it, in the words
+	// the board shows. Written only by store/processes.HoldReorder, whose WHERE
+	// refuses a kind ranked below the one held; read by AutoReorderHeld for the
+	// demand sweep and the station view. Not on the wire: the view sends the
+	// decided sentence (StationNodeView.AutoReorderNote).
+	ReorderHold     ReorderHold `json:"-"`
+	ReorderHoldAt   time.Time   `json:"-"`
+	ReorderHoldNote string      `json:"-"`
+	ActiveOrderID   *int64      `json:"active_order_id,omitempty"`
+	StagedOrderID   *int64      `json:"staged_order_id,omitempty"`
+	ActivePull      bool        `json:"active_pull"`
+	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
 // PartRecorded reports whether the seat records its cart's part: known (a

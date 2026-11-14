@@ -678,7 +678,18 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     -- here or a person enters a count (a Core lifecycle message never clears
     -- it). After placed_seq, where the
     -- v49 ALTER puts it.
-    hold_stopped INTEGER NOT NULL DEFAULT 0
+    hold_stopped INTEGER NOT NULL DEFAULT 0,
+    -- reorder_hold: the position's auto-reorder hold ('' none, 'paused',
+    -- 'off', 'person_off'), ranked in that order; the one write
+    -- (HoldReorder) never sets a kind below the one held. The demand sweep
+    -- does not ask while it holds (domain.AutoReorderHeld). After
+    -- hold_stopped, where the v50 ALTERs put the three hold columns.
+    reorder_hold TEXT NOT NULL DEFAULT '',
+    -- reorder_hold_at: when the hold was set, the engine's clock ('' when
+    -- never). A pause ends ten minutes after it.
+    reorder_hold_at TEXT NOT NULL DEFAULT '',
+    -- reorder_hold_note: who or what set the hold, in the board's words.
+    reorder_hold_note TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS style_node_claims (

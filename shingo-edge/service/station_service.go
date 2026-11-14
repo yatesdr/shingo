@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
@@ -1548,6 +1549,11 @@ func (s *StationService) buildNodeTile(
 		nodeView.AskPending = s.unloaderAsk(node.CoreNodeName)
 	}
 	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
+	// The chip for a held automatic ask: the sweep's own decider on the claim and
+	// row in hand, on the engine's clock, which stamped the hold.
+	if held := domain.AutoReorderHeld(nodeView.ActiveClaim, runtime, clock.Now()); held.Holds() {
+		nodeView.AutoReorderHold, nodeView.AutoReorderNote = held.Hold, held.Sentence
+	}
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
 	// order for something a loader operator has said they cannot supply.
 	//
