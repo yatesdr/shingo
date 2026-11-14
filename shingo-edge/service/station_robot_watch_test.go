@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/stations"
 )
@@ -25,8 +26,10 @@ func TestRobotWatchOrders_TheBoardsTrackedOrdersWithAUUID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	n, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "N", Enabled: true})
-	m, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "M", Enabled: true})
+	n, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "N", Enabled: true})
+	testutil.MustNoErr(t, err, "create station N")
+	m, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "M", Enabled: true})
+	testutil.MustNoErr(t, err, "create station M")
 	if err := setNodesErr(svc, n, []string{"LN01", "LN02"}); err != nil {
 		t.Fatalf("set N's nodes: %v", err)
 	}
