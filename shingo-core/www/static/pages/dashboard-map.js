@@ -230,6 +230,19 @@ import {
     if (el) el.className = 'dash-conn ' + (ok ? 'dash-conn-ok' : 'dash-conn-down');
   }
 
+  // writeHTML sets el's markup only when it differs from what this page last
+  // wrote there, so a legend or rail that has not changed costs no parse, no
+  // layout and no new listeners on a render. It compares with the string it
+  // wrote, not with el.innerHTML, which a browser re-serialises. Returns
+  // whether it wrote. Pinned by the render pin legendsAndRailWriteOnlyOnChange.
+  var shownHTML = new WeakMap();
+  function writeHTML(el, html) {
+    if (shownHTML.get(el) === html) return false;
+    shownHTML.set(el, html);
+    el.innerHTML = html;
+    return true;
+  }
+
   // Bucket a robot into one of the header-legend categories so the legend can
   // double as a live fleet summary. Paused/offline robots are uncounted.
   function robotBucket(r) {
@@ -273,10 +286,10 @@ import {
     // Only active states show — a zero bucket is just clutter (Blocked sitting
     // there doing nothing). Exceptions (Blocked/Error) therefore appear only
     // when something is actually blocked/faulted, so they read as real signal.
-    el.innerHTML = items.filter(function (it) { return counts[it[0]] > 0; }).map(function (it) {
+    writeHTML(el, items.filter(function (it) { return counts[it[0]] > 0; }).map(function (it) {
       return '<span class="map-legend-item"><span class="map-legend-dot" style="background:' + it[2] +
         '"></span>' + it[1] + '<span class="map-legend-count">' + counts[it[0]] + '</span></span>';
-    }).join('') || '<span class="map-legend-item map-legend-zero">No active robots</span>';
+    }).join('') || '<span class="map-legend-item map-legend-zero">No active robots</span>');
   }
 
   // ── robot normalization (handles SSE lowercase + REST PascalCase) ──
@@ -1962,14 +1975,16 @@ import {
           n === 'ChargePoint' || n === 'ParkPoint') return;
       items.push(legendSwatch(classColors[n] || '#67748f', 'dot', prettyClass(n)));
     });
-    if (!items.length) { el.innerHTML = ''; return; }
+    if (!items.length) { writeHTML(el, ''); return; }
     // The node-type key is reference an operator learns once, so it lives behind
     // a small collapsible toggle (default closed) instead of a permanent second
     // legend strip competing with the live status counts in the header.
-    el.innerHTML =
+    var html =
       '<button type="button" class="map-key-toggle" aria-expanded="' + mapKeyOpen + '">' +
         (mapKeyOpen ? '▾' : '▸') + ' Map key</button>' +
       '<div class="map-key-items"' + (mapKeyOpen ? '' : ' hidden') + '>' + items.join('') + '</div>';
+    // Unchanged: the button on screen is the one already listened to.
+    if (!writeHTML(el, html)) return;
     var btn = el.querySelector('.map-key-toggle');
     if (btn) btn.addEventListener('click', function () { mapKeyOpen = !mapKeyOpen; renderClassLegend(); });
   }
@@ -2135,9 +2150,9 @@ import {
       queued: 'queued', pending: 'pending', reshuffling: 'reshuffling'
     };
     if (!shown.length) {
-      motionEl.innerHTML = '<li class="rail-empty">Nothing active</li>';
+      writeHTML(motionEl, '<li class="rail-empty">Nothing active</li>');
     } else {
-      motionEl.innerHTML = shown.map(function (o) {
+      writeHTML(motionEl, shown.map(function (o) {
         var color = STATUS_COLOR[o.status] || '#888';
         var label = statusLabel[o.status] || o.status;
         return '<li class="rail-row" style="border-left-color:' + color + '">' +
@@ -2153,7 +2168,7 @@ import {
             return words ? '<span class="rail-row-why" style="color:' + color + '">' + escapeHtml(words) + '</span>' : '';
           })() +
           '</li>';
-      }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : '');
+      }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : ''));
     }
 
     // ── Activity feed ─────────────────────────────────────────────────
@@ -2162,14 +2177,14 @@ import {
     activityFeed = activityFeed.filter(function (e) { return (now - e.ts) < FEED_MAX_AGE_MS; });
     var showing = activityFeed.slice(0, FEED_MAX_ITEMS);
     if (!showing.length) {
-      activityEl.innerHTML = '<li class="rail-empty">No recent activity</li>';
+      writeHTML(activityEl, '<li class="rail-empty">No recent activity</li>');
     } else {
-      activityEl.innerHTML = showing.map(function (e) {
+      writeHTML(activityEl, showing.map(function (e) {
         var ageFrac = (now - e.ts) / FEED_MAX_AGE_MS;
         var opacity = Math.max(0.25, 1 - ageFrac * 0.75).toFixed(2);
         var cls = 'rail-event' + (e.level === 'alert' ? ' rail-event-alert' : '');
         return '<li class="' + cls + '" style="opacity:' + opacity + '">' + escapeHtml(e.text) + '</li>';
-      }).join('');
+      }).join(''));
     }
   }
 

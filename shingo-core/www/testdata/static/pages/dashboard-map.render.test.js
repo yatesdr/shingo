@@ -1333,6 +1333,73 @@ test(async function aLaneFollowsItsRobotInPlace() {
     check('the scene as kept is the scene a fresh build draws', same.ok, same.why);
 });
 
+// ═══ 11. the legends and the rail write only on change ══════════════════════
+//
+// The header legend, the map key and the rail's two lists are innerHTML. A
+// render rewrites one only when its markup differs from what the page last
+// wrote there; each check counts the writes, then reads what is shown.
+
+const PANELS = ['map-legend', 'map-class-legend', 'rail-motion-list', 'rail-activity-list'];
+function writes(m) { return PANELS.map(function (id) { return m.ids[id].writes; }); }
+// moveInPlace is a robot tick on a stopped clock: three robots move, and
+// nothing a legend or the rail says about them changes.
+function moveInPlace(m, k) {
+    m.onRobotUpdate([
+        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3 }),
+        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy' }),
+        robotFrame('AMR-I', [8.5 + 0.1 * k, 6], { angle: 1.2 }),
+    ]);
+    paint(m);
+}
+
+test(async function legendsAndRailWriteOnlyOnChange() {
+    console.log('legends and rail');
+    const m = await glyphFloor();
+    const w0 = writes(m);
+    const shown = PANELS.map(function (id) { return m.ids[id].html; });
+    for (let k = 1; k <= 5; k++) moveInPlace(m, k);
+    check('five robot ticks that change no count, key or row write none of the legend, the map key and the rail',
+        JSON.stringify(writes(m)) === JSON.stringify(w0), JSON.stringify(w0) + ' -> ' + JSON.stringify(writes(m)));
+    check('...which still show what they showed', PANELS.every(function (id, i) { return m.ids[id].html === shown[i]; }));
+
+    // AMR-K errors on its charger: Charging 2 -> 1, Error 1 -> 2.
+    m.onRobotUpdate([robotFrame('AMR-K', [28, 2], { charging: true, state: 'error' })]);
+    paint(m);
+    const legend = m.ids['map-legend'];
+    check('a robot changing bucket rewrites the header legend once, with the new counts, and nothing else',
+        JSON.stringify(writes(m)) === JSON.stringify([w0[0] + 1, w0[1], w0[2], w0[3]]) &&
+        legend.html.indexOf('Charging<span class="map-legend-count">1</span>') >= 0 &&
+        legend.html.indexOf('Error<span class="map-legend-count">2</span>') >= 0, JSON.stringify(writes(m)) + ' ' + legend.html);
+
+    const key = m.ids['map-class-legend'];
+    const kw = key.writes;
+    key.querySelector('.map-key-toggle').listeners.click[0]({});
+    check('opening the map key rewrites it once, open',
+        key.writes === kw + 1 && key.html.indexOf('aria-expanded="true"') >= 0 && key.html.indexOf(' hidden') < 0, key.html);
+    moveInPlace(m, 6);
+    moveInPlace(m, 7);
+    check('...renders after that leave it alone', key.writes === kw + 1, String(key.writes - kw));
+    key.querySelector('.map-key-toggle').listeners.click[0]({});
+    check('...and the button it wrote is the one listened to: it closes the key again',
+        key.writes === kw + 2 && key.html.indexOf('aria-expanded="false"') >= 0, key.html);
+
+    // AMR-F's order is released: blocked -> in_transit.
+    const rail = m.ids['rail-motion-list'], feed = m.ids['rail-activity-list'];
+    const rw = rail.writes, fw = feed.writes, lw = legend.writes;
+    await setOrders(m, m.data.orders.map(function (o) {
+        return o.order_id === 13 ? Object.assign({}, o, { status: 'in_transit' }) : o;
+    }));
+    m.render();
+    check('an order changing status rewrites the active list and the feed once each',
+        rail.writes === rw + 1 && feed.writes === fw + 1 && rail.html.indexOf('BLOCKED') < 0 &&
+        feed.html.indexOf('AMR-F responding') >= 0, rail.writes - rw + ' / ' + (feed.writes - fw));
+    const aged = feed.html;
+    m.clock.t += 10000;
+    moveInPlace(m, 8);
+    check('ten seconds on, the feed rewrites once as its lines fade, and the legend does not',
+        feed.writes === fw + 2 && feed.html !== aged && legend.writes === lw + 1, feed.writes - fw + ' feed, ' + (legend.writes - lw) + ' legend');
+});
+
 // --- run -------------------------------------------------------------------
 
 (async function run() {
