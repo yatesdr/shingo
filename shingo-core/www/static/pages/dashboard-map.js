@@ -1378,13 +1378,15 @@ import {
   //
   // It reaches only what it is given: the host and the look (colours) at
   // creation, and per frame the view, the projector, the marker sizes and the
-  // items, plus the pure helpers svgEl, laneKey and cubicPathD. Its functions
+  // items, plus this file's svgEl and SVGNS and scene-geom's laneKey and
+  // cubicPathD, all pure. Its functions
   // name their parameters proj and view on purpose: inside them those are the
   // frame's, never the page's, so the section can be lifted out of this file
   // whole. Pinned by the render pins theWholeSceneAsDrawn (the look),
   // aFrameWithNothingStaticBuildsNothing and its siblings (what a frame costs).
   function createSceneView(host, look) {
-    var svg = null, layers = null, baseKey = null, nodesKey = null, routes = [], robots = [];
+    // routeRecs and robotRecs: syncKids' records of the two in-place layers.
+    var svg = null, layers = null, baseKey = null, nodesKey = null, routeRecs = [], robotRecs = [];
     function mount() {
       if (svg && svg.parentNode === host) return;
       host.innerHTML = '';
@@ -1394,7 +1396,7 @@ import {
         layers[name] = svg.appendChild(svgEl('g', { 'data-layer': name }));
       });
       host.appendChild(svg);
-      baseKey = null; nodesKey = null; routes = []; robots = [];
+      baseKey = null; nodesKey = null; routeRecs = []; robotRecs = [];
     }
     function emptyLayer(g) { while (g.firstChild) g.removeChild(g.firstChild); }
     return {
@@ -1419,8 +1421,8 @@ import {
           emptyLayer(layers.nodes);
           f.nodes().forEach(function (n) { drawNodeGlyph(layers.nodes, n, f.nodeR, f.proj, look); });
         }
-        routes = syncKids(layers.routes, routes, f.routes.map(function (rt) { return routeSpec(rt, f.robotR); }));
-        robots = syncKids(layers.robots, robots, f.robots.map(function (r) { return robotSpec(r, f.robotR, f.proj, look); })
+        routeRecs = syncKids(layers.routes, routeRecs, f.routes.map(function (rt) { return routeSpec(rt, f.robotR); }));
+        robotRecs = syncKids(layers.robots, robotRecs, f.robots.map(function (r) { return robotSpec(r, f.robotR, f.proj, look); })
           .concat(chipSpecs(f.robots, f.robotR, f.fontS, f.proj)));
       },
       // clear empties the host and forgets every element, for a frame with
@@ -1608,15 +1610,15 @@ import {
   //    → red error state), so its lane draws the SAME neutral frozen treatment —
   //    the old loud red route line doubled the signal and was removed (2026-07).
   function routeSpec(rt, robotR) {
-    var points = rt.pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' ');
+    var spelled = rt.pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' ');
     if (rt.kind === 'intent') {
       return { key: rt.key, tag: 'polyline', attrs: {
-        points: points, class: 'map-route-intent', fill: 'none',
+        points: spelled, class: 'map-route-intent', fill: 'none',
         'stroke-width': robotR * 0.16, 'stroke-opacity': rt.dimmed ? 0.18 : 0.34
       } };
     }
     return { key: rt.key, tag: 'polyline', attrs: {
-      points: points, class: 'map-route-frozen', fill: 'none',
+      points: spelled, class: 'map-route-frozen', fill: 'none',
       stroke: rt.color, 'stroke-width': robotR * 0.22, 'stroke-opacity': rt.dimmed ? 0.22 : 0.4
     } };
   }
