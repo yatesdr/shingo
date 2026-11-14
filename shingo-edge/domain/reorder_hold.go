@@ -111,7 +111,7 @@ func AutoReorderHeld(c *NodeClaim, rt *RuntimeState, now time.Time) ReorderHeld 
 			Sentence: fmt.Sprintf("Auto-reorder is paused until %s: %s. REQUEST asks now.", clockTime(until), note)}
 	case ReorderHoldOff:
 		return ReorderHeld{Hold: ReorderHoldOff,
-			Sentence: fmt.Sprintf("Auto-reorder is off: %s. It comes back on when the line counts a part, or on REQUEST.", note)}
+			Sentence: fmt.Sprintf("Auto-reorder is off: %s. REQUEST asks now.", note)}
 	case ReorderHoldPersonOff:
 		return ReorderHeld{Hold: ReorderHoldPersonOff,
 			Sentence: fmt.Sprintf("Auto-reorder was switched off here by %s at %s.", note, clockTime(rt.ReorderHoldAt))}
