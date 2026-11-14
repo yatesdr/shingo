@@ -48,6 +48,7 @@ import { toast } from '/static/shared/notice.js';
 // each field with its own rule (pickerInit, drawPicker).
 import { mountPicker, nodePicker, nodeRows, nodeSource } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
+import { exceptionList, countOf } from '/static/shared/exceptions.js';
 const NO_NOTICE = { notice: false };
 
 const M = () => window.ComposerModel;
@@ -110,6 +111,7 @@ const S = {
     pickers: {},         // every open node picker, by key — see pickerInit
     sets: {},            // every set picker's four buckets, by its picker's key — see setInit
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
+    countedPick: 0,      // the position Counted at's + Add picked, its counter not yet chosen
     stMap: null,         // Settings' map shown or put away: {pid, shown} — see stMapShown
     livePositions: null, // every live position on this Edge, every process's — see loadLivePositions
     add: null,           // the process sheet's own non-text draft: {groupID, map, edit, station, before}
@@ -5613,12 +5615,12 @@ function identityField() {
 
 // countingView is what the Production counter section's live words and its
 // MES slots and station counters rows read (station-card.js): the process as
-// saved, the slots' read, the station counters, their checklists' positions
-// and verdicts, the open checklist (S.scOpen), the process's health items, its
-// styles, and the plant-local time formats.
+// saved, the slots' read, the station counters, the positions (each counter
+// says which it counts), the process's health items, its styles, and the
+// plant-local time formats.
 function countingView(p) {
     return { process: p, slots: S.countingSlots || [], counters: S.stationCounters || [],
-        positions: S.curtainNodes || [], verdicts: S.stationVerdicts, open: S.scOpen || 0,
+        positions: S.curtainNodes || [],
         items: S.catidItems || [], styles: stylesOf(p.id), fmt: formatTime, clock: formatClock };
 }
 
@@ -5664,51 +5666,16 @@ async function loadCatidItems() {
 }
 
 // loadStationVerdicts reads the binding's dry run for every position of the
-// process, in one read, while it has a station counter. A failed read leaves
-// every position greyed as not checked.
-async function loadStationVerdicts() {
+// process, in one read, while it has a station counter, or when force (Counted
+// at's + Add, which may bind a position to a counter not made yet). A failed
+// read leaves every position greyed as not checked.
+async function loadStationVerdicts(force) {
     S.stationVerdicts = {};
-    if (!(S.stationCounters || []).length) return;
+    if (!force && !(S.stationCounters || []).length) return;
     const res = await send('GET', '/api/processes/' + S.processID + '/countable');
     if (res.ok && res.body) S.stationVerdicts = res.body;
 }
 
-// saveStationPositions is a card's save: one PUT …/counted-at per box that
-// differs from its binding, after a confirm naming them.
-function saveStationPositions(id) {
-    const ticked = {};
-    for (const el of root().querySelectorAll('input[data-scpos][data-sc="' + id + '"]')) {
-        ticked[Number(el.dataset.scpos)] = el.checked;
-    }
-    const changes = window.StationCard.changes(id, S.curtainNodes || [], S.stationVerdicts, ticked);
-    const name = nid => ((S.curtainNodes || []).find(n => n.id === nid) || {}).name || 'position ' + nid;
-    if (!changes.length) {
-        S.settingsNotice = 'No position changed.';
-        drawSettings();
-        return;
-    }
-    const here = changes.filter(x => x.line_counter_id).map(x => name(x.id));
-    const back = changes.filter(x => !x.line_counter_id).map(x => name(x.id));
-    pageSheet('Save this station counter’s positions?',
-        (here.length ? 'Counted here: ' + here.join(', ') + '. ' : '') +
-        (back.length ? 'Back to the production counter: ' + back.join(', ') + '.' : ''),
-        '', 'Save', async () => {
-            for (const x of changes) {
-                const out = await send('PUT', '/api/process-nodes/' + x.id + '/counted-at', { line_counter_id: x.line_counter_id }, NO_NOTICE);
-                if (!out.ok) {
-                    sheetStatus(said(out, name(x.id) + ': '), true);
-                    await afterStationChange();
-                    return;
-                }
-            }
-            S.scOpen = 0;
-            closeSheet();
-            await afterStationChange();
-        });
-}
-
-// loadCountingSlots reads the process's MES slots for the Production counter
-// section (none on a failed read).
 async function loadCountingSlots() {
     const res = await send('GET', '/api/processes/' + S.processID + '/counting-slots');
     S.countingSlots = res.ok ? ((res.body || {}).slots || []) : [];
@@ -5772,11 +5739,14 @@ function openStationCounter(id, bindNode) {
                 if (!b.ok) { chainHalf(afterStationChange); sheetStatus(said(b), true); return; }
             }
             chainDone();
-            // A new counter counts nothing yet: its checklist opens, its
-            // countable positions ticked when it is the only one.
-            if (!id && !bindNode && bodyOf(out).id) S.scOpen = bodyOf(out).id;
             closeSheet();
             await afterStationChange();
+            // A new counter counts nothing yet: the positions it counts are
+            // picked under Position settings, the one editor of a binding.
+            if (!id && !bindNode && bodyOf(out).id) {
+                S.settingsNotice = 'Station counter added. Pick the positions it counts under Position settings › Counted at.';
+                drawSettings();
+            }
         });
     bindCombos(sheetEl());
 }
@@ -5798,12 +5768,12 @@ async function setCountedAt(nodeID, value) {
     const out = await send('PUT', '/api/process-nodes/' + nodeID + '/counted-at',
         { line_counter_id: value ? Number(value) : null }, NO_NOTICE);
     S.settingsError = out.ok ? '' : said(out);
+    if (out.ok && S.countedPick === nodeID) S.countedPick = 0;
     await afterStationChange();
 }
 
 // countedAtField is a position's "Counted at": the production counter, one of
-// the process's station counters, or a new one. countedAtName is the one it
-// is counted at, in words, for the position's row.
+// the process's station counters, or a new one.
 function counterName(c) { return window.StationCard ? window.StationCard.nameOf(c) : c.label || c.tag_name; }
 
 function countedAtField(n) {
@@ -5815,41 +5785,29 @@ function countedAtField(n) {
     return '<select class="pd-inp" data-countedat="' + n.id + '">' + opts + '</select>';
 }
 
-function countedAtName(n) {
-    const c = n.line_counter_id ? (S.stationCounters || []).find(x => x.id === n.line_counter_id) : null;
-    return c ? counterName(c) : 'the production counter';
-}
-
-// ── Settings · Positions ─────────────────────────────────────────────────────
+// ── Settings · Position settings ─────────────────────────────────────────────
 //
-// Every position of the process, under the screen it is on, each with its
-// light-curtain switch and a Remove. Adding one is the Positions bucket of the
-// set picker above (setSection).
-//
-// A POSITION BELONGS TO A SCREEN, not to the process alone (process_nodes
-// carries operator_station_id, and claimed-nodes is per screen), so the rows
-// are grouped by screen and the add asks which one when there is more than
-// one. The Operator screens tab still edits the same list; both write through
-// PUT …/claimed-nodes, and this section never sends a list it did not just read.
-function positionsSection() {
-    const screens = stationsOf(S.processID);
-    const head = '<div class="pd-sect"><h2>Positions</h2>' +
-        '<span class="pd-dim">each position’s light curtain and where it is counted, by the screen it is on</span></div>';
-    if (!screens.length) {
-        return head + '<p class="pd-note">A position belongs to an operator screen, and this process has ' +
-            'none yet. Add one on the Operator screens tab, then tick its positions above.</p>';
-    }
+// A SETTING KEPT PER POSITION IS SAID AS ITS RULE AND THE POSITIONS THAT DIFFER
+// (shared/exceptions.js; owner ruling 2026-11-14), not as one row per position
+// saying the default: a 23-position press drew 23 rows of "light curtain off ·
+// counted at the production counter". Adding and taking a position off a
+// screen is the Positions bucket of the set picker above (setSection), which
+// asks what still names a position before it takes it off.
+function positionSettings() {
+    const head = '<div class="pd-sect"><h2>Position settings</h2>' +
+        '<span class="pd-dim">only where a position differs</span></div>';
     const nodes = S.curtainNodes || [];
     if (!nodes.length) return head + '<p class="pd-note">This process has no positions yet: tick them in the Positions bucket above.</p>';
-    const onScreen = id => nodes.filter(n => n.operator_station_id === id);
-    const loose = nodes.filter(n => !screens.some(st => st.id === n.operator_station_id));
-    return head + screens.filter(st => onScreen(st.id).length).map(st =>
-        '<div class="pd-lbl pd-posscreen">' + esc(st.name) + '</div>' + onScreen(st.id).map(positionRow).join('')).join('') +
-        (loose.length ? '<div class="pd-lbl pd-posscreen">On no screen</div>' + loose.map(positionRow).join('') : '');
+    return head + curtainExceptions(nodes) + countedAtExceptions(nodes) + positionFacts(nodes);
 }
 
-// positionRow is one position: its name, its curtain switch and Remove, and the
-// curtain's three fields under it while the switch is on.
+// posName is a position as the exception rows name it.
+function posName(n) {
+    return n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : '');
+}
+
+// curtainExceptions: the positions whose light curtain is on, each with its
+// PLC, tag and release value.
 //
 // FG LIGHT-CURTAIN INTERLOCK - a per-node opt-in. Off (the default) means
 // releases at the node go as always. On, a produce release there waits for the
@@ -5857,40 +5815,110 @@ function positionsSection() {
 // read at the click (fail-closed on any read trouble); the operator station's
 // RELEASE button greys when the cached value disagrees. The release value
 // starts unchosen and must be picked before the node can be saved switched on
-// - the server refuses the same. The switch is a draft, saved by Save settings;
-// Add and Remove write at once, like the routing set below.
-//
-// ONE ROW PER POSITION (owner ruling 4): its light curtain and where it is
-// counted are rarely changed, so the row says both in its sub-label and
-// Change… shows the controls (stMore); Remove stays on the row.
-function positionRow(n) {
-    const d = S.curtain[n.id];
-    if (!d) return '';
-    const on = !!d.enabled;
-    const seg = [[true, 'TRUE'], [false, 'FALSE']].map(v =>
-        '<button class="' + (d.safe === v[0] ? 'on' : '') + '" data-act="cu-val" data-node="' + n.id +
+// - the server refuses the same, and the list says so while one is unchosen.
+// + Add and × are drafts, saved by Save settings.
+function curtainExceptions(nodes) {
+    const on = nodes.filter(n => S.curtain[n.id] && S.curtain[n.id].enabled);
+    const seg = n => [[true, 'Releases on TRUE'], [false, 'on FALSE']].map(v =>
+        '<button class="' + (S.curtain[n.id].safe === v[0] ? 'on' : '') + '" data-act="cu-val" data-node="' + n.id +
         '" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
-    const pointer = [d.plc, d.tag].filter(Boolean).join(' · ');
-    const now = (n.enabled === false ? 'off until its active order finishes · ' : '') +
-        (on ? 'light curtain on' + (pointer ? ' (' + pointer + ')' : '') : 'light curtain off') +
-        ' · counted at ' + countedAtName(n);
-    const remove = n.operator_station_id
-        ? '<button class="pd-dimlink" data-act="pos-remove" data-node="' + esc(n.core_node_name) +
-            '" data-station="' + n.operator_station_id + '">Remove</button>'
-        : '';
-    const inner = stField('Light curtain', on ? 'on: releases here wait for its tag' : 'off: releases here go as always',
-        '<button class="pd-chk' + (on ? ' on' : '') + '" data-act="cu-toggle" data-node="' + n.id +
-        '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button>') +
-        (on
-            ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', cuCombo(n.id, 'plc', 'plc')) +
-              stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', cuCombo(n.id, 'tag', 'tag')) +
-              stField('Release value', 'which reading allows the release - a site fact; choose it from the test, there is no default',
-                  '<div class="pd-seg">' + seg + '</div>')
-            : '') +
-        stField('Counted at', 'the counter its strokes count on', countedAtField(n));
-    const dirty = JSON.stringify(d) !== JSON.stringify(curtainDraft()[n.id]);
-    return stMore('pos-' + n.id, n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''),
-        now, inner, dirty, remove);
+    const unchosen = on.filter(n => S.curtain[n.id].safe === null).map(posName);
+    return exceptionList({
+        id: 'curtain', label: 'Light curtain', sub: 'a full-bin release waits for the curtain',
+        summary: on.length ? countOf(on.length, nodes.length, 'position')
+            : 'off at ' + (nodes.length === 1 ? 'its one position' : 'all ' + nodes.length + ' positions'),
+        rows: on.map(n => ({
+            name: posName(n),
+            cells: [cuCombo(n.id, 'plc', 'plc'), cuCombo(n.id, 'tag', 'tag'), '<div class="pd-seg">' + seg(n) + '</div>'],
+            remove: { act: 'cu-off', node: n.id },
+        })),
+        add: on.length < nodes.length ? { label: '+ Add a position', act: 'cu-add' } : null,
+    }) + (unchosen.length
+        ? '<p class="pd-note">Pick which reading releases at ' + esc(unchosen.join(', ')) +
+            ': it is a site fact, and there is no default.</p>'
+        : '');
+}
+
+// countedAtExceptions: the positions counted at a station counter instead of
+// the production counter, each with the counter it is counted at; a position
+// just picked by + Add sits here until a counter is chosen for it. Its
+// counter and its × write at once (PUT …/counted-at), as they always have.
+function countedAtExceptions(nodes) {
+    const bound = nodes.filter(n => n.line_counter_id || n.id === S.countedPick);
+    const at = nodes.length - nodes.filter(n => n.line_counter_id).length;
+    return exceptionList({
+        id: 'counted', label: 'Counted at', sub: 'where a position’s strokes count',
+        summary: (at === nodes.length ? 'all ' + nodes.length : countOf(at, nodes.length, 'position')) + ' at the production counter',
+        rows: bound.map(n => ({
+            name: posName(n),
+            cells: [countedAtField(n)],
+            remove: n.line_counter_id ? { act: 'ca-off', node: n.id } : { act: 'ca-cancel', node: n.id },
+        })),
+        add: bound.length < nodes.length ? { label: '+ Add a position', act: 'ca-add' } : null,
+    });
+}
+
+// positionFacts: what the exception lists do not say about a position and the
+// old one-row-per-position wall did: a position on no screen, and one that is
+// off until its active order finishes. Said only when there is one.
+function positionFacts(nodes) {
+    const screens = stationsOf(S.processID);
+    const loose = nodes.filter(n => !screens.some(st => st.id === n.operator_station_id)).map(posName);
+    const retiring = nodes.filter(n => n.enabled === false).map(posName);
+    return (loose.length ? '<p class="pd-note">On no screen: ' + esc(loose.join(', ')) +
+            '. Tick one in a screen’s Positions bucket above to put it there.</p>' : '') +
+        (retiring.length ? '<p class="pd-note">Off until its active order finishes: ' + esc(retiring.join(', ')) + '.</p>' : '');
+}
+
+// openPositionPicker is + Add's list: the shared picker over this process's
+// positions, one picked at a time; a position the setting cannot take is
+// greyed with why (why(n), '' for none).
+function openPositionPicker(btn, nodes, why, onPick) {
+    const pop = $('pd-stpop');
+    if (!pop) return;
+    pop.innerHTML = '';
+    showPop(pop, btn);
+    const rows = nodes.map(n => {
+        const r = { value: String(n.id), label: posName(n) };
+        const no = why(n);
+        if (no) r.reason = no;
+        return r;
+    });
+    mountPicker(pop, null, () => rows, {
+        open: true, chips: false, placeholder: 'find a position',
+        onChange: v => {
+            closeLayer(pop);
+            pop.hidden = true;
+            pop.innerHTML = '';
+            if (v) onPick(Number(v));
+        },
+    });
+    placePopover(pop, btn);
+}
+
+// openCurtainAdd: + Add under Light curtain, over the positions whose curtain
+// is off. A pick switches it on in the draft, its release value unchosen.
+function openCurtainAdd(btn) {
+    const off = (S.curtainNodes || []).filter(n => S.curtain[n.id] && !S.curtain[n.id].enabled);
+    openPositionPicker(btn, off, () => '', id => {
+        S.curtain[id].enabled = true;
+        drawSettings();
+    });
+}
+
+// openCountedAdd: + Add under Counted at, over the positions at the production
+// counter, each refused one greyed with the binding's own sentence (the dry
+// run, read once for the process if it has not been).
+async function openCountedAdd(btn) {
+    if (!Object.keys(S.stationVerdicts || {}).length) await loadStationVerdicts(true);
+    const v = S.stationVerdicts || {};
+    const free = (S.curtainNodes || []).filter(n => !n.line_counter_id);
+    openPositionPicker(btn, free,
+        n => (v[n.id] ? (v[n.id].countable ? '' : v[n.id].refusal) : 'not checked: the dry run could not be read'),
+        id => {
+            S.countedPick = id;
+            drawSettings();
+        });
 }
 
 // The positions one screen holds, read fresh, or null when the read failed.
@@ -5904,38 +5932,6 @@ async function readStationNodes(stationID) {
     const res = await send('GET', '/api/operator-stations/' + stationID + '/claimed-nodes');
     if (!res.ok) return null;
     return Array.isArray(res.body) ? res.body : [];
-}
-
-// openRemovePosition asks first, with what still names the position
-// (POST …/claimed-nodes/impact) in the question.
-async function openRemovePosition(name, stationID) {
-    const st = stationsOf(S.processID).find(s => s.id === stationID) || { name: 'its screen' };
-    const current = await readStationNodes(stationID);
-    if (!current) {
-        S.settingsError = st.name + '’s positions could not be read, so ' + name + ' was not removed.';
-        drawSettings();
-        return;
-    }
-    const impact = await send('POST', '/api/operator-stations/' + stationID + '/claimed-nodes/impact',
-        B().stationNodes(current.filter(n => n !== name)), NO_NOTICE);
-    const says = !impact.ok ? (impact.shown ? 'What still names it could not be read.' : 'What still names it could not be read (' + impact.error + ').')
-        : bodyOf(impact).warning || 'No recipe or style of this process names it.';
-    pageSheet('Remove ' + name, 'from ' + st.name,
-        '<p class="pd-note">' + esc(says) + ' Removing it takes its tile off the screen.</p>',
-        'Remove', () => submitRemovePosition(name, stationID, st.name), true);
-}
-
-async function submitRemovePosition(name, stationID, screenName) {
-    const current = await readStationNodes(stationID);
-    if (!current) { sheetStatus('This screen’s positions could not be read, so nothing was removed.', true); return; }
-    const out = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
-        B().stationNodes(current.filter(n => n !== name)), NO_NOTICE);
-    if (!out.ok) { sheetStatus(said(out), true); return; }
-    const kept = Array.isArray(bodyOf(out).kept) ? bodyOf(out).kept : [];
-    closeSheet();
-    await afterPositionsChanged(stationID);
-    S.settingsNotice = kept.length ? keptPositionsSentence(kept) : 'Removed ' + name + ' from ' + screenName + '.';
-    drawSettings();
 }
 
 // afterPositionsChanged re-reads what an add or a remove moved — the screen's
@@ -6065,7 +6061,7 @@ function drawSettings() {
         identityField() + (card ? card.countingHTML(view) : '');
 
     if (!S.curtain) S.curtain = curtainDraft();
-    const positions = positionsSection();
+    const positions = positionSettings();
 
     // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
     // picks from. Write-through, so it is outside the save bar's draft. Sync
@@ -9344,7 +9340,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'gspot-add': 1, 'glist-add': 1 };
+    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
 // Styles. The Recipes tab's hash still says presets (F23); recipes names it
@@ -9469,12 +9465,16 @@ function onClick(e) {
                 S.settings.changeover_auto_arm = btn.dataset.arm;
                 drawSettings();
                 return;
-            case 'cu-toggle': {
+            case 'cu-add': openCurtainAdd(btn); return;
+            case 'cu-off': {
                 const d = S.curtain[btn.dataset.node];
-                if (d) d.enabled = !d.enabled;
+                if (d) d.enabled = false;
                 drawSettings();
                 return;
             }
+            case 'ca-add': void openCountedAdd(btn); return;
+            case 'ca-off': void setCountedAt(Number(btn.dataset.node), ''); return;
+            case 'ca-cancel': S.countedPick = 0; drawSettings(); return;
             case 'cu-val': {
                 const d = S.curtain[btn.dataset.node];
                 if (d) d.safe = btn.dataset.val === 'true';
@@ -9501,16 +9501,6 @@ function onClick(e) {
             }
             case 'sc-new': openStationCounter(0, 0); return;
             case 'sc-edit': openStationCounter(Number(btn.dataset.sc), 0); return;
-            case 'sc-positions': saveStationPositions(Number(btn.dataset.sc)); return;
-            // A counter's checklist opens on Change positions… and closes on
-            // its Cancel, a second click, or its save; one is open at a time.
-            case 'sc-checklist': {
-                const id = Number(btn.dataset.sc);
-                S.scOpen = S.scOpen === id ? 0 : id;
-                drawSettings();
-                return;
-            }
-            case 'sc-checklist-close': S.scOpen = 0; drawSettings(); return;
             case 'sc-delete': {
                 const id = Number(btn.dataset.sc);
                 pageSheet('Remove this station counter?', 'its positions are counted by the production counter again', '',
@@ -9525,7 +9515,6 @@ function onClick(e) {
                 if (S.stSet) { S.stSet.station = Number(btn.dataset.station); S.stSet.warnedFor = null; }
                 drawSettings();
                 return;
-            case 'pos-remove': void openRemovePosition(btn.dataset.node, Number(btn.dataset.station)); return;
             case 'bind-loader': bindLoaderBoard(btn.dataset.loader); return;
             case 'screen-add': void openScreenSheet(0); return;
             case 'screen-edit': void openScreenSheet(btn.dataset.station); return;

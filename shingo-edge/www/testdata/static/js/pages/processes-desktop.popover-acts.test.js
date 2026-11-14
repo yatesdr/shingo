@@ -332,13 +332,14 @@ function sheetParts(doc, scrim) {
 // ── the shared modules the page imports ──────────────────────────────────────
 //
 // loadShared runs the shared modules the page imports as it imports them
-// (dom.js, layer.js, http.js), each one's imports bound to the ones loaded
+// (dom.js, layer.js, http.js, the pickers, exceptions.js and the esc.js it
+// imports), each one's imports bound to the ones loaded
 // before it; notice.js's toast is what the caller passes (here a recorder).
 // It returns every export.
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
 function loadShared(deps) {
     const mods = { 'notice.js': { toast: deps.toast } };
-    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js']) {
+    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js']) {
         const names = [];
         const binds = [];
         const src = fs.readFileSync(path.join(SHARED_DIR, file), 'utf8')
@@ -350,7 +351,8 @@ function loadShared(deps) {
         mods[file] = vm.runInThisContext('(function (__mods) {' + binds.join(' ') + src + '\nreturn { ' + names.join(', ') + ' };\n})',
             { filename: file })(mods);
     }
-    return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js']);
+    return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js'],
+        mods['exceptions.js']);
 }
 
 // ── the page, booted for real ────────────────────────────────────────────────
@@ -497,6 +499,8 @@ function loadPage(loadOpts) {
         send: shared.send, createPicker: shared.createPicker,
         nodePicker: shared.nodePicker, nodeSource: shared.nodeSource, nodeWhy: shared.nodeWhy,
         partPicker: shared.partPicker, partSource: shared.partSource,
+        mountPicker: shared.mountPicker, nodeRows: shared.nodeRows,
+        exceptionList: shared.exceptionList, countOf: shared.countOf,
     });
     // The sheets' writes build their bodies through the real body module.
     win.DesktopBodies = require(path.join(SRC_DIR, 'desktop-bodies.js'));
@@ -3797,8 +3801,9 @@ async function settingsPositionsPins(h) {
         o = o || {};
         const writes = [];
         const host = pickerHost('npk-procset');
+        const setHost = pickerHost('npk-stset');
         const ctx = loadPage({
-            allowSheet: true, hash: hash, extraIds: { 'npk-procset': host },
+            allowSheet: true, hash: hash, extraIds: { 'npk-procset': host, 'npk-stset': setHost },
             processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
             stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }],
             stationNodes: { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
@@ -3817,32 +3822,27 @@ async function settingsPositionsPins(h) {
                 return okJSON({ status: 'ok', kept: [] });
             },
         });
-        return Object.assign(ctx, { writes: writes, host: host });
+        return Object.assign(ctx, { writes: writes, host: host, setHost: setHost });
     };
     const rowOf = (html, name) => (html.match(new RegExp('<button[^>]*>(?:<i class="box"></i>)?' + name + '(?:<small>[^<]*</small>)?</button>')) || [''])[0];
 
-    await pin('Settings lists each position under its screen, with its Change… (curtain, counted at) and a Remove', async () => {
+    await pin('Settings says each position setting as its rule and the positions that differ, not one row per position', async () => {
         const ctx = page('#tab=settings');
         await settle();
         const html = ctx.root.innerHTML;
-        if (html.indexOf('<h2>Positions</h2>') < 0) throw new Error('Settings draws no Positions section');
-        if (html.indexOf('data-act="pos-add"') >= 0) throw new Error('Settings still draws Add positions: adding is the set picker’s Positions bucket');
-        if (html.indexOf('<h2>Light curtain interlock</h2>') >= 0) throw new Error('the curtain section is still its own heading');
-        const press = html.indexOf('<div class="pd-lbl pd-posscreen">Press 6 Operator Screen</div>');
-        const unloader = html.indexOf('<div class="pd-lbl pd-posscreen">Unloader</div>');
-        if (press < 0 || unloader < 0) throw new Error('the rows are not grouped under their two screens');
-        const at = n => html.indexOf('data-act="pos-remove" data-node="' + n + '"');
-        if (!(press < at('PLN_005') && at('PLN_005') < unloader && unloader < at('ULN_002'))) {
-            throw new Error('PLN_005 is not under the press\'s screen, or ULN_002 not under the Unloader');
+        if (html.indexOf('<h2>Position settings</h2>') < 0) throw new Error('Settings draws no Position settings section');
+        for (const gone of ['pd-posscreen', 'data-act="pos-remove"', 'data-more="pos-', 'data-act="cu-toggle"', 'data-act="pos-add"']) {
+            if (html.indexOf(gone) >= 0) throw new Error('the one-row-per-position wall is still drawn: ' + gone);
         }
-        if (html.indexOf('data-act="pos-remove" data-node="PLN_005" data-station="18"') < 0) throw new Error('PLN_005\'s Remove does not name screen 18');
-        // One row per position (owner ruling 4): its curtain and counted-at
-        // are behind its Change….
-        if (html.indexOf('data-act="st-more" data-more="pos-87"') < 0) throw new Error('PLN_005 has no Change…');
-        if (html.indexOf('data-act="cu-toggle"') >= 0) throw new Error('a curtain switch is drawn before Change…');
-        const loose = html.indexOf('<div class="pd-lbl pd-posscreen">On no screen</div>');
-        if (loose < unloader || html.indexOf('data-act="st-more" data-more="pos-89"') < loose) throw new Error('PLN_009 is not under On no screen');
-        if (html.indexOf('data-act="pos-remove" data-node="PLN_009"') >= 0) throw new Error('a position on no screen offers a Remove it cannot do');
+        // THE RULE, ONCE: no curtain is on and every position counts at the
+        // production counter, so neither list has a row.
+        const sum = id => (html.match(new RegExp('<div class="exc" data-exc="' + id + '">.*?<div class="exc-sum"><span>([^<]*)</span>')) || [])[1];
+        if (sum('curtain') !== 'off at all 4 positions') throw new Error('Light curtain says ' + JSON.stringify(sum('curtain')));
+        if (sum('counted') !== 'all 4 at the production counter') throw new Error('Counted at says ' + JSON.stringify(sum('counted')));
+        if (html.indexOf('<table class="exc-rows">') >= 0) throw new Error('a list draws a row for a position that does not differ');
+        if (html.indexOf('data-act="cu-add"') < 0 || html.indexOf('data-act="ca-add"') < 0) throw new Error('a list has no + Add');
+        // What the wall also said: a position on no screen.
+        if (html.indexOf('<p class="pd-note">On no screen: PLN_009.') < 0) throw new Error('PLN_009 on no screen is not said');
     });
 
     await pin('the positions editor greys another process\'s position, ticks the screen\'s own, says what a move does, offers a loader window', async () => {
@@ -3930,24 +3930,28 @@ async function settingsPositionsPins(h) {
         }
     });
 
-    await pin('Remove asks with what still names the position, then sends the list without it', async () => {
+    // ONE DOOR TAKES A POSITION OFF A SCREEN: the Positions bucket of the set
+    // picker. It asks what still names the position first, and the same
+    // untick again takes it off (Settings' per-row Remove was a second door
+    // to the same write, and went with the one-row-per-position wall).
+    await pin('unticking a position in the Positions bucket asks what still names it, and unticking it again takes it off', async () => {
         const says = 'PLN_005 is named by recipe Two up.';
         const ctx = page('#tab=settings', { warning: says });
         await settle();
-        click(ctx.root, ctx.doc, { act: 'pos-remove', node: 'PLN_005', station: '18' });
+        pk.pick(ctx.setHost, 'PLN_005');
         await settle();
         const ask = ctx.writes.find(w => /\/impact$/.test(w.url));
-        if (!ask || JSON.stringify(ask.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the impact ask was ' + JSON.stringify(ask));
-        if (ctx.sheet().el.innerHTML.indexOf('<h2>Remove PLN_005</h2>') < 0 || ctx.sheet().el.innerHTML.indexOf(says) < 0) {
-            throw new Error('the question does not carry the warning: ' + ctx.sheet().el.innerHTML.slice(0, 300));
+        if (!ask || JSON.stringify(ask.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the impact ask was ' + JSON.stringify(ctx.writes));
+        if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('the untick wrote before the warning was seen');
+        if (ctx.root.innerHTML.indexOf(says + ' Untick PLN_005 again to take it off.') < 0) {
+            throw new Error('Settings does not carry the warning: ' + (ctx.root.innerHTML.match(/<div class="pd-notice">[^<]*/) || ['none'])[0]);
         }
-        if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('Remove wrote before it was confirmed');
-        ctx.sheet().ok();
+        pk.pick(ctx.setHost, 'PLN_005');
         await settle();
         const put = ctx.writes.find(w => w.method === 'PUT');
-        if (!put || JSON.stringify(put.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('Remove sent ' + JSON.stringify(put));
-        if (ctx.root.innerHTML.indexOf('<div class="pd-notice">Removed PLN_005 from Press 6 Operator Screen.</div>') < 0) {
-            throw new Error('Settings does not say what was removed');
+        if (!put || JSON.stringify(put.body.nodes) !== '["PLN_006BCD","PLN_009BCD"]') throw new Error('the second untick sent ' + JSON.stringify(put));
+        if (ctx.root.innerHTML.indexOf('<div class="pd-notice">Took PLN_005 off Press 6 Operator Screen.</div>') < 0) {
+            throw new Error('Settings does not say what was taken off');
         }
     });
 }

@@ -12,7 +12,9 @@
 //   - bigline-requests.txt: each view's requests in order, with the size of
 //     each answer, and a total. A view that asks once per position shows it.
 //   - bigline-settings.txt: what Settings draws at this size, counted: the
-//     position rows, the curtain rows, the chips and the save bar.
+//     old one-row-per-position wall (0 since the exception list), what each
+//     exception list says and how many rows it draws, the chips and the save
+//     bar.
 //
 // The page runs unmodified under page-harness.js, as for pins.js.
 'use strict';
@@ -225,6 +227,20 @@ async function open(FX, search, hash) {
 // count of a string in the page's markup, the way the page wrote it.
 const count = (html, s) => html.split(s).length - 1;
 
+// excSum and excRows read one exception list (shared/exceptions.js) by its
+// data-exc: the rule it says, and how many positions it lists.
+function excList(html, id) {
+    const i = html.indexOf('<div class="exc" data-exc="' + id + '">');
+    if (i < 0) return '';
+    const j = html.indexOf('<div class="exc"', i + 1);
+    return html.slice(i, j < 0 ? undefined : j);
+}
+function excSum(html, id) {
+    const m = /<div class="exc-sum"><span>([^<]*)<\/span>/.exec(excList(html, id));
+    return m ? m[1] : '(not drawn)';
+}
+const excRows = (html, id) => count(excList(html, id), '<td class="exc-pos">');
+
 (async () => {
     const out = {};
     const req = [];
@@ -255,6 +271,9 @@ const count = (html, s) => html.split(s).length - 1;
         'position rows drawn (each "light curtain …" line): ' + count(html, 'light curtain '),
         'positions whose curtain is on: ' + (S.curtainNodes || []).filter(n => n.curtain_enabled).length,
         'rows saying the curtain is off: ' + count(html, 'light curtain off'),
+        'Light curtain says: ' + excSum(html, 'curtain') + ' · rows: ' + excRows(html, 'curtain'),
+        'Counted at says: ' + excSum(html, 'counted') + ' · rows: ' + excRows(html, 'counted'),
+        'Counted at, with one station counter, says: ' + excSum(vc.page.root.innerHTML || '', 'counted'),
         'parts in the part set: ' + (S.partSet || FX.server.partSet).length,
         'recipe versions listed: ' + (html.match(/<tr class="[^"]*" data-preset="/g) || []).length,
         'save bar: ' + (count(html, 'pd-savebar') ? 'yes' : 'no'),

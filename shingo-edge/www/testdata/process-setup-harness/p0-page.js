@@ -415,9 +415,14 @@ const scSheet = (label, tag) => async page => {
     page.byId('sc-tag').value = tag;
     await pressOK(page);
 };
-// Counted at sits behind its position row's Change… (owner ruling 4).
+// Counted at is an exception list under Position settings: + Add a position,
+// the position, then its counter in the row that appears.
 const countedAt = (node, value) => async page => {
-    page.click('root', { act: 'st-more', more: 'pos-' + node });
+    page.click('root', { act: 'ca-add' });
+    await page.settle();
+    const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(node));
+    if (!pick) throw new Error('+ Add a position under Counted at offers no ' + node);
+    pick.click();
     await page.settle();
     const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === String(node));
     if (!sel) throw new Error('Settings draws no Counted at for ' + node);
@@ -439,17 +444,12 @@ Object.assign(D, {
         await countedAt(202, 'new')(page);
         await scSheet('Station 3', 'S3.Count')(page);
     } },
-    // Change positions…: every countable box opens ticked (the only counter,
-    // counting none: station-card.js rows); all but POS_A1 and POS_A2 are
-    // unticked, so the save binds those two.
-    scPositions: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
-        page.click('root', rootButton(page, 'sc-checklist', { sc: 51 }));
-        const sel = 'input[data-scpos][data-sc="51"]';
-        const keep = new Set(page.S.curtainNodes.filter(n => n.core_node_name === 'POS_A1' || n.core_node_name === 'POS_A2').map(n => String(n.id)));
-        for (const el of page.root.querySelectorAll(sel)) el.checked = keep.has(el.dataset.scpos);
-        page.click('root', rootButton(page, 'sc-positions', { sc: 51 }));
-        await page.settle();
-        await pressOK(page);
+    // Two positions counted at Station 1, each through Counted at's + Add:
+    // the card's Change positions… checklist was a second editor of the same
+    // binding and is gone.
+    scCountedAtTwo: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
+        await countedAt(201, '51')(page);
+        await countedAt(202, '51')(page);
     } },
     scDelete: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
         page.click('root', rootButton(page, 'sc-delete', { sc: 51 }));
@@ -463,14 +463,12 @@ Object.assign(D, {
         T.setPick(page, 'root', 'stset', 'positions', 'NEW_1');
         await page.settle();
     } },
-    posRemoveAsk: { hash: '#tab=settings', drive: async page => {
-        page.click('root', rootButton(page, 'pos-remove', { node: 'POS_A11' }));
+    // And unticked there: what still names it is read first, then the list
+    // without it is written (Settings' per-row Remove was a second door to
+    // the same write).
+    posUntick: { hash: '#tab=settings', drive: async page => {
+        T.setPick(page, 'root', 'stset', 'positions', 'POS_A11');
         await page.settle();
-    } },
-    posRemove: { hash: '#tab=settings', drive: async page => {
-        page.click('root', rootButton(page, 'pos-remove', { node: 'POS_A11' }));
-        await page.settle();
-        await pressOK(page);
     } },
     bindLoader: {
         hash: '#tab=screens', extra: MISC_ROUTES,
@@ -568,14 +566,14 @@ async function pinRequests() {
     await requests('requests-station-counters.txt', [
         ['Settings › + Add station counter: Station 2 on S2.Count', D.scNew],
         ['Settings › Station 1 › Edit: Station 1b', D.scEdit],
-        ['Settings › POS_A1 › Counted at: Station 1 (the select\'s change)', D.scCountedAt],
-        ['Settings › POS_A2 › Counted at: New station counter… (Station 3 on S3.Count, then the bind)', D.scCountedAtNew],
-        ['Settings › Station 1 › Change positions…: POS_A1 and POS_A2 ticked, the rest unticked, Save positions', D.scPositions],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A1, at Station 1 (the select\'s change)', D.scCountedAt],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count, then the bind)', D.scCountedAtNew],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A1 then POS_A2, each at Station 1', D.scCountedAtTwo],
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
         ['Settings › Positions bucket: tick NEW_1 onto Screen A (the first screen)', D.posAdd],
-        ['Settings › POS_A11 › Remove (the impact is read before the sheet opens)', D.posRemove],
+        ['Settings › Positions bucket: untick POS_A11 (the impact is read before the list is written)', D.posUntick],
         ['Operator screens › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
     ]);
     await requests('requests-settings-misc.txt', [
@@ -613,13 +611,18 @@ async function pinReads() {
     await act('the Part chip on POS_A1 (the part popover opens)', null, async page => {
         page.click('root', { act: 'pick', node: 'POS_A1', kind: 'part' });
     });
-    // A PLC box is drawn only under a curtain switched on (cuCombo); the
-    // counter's tag box names its PLC field by selector (data-plcsel), which
-    // reads PLC_A off the drawn draft.
+    // A PLC box is drawn only under a curtain switched on (cuCombo): + Add a
+    // position under Light curtain, then POS_A1. The counter's tag box names
+    // its PLC field by selector (data-plcsel), which reads PLC_A off the
+    // drawn draft.
     await act('Settings: POS_A1\'s curtain switched on and its PLC box focused, then the counter\'s tag box focused',
         { hash: '#tab=settings', extra: MISC_ROUTES }, async page => {
             const node = page.S.curtainNodes.find(n => n.core_node_name === 'POS_A1');
-            page.click('root', { act: 'cu-toggle', node: String(node.id) });
+            page.click('root', { act: 'cu-add' });
+            await page.settle();
+            const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(node.id));
+            if (!pick) throw new Error('+ Add a position under Light curtain offers no POS_A1');
+            pick.click();
             const box = (kind, attr, v) => {
                 const w = page.root.querySelectorAll('[data-combo]').find(c => c.dataset.combo === kind && c.dataset[attr] === v);
                 if (!w) throw new Error('Settings draws no ' + kind + ' suggestion box with ' + attr + '=' + v);
@@ -713,15 +716,14 @@ async function pinRefusals() {
     await refusals('refusals-station-counters.txt', [
         specOf('+ Add station counter', D.scNew, { again: true }),
         specOf('Edit Station 1', D.scEdit, { again: true }),
-        specOf('POS_A1 › Counted at: Station 1', D.scCountedAt),
-        specOf('POS_A2 › Counted at: New station counter… (the create, then the bind)', D.scCountedAtNew, { again: true }),
-        specOf('Change positions… › Save positions (two binds)', D.scPositions, { again: true }),
+        specOf('Counted at › + Add: POS_A1 at Station 1', D.scCountedAt),
+        specOf('Counted at › + Add: POS_A2, New station counter… (the create, then the bind)', D.scCountedAtNew, { again: true }),
+        specOf('Counted at › + Add: POS_A1 then POS_A2 at Station 1 (two binds)', D.scCountedAtTwo),
         specOf('Remove Station 1', D.scDelete, { again: true }),
     ]);
     await refusals('refusals-positions.txt', [
         specOf('Positions bucket: tick NEW_1', D.posAdd),
-        specOf('Remove POS_A11: the sheet the impact read opens', D.posRemoveAsk),
-        specOf('Remove POS_A11: the sheet\'s Remove', D.posRemove, { again: true, refuse: /^PUT / }),
+        specOf('Positions bucket: untick POS_A11, its list write refused', D.posUntick, { refuse: /^PUT / }),
         specOf('Make a screen for LDR_1', D.bindLoader),
     ]);
     await refusals('refusals-settings-misc.txt', [

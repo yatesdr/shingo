@@ -68,7 +68,7 @@
     unhandled rejection: none
     pressed again: PUT /api/station-counters/51 → sheet: open "Edit station counter", no status, OK "Save" enabled
 
-## POS_A1 › Counted at: Station 1
+## Counted at › + Add: POS_A1 at Station 1
 # writes, in order: PUT /api/process-nodes/201/counted-at
 ### PUT /api/process-nodes/201/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
@@ -100,7 +100,7 @@
     state: no message set
     unhandled rejection: none
 
-## POS_A2 › Counted at: New station counter… (the create, then the bind)
+## Counted at › + Add: POS_A2, New station counter… (the create, then the bind)
 # writes, in order: POST /api/processes/1/station-counters · PUT /api/process-nodes/202/counted-at
 ### POST /api/processes/1/station-counters  ←  400 {"error"} (writeError)
     then: nothing
@@ -163,68 +163,64 @@
     unhandled rejection: none
     pressed again: PUT /api/process-nodes/202/counted-at → sheet: open "New station counter", no status, OK "Save" enabled
 
-## Change positions… › Save positions (two binds)
+## Counted at › + Add: POS_A1 then POS_A2 at Station 1 (two binds)
 # writes, in order: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at
 ### PUT /api/process-nodes/201/counted-at  ←  400 {"error"} (writeError)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
-    new text: … and 54 more runs (the tab redrew)
-    sheet: open "Save this station counter’s positions?", status "POS_A1: the Edge refused it" (bad), OK "Save" enabled
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable → sheet: closed
 ### PUT /api/process-nodes/201/counted-at  ←  500, no body (chi Recoverer)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
-    new text: … and 54 more runs (the tab redrew)
-    sheet: open "Save this station counter’s positions?", status "POS_A1: Server error (500)" (bad), OK "Save" enabled
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable → sheet: closed
 ### PUT /api/process-nodes/201/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
-    new text: … and 54 more runs (the tab redrew)
-    sheet: open "Save this station counter’s positions?", status "POS_A1: No answer from the server" (bad), OK "Save" enabled
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable → sheet: closed
 ### PUT /api/process-nodes/201/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
+    then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
     new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
-    new text: … and 50 more runs (the tab redrew)
+    new text: … and 51 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Save this station counter’s positions?", no status, OK "Save" enabled
+    the act stopped: + Add a position under Counted at offers no 202
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health → sheet: open "Save this station counter’s positions?", no status, OK "Save" enabled
 ### PUT /api/process-nodes/202/counted-at  ←  400 {"error"} (writeError)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
-    new text: … and 54 more runs (the tab redrew)
-    sheet: open "Save this station counter’s positions?", status "POS_A2: the Edge refused it" (bad), OK "Save" enabled
-    state: no message set
+    new text: #pd-root div.pd-refusal: the Edge refused it
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
+    state: settingsError="the Edge refused it"
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  500, no body (chi Recoverer)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
-    new text: … and 54 more runs (the tab redrew)
-    sheet: open "Save this station counter’s positions?", status "POS_A2: Server error (500)" (bad), OK "Save" enabled
-    state: no message set
+    new text: #pd-root div.pd-refusal: Server error (500)
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
+    state: settingsError="Server error (500)"
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable
-    new text: … and 54 more runs (the tab redrew)
-    sheet: open "Save this station counter’s positions?", status "POS_A2: No answer from the server" (bad), OK "Save" enabled
-    state: no message set
+    new text: #pd-root div.pd-refusal: No answer from the server
+    new text: … and 53 more runs (the tab redrew)
+    sheet: closed
+    state: settingsError="No answer from the server"
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · PUT /api/process-nodes/202/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health · GET /api/processes/1/countable → sheet: closed
 ### PUT /api/process-nodes/202/counted-at  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health
     new text: #pd-root p.pd-note: This process has no positions yet: tick them in the Positions bucket above.
     new text: … and 50 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Save this station counter’s positions?", no status, OK "Save" enabled
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/process-nodes/201/counted-at · GET /api/processes/1/station-counters · GET /api/process-nodes · GET /api/processes/1/counting-slots · GET /api/processes/1/catid-health → sheet: open "Save this station counter’s positions?", no status, OK "Save" enabled
 
 ## Remove Station 1
 # writes, in order: DELETE /api/station-counters/51

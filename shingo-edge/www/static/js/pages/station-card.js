@@ -11,14 +11,9 @@
 // positions it counts, a one-line status (amber only when it is stopped while
 // the line produces, the list's stopped) and its verbs; then + Add.
 //
-// A counter's positions are a checklist opened by Change positions…: one box
-// per position of the process, each greyed with its refusal when the
-// binding's rules refuse it (the dry run, one read for the whole process: GET
-// /api/processes/{id}/countable). The boxes are the bindings, except that
-// the process's only station counter, while it counts no position yet, starts
-// with its countable unbound positions ticked. Nothing binds until the
-// checklist's save, which sends one PUT …/counted-at per box that differs from
-// its binding. A classic script, so its Node test loads it.
+// Which positions a counter counts is said on its row and picked under
+// Position settings › Counted at, the one editor of a binding (the exception
+// list, shared/exceptions.js). A classic script, so its Node test loads it.
 (function () {
     'use strict';
 
@@ -49,52 +44,6 @@
     // count(n, one, many): "1 stroke", "2 strokes".
     function count(n, one, many) {
         return n + ' ' + (n === 1 ? one : many);
-    }
-
-    // rows(counterID, counterCount, positions, verdicts): one row per position,
-    // { id, name, at, checked, disabled, refusal }. at is the station counter
-    // the position is counted at (0: the production counter); verdicts holds
-    // each position's dry run, { countable, refusal } — a position with none
-    // yet is greyed. A box is ticked where the position is counted here; the
-    // process's only station counter, while it counts no position, also ticks
-    // its countable unbound positions (the first save's likely answer). Once
-    // it counts one, the boxes are the bindings: a position left unbound stays
-    // unticked.
-    function rows(counterID, counterCount, positions, verdicts) {
-        const v = verdicts || {};
-        const list = positions || [];
-        const countsNone = !list.some(n => (n.line_counter_id || 0) === counterID);
-        return list.map(function (n) {
-            const at = n.line_counter_id || 0;
-            const verdict = v[n.id];
-            const countable = !!(verdict && verdict.countable);
-            return {
-                id: n.id,
-                name: n.name,
-                at: at,
-                checked: at === counterID || (countable && at === 0 && counterCount === 1 && countsNone),
-                disabled: !countable,
-                refusal: countable ? '' : ((verdict && verdict.refusal) || 'not checked yet'),
-            };
-        });
-    }
-
-    // changes(counterID, positions, verdicts, ticked): the bindings the save
-    // sends, { id, line_counter_id }, for each countable position whose box
-    // differs from its binding: ticked and not counted here binds here;
-    // unticked and counted here goes back to the production counter. A box
-    // left unticked at a position another counter counts leaves it there.
-    function changes(counterID, positions, verdicts, ticked) {
-        const v = verdicts || {};
-        const t = ticked || {};
-        const out = [];
-        (positions || []).forEach(function (n) {
-            if (!(v[n.id] && v[n.id].countable)) return;
-            const here = (n.line_counter_id || 0) === counterID;
-            if (t[n.id] && !here) out.push({ id: n.id, line_counter_id: counterID });
-            else if (!t[n.id] && here) out.push({ id: n.id, line_counter_id: null });
-        });
-        return out;
     }
 
     // when(iso): a time to the minute, the default when the page passes no
@@ -235,44 +184,18 @@
             first + used.join('') + folded(unused, 'unused') + folded(unread, 'not read at the last pass'));
     }
 
-    // checklistHTML(c, v): a counter's positions as boxes (rows), a refused
-    // one greyed with its sentence, one counted at another counter named so;
-    // then the checklist's save and its cancel.
-    function checklistHTML(c, v) {
-        const counters = v.counters || [];
-        const other = id => {
-            const o = counters.find(x => x.id === id);
-            return o ? nameOf(o) : 'station counter ' + id;
-        };
-        const boxes = rows(c.id, counters.length, v.positions || [], v.verdicts).map(r =>
-            '<label class="pd-scl-box' + (r.disabled ? ' pd-dim' : '') + '"' + (r.refusal ? ' title="' + esc(r.refusal) + '"' : '') + '>' +
-            '<input type="checkbox" data-scpos="' + r.id + '" data-sc="' + c.id + '"' + (r.checked ? ' checked' : '') +
-            (r.disabled ? ' disabled' : '') + '> <span>' + esc(r.name) + '</span>' +
-            (r.refusal ? '<span class="pd-dim">' + esc(r.refusal) + '</span>'
-                : r.at && r.at !== c.id ? '<span class="pd-dim">counted at ' + esc(other(r.at)) + '</span>' : '') +
-            '</label>').join('');
-        return '<div class="pd-scl-pos" data-checklist="' + c.id + '">' +
-            (boxes || '<span class="pd-dim">this process has no positions yet</span>') +
-            '<div class="pd-scl-acts">' +
-            (boxes ? '<button class="pd-btn" data-act="sc-positions" data-sc="' + c.id + '">Save positions</button>' : '') +
-            '<button class="pd-btn" data-act="sc-checklist-close" data-sc="' + c.id + '">Cancel</button></div></div>';
-    }
-
     // counterRow(c, v): one station counter: its label and tags, its verbs,
-    // the positions it counts, its status, and its checklist when open
-    // (v.open, the counter whose checklist is open).
+    // the positions it counts and its status.
     function counterRow(c, v) {
         const here = (v.positions || []).filter(n => n.line_counter_id === c.id).map(n => n.name);
         const st = status(c);
         return '<div class="pd-scl-row" data-sc-row="' + c.id + '">' +
             '<div class="pd-scl-head"><b>' + esc(c.label || 'station counter ' + c.id) + '</b>' +
             '<span class="pd-dim">' + esc(tagsOf(c)) + '</span><span class="pd-spacer"></span>' +
-            '<button class="pd-dimlink" data-act="sc-checklist" data-sc="' + c.id + '">Change positions…</button>' +
             '<button class="pd-dimlink" data-act="sc-edit" data-sc="' + c.id + '">Edit</button>' +
             '<button class="pd-dimlink" data-act="sc-delete" data-sc="' + c.id + '">Remove</button></div>' +
             line(here.length ? 'counts ' + here.join(', ') : 'counts no position yet', '', 'pd-dim') +
-            line(st.text, '', st.warn ? 'pd-warn' : 'pd-dim') +
-            (v.open === c.id ? checklistHTML(c, v) : '') + '</div>';
+            line(st.text, '', st.warn ? 'pd-warn' : 'pd-dim') + '</div>';
     }
 
     // stationsField(v): the station counters row: one row per counter, then
@@ -291,15 +214,14 @@
 
     // countingHTML(v): the Production counter section's two list rows. v holds
     // the process (as saved), slots (the MES slots' read), counters (the
-    // station counters' list), positions and verdicts (the checklists' boxes),
-    // open (the counter whose checklist is open), items (the process's health
-    // items), styles (the process's styles), and fmt and clock (a time's
-    // formats; when by default).
+    // station counters' list), positions (each counter names those it counts),
+    // items (the process's health items), styles (the process's styles), and
+    // fmt and clock (a time's formats; when by default).
     function countingHTML(v) {
         return slotsField(v) + stationsField(v);
     }
 
-    const api = { RULE, SECOND_TAG, tagsOf, nameOf, rows, changes, status, titleWords, titleHTML, countingHTML };
+    const api = { RULE, SECOND_TAG, tagsOf, nameOf, status, titleWords, titleHTML, countingHTML };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (typeof window !== 'undefined') window.StationCard = api;
 })();

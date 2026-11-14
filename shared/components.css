@@ -1358,3 +1358,24 @@ nav {
     position: sticky; bottom: 0; padding: var(--sp-1) var(--sp-3); border-top: 1px solid var(--sub-2);
     background: var(--surface); color: var(--text-muted); font-size: var(--font-xs); text-align: right;
 }
+
+/* ── THE EXCEPTION LIST (shared/exceptions.js) ───────────────────────────
+ * One setting kept per place, said as the rule and the places that break it:
+ * the label in the settings grid's label column, the summary, then one row per
+ * place that differs (its name, the caller's controls, a ×), then + Add. Rows
+ * size to their controls, never to the page's width. Three uses: a process's
+ * position settings, a style's "Set for this style", a recipe group's keys. */
+.exc { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 2px var(--sp-3); align-items: start; padding: var(--sp-2) 0 var(--sp-3); }
+.exc + .exc { border-top: 1px dashed var(--sub-1); }
+.exc-name { padding-top: var(--sp-2); font-size: var(--font-sm); }
+.exc-name small { display: block; color: var(--text-muted); font-size: var(--font-xs); font-weight: var(--fw-normal); }
+.exc-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); min-width: 0; }
+.exc-sum { display: flex; align-items: center; gap: var(--sp-3); min-height: 34px; color: var(--text-muted); font-size: var(--font-sm); }
+.exc-rows { border-collapse: collapse; }
+.exc-rows td { padding: 3px var(--sp-2) 3px 0; font-size: var(--font-sm); vertical-align: middle; white-space: nowrap; }
+.exc-rows td.exc-pos { min-width: 110px; font-weight: var(--fw-bold); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.exc-rows td.exc-x button {
+    padding: 0 var(--sp-2); border: 0; background: none; color: var(--text-muted); font: inherit; font-size: var(--font-base); cursor: pointer;
+}
+.exc-rows td.exc-x button:hover, .exc-rows td.exc-x button:focus-visible { color: var(--text); }
+.exc-add { align-self: flex-start; }

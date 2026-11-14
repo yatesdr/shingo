@@ -899,15 +899,18 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }
 
-/* Settings · Positions: the screen's name over its rows. */
-.pd-settings .pd-posscreen { display: block; margin: 14px 0 2px; }
+/* Settings · Position settings: a light curtain's row fits the value column.
+   A PLC name is short; a tag is a struct path and keeps the wider box. */
+.pd-settings .exc-rows .pd-combo[data-combo="plc"] .pd-inp { width: 130px; }
+.pd-settings .exc-rows .pd-combo[data-combo="tag"] .pd-inp { width: 180px; }
 
 /* Settings · Production counter: the MES slots' lines and the station
    counters' list, rows in the value column (33-settings-pages.md rule 9).
    A counter's row is its name and tags with its verbs, then two muted lines
    (its positions, its status; the status takes the warning ink only when the
-   counter stopped), then its checklist while open. Sizes are the settings
-   rows' own (.pd-dim, .pd-dimlink). */
+   counter stopped). Which positions it counts is picked under Position
+   settings › Counted at. Sizes are the settings rows' own (.pd-dim,
+   .pd-dimlink). */
 .pd-sfld.pd-scl-fld { align-items: start; }
 .pd-sfld.pd-scl-fld > label { padding-top: 3px; }
 .pd-scl-line { display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 1px 0; }
@@ -918,9 +921,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-scl-head b, .pd-scl-head .pd-dimlink { flex: none; white-space: nowrap; }
 .pd-scl-head .pd-dimlink { margin-left: 0; }
 .pd-scl-head .pd-dim { min-width: 0; overflow-wrap: anywhere; }
-.pd-scl-pos { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 2px 14px; }
-.pd-scl-box { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.pd-scl-acts { display: flex; gap: 8px; margin-top: 4px; }
 
 /* A process with no part yet — the state an Add process lands in. Prose at the
    note's colour and the field grid's measure; it is a sentence, not a panel. */

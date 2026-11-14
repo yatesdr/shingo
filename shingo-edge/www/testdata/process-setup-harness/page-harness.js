@@ -128,9 +128,9 @@ function classList(set) {
 
 // The modules a page imports from shared/ that run here for real: the
 // components (layer.js, notice.js, http.js, picker.js and its node and part
-// adapters) and the DOM file they build with. esc.js, clock.js and scene-geom.js stay the realm globals they
+// adapters, exceptions.js) and the DOM file they build with. esc.js, clock.js and scene-geom.js stay the realm globals they
 // always were (see open).
-const SHARED_REAL = new Set(['dom.js', 'notice.js', 'http.js', 'layer.js', 'picker.js', 'node-picker.js', 'part-picker.js']);
+const SHARED_REAL = new Set(['dom.js', 'notice.js', 'http.js', 'layer.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'exceptions.js']);
 const sharedFile = spec => {
     const m = /^\/static\/shared\/([\w.-]+\.js)$/.exec(spec);
     return m && SHARED_REAL.has(m[1]) ? m[1] : null;

@@ -511,7 +511,10 @@ const DRIVE = {
         // was, so only these two are sent.
         const nodes = S.curtainNodes;
         for (const [n, tag, val] of [[nodes[0], 'CurtainA1', 'true'], [nodes[2], 'CurtainA3', 'false']]) {
-            page.click('root', { act: 'cu-toggle', node: String(n.id) });
+            // + Add a position under Light curtain, then the position.
+            page.click('root', { act: 'cu-add' });
+            await page.settle();
+            holdPick(page, String(n.id));
             const cu = f => typeSetting(page, 'input[data-cn]', el => el.dataset.cn === String(n.id) && el.dataset.cf === f,
                 f === 'plc' ? 'PLC_A' : tag);
             cu('plc');
