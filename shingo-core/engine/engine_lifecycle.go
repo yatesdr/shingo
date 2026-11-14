@@ -127,6 +127,11 @@ func (e *Engine) Start() {
 		e.tracker.Start()
 	}
 
+	// The robot-route index from the scene already stored, before the first
+	// connection check below can start a scene sync: a sync's own rebuild then
+	// always lands after this one (rebuildPointIndex).
+	e.rebuildPointIndex()
+
 	// Emit initial connection status
 	e.checkConnectionStatus()
 

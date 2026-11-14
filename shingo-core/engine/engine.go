@@ -36,6 +36,7 @@ import (
 	"shingocore/internal/lockorder"
 	"shingocore/messaging"
 	"shingocore/notify"
+	"shingocore/scenesync"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -219,6 +220,13 @@ type Engine struct {
 	// only by robotRefreshLoop.
 	latestPoll   []fleet.RobotStatus
 	latestPollAt time.Time
+
+	// pointIndex names the fleet's route point ids from the stored scene, for
+	// every poll (resolveRobotPaths). Swapped whole by rebuildPointIndex, at
+	// boot and after each scene sync; pointIndexMu serialises the rebuilds so
+	// a slower one cannot store an older read over a newer one.
+	pointIndex   atomic.Pointer[scenesync.PointIndex]
+	pointIndexMu lockcheck.Mutex[lockorder.PointIndex]
 
 	// lastSceneSync is when the previous scene observation landed, so a diff
 	// row can record the WINDOW an edit happened in rather than only the

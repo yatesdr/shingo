@@ -30,6 +30,7 @@ func (e *Engine) robotRefreshLoop() {
 	ticker := clock.Default().NewTicker(robotPollInterval)
 	defer ticker.Stop()
 	var prevHash [sha256.Size]byte
+	routesNotDrawn := map[string]routeNotDrawn{}
 	for {
 		select {
 		case <-e.stopChan:
@@ -47,6 +48,9 @@ func (e *Engine) robotRefreshLoop() {
 				e.dbg("engine: robot refresh: %v", err)
 				continue
 			}
+			// Name each robot's planned route before anything reads this poll:
+			// the cache, the hash below and the robot-update frame all carry it.
+			e.resolveRobotPaths(robots, routesNotDrawn)
 			// Update robot position cache (used for telemetry snapshots)
 			now := time.Now()
 			e.robotsMu.Lock()
