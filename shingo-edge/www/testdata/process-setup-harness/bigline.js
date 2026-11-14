@@ -152,6 +152,7 @@ function serverFor(FX, log) {
         ['GET', /^\/api\/catid-health$/, () => ({ items: [] })],
         ['GET', /^\/api\/processes$/, () => FX.page.processes],
         ['GET', /^\/api\/processes\/\d+\/composer$/, () => FX.composer],
+        ['GET', /^\/api\/processes\/\d+\/composer\/lists$/, () => ({ styles: FX.composer.styles, presets: FX.composer.presets })],
         ['POST', /^\/api\/processes\/\d+\/flow\/preview$/, () => ({ fingerprint: 'fp-big', findings: [], running: true })],
         ['GET', /^\/api\/processes\/\d+\/styles$/, () => FX.page.styles],
         ['GET', /^\/api\/processes\/\d+\/routing-nodes$/, () => ({ rows: FX.server.routingNodes })],

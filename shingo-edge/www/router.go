@@ -458,6 +458,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// The desktop composer's one read (U9 SPEC §4). Everything else
 				// the Processes page needs already had a door.
 				r.Get("/processes/{id}/composer", h.apiProcessComposer)
+				// The Styles tab's poll: its two lists, not the picture or the
+				// plant map it never reads.
+				r.Get("/processes/{id}/composer/lists", h.apiProcessComposerLists)
 				// Save a style's flow. Only the desktop's Processes page calls
 				// it; the station previews and mints, and never saves. HMI
 				// setup does not gate it: the gate refuses the station's

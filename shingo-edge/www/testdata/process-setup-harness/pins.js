@@ -59,6 +59,11 @@ function server(extra) {
         const pid = id(u, /^\/api\/processes\/(\d+)\//);
         const routes = [
             ['GET', /^\/api\/processes\/\d+\/composer$/, () => (pid === '1' ? FX.composer : EMPTY_COMPOSER)],
+            // The Styles poll's read: the two lists of the same answer.
+            ['GET', /^\/api\/processes\/\d+\/composer\/lists$/, () => {
+                const c = pid === '1' ? FX.composer : EMPTY_COMPOSER;
+                return { styles: c.styles, presets: c.presets };
+            }],
             ['POST', /^\/api\/processes\/\d+\/flow\/preview$/, () => preview(body)],
             ['POST', /^\/api\/processes\/\d+\/flow\/save$/, () => ({ status: 'ok' })],
             ['POST', /^\/api\/processes\/\d+\/flow\/mint$/, () => ({ style_id: 9, style_name: 'PART-1 PART-3', minted: true })],

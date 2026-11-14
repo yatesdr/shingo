@@ -3046,20 +3046,22 @@ async function mainAsync() {
     });
 
     // A STYLE BUILT ON THE HMI REACHES THE RAIL WITHOUT A RELOAD: the rail's
-    // own re-read redraws its lists and nothing else.
+    // own re-read redraws its lists and nothing else. It reads the lists
+    // alone (…/composer/lists), not the whole composer with its plant map.
     await pin('a style built on a station appears in the rail on its next read', async () => {
         const intervals = [];
         const body = makeElement('pd-rail-body');
-        let reads = 0;
         loadPage({
             intervals, extraIds: { 'pd-rail-body': body },
             fetch: url => {
-                if (!/\/api\/processes\/1\/composer$/.test(url)) return null;
-                reads++;
                 const styles = [{ id: 1, name: 'Style A', claims: [], parts: [], advanced: {} }];
-                if (reads > 1) styles.push({ id: 2, name: 'Style B', claim_count: 2, claims: [], parts: [], advanced: {} });
-                return Promise.resolve({ ok: true, json: async () => ({ styles: styles, routing: [], presets: [],
-                    palette: [], cell: { positions: [], groups: {} } }) });
+                if (/\/api\/processes\/1\/composer$/.test(url)) {
+                    return Promise.resolve({ ok: true, json: async () => ({ styles: styles, routing: [], presets: [],
+                        palette: [], cell: { positions: [], groups: {} } }) });
+                }
+                if (!/\/api\/processes\/1\/composer\/lists$/.test(url)) return null;
+                styles.push({ id: 2, name: 'Style B', claim_count: 2, claims: [], parts: [], advanced: {} });
+                return Promise.resolve({ ok: true, json: async () => ({ styles: styles, presets: [] }) });
             },
         });
         await settle();

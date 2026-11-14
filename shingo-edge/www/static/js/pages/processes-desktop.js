@@ -1165,7 +1165,9 @@ async function openNewRecipe() {
 // picture are the engineer's and are left exactly as they are.
 async function refreshRail() {
     if (!S.processID || S.tab !== 'flows' || document.hidden) return;
-    const res = await send('GET', '/api/processes/' + S.processID + '/composer', undefined, NO_NOTICE);
+    // The lists only: the full read carries the press picture and the whole
+    // plant map, which this poll never draws.
+    const res = await send('GET', '/api/processes/' + S.processID + '/composer/lists', undefined, NO_NOTICE);
     const data = res.ok ? res.body : null;
     if (!data || S.tab !== 'flows') return;
     const key = d => JSON.stringify([((d && d.styles) || []).map(x => [x.id, x.name, x.claim_count, x.last_run]),

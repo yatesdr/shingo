@@ -101,6 +101,24 @@ const recentChangeoverWindow = 200
 // behind both, and a second builder here would be the two-copies problem
 // wearing a different hat.
 func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerData, error) {
+	return s.composerForProcess(processID, true)
+}
+
+// ComposerListsForProcess is the desktop Styles tab's poll: the process's
+// style and recipe lists exactly as ComposerForProcess builds them, and none
+// of what the poll never reads. Above all not the plant map, which is the
+// whole scene on every answer while Core has sent one.
+func (s *StationService) ComposerListsForProcess(processID int64) (*domain.ComposerData, error) {
+	out, err := s.composerForProcess(processID, false)
+	if out == nil || err != nil {
+		return out, err
+	}
+	return &domain.ComposerData{Styles: out.Styles, Presets: out.Presets}, nil
+}
+
+// composerForProcess builds the desktop's read; whole adds the press picture,
+// the routing gaps and the plant map.
+func (s *StationService) composerForProcess(processID int64, whole bool) (*domain.ComposerData, error) {
 	process, err := s.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -121,6 +139,9 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 		log.Printf("composer: list process nodes for %d: %v", processID, err)
 	}
 	out := s.buildComposerData(processID, styles, claims, composerDesktop, func() []processes.Node { return nodes })
+	if !whole {
+		return out, nil
+	}
 	// THE ROUTING SET THE BLOCK JUST BUILT, not a second read of it: the
 	// picture's staging offers are the enabled staging rows, which is the same
 	// list out.Routing carries.

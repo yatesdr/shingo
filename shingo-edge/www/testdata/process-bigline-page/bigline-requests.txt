@@ -10,8 +10,8 @@ POST /api/processes/1/flow/preview  53 B
 -- 4 requests, 60328 B of answers
 
 == the Styles poll, once (it runs every 10 s and on focus)
-GET /api/processes/1/composer  59986 B
--- 1 requests, 59986 B of answers
+GET /api/processes/1/composer/lists  5433 B
+-- 1 requests, 5433 B of answers
 
 == Settings, opened
 GET /api/processes/1/composer  59986 B

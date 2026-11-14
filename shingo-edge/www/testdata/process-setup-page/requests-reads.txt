@@ -32,7 +32,7 @@
 -- sheet closed
 
 ## window focus on the Styles tab (refreshRail)
-  1  GET /api/processes/1/composer
+  1  GET /api/processes/1/composer/lists
 -- sheet closed
 
 ## the Part chip on POS_A1 (the part popover opens)

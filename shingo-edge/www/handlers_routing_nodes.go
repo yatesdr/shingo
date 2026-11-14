@@ -208,12 +208,22 @@ func (h *Handlers) apiPatchProcess(w http.ResponseWriter, r *http.Request) {
 // equivalent door. Admin-gated with the rest of the process routes: this is the
 // engineer's screen, and the shop-floor group has no business serving it.
 func (h *Handlers) apiProcessComposer(w http.ResponseWriter, r *http.Request) {
+	h.writeProcessComposer(w, r, h.engine.StationService().ComposerForProcess)
+}
+
+// apiProcessComposerLists is the Styles tab's poll: the style and recipe lists
+// only (service ComposerListsForProcess), not the picture or the plant map.
+func (h *Handlers) apiProcessComposerLists(w http.ResponseWriter, r *http.Request) {
+	h.writeProcessComposer(w, r, h.engine.StationService().ComposerListsForProcess)
+}
+
+func (h *Handlers) writeProcessComposer(w http.ResponseWriter, r *http.Request, read func(int64) (*domain.ComposerData, error)) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	data, err := h.engine.StationService().ComposerForProcess(processID)
+	data, err := read(processID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

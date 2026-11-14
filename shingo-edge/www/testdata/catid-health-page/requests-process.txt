@@ -1,12 +1,12 @@
 # A process open (?process=4, CELL-IDENT): its health items are read on the Settings tab only;
 # the 10 s tick never reads them, and the list's summary is not read while a process is open.
-# Requests other than the health routes and the composer read answer 404 (no fixture): listed, not
+# Requests other than the health routes and the composer reads answer 404 (no fixture): listed, not
 # pinned for their own sake.
 
 boot on Flows (health reads only): 0 requests
   (none)
 10 s tick on Flows (all): 1 request
-  GET /api/processes/4/composer
+  GET /api/processes/4/composer/lists
 the Settings tab opened (health reads only): 1 request
   GET /api/processes/4/catid-health
 10 s tick on Settings (all): 0 requests
