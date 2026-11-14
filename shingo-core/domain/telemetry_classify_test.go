@@ -133,14 +133,15 @@ func TestClassifyCancelOrigin(t *testing.T) {
 
 // TestClassifyCancelOrigin_CodeDecides walks every terminal code through the
 // cancel-origin split (R4 extended): a coded row is classified by its code and
-// its prose is not read. The two codes a cancel writer sets are shingo; a code
-// no cancel writer sets is unclassified, so a new coded writer is seen. An
+// its prose is not read. The three codes a cancel writer sets are shingo; a
+// code no cancel writer sets is unclassified, so a new coded writer is seen. An
 // Edge changeover cancel arrives coded operator_cancelled, which is why its
-// prose stops deciding.
+// prose stops deciding; the Edge's idle send-back arrives coded abandoned.
 func TestClassifyCancelOrigin_CodeDecides(t *testing.T) {
 	shingo := map[protocol.TermCode]bool{
 		protocol.TermOperatorCancelled: true,
 		protocol.TermPeerTerminal:      true,
+		protocol.TermAbandoned:         true,
 	}
 	for _, code := range protocol.AllTermCodes() {
 		want := CancelOriginUnclassified
@@ -158,6 +159,16 @@ func TestClassifyCancelOrigin_CodeDecides(t *testing.T) {
 	}
 	if got := ClassifyCancelOrigin("", edge); got != CancelOriginUnclassified {
 		t.Errorf("uncoded Edge changeover cancel = %q, want unclassified (pre-code row)", got)
+	}
+	// The Edge's idle send-back is the machine's: shingo by origin, and a
+	// failure by outcome, as Core's old sweep's uncoded "abandoned: …" rows were.
+	idle := protocol.CancelReasonLineIdle
+	if got := ClassifyCancelOrigin(protocol.TermAbandoned, idle); got != CancelOriginShingo {
+		t.Errorf("coded idle send-back origin = %q, want shingo", got)
+	}
+	coded, _ := ClassifyTermCode(protocol.StatusCancelled, protocol.TermAbandoned)
+	if old := ClassifyTermination(string(protocol.StatusCancelled), "abandoned: stuck in staged past 1h0m0s"); coded != old {
+		t.Errorf("coded idle send-back outcome = %q, the old sweep's uncoded abandon = %q; want the same", coded, old)
 	}
 }
 

@@ -709,15 +709,16 @@ var coreCancelPrefixes = []string{
 }
 
 // cancelCodeOrigin is the origin of a coded cancel. Every cancel writer that
-// sets a code sets one of these two: operator_cancelled (the Edge door
+// sets a code sets one of these three: operator_cancelled (the Edge door
 // Dispatcher.HandleOrderCancel, the UI door engine.TerminateOrder, carried-bin
-// recovery's supersede, and the compound children each cascades to) and
-// peer_terminal (dispatch/swap_peer.go). Any other code on a cancelled row has
-// no writer today and stays unclassified, so a new coded writer is seen rather
-// than guessed at.
+// recovery's supersede, and the compound children each cascades to),
+// peer_terminal (dispatch/swap_peer.go), and abandoned (the Edge door, for the
+// Edge's own idle send-back: OrderCancel.Actor = CancelActorEdge). Any other
+// code on a cancelled row has no writer today and stays unclassified, so a new
+// coded writer is seen rather than guessed at.
 func cancelCodeOrigin(code protocol.TermCode) string {
 	switch code {
-	case protocol.TermOperatorCancelled, protocol.TermPeerTerminal:
+	case protocol.TermOperatorCancelled, protocol.TermPeerTerminal, protocol.TermAbandoned:
 		return CancelOriginShingo
 	}
 	return CancelOriginUnclassified
