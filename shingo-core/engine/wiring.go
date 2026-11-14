@@ -119,6 +119,11 @@ func (e *Engine) wireEventHandlers() {
 		e.recordMissionEvent(evt.Payload)
 	}, EventOrderStatusChanged)
 
+	// ── Vendor robot changes (no state change) ──────────────────────
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderRobotChangedEvent]) {
+		e.handleVendorRobotChange(evt.Payload)
+	}, EventOrderRobotChanged)
+
 	// ── Order failure ───────────────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
 		ev := evt.Payload

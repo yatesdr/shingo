@@ -55,6 +55,12 @@ const (
 	// illegal jump it rejected — three robots per run, held from the first minute
 	// of the soak to the end. See §12.49.
 	EventOrderResumed
+	// EventOrderRobotChanged — the fleet moved an order to another robot
+	// without changing its state (rds.Poller reportRobotSwap). Its handler
+	// (handleVendorRobotChange) writes the robot and nothing else. Its own
+	// event, not an EventOrderStatusChanged, because that handler reads every
+	// event as a possible transition.
+	EventOrderRobotChanged
 )
 
 // --- Event payloads ---
@@ -91,6 +97,17 @@ type OrderStatusChangedEvent struct {
 	RobotID       string
 	Detail        string
 	Snapshot      *fleet.OrderSnapshot
+}
+
+// OrderRobotChangedEvent is EventOrderRobotChanged's payload: the vendor order,
+// the state it stayed in, and the robot it moved from and to.
+type OrderRobotChangedEvent struct {
+	eventbus.PayloadBase
+	OrderID       int64
+	VendorOrderID string
+	VendorState   string
+	FromRobotID   string
+	RobotID       string
 }
 
 type OrderCompletedEvent struct {

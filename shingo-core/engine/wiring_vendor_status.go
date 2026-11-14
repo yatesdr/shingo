@@ -301,6 +301,43 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	}
 }
 
+// handleVendorRobotChange records a robot the fleet moved an order to without
+// changing its state (rds.Poller reportRobotSwap): orders.robot_id, and a
+// mission_events row so the swap is on the mission's timeline. The status is
+// not touched, whatever the vendor state maps to: this event is not a
+// transition (EventOrderRobotChanged).
+//
+// The station is not told here. The robot reaches it on the order's next
+// order.update, which carries Core's robot (handleVendorStatusChange).
+//
+// A report for a vendor order the Core order no longer runs (a redirect raced
+// the poll) names another job's robot, and is dropped.
+func (e *Engine) handleVendorRobotChange(ev OrderRobotChangedEvent) {
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil {
+		e.logFn("engine: get order %d for robot change: %v", ev.OrderID, err)
+		return
+	}
+	if protocol.IsTerminal(order.Status) || ev.RobotID == "" || ev.RobotID == order.RobotID ||
+		ev.VendorOrderID != order.VendorOrderID {
+		return
+	}
+	if err := e.db.UpdateOrderRobotID(order.ID, ev.RobotID); err != nil {
+		e.logFn("engine: update order %d robot: %v", order.ID, err)
+		return
+	}
+	e.logFn("engine: order %d: the fleet moved it from robot %s to %s (%s)",
+		order.ID, ev.FromRobotID, ev.RobotID, ev.VendorState)
+	e.recordMissionEvent(OrderStatusChangedEvent{
+		OrderID:       order.ID,
+		VendorOrderID: ev.VendorOrderID,
+		OldStatus:     ev.VendorState,
+		NewStatus:     ev.VendorState,
+		RobotID:       ev.RobotID,
+		Detail:        fmt.Sprintf("fleet robot: %s -> %s", ev.FromRobotID, ev.RobotID),
+	})
+}
+
 // faultRefFrom builds the history-row reference for a fault: where the order
 // was, and what the fleet said about it.
 //

@@ -370,6 +370,7 @@ type mockPollerEmitter struct {
 	events       []pollerEvent
 	blockEvents  []blockEvent
 	graceExpired []graceExpiredEvent
+	robotChanges []string
 }
 
 type graceExpiredEvent struct {
@@ -411,6 +412,13 @@ func (m *mockPollerEmitter) EmitBlockCompleted(orderID int64, rdsOrderID, blockI
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.blockEvents = append(m.blockEvents, blockEvent{orderID, rdsOrderID, blockID, location, binTask, startTime, terminateTime})
+}
+
+// EmitOrderRobotChanged records a robot swap as "state:from->to".
+func (m *mockPollerEmitter) EmitOrderRobotChanged(orderID int64, rdsOrderID, state, fromRobotID, robotID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.robotChanges = append(m.robotChanges, state+":"+fromRobotID+"->"+robotID)
 }
 
 type mockResolver struct{}

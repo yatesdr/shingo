@@ -20,7 +20,8 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 
 - Core reads the route the fleet has planned for each driving robot, the route the robot map will draw
 - The Edge keeps each order's robot, from the robot's first waybill and from any status update that names one
-- Core names the order's robot on every status update it sends, so a robot changed after the first waybill reaches the station at the order's next step
+- Core names the order's robot on each fleet status update it sends, so a robot changed after the first waybill reaches the station at the order's next step
+- Core sees RDS move an order to another robot while the order stays in one state, and records the new robot and the swap on the mission's timeline
 
 ## v0.7.0 — 2026-11-13
 

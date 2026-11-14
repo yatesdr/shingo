@@ -2,6 +2,8 @@ package seerrds
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"shingocore/fleet"
@@ -162,6 +164,38 @@ func TestEmitterBridge_MultipleCalls(t *testing.T) {
 	}
 	if fake.snapshot == nil || fake.snapshot.State != string(rds.StateFinished) {
 		t.Errorf("last-call snapshot = %+v, want State=FINISHED", fake.snapshot)
+	}
+}
+
+// robotChangeEmitter is a fakeTrackerEmitter that also takes robot changes.
+type robotChangeEmitter struct {
+	fakeTrackerEmitter
+	robotChanges []string
+}
+
+func (f *robotChangeEmitter) EmitOrderRobotChanged(orderID int64, vendorOrderID, vendorState, fromRobotID, robotID string) {
+	f.robotChanges = append(f.robotChanges,
+		fmt.Sprintf("%d %s %s %s->%s", orderID, vendorOrderID, vendorState, fromRobotID, robotID))
+}
+
+// TestEmitterBridge_ForwardsARobotChange: the poller's robot swap reaches a
+// fleet emitter that takes it, unchanged and never as a status change, and is
+// dropped for one that does not.
+func TestEmitterBridge_ForwardsARobotChange(t *testing.T) {
+	t.Parallel()
+	fake := &robotChangeEmitter{}
+	(&emitterBridge{emitter: fake}).EmitOrderRobotChanged(7, "rds-7", string(rds.StateRunning), "AMB-1", "AMB-2")
+	if got := strings.Join(fake.robotChanges, "|"); got != "7 rds-7 RUNNING AMB-1->AMB-2" {
+		t.Errorf("forwarded %q", got)
+	}
+	if fake.calls != 0 {
+		t.Errorf("a robot change reached EmitOrderStatusChanged (%d calls)", fake.calls)
+	}
+
+	plain := &fakeTrackerEmitter{}
+	(&emitterBridge{emitter: plain}).EmitOrderRobotChanged(7, "rds-7", string(rds.StateRunning), "AMB-1", "AMB-2")
+	if plain.calls != 0 {
+		t.Errorf("an emitter without robot changes got a status change (%d calls)", plain.calls)
 	}
 }
 

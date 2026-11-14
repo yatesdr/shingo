@@ -295,6 +295,60 @@ func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
 	}
 }
 
+// A ROBOT SWAP IS NOT A TRANSITION. The fleet moves a staged order's job to
+// another robot after Core released it (Core in_transit, RDS still WAITING at
+// the old wait). Read as a WAITING -> WAITING status event, it would stage the
+// order again; on its own event it writes the robot and a mission_events row,
+// and nothing else: the status stays, and nothing is sent to the station (the
+// robot reaches it on the order's next update). A report naming a vendor order
+// the Core order no longer runs is dropped.
+func TestVendorRobotChange_WritesTheRobotAndNothingElse(t *testing.T) {
+	t.Parallel()
+	db, eng, sim, order := dispatchRetrieveOrderWithRobot(t)
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
+	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-42")
+	staged := testdb.AssertOrderStatus(t, db, "rid-order-1", "staged")
+	if err := eng.Dispatcher().Lifecycle().Release(staged, "test"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	pending := func() int {
+		msgs, err := db.ListPendingOutbox(500)
+		if err != nil {
+			t.Fatalf("read outbox: %v", err)
+		}
+		return len(msgs)
+	}
+	sent := pending()
+	em := &pollerEmitter{bus: eng.Events}
+
+	em.EmitOrderRobotChanged(order.ID, "some-other-vendor-order", "WAITING", "AMB-42", "AMB-7")
+	if got := testdb.RequireOrder(t, db, "rid-order-1"); got.RobotID != "AMB-42" {
+		t.Fatalf("a report for another vendor order wrote robot %q", got.RobotID)
+	}
+
+	em.EmitOrderRobotChanged(order.ID, order.VendorOrderID, "WAITING", "AMB-42", "AMB-99")
+	got := testdb.AssertOrderStatus(t, db, "rid-order-1", "in_transit")
+	if got.RobotID != "AMB-99" {
+		t.Errorf("robot_id = %q, want AMB-99", got.RobotID)
+	}
+	if got.VendorState != "WAITING" {
+		t.Errorf("vendor_state = %q, want WAITING (a robot change is not a state)", got.VendorState)
+	}
+	if n := pending(); n != sent {
+		t.Errorf("the robot change sent %d message(s); want none", n-sent)
+	}
+	events, err := db.ListMissionEvents(order.ID)
+	if err != nil {
+		t.Fatalf("mission events: %v", err)
+	}
+	last := events[len(events)-1]
+	if last.RobotID != "AMB-99" || last.OldState != "WAITING" || last.NewState != "WAITING" ||
+		last.Detail != "fleet robot: AMB-42 -> AMB-99" {
+		t.Errorf("last mission event = %s->%s robot %s %q; want the swap on the timeline",
+			last.OldState, last.NewState, last.RobotID, last.Detail)
+	}
+}
+
 // TestSimpleDispatch_EmitsAckAndWaybill is the gate (red-before-green) for the
 // fleet-create collapse. Routing the simple no-wait dispatch through the unified
 // CreateOrder primitive inside dispatchToFleetCore (the scanner's DispatchDirect
