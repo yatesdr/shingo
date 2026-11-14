@@ -73,6 +73,9 @@ type CoreDataService struct {
 	plantTimezone string
 	// askKinds is the ask kinds this Core answers, for the ack (SetAskKinds).
 	askKinds func() []string
+	// ephemeralTopic is the ephemeral topic this Core verified, "" for none
+	// (SetEphemeralTopic); nil names none.
+	ephemeralTopic func() string
 	// cellTickEmitter, if set, fires once per tick row actually inserted, so
 	// the composition root can fan it out — the SSE cell-heartbeat broadcast
 	// (Phase E). Optional; nil in tests and headless runs. Set once at the
@@ -157,6 +160,22 @@ func (s *CoreDataService) SetPlantTimezone(tz string) { s.plantTimezone = tz }
 // registered kinds), which every heartbeat ack advertises. Set once at the
 // composition root; unset advertises none, and an Edge then asks nothing.
 func (s *CoreDataService) SetAskKinds(fn func() []string) { s.askKinds = fn }
+
+// SetEphemeralTopic injects the read of the ephemeral topic Core's messaging
+// client verified (Client.EphemeralTopic), which every registration and every
+// heartbeat ack names (protocol.EdgeHeartbeatAck.EphemeralTopic). Read at send
+// time, so a reconnect that verifies, or fails to, is what the next ack says.
+// Set once at the composition root; unset names none, and no Edge then
+// touches the topic.
+func (s *CoreDataService) SetEphemeralTopic(fn func() string) { s.ephemeralTopic = fn }
+
+// ephemeralTopicName is the topic to name on a registration or ack.
+func (s *CoreDataService) ephemeralTopicName() string {
+	if s.ephemeralTopic == nil {
+		return ""
+	}
+	return s.ephemeralTopic()
+}
 
 // asksFor is the ack's Asks: nil for an Edge that sends no Feeds (an older
 // binary, which would not read it) or when none are registered.
@@ -494,7 +513,7 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 			" — enroll the second edge as its own station on Core and put ITS station_uid in that Pi's shingoedge.yaml"
 	}
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,
-		&protocol.EdgeRegistered{StationID: p.StationID, Message: msg})
+		&protocol.EdgeRegistered{StationID: p.StationID, Message: msg, EphemeralTopic: s.ephemeralTopicName()})
 	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
 
 	// Derive demand_registry for this station from the Core-owned loader aggregate
@@ -574,6 +593,9 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			Claims:    claims,
 			BinWatch:  binWatch,
 			Asks:      s.asksFor(p),
+			// Core's verified topic, afresh on every ack: absent, the Edge
+			// closes its ephemeral reader and writer (protocol/ephemeral.go).
+			EphemeralTopic: s.ephemeralTopicName(),
 		})
 
 	if err == nil && !found {

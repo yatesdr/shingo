@@ -135,6 +135,25 @@ func buildProtocolRouter(
 	return r, nil
 }
 
+// robotWatcher is the engine's door for the robot watches Edges send.
+type robotWatcher interface {
+	HandleRobotWatch(env *protocol.Envelope, w *protocol.RobotWatch)
+}
+
+// buildEphemeralReader is Core's reader of the ephemeral topic
+// (protocol/ephemeral.go): a router of its own holding the one type Core reads
+// off it, robot.watch addressed to Core, behind router.ReadEphemeral. Core's
+// own robot.positions, read back off the same topic, are dropped there without
+// a word, as is anything expired or signed with another key. Not the protocol
+// router: nothing on this topic is an order message, and none of it is
+// deduplicated or counted.
+func buildEphemeralReader(signingKey []byte, watches robotWatcher) func(data []byte) {
+	r := router.New[string]()
+	router.Register(r, protocol.TypeRobotWatch, watches.HandleRobotWatch)
+	toCore := func(h *protocol.RawHeader) bool { return h.Dst.Role == protocol.RoleCore }
+	return router.ReadEphemeral(signingKey, toCore, r)
+}
+
 // buildAskServer returns the ask server answering every kind of
 // www.Doors.AskDoors through reply, with db for the replay, and asserts it
 // answers exactly

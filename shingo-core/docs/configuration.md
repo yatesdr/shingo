@@ -129,6 +129,7 @@ The table below is every key the YAML accepts: key and default from
 | `fire_alarm.enabled` | bool | `false` | feature gate; false = hidden from UI |
 | `logging.stderr_subsystems` | list of string | `[dispatch engine core_handler kafka outbox protocol]` | StderrSubsystems is the allow-list of debuglog subsystems mirrored to stderr (under systemd, the journal). |
 | `messaging.dispatch_topic` | string | `shingo.dispatch` | the topic Core publishes to edges on |
+| `messaging.ephemeral_topic` | string | `shingo.ephemeral` | the short-lived, lossy topic the live robot feed rides (protocol/ephemeral.go): Core creates it with 60 s retention and verifies it before naming it to edges; empty turns the feed off |
 | `messaging.kafka.brokers` | list of string | `[localhost:9092]` | Kafka broker addresses, host:port |
 | `messaging.kafka.dial_timeout` | duration | `0s` | DialTimeout bounds the per-broker reachability probe in Connect. Zero means the 5s production default. A config that names unreachable brokers pays this per broker, serially — which is why it is a knob at all: the config-save handler reconfigures messaging inline, and a test (or a plant) saving broker names that don't resolve would hold the handler for 5s × brokers. |
 | `messaging.kafka.group_id` | string | `shingocore` | Kafka consumer group Core joins |

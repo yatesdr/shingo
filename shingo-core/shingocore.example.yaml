@@ -27,6 +27,7 @@ messaging:
     group_id: shingocore
   orders_topic: shingo.orders           # Edge -> Core topic
   dispatch_topic: shingo.dispatch       # Core -> Edge topic
+  ephemeral_topic: shingo.ephemeral     # short-lived topic for the live robot feed; Core makes it; "" turns the feed off
   outbox_drain_interval: 5s             # How often to flush outbox to Kafka
   station_id: core                      # This core instance's identity
 

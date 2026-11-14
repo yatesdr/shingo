@@ -24,8 +24,9 @@ import (
 // caps the time one poll may credit at twice this (robot_hours.go).
 const robotPollInterval = 2 * time.Second
 
-// robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated
-// only when the robot state has actually changed.
+// robotRefreshLoop polls robot status every 2 seconds, answers each live robot
+// watch from the poll, and emits EventRobotsUpdated only when the robot state
+// has actually changed.
 func (e *Engine) robotRefreshLoop() {
 	ticker := clock.Default().NewTicker(robotPollInterval)
 	defer ticker.Stop()
@@ -77,6 +78,13 @@ func (e *Engine) robotRefreshLoop() {
 			// short-circuit for the same reason: time connected and charging
 			// accrues on the polls where nothing changed.
 			e.tapRobotHours(robots, now)
+
+			// The live robot feed: one robot.positions per station with a live
+			// watch, from this poll. Before the hash short-circuit, because a
+			// reader counts the polls it missed (interval_ms) and a robot that
+			// stands still is still answered; with no live watch it does nothing
+			// at all (robot_watch.go).
+			e.publishRobotPositions(robots, now)
 
 			data, _ := json.Marshal(robots)
 			hash := sha256.Sum256(data)

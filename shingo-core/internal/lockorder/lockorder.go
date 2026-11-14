@@ -60,6 +60,7 @@ type (
 	FaultTimers          struct{}
 	FaultSent            struct{}
 	PointIndex           struct{}
+	RobotWatches         struct{}
 
 	Dissolve        struct{}
 	FloorSeen       struct{}
@@ -127,6 +128,7 @@ func (DriftTally) Rank() int           { return 139 }
 func (FaultTimers) Rank() int          { return 140 }
 func (FaultSent) Rank() int            { return 141 }
 func (PointIndex) Rank() int           { return 142 }
+func (RobotWatches) Rank() int         { return 143 }
 
 func (Dissolve) Rank() int        { return 150 }
 func (FloorSeen) Rank() int       { return 151 }
@@ -193,6 +195,7 @@ func (DriftTally) Name() string           { return "engine.destNodeDriftTally.mu
 func (FaultTimers) Name() string          { return "engine.faultTimersMu" }
 func (FaultSent) Name() string            { return "engine.faultSentMu" }
 func (PointIndex) Name() string           { return "engine.pointIndexMu" }
+func (RobotWatches) Name() string         { return "engine.robotWatches.mu" }
 
 func (Dissolve) Name() string        { return "dispatch.dissolveMu" }
 func (FloorSeen) Name() string       { return "dispatch.floorSeenMu" }

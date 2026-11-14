@@ -72,11 +72,22 @@ type Client struct {
 	// Meanwhile the key travels with the record: an Edge message dumped off the
 	// topic carries its station without being decoded.
 	PartitionKey string
+
+	// ephemeralHandler is what SubscribeEphemeral registered: every message
+	// read off the ephemeral topic, raw (ephemeral.go). Guarded by mu.
+	ephemeralHandler func(data []byte)
+	// openEphemeral opens the ephemeral topic's reader (newEphemeralReader);
+	// a field so a test can put a fake reader under the read loop. Set once,
+	// in NewClient.
+	openEphemeral func(brokers []string, topic string) ephemeralReader
 }
 
 type kafkaState struct {
 	readers map[string]kafkaReader
 	writer  *kafka.Writer
+	// ephemeral is the ephemeral topic once this connection verified it; nil
+	// while it is not configured or not verified (ephemeral.go).
+	ephemeral *ephemeralLink
 }
 
 // kafkaReader is the part of *kafka.Reader that readLoop drives. It is an
@@ -93,6 +104,9 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 		cfg:      cfg,
 		handlers: make(map[string]MessageHandler),
 		stopChan: make(chan struct{}),
+		openEphemeral: func(brokers []string, topic string) ephemeralReader {
+			return newEphemeralReader(brokers, topic)
+		},
 	}
 }
 
@@ -142,6 +156,10 @@ func (c *Client) Connect() error {
 			BatchTimeout: writerBatchTimeout,
 		},
 	}
+	// After the durable topics and the writer: the live robot feed is
+	// optional, and a topic that will not verify leaves it off and the rest
+	// of the connection as it was.
+	c.connectEphemeralLocked()
 	return nil
 }
 
@@ -453,6 +471,7 @@ func (c *Client) Close() {
 		if c.kafka.writer != nil {
 			c.kafka.writer.Close()
 		}
+		c.kafka.ephemeral.close()
 		c.kafka = nil
 	}
 }

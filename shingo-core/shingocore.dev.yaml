@@ -23,6 +23,7 @@ messaging:
     group_id: shingocore
   orders_topic: shingo.orders
   dispatch_topic: shingo.dispatch
+  ephemeral_topic: shingo.ephemeral
   # 500ms (sim): under a sim multiplier the plant inserts outbox rows far faster
   # than the
   # PRODUCTION-paced 5s tick (batch 50 → ~10 msg/s ceiling) can drain, so ~150–200

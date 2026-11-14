@@ -54,6 +54,7 @@ fire_alarm.auto_resume_default = false
 fire_alarm.enabled = false
 logging.stderr_subsystems = [dispatch engine core_handler kafka outbox protocol]
 messaging.dispatch_topic = shingo.dispatch
+messaging.ephemeral_topic = shingo.ephemeral
 messaging.kafka.brokers = [localhost:9092]
 messaging.kafka.dial_timeout = 0s
 messaging.kafka.group_id = shingocore
