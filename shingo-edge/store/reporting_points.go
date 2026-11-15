@@ -43,6 +43,12 @@ func (db *DB) UpdateReportingPointCounter(id int64, plcName, tagName string, cou
 	return counters.UpdateReportingPointCounter(db.DB, id, plcName, tagName, count)
 }
 
+// UpdateReportingPointCounted is the counted read's write: with parts it also
+// stamps last_part_at (counters.UpdateReportingPointCounted).
+func (db *DB) UpdateReportingPointCounted(id int64, plcName, tagName string, count int64, parts bool) (bool, error) {
+	return counters.UpdateReportingPointCounted(db.DB, id, plcName, tagName, count, parts)
+}
+
 // SetReportingPointManaged toggles the warlink_managed flag.
 func (db *DB) SetReportingPointManaged(id int64, managed bool) error {
 	return counters.SetReportingPointManaged(db.DB, id, managed)

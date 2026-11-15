@@ -337,7 +337,18 @@ type OrderCancel struct {
 	// Reason is the human-readable cancellation reason, or
 	// CancelReasonAcceptHalfSwap.
 	Reason string `json:"reason"`
+	// Actor says who decided the cancel when it was not a person at the
+	// station: CancelActorEdge for the Edge's own idle rule. Empty is a person,
+	// every door before that rule, and Core codes it operator_cancelled; with
+	// CancelActorEdge it codes it abandoned. Additive: an older Core ignores it
+	// and codes every cancel a person's, as it always has.
+	Actor string `json:"actor,omitempty"`
 }
+
+// CancelActorEdge is OrderCancel.Actor on a cancel the Edge decided itself, not
+// a person at it: the robots it sends back from a line idle past its hour
+// (shingo-edge/engine/idle_cancel.go).
+const CancelActorEdge = "edge"
 
 // CancelReasonAcceptHalfSwap marks a supply-leg cancel where the operator
 // explicitly ACCEPTED the half-swap: the fleet-committed partner evac must NOT
@@ -346,6 +357,20 @@ type OrderCancel struct {
 // Core's swap-peer unwind switches on this exact reason; every other cancel
 // reason keeps the fail-closed peer-cancel behaviour.
 const CancelReasonAcceptHalfSwap = "accept_half_swap"
+
+// CancelReasonAbandonedPrefix opens the reason of a cancel made because an
+// order waited too long, not because anyone asked: Core's stuck-order sweep
+// (shingo-core/engine/reconciliation_service.go) writes "abandoned: stuck in
+// ..." and "abandoned: operator-gated staging ...". The Edge reads it on a
+// cancel Core sends and switches the position's auto-reorder off rather than
+// pausing it (shingo-edge/orders.holdOnCoreCancel).
+const CancelReasonAbandonedPrefix = "abandoned:"
+
+// CancelReasonLineIdle is the reason of the Edge's own cancel of the robots
+// parked at a line that has counted no part for its idle hour
+// (shingo-edge/engine/idle_cancel.go). It opens CancelReasonAbandonedPrefix,
+// so a reader of the prefix files it as a wait given up, not a person's stop.
+const CancelReasonLineIdle = CancelReasonAbandonedPrefix + " line idle"
 
 // OrderReceipt confirms delivery acceptance.
 type OrderReceipt struct {

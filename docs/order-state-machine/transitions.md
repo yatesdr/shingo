@@ -13,7 +13,7 @@ Where the machine actually lives:
 | the statuses | `protocol/status.go` — the const block, and `AllStatuses()` |
 | the transitions | `protocol/types.go` — `validTransitions` |
 | terminality | derived: a status is terminal iff it has no outgoing edges |
-| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsWaiting`, `IsPreDispatch`, `IsStuckSweepCandidate`, `IsRuntimeStuckCandidate`, `IsFailureTerminal`, `BlocksChangeoverStart` |
+| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsWaiting`, `IsPreDispatch`, `IsRuntimeStuckCandidate`, `IsFailureTerminal`, `BlocksChangeoverStart` |
 | the side effects per edge | `shingo-core/dispatch/lifecycle.go` — `actionMap` |
 | the typed writer methods | `shingo-core/dispatch/lifecycle.go` |
 | a readable diagram | [`docs/order-lifecycle.md`](../order-lifecycle.md) |

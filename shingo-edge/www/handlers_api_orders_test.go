@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -10,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/internal/testdb"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -26,10 +28,10 @@ import (
 // session store forty times and the handlers no better.
 //
 // The auth split itself is pinned separately and on purpose, by
-// TestApiOrders_CreationRequiresAuth_LifecycleDoesNot below, which builds the
-// production route shape. This file used to say "all endpoints are public, so
-// there is no auth gating to test here" — that was true when written, and it
-// was the gap.
+// TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot below, on the
+// router production builds (NewRouter). This file used to say "all endpoints
+// are public, so there is no auth gating to test here" — that was true when
+// written, and it was the gap.
 // ═══════════════════════════════════════════════════════════════════════
 
 func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
@@ -55,8 +57,9 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	return h, r
 }
 
-// TestApiOrders_CreationRequiresAuth_LifecycleDoesNot pins the auth split, on
-// a router built the way production builds it.
+// TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot pins the auth split, on
+// the router production builds (NewRouter). Until 2026-11-14 it built a copy
+// of the routes by hand, which a change to router.go could not fail.
 //
 // The four creation routes sat in the public group, so anything that could
 // reach the Edge could make robots move by POSTing a body. Nobody has been
@@ -64,55 +67,43 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // rather than a reason to wait.
 //
 // The other half matters just as much: the operator station is a shop-floor
-// monitor with no login, so gating release/submit/abort would take the floor's
-// own buttons away. Minting new work and acting on work that already exists are
-// different authorities. Both directions are asserted so a later "tidy the
-// routes" pass cannot move one without noticing the other.
-func TestApiOrders_CreationRequiresAuth_LifecycleDoesNot(t *testing.T) {
-	t.Parallel()
-	h, r := newTestHandlers(t)
-	r.Route("/api", func(r chi.Router) {
-		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
-		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
-		r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
-		r.Group(func(r chi.Router) {
-			r.Use(h.adminMiddleware)
-			r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
-			r.Post("/orders/move", h.apiCreateMoveOrder)
-			r.Post("/orders/complex", h.apiCreateComplexOrder)
-			r.Post("/orders/ingest", h.apiCreateIngestOrder)
-		})
-	})
+// monitor with no login, so gating a door it posts would take the floor's own
+// buttons away. Of the lifecycle it posts release alone (operator-modal.js, a
+// staged order's RELEASE); submit and abort are the Orders page's (orders.js)
+// and need a session, abort because it writes a person's pause on the
+// position's auto-reorder (orders.AbortOrderByPerson). Changed 2026-11-14:
+// submit and abort were public. Both directions are asserted so a later "tidy
+// the routes" pass cannot move one without noticing the other.
+//
+// Not parallel: NewRouter sets plantLocation (realFlowRouterEngine).
+func TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot(t *testing.T) {
+	h, r, _ := realFlowRouterEngine(t, testdb.Open(t))
 
 	for _, path := range []string{
 		"/api/orders/retrieve",
 		"/api/orders/move",
 		"/api/orders/complex",
 		"/api/orders/ingest",
-	} {
-		resp := doRequest(t, r, "POST", path, map[string]any{}, nil)
-		if resp.StatusCode != http.StatusSeeOther {
-			t.Errorf("unauthenticated POST %s: status = %d, want 303 — order creation must be behind the admin gate", path, resp.StatusCode)
-		}
-	}
-
-	admin := authCookie(t, h)
-	for _, path := range []string{"/api/orders/retrieve", "/api/orders/move"} {
-		resp := doRequest(t, r, "POST", path, map[string]any{}, admin)
-		if resp.StatusCode == http.StatusSeeOther {
-			t.Errorf("authenticated POST %s was still redirected — the gate must let the /manual-order page through", path)
-		}
-	}
-
-	for _, path := range []string{
-		"/api/orders/1/release",
 		"/api/orders/1/submit",
 		"/api/orders/1/abort",
 	} {
 		resp := doRequest(t, r, "POST", path, map[string]any{}, nil)
-		if resp.StatusCode == http.StatusSeeOther {
-			t.Errorf("unauthenticated POST %s was redirected to login — the operator station has no session, and gating this takes the shop floor's buttons away", path)
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Errorf("unauthenticated POST %s: status = %d, want 303 — it must be behind the admin gate", path, resp.StatusCode)
 		}
+	}
+
+	admin := authCookie(t, h)
+	for _, path := range []string{"/api/orders/retrieve", "/api/orders/move", "/api/orders/1/submit", "/api/orders/1/abort"} {
+		resp := doRequest(t, r, "POST", path, map[string]any{}, admin)
+		if resp.StatusCode == http.StatusSeeOther {
+			t.Errorf("authenticated POST %s was still redirected — the gate must let the /manual-order and Orders pages through", path)
+		}
+	}
+
+	resp := doRequest(t, r, "POST", "/api/orders/1/release", map[string]any{}, nil)
+	if resp.StatusCode == http.StatusSeeOther {
+		t.Error("unauthenticated POST /api/orders/1/release was redirected to login — the operator station has no session, and gating it takes the shop floor's RELEASE away")
 	}
 }
 
@@ -814,5 +805,45 @@ func TestApiOrders_DecodeHelper_StringInsteadOfInt(t *testing.T) {
 	}
 	if err := json.Unmarshal(b, &target); err == nil {
 		t.Error("expected decode error for string-into-int64")
+	}
+}
+
+// TestApiOrders_AbortPausesThePositionsAutoReorder: the Orders page's abort is
+// the HMI abort door. It cancels the order and pauses its position's
+// auto-reorder (orders.Manager.AbortOrderByPerson), so the sweep does not ask
+// again a minute after a person said stop.
+func TestApiOrders_AbortPausesThePositionsAutoReorder(t *testing.T) {
+	t.Parallel()
+	h, r := newTestHandlers(t)
+	r.Post("/api/orders/{orderID}/abort", h.apiCancelOrder)
+	db := dbOf(h)
+	procID, err := db.CreateProcess("ABORT-PROC", "", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "ABORT_N",
+		Code: "A1", Name: "ABORT_N", Sequence: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err := db.EnsureProcessNodeRuntime(nodeID); err != nil {
+		t.Fatalf("ensure runtime: %v", err)
+	}
+	orderID, err := db.CreateOrder("abort-door", orders.TypeRetrieve, &nodeID, false, 1, "ABORT_N", "", "MARKET",
+		protocol.Height{}, false, "PART", "", "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	resp := doRequest(t, r, "POST", "/api/orders/"+strconv.FormatInt(orderID, 10)+"/abort", map[string]any{}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("abort: status %d", resp.StatusCode)
+	}
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if rt.ReorderHold != domain.ReorderHoldPaused {
+		t.Errorf("after a person's abort the position holds %q, want paused", rt.ReorderHold)
 	}
 }

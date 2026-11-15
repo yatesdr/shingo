@@ -299,10 +299,12 @@ re-sends every row at boot.
 - `engine/demand_reconciler.go` — the level sweep (`sweepCellLevels`): cell autoreorder evaluation and the ask.
 - `engine/operator_demand_loader.go`, `engine/operator_demand_unloader.go`, `engine/loader_retrieve_ask.go` — the
   push sweeps and the other askers: when to send a `loader.retrieve` ask; Core decides and creates the orders.
-- `engine/replenishment_admin.go` — `UpdateCellReorder` (reorder_point / source / auto_reorder on
-  style_node_claims).
-- `www/handlers_api_replenishment.go` + `www/static/js/pages/replenishment.js` + `www/templates/replenishment.html`
-  — cell-autoreorder admin UI.
+- `engine/idle_cancel.go` — the one cancel rule: a line silent for its idle hour sends back the robots parked
+  at its station waits, and those positions' auto-reorder goes off.
+- `domain/reorder_hold.go` — a position's auto-reorder hold (paused, off, a person's off) and the decider the
+  sweep and the station view read; `engine/auto_reorder_switch.go` — a line's switch.
+- The reorder point and auto-reorder are set in Processes (the reorder column's popover); the line's switch is
+  Processes Settings → Auto-reorder.
 
 ### Core
 

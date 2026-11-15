@@ -42,4 +42,3 @@ edge operator-display.html: opens a stream; operator-station/operator.js: onSSE(
 edge orders.html: opens a stream; topics order-completed,order-failed,order-update; bus frames build-changed,connected,disconnected
 edge processes.html: no stream; bus frames build-changed,connected,disconnected
 edge production.html: opens a stream; topics core-nodes,counter-update,order-failed,order-update; bus frames build-changed,connected,disconnected
-edge replenishment.html: no stream; bus frames build-changed,connected,disconnected

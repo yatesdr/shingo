@@ -182,6 +182,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	}
 	e.clearStrandedPark(node, claim, cell.park)
 	e.rearmKeepStaged(node, claim)
+	e.goAtRequest(node, ask.trigger)
 
 	// The evacuate-direction episode, opened after the plan exists and before
 	// any order does — same ordering and same reasoning as the consume side.

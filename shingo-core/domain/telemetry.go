@@ -627,11 +627,16 @@ func ClassifyTermCode(status protocol.Status, code protocol.TermCode) (string, b
 		return "", false
 	}
 	switch code {
-	case protocol.TermOperatorCancelled, protocol.TermNotNeeded, protocol.TermPeerTerminal:
+	case protocol.TermOperatorCancelled, protocol.TermNotNeeded, protocol.TermPeerTerminal, protocol.TermAbandoned:
 		// Deliberate or unnecessary — not fulfillment failures. TermNotNeeded
 		// is the skip case; TermPeerTerminal is a leg unwound with its sibling,
 		// and counting both halves of one dead swap as two failures would
-		// double-count the same event.
+		// double-count the same event. TermAbandoned is the Edge's idle
+		// send-back (robots parked at a line that counted nothing for its
+		// hour): the design working, not an order that failed. Its origin
+		// stays shingo's (cancelCodeOrigin). Core's old sweep filed its
+		// abandons uncoded, and those rows still read failed by their prose
+		// (classifyCancelByDetail).
 		if status == protocol.StatusSkipped {
 			return OutcomeSkipped, true
 		}
@@ -703,21 +708,22 @@ const (
 var coreCancelPrefixes = []string{
 	"reshuffle dissolved:",                // dispatch.ReshuffleDissolveDetail / ReshuffleLegFailedDetail (compound.go)
 	"reshuffle withdrawn:",                // reshuffleWithdrawnDetail (compound.go)
-	"abandoned:",                          // reconciliation stuck-order sweep (engine/reconciliation_service.go)
+	"abandoned:",                          // a wait given up: Core's old stuck sweep (uncoded rows), the Edge's idle rule
 	"coordinated swap ",                   // a swap leg unwound with its dead peer (dispatch/swap_peer.go), pre-code rows
 	"retired: restore-blockers subsystem", // one-off retirement sweep (store/orders.go)
 }
 
 // cancelCodeOrigin is the origin of a coded cancel. Every cancel writer that
-// sets a code sets one of these two: operator_cancelled (the Edge door
+// sets a code sets one of these three: operator_cancelled (the Edge door
 // Dispatcher.HandleOrderCancel, the UI door engine.TerminateOrder, carried-bin
-// recovery's supersede, and the compound children each cascades to) and
-// peer_terminal (dispatch/swap_peer.go). Any other code on a cancelled row has
-// no writer today and stays unclassified, so a new coded writer is seen rather
-// than guessed at.
+// recovery's supersede, and the compound children each cascades to),
+// peer_terminal (dispatch/swap_peer.go), and abandoned (the Edge door, for the
+// Edge's own idle send-back: OrderCancel.Actor = CancelActorEdge). Any other
+// code on a cancelled row has no writer today and stays unclassified, so a new
+// coded writer is seen rather than guessed at.
 func cancelCodeOrigin(code protocol.TermCode) string {
 	switch code {
-	case protocol.TermOperatorCancelled, protocol.TermPeerTerminal:
+	case protocol.TermOperatorCancelled, protocol.TermPeerTerminal, protocol.TermAbandoned:
 		return CancelOriginShingo
 	}
 	return CancelOriginUnclassified

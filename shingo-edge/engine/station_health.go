@@ -326,3 +326,14 @@ func (e *Engine) openChangeover(processID int64) (int64, bool) {
 	}
 	return co.ID, true
 }
+
+// readSinceBoot reports whether a counter tag has read a number since this Edge
+// started and has not failed since: the counter the idle rule may trust
+// (idle_cancel.go). unreadable alone cannot answer it, since it reads a tag
+// with no read yet as readable, and that is every tag at boot.
+func (h *stationHealthTracker) readSinceBoot(plcName, tagName string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r, ok := h.reads[plcName+"/"+tagName]
+	return ok && !r.okAt.IsZero() && !r.errAt.After(r.okAt)
+}

@@ -212,7 +212,8 @@ func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, disp engine.Release
 	s.lastReleaseOrderDisposition = &d
 	return s.orderMgr.ReleaseOrder(orderID, nil, "", nil)
 }
-func (s *stubEngine) ResumeKeepStaged(int64) error { return nil }
+func (s *stubEngine) ResumeKeepStaged(int64) error                      { return nil }
+func (s *stubEngine) FlipAutoReorder(int64, bool, string, string) error { return nil }
 func (s *stubEngine) SendBack(int64) (*engine.SendBackResult, error) {
 	return &engine.SendBackResult{}, nil
 }
@@ -448,10 +449,6 @@ func (s *stubEngine) SetProcessActiveStyle(processID int64, styleID *int64) erro
 	}
 	return err
 }
-
-// Cell-side replenishment admin (the loader half was deleted with the
-// dead Edge threshold surface).
-func (s *stubEngine) UpdateCellReorder(engine.CellReorderInput) error { return nil }
 
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so

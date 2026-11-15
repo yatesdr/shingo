@@ -645,8 +645,7 @@ func (db *DB) migrate() error {
 	// Strategy: NULL out a pointer iff the referenced order's status is
 	// in the terminal set (confirmed, cancelled, failed, skipped). Live
 	// orders are left alone. Idempotent — runs every migrate(), no-op
-	// when there's nothing to clean. Default to apply mode here; the
-	// dry-run variant lives in the admin endpoint (handlers_api_replenishment).
+	// when there's nothing to clean. There is no dry-run variant.
 	db.Exec(`UPDATE process_node_runtime_states
 		SET active_order_id = NULL
 		WHERE active_order_id IN (
@@ -2557,7 +2556,162 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// v51 (2026-11-14): the position's auto-reorder hold on
+			// process_node_runtime_states: reorder_hold (the kind, '' none),
+			// reorder_hold_at (the engine's clock, '' when never) and
+			// reorder_hold_note (who or what set it). '' on every existing
+			// row, which holds nothing. Each column guarded, as v43.
+			Version: 51,
+			Name:    "runtime_reorder_hold",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v51Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(c.add); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name IN ('reorder_hold', 'reorder_hold_at', 'reorder_hold_note')`).Scan(&n)
+				return err == nil && n == len(v51Columns)
+			},
+		},
+		{
+			// v52 (2026-11-14): process_node_runtime_states.reorder_go_at,
+			// the position's last go (a REQUEST, or Processes turning a
+			// claim's auto-reorder on), on the engine's clock. '' on every
+			// existing row: no go recorded. Column-check guarded, like v49.
+			Version: 52,
+			Name:    "runtime_reorder_go_at",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'reorder_go_at'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_node_runtime_states ADD COLUMN reorder_go_at TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'reorder_go_at'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
+		{
+			// v53 (2026-11-14): a line's auto-reorder switch.
+			// processes.auto_reorder_switch_hmi (0 on every existing process:
+			// the station shows no switch until an engineer allows it), and
+			// auto_reorder_flips, the record of every flip: who, from where,
+			// which way, when (the engine's clock). The table is the chain's
+			// alone, so it is created here and nowhere else; the column is in
+			// the baseline too, guarded like v49.
+			Version: 53,
+			Name:    "auto_reorder_switch",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('processes')
+					WHERE name = 'auto_reorder_switch_hmi'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					if _, err := tx.Exec(`ALTER TABLE processes ADD COLUMN auto_reorder_switch_hmi INTEGER NOT NULL DEFAULT 0`); err != nil {
+						return err
+					}
+				}
+				_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS auto_reorder_flips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id  INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    turned_on   INTEGER NOT NULL,
+    by          TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(process_id, id DESC);`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var col, tbl int
+				if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('processes')
+					WHERE name = 'auto_reorder_switch_hmi'`).Scan(&col); err != nil {
+					return false
+				}
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='auto_reorder_flips'`).Scan(&tbl)
+				return err == nil && col == 1 && tbl == 1
+			},
+		},
+		{
+			// v54 (2026-11-14): the idle rule's two clocks.
+			// reporting_points.last_part_at, the engine's clock at the last
+			// read that counted a part (NULL until one), and orders.staged_at,
+			// the engine's clock when the order was last mirrored to staged
+			// (NULL until then). Each column guarded, as v51. An order staged
+			// when the column is added is stamped with the migration's own
+			// time (SQLite's, the wall: the engine's clock is not running yet,
+			// and at a plant they agree): its robots get their hour from the
+			// release, rather than being sent back by the first pass of a rule
+			// that cannot see when they arrived. Every other row stays NULL.
+			Version: 54,
+			Name:    "idle_rule_clocks",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v54Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` TEXT`); err != nil {
+						return err
+					}
+					if c.column == "staged_at" {
+						if _, err := tx.Exec(`UPDATE orders SET staged_at = datetime('now') WHERE status = 'staged'`); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				for _, c := range v54Columns {
+					var n int
+					if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil || n != 1 {
+						return false
+					}
+				}
+				return true
+			},
+		},
 	}
+}
+
+// v54Columns are v54's columns (each TEXT, NULL on every existing row).
+var v54Columns = []struct{ table, column string }{
+	{"reporting_points", "last_part_at"},
+	{"orders", "staged_at"},
+}
+
+// v51Columns are v51's runtime-row columns, each with its ADD (run only where
+// missing).
+var v51Columns = []struct{ column, add string }{
+	{"reorder_hold", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold TEXT NOT NULL DEFAULT ''"},
+	{"reorder_hold_at", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold_at TEXT NOT NULL DEFAULT ''"},
+	{"reorder_hold_note", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold_note TEXT NOT NULL DEFAULT ''"},
 }
 
 // refillByAndOneToolChange is v47's body (see its entry).

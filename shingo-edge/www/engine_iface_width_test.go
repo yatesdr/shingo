@@ -102,6 +102,14 @@ func TestServiceAccessWidth(t *testing.T) {
 // (2026-11-11: +1, DismissPostCutoverFlag, the owner's ask for the HK P400
 // banner's Dismiss. The want-list below is 93 entries with it; the 78 above
 // had already drifted, and is left for the width study rather than re-derived.)
+// (2026-11-14: +1, FlipAutoReorder, a line's auto-reorder switch from
+// Processes and the station board, POST /processes/{id}/auto-reorder and
+// /operator-stations/{id}/auto-reorder (the reorder-idle build brief, E4). An
+// orchestration verb because turning it on reads the engine's counter read
+// health. 94 entries. Not owner-approved yet: the stage report asks.)
+// (2026-11-14: -1, UpdateCellReorder, with the Replenishment page it backed
+// (the reorder-idle build brief, E5): Processes writes the reorder point and
+// auto-reorder, and the line's switch is FlipAutoReorder. 93 entries.)
 // (2026-10-23: 76 -> 78, SendBack and CancelSendBack, the owner's ruling in
 // the press tranche 2 brief: the tote press's SEND BACK and its CANCEL,
 // POST /process-nodes/{id}/send-back and /send-back/cancel.)
@@ -249,6 +257,8 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReleaseStagedOrders",
 		// Added 2026-10-08: the board's RESUME on a paused keep-staged line.
 		"ResumeKeepStaged",
+		// Added 2026-11-14: a line's auto-reorder switch (Processes, station).
+		"FlipAutoReorder",
 		// Added 2026-10-23: a tote press's SEND BACK and its CANCEL.
 		"SendBack",
 		"CancelSendBack",
@@ -279,7 +289,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"SwitchNodeToTarget",
 		"SwitchOperatorStationToTarget",
 		"UndoSupplyRefusal",
-		"UpdateCellReorder",
 	}
 	var iface EngineOrchestration
 	assertInterfaceWidth(t, "EngineOrchestration", reflect.TypeOf(&iface).Elem(), want)

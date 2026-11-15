@@ -1426,3 +1426,33 @@ func TestAllocator_ConstructedAndWired(t *testing.T) {
 		t.Error("allocator.dbg is nil — debug logging not wired")
 	}
 }
+
+// TestHandleOrderCancel_CodedByWhoDecidedIt: an Edge cancel with no actor is a
+// person's (operator_cancelled, as every Edge door was before the idle rule); one
+// with protocol.CancelActorEdge is the Edge's own decision (abandoned, filed by
+// the station itself).
+func TestHandleOrderCancel_CodedByWhoDecidedIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, actor string
+		code        protocol.TermCode
+	}{
+		{name: "a person at the station", code: protocol.TermOperatorCancelled},
+		{name: "the Edge's idle rule", actor: protocol.CancelActorEdge, code: protocol.TermAbandoned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			order := &orders.Order{EdgeUUID: "uuid-coded", StationID: "line-1", Status: StatusPending}
+			db.CreateOrder(order)
+			d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
+			d.HandleOrderCancel(testEnvelope(), &protocol.OrderCancel{OrderUUID: "uuid-coded",
+				Reason: protocol.CancelReasonLineIdle, Actor: tc.actor})
+			h, err := db.LatestOrderHistoryForStatus(order.ID, StatusCancelled)
+			testutil.MustNoErr(t, err, "the cancelled row")
+			if h == nil || h.Code != string(tc.code) {
+				t.Fatalf("cancelled row = %+v, want code %q", h, tc.code)
+			}
+		})
+	}
+}

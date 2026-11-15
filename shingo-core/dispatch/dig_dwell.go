@@ -78,9 +78,8 @@ import (
 // The wait is an ordinary WaitKindLane wait carrying an ordinary WaitLane — the
 // DUG lane, which is a real lane with an evaluator, a 60-second floor, a cause
 // vocabulary and a tripwire. That identity is the whole reason this shape works
-// where the round-2 reading did not: a wait naming no lane is exempt from the
-// abandon sweep while being invisible to every evaluator and every floor, which
-// is unbounded, unreleasable and silent with a bin in the gripper. Nothing here
+// where the round-2 reading did not: a wait naming no lane is invisible to every
+// evaluator and every floor, and no timer ends it, which is unbounded, unreleasable and silent with a bin in the gripper. Nothing here
 // adds a field, a status or a population; the dweller joins PopGateStaged, which
 // already has both of law 8's paths.
 

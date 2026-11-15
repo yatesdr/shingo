@@ -1231,6 +1231,147 @@ No assertion read any of the twelve.
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
 
+### DEAD — `TestUpdateCellReorder_AClaimNamingALane`
+- test: `TestUpdateCellReorder_AClaimNamingALane` · pkg `shingoedge/engine` · run `-run '^TestUpdateCellReorder_AClaimNamingALane$'` · `shingo-edge/engine/claim_leg_writers_test.go:117` @ `aea6321d` · tags `none`
+- code: DEAD (`engine.UpdateCellReorder` went with the Replenishment page it backed: the reorder-idle build, E5)
+- assertion map: a reorder edit of a claim naming a lane on any of five legs is refused → the same refusal at the one writer left, a flow save: `TestSaveFlow_ALaneOnEachLeg` (`claim_leg_writers_test.go`, unchanged) walks the composer's save over a lane on each leg.
+- mutation: none needed: the code under test is deleted, and the test no longer compiles against the tree.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestUpdateCellReorder_LeavesUnmentionedColumnsAlone`
+- test: `TestUpdateCellReorder_LeavesUnmentionedColumnsAlone` · pkg `shingoedge/engine` · run `-run '^TestUpdateCellReorder_LeavesUnmentionedColumnsAlone$'` · `shingo-edge/engine/claim_partial_update_test.go:88` @ `aea6321d` · tags `none`
+- code: DEAD (`engine.UpdateCellReorder` went with the Replenishment page: E5)
+- assertion map: a reorder-point edit through the page's door leaves every optional column as it was → the contract with no door: `TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone` and `TestClaimUpdate_ExplicitEmptyStillClears` (same file, unchanged). The file header now names the page as the history and the contract as what stays pinned.
+- mutation: none needed: the code under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestSaveFlow_ARestatedReorderPointLeavesThePreviewCurrent`
+- test: `TestSaveFlow_ARestatedReorderPointLeavesThePreviewCurrent` · pkg `shingoedge/engine` · run `-run '^TestSaveFlow_ARestatedReorderPointLeavesThePreviewCurrent$'` · `shingo-edge/engine/flow_restated_reorder_test.go:16` @ `aea6321d` · tags `none`
+- code: DEAD (its subject was the Replenishment page's Apply on an unchanged row; the page and its write are gone, E5, and the provenance stamp it once moved left in v48)
+- assertion map: none carried: there is no second writer of a claim's reorder point outside the flow save the preview belongs to.
+- mutation: none needed: the code under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestReplenishmentPage_AMintedStyleReadsOff`
+- test: `TestReplenishmentPage_AMintedStyleReadsOff` · pkg `shingoedge/www` · run `-run '^TestReplenishmentPage_AMintedStyleReadsOff$'` · `shingo-edge/www/handlers_flow_mint_test.go:238` @ `aea6321d` · tags `none`
+- code: DEAD (it read `/replenishment`, which is gone: E5)
+- assertion map: a minted style's claims render on the page as point 0, auto-reorder off, with Clear → not re-pinned on Processes: the reorder cell draws a claim from its own point and flag (`processes-desktop.js` `reorderCell`), and no test reads that cell for a minted style.
+- mutation: none needed: the page under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestInputFromClaimUngated_SpeaksNoGatedColumn`
+- test: `TestInputFromClaimUngated_SpeaksNoGatedColumn` · pkg `shingoedge/domain` · run `-run '^TestInputFromClaimUngated_SpeaksNoGatedColumn$'` · `shingo-edge/domain/flow_ungated_test.go:25` @ `aea6321d` · tags `none`
+- code: DEAD (`domain.InputFromClaimUngated` lost its only production caller, the Replenishment page's edit, and goes with it: E5)
+- assertion map: none carried: no partial writer of a whole claim remains. The store test that re-saved a stale row through it (`TestUpsertClaim_StoresNoPairOnAModeThatNamesNone`) re-saves it through `InputFromClaim`, the whole echo, and asserts the same thing.
+- mutation: none needed: the function under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn`
+- test: `TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn` · pkg `shingoedge/domain` · run `-run '^TestInputFromClaimUngated_SpeaksEveryUnconditionalColumn$'` · `shingo-edge/domain/flow_ungated_test.go:59` @ `aea6321d` · tags `none`
+- code: DEAD (as the row above)
+- assertion map: none carried (as above).
+- mutation: none needed: the function under test is deleted.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept`
+- test: `TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept` · pkg `shingo/protocol` · run `-run '^TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept$'` · `protocol/status_test.go:470` @ `aea6321d` · tags `none`
+- code: STALE (the never-swept half (`IsStuckSweepCandidate` false for both acquiring statuses, and the sweep set non-empty) had nothing left to answer: the predicate and the sweep are gone (reorder-idle build, C1))
+- assertion map: the anomaly half, unchanged → `TestAcquiringStatusesRaiseAnAnomaly` (same file): every acquiring status is a runtime-stuck candidate.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestFleetRefusal_ADemotedOrderIsOutOfTheDestructiveSweep`
+- test: `TestFleetRefusal_ADemotedOrderIsOutOfTheDestructiveSweep` · pkg `shingocore/dispatch` · run `-run '^TestFleetRefusal_ADemotedOrderIsOutOfTheDestructiveSweep$'` · `shingo-core/dispatch/fleet_demote_sweep_docker_test.go:48` @ `aea6321d` · tags `docker`
+- code: STALE (the sweep half asked whether a demoted order could age into `AbandonStuckOrders`; the sweep is gone (C1))
+- assertion map: the watched half, unchanged → `TestFleetRefusal_ADemotedOrderIsWatched` (same file): a demoted order rests in a runtime-stuck candidate status.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestApiOrders_CreationRequiresAuth_LifecycleDoesNot`
+- test: `TestApiOrders_CreationRequiresAuth_LifecycleDoesNot` · pkg `shingoedge/www` · run `-run '^TestApiOrders_CreationRequiresAuth_LifecycleDoesNot$'` · `shingo-edge/www/handlers_api_orders_test.go:71` @ `aea6321d` · tags `none`
+- code: STALE (it built its own copy of the routes, so a change to `router.go` could never fail it; and Submit and Abort moved behind login (the Orders page is their only caller; Abort writes a person's pause))
+- assertion map: creation needs a login, unchanged; release stays public, unchanged; submit and abort now answer 303 signed out → `TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot` (same file), on the real `NewRouter`.
+- mutation: moving submit or abort back to the public group turns the new test red.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: `shingo-edge/www/router.go`'s comment names the new test
+- verified at: the commit that adds this row
+
+### STALE — `TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep`
+- test: `TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep` · pkg `shingocore/dispatch` · run `-run '^TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep$'` · `shingo-core/dispatch/compound_staged_docker_test.go:232` @ `aea6321d` · tags `docker`
+- code: STALE (the name and text said an operator-staged row was the abandon sweep's; the sweep is gone (C1) and the row is a person's (it waits on RELEASE))
+- assertion map: unchanged assertion (`SweepStalledChapters` leaves an operator-staged parent alone) → `TestStagedParent_OperatorStagedRow_StaysWithAPerson` (same file), renamed with its comment and failure text.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestAbandonStuckOperatorGatedStaging`
+- test: `TestAbandonStuckOperatorGatedStaging` · pkg `shingocore/engine` · run `-run '^TestAbandonStuckOperatorGatedStaging$'` · `shingo-core/engine/reconciliation_service_test.go:399` @ `aea6321d` · tags `docker`
+- code: DEAD (`AbandonStuckOrders` and its 4 h class are removed (C1, owner ruling 2026-11-14: Core keeps no automatic cancel of a waiting order))
+- assertion map: none carried: the Edge's idle rule replaces the bound (`shingo-edge/engine/idle_cancel_test.go`).
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestAbandonStuckOrders`
+- test: `TestAbandonStuckOrders` · pkg `shingocore/engine` · run `-run '^TestAbandonStuckOrders$'` · `shingo-core/engine/reconciliation_service_test.go:335` @ `aea6321d` · tags `docker`
+- code: DEAD (`AbandonStuckOrders` is removed (C1))
+- assertion map: none carried: nothing in Core cancels on a timer; the Edge's idle rule sends back parked robots at an idle line (`TestIdleCancel_TheHourSendsBackAParkedPairAndSwitchesOff`).
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestAbandonSweep_ExemptsVacateWait`
+- test: `TestAbandonSweep_ExemptsVacateWait` · pkg `shingocore/engine` · run `-run '^TestAbandonSweep_ExemptsVacateWait$'` · `shingo-core/engine/reconciliation_service_test.go:618` @ `aea6321d` · tags `docker`
+- code: DEAD (an exemption of the removed sweep (C1))
+- assertion map: none carried: with no sweep there is nothing to exempt a vacate hold from; its own bounds (the lift, the lifter's end, the hard release) are pinned in `dispatch`.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestGateStagedNotSwept`
+- test: `TestGateStagedNotSwept` · pkg `shingocore/engine` · run `-run '^TestGateStagedNotSwept$'` · `shingo-core/engine/reconciliation_service_test.go:540` @ `aea6321d` · tags `docker`
+- code: DEAD (an exemption of the removed sweep (C1))
+- assertion map: none carried: nothing cancels a gate-staged order on a timer now.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestPreDispatchNotSwept`
+- test: `TestPreDispatchNotSwept` · pkg `shingocore/engine` · run `-run '^TestPreDispatchNotSwept$'` · `shingo-core/engine/reconciliation_service_test.go:470` @ `aea6321d` · tags `docker`
+- code: DEAD (an exemption of the removed sweep (C1))
+- assertion map: none carried: nothing cancels a pre-dispatch order on a timer now; the Edge's idle rule leaves one alone (`TestIdleCancel_WhatItLeavesAlone`, "no robot has reached it").
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### DEAD — `TestStuckContext`
+- test: `TestStuckContext` · pkg `shingocore/engine` · run `-run '^TestStuckContext$'` · `shingo-core/engine/cancel_return_test.go:58` @ `aea6321d` · tags `none`
+- code: DEAD (`stuckContext`, the parenthesis the removed sweep added to its reason, goes with it (C1))
+- assertion map: none carried.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+
 ### DEAD — `TestSceneGraph_AdjacencyIsUndirected`
 - test: `TestSceneGraph_AdjacencyIsUndirected` · pkg `shingoedge/engine` · run `-run '^TestSceneGraph_AdjacencyIsUndirected$'` · `shingo-edge/engine/scene_graph_test.go:49` @ `aea6321d` · tags `none`
 - code: DEAD (`engine.SceneAdjacency` is deleted: no caller in any of the five modules, owner follow-up F3; the key-route picker it was kept for walks the directed shared route model, shared/scene-net.js sceneRoute)

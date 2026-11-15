@@ -25,12 +25,16 @@ type HourlyCount struct {
 // counter is driven by an external Warlink integration rather than
 // the edge poller.
 type ReportingPoint struct {
-	ID             int64      `json:"id"`
-	PLCName        string     `json:"plc_name"`
-	TagName        string     `json:"tag_name"`
-	StyleID        int64      `json:"style_id"`
-	LastCount      int64      `json:"last_count"`
-	LastPollAt     *time.Time `json:"last_poll_at"`
+	ID         int64      `json:"id"`
+	PLCName    string     `json:"plc_name"`
+	TagName    string     `json:"tag_name"`
+	StyleID    int64      `json:"style_id"`
+	LastCount  int64      `json:"last_count"`
+	LastPollAt *time.Time `json:"last_poll_at"`
+	// LastPartAt is the engine's clock at the last read that counted a part
+	// (nil until one); LastPollAt also moves on a read that counts none. Read
+	// by the idle rule only, so it is not on the wire.
+	LastPartAt     *time.Time `json:"-"`
 	Enabled        bool       `json:"enabled"`
 	WarlinkManaged bool       `json:"warlink_managed"`
 	ProcessID      int64      `json:"process_id"`

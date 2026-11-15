@@ -182,6 +182,17 @@ type StationNodeView struct {
 	// <node>'s bin lands." Its strokes are logged (decision 55: no cart of the
 	// part stands there). Empty otherwise.
 	CountWaits string `json:"count_waits,omitempty"`
+	// AutoReorderHold and AutoReorderNote are what holds this position's
+	// automatic ask, decided by AutoReorderHeld, the decider the demand sweep
+	// reads, from the runtime row and the claim the view already holds: the
+	// kind and the sentence, which the tile's panel shows verbatim. Empty when
+	// nothing holds it. The kind is not serialised: the board reads the chip.
+	AutoReorderHold ReorderHold `json:"-"`
+	AutoReorderNote string      `json:"auto_reorder_note,omitempty"`
+	// AutoReorderChip is the held tile's chip, verbatim (ReorderHoldChip): the
+	// point the claim asks at and the cause. Empty when nothing holds, and on
+	// a person's off where the board's header carries the line's switch.
+	AutoReorderChip string `json:"auto_reorder_chip,omitempty"`
 	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
 	// position: non-empty when some producing claim names this node as its
 	// containment destination, and carries that claim's OutboundDestination —
@@ -295,6 +306,11 @@ type OperatorStationView struct {
 	ActiveChangeover *Changeover       `json:"active_changeover,omitempty"`
 	StationTask      *StationTask      `json:"station_task,omitempty"`
 	Nodes            []StationNodeView `json:"nodes"`
+	// AutoReorderSwitch is the line's auto-reorder switch as the board's
+	// header draws it: nil unless Processes shows it on the station
+	// (Process.AutoReorderSwitchHMI). The board posts its flip to
+	// /operator-stations/{id}/auto-reorder.
+	AutoReorderSwitch *StationAutoReorderSwitch `json:"auto_reorder_switch,omitempty"`
 	// CellVersion is the cell picture's version, and the picture itself is NOT
 	// here (owner ruling 4, 2026-09-17: "maps don't change often, especially
 	// near process nodes… why is this info flying over the wire so much?").
@@ -731,4 +747,11 @@ func (v StationNodeView) MarshalJSON() ([]byte, error) {
 type ReleasePurpose struct {
 	Purpose string `json:"purpose"`
 	Ready   bool   `json:"ready"`
+}
+
+// StationAutoReorderSwitch is the switch on the board: On is false when a
+// person has switched the line's auto-reorder off at any of the board's
+// positions (SwitchedOffOnTiles).
+type StationAutoReorderSwitch struct {
+	On bool `json:"on"`
 }

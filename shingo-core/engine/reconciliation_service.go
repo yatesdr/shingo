@@ -8,7 +8,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/config"
-	"shingocore/dispatch"
 	"shingocore/service"
 	"shingocore/store/messaging"
 	"shingocore/store/orders"
@@ -32,10 +31,6 @@ type ReconciliationService struct {
 	db               ReconciliationStore
 	logFn            LogFunc
 	confirmDelivered func(order *orders.Order) error
-	// abandonOrder cancels a stuck order (and cascades to its two-robot
-	// sibling). Late-bound to dispatch.LifecycleService.CancelOrder in
-	// engine.New, same wiring rationale as confirmDelivered above.
-	abandonOrder func(order *orders.Order, reason string) error
 	// advanceCompound re-drives a compound (reshuffle) parent whose children
 	// are all terminal. Late-bound to dispatch.Dispatcher.AdvanceCompoundOrder
 	// in engine.New. The liveness backstop for reshuffle parents stranded in
@@ -93,19 +88,19 @@ func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*messaging.Ou
 }
 
 // Loop runs the reconciliation passes every interval until stopCh closes: the
-// summary (logged when not ok), auto-confirm of stuck delivered orders and
-// abandonment of stuck orders (each when its timeout is set), the stuck
-// reshuffle-parent re-drive, the orphaned-reservation reap, the stranded-bin
+// summary (logged when not ok), auto-confirm of stuck delivered orders (when
+// its timeout is set), the stuck reshuffle-parent re-drive, the orphaned-reservation reap, the stranded-bin
 // sweep and the shadow logs.
-func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout, abandonTimeout, abandonOperatorGatedTimeout time.Duration) {
+func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout time.Duration) {
 	if interval <= 0 {
 		// Its one caller passes cfg.Staging.SweepInterval (engine_lifecycle.go).
 		interval = config.DefaultStagingSweepInterval
 	}
 	// clock.Default(), not time.NewTicker. The cutoff comparison below already
 	// moved to clock.Now() and its comment explains why; the loop that drives
-	// it stayed on the wall. Half a conversion is what left auto-confirm and
-	// abandon firing at 1x against sim-time deadlines.
+	// it stayed on the wall. Half a conversion is what left auto-confirm (and
+	// the stuck-order abandon, since removed) firing at 1x against sim-time
+	// deadlines.
 	ticker := clock.Default().NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -141,13 +136,6 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 					s.logFn("engine: auto-confirm delivered error: %v", err)
 				} else if n > 0 {
 					s.logFn("engine: auto-confirmed %d stuck delivered orders", n)
-				}
-			}
-			if abandonTimeout > 0 {
-				if n, err := s.AbandonStuckOrders(abandonTimeout, abandonOperatorGatedTimeout); err != nil {
-					s.logFn("engine: abandon stuck orders error: %v", err)
-				} else if n > 0 {
-					s.logFn("engine: abandoned %d stuck orders", n)
 				}
 			}
 			if n, err := s.AdvanceStuckReshuffleParents(); err != nil {
@@ -458,226 +446,4 @@ func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
 		advanced++
 	}
 	return advanced, nil
-}
-
-// AbandonStuckOrders cancels RUNTIME-stuck orders that have sat without progress past the
-// timeout: a robot parked at a staging node (staged), or a leg handed to the fleet that
-// never started moving (dispatched). The latter is the long-weekend drain — orders
-// dispatched Friday whose robots dwelled all weekend, drained, and faulted on transport
-// when finally moved (2026-06-05/07) sit at `dispatched`/vendor CREATED.
-//
-// Scope = protocol.IsStuckSweepCandidate ({dispatched, staged}). in_transit is excluded (an
-// actively moving robot is not stuck). PRE-DISPATCH WAITING (pending/queued) is excluded
-// per the operator-driven-demand rule: demand is operator-driven and never
-// evaporates, so a waiting order holds INDEFINITELY and is never abandoned on a
-// timer — a wait of days is legitimate, and give-up is an operator decision. This
-// is the narrowing of the old
-// {queued,staged,sourcing,dispatched} set: a swap removal leg whose supply never arrives now
-// WAITS (the sibling gate holds it in queued/sourcing) rather than being auto-cancelled at
-// ~1h; the operator cancels if it is truly abandoned.
-//
-// Cancelling reuses the standard teardown (fleet cancel, bin unclaim, auto-return, Edge
-// notify) and cascades to the swap sibling. Returns the count abandoned.
-// operatorGatedTimeout is the separate, longer bound applied to operator-gated
-// staging (dispatch.IsOperatorGatedStaging) — a coordinated swap leg parked at
-// its wait point waiting for a human to press RELEASE. 0 means such a leg is
-// never auto-cancelled. See config.StagingConfig.AbandonStuckOperatorGated.
-func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout time.Duration) (int, error) {
-	if timeout <= 0 {
-		return 0, nil
-	}
-
-	// Sim-clock cutoff, same rationale as AutoConfirmStuckDeliveredOrders — order
-	// updated_at is clock.Now()-stamped, so a wall-NOW() comparison never fires in sim.
-	now := clock.Now().UTC()
-	// Candidates are selected on the SHORTER of the two thresholds so both
-	// classes surface here; each order is then held to its OWN bound in the loop
-	// below. Selecting on `timeout` alone would silently floor a shorter
-	// operator-gated bound at the base one.
-	selectTimeout := timeout
-	if operatorGatedTimeout > 0 && operatorGatedTimeout < selectTimeout {
-		selectTimeout = operatorGatedTimeout
-	}
-	cutoff := now.Add(-selectTimeout)
-	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT id
-		FROM orders
-		WHERE status IN (%s)
-		  AND updated_at < $1
-		ORDER BY updated_at ASC
-		LIMIT 100`, protocol.StuckSweepStatusSQLList()), cutoff)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
-	var orderIDs []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return 0, err
-		}
-		orderIDs = append(orderIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	if s.abandonOrder == nil {
-		s.logFn("engine: abandon-stuck skipped (%d candidate orders): abandonOrder callback not wired", len(orderIDs))
-		return 0, nil
-	}
-
-	abandoned := 0
-	for _, id := range orderIDs {
-		order, err := s.db.GetOrder(id)
-		if err != nil {
-			s.logFn("engine: abandon-stuck reload order %d: %v (skipping this pass; periodic loop retries)", id, err)
-			continue
-		}
-		// A sibling cancel from an earlier iteration this pass may already
-		// have moved this one out of the stuck-sweep set (terminal, or a
-		// re-queue back to a pre-dispatch waiting state) — skip if it is no
-		// longer a runtime-stuck candidate.
-		if !protocol.IsStuckSweepCandidate(order.Status) {
-			continue
-		}
-		// A lane-gate-staged order is a robot physically parked at a lane wait
-		// point, holding a bin and an unsealed waybill, waiting for Core to
-		// append its tail. Its updated_at never moves while it dwells, so the
-		// cutoff fires reliably — and abandoning it cancels a committed robot
-		// mid-order and strands the bin it is carrying. That is not "stuck"; it
-		// is Core owing it a decision.
-		//
-		// This is distinct from the operator-gated swap leg handled below:
-		// IsGateStaged is a wait CORE owes a decision on, whereas
-		// IsOperatorGatedStaging is one a HUMAN owes, and the second gets a
-		// longer bound rather than an exemption.
-		//
-		// ⛔ THEY ARE NO LONGER MUTUALLY EXCLUSIVE, and the reasoning that used
-		// to sit here — "by construction, IsGateStaged returns false for any
-		// Coordinated order" — is now false. IsGateStaged asks which WAIT the
-		// order is parked at, not what class of order it is, and a coordinated
-		// plan can hold an operator wait and a lane wait at once. A coordinated
-		// order parked at a lane wait satisfies BOTH predicates.
-		//
-		// THE ORDERING IS WHAT DISAMBIGUATES, and it is already right: this
-		// check runs first, so whichever wait the order is actually parked at
-		// decides which party owes it. Parked at the lane wait → Core owes it →
-		// exempt. Parked at the operator wait → IsGateStaged is false, it falls
-		// through, and the longer human-scale bound applies. The wait kind names
-		// the party, which is the whole point of putting the kind on the step.
-		//
-		// So this is a re-derivation, not a repair: the code did the right thing
-		// for a reason that has changed underneath it. Moving these two checks
-		// past each other would now be a behaviour change.
-		//
-		// Skipping here rather than in the SQL keeps the exemption next to the
-		// re-check above, where a reader looking at what the sweep cancels will
-		// see it. It is the sweep's own stated principle (give-up is an operator
-		// decision, demand never evaporates) applied to a case it predates.
-		//
-		// TODO(increment 7): a dwelling order must not be merely exempt — it needs
-		// its own watchdog: a staged-too-long queue code and an operator surface,
-		// so the wait is visible and owned rather than silent. Exemption alone
-		// trades a destructive failure for an invisible one.
-		//
-		// A VACATE wait answers that TODO in its own way: it is exempt here and
-		// bounded by its lifter, not by a clock. Its row carries
-		// CauseVacateWaitingLift ("waiting for <bin> to leave <node>"); the lift
-		// releases it (event, or the 60 s floor); the lifter's moot end releases
-		// it; the lifter's cancel or failure ends it through the swap death rule,
-		// with CauseVacateLifterGone on the row until it does; the Core hard
-		// release is the hatch (dispatch/vacate_hold.go).
-		//
-		// The OWNER is dispatch.CoreOwnsWaitAt's answer (lane or vacate), the one
-		// function every owner guard asks. The vendor-order term stays beside it
-		// and is not an owner question: it is the witness that a robot is
-		// committed, which is what makes the exemption worth having
-		// (IsGateStaged's own note).
-		if order.VendorOrderID != "" && dispatch.CoreOwnsWaitAt(order.StepsJSON, order.WaitIndex) {
-			continue
-		}
-		// Which clock applies to THIS order. Operator-gated staging — a
-		// coordinated swap leg parked at its wait point — is waiting on a
-		// HUMAN, not on the system, so it answers to its own longer bound. It
-		// stays BOUNDED rather than exempt, so a genuinely forgotten swap
-		// still cannot park two robots forever. Springfield ALN_003
-		// 2026-07-31: the base 1h cancelled a staged evac and cascaded its
-		// supply, destroying both legs of a live changeover.
-		// See dispatch.IsOperatorGatedStaging.
-		effective := timeout
-		reason := fmt.Sprintf("abandoned: stuck in %s past %s", order.Status, timeout)
-		if dispatch.IsOperatorGatedStaging(order) {
-			if operatorGatedTimeout <= 0 {
-				s.logFn("engine: abandon-stuck holding operator-gated order %d (uuid=%s, staged %s) — auto-cancel disabled for operator-gated staging",
-					order.ID, order.EdgeUUID, now.Sub(order.UpdatedAt).Round(time.Second))
-				continue
-			}
-			effective = operatorGatedTimeout
-			reason = fmt.Sprintf("abandoned: operator-gated staging past %s", operatorGatedTimeout)
-		}
-		// AND WHAT IT WAS STUCK ON: the fleet's last state, the robot, and the
-		// wait it last stood under — the handles a person looks up. Short, after
-		// the "abandoned:" opening the classifiers key on (2026-11-05).
-		reason += stuckContext(order)
-		// Selected on the shorter cutoff but not yet past its own bound. Logged
-		// rather than silent: a held order is a robot parked holding a bin, and
-		// an exemption nobody can see trades a destructive failure for an
-		// invisible one.
-		if order.UpdatedAt.After(now.Add(-effective)) {
-			s.logFn("engine: abandon-stuck holding order %d (uuid=%s status=%s) — waiting %s of %s",
-				order.ID, order.EdgeUUID, order.Status, now.Sub(order.UpdatedAt).Round(time.Second), effective)
-			continue
-		}
-		// A SWEPT DIG LEG ENDS ITS CHAPTER, AND HAS TO SAY SO IN THE ONE WORD
-		// THE DISPOSITION READS. Gate 1's wording is "a failed OR SWEPT dig
-		// child dissolves the chapter", and the chapter-end test reads the
-		// cancel's marker rather than its status — deliberately, because an
-		// OPERATOR cancel must not read as a chapter end or the parent comes
-		// back to the acquiring set carrying work a human stopped. A sweep is
-		// not an operator, so it says which it is.
-		//
-		// The diagnostic sentence is not lost, it moves: RecordRecoveryAction
-		// below still files the full "stuck in %s past %s" text, which is where
-		// a sweep's reasoning belongs. The leg's error_detail is read by
-		// machinery; the recovery ledger is read by people.
-		legReason := reason
-		if order.ParentOrderID != nil {
-			legReason = dispatch.ReshuffleLegFailedDetail
-		}
-		if err := s.abandonOrder(order, legReason); err != nil {
-			s.logFn("engine: abandon stuck order %d: %v", order.ID, err)
-			continue
-		}
-		s.logFn("engine: abandoned stuck order %d (uuid=%s status=%s)", order.ID, order.EdgeUUID, order.Status)
-		s.db.RecordRecoveryAction("abandon_stuck_order", "order", order.ID, reason, "system")
-		abandoned++
-	}
-
-	return abandoned, nil
-}
-
-// stuckContext is the parenthesis a stuck-sweep abandon adds to its reason:
-// " (RDS WAITING, AMR-06; last wait: Waiting for a slot)", whichever parts the
-// row has, or "" when it has none.
-func stuckContext(o *orders.Order) string {
-	var parts []string
-	if o.VendorState != "" {
-		parts = append(parts, "RDS "+o.VendorState)
-	}
-	if o.RobotID != "" {
-		parts = append(parts, o.RobotID)
-	}
-	s := strings.Join(parts, ", ")
-	if o.QueueReason != "" {
-		if s != "" {
-			s += "; "
-		}
-		s += "last wait: " + o.QueueReason
-	}
-	if s == "" {
-		return ""
-	}
-	return " (" + s + ")"
 }

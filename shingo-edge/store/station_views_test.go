@@ -81,7 +81,7 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 	// Sibling-link the pair — mirrors what every site that creates a
 	// two-robot pair does in production (applyConsumePlan in operator_stations.go,
 	// operator_bin_ops.go, operator_produce.go, changeover_applier.go,
-	// wiring_status_changed.go). ComputeSwapReady's order-graph predicate
+	// sequential_backfill.go). ComputeSwapReady's order-graph predicate
 	// requires this pointer; tests that exercise the happy path need it
 	// set the same way real flows would.
 	testutil.MustNoErr(t, d.LinkOrderSiblings(aID, bID), "link siblings")

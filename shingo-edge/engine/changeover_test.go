@@ -1250,8 +1250,8 @@ func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
 // Edge-lifecycle words the fleet never emits.
 //
 // acknowledged carries the sharpest consequence and is why this test names each
-// status rather than looping anonymously: NOTHING reaps it — AbandonStuckOrders
-// is scoped to {dispatched, staged}, no Core reconciler or Edge ticker moves it,
+// status rather than looping anonymously: NOTHING reaps it — Core cancels no
+// order on a timer, no Core reconciler or Edge ticker moves it,
 // and this HMI has no operator order cancel. Blocking on it locked the operator
 // out of changeover until somebody restarted Edge.
 func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {

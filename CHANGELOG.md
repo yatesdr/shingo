@@ -16,6 +16,38 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Edge v51–v54 first, at every Edge of the plant. Core has no migration, and goes only after every Edge there runs this release: until then Core's old timers are what end a dead Edge's waits.
+
+- A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
+- A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
+- A held tile's chip names its reorder point and the cause in words (REORDER AT 110: PAUSED, LINE IDLE, CORE GAVE UP, SWITCHED OFF, CHECK COUNT); tapping the tile shows the full sentence
+- Nothing on the station board is said only on hover: a refusal, a keep-staged note, a containment and a disabled button's reason show in the tile's panel or beside the button
+- The station tiles no longer carry the partial line; a held partial's panel still says how long it has been held
+- A cancel Core sends, an abort on the Orders page, or a failed order pauses that position's auto-reorder for 10 minutes
+- When Core gives up on an order that waited too long, that position's auto-reorder goes off until someone says go
+- REQUEST, or turning auto-reorder on in Processes, ends a pause or an off at the position
+- Auto-reorder does not ask on a count that cannot be the part's (a press past two packs or below zero, a line past one pack); the tile says so
+- A line that counts no part for an hour sends back the robots parked there waiting on a RELEASE, and auto-reorder goes off at those positions
+- Not during a changeover, nor within an hour of one ending, of a REQUEST there, or of the robots parking, nor while the counter cannot be read
+- Never a robot Core has released or holds at its own wait, and never one the Edge did not hear park (it parked while the Edge was down): that one waits for a person
+- That off ends when the line counts a part after the stop, or on REQUEST, even if the Edge restarted in between
+- A sequential position's second robot is called when the first is released at the line, not when the first robot is sent, so it no longer waits behind the first with the new bin
+- A sequential robot parked at a line idle past its hour is sent back on its own; a release that went out just before the Edge stopped still calls the second robot when it starts
+- A cancel the Edge sends no longer expires on its way to Core
+- The hour is `demand.idle_cancel_after` in the Edge config
+- Processes Settings has an Auto-reorder card: switch a line's auto-reorder off or on, and choose whether its station shows the switch
+- The station board shows LINE AUTO-REORDER ON/OFF where Processes allows it; every flip is listed with who, where and when
+- With the line switched off and the switch on the board, the tiles carry no SWITCHED OFF chip of their own
+- Auto-reorder cannot be turned on at a line with no counter, or one whose counter cannot be read now
+- A position added to a line whose auto-reorder is switched off starts switched off
+- A Processes save that turns auto-reorder on at a line with no counter is refused and says why
+- The Edge's Replenishment page is gone: a position's reorder point and auto-reorder are set in Processes
+- Abort and Submit on the Orders page need a login; RELEASE stays open to the station
+- Processes can clear a position's reorder point (to 0, which never orders)
+- Core no longer cancels a waiting order on a timer; `staging.abandon_stuck` and `abandon_stuck_operator_gated` are ignored and said so at start
+- A robot left waiting at a line with no counter, or at a dead Edge, waits for a person to cancel it in Core
+- Core files the Edge's idle cancel as abandoned, the system's, not as a person's cancel, and counts it as a cancel, not a failure
+
 ## v0.8.1 — 2026-11-15
 
 Deploy: no migration.

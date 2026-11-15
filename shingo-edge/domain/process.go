@@ -84,6 +84,10 @@ type Process struct {
 	// Add-process does not turn it on.
 	FlowComposerEnabled bool      `json:"flow_composer_enabled"`
 	CreatedAt           time.Time `json:"created_at"`
+	// AutoReorderSwitchHMI: the station board shows this line's auto-reorder
+	// switch (engine FlipAutoReorder from the station refuses without it). An
+	// engineer allows it in Processes; off on every process until then.
+	AutoReorderSwitchHMI bool `json:"auto_reorder_switch_hmi"`
 }
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.
@@ -293,7 +297,22 @@ type RuntimeState struct {
 	// one pack (D2) and sets nothing aside until another cart binds here or a
 	// person enters a count (D3, U1). Written with the hold, under the engine's
 	// count lock; a Core lifecycle message never clears it.
-	HoldStopped   bool      `json:"hold_stopped,omitempty"`
+	HoldStopped bool `json:"hold_stopped,omitempty"`
+	// ReorderHold, ReorderHoldAt and ReorderHoldNote are the position's
+	// auto-reorder hold (reorder_hold.go): its kind, when it was set (the
+	// engine's clock; zero when never), and who or what set it, in the words
+	// the board shows. Written only by store/processes.HoldReorder, whose WHERE
+	// refuses a kind ranked below the one held; read by AutoReorderHeld for the
+	// demand sweep and the station view. Not on the wire: the view sends the
+	// decided sentence (StationNodeView.AutoReorderNote).
+	ReorderHold     ReorderHold `json:"-"`
+	ReorderHoldAt   time.Time   `json:"-"`
+	ReorderHoldNote string      `json:"-"`
+	// ReorderGoAt is the position's last go (the engine's clock; zero when
+	// never): a REQUEST, or Processes turning the claim's auto-reorder on.
+	// Written by store/processes.GoReorder, the statement that also clears a
+	// pause or an off.
+	ReorderGoAt   time.Time `json:"-"`
 	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
 	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
 	ActivePull    bool      `json:"active_pull"`

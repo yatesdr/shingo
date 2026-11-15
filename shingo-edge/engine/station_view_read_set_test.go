@@ -31,6 +31,9 @@ import (
 // state none of them is in reaches (an active changeover's node tasks) is not
 // seen here, and is the walk's to cover through the changeover routes.
 var stationViewTables = map[string]string{
+	// Read only when a position's first runtime row is made, which takes the
+	// line's switch from its last flip (processes.EnsureRuntime).
+	"auto_reorder_flips":          "POST /api/processes/{id}/auto-reorder, POST /api/operator-stations/{id}/auto-reorder",
 	"line_counters":               "the station-counter poll (counter-update); a counter's delete unbinds its positions in its transaction",
 	"node_lineside_bucket":        "POST /api/lineside/buckets/{id}/clear, the release verbs; the PLC count",
 	"operator_stations":           "/api/operator-stations (POST, PUT, move, DELETE), POST /api/loader-boards",

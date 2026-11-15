@@ -657,8 +657,8 @@ func (d *Dispatcher) assertWaitGatesAnAppend(steps []resolvedStep, i int) error 
 // what this survives restarts on.
 //
 // The vendor-order term SURVIVES and is the one that was never a proxy: it is
-// the witness that a robot is committed, which is what makes this a wait worth
-// exempting from the abandon sweep rather than a plan detail.
+// the witness that a robot is committed, which is what makes this a wait Core
+// owes rather than a plan detail.
 //
 // NO COMPATIBILITY FALLBACK — see the note below on why the shape it would
 // catch cannot exist, and why catching it silently would be worse than not.
@@ -670,9 +670,9 @@ func IsGateStaged(order *orders.Order) bool {
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
 		// A plan that cannot be parsed cannot be appended to either — every
 		// releaser unmarshals the same bytes — so no answer here rescues the
-		// order. Answer false and be LOUD: the abandon sweep's exemption keys on
-		// this, so a silent false is a committed robot quietly losing its
-		// exemption, and that is worth a log line rather than a shrug.
+		// order. Answer false and be LOUD: the owner guards key on this, so a
+		// silent false quietly hands a committed robot's wait to the station, and
+		// that is worth a log line rather than a shrug.
 		log.Printf("lane gate: order %d has unparseable steps_json (%v) — treating as not gate-staged; "+
 			"if a robot is dwelling for this order it is now sweep-eligible", order.ID, err)
 		return false
@@ -708,7 +708,7 @@ func IsGateStaged(order *orders.Order) bool {
 // the fence, not invisibly right underneath it.
 //
 // If a pre-field row ever does appear, it reads as an operator wait: the
-// evaluator ignores it and AbandonStuckOrders bounds it, which is the same
+// evaluator ignores it and it waits for a person, which is the same
 // disposition every other unreleasable order gets.
 
 // dispatchGated is THE VALVE, one function for every direction and every order

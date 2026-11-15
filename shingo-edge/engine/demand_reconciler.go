@@ -80,6 +80,7 @@ func (e *Engine) runDemandReconciler() {
 // close. Run the other way round, every close would be deciding on a flag one
 // period stale.
 func (e *Engine) reconcileDemand() {
+	e.idleCancelLines()
 	e.sweepCellLevels()
 	e.reconcileDemandEpisodes()
 }
@@ -282,6 +283,14 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	// wrong for "should we order". A cell at 26 against a level of 25 sits in
 	// the band with the flag still set, and the tick never ordered there.
 	if !breached || !claim.AutoReorder {
+		return
+	}
+	// A HOLD AT THE POSITION — a pause after a cancel, a line gone idle, a
+	// person's off — decided by the one decider the station view reads too,
+	// from the runtime row this pass already read: no statement, and the
+	// dedup read below is not made for a held position.
+	if held := domain.AutoReorderHeld(claim, runtime, e.reconcilerClock().Now()); held.Holds() {
+		e.debugFn("demand_sweep: node %s below its level, but its auto-reorder is held: %s", node.Name, held.Sentence)
 		return
 	}
 

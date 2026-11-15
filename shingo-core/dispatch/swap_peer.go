@@ -26,49 +26,6 @@ const (
 	SwapTerminalAbandoned = "abandoned"
 )
 
-// IsOperatorGatedStaging reports whether an order is a coordinated swap leg
-// parked at its wait point waiting for an OPERATOR to press RELEASE — as
-// opposed to a robot the system has forgotten about.
-//
-// This is the abandon sweep's second exemption, alongside IsGateStaged, and the
-// two are deliberately separate because they are held by different parties: a
-// gate-staged leg waits on CORE to append its tail, and this one waits on a
-// HUMAN. Neither is "stuck", and neither should be cancelled on a timer whose
-// premise is that it has been forgotten.
-//
-// SPRINGFIELD ALN_003, 2026-07-31. The evac leg staged at 15:00:07 and its
-// supply sibling reached staged at 15:32:57 after three transient fleet faults
-// (AMR-11, laser-reflector warnings on the SMN_033→ALN_003 path). The operator
-// could not release, and at 16:00:22 — exactly 1h after the evac staged — the
-// sweep abandoned the evac and cascade-cancelled the supply, destroying both
-// legs of a live changeover. 1h is the right bound for a forgotten robot and
-// far too short for a swap a human still has to authorise.
-//
-// WHY `Coordinated` AND NOT "is this a changeover". Core cannot see changeovers:
-// process_changeovers is an Edge-local SQLite table and no changeover marker
-// reaches the Core order row (origin_class is a closed enum of
-// attached/orphan/no_demand). `Coordinated` is the Core-side category that
-// actually carries the property we care about. A mid-cycle two-robot swap has
-// the identical hazard (both legs cancelled, line left un-cleared) and the
-// identical operator dependency, so covering it too is intended, not overreach.
-//
-// ⛔ THIS IS NO LONGER "the SAME category IsGateStaged excludes", which is what
-// this note used to say. IsGateStaged stopped being a statement about order
-// class: it asks which WAIT the order is parked at, so a coordinated order can
-// satisfy both predicates. This one is deliberately still coarse — Coordinated
-// AND staged — and it stays coarse safely only because the abandon sweep asks
-// IsGateStaged FIRST (reconciliation_service.go). A coordinated order parked at
-// a LANE wait is claimed there and never reaches here; what reaches here is a
-// coordinated order parked on a wait Core does not own, which is exactly the
-// population this bound is for. Read the two together; the precedence is
-// load-bearing.
-func IsOperatorGatedStaging(order *orders.Order) bool {
-	if order == nil {
-		return false
-	}
-	return order.Coordinated && order.Status == protocol.StatusStaged
-}
-
 // HandleSwapPeerTerminal reacts to a two-robot swap leg reaching a terminal
 // state so a half-completed swap can't silently strand the line (evac pulled the
 // resident, no replacement) or collide two bins on it (supply drops onto an

@@ -1,3 +1,5 @@
+CREATE INDEX idx_auto_reorder_flips_process ON auto_reorder_flips(process_id, id DESC);
+
 CREATE UNIQUE INDEX idx_catid_holds_open
     ON catid_holds(process_id, catid, process_node_id, payload_code, last_bin_id, last_left_at) WHERE resolved_at IS NULL;
 
@@ -53,6 +55,15 @@ CREATE TABLE admin_users (
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE auto_reorder_flips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id  INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    turned_on   INTEGER NOT NULL,
+    by          TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    at          TEXT NOT NULL
 );
 
 CREATE TABLE bin_returns (
@@ -384,9 +395,9 @@ CREATE TABLE orders (
     queue_code      TEXT NOT NULL DEFAULT '',
     -- authored_by: who decided this order should exist. 'edge' (the default, and
     -- what every existing row is) means this Edge created it and sent it up;
-    -- 'core' means Core created it and pushed the row down. Nothing branches on
-    -- it: it labels the board and it is what a projected-row test asserts
-    -- against. Deliberately cheap to stop rendering.
+    -- 'core' means Core created it and pushed the row down. The idle rule
+    -- sends back only 'edge' rows (engine/idle_cancel.go); otherwise it labels
+    -- the board and is what a projected-row test asserts against.
     authored_by     TEXT NOT NULL DEFAULT 'edge',
     -- The fault clock (v36). Set only while the order is faulted; the handler
     -- clears them on any other status, derived from the status rather than from
@@ -448,6 +459,10 @@ CREATE TABLE orders (
     -- hold or rejection sentence the board's chip shows.
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
+    -- staged_at (Edge v54): the engine's clock when this Edge last mirrored the
+    -- order to staged (a robot parked). NULL until then. The idle rule's hour
+    -- does not start before it (engine/idle_cancel.go).
+    staged_at       TEXT,
     -- want (Edge v30): the height an empty is wanted at, as this Edge stated
     -- it on the order's request (protocol.Height's spelling; '' is none).
     -- SEND BACK knows its pull by it; a projection never writes it.
@@ -650,7 +665,23 @@ CREATE TABLE process_node_runtime_states (
     -- here or a person enters a count (a Core lifecycle message never clears
     -- it). After placed_seq, where the
     -- v49 ALTER puts it.
-    hold_stopped INTEGER NOT NULL DEFAULT 0
+    hold_stopped INTEGER NOT NULL DEFAULT 0,
+    -- reorder_hold: the position's auto-reorder hold ('' none, 'paused',
+    -- 'off', 'person_off'), ranked in that order; the one write
+    -- (HoldReorder) never sets a kind below the one held. The demand sweep
+    -- does not ask while it holds (domain.AutoReorderHeld). After
+    -- hold_stopped, where the v51 ALTERs put the three hold columns.
+    reorder_hold TEXT NOT NULL DEFAULT '',
+    -- reorder_hold_at: when the hold was set, the engine's clock ('' when
+    -- never). A pause ends ten minutes after it.
+    reorder_hold_at TEXT NOT NULL DEFAULT '',
+    -- reorder_hold_note: who or what set the hold, in the board's words.
+    reorder_hold_note TEXT NOT NULL DEFAULT '',
+    -- reorder_go_at: the position's last go, the engine's clock ('' when
+    -- never): a REQUEST, or Processes turning a claim's auto-reorder on. The
+    -- same statement clears a pause or an off (GoReorder). After
+    -- reorder_hold_note, where the v52 ALTER puts it.
+    reorder_go_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE process_nodes (
@@ -737,7 +768,12 @@ CREATE TABLE processes (
     -- process_routing_nodes below; the backfill re-derives only while it is
     -- off, so a reviewed set is never silently re-seeded.
     flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    -- auto_reorder_switch_hmi: the station board shows this line's
+    -- auto-reorder switch (engine FlipAutoReorder from the station). Off
+    -- until an engineer allows it in Processes. After created_at, where the
+    -- v53 ALTER puts it.
+    auto_reorder_switch_hmi INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE production_tick_cursor (
@@ -760,6 +796,11 @@ CREATE TABLE reporting_points (
     tag_name        TEXT NOT NULL,
     last_count      INTEGER NOT NULL DEFAULT 0,
     last_poll_at    TEXT,
+    -- last_part_at (Edge v54): the engine's clock at the last read that
+    -- counted a part. last_poll_at also moves on a read that counts none (a
+    -- point's first read, a counter reset to 0); this does not. NULL until the
+    -- first counted part. The idle rule's off ends on it (engine/idle_cancel.go).
+    last_part_at    TEXT,
     enabled         INTEGER NOT NULL DEFAULT 1,
     warlink_managed INTEGER NOT NULL DEFAULT 0,
     UNIQUE(plc_name, tag_name)

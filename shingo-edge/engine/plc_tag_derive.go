@@ -4,9 +4,10 @@ import "strings"
 
 // PLC tag derivation for the AMR-trial MES struct convention.
 //
-// Plant PLCs publish a per-process struct that carries the production
-// counters, identity (CATID_NN), and control bits (Changeover_Active,
-// RunTime_Active, DownTime_Active) together. The AMR trial confirmed
+// Plant PLCs that follow the convention publish a per-process struct that
+// carries the production counters, identity (CATID_NN), and control bits
+// (Changeover_Active, RunTime_Active, DownTime_Active) together. Not every PLC
+// does: an SLC press counts in a data-file alias with no struct around it. The AMR trial confirmed
 // the convention via WarLink Tag Republisher: a typical struct path is
 //
 //   MES_Press_A1.Prod_Counter_01
@@ -22,8 +23,8 @@ import "strings"
 // admin UI work, as long as the convention holds.
 //
 // The convention is documented; if a future plant uses a different
-// layout, the derivation returns an empty tag and the caller (cutover
-// monitor) logs and skips the subscription rather than crashing.
+// layout, the derivation returns an empty tag and its callers (the CATID slot
+// watch, the station counters) treat that as no struct rather than crashing.
 
 // deriveProcessTagPrefix strips the leaf segment from a fully-qualified
 // PLC tag name, returning the parent struct path. Returns the empty

@@ -335,10 +335,10 @@ reservations for minutes, hours, or days while waiting for a source; that is not
 "stuck," it is working as designed. A hold becomes reclaimable only when its
 order reaches a terminal status or no longer exists.
 
-Consequently pre-dispatch orders (`pending`, `queued`) are **exempt** from the
-stuck-order sweep — `AbandonStuckOrders` is restricted to the runtime states
-(`dispatched`, `staged`; `protocol.IsStuckSweepCandidate`). There is no timer
-that abandons a waiting order, and no age-based reaper: reserve-at-plan-time
+Consequently no order is cancelled on a timer: Core's stuck-order sweep is gone,
+and the Edge's idle rule sends back only robots parked at a station wait of a line
+that has counted nothing for its hour, never a `pending` or `queued` ask. There
+is no age-based reaper either: reserve-at-plan-time
 makes the soft window long by design. Give-up is operator-driven.
 
 The `expires_at` column (made nullable in v44) is written by no Acquire and read

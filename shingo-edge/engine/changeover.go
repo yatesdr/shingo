@@ -519,10 +519,10 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, drainState fun
 		// press is what fills it — so a drained bin there is one the next style
 		// can go on filling. At a CONSUME position a drained bin is a starved
 		// line: the changeover swap is what puts a full bin there for the start
-		// of the new style, and nothing automatic would catch the miss
-		// (auto_reorder is 0 on every live claim at both plants, and
-		// Hopkinsville sets no reorder point at all). Ruled 2026-09-09, the same
-		// answer the owner gave for the sequential reuse-skip on 2026-08-28.
+		// of the new style, and nothing automatic would catch the miss: most
+		// positions have auto-reorder off, and one that has it cannot ask while
+		// the changeover holds its cell. Ruled 2026-09-09, the same answer the
+		// owner gave for the sequential reuse-skip on 2026-08-28.
 		if d.FromClaim.Role != protocol.ClaimRoleProduce || d.ToClaim.Role != protocol.ClaimRoleProduce {
 			continue
 		}

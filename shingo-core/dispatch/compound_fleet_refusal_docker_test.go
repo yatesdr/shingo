@@ -80,8 +80,8 @@ func TestCompound_FleetRefusalParksTheLegAndKeepsTheDemand(t *testing.T) {
 	// (b) THE CLAIM IS UNDONE. handoverToFleet CASes the leg to `dispatched`
 	// before it calls the fleet and leaves it there for its caller to dispose of.
 	// A leg left at `dispatched` with no vendor order is tracked by nothing,
-	// selected by no re-drive, and swept to `cancelled` by AbandonStuckOrders an
-	// hour later — which fails the parent anyway, just slower.
+	// selected by no re-drive, and ended by no timer — it stays until a person
+	// finds it.
 	if leg.Status == StatusDispatched {
 		t.Errorf("leg is stranded at `dispatched` with vendor %q — the fleet never took it, so the "+
 			"claim must be rolled back or nothing will ever look at this leg again", leg.VendorOrderID)

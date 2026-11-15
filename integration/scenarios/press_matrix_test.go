@@ -707,7 +707,8 @@ func pmMarker(p *pmCell) {
 // lets it go, and it runs to the end.
 //
 // A sequential swap is its removal, which sources nothing: the removal goes,
-// and the backfill it makes on its way is what queues (pmDrySequential).
+// and the backfill its release at the line makes is what queues
+// (pmDrySequential).
 func pmDry(p *pmCell) {
 	if p.mode == protocol.SwapModeSequential {
 		pmDrySequential(p)
@@ -755,7 +756,7 @@ func pmDry(p *pmCell) {
 }
 
 // pmDrySequential: the removal goes to the fleet at once (it sources
-// nothing); at the line it makes the backfill, which Core queues on
+// nothing); its release at the line makes the backfill, which Core queues on
 // waiting_for_material; a second tap is refused; the stock lands and the
 // backfill brings it.
 func pmDrySequential(p *pmCell) {
@@ -767,7 +768,8 @@ func pmDrySequential(p *pmCell) {
 	if co := p.coreOf(removal); co.QueueCode != "" {
 		p.t.Logf("%s: the removal reads %q at Core before the fleet takes it", label, co.QueueCode)
 	}
-	backfill := p.seqAtTheLine(label, removal)
+	p.seqAtTheLine(label, removal)
+	backfill := p.seqRelease(label, removal)
 	p.eventually(label+": the backfill queued for material", func() bool {
 		co := p.coreOf(backfill)
 		return co.VendorOrderID == "" && co.QueueCode == string(protocol.QueueWaitingForMaterial)

@@ -171,12 +171,25 @@ var requiredColumns = []requiredColumn{
 	// The produce seat's stop flag (v49): scanRuntime SELECTs it and every
 	// seat-guarded write names it, so a missing column kills every tick.
 	{"process_node_runtime_states", "hold_stopped"},
+	// The position's auto-reorder hold (v51): scanRuntime SELECTs all three,
+	// so a missing column kills every runtime-row read.
+	{"process_node_runtime_states", "reorder_hold"},
+	{"process_node_runtime_states", "reorder_hold_at"},
+	{"process_node_runtime_states", "reorder_hold_note"},
+	// The position's last go (v52): scanRuntime SELECTs it.
+	{"process_node_runtime_states", "reorder_go_at"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.
 	{"processes", "group_id"},
 	// flow_composer_enabled is scanned by every process List/Get, like group_id.
 	{"processes", "flow_composer_enabled"},
+	// The station switch's setting (v53): scanProcess selects it.
+	{"processes", "auto_reorder_switch_hmi"},
+	// The idle rule's clocks (v54): every reporting-point read selects
+	// last_part_at, every order read staged_at.
+	{"reporting_points", "last_part_at"},
+	{"orders", "staged_at"},
 	// The curtain interlock's node columns: scanNode selects all four, so a
 	// failed ALTER would kill every process_nodes read on the box.
 	{"process_nodes", "curtain_enabled"},

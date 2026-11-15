@@ -14,10 +14,15 @@
 //                                replenishment, keep-staged pre-stage),
 //                                plus the OrderFailed counterpart for
 //                                changeover-task error marking.
-//   wiring_status_changed.go   – OrderStatusChanged reactions:
-//                                sequential backfill on Order A
-//                                in_transit, plus the two-robot
-//                                auto-release-on-staged path.
+//   OrderStatusChanged         – the release layer's (release_act.go
+//                                onReleaseStatusChanged), a carrier
+//                                left waiting (changeover_cancel_park.go)
+//                                and the held pulling leg
+//                                (changeover_sequential_order.go). The
+//                                sequential backfill is not one: the
+//                                release act calls it when Order A's
+//                                release at the line goes out
+//                                (sequential_backfill.go).
 //
 // Stage 2A.2 (2026-04) split this file out of an 813-line monolith to
 // match the Phase 2C precedent on the core side. The split is a pure
@@ -76,7 +81,6 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderFailed)
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
-		e.handleSequentialBackfill(evt.Payload)
 		e.onReleaseStatusChanged(evt.Payload)
 		e.returnCarrierLeftWaiting(evt.Payload)
 		e.createHeldPullingLeg(evt.Payload)

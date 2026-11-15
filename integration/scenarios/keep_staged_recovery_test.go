@@ -1034,16 +1034,14 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 }
 
 // seqCycle runs a sequential line's swap to the end: the removal waits at the
-// line and, on its way, makes the backfill; the operator releases; the removal
-// and then the backfill finish, the fleet carrying the plain orders meanwhile
-// (the backfill fetches its carrier from the spot, and waits there for one when
-// the spot is bare); the operator confirms.
+// line; the operator releases it, which calls the backfill; the removal and
+// then the backfill finish, the fleet carrying the plain orders meanwhile (the
+// backfill fetches its carrier from the spot, and waits there for one when the
+// spot is bare); the operator confirms.
 func (c *ksrCell) seqCycle(label string, removal domain.Order) {
 	c.t.Helper()
-	backfill := c.seqAtTheLine(label, removal)
-	mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(removal.ID,
-		edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}), label+": release")
-	c.settle()
+	c.seqAtTheLine(label, removal)
+	backfill := c.seqRelease(label, removal)
 	c.drive(c.coreOf(removal), "RUNNING", "FINISHED")
 	c.eventually(label+": the removal and the backfill delivered and confirmed", func() bool {
 		c.fleetStep()

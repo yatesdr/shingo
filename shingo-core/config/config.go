@@ -315,46 +315,14 @@ type StagingConfig struct {
 	// receipt before the sweep confirms it; an order sent with
 	// SkipAutoConfirm is never confirmed this way.
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
-	// AbandonStuck cancels orders stuck past this age. It covers exactly TWO
-	// statuses — dispatched and staged — the ones where the fleet has the order
-	// and nothing is moving: a leg handed over that never started (the
-	// long-weekend drain case), or a robot parked at a staging node.
-	// protocol.IsStuckSweepCandidate is the authority; this comment is not.
-	//
-	// It does NOT cover queued or sourcing, and that is deliberate: demand is
-	// operator-driven and does not evaporate, so a waiting order holds
-	// indefinitely rather than being cancelled on a timer. in_transit is
-	// excluded too — a robot that is actually moving is not stuck.
-	//
-	// This comment used to list queued and sourcing as covered, describing the
-	// wider set the sweep had before it was narrowed. Worth knowing what that
-	// cost a reader: queued was not swept AND was outside
-	// protocol.IsRuntimeStuckCandidate, so a wedged queued order raised no
-	// anomaly either. It was the least observable state in the system, and this
-	// comment said it was covered.
-	//
-	// Half of that is now fixed: queued joined IsRuntimeStuckCandidate on
-	// 2026-08-03, so a wedged one raises a `degraded` anomaly after 30 minutes.
-	// It is still deliberately NOT swept, for the reason two paragraphs up —
-	// flagging it for a person and cancelling it on a timer are different
-	// answers, and only the first one is right for demand that has not gone away.
-	//
-	// Cascades to the two-robot sibling.
-	AbandonStuck time.Duration `yaml:"abandon_stuck"` // default 1h; 0 = disabled
-	// AbandonStuckOperatorGated is the SEPARATE, longer bound for a staged leg
-	// whose release is a HUMAN action rather than a system step — a coordinated
-	// two-robot swap parked at its wait point (dispatch.IsOperatorGatedStaging).
-	//
-	// AbandonStuck's premise is "a robot parked this long has been forgotten".
-	// That premise is wrong for a pair an operator still has to authorise, and
-	// at Springfield on 2026-07-31 it destroyed both legs of a live changeover
-	// at exactly 1h: the evac staged at 15:00, its supply sibling arrived 15:32
-	// after three transient fleet faults, and the sweep cancelled the evac at
-	// 16:00 and cascaded the supply.
-	//
-	// Still BOUNDED rather than exempt, so a genuinely forgotten swap cannot
-	// park two robots forever. 0 = never auto-cancel an operator-gated leg.
-	AbandonStuckOperatorGated time.Duration `yaml:"abandon_stuck_operator_gated"` // default 4h; 0 = never
+	// AbandonStuck and AbandonStuckOperatorGated are RETIRED (2026-11-14). Core
+	// cancels no waiting order on a timer: the Edge sends back the robots parked
+	// at a line that has counted no part for its idle hour (shingo-edge
+	// engine/idle_cancel.go), and a dead Edge's robots wait for it or for a
+	// person. The keys are still read so an existing config file loads; a value
+	// set is ignored, and Core logs that once at startup (sayRetiredAbandonKeys).
+	AbandonStuck              time.Duration `yaml:"abandon_stuck"`                // retired: ignored
+	AbandonStuckOperatorGated time.Duration `yaml:"abandon_stuck_operator_gated"` // retired: ignored
 }
 
 type DatabaseConfig struct {
@@ -619,10 +587,6 @@ func Defaults() *Config {
 			TTL:                  0, // retired: staging never expires
 			SweepInterval:        DefaultStagingSweepInterval,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
-			AbandonStuck:         time.Hour,       // cancel orders stuck queued/staged for 1h (ties up robots, clutters the board)
-			// Operator-gated staging gets 4h, not 1h: the wait is a human
-			// decision, and 1h is shorter than a changeover legitimately runs.
-			AbandonStuckOperatorGated: 4 * time.Hour,
 		},
 		Sourceability: SourceabilityConfig{
 			EnableAtRisk: false, // green/red only until the owner validates the rate window on plant data

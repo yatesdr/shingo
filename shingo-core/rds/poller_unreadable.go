@@ -19,8 +19,8 @@ const UnreadableAfter = 5 * time.Minute
 //
 // WHY IT EXISTS. A failed GetOrderDetails used to be a log line and a
 // `continue`: the order kept its last status — "in transit" on every screen —
-// for as long as RDS failed to answer about it, and in_transit is exempt from
-// the stuck sweep. RDS answers "order details is empty" for an id it does not
+// for as long as RDS failed to answer about it, and nothing ends an in_transit
+// order on a timer. RDS answers "order details is empty" for an id it does not
 // hold (HK, 2026-11-04). Nothing told anyone.
 type UnreadableEmitter interface {
 	EmitOrderUnreadable(orderID int64, rdsOrderID string, since time.Time, reason string)

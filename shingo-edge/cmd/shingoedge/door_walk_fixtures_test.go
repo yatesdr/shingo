@@ -177,8 +177,7 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/orders/ingest":  {want: 400, req: at("/api/orders/ingest", map[string]any{"node": "PLN_01", "payload_code": "PART-W"})},
 
 		// ── admin: PLCs ──
-		"POST /api/plcs/read-tag":             {want: 500, req: at("/api/plcs/read-tag", map[string]any{"plc_name": "PLC-1", "tag_name": "T"})},
-		"PUT /api/replenishment/cell-reorder": {want: 400, req: at("/api/replenishment/cell-reorder", map[string]any{})},
+		"POST /api/plcs/read-tag": {want: 500, req: at("/api/plcs/read-tag", map[string]any{"plc_name": "PLC-1", "tag_name": "T"})},
 
 		// ── admin: processes ──
 		"POST /api/processes": {want: 200, req: on(func(w *walk) (string, any) {
@@ -204,6 +203,15 @@ func routeFixtures() map[string]routeFixture {
 		})},
 		"POST /api/processes/{id}/containment-setting": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/containment-setting", map[string]any{"enabled": false}
+		})},
+		// The line's auto-reorder switch. Off needs no counter, so it writes,
+		// and the walk's press is not armed and shows no switch yet, so no view
+		// moves; showing it on the station puts the switch on the board's header.
+		"POST /api/processes/{id}/auto-reorder": {want: 200, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/auto-reorder", map[string]any{"on": false}
+		})},
+		"POST /api/processes/{id}/auto-reorder-station": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/auto-reorder-station", map[string]any{"shown": true}
 		})},
 		"POST /api/processes/{id}/presets": {want: 400, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/presets", map[string]any{"name": w.uniq("preset"), "from_style_id": w.activeStyle()}
@@ -303,6 +311,11 @@ func routeFixtures() map[string]routeFixture {
 		})},
 		"POST /api/operator-stations/{id}/move": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return sp(w) + "/move", map[string]any{"direction": "down"}
+		})},
+		// Walked before Processes shows the switch on the station (the doors
+		// run sorted), so the station's flip is refused.
+		"POST /api/operator-stations/{id}/auto-reorder": {want: 400, req: on(func(w *walk) (string, any) {
+			return sp(w) + "/auto-reorder", map[string]any{"on": false}
 		})},
 		"DELETE /api/operator-stations/{id}": {want: 200, req: on(func(w *walk) (string, any) {
 			m := w.api("POST", "/api/operator-stations", map[string]any{"process_id": w.press, "name": w.uniq("Doomed"), "enabled": true})

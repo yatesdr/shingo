@@ -884,7 +884,9 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// count where it was, so the next pass counts these strokes again, and a
 	// point re-pointed since the list is unread and seeds on its next read.
 	// The snapshot above is a real read of the tag the pass listed.
-	if wrote, err := m.db.UpdateReportingPointCounter(rp.ID, rp.PLCName, rp.TagName, newCount); err != nil || !wrote {
+	// delta > 0 is a part: it stamps the point's last_part_at in the same
+	// UPDATE. A reset to 0 (delta 0) moves last_poll_at alone.
+	if wrote, err := m.db.UpdateReportingPointCounted(rp.ID, rp.PLCName, rp.TagName, newCount, delta > 0); err != nil || !wrote {
 		log.Printf("update reporting point %d (%s/%s) counter: written=%t %v — not emitted", rp.ID, rp.PLCName, rp.TagName, wrote, err)
 		return false
 	}

@@ -2554,8 +2554,9 @@ function reorderCell(node) {
 const REORDER_WORDS = 'units in the bin when the next one is requested';
 
 // openReorderPop is the cell's popover: the point, Turn on (Set once it is
-// on), which writes the point and turns Auto reorder on at it, and Off. Each
-// is a draft edit, saved with Save style.
+// on), which writes the point and turns Auto reorder on at it, Off, and Clear
+// the point (0, the opt-out, and off). Each is a draft edit, saved with Save
+// style.
 function openReorderPop(btn, node) {
     const pop = $('pd-pop');
     if (!pop || !S.model) return;
@@ -2569,6 +2570,7 @@ function openReorderPop(btn, node) {
         '<button class="pd-btn primary" data-rp="set">' + (a.auto_reorder ? 'Set' : 'Turn on') + '</button></div>' +
         '<small>' + esc(REORDER_WORDS) + '</small>' +
         '<button data-rp="off" class="' + (a.auto_reorder ? '' : 'on') + '">' + esc(W('auto_reorder')) + ' off</button>' +
+        (a.reorder_point ? '<button data-rp="clear">Clear the point</button>' : '') +
         '<div class="none" data-rpnote></div></div>';
     showPop(pop, btn);
     placePopover(pop, btn);
@@ -2579,6 +2581,10 @@ function openReorderPop(btn, node) {
         if (e.stopPropagation) e.stopPropagation();
         if (!b) return;
         if (b.dataset.rp === 'off') { setReorder(node, null, false); return; }
+        // A point of 0 is the opt-out on either role (domain DemandLevel): the
+        // clear writes it and turns auto-reorder off with it, what the
+        // Replenishment page's blank point did before the page went.
+        if (b.dataset.rp === 'clear') { setReorder(node, 0, false); return; }
         const digits = String((pop.querySelector('[data-f="rp"]') || {}).value || '').replace(/[^0-9]/g, '');
         if (!Number(digits)) {
             const note = pop.querySelector('[data-rpnote]');
@@ -4129,7 +4135,7 @@ async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
     await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet(), loadStationCounters(), loadCountingSlots(),
-        loadCatidItems(), loadPLCs(), loadPresets()]);
+        loadCatidItems(), loadPLCs(), loadPresets(), loadAutoReorder()]);
     await loadStationVerdicts();
     // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
     // declares which parts a process may run (R-I) and the floor's part list
@@ -5198,6 +5204,25 @@ async function loadCountingSlots() {
 }
 
 // loadStationCounters reads the process's station counters ([] on a failed read).
+// loadAutoReorder reads the line's auto-reorder switch: whether the station
+// shows it, how many positions a person has switched off, the last flips.
+async function loadAutoReorder() {
+    const res = await send('GET', '/api/processes/' + S.processID + '/auto-reorder', undefined, NO_NOTICE);
+    S.autoReorder = res.ok ? res.body : null;
+}
+
+// flipAutoReorder is the switch's two doors, written as they are pressed like
+// the positions: the line on or off ({on}), and the station showing it
+// ({shown}). A refusal (no counter, or one that cannot be read now) is the
+// server's sentence, said on the card.
+async function flipAutoReorder(path, body) {
+    S.autoReorderError = '';
+    const res = await send('POST', '/api/processes/' + S.processID + path, body, NO_NOTICE);
+    if (!res.ok) S.autoReorderError = said(res);
+    await loadAutoReorder();
+    drawSettings();
+}
+
 async function loadStationCounters() {
     const res = await send('GET', '/api/processes/' + S.processID + '/station-counters');
     S.stationCounters = res.ok ? res.body || [] : [];
@@ -5462,6 +5487,36 @@ async function loadPLCs() {
     S._plcList = res.ok && Array.isArray(res.body) ? res.body : null;
 }
 
+// AUTO-REORDER, THE LINE'S SWITCH (owner, 2026-11-13). Off is a person's off
+// at every position: nothing asks on its own until someone turns it back on,
+// here or on the station where it is shown. On needs the line's counter,
+// configured and reading; the server refuses it otherwise and says why. Both
+// controls are written as they are pressed, outside the save bar, and every
+// flip is listed below them.
+function autoReorderCard() {
+    const a = S.autoReorder;
+    if (!a) return '';
+    const off = a.switched_off > 0;
+    const when = at => { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleString(); };
+    const state = off ? 'off' + (a.switched_off < a.positions ? ' at ' + a.switched_off + ' of ' + a.positions + ' positions' : '') : 'on';
+    const flips = a.flips || [];
+    const last = flips[0];
+    const now = state + (last ? ' · ' + (last.turned_on ? 'on' : 'off') + ' by ' + last.by + ', ' + when(last.at) : '');
+    const list = flips.map(f => '<li>' + esc((f.turned_on ? 'On' : 'Off') + ' by ' + f.by + ' from ' +
+        (f.source === 'station' ? 'the station' : 'Processes') + ', ' + when(f.at)) + '</li>').join('');
+    const inner =
+        stField('Auto-reorder on this line',
+            off ? 'off: no position asks on its own · REQUEST still asks' : 'on: a position with auto-reorder asks on its own',
+            '<button class="pd-btn' + (off ? ' primary' : '') + '" data-act="ar-flip" data-on="' + (off ? '1' : '') + '">' +
+                (off ? 'Turn on' : 'Turn off') + '</button>') +
+        stField('Show the switch on the station', 'off: it is flipped here only · on: the station board shows it',
+            '<button class="pd-chk' + (a.shown_on_station ? ' on' : '') + '" data-act="ar-shown" data-shown="' +
+                (a.shown_on_station ? '' : '1') + '" role="switch" aria-checked="' + (a.shown_on_station ? 'true' : 'false') + '"></button>') +
+        (S.autoReorderError ? '<div class="pd-refusal">' + esc(S.autoReorderError) + '</div>' : '') +
+        (list ? '<p class="pd-note">Flips, newest first:</p><ul class="pd-note">' + list + '</ul>' : '');
+    return stMore('reorder', 'Auto-reorder', now, inner, !!S.autoReorderError);
+}
+
 function drawSettings() {
     if (!S.settings) S.settings = settingsDraft();
     const p = process() || {};
@@ -5572,7 +5627,7 @@ function drawSettings() {
                 esc(dest || '-- None --') + '<i class="car"></i></button>')
             : ''),
         holdOn !== saved.quality_hold_enabled || dest !== saved.quality_hold_destination);
-    const more = '<div class="pd-sect"><h2>More</h2></div>' + changeover + hmi + hold;
+    const more = '<div class="pd-sect"><h2>More</h2></div>' + changeover + hmi + hold + autoReorderCard();
 
     const danger = '<div class="pd-sect danger"><h2>Danger</h2></div>' +
         stField('Delete this process', 'its styles, flows, routing set and screens go with it',
@@ -8817,6 +8872,8 @@ function onClick(e) {
                 stMoreOpen()[btn.dataset.more] = btn.dataset.open !== '1';
                 drawSettings();
                 return;
+            case 'ar-flip': flipAutoReorder('/auto-reorder', { on: btn.dataset.on === '1' }); return;
+            case 'ar-shown': flipAutoReorder('/auto-reorder-station', { shown: btn.dataset.shown === '1' }); return;
             case 'st-group': openGroupPicker(btn); return;
         case 'st-holddest': openContainmentPicker(btn); return;
             case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.settingsError = ''; drawSettings(); return;

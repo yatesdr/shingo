@@ -74,9 +74,15 @@ func (e *Engine) commitAct(act *releaseAct, p release.ActPlan, lls []*legLoad) e
 			e.emitLogs(d.Logs)
 			trunk := d.Trunk
 			trunk.Logs = nil
-			if _, err := e.commitLeg(act, trunk, ll); err != nil {
+			released, err := e.commitLeg(act, trunk, ll)
+			if err != nil {
 				act.fail(d.OrderID, err)
 				continue
+			}
+			if released {
+				// A sequential position's second robot is called by this release
+				// of its first, at the line, and by nothing earlier.
+				e.ensureSequentialBackfill(d.OrderID)
 			}
 			if ll.order != nil && ll.order.ReleaseHeld != "" {
 				e.setReleaseHeld(d.OrderID, "")

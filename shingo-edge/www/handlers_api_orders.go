@@ -414,7 +414,7 @@ func (h *Handlers) apiCancelOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid order ID")
 		return
 	}
-	if err := h.engine.OrderManager().AbortOrder(orderID); err != nil {
+	if err := h.engine.OrderManager().AbortOrderByPerson(orderID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

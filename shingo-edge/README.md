@@ -136,6 +136,7 @@ regenerates it. Durations take Go duration strings (`5s`, `1h0m0s`).
 | `counter.jump_threshold` | int64 | `1000` | JumpThreshold is read by plc.CalculateDelta twice: a delta above it is labelled "jump", and a backward read is taken as a 16/32-bit rollover only when the wrap delta is at or under it (otherwise it is a "reset"). The labels describe how the counter moved; every delta is counted. |
 | `database_path` | string | `shingoedge.db` | the SQLite database file |
 | `demand.hysteresis_percent` | float64 | _(unset)_ | HysteresisPercent is the recovery margin, as a percentage of the claim's reorder_point. A cell episode opens when remaining UOP falls to or below reorder_point and closes only once it climbs back ABOVE reorder_point + margin. |
+| `demand.idle_cancel_after` | duration | `1h0m0s` | IdleCancelAfter is how long a line counts no part before the Edge sends back the robots parked at its station waits and switches those positions' auto-reorder off (engine/idle_cancel.go). The owner's one number. <= 0 uses DefaultIdleCancelAfter. A sim run shortens it in its own config to watch the rule fire. |
 | `line_id` | string | _(empty)_ | Namespace / LineID are labels, not identity: nothing composes a station id from them, they have no defaults, and the engine only logs them at start. A plant config that carries them still loads. |
 | `logging.stderr_subsystems` | list of string | `[edge_handler engine heartbeat orders plant_claims plc production_ticks protocol release]` | StderrSubsystems is the allow-list of debuglog subsystems mirrored to stderr (under systemd, the journal). |
 | `messaging.dispatch_topic` | string | `shingo.dispatch` | the topic Core publishes to edges on |
@@ -228,7 +229,6 @@ Shingo Edge provides a browser-based interface for production line operators and
 | `/manual-message` | `manual-message.html` | Kafka Direct | login |
 | `/manual-order` | `manual-order.html` | Manual Order | login |
 | `/processes` | `processes.html` | Processes | login |
-| `/replenishment` | `replenishment.html` | Replenishment | login |
 
 <!-- /generated -->
 
@@ -262,8 +262,8 @@ operator sees at each.
 
 ### Auto-Reorder
 
-Each claim (a node's place in a style) carries a reorder point and an auto-reorder switch, set on
-`/replenishment`. Once a minute the level sweep (`(*Engine).sweepCellLevels`) reads each claim's remaining UOP
+Each claim (a node's place in a style) carries a reorder point and an auto-reorder switch, set in
+Processes (the reorder column's popover). Once a minute the level sweep (`(*Engine).sweepCellLevels`) reads each claim's remaining UOP
 against its level (`protocol.ClaimDemandLevel`): a consume claim breaches at or below its reorder point, a
 produce claim at or above its level. For a breached claim with auto-reorder on and nothing already coming to
 the node, the sweep asks for the bin. A consume claim with a reorder point of 0 never orders. The mechanism is

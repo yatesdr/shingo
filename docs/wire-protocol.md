@@ -536,7 +536,7 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 |---|---|
 | `data` | 5 min |
 | `order.request` | 10 min |
-| `order.cancel` | 10 min |
+| `order.cancel` | **none** |
 | `order.receipt` | 30 min |
 | `order.redirect` | 10 min |
 | `order.complex_request` | 10 min |
@@ -1924,6 +1924,7 @@ Requests cancellation of an in-progress order.
 |---|---|---|---|
 | `order_uuid` | string |  | OrderUUID names the order to cancel. |
 | `reason` | string |  | Reason is the human-readable cancellation reason, or CancelReasonAcceptHalfSwap. |
+| `actor` | string | omitempty | Actor says who decided the cancel when it was not a person at the station: CancelActorEdge for the Edge's own idle rule. Empty is a person, every door before that rule, and Core codes it operator_cancelled; with CancelActorEdge it codes it abandoned. Additive: an older Core ignores it and codes every cancel a person's, as it always has. |
 
 <!-- /generated -->
 

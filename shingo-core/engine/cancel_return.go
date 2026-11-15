@@ -140,20 +140,23 @@ func (e *Engine) maybeReturnCarriedBin(bin *bins.Bin, robotID string, robot flee
 //
 //	person / station terminate     operator_cancelled             → returned
 //	fleet stop                     uncoded, "fleet order stopped"  → returned
-//	reconciliation abandon         uncoded, "abandoned: ..."       → returned
+//	the Edge's idle send-back      abandoned, "abandoned: line idle" → returned
 //	reshuffle dissolve             uncoded, "reshuffle dissolved"  → returned
 //	reshuffle leg failed           uncoded, "reshuffle dissolved"  → returned
 //	swap-peer cascade              peer_terminal                   → returned
 //
+// (Core's own stuck-order sweep, removed, filed uncoded "abandoned: ..." rows;
+// they return the same way.)
+//
 // There is no reason classifier, and that is the ruling, not an omission. An
-// abandon is Core cancelling an order it has stopped trusting the progress of;
+// abandon is the system giving up on an order that waited past its window;
 // whether the bin it leaves on a deck is safe to order down is a question about
 // the ROBOT, and the trigger's physical gates answer it the same way for every
 // producer — a jack that reads certain and loaded, a robot that is not Busy, a
-// robot the fleet will dispatch. The telemetry buckets "abandoned: ..." as a
-// failure because that is how a dashboard wants to count it; it says nothing
-// about what is on the deck. A FAILED order is a different status and is not
-// returned.
+// robot the fleet will dispatch. The telemetry's outcome bucket (the coded
+// idle send-back a cancel, the old sweep's uncoded rows a failure) says
+// nothing about what is on the deck. A FAILED order is a different status and
+// is not returned.
 //
 // THE EPISODE MUST BE FRESH: the terminal row inside the same window the
 // _TRANSIT sweep uses (terminalWithin). A carrier that ended hours ago is not

@@ -43,7 +43,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var createdAt string
 	var groupID sql.NullInt64
 	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled,
-		&p.IdentityTagName, &p.IdentityNone, &p.IdentityWarlinkManaged, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
+		&p.IdentityTagName, &p.IdentityNone, &p.IdentityWarlinkManaged, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt, &p.AutoReorderSwitchHMI); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
@@ -55,7 +55,8 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 }
 
 const processSelect = `id, name, description, active_style_id, target_style_id, counter_plc_name, counter_tag_name, counter_enabled,
-	identity_tag_name, identity_none, identity_warlink_managed, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
+	identity_tag_name, identity_none, identity_warlink_managed, changeover_auto_arm, group_id, flow_composer_enabled, created_at,
+	auto_reorder_switch_hmi`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -719,15 +720,18 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 
 func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) {
 	var r RuntimeState
-	var updatedAt, linesideAt string
+	var updatedAt, linesideAt, holdAt, goAt string
 	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch,
 		&r.LinesidePayloadCode, &r.LinesidePayloadKnown, &r.LinesideSource, &linesideAt, &r.RemainingUOPCached,
-		&r.PendingUOPDelta, &r.PendingUOPPayload, &r.ReleasedEmpty, &r.HoldStopped, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
+		&r.PendingUOPDelta, &r.PendingUOPPayload, &r.ReleasedEmpty, &r.HoldStopped,
+		&r.ReorderHold, &holdAt, &r.ReorderHoldNote, &goAt, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
 	}
 	r.UpdatedAt = helpers.ScanTime(updatedAt)
 	r.LinesideAt = helpers.ScanTime(linesideAt)
+	r.ReorderHoldAt = helpers.ScanTime(holdAt)
+	r.ReorderGoAt = helpers.ScanTime(goAt)
 	return r, nil
 }
 
@@ -767,7 +771,8 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 	}
 	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, reorder_hold, reorder_hold_at, reorder_hold_note, reorder_go_at,
+		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id IN (`+placeholders.String()+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -789,13 +794,26 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 // check-then-insert race-safe when concurrent callers (engine tick,
 // HMI handler, station service) hit a node whose runtime row hasn't
 // been materialized yet.
+//
+// A FRESH ROW TAKES THE LINE'S SWITCH. A line switched off (its last flip in
+// auto_reorder_flips, FlipAutoReorder) writes a person's off at the rows that
+// exist; a position added since, or one with no row at the flip, gets the same
+// off here, with that flip's who and when, in the same INSERT. A line never
+// flipped, or last switched on, starts its new position on.
 func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	if r, err := GetRuntime(db, processNodeID); err == nil {
 		return r, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if _, err := db.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, processNodeID); err != nil {
+	if _, err := db.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id, reorder_hold, reorder_hold_at, reorder_hold_note)
+		SELECT pn.id,
+		       CASE WHEN f.turned_on = 0 THEN ? ELSE '' END,
+		       CASE WHEN f.turned_on = 0 THEN f.at ELSE '' END,
+		       CASE WHEN f.turned_on = 0 THEN f.by ELSE '' END
+		FROM process_nodes pn
+		LEFT JOIN auto_reorder_flips f ON f.id = (SELECT MAX(id) FROM auto_reorder_flips WHERE process_id = pn.process_id)
+		WHERE pn.id = ?`, string(domain.ReorderHoldPersonOff), processNodeID); err != nil {
 		return nil, err
 	}
 	return GetRuntime(db, processNodeID)
@@ -805,7 +823,8 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, pending_uop_payload, released_empty, hold_stopped, reorder_hold, reorder_hold_at, reorder_hold_note, reorder_go_at,
+		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
 		return nil, err

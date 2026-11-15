@@ -170,7 +170,6 @@ var predicateProjectorPairs = []struct {
 	{"IsWaiting", IsWaiting, WaitingStatusSQLList},
 	{"CanHoldWait", CanHoldWait, CanHoldWaitStatusSQLList},
 	{"IsRuntimeStuckCandidate", IsRuntimeStuckCandidate, RuntimeStuckCandidateStatusSQLList},
-	{"IsStuckSweepCandidate", IsStuckSweepCandidate, StuckSweepStatusSQLList},
 }
 
 // TestBlockingStatusesAreTracked is the invariant that was missing, and its
@@ -392,9 +391,8 @@ func TestChangeoverStartNeverCancelsOrBlocksATerminalOrder(t *testing.T) {
 // halves of the decision for these two statuses, because carrying only the first
 // half is precisely what went wrong.
 //
-// They must NOT BLOCK: nothing in either service reaps them (AbandonStuckOrders
-// is scoped to {dispatched, staged}) and this HMI exposes no operator order
-// cancel, so blocking would lock an operator out of changeover until Edge
+// They must NOT BLOCK: nothing in either service reaps them (Core cancels no
+// order on a timer) and this HMI exposes no operator order cancel, so blocking would lock an operator out of changeover until Edge
 // restarted.
 //
 // They must BE CANCELLED: Springfield SNF2, 30 July. Two complex orders for the
@@ -452,22 +450,15 @@ func containsToken(list, token string) bool {
 	return false
 }
 
-// TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept pins the split that makes
-// a waiting order visible without making it disposable.
+// TestAcquiringStatusesRaiseAnAnomaly: a waiting order is visible. Both
+// acquiring statuses are runtime-stuck candidates, so a wedged one raises an
+// anomaly for a person. Nothing cancels one on a timer: Core's stuck sweep,
+// whose set they were kept out of, is gone.
 //
-// The two predicates answer different questions. IsRuntimeStuckCandidate means
-// "a person should look at this". IsStuckSweepCandidate means "cancel it on a
-// timer". Both acquiring statuses must get the first and neither may get the
-// second: demand does not evaporate, so cancelling a queued order deletes the
-// ask while the need is still real.
-//
-// The regression this guards is a tidy-up. The two sets look like near
-// duplicates and a future reader may reasonably try to unify them — at which
-// point either queued starts being cancelled on a timer, or it goes back to
-// raising nothing. Springfield 2026-08-03 is what the second one costs: queued
-// was in NEITHER set, 290 duplicate orders accumulated at one window over three
-// and a half hours, and the system reported nothing at all.
-func TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept(t *testing.T) {
+// Springfield 2026-08-03 is what the absence costs: queued was in neither set,
+// 290 duplicate orders accumulated at one window over three and a half hours,
+// and the system reported nothing at all.
+func TestAcquiringStatusesRaiseAnAnomaly(t *testing.T) {
 	t.Parallel()
 	for _, s := range AllStatuses() {
 		if !IsAcquiring(s) {
@@ -476,20 +467,6 @@ func TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept(t *testing.T) {
 		if !IsRuntimeStuckCandidate(s) {
 			t.Errorf("%s is acquiring but raises no stuck anomaly — a wedged order in this status is invisible, which is exactly how the SPR duplicate pile went unreported for 3.5h", s)
 		}
-		if IsStuckSweepCandidate(s) {
-			t.Errorf("%s is acquiring and would be CANCELLED by the stuck sweep; an order waiting on material must be flagged for a person, not abandoned on a timer", s)
-		}
-	}
-	// Negative half: the sweep set is not empty, so the assertion above is
-	// meaningful rather than passing because nothing is ever swept.
-	swept := 0
-	for _, s := range AllStatuses() {
-		if IsStuckSweepCandidate(s) {
-			swept++
-		}
-	}
-	if swept == 0 {
-		t.Fatal("no status is sweep-eligible; the never-swept assertion above proves nothing")
 	}
 }
 

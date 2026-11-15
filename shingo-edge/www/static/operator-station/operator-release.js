@@ -300,23 +300,20 @@ function releasePromptStep1HTML(state) {
     // Label reflects the actual action: bin still has UoP → returns as-is
     // (partial); bin is at zero → manifest cleared (empty). Same wire
     // disposition mapping as before; just makes it visible to the operator.
+    // No hover text (a touch panel has none): the count it returns with is the
+    // line above.
     const submitLabel = remainingUOP > 0 ? 'RELEASE PARTIAL' : 'RELEASE EMPTY';
-    const submitTitle = remainingUOP > 0
-        ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UoP intact.'
-        : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
     html += '<button type="button" class="os-action-btn release-empty"' +
-        ' data-action="release-submit"' +
-        ' title="' + esc(submitTitle) + '">' +
+        ' data-action="release-submit">' +
         submitLabel + '</button>';
     // Underpack release: bin physically empty before count reaches zero.
     // Only offered when the system still thinks the bin has UoP — otherwise
     // RELEASE EMPTY is the right path. Routes through a confirmation
     // modal because it's a destructive-ish action: the missing inventory
-    // is recorded as a forensics signal.
+    // is recorded as a forensics signal. The confirm says what it records.
     if (remainingUOP > 0) {
         html += '<button type="button" class="os-action-btn release-empty"' +
-            ' data-action="release-underpack-confirm"' +
-            ' title="Bin is physically empty, but the system still shows UoP remaining. Records the gap as missing inventory.">' +
+            ' data-action="release-underpack-confirm">' +
             'BIN EMPTY (UNDER COUNT)</button>';
     }
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';

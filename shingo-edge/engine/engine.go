@@ -277,6 +277,18 @@ type Engine struct {
 	// the bins copy runs it again (keepSpotsOnBinsChange). Memory only; the
 	// first sweep runs every kept line.
 	keptSpotLines sync.Map
+	// lineStops is what the idle rule remembers of each line between passes
+	// (process id -> lineStop): its last part and whether it was stopped, so
+	// the first part after a stop ends an older Core's off there
+	// (idle_cancel.go). Memory only; the first pass after a start learns every
+	// line afresh.
+	lineStops sync.Map
+	// idleOffs is when the idle rule looks for its own offs to end, per line
+	// (process id -> idleOffWatch). It decides only whether a pass spends the
+	// statement; what ends an off is read from the database, so a restart the
+	// Edge was down for still ends it. Absent after a start: every line is
+	// looked at once.
+	idleOffs sync.Map
 	// unloaderAsks holds the U1 asks out with Core and not answered
 	// (unloaderAskKey -> struct{}): the board's pending note per unloader
 	// window (UnloaderAskNote). Memory only, as the ask's waiter is: a restart
@@ -477,6 +489,10 @@ func (e *Engine) Start() {
 
 	// Reconcile any in-progress changeover against order statuses
 	e.restoreChangeoverState()
+
+	// A sequential Order A released at the line while this Edge then stopped,
+	// before its Order B was created: create it now.
+	e.recoverSequentialBackfills()
 
 	// Note: pre-side-cycle this had a NOTE about StartupSweepManualSwap.
 	// That sweep, along with HandleDemandSignal and tryAutoRequest, was

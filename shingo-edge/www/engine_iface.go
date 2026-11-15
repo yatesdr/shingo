@@ -125,6 +125,7 @@ type EngineOrchestration interface {
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ResumeKeepStaged(nodeID int64) error
+	FlipAutoReorder(processID int64, on bool, by, source string) error
 	SendBack(nodeID int64) (*engine.SendBackResult, error)
 	CancelSendBack(nodeID int64) (int, error)
 	ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
@@ -263,12 +264,6 @@ type EngineOrchestration interface {
 	// deletes the pile, active or stranded, and sends its level (0) so
 	// Core's mirror loses it too. There is no qty edit.
 	AdminClearLinesideBucket(bucketID int64) error
-
-	// ── Cell auto-reorder (reorder point) admin ──────────────────────
-	// Backs the CELL half of the /replenishment admin page. The loader
-	// half was deleted: Core owns the loader UOP threshold and the Edge
-	// write path ended in a no-op stub. See engine/replenishment_admin.go.
-	UpdateCellReorder(engine.CellReorderInput) error
 
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)
