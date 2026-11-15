@@ -63,13 +63,6 @@ type ServiceAccess interface {
 	// sync. The universe a key route is expressed in — CoreNodes is only the
 	// subset Shingo gave a job to. Empty means "not received", never "the map
 	// is empty"; the key-route validator degrades to a warning on it.
-	//
-	// The scene's undirected ADJACENCY is derivable beside this
-	// (engine.SceneAdjacency) and deliberately not exposed here: nothing on
-	// this server needs it, since the desktop's key-route picker walks the
-	// directed shared route model in the browser (shared/scene-net.js). An
-	// interface method with no caller is what this interface's width guard
-	// exists to prevent.
 	ScenePointNames() map[string]bool
 
 	// ── Service accessors ──────────────────────────────────────────

@@ -61,36 +61,3 @@ func (e *Engine) ScenePointNames() map[string]bool {
 	}
 	return out
 }
-
-// SceneAdjacency returns, for each point, the points joined to it by one
-// segment, in either direction.
-//
-// UNDIRECTED, WHICH IS NOT HOW A ROBOT DRIVES. A scene stores one segment per
-// direction a robot may drive it: most lanes both ways, and some one way only
-// (study S3, 2026-11-14), and the fleet plans only along the stored direction.
-// So this answers "what is connected to what", never "where may a robot go".
-//
-// NO PRODUCTION CALLER (only its own tests): the key-route picker it was kept
-// for walks the directed shared route model in the browser instead
-// (shared/scene-net.js sceneRoute). Reported as dead, not deleted: no ruling
-// covers removing it.
-func (e *Engine) SceneAdjacency() map[string][]string {
-	edges := e.SceneEdges()
-	if len(edges) == 0 {
-		return nil
-	}
-	out := make(map[string][]string, len(edges))
-	seen := make(map[[2]string]bool, len(edges))
-	add := func(from, to string) {
-		if from == "" || to == "" || from == to || seen[[2]string{from, to}] {
-			return
-		}
-		seen[[2]string{from, to}] = true
-		out[from] = append(out[from], to)
-	}
-	for _, edge := range edges {
-		add(edge.From, edge.To)
-		add(edge.To, edge.From)
-	}
-	return out
-}

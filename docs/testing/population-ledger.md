@@ -1230,3 +1230,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### DEAD — `TestSceneGraph_AdjacencyIsUndirected`
+- test: `TestSceneGraph_AdjacencyIsUndirected` · pkg `shingoedge/engine` · run `-run '^TestSceneGraph_AdjacencyIsUndirected$'` · `shingo-edge/engine/scene_graph_test.go:49` @ `aea6321d` · tags `none`
+- code: DEAD (`engine.SceneAdjacency` is deleted: no caller in any of the five modules, owner follow-up F3; the key-route picker it was kept for walks the directed shared route model, shared/scene-net.js sceneRoute)
+- assertion map: an undirected neighbour list, duplicates, self-segments and half-named segments dropped → nothing: no code asks for an undirected adjacency now. The directed route model the picker walks is pinned by `TestSceneNetRoutesAsTheDesktopDoes` (shared/testdata/js/scene-net.test.js)
+- mutation: none to run: the function it called is deleted, so the test no longer compiles
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

@@ -180,7 +180,6 @@ func (s *stubEngine) CoreNodeKinds() domain.CoreNodeKinds {
 }
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo { return nil }
 func (s *stubEngine) ScenePointNames() map[string]bool               { return nil }
-func (s *stubEngine) SceneAdjacency() map[string][]string            { return nil }
 func (s *stubEngine) RequestNodeSync()                               {}
 func (s *stubEngine) RequestCatalogSync()                            {}
 func (s *stubEngine) EditProcessCounter(processID int64, edit domain.ProcessCounterEdit) error {
