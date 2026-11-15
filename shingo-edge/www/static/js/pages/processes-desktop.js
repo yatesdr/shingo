@@ -4433,8 +4433,8 @@ const SET_SWITCHES = ['auto_reorder', 'auto_push', 'strict_pack', 'curtain_requi
 // that changes is cleared whatever this says. It read "what happens to a
 // part-full bin", and nothing on that path reads fill.
 const CARRYOVER = { replace: 'Fresh bin', keep_lineside: 'Keep it', outbound_staging: 'Out and back' };
-const CARRYOVER_NOTE = 'If the part stays: Fresh bin clears it and brings another, Keep it leaves it, ' +
-    'Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.';
+const CARRYOVER_NOTE = 'If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at ' +
+    'outbound staging until Tooling done. A part that changes is always cleared.';
 
 // setKeys is the settings a scope lists: a style's (not the two its row
 // carries) or a group's (GROUP_ADV_KEYS: no part, no cell fields).
@@ -4722,7 +4722,7 @@ function setList(key, places, eligible, group) {
         })),
         add: !group && places.length < eligible ? { label: '+ Add a position', act: 'set-addpos', key: key } : null,
     }) + (key === 'evac_nodes' && places.some(p => setCtx(p).evacNodes.length)
-        ? '<p class="pd-note pd-oneline">' + esc(CARRYOVER_NOTE) + '</p>' : '');
+        ? '<p class="pd-note pd-setnote">' + esc(CARRYOVER_NOTE) + '</p>' : '');
 }
 
 // styleSettings is "Set for this style", under the positions table: a list per
@@ -5335,9 +5335,11 @@ const AUTO_ARM = [
 // process"). The auto-arm setting is on every process, and a 4x2 weld cell is
 // not stamping anything — it is running the new part, which is the fact this
 // sentence is actually about.
-const AUTO_ARM_NOTE = 'Cut over automatically finishes a changeover the operator already started, once ' +
-    'the cell is confirmed running the new part. It never starts one — starting moves robots, and only ' +
-    'a person knows the material is there.';
+//
+// ONE LINE (owner, 2026-11-14). It went on to say why: starting moves robots,
+// and only a person knows the material is there.
+const AUTO_ARM_NOTE = 'Cut over automatically finishes a changeover the operator started, once the new part ' +
+    'is confirmed running. It never starts one.';
 
 function settingsDraft() { return settingsDraftFor(process() || {}); }
 
@@ -5812,9 +5814,10 @@ function countingView(p) {
 }
 
 // PRESS_INDEX_COUNTING is what the Counting switch also decides for a
-// process with a press-index position, said only where one exists.
-const PRESS_INDEX_COUNTING = 'A press-index position keeps a drained same-part bin at changeover only while ' +
-    'this process is counted; a sequential press reuses its parked empty either way.';
+// process with a press-index position, said only where one exists. ONE LINE
+// (owner, 2026-11-14): it went on to say a sequential press reuses its parked
+// empty either way, which is what the line already leaves unsaid.
+const PRESS_INDEX_COUNTING = 'Index Swap keeps a drained same-part bin at changeover only while this process is counted.';
 
 // hasPressIndexClaim: some live style of the open process claims a position
 // in press-index mode.
@@ -8574,6 +8577,9 @@ function newestRecipes(presets) {
     return presets.filter(p => top[p.name] === p);
 }
 
+// CAND_FOLD is how many found shapes Operator setup draws before "N more".
+const CAND_FOLD = 3;
+
 function recipesHTML() {
     if (S.presets && S.presets.error) return '<div class="pd-refusal">' + esc(S.presets.error) + '</div>';
     const v = presetsView();
@@ -8606,8 +8612,17 @@ function recipesHTML() {
     // THE OFFER, while there is one. Once every shape the press runs has a
     // name it is finished — and a row over nothing would read as a thing
     // still to do.
+    //
+    // THREE, THEN THE REST ON ASK (owner, 2026-11-14), as the recipes fold
+    // their older versions: ten found shapes on a big line were ten rows over
+    // Auto-reorder, the wall this page exists to take down.
     if (cands.length) {
-        h += stBlock('Found in your flows', 'a shape run by styles, not named yet', cands.map(candidateRow).join(''));
+        const fold = cands.length > CAND_FOLD;
+        const shownCands = fold && !S.presets.cands ? cands.slice(0, CAND_FOLD) : cands;
+        h += stBlock('Found in your flows', 'a shape run by styles, not named yet', shownCands.map(candidateRow).join('') +
+            (fold ? '<p class="pd-dim">' + (S.presets.cands ? 'all ' + cands.length : (cands.length - CAND_FOLD) + ' more') +
+                ' · <button class="pd-dimlink" data-act="cand-more">' + (S.presets.cands ? 'first ' + CAND_FOLD + ' only' : 'show') +
+                '</button></p>' : ''));
     }
     // THE ROW MENU NEEDS A POPOVER TO OPEN INTO: hmiRecipes draws #pd-pop
     // beside these rows (Settings' own is #pd-stpop).
@@ -9489,6 +9504,10 @@ function onClick(e) {
             case 'ar-flip': void flipAutoReorder(btn.dataset.on === '1'); return;
             case 'preset-older':
                 S.presets.older = !S.presets.older;
+                drawPresets();
+                return;
+            case 'cand-more':
+                S.presets.cands = !S.presets.cands;
                 drawPresets();
                 return;
             case 'st-jump': {

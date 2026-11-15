@@ -3309,7 +3309,7 @@ async function recipeGroupPins(h) {
         }
         if (!/class="on" data-act="set-seg" data-key="changeover_carryover_disposition" data-node="PLN_010" data-v="keep_lineside"/.test(list)) throw new Error('Keep it is not on: ' + list);
         if (!/data-v="outbound_staging" disabled title="this position has no outbound staging"/.test(list)) throw new Error('Out and back is offered with no outbound staging: ' + list);
-        if (h.indexOf('If the part stays: Fresh bin clears it and brings another, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.') < 0) {
+        if (h.indexOf('If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.') < 0) {
             throw new Error('the carry-over help is not written from the code: ' + plain(between(h, 'data-exc="set-evac_nodes"', 'exc-add')));
         }
         if (/part-full bin/.test(h)) throw new Error('the carry-over still talks of a part-full bin');
@@ -3670,7 +3670,8 @@ async function settingsSectionsPins(h) {
         o = o || {};
         const writes = [];
         let sw = { shown_on_station: false, positions: 4, switched_off: 0, flips: [] };
-        const ctx = loadPage(Object.assign(o.stations ? { stations: o.stations, stationNodes: o.stationNodes } : {}, {
+        const ctx = loadPage(Object.assign(o.stations ? { stations: o.stations, stationNodes: o.stationNodes } : {},
+            o.composer ? { composer: o.composer } : {}, {
             allowSheet: true, hash: '#tab=settings',
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
@@ -3702,6 +3703,39 @@ async function settingsSectionsPins(h) {
         for (const gone of ['data-act="st-more"', '<h2>More</h2>', '<h2>General</h2>', 'data-act="ar-shown"']) {
             if (html.indexOf(gone) >= 0) throw new Error('Settings still draws ' + gone);
         }
+    });
+
+    // ONE LINE EACH (owner, 2026-11-14): the note under Changeover's choice,
+    // and the one under Counting on a process with an Index Swap position.
+    await pin('the notes under Changeover and Counting are one line each', async () => {
+        const c = { styles: [{ id: 1, name: 'Style A', claims: [{ core_node_name: 'PLN_01', role: 'produce',
+            swap_mode: 'two_robot_press_index', payload_code: 'PART-A', paired_core_node: 'PLN_02' }],
+            parts: ['PART-A'], advanced: {} }], routing: [], presets: [], palette: ['PART-A'],
+            cell: { positions: [{ core_node_name: 'PLN_01', kind: 'front', sequence: 1 }, { core_node_name: 'PLN_02', kind: 'back', sequence: 2 }], groups: {} } };
+        const ctx = page({ composer: c });
+        await settle();
+        const html = ctx.root.innerHTML;
+        for (const line of ['Cut over automatically finishes a changeover the operator started, once the new part is confirmed running. It never starts one.',
+            'Index Swap keeps a drained same-part bin at changeover only while this process is counted.']) {
+            if (html.indexOf('<p class="pd-note">' + line + '</p>') < 0) {
+                throw new Error('no note reads ' + JSON.stringify(line) + ': ' + JSON.stringify(html.match(/<p class="pd-note">[^<]*<\/p>/g)));
+            }
+        }
+    });
+
+    // THREE, THEN THE REST ON ASK (owner, 2026-11-14), as the recipes fold
+    // their older versions.
+    await pin('Found in your flows draws three, then "N more · show"', async () => {
+        const cands = [1, 2, 3, 4, 5].map(i => ({ shape_key: 'k' + i, mode: 'single_robot', where: 'PLN_0' + i,
+            members: [i], member_names: ['Style ' + i] }));
+        const ctx = page({ presets: { presets: [], candidates: cands } });
+        await settle();
+        const rows = () => (ctx.root.innerHTML.match(/<div class="pd-cand" data-cand=/g) || []).length;
+        const tail = () => plain((ctx.root.innerHTML.match(/<p class="pd-dim">[^<]*<button class="pd-dimlink" data-act="cand-more">[^<]*<\/button><\/p>/) || [''])[0]);
+        if (rows() !== 3 || tail() !== '2 more · show') throw new Error('folded: ' + rows() + ' rows, ' + JSON.stringify(tail()));
+        click(ctx.root, ctx.doc, { act: 'cand-more' });
+        await settle();
+        if (rows() !== 5 || tail() !== 'all 5 · first 3 only') throw new Error('shown: ' + rows() + ' rows, ' + JSON.stringify(tail()));
     });
 
     // SWITCHING IS AN ACTION (owner, 2026-11-14): written as it is pressed,

@@ -497,7 +497,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-setfor .pd-lbl { margin-bottom: 2px; }
 .pd-setfor .exc-rows .k, .pd-gset .exc-rows .k { color: var(--text-muted); font-size: 12px; }
 .pd-setnum { width: 72px; }
-.pd-oneline { margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-setnote { margin: 0 0 6px; }
 .pd-gset { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .pd-gset .exc { width: 100%; grid-template-columns: 170px minmax(0, 1fr); }
 
