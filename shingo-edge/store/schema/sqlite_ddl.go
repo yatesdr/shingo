@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS reporting_points (
     tag_name        TEXT NOT NULL,
     last_count      INTEGER NOT NULL DEFAULT 0,
     last_poll_at    TEXT,
+    -- last_part_at (Edge v53): the engine's clock at the last read that
+    -- counted a part. last_poll_at also moves on a read that counts none (a
+    -- point's first read, a counter reset to 0); this does not. NULL until the
+    -- first counted part. The idle rule's off ends on it (engine/idle_cancel.go).
+    last_part_at    TEXT,
     enabled         INTEGER NOT NULL DEFAULT 1,
     warlink_managed INTEGER NOT NULL DEFAULT 0,
     UNIQUE(plc_name, tag_name)
@@ -260,6 +265,10 @@ CREATE TABLE IF NOT EXISTS orders (
     -- hold or rejection sentence the board's chip shows.
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
+    -- staged_at (Edge v53): the engine's clock when this Edge last mirrored the
+    -- order to staged (a robot parked). NULL until then. The idle rule's hour
+    -- does not start before it (engine/idle_cancel.go).
+    staged_at       TEXT,
     -- want (Edge v30): the height an empty is wanted at, as this Edge stated
     -- it on the order's request (protocol.Height's spelling; '' is none).
     -- SEND BACK knows its pull by it; a projection never writes it.

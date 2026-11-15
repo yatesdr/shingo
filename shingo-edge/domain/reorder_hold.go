@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -50,6 +51,24 @@ const (
 	// not in ReorderHolds, so the one write refuses it.
 	ReorderHoldCount ReorderHold = "count"
 )
+
+// IdleOffNotePrefix opens the note the idle rule writes with its off
+// (IdleOffNote). An off with this note was written at a line that had counted
+// nothing for its hour, so any part the line counts after it is a restart and
+// ends it (store/processes.ClearIdleOffAtProcess); an older Core's off, whose
+// note is its own, ends only after a stop and a restart, or a go.
+const IdleOffNotePrefix = "the line counted no part for "
+
+// IdleOffNote is the idle rule's note for its off: the line counted no part
+// for idleWords (its hour, as the board says it) and the robots were sent back.
+func IdleOffNote(idleWords string) string {
+	return IdleOffNotePrefix + idleWords + " and the robots waiting here were sent back"
+}
+
+// IsIdleOff reports whether a held off is the idle rule's own (its note).
+func IsIdleOff(hold ReorderHold, note string) bool {
+	return hold == ReorderHoldOff && strings.HasPrefix(note, IdleOffNotePrefix)
+}
 
 // ReorderHolds is every kind that holds, lowest rank first. The rank the write
 // guards on is the position in this list (Rank); store/processes builds its

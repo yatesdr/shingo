@@ -27,12 +27,15 @@ import (
 // (counters.ListPolledReportingPoints), so a line is a process with a counter
 // the poll reads; a process with none is outside the rule.
 //
-// THE HOUR STARTS at the latest of three things: the line's last counted part,
-// the end of its last changeover, and the position's last go (a REQUEST, or
-// Processes turning its auto-reorder on: runtime reorder_go_at). Measured from
+// THE HOUR STARTS at the latest of four things: the line's last counted part,
+// the end of its last changeover, the position's last go (a REQUEST, or
+// Processes turning its auto-reorder on: runtime reorder_go_at), and when the
+// group's robots parked (the latest orders.staged_at among its legs, the
+// engine's clock, stamped by the staged mirror's own UPDATE). Measured from
 // the part alone, a REQUEST at a line quiet since last shift would be sent
-// back on the next pass. orders.created_at is never read: it is SQLite's wall
-// clock, and the line's is the engine's.
+// back on the next pass, and a pair that parks at a line stopped for three
+// hours, waiting for exactly that swap, as it arrives. orders.created_at is
+// never read: it is SQLite's wall clock, and the line's is the engine's.
 //
 // IT STANDS DOWN, WITH NO LIMIT, while a changeover is open, and while the
 // counter has not read a number since this Edge started or has failed since
@@ -53,21 +56,33 @@ import (
 // with protocol.CancelReasonLineIdle and protocol.CancelActorEdge, so Core
 // files them as the Edge's and not a person's; the cancel never expires.
 //
-// A PART AFTER A STOP ENDS AN OFF. The rule remembers, per line, whether the
-// line was stopped (silent for the idle hour) at the last pass; the first part
-// after that is a restart, and every off at the line set before it clears.
-// Memory only: after a reboot the first pass learns the line afresh, and a
-// restart while the Edge was down ends nothing (a go still does). An off an
-// older Core wrote at a running line ("abandoned: ..." for an order that
-// waited) is not ended by the line running on, only by a stop and a restart, or
-// a go.
+// A PART AFTER A STOP ENDS AN OFF. The rule's own off (domain.IsIdleOff, by
+// its note) was written at a line that had counted nothing for its hour, so
+// any part the line counts after it is a restart: it ends when the line's last
+// counted part (reporting_points.last_part_at) passes the off's
+// reorder_hold_at, read from the database, so a restart while the Edge was
+// down, or ten minutes after it booted, ends it all the same. last_part_at is
+// not last_poll_at: a reading with no part (a counter reset to 0, a point's
+// first read) moves the hour's clock and not this one. Memory (idleOffs)
+// decides only when to look, so a line that holds none costs nothing.
+//
+// An off an older Core wrote ("abandoned: ..." for an order that waited) may
+// have been written at a running line, so a part after it is not a restart:
+// the rule remembers, per line, whether the line was stopped (silent for its
+// hour) at the last pass, and the first part after that ends it (lineStops).
+// That one is memory only, as before: it is the interim, for a Core that still
+// gives up on its own; a go still ends it.
 //
 // COST per pass: one statement (the polled points). Per line silent for its
 // hour with a counter it trusts: one more (ChangeoverBounds), and one more
-// (its live orders) when no changeover is open. Only when a group is parked:
-// the line's nodes and runtime rows, and under the locks a re-read of the
-// group and the position before the writes. Per restart: one UPDATE. Nothing
-// per PLC tick.
+// (its live orders) when no changeover is open. Only when a group is parked
+// past its hour: the line's nodes, and under the locks a re-read of the group
+// and the position before the writes. Ending the rule's offs: one UPDATE per
+// line on the first pass after a start, then one per line only where an off
+// of the rule's may still wait and the line has counted a part since the last
+// look (idleOffWatch). Per restart an older Core's off is waiting on: one
+// UPDATE. Nothing per PLC tick: the poll's own UPDATE stamps last_part_at, and
+// the staged mirror's own UPDATE staged_at.
 
 // lineStop is what the rule remembers of a line between passes (lineStops).
 type lineStop struct {
@@ -96,6 +111,7 @@ func (e *Engine) idleCancelLine(rp *counters.ReportingPoint, now time.Time, idle
 		return // never read: no clock yet
 	}
 	part := *rp.LastPollAt
+	e.endIdleOffs(rp.ProcessID, rp.LastPartAt, now, idle)
 	if e.noteLinePart(rp.ProcessID, part, now, idle) {
 		if n, err := processes.ClearReorderOffAtProcess(e.db.DB, rp.ProcessID, part); err != nil {
 			e.logFn("idle-cancel: process %d restarted: clear its offs: %v", rp.ProcessID, err)
@@ -127,7 +143,12 @@ func (e *Engine) idleCancelLine(rp *counters.ReportingPoint, now time.Time, idle
 		e.logFn("idle-cancel: process %d: read its live orders: %v — this pass cancels nothing", rp.ProcessID, err)
 		return
 	}
-	groups := parkedGroups(rows)
+	var groups []parkedGroup
+	for _, g := range parkedGroups(rows) {
+		if now.Sub(latest(since, g.stagedAt)) >= idle {
+			groups = append(groups, g) // parked past its hour; robots that arrived within it wait
+		}
+	}
 	if len(groups) == 0 {
 		return
 	}
@@ -145,8 +166,53 @@ func (e *Engine) idleCancelLine(rp *counters.ReportingPoint, now time.Time, idle
 		if node == nil {
 			continue
 		}
-		e.sendBackParked(node, g, since, now, idle)
+		e.sendBackParked(rp.ProcessID, node, g, since, now, idle)
 	}
+}
+
+// idleOffWatch is when the rule looks for its own offs to end at a line:
+// pending while one may wait there for a part (from a start, and from each
+// send-back, until the line is seen running), and the last part it looked at.
+// A line running past its last look holds none: the rule wrote each off at a
+// moment the line had counted nothing for its hour, and a part since then has
+// ended it (ClearIdleOffAtProcess).
+type idleOffWatch struct {
+	checked time.Time
+	pending bool
+}
+
+// endIdleOffs ends the rule's offs at a line its last counted part has passed
+// (processes.ClearIdleOffAtProcess). It runs the statement once per line
+// after a start, then only where an off of the rule's may still wait and the
+// line has counted since the last look.
+func (e *Engine) endIdleOffs(processID int64, lastPart *time.Time, now time.Time, idle time.Duration) {
+	if lastPart == nil {
+		return // no part counted since this clock began: nothing has restarted
+	}
+	v, seen := e.idleOffs.Load(processID)
+	w, _ := v.(idleOffWatch)
+	if seen && (!w.pending || !lastPart.After(w.checked)) {
+		return
+	}
+	n, err := processes.ClearIdleOffAtProcess(e.db.DB, processID, *lastPart)
+	if err != nil {
+		e.logFn("idle-cancel: process %d: end its offs: %v", processID, err)
+		return
+	}
+	if n > 0 {
+		e.logFn("idle-cancel: process %d counted a part after its offs were set: auto-reorder back on at %d position(s)", processID, n)
+		e.nudgeBoards()
+	}
+	e.idleOffs.Store(processID, idleOffWatch{checked: *lastPart, pending: now.Sub(*lastPart) >= idle})
+}
+
+// noteSentBack marks a line as holding an off of the rule's, which the next
+// part it counts ends (endIdleOffs).
+func (e *Engine) noteSentBack(processID int64) {
+	v, _ := e.idleOffs.Load(processID)
+	w, _ := v.(idleOffWatch)
+	w.pending = true
+	e.idleOffs.Store(processID, w)
 }
 
 // noteLinePart records the line's last part at this pass and reports whether
@@ -161,9 +227,9 @@ func (e *Engine) noteLinePart(processID int64, part, now time.Time, idle time.Du
 // sendBackParked sends back one parked group at node, the line silent since
 // since. Under the position's release lock and its cell lock, it reads the
 // group and the position again: a RELEASE or a REQUEST that won the locks has
-// moved a leg or stamped a go, and the group is left. Then it writes off and
-// cancels each leg.
-func (e *Engine) sendBackParked(node *processes.Node, g parkedGroup, since, now time.Time, idle time.Duration) {
+// moved a leg or stamped a go, a leg staged again has a later arrival, and
+// the group is left. Then it writes off and cancels each leg.
+func (e *Engine) sendBackParked(processID int64, node *processes.Node, g parkedGroup, since, now time.Time, idle time.Duration) {
 	unlock := e.lockNode(node.ID)
 	defer unlock()
 	cell := e.primeNodeLock(&processes.NodeClaim{CoreNodeName: node.CoreNodeName})
@@ -179,36 +245,39 @@ func (e *Engine) sendBackParked(node *processes.Node, g parkedGroup, since, now 
 		return
 	}
 	since = latest(since, rt.ReorderGoAt)
-	if now.Sub(since) < idle {
-		return // someone said go here within the hour
-	}
 	for _, id := range g.orderIDs {
 		o, err := e.db.GetOrder(id)
 		if err != nil || !parkedLeg(o) {
 			return // moved, ended or unreadable since the pass read it
 		}
+		since = latest(since, stagedAt(o))
 	}
-	note := fmt.Sprintf("the line counted no part for %s and the robots waiting here were sent back", idleWords(idle))
-	if _, err := processes.HoldReorder(e.db.DB, node.ID, domain.ReorderHoldOff, now, note); err != nil {
+	if now.Sub(since) < idle {
+		return // someone said go here, or the robots parked, within the hour
+	}
+	if _, err := processes.HoldReorder(e.db.DB, node.ID, domain.ReorderHoldOff, now, domain.IdleOffNote(idleWords(idle))); err != nil {
 		e.logFn("idle-cancel: node %s: write off: %v — nothing sent back", node.Name, err)
 		return
 	}
+	e.noteSentBack(processID)
 	for _, id := range g.orderIDs {
 		if err := e.orderMgr.AbortOrderAsEdge(id, protocol.CancelReasonLineIdle); err != nil {
 			e.logFn("idle-cancel: node %s: cancel order %d: %v", node.Name, id, err)
 			continue
 		}
-		e.logFn("idle-cancel: node %s: order %d sent back — nothing has happened at the line since %s (its last part, changeover end or go)",
+		e.logFn("idle-cancel: node %s: order %d sent back — nothing has happened at the line since %s (its last part, changeover end, go or the robots' arrival)",
 			node.Name, id, since.Format(time.RFC3339))
 	}
 	e.nudgeBoards()
 }
 
 // parkedGroup is a lone order or a swap pair the rule may send back: every
-// live leg parked (parkedLeg), all at one position.
+// live leg parked (parkedLeg), all at one position. stagedAt is the latest
+// arrival among its legs (zero for a leg staged before the column existed).
 type parkedGroup struct {
 	position int64
 	orderIDs []int64
+	stagedAt time.Time
 }
 
 // parkedGroups groups a line's live orders by their swap link and keeps the
@@ -262,8 +331,18 @@ func parkedGroupOf(legs []*storeorders.Order) (parkedGroup, bool) {
 		}
 		g.position = *o.ProcessNodeID
 		g.orderIDs = append(g.orderIDs, o.ID)
+		g.stagedAt = latest(g.stagedAt, stagedAt(o))
 	}
 	return g, len(g.orderIDs) > 0
+}
+
+// stagedAt is when the leg's robot parked (orders.staged_at), zero when the
+// row has none.
+func stagedAt(o *storeorders.Order) time.Time {
+	if o.StagedAt == nil {
+		return time.Time{}
+	}
+	return *o.StagedAt
 }
 
 // parkedLeg reports whether an order is a robot parked at a station wait for a

@@ -254,7 +254,8 @@ function spotsWord(n) { return n === 1 ? '1 spot' : (n || 0) + ' spots'; }
 
 // One style row: its name, its parts and spots, Core's word on it. The
 // running one says so. A CATID is still searched (drawRows) and not printed:
-// the floor knows a part by its number.
+// the floor knows a part by its number. Core's note on the word rides the meta
+// line (here and in partRow), never a hover: the station is a touch panel.
 function savedRow(s) {
     const running = s.id === runningID();
     const v = running ? { cls: 'ok', text: 'Running' } : verdict(s.name);
@@ -264,7 +265,7 @@ function savedRow(s) {
     return '<button class="os-comp-row" data-act="saved" data-style="' + esc(s.id) + '">' +
         '<span class="id">' + esc(s.name) + '</span>' +
         '<span class="meta">' + esc(meta) + '</span>' +
-        '<span class="vd ' + v.cls + '"' + (v.note ? ' title="' + esc(v.note) + '"' : '') + '>' + esc(v.text) + '</span></button>';
+        '<span class="vd ' + v.cls + '">' + esc(v.text) + '</span></button>';
 }
 
 // One part row. The styles it runs in are named in it.
@@ -277,7 +278,7 @@ function partRow(r) {
     return '<button class="os-comp-row" data-act="part" data-part="' + esc(r.code) + '">' +
         '<span class="id">' + esc(M().shortPart(r.code)) + '</span>' +
         '<span class="meta">' + esc(meta) + '</span>' +
-        '<span class="vd ' + v.cls + '"' + (v.note ? ' title="' + esc(v.note) + '"' : '') + '>' + esc(v.text) + '</span>' +
+        '<span class="vd ' + v.cls + '">' + esc(v.text) + '</span>' +
         '</button>';
 }
 

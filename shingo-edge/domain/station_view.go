@@ -185,10 +185,14 @@ type StationNodeView struct {
 	// AutoReorderHold and AutoReorderNote are what holds this position's
 	// automatic ask, decided by AutoReorderHeld, the decider the demand sweep
 	// reads, from the runtime row and the claim the view already holds: the
-	// kind (the board's chip label) and the sentence (its hover), verbatim.
-	// Empty when nothing holds it.
-	AutoReorderHold ReorderHold `json:"auto_reorder_hold,omitempty"`
+	// kind and the sentence, which the tile's panel shows verbatim. Empty when
+	// nothing holds it. The kind is not serialised: the board reads the chip.
+	AutoReorderHold ReorderHold `json:"-"`
 	AutoReorderNote string      `json:"auto_reorder_note,omitempty"`
+	// AutoReorderChip is the held tile's chip, verbatim (ReorderHoldChip): the
+	// point the claim asks at and the cause. Empty when nothing holds, and on
+	// a person's off where the board's header carries the line's switch.
+	AutoReorderChip string `json:"auto_reorder_chip,omitempty"`
 	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
 	// position: non-empty when some producing claim names this node as its
 	// containment destination, and carries that claim's OutboundDestination —

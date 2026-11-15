@@ -61,12 +61,22 @@ func newIdleLine(t *testing.T, ago time.Duration) *idleLine {
 }
 
 // lastPart sets the line's last counted part ago before now (the engine's
-// clock, as the poll stamps it).
+// clock, as the poll stamps it): the hour's clock and the part clock both, as
+// a read that counted parts writes them.
 func (l *idleLine) lastPart(t *testing.T, ago time.Duration) {
 	t.Helper()
-	_, err := l.db.DB.Exec(`UPDATE reporting_points SET last_poll_at=? WHERE plc_name='PLC1' AND tag_name='COUNT'`,
-		time.Now().Add(-ago).UTC().Format("2006-01-02 15:04:05"))
+	at := time.Now().Add(-ago).UTC().Format("2006-01-02 15:04:05")
+	_, err := l.db.DB.Exec(`UPDATE reporting_points SET last_poll_at=?, last_part_at=? WHERE plc_name='PLC1' AND tag_name='COUNT'`, at, at)
 	testutil.MustNoErr(t, err, "set the last part")
+}
+
+// parkedAgo sets when the legs' robots parked (staged_at), ago before now.
+func (l *idleLine) parkedAgo(t *testing.T, ago time.Duration, ids ...int64) {
+	t.Helper()
+	for _, id := range ids {
+		_, err := l.db.DB.Exec(`UPDATE orders SET staged_at=? WHERE id=?`, time.Now().Add(-ago).UTC().Format("2006-01-02 15:04:05"), id)
+		testutil.MustNoErr(t, err, "set when the robot parked")
+	}
 }
 
 // leg is one order at the line's position, put in the shape a test names.

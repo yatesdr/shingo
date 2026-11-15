@@ -1959,7 +1959,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 13 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
-| [`orders`](#edge-orders) | 43 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
+| [`orders`](#edge-orders) | 44 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
 | [`payload_catalog`](#edge-payload_catalog) | 8 | `id` |  |
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
@@ -1972,7 +1972,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`processes`](#edge-processes) | 16 | `id` | [`process_groups`](#edge-process_groups), [`styles`](#edge-styles) |
 | [`production_tick_cursor`](#edge-production_tick_cursor) | 3 | `id` |  |
 | [`release_paperwork`](#edge-release_paperwork) | 4 | `order_id`, `kind` |  |
-| [`reporting_points`](#edge-reporting_points) | 8 | `id` | [`styles`](#edge-styles) |
+| [`reporting_points`](#edge-reporting_points) | 9 | `id` | [`styles`](#edge-styles) |
 | [`scene_geometry_edges`](#edge-scene_geometry_edges) | 10 | `from_name`, `to_name` |  |
 | [`scene_geometry_meta`](#edge-scene_geometry_meta) | 3 | `id` |  |
 | [`scene_geometry_points`](#edge-scene_geometry_points) | 5 | `instance_name` |  |
@@ -2337,6 +2337,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `release_facts` | `TEXT` |  |  |  | release_facts (Edge v8): the leg's static release facts, computed from its steps when this Edge created it (release.Facts, JSON): the nodes it leaves a bin at, the bin its release lifts, the nodes a release lets a bin cross, its role at its process node. NULL for an order with no steps this Edge authored, and for every row older than v8. |
 | `release_intent` | `TEXT` | yes | `''` |  | release_intent / release_held (Edge v9): the act's promise to this leg for one station wait (release.Intent, JSON; '' = none), and the last hold or rejection sentence the board's chip shows. |
 | `release_held` | `TEXT` | yes | `''` |  |  |
+| `staged_at` | `TEXT` |  |  |  | staged_at (Edge v53): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
 | `want` | `TEXT` | yes | `''` |  | want (Edge v30): the height an empty is wanted at, as this Edge stated it on the order's request (protocol.Height's spelling; '' is none). SEND BACK knows its pull by it; a projection never writes it. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 | `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
@@ -2547,16 +2548,17 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Edge: `reporting_points`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `INTEGER` | yes |  | PK autoincrement |
-| `style_id` | `INTEGER` | yes |  | → `styles(id) ON DELETE CASCADE` |
-| `plc_name` | `TEXT` | yes |  |  |
-| `tag_name` | `TEXT` | yes |  |  |
-| `last_count` | `INTEGER` | yes | `0` |  |
-| `last_poll_at` | `TEXT` |  |  |  |
-| `enabled` | `INTEGER` | yes | `1` |  |
-| `warlink_managed` | `INTEGER` | yes | `0` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `INTEGER` | yes |  | PK autoincrement |  |
+| `style_id` | `INTEGER` | yes |  | → `styles(id) ON DELETE CASCADE` |  |
+| `plc_name` | `TEXT` | yes |  |  |  |
+| `tag_name` | `TEXT` | yes |  |  |  |
+| `last_count` | `INTEGER` | yes | `0` |  |  |
+| `last_poll_at` | `TEXT` |  |  |  |  |
+| `last_part_at` | `TEXT` |  |  |  | last_part_at (Edge v53): the engine's clock at the last read that counted a part. last_poll_at also moves on a read that counts none (a point's first read, a counter reset to 0); this does not. NULL until the first counted part. The idle rule's off ends on it (engine/idle_cancel.go). |
+| `enabled` | `INTEGER` | yes | `1` |  |  |
+| `warlink_managed` | `INTEGER` | yes | `0` |  |  |
 
 - Unique (plc_name, tag_name)
 

@@ -1677,6 +1677,97 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq([buttons(), rowsText()], [[], 'Select a payload above'], 'load modal, no parts: no button');
 }
 
+// ── 21. A press tile's chips, its panel and the line's switch ─────────────
+{
+    // The node grid's press tiles beside a loader: the chips a tile draws,
+    // what its tap's panel says, the header's switch for the line, and the
+    // partial line. Pinned as the board drew them at fb48197c, then changed
+    // (2026-11-14); each "changed" below names what it was. The chip's words
+    // are the server's (auto_reorder_chip, domain.ReorderHoldChip, pinned in
+    // Go): the board draws them and spells no rule.
+    const pressTile = (id, core, o) => Object.assign({
+        node: { id: id, process_id: 1, core_node_name: core, name: core },
+        runtime: { remaining_uop_cached: 10, active_bin_id: 1 }, orders: [],
+        active_claim: { id: id, core_node_name: core, role: 'consume', swap_mode: 'single_robot',
+            payload_code: 'PART-A', uop_capacity: 20, reorder_point: 6, auto_reorder: true },
+    }, o || {});
+    const chips = name => slotTile(name).children.filter(k => k.classList.contains('os-node-alarm'))
+        .map(k => [k.textContent, k.title || '']);
+    const partials = name => slotTile(name).children.filter(k => k.classList.contains('os-node-partial'))
+        .map(k => k.textContent);
+    const modalHTML = () => document.getElementById('node-modal-content').innerHTML;
+    const OFF_NOTE = 'Auto-reorder is off: the line counted no part for 1 hour and the robots waiting here were sent back. ' +
+        'It comes back on when the line counts a part after a stop, or on REQUEST.';
+    const PERSON_NOTE = 'Auto-reorder was switched off here by LINE-OPS at 13:24.';
+    const PARTIAL_BIN = { occupied: true, payload_code: 'PART-A', stocked: true, bin_label: 'BIN-A', bin_type_code: 'TOTE-1',
+        uop_capacity: 20 };
+    const HELD_BIN = Object.assign({}, PARTIAL_BIN, { bin_label: 'BIN-H', held_since: '2026-10-29T10:00:00Z',
+        held_for: 'P400', held_uop: 8 });
+
+    // The idle rule's off at one position, a person's off at the other, the
+    // line's switch on the header reading off. The server sends the person's
+    // off no chip there: the header says it.
+    const idle = pressTile(21, 'WLN_21', { bin_state: PARTIAL_BIN, auto_reorder_chip: 'REORDER AT 6: LINE IDLE',
+        auto_reorder_note: OFF_NOTE });
+    const person = pressTile(22, 'WLN_22', { auto_reorder_note: PERSON_NOTE });
+    const home = loaderTile(23, 'SMN_H1', { bin: HELD_BIN });
+    setView([idle, person, home], { auto_reorder_switch: { on: false } });
+    render();
+    eq(headerButtons(), ['CHANGEOVER', 'LINE AUTO-REORDER: OFF', 'REFRESH'],
+        'the line switched off: the header names the line\'s switch (changed: AUTO-REORDER: OFF)');
+    eq(chips('WLN_21'), [['REORDER AT 6: LINE IDLE', '']],
+        'an idle off: the chip is the server\'s, its point and cause, no hover (changed: AUTO-REORDER OFF, the sentence on hover)');
+    eq(chips('WLN_22'), [],
+        'a person\'s off under a header that says off: no chip (changed: AUTO-REORDER SWITCHED OFF, the sentence on hover)');
+    eq(partials('WLN_21'), [], 'a partial at its line: no tile line (changed: PARTIAL — 10 of PART-A, finishing)');
+    eq(partials('SMN_H1'), [], 'a held partial at a home: no tile line (changed: PARTIAL — 8 of PART-A, held for P400, since …)');
+    resetDOM();
+    ctx.openModal(21);
+    eq(modalHTML().includes(ctx.esc(OFF_NOTE)), true, 'an idle off: the tap\'s panel says the sentence (changed: it did not)');
+    resetDOM();
+    ctx.openModal(22);
+    eq(modalHTML().includes(ctx.esc(PERSON_NOTE)), true, 'a person\'s off: the panel says who and when, the chip gone');
+    render();
+    await tap(headerButton('LINE AUTO-REORDER: OFF'));
+    eq(overlayTexts()[0], 'Turn line auto-reorder on for LDR?',
+        'the switch\'s confirm names the line\'s (changed: Turn auto-reorder on for …)');
+    await tapOverlay('CANCEL');
+
+    // The switch not on the board: the person's off is the board's only word
+    // for it, so the server sends its chip.
+    setView([pressTile(22, 'WLN_22', { auto_reorder_chip: 'REORDER AT 6: SWITCHED OFF', auto_reorder_note: PERSON_NOTE })]);
+    render();
+    eq([headerButtons(), chips('WLN_22')], [['CHANGEOVER', 'REFRESH'], [['REORDER AT 6: SWITCHED OFF', '']]],
+        'a person\'s off with no switch on the header: the chip says it');
+
+    setView([idle, person], { auto_reorder_switch: { on: true } });
+    render();
+    eq(headerButtons(), ['CHANGEOVER', 'LINE AUTO-REORDER: ON', 'REFRESH'], 'the line on: the header (changed: AUTO-REORDER: ON)');
+
+    // Every other chip on a tile: no hover; each reason is in the panel.
+    const REFUSAL = { loader_node: 'SMN_A1', payload_code: 'PART-A', refused_by: 'Loader one', answered: true };
+    const KEEPER = 'Keep-staged cannot keep SLN_1: its spot is blocked.';
+    const WAITS = 'The line is on WLN_24; its parts wait for WLN_24\'s bin lands.';
+    const CONTAINED = 'This payload is quality-contained — its finished-goods deliveries divert to the hold spot until released.';
+    const busy = pressTile(24, 'WLN_24', { supply_refused_for_me: REFUSAL, keep_staged_note: KEEPER, count_waits: WAITS,
+        containment_flagged: true, send_back: { state: 'disabled', outside: 'OUT-1', outbound: 'DOCK' } });
+    setView([busy]);
+    render();
+    eq(chips('WLN_24'), [['NO PART-A', ''], ['SPOT BLOCKED', ''], ['NO BIN: STROKES LOGGED', ''], ['CONTAINED', '']],
+        'every other chip: no hover (changed: each carried its reason as a title)');
+    resetDOM();
+    ctx.openModal(24);
+    eq([KEEPER, WAITS, 'SMN_A1 cannot supply PART-A — Loader one', CONTAINED].map(s => modalHTML().includes(ctx.esc(s))),
+        [true, true, true, true], 'the panel says every chip\'s sentence (changed: count_waits\'s alone)');
+    eq([modalHTML().includes(' title='),
+        modalHTML().includes('<div class="os-action-why">A swap or another delivery is on its way to this press</div>')],
+        [false, true], 'a disabled SEND BACK: its reason under it (changed: on hover)');
+    setView([pressTile(24, 'WLN_24', { send_back: { state: 'enabled', outside: 'OUT-1', outbound: 'DOCK' } })]);
+    resetDOM();
+    ctx.openModal(24);
+    eq(modalHTML().includes('os-action-why'), false, 'an enabled SEND BACK: no reason line');
+}
+
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator loader station: ' + passed + ' passed');
 process.exit(0);
