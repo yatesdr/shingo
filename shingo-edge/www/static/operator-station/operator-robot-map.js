@@ -23,6 +23,16 @@
 // Core has a fresh sample for, joined to the Edge's own order id. The robot
 // drawn is the one the stream names, never the one the order stored (D14).
 //
+// DRIVING IS THE POSITIONS' WORD, NOT THE EDGE STATUS'S (owner's F4). After a
+// Core-side release (lane gate, table turn, vacate, hard release) Core moves
+// the order on and tells the Edge nothing, so the Edge order stays staged
+// while its robot drives. So a robot is driving when its positions say it
+// moves (movingAt) and its order is not faulted, whatever the status: it gets
+// its route and comet when RDS's path for it draws, counts for the calm, and
+// its row gives the tile's in-transit words, not Arrived. A faulted robot
+// keeps its static grey lane. Core's map reads Core's status and is not
+// changed; nothing is told to the Edge.
+//
 // THE DATA, ONCE PER PAGE LIFE WHERE IT CAN BE:
 //   - the scene, D11's shape, from GET /api/operator-stations/<id>/scene on
 //     the first show (D7). The door answers no-cache with an ETag on the
@@ -92,8 +102,11 @@ const MIN_PLANT = 0.25;
 const NO_SCENE_MIN = 20;
 // How many times one draw may widen the crop for a chip it would cut.
 const CHIP_FITS = 4;
-// The statuses a robot drives on. A staged robot stands at its spot, and a
-// faulted one has stopped (its path is a static lane).
+// The statuses an order drives in by the Edge's word: a stopped robot on one
+// still draws its route as a static lane under reduced motion. On any other
+// status the route draws only while the positions say the robot drives (F4:
+// a staged order after a Core-side release); a faulted robot has stopped
+// (its path is a static lane).
 const MOVING = { dispatched: true, in_transit: true };
 
 function cssVar(name, fallback) {
@@ -328,7 +341,9 @@ export function createRobotMap(opts) {
     }
 
     // shown is the robots drawn: each order with a position, once per robot,
-    // by robot id.
+    // by robot id. driving is the positions' word (F4): the robot moving, on
+    // an order that is not faulted, whatever the Edge status; path or not, as
+    // the calm counts it (robot-motion.js COMET_LIMIT).
     function shown(now) {
         const seen = {}, out = [];
         orders.forEach(function (o) {
@@ -336,7 +351,8 @@ export function createRobotMap(opts) {
             if (!rec || !rec.robot || seen[rec.robot]) return;
             seen[rec.robot] = true;
             const lost = rec.interval > 0 && now - rec.seenAt > LOST_AFTER * rec.interval;
-            out.push({ o: o, rec: rec, lost: lost, moving: !lost && movingAt(rec.lastMoveAt, now) });
+            const moving = !lost && movingAt(rec.lastMoveAt, now);
+            out.push({ o: o, rec: rec, lost: lost, moving: moving, driving: moving && o.status !== 'faulted' });
         });
         return out.sort(function (a, b) { return a.rec.robot < b.rec.robot ? -1 : a.rec.robot > b.rec.robot ? 1 : 0; });
     }
@@ -370,6 +386,9 @@ export function createRobotMap(opts) {
         const now = Date.now();
         const net = scene ? sceneNet(scene) : null;
         const list = shown(now);
+        // along: the robot is drawn driving its route, RDS's path for it
+        // drawing (F4); its row then says no Arrived.
+        list.forEach(function (r) { r.along = r.driving && !!robotRoute(net, r.rec); });
         const names = cellNames();
         const cell = cellPlaces(net, names);
         const pts = cell.map(function (c) { return proj(c.x, c.y); })
@@ -501,13 +520,13 @@ export function createRobotMap(opts) {
         const robotR = ROBOT_PX / s, nodeR = NODE_PX / s, fontS = FONT_PX / s;
         const reduce = reducedMotion();
         let moving = 0;
-        list.forEach(function (r) { if (MOVING[r.o.status] && r.moving) moving++; });
+        list.forEach(function (r) { if (r.driving) moving++; });
         const quiet = moving <= COMET_LIMIT;
         const lines = [], cometRoutes = [];
         list.forEach(function (r) {
             if (r.lost) return;
             const blocked = r.o.status === 'faulted';
-            if (!blocked && !MOVING[r.o.status]) return;
+            if (!blocked && !r.driving && !MOVING[r.o.status]) return;
             const route = robotRoute(net, r.rec);
             if (!route) return;
             const pts = route.map(function (p) { return proj(p[0], p[1]); });
@@ -633,14 +652,20 @@ export function createRobotMap(opts) {
         return over;
     }
 
-    // etaWords is a row's words for order o, as the tile's pill words it
-    // (operator-render.js appendETAPills): Arrived when staged, the fault's
-    // first word when faulted, else the order's ETA (formatETA) when it is
-    // coming to one of this screen's nodes.
-    function etaWords(o, names) {
+    // etaWords is a row's words for shown robot r, as the tile's pill words
+    // its order (operator-render.js appendETAPills): the fault's first word
+    // when faulted; Arrived when staged and not drawn driving its route; else
+    // the in-transit words of the order's ETA (formatETA: ETA: ~N min,
+    // Arriving, Running late; none with no ETA) when it is coming to one of
+    // this screen's nodes. A staged order the robot is driving after a
+    // Core-side release (F4) still holds the ETA Core stamped when it went in
+    // transit (Core sends no fresh one), so its words are measured against
+    // that: the only estimate this screen has.
+    function etaWords(r, names) {
+        const o = r.o;
         if (o.status === 'faulted') return (o.fault_line || 'Replanning').split(' · ')[0];
         if (!names[o.delivery_node]) return '';
-        if (o.status === 'staged') return 'Arrived';
+        if (o.status === 'staged' && !r.along) return 'Arrived';
         const d = formatETA(o.eta);
         return d.empty ? '' : d.text;
     }
@@ -651,7 +676,7 @@ export function createRobotMap(opts) {
     // them changed.
     function drawRows(list, names, unseen) {
         const items = list.map(function (r) {
-            return { robot: r.rec.robot, status: r.o.status, lost: r.lost, words: r.lost ? 'Position lost' : etaWords(r.o, names) };
+            return { robot: r.rec.robot, status: r.o.status, lost: r.lost, words: r.lost ? 'Position lost' : etaWords(r, names) };
         }).concat(unseen.filter(function (u) { return u.lost; }).map(function (u) {
             return { robot: '', status: u.o.status, lost: true, words: 'Position lost' };
         }));

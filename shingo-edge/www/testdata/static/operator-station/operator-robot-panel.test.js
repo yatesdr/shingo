@@ -1108,6 +1108,9 @@ await zeroWork('{available: false} first', async h => {
 // vacate, hard release). Core moves the order on and tells the Edge nothing
 // (LEAD-NOTES open item 1), so the Edge order stays staged while its robot
 // drives, and staged is vendor-tracked: positions flow and the robot is drawn.
+// Driving is the positions' word, not the Edge status's: a robot moving on an
+// order that is not faulted gets its route and comet, counts for the calm,
+// and its row gives the tile's in-transit words, not Arrived.
 {
     const released = extra => cellView({ 3: [order(1701, 'staged', 'AMR-17', 'PLN_03', extra)] });
     const eta = new Date(Date.UTC(2026, 10, 14, 12, 3, 30)).toISOString();
@@ -1117,17 +1120,65 @@ await zeroWork('{available: false} first', async h => {
     h.vsync(3000);
     eq([robotGroups(h).length, robotGroups(h)[0].children.map(k => k.attrs['class'] || k.tagName)], [1, ['map-robot-halo', 'g', 'map-robot-core']],
         'staged and driving: the robot is drawn, moving');
-    eq([h.cometLayer() ? h.cometLayer().children.length : 0, h.layer('routes').children.length], [0, 0],
-        'today: staged and driving draws no comet and no lane (the route is gated on the Edge status)');
-    eq(h.rows(), ['AMR-17Arrived'], 'today: staged and driving, its row says Arrived');
-    // The calm: twelve in transit and the released one, all driving.
+    const comets = h.cometLayer() ? h.cometLayer().children : [];
+    eq([comets.length, comets[0] && comets[0].attrs['class'], h.layer('routes').children.length], [10, 'map-comet-head', 0],
+        'staged and driving with RDS\'s path: its comet (carrying to PLN_03, solid), no static lane, as an in-transit robot');
+    const head = comets[0] && /translate\(([-\d.]+) ([-\d.]+)\)/.exec(comets[0].attrs.transform);
+    const half = alongAt([[13, 0], [20, 0], [30, 0], [40, 0], [40, 10], [40, 20], [40, 26]].map(p => proj(p[0], p[1])), 0.5);
+    ok(head && Math.abs(+head[1] - half[0]) < 0.01 && Math.abs(+head[2] - half[1]) < 0.01,
+        'the comet runs along RDS\'s path from the robot', 'head ' + (head && head[0]) + ' want ' + half);
+    eq(h.rows(), ['AMR-17ETA: ~3 min'], 'staged and driving: its row gives the tile\'s in-transit words from the order\'s ETA, not Arrived');
+    // No ETA held: no word.
+    const n = await shownPage(released({}));
+    await drive(n, [pos(1701, 'AMR-17', 12, 0, PATH_WEST, 0)], 1, 2000);
+    eq(n.rows(), ['AMR-17'], 'staged and driving with no ETA: no word, not Arrived');
+    // Staged and still: as before the fix.
+    const s = await shownPage(released({ eta: eta }));
+    s.frame(frameOf([pos(1701, 'AMR-17', 40, 26, ['N40_20', 'PLN_03'], 0)]));
+    await s.advance(2000);
+    s.frame(frameOf([pos(1701, 'AMR-17', 40, 26, ['N40_20', 'PLN_03'], 0)]));
+    await s.flush();
+    s.vsync(3000);
+    eq([robotGroups(s).length, s.cometLayer() ? s.cometLayer().children.length : 0, s.layer('routes').children.length, s.rows()],
+        [1, 0, 0, ['AMR-17Arrived']], 'staged and still, with a path: drawn at rest, no comet, no lane, and its row says Arrived');
+    // Staged, moving, but RDS has no route left for it: its row keeps Arrived.
+    const e = await shownPage(released({ eta: eta }));
+    await drive(e, [pos(1701, 'AMR-17', 39, 25, null, 0)], 0.5, 2000);
+    e.vsync(3000);
+    eq([e.cometLayer() ? e.cometLayer().children.length : 0, e.rows()], [0, ['AMR-17Arrived']],
+        'staged, settling with no route left: no comet, and its row says Arrived');
+    // Faulted and moving: the static grey lane, no comet, whatever the positions.
+    const f = await shownPage(cellView({ 3: [order(1702, 'faulted', 'AMR-18', 'PLN_03', { fault_line: 'Replanning' })] }));
+    await drive(f, [pos(1702, 'AMR-18', 12, 0, PATH_WEST, 0)], 1, 2000);
+    f.vsync(3000);
+    const lane = f.layer('routes').children[0];
+    eq([f.cometLayer() ? f.cometLayer().children.length : 0, f.layer('routes').children.length, lane && lane.attrs['class'], lane && lane.attrs.stroke],
+        [0, 1, 'map-route-frozen', '#8b949e'], 'faulted and moving: its path a static grey lane, no comet');
+    // The calm: twelve in transit and the released one, all driving: thirteen.
     const byTile = { 1: [], 2: [], 3: [order(1701, 'staged', 'AMR-17', 'PLN_03')], 4: [], 5: [] };
     for (let i = 0; i < 12; i++) byTile[1 + (i % 5)].push(order(1710 + i, 'in_transit', 'AMR-' + (30 + i), 'PLN_03'));
     const c = await shownPage(cellView(byTile));
     await drive(c, [pos(1701, 'AMR-17', 2, 20, PATH_WEST, 0)].concat(Array.from({ length: 12 }, (_, i) =>
         pos(1710 + i, 'AMR-' + (30 + i), 2 + 4 * i, i % 2 ? 0 : 10, PATH_WEST, 0))), 0.5, 2000);
     c.vsync(3000);
-    eq(c.cometLayer().children.length, 120, 'today: twelve in transit and one staged, all driving: the staged one is not counted, twelve comets');
+    eq(c.cometLayer().children.length, 0, 'twelve in transit and one staged, all driving: the staged one counts, thirteen, the calm');
+    // And a twelfth driving robot that is staged keeps the comets: it is counted, not dropped.
+    const byTile12 = JSON.parse(JSON.stringify(byTile));
+    byTile12[2] = byTile12[2].filter(o => o.id !== 1721);
+    const c12 = await shownPage(cellView(byTile12));
+    await drive(c12, [pos(1701, 'AMR-17', 2, 20, PATH_WEST, 0)].concat(Array.from({ length: 11 }, (_, i) =>
+        pos(1710 + i, 'AMR-' + (30 + i), 2 + 4 * i, i % 2 ? 0 : 10, PATH_WEST, 0))), 0.5, 2000);
+    c12.vsync(3000);
+    eq(c12.cometLayer().children.length, 120, 'eleven in transit and one staged, all driving: twelve comets, the staged one\'s among them');
+    // A faulted robot is not driving, moving or not: twelve in transit and one
+    // faulted, all moving, keep their twelve comets.
+    const byTileF = JSON.parse(JSON.stringify(byTile));
+    byTileF[3][0] = order(1701, 'faulted', 'AMR-17', 'PLN_03', { fault_line: 'Replanning' });
+    const cf = await shownPage(cellView(byTileF));
+    await drive(cf, [pos(1701, 'AMR-17', 2, 20, PATH_WEST, 0)].concat(Array.from({ length: 12 }, (_, i) =>
+        pos(1710 + i, 'AMR-' + (30 + i), 2 + 4 * i, i % 2 ? 0 : 10, PATH_WEST, 0))), 0.5, 2000);
+    cf.vsync(3000);
+    eq(cf.cometLayer().children.length, 120, 'twelve in transit and one faulted, all moving: the faulted one is not counted, twelve comets');
 }
 
 finished = true;
