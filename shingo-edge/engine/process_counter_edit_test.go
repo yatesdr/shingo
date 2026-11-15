@@ -56,6 +56,9 @@ func counterRig(t *testing.T) (eng *Engine, db *store.DB, pid, style int64, wl *
 	t.Helper()
 	db = testEngineDB(t)
 	eng = testEngine(t, db)
+	// The rig is a live WarLink, so its config says WarLink is on: prime asks
+	// an Edge with WarLink off for no publish (TestPrime_WarLinkOffMakesNoCall).
+	eng.cfg.WarLink.Enabled = true
 	wl = &recordingWarlink{tags: []plc.WarlinkTagInfo{
 		{Name: "MES_Cell.Prod_Counter_01", Type: "DINT"},
 		{Name: "MES_Other.Prod_Counter_01", Type: "DINT"},

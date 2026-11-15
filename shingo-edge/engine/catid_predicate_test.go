@@ -146,6 +146,7 @@ func TestPrime_KeepsStateWhenEnableFails(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	eng.cfg.WarLink.Enabled = true
 	eng.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, &failingPublishClient{})
 	pid, err := db.CreateProcess("CELL", "", "plc", "MES_Cell.Prod_Counter_01", true)
 	testutil.MustNoErr(t, err, "create process")
@@ -158,6 +159,36 @@ func TestPrime_KeepsStateWhenEnableFails(t *testing.T) {
 	}
 	if st.tagName != "MES_Cell.CATID_01" || st.plcName != "plc" {
 		t.Errorf("state = %+v, want plc/MES_Cell.CATID_01", st)
+	}
+}
+
+// TestPrime_WarLinkOffMakesNoCall: with warlink.enabled false the Edge talks
+// to no WarLink, so prime asks for no publish; the process is still monitored
+// (its reads fail open, as for any unreadable tag). With WarLink on, prime
+// asks for the identity tag as before.
+func TestPrime_WarLinkOffMakesNoCall(t *testing.T) {
+	t.Parallel()
+	for _, on := range []bool{false, true} {
+		t.Run(map[bool]string{false: "off", true: "on"}[on], func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			eng.cfg.WarLink.Enabled = on
+			wl := &recordingWarlink{}
+			eng.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, wl)
+			pid, err := db.CreateProcess("CELL", "", "plc", "MES_Cell.Prod_Counter_01", true)
+			testutil.MustNoErr(t, err, "create process")
+
+			cm := &catidMonitor{eng: eng, states: map[int64]*catidState{}}
+			cm.prime()
+			if _, ok := cm.states[pid]; !ok {
+				t.Error("the process is not monitored")
+			}
+			got := strings.Join(wl.toggles(), ",")
+			if want := map[bool]string{false: "", true: "on plc.MES_Cell.CATID_01"}[on]; got != want {
+				t.Errorf("publish toggles = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
