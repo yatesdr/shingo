@@ -3715,8 +3715,8 @@ async function settingsSectionsPins(h) {
         const ctx = page({ composer: c });
         await settle();
         const html = ctx.root.innerHTML;
-        for (const line of ['Cut over automatically finishes a changeover the operator started, once the new part is confirmed running. It never starts one.',
-            'Index Swap keeps a drained same-part bin at changeover only while this process is counted.']) {
+        for (const line of ['Cut over automatically finishes a started changeover; it never starts one.',
+            'Index Swap keeps a drained same-part bin at changeover only while counted.']) {
             if (html.indexOf('<p class="pd-note">' + line + '</p>') < 0) {
                 throw new Error('no note reads ' + JSON.stringify(line) + ': ' + JSON.stringify(html.match(/<p class="pd-note">[^<]*<\/p>/g)));
             }

@@ -5336,10 +5336,10 @@ const AUTO_ARM = [
 // not stamping anything — it is running the new part, which is the fact this
 // sentence is actually about.
 //
-// ONE LINE (owner, 2026-11-14). It went on to say why: starting moves robots,
-// and only a person knows the material is there.
-const AUTO_ARM_NOTE = 'Cut over automatically finishes a changeover the operator started, once the new part ' +
-    'is confirmed running. It never starts one.';
+// ONE LINE (owner, 2026-11-14): a note is 68ch wide (style guide). It went on
+// to say when (the field's own words: a confirmed part change) and why:
+// starting moves robots, and only a person knows the material is there.
+const AUTO_ARM_NOTE = 'Cut over automatically finishes a started changeover; it never starts one.';
 
 function settingsDraft() { return settingsDraftFor(process() || {}); }
 
@@ -5815,9 +5815,9 @@ function countingView(p) {
 
 // PRESS_INDEX_COUNTING is what the Counting switch also decides for a
 // process with a press-index position, said only where one exists. ONE LINE
-// (owner, 2026-11-14): it went on to say a sequential press reuses its parked
-// empty either way, which is what the line already leaves unsaid.
-const PRESS_INDEX_COUNTING = 'Index Swap keeps a drained same-part bin at changeover only while this process is counted.';
+// (owner, 2026-11-14; a note is 68ch wide): it went on to say a sequential
+// press reuses its parked empty either way.
+const PRESS_INDEX_COUNTING = 'Index Swap keeps a drained same-part bin at changeover only while counted.';
 
 // hasPressIndexClaim: some live style of the open process claims a position
 // in press-index mode.
