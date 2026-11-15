@@ -87,10 +87,17 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 
 // apiSetProcessPositions is PUT /api/processes/{id}/positions: the process's
 // positions on NO screen, set in one write (StationService.SetLoosePositions)
-// — the claimed-nodes PUT's body, refusals and reply, over the rows whose
+// — the claimed-nodes PUT's body and refusals, over the rows whose
 // operator_station_id is NULL. A press is set up before it has a screen, and
 // its positions exist from the setup; a screen added later takes them with
 // its own claimed-nodes PUT.
+//
+// The reply is {"status":"ok","kept":[...]} and no more: kept as in
+// writePositionsSaved, but no nodes and no read-back to fill it. The screen
+// write's nodes is there because the page keeps a screen's list from the
+// reply; the page draws the positions on no screen from its own draft and
+// never read this route's list, so the read that filled it cost a statement
+// per save for nothing.
 //
 // A position that is on one of the process's screens is refused by name
 // (service.ErrPositionOnAScreen), never moved off the screen by this write.
@@ -120,8 +127,10 @@ func (h *Handlers) apiSetProcessPositions(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	nodes, err := svc.LoosePositionNames(id)
-	writePositionsSaved(w, kept, nodes, err)
+	if kept == nil {
+		kept = []string{}
+	}
+	writeJSON(w, map[string]any{"status": "ok", "kept": kept})
 }
 
 // writePositionsRefusal maps the refusals both position writes share. A name
@@ -138,13 +147,13 @@ func writePositionsRefusal(w http.ResponseWriter, err error) bool {
 	return false
 }
 
-// writePositionsSaved is both position writes' reply:
-// {"status":"ok","kept":[...],"nodes":[...]}.
+// writePositionsSaved is the screen write's reply (the claimed-nodes PUT):
+// {"status":"ok","kept":[...],"nodes":[...]}. The loose write answers its
+// status and kept only (apiSetProcessPositions).
 //
 // kept: removed positions that stayed, disabled, because an order is still
-// running at them. nodes: the list the write leaves, read once after it — for
-// a screen exactly what its claimed-nodes GET answers, for the loose write the
-// process's positions on no screen in the same order — so the page takes its
+// running at them. nodes: the list the write leaves, read once after it,
+// exactly what the screen's claimed-nodes GET answers, so the page takes its
 // read-back from the reply instead of a second GET. It is the server's
 // reading, not an echo: a group sent comes back as its nodes, and a kept
 // position comes back because it is still there. Both are always arrays, so
@@ -168,8 +177,9 @@ func writePositionsSaved(w http.ResponseWriter, kept, nodes []string, readErr er
 
 // apiStationRemovalImpact answers the screen sheet before it saves a list
 // that takes positions off the station: the recipes and styles that still
-// name them (StationService.RemovalImpact). It writes nothing; the body is the
-// claimed-nodes PUT's own, and an empty warning means go ahead.
+// name them, and the light curtain, station counter and auto-reorder off the
+// take-off clears (StationService.RemovalImpact). It writes nothing; the body
+// is the claimed-nodes PUT's own, and an empty warning means go ahead.
 func (h *Handlers) apiStationRemovalImpact(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -193,9 +203,9 @@ func (h *Handlers) apiStationRemovalImpact(w http.ResponseWriter, r *http.Reques
 
 // apiProcessPositionsImpact is apiStationRemovalImpact for the positions on
 // no screen: the body is PUT /api/processes/{id}/positions' own, the answer
-// the recipes and styles that still name a position the list drops
-// (StationService.LooseRemovalImpact). It writes nothing; an empty warning
-// means go ahead.
+// the recipes and styles that still name a position the list drops and what
+// the take-off clears there (StationService.LooseRemovalImpact). It writes
+// nothing; an empty warning means go ahead.
 func (h *Handlers) apiProcessPositionsImpact(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

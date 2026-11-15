@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 
@@ -510,7 +511,8 @@ func TestOperatorStations_SetStationClaimedNodes_NamesPositionsKeptByAnActiveOrd
 	}
 }
 
-// positionsReply is the claimed-nodes PUT's reply, and the loose PUT's.
+// positionsReply is the claimed-nodes PUT's reply. The loose PUT's is its
+// status and kept only (looseReply).
 type positionsReply struct {
 	Status string   `json:"status"`
 	Kept   []string `json:"kept"`
@@ -620,10 +622,32 @@ func nodeNamesOf(nodes []processes.Node) string {
 	return strings.Join(names, ",")
 }
 
+// looseReply decodes the loose PUT's reply, and fails it unless it carries
+// exactly status and kept. The page reads no list back from this write (it
+// draws the positions on no screen from its own draft), so the reply has no
+// nodes, and the server makes none of the read that would have filled it.
+func looseReply(t *testing.T, resp *http.Response) positionsReply {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	decodeJSON(t, resp, &raw)
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if strings.Join(keys, ",") != "kept,status" {
+		t.Errorf("the loose PUT's reply carries %v, want exactly kept and status", keys)
+	}
+	var reply positionsReply
+	testutil.MustNoErr(t, json.Unmarshal(raw["status"], &reply.Status), "decode status")
+	testutil.MustNoErr(t, json.Unmarshal(raw["kept"], &reply.Kept), "decode kept")
+	return reply
+}
+
 // A process with no screen gets its positions in one write: the rows exist
-// on no screen, a group sent is its nodes, and the reply's nodes are the
-// list a following read gives. Removing one with an order still running at
-// it keeps it, disabled, named in kept and still in nodes.
+// on no screen and a group sent is its nodes. The reply is status and kept,
+// no list. Removing one with an order still running at it keeps it,
+// disabled, named in kept and still on the process.
 func TestOperatorStations_SetProcessPositions_OnNoScreen(t *testing.T) {
 	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
@@ -635,17 +659,13 @@ func TestOperatorStations_SetProcessPositions_OnNoScreen(t *testing.T) {
 	body := map[string]any{"nodes": []string{"GRP-LOOSE", "loose-node-c"}}
 	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	var reply positionsReply
-	decodeJSON(t, resp, &reply)
+	reply := looseReply(t, resp)
 	if reply.Status != "ok" || reply.Kept == nil || len(reply.Kept) != 0 {
 		t.Errorf("status %q kept %v, want ok and an empty (not absent) kept", reply.Status, reply.Kept)
 	}
 	rows := loosePositionsRead(t, router, cookie, pid)
 	if got := nodeNamesOf(rows); got != "loose-node-b,loose-node-a,loose-node-c" {
 		t.Errorf("positions on no screen = %s, want the group's nodes in its place, then loose-node-c", got)
-	}
-	if strings.Join(reply.Nodes, ",") != nodeNamesOf(rows) {
-		t.Errorf("the reply's nodes %v are not the list a read gives after (%s)", reply.Nodes, nodeNamesOf(rows))
 	}
 
 	busyID := rows[0].ID
@@ -654,15 +674,11 @@ func TestOperatorStations_SetProcessPositions_OnNoScreen(t *testing.T) {
 	}
 	resp = doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions", map[string]any{"nodes": []string{"loose-node-c"}}, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	reply = positionsReply{}
-	decodeJSON(t, resp, &reply)
+	reply = looseReply(t, resp)
 	if len(reply.Kept) != 1 || reply.Kept[0] != "loose-node-b" {
 		t.Errorf("kept = %v, want [loose-node-b]: an order is still running at it", reply.Kept)
 	}
 	rows = loosePositionsRead(t, router, cookie, pid)
-	if strings.Join(reply.Nodes, ",") != nodeNamesOf(rows) {
-		t.Errorf("the reply's nodes %v are not the list a read gives after (%s)", reply.Nodes, nodeNamesOf(rows))
-	}
 	// The kept row keeps its sequence (1, as loose-node-c's now is), so the two
 	// sort by name; what matters is that both are there and loose-node-a is not.
 	if got := nodeNamesOf(rows); got != "loose-node-b,loose-node-c" {

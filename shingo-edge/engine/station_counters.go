@@ -207,12 +207,9 @@ func tagsWords(tagName, tagName2 string) string {
 }
 
 // stationCounterName is a counter as the strip names it: its label, else its
-// tags.
+// tags (counters.LineCounter.Name, which the position-removal warning says too).
 func stationCounterName(lc counters.LineCounter) string {
-	if lc.Label != "" {
-		return lc.Label
-	}
-	return tagsWords(lc.TagName, lc.TagName2)
+	return lc.Name()
 }
 
 // SetCountedAt binds a position to a station counter (nil: back to the

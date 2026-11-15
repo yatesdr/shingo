@@ -1,12 +1,15 @@
 package service
 
 import (
+	"fmt"
+
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
 // RemovalImpact is the screen sheet's question before a save that takes
-// positions off a station: what still names them. nodeNames is the list the
+// positions off a station: what still names them, and what a person set at
+// them that the take-off clears (positionSettings). nodeNames is the list the
 // save will send, read as SetNodes reads it; the answer is
 // domain.PositionRemovalWarning over the positions the station owns that the
 // list leaves out. Nothing is written.
@@ -14,8 +17,10 @@ import (
 // ONLY ON THE REMOVE PATH. The sheet asks only when its list drops a position,
 // and the save itself (SetNodes) reads nothing more than it did. A list that
 // removes nothing costs two reads, the station and its positions; one that
-// removes a position adds four, flat in the style count: the recipes, the live
-// claims, the styles and the process. TestRemovalImpact_Statements pins both.
+// removes a position adds five, flat in the style count: the recipes, the live
+// claims, the styles, the process and the removed positions' runtime rows; a
+// sixth, the process's station counters, when a removed position is counted
+// at one. TestRemovalImpact_Statements pins all three.
 func (s *StationService) RemovalImpact(stationID int64, nodeNames []string) (string, error) {
 	station, err := s.db.GetOperatorStation(stationID)
 	if err != nil {
@@ -28,7 +33,7 @@ func (s *StationService) RemovalImpact(stationID int64, nodeNames []string) (str
 // the warning over the process's positions on no screen that nodeNames
 // leaves out. A position on a screen is not that list's to remove, so it is
 // never named. Nothing is written; one read when nothing is removed, the
-// same four more when something is.
+// same five or six more when something is.
 func (s *StationService) LooseRemovalImpact(processID int64, nodeNames []string) (string, error) {
 	return s.removalImpact(processID, 0, nodeNames)
 }
@@ -36,7 +41,7 @@ func (s *StationService) LooseRemovalImpact(processID int64, nodeNames []string)
 // removalImpact is the warning both share, as setPositions is the save both
 // share: the positions the write owns (the station's, or with stationID 0
 // the process's on no screen) that nodeNames, read as the save reads it,
-// leaves out, and what still names them.
+// leaves out, what still names them, and what they take with them.
 func (s *StationService) removalImpact(processID, stationID int64, nodeNames []string) (string, error) {
 	var owned []processes.Node
 	var err error
@@ -51,20 +56,76 @@ func (s *StationService) removalImpact(processID, stationID int64, nodeNames []s
 		return "", err
 	}
 	_, desired := s.wantedNames(nodeNames)
-	var removed []string
+	var removed []processes.Node
+	var names []string
 	for _, n := range owned {
 		if !desired[n.CoreNodeName] {
-			removed = append(removed, n.CoreNodeName)
+			removed = append(removed, n)
+			names = append(names, n.CoreNodeName)
 		}
 	}
 	if len(removed) == 0 {
 		return "", nil
 	}
-	claims, err := s.positionClaims(processID, removed)
+	claims, err := s.positionClaims(processID, names)
 	if err != nil {
 		return "", err
 	}
+	if err := s.positionSettings(processID, removed, claims); err != nil {
+		return "", err
+	}
 	return domain.PositionRemovalWarning(claims), nil
+}
+
+// positionSettings fills in, on claims (one per position of removed, in the
+// same order), what a person set at each position that the save's retire
+// clears for good: its light curtain, the station counter it is counted at,
+// and a person's auto-reorder off (domain.PositionClaims says why each is
+// lost and not moved).
+//
+// The curtain and the counter binding are on the rows already in hand; a
+// person's off is on the runtime row, one read for every removed position;
+// a counter's name is one read of the process's counters, made only when a
+// removed position is counted at one.
+//
+// A position the save finds an order still running at is kept, disabled,
+// and loses nothing; this read cannot know that ahead of the save, and the
+// save's reply names it in kept.
+func (s *StationService) positionSettings(processID int64, removed []processes.Node, claims []domain.PositionClaims) error {
+	ids := make([]int64, len(removed))
+	counted := false
+	for i, n := range removed {
+		ids[i] = n.ID
+		counted = counted || n.LineCounterID != nil
+	}
+	runtimes, err := s.db.ProcessNodeRuntimes(ids)
+	if err != nil {
+		return err
+	}
+	counterName := map[int64]string{}
+	if counted {
+		lcs, err := s.db.ListLineCounters(processID)
+		if err != nil {
+			return err
+		}
+		for _, lc := range lcs {
+			counterName[lc.ID] = lc.Name()
+		}
+	}
+	for i, n := range removed {
+		c := &claims[i]
+		c.Curtain = n.CurtainEnabled || n.CurtainPLCName != "" || n.CurtainTagName != ""
+		if n.LineCounterID != nil {
+			c.CountedAt = counterName[*n.LineCounterID]
+			if c.CountedAt == "" {
+				c.CountedAt = fmt.Sprintf("station counter %d", *n.LineCounterID)
+			}
+		}
+		if rt := runtimes[n.ID]; rt != nil && rt.ReorderHold == domain.ReorderHoldPersonOff {
+			c.ReorderOff = true
+		}
+	}
+	return nil
 }
 
 // positionClaims is, for each position in removed, the recipes and styles of

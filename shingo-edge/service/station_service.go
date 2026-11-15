@@ -581,22 +581,6 @@ func (s *StationService) SetLoosePositions(processID int64, nodeNames []string) 
 	return s.setPositions(processID, 0, nodeNames)
 }
 
-// LoosePositionNames is the core_node_name list of a process's positions on
-// no screen, in the order GetNodeNames gives a screen's (sequence, then
-// name), disabled rows included: what SetLoosePositions leaves, read back.
-// Never nil.
-func (s *StationService) LoosePositionNames(processID int64) ([]string, error) {
-	nodes, err := s.db.ListProcessNodesByProcess(processID)
-	if err != nil {
-		return nil, err
-	}
-	out := []string{}
-	for _, n := range onNoScreen(nodes) {
-		out = append(out, n.CoreNodeName)
-	}
-	return out, nil
-}
-
 // onNoScreen is the rows of nodes that no screen holds, in nodes' order.
 func onNoScreen(nodes []processes.Node) []processes.Node {
 	var out []processes.Node

@@ -48,6 +48,20 @@ func (c LineCounter) Tags() []string {
 	return []string{c.TagName, c.TagName2}
 }
 
+// Name is the counter as another row names it: its label, else its tags joined
+// with " + " (the counter counts their sum). The station strip's name and the
+// position-removal warning's; the page's own copy is StationCard.nameOf
+// (station-card.js).
+func (c LineCounter) Name() string {
+	if c.Label != "" {
+		return c.Label
+	}
+	if c.TagName2 == "" {
+		return c.TagName
+	}
+	return c.TagName + " + " + c.TagName2
+}
+
 const lineCounterCols = `lc.id, lc.process_id, lc.label, lc.plc_name, lc.tag_name, lc.last_count,
 	COALESCE(lc.last_poll_at, ''), lc.warlink_managed,
 	lc.tag_name_2, lc.last_count_2, COALESCE(lc.last_poll_at_2, ''), lc.warlink_managed_2`
