@@ -351,6 +351,34 @@ func TestCellPicture_EveryPositionSaysItsStation(t *testing.T) {
 	}
 }
 
+// TestCellPicture_TheDesktopDrawsAPositionOnNoScreen: the desktop's picture
+// (station 0) is every live position of the process, a position no screen
+// has taken yet included. A process's positions come before its screen
+// (setup order, 2026-11-14), so a new process's first style is drawn over
+// positions on no screen; leaving them out drew an empty press. A screen's
+// own picture still leaves them out: nobody at that screen works them.
+func TestCellPicture_TheDesktopDrawsAPositionOnNoScreen(t *testing.T) {
+	t.Parallel()
+	screen := int64(4)
+	nodes := []Node{
+		{ID: 1, CoreNodeName: "LOOSE_1", Enabled: true},
+		{ID: 2, CoreNodeName: "ON_SCREEN_1", Enabled: true, OperatorStationID: &screen},
+	}
+	names := func(stationID int64) map[string]bool {
+		out := map[string]bool{}
+		for _, p := range BuildCellPicture(CellPictureInput{StationID: stationID, Nodes: nodes}).Positions {
+			out[p.CoreNodeName] = true
+		}
+		return out
+	}
+	if desk := names(0); !desk["LOOSE_1"] || !desk["ON_SCREEN_1"] {
+		t.Errorf("the desktop's picture draws %v, want both positions, the one on no screen included", desk)
+	}
+	if hmi := names(screen); hmi["LOOSE_1"] || !hmi["ON_SCREEN_1"] {
+		t.Errorf("the screen's picture draws %v, want its own position and not the one on no screen", hmi)
+	}
+}
+
 // TestCellPicture_AnIndexPressSaysWhoRefillsIt: the board's view carries who
 // brings an index press's back its next carrier, so the board's lines can
 // name Robot 2 or Robot 3; Robot 1, the default, says nothing.
