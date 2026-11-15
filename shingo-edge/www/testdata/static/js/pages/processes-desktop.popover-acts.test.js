@@ -617,6 +617,11 @@ function loadPage(loadOpts) {
 
     let src = fs.readFileSync(path.join(SRC_DIR, 'processes-desktop.js'), 'utf8');
     src = src.replace(/^import[\s\S]*?from\s+'[^']+';\s*$/gm, '');
+    // THE COMPOSER STACK'S import()s (loadStack) answer with this harness's
+    // globals: the module a name is read from is the global of that name, as
+    // the static imports' names are.
+    src = src.replace(/\bimport\(('[^']+')\)/g, '__import($1)');
+    global.__import = () => Promise.resolve(new Proxy({}, { get: (_, k) => global[k] }));
     src = src.replace(/^export\s*\{[^}]*\};?\s*$/m, '');
     // Each load gets its own function scope: the page declares top-level
     // consts (M, B, S, POPOVER_ACTS…) and this pin loads it twice.

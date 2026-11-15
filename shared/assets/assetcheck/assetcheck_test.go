@@ -87,6 +87,38 @@ func TestLoad_BothBrowsersLoadOneURLPerModule(t *testing.T) {
 	}
 }
 
+// A <template>'s stylesheet and classic script are fetched, held to the gates
+// and left out of the boot: a browser fetches nothing a template holds until
+// the page puts the tag in the document.
+func TestLoad_ATemplatesTagsAreLazy(t *testing.T) {
+	h := testHandler(t)
+	html := `<link rel="stylesheet" href="` + h.URL("/static/a.css") + `"><template id="later">` +
+		`<script src="` + h.URL("/static/c.js") + `"></script></template>`
+	r := Load(h, html, WithImportMap)
+	noProblems(t, "a template", r)
+	lazy := map[string]bool{}
+	for _, f := range r.Fetches {
+		lazy[f.URL] = f.Lazy
+	}
+	if v, ok := lazy[h.URL("/static/c.js")]; !ok || !v {
+		t.Errorf("the template's script: fetched %v, lazy %v; want fetched, lazy", ok, v)
+	}
+	if v := lazy[h.URL("/static/a.css")]; v {
+		t.Error("the stylesheet outside the template is lazy")
+	}
+	if n, _ := r.Boot(); n != 1 {
+		t.Errorf("boot requests %d, want 1 (the stylesheet): %+v", n, r.Fetches)
+	}
+	plain := Load(h, `<template><script src="/static/c.js"></script></template>`, WithImportMap)
+	if len(plain.Problems) == 0 || !strings.Contains(plain.Problems[0], `name it {{assetURL "/static/c.js"}}`) {
+		t.Errorf("a plain URL in a template: problems %v, want the hashed-form gate", plain.Problems)
+	}
+	mod := Load(h, `<template><script type="module">import "/static/dep.js";</script></template>`, WithImportMap)
+	if len(mod.Problems) == 0 || !strings.Contains(mod.Problems[0], "a module defers by import()") {
+		t.Errorf("a module in a template: problems %v", mod.Problems)
+	}
+}
+
 func TestLoad_NamesEachBreach(t *testing.T) {
 	h := testHandler(t)
 	for _, c := range []struct {

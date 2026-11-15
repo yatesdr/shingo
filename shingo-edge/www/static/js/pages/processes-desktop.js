@@ -14,7 +14,6 @@
 // changeover/start; the one start on this page is the health strip's, the
 // changeover a wrong part offers (catidStartChangeover).
 
-import { renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
 import {
@@ -48,8 +47,52 @@ import { toast } from '/static/shared/notice.js';
 // each field with its own rule (pickerInit, drawPicker).
 import { mountPicker, nodePicker, nodeRows, nodeSource } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
-import { exceptionList, countOf } from '/static/shared/exceptions.js';
-import { settingsPage } from '/static/shared/settings.js';
+
+// THE COMPOSER STACK IS A PROCESS'S, NOT THE LIST'S (slice 5): the flow
+// picture, Settings' page shell and its exception lists, and the classic
+// scripts and stylesheets in processes.html's <template>s. loadStack brings
+// them once, before the first openProcess, and they stay; the list's cold
+// load is 12 requests fewer. These names are bound when it lands.
+let renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf;
+let exceptionList, countOf, settingsPage;
+let stackLoad = null;
+
+// loadStack puts a copy of each tag in the page's stack templates where its
+// template stands (the cascade and the script order the tags had in the
+// page; a classic script inserted by script runs in insertion order only with
+// async off), and imports the modules beside them: none of those reads the
+// classic scripts' globals as it evaluates. A failure stays until a reload:
+// asking again would run the classic scripts that did load a second time,
+// and a second run of a top-level const throws.
+function loadStack() {
+    if (stackLoad) return stackLoad;
+    const tags = [];
+    for (const id of ['pd-stack-before', 'pd-stack']) {
+        const t = $(id);
+        if (!t || !t.content) continue;
+        for (const src of Array.from(t.content.children)) {
+            const tag = document.createElement(src.tagName.toLowerCase());
+            for (const a of Array.from(src.attributes)) tag.setAttribute(a.name, a.value);
+            if (tag.tagName === 'SCRIPT') tag.async = false;
+            tags.push(new Promise((ok, bad) => {
+                tag.addEventListener('load', ok);
+                tag.addEventListener('error', () => bad(new Error((src.getAttribute('src') || src.getAttribute('href')) + ' did not load')));
+            }));
+            t.before(tag);
+        }
+    }
+    stackLoad = Promise.all([
+        Promise.all(tags),
+        import('/static/operator-station/operator-flow.js'),
+        import('/static/shared/exceptions.js'),
+        import('/static/shared/settings.js'),
+    ]).then(([, flow, exc, set]) => {
+        ({ renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } = flow);
+        ({ exceptionList, countOf } = exc);
+        ({ settingsPage } = set);
+    });
+    return stackLoad;
+}
 const NO_NOTICE = { notice: false };
 
 const M = () => window.ComposerModel;
@@ -710,6 +753,13 @@ async function openSettingsAt(heading) {
 
 // ── D1 · Flows ───────────────────────────────────────────────────────────────
 async function openProcess(id) {
+    try {
+        await loadStack();
+    } catch (err) {
+        root().innerHTML = '<div class="pd-list"><p class="pd-dim">This process’s page could not load (' +
+            esc(err && err.message ? err.message : String(err)) + '). Reload to try again.</p></div>';
+        return;
+    }
     S.processID = id;
     S.tab = 'flows';
     // Everything derived from the last process goes with it: a travel graph

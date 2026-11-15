@@ -45,7 +45,7 @@ var edgePageBudgets = map[string]struct {
 	"manual-order.html":     {20, 75 << 10},  // 18, 68974 at s3-adapters: the shared picker and its adapters
 	"operator-display.html": {27, 194 << 10}, // 25, 180258
 	"orders.html":           {18, 80 << 10},  // 16, 73607
-	"processes.html":        {35, 360 << 10}, // 33, 329851 at s3-processes: the shared picker and its adapters
+	"processes.html":        {25, 272 << 10}, // 23, 247690 at process-page slice 5: the composer stack waits for the first open
 	"production.html":       {22, 101 << 10}, // 20, 93782 at s3-adapters: the shared picker and its adapters
 }
 

@@ -159,7 +159,8 @@ type Fetch struct {
 	URL  string
 	Kind string // module, script, style, icon
 	// Lazy is a module reached only through import(): fetched when the call
-	// runs, not at boot.
+	// runs, not at boot. Or a stylesheet or classic script whose tag is in a
+	// <template>: fetched when the page puts the tag in the document.
 	Lazy         bool
 	Status       int
 	Bytes        int64 // the body as sent: the gzip when the handler holds one
@@ -203,6 +204,7 @@ func (r Result) Modules() []string {
 var (
 	htmlCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
 	tagRe         = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>|<link\b([^>]*)>`)
+	templateRe    = regexp.MustCompile(`(?is)<template\b[^>]*>(.*?)</template\s*>`)
 	attrRe        = regexp.MustCompile(`(?s)([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?`)
 )
 
@@ -219,19 +221,31 @@ func attrs(s string) map[string]string {
 // inline module scripts import, followed through each module's static
 // imports (the boot) and then its import() calls (lazy). Each request asks
 // for gzip; each module body is read for its imports as fetched.
+//
+// A <template>'s tags are inert: a browser fetches nothing a template holds
+// until the page puts a copy in the document. A page defers a stylesheet or a
+// classic script that way (processes.html's composer stack, loaded on the
+// first open of a process); its tags are fetched lazy, held to every gate
+// here and left out of Boot. A module script or an import map in one is a
+// problem: a module defers by import(), and a map is read once, at parse.
 func Load(h http.Handler, page string, mode Mode) Result {
 	l := &loader{h: h, mode: mode, byURL: map[string]bool{}, byPlain: map[string]string{}}
+	page = htmlCommentRe.ReplaceAllString(page, "")
+	for _, t := range templateRe.FindAllStringSubmatch(page, -1) {
+		l.deferred(t[1])
+	}
+	page = templateRe.ReplaceAllString(page, "")
 	var entries []string
 	mapSeen, moduleSeen := false, false
-	for _, m := range tagRe.FindAllStringSubmatch(htmlCommentRe.ReplaceAllString(page, ""), -1) {
+	for _, m := range tagRe.FindAllStringSubmatch(page, -1) {
 		if strings.HasPrefix(strings.ToLower(m[0]), "<link") {
 			a := attrs(m[3])
 			rel := " " + strings.ToLower(a["rel"]) + " "
 			switch {
 			case strings.Contains(rel, " stylesheet "):
-				l.asset(a["href"], "style")
+				l.asset(a["href"], "style", false)
 			case strings.Contains(rel, " icon "):
-				l.asset(a["href"], "icon")
+				l.asset(a["href"], "icon", false)
 			case strings.Contains(rel, " modulepreload "):
 				l.problem("<link rel=modulepreload href=%q>: a preload is not covered by these checks", a["href"])
 			}
@@ -275,7 +289,7 @@ func Load(h http.Handler, page string, mode Mode) Result {
 			}
 		case "", "text/javascript", "application/javascript":
 			if hasSrc {
-				l.asset(src, "script")
+				l.asset(src, "script", false)
 			}
 		}
 	}
@@ -309,14 +323,38 @@ func (l *loader) problem(format string, args ...any) {
 	l.res.Problems = append(l.res.Problems, fmt.Sprintf(format, args...))
 }
 
-// asset fetches a stylesheet, icon or classic script. Its tag is the
-// template's {{assetURL}}, so its URL is the hashed one, cached for good.
-func (l *loader) asset(u, kind string) {
+// deferred loads the tags of one <template>'s content, lazy: stylesheets and
+// classic scripts (see Load).
+func (l *loader) deferred(content string) {
+	for _, m := range tagRe.FindAllStringSubmatch(content, -1) {
+		if strings.HasPrefix(strings.ToLower(m[0]), "<link") {
+			a := attrs(m[3])
+			if strings.Contains(" "+strings.ToLower(a["rel"])+" ", " stylesheet ") {
+				l.asset(a["href"], "style", true)
+			}
+			continue
+		}
+		a := attrs(m[1])
+		switch typ := strings.ToLower(strings.TrimSpace(a["type"])); typ {
+		case "", "text/javascript", "application/javascript":
+			if src, ok := a["src"]; ok {
+				l.asset(src, "script", true)
+			}
+		default:
+			l.problem("a <template> holds <script type=%q>: a module defers by import(), and an import map is read once, at parse", typ)
+		}
+	}
+}
+
+// asset fetches a stylesheet, icon or classic script, lazy when its tag is in
+// a <template>. Its tag is the template's {{assetURL}}, so its URL is the
+// hashed one, cached for good.
+func (l *loader) asset(u, kind string, lazy bool) {
 	if !strings.HasPrefix(u, "/") || strings.HasPrefix(u, "//") || l.byURL[u] {
 		return
 	}
 	l.byURL[u] = true
-	f, _ := l.fetch(u, kind, false)
+	f, _ := l.fetch(u, kind, lazy)
 	if f.Status != http.StatusOK {
 		return
 	}

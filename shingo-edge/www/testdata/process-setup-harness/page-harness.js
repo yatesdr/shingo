@@ -743,6 +743,11 @@ async function open(opts) {
     src = src.replace(/^import\s*\{([^}]*)\}\s*from\s+'([^']+)';[ \t]*$/gm, (m, list, from) =>
         (sharedFile(from) ? 'const ' + destructure(list) + ' = __shared(' + JSON.stringify(from) + ');' : '') + blank(m));
     src = src.replace(/^import[\s\S]*?from\s+'[^']+';[ \t]*$/gm, blank);
+    // THE COMPOSER STACK'S import()s (loadStack): a shared module that runs
+    // here for real is that module; operator-flow.js is the flow bound above,
+    // on the realm.
+    src = src.replace(/\bimport\(('[^']+')\)/g, '__import($1)');
+    ctx.__import = from => Promise.resolve(sharedFile(from) ? ctx.__shared(from) : ctx);
     src = src.replace(/^export\s*\{[^}]*\};?[ \t]*$/m, blank);
     vm.runInContext('(function(){\n' + src + '\n;globalThis.__pd = function (s) { return eval(s); };\n})();', ctx,
         { filename: 'processes-desktop.js' });
