@@ -415,7 +415,7 @@ func TestComposerShots(t *testing.T) {
 			if c.Mode == string(protocol.SwapModeTwoRobotPressIndex) {
 				pressIndexID = id
 			}
-			t.Logf("named %q (preset %d) over %d of %d flows", c.SuggestedName, id, len(c.Members), offer.StylesWithFlow)
+			t.Logf("named %q (preset %d) over %d flows", c.SuggestedName, id, len(c.Members))
 		}
 	}
 

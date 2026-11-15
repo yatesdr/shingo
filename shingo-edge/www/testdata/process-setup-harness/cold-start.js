@@ -274,7 +274,7 @@ async function bugDeadEndSlot() {
 async function bugHmiNoRecipe() {
     L.push('', '## F36: Settings › HMI setup on a process with no recipe');
     const o = pressA(c => { c.presets = []; });
-    const presetsView = { presets: [], styles_with_flow: 2, candidates: [{
+    const presetsView = { presets: [], candidates: [{
         shape_key: 'k1', suggested_name: 'Found shape', mode: '', where: 'POS_A1 / POS_A3',
         shape: clone(T.FX.server.presetsView.presets[0].shape), members: [1, 2], member_names: ['Style A', 'Style B'],
     }] };

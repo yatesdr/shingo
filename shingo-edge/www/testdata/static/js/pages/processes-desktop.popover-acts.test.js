@@ -1808,7 +1808,7 @@ async function mainAsync() {
         const { root, pop, main, doc } = loadPage({
             composer: firstRowComposer(),
             fetch: url => (/\/api\/processes\/1\/presets$/.test(url)
-                ? Promise.resolve({ ok: true, json: async () => ({ presets: [], candidates: [], styles_with_flow: 0,
+                ? Promise.resolve({ ok: true, json: async () => ({ presets: [], candidates: [],
                     generated: [{ mode: 'single_robot', shape, where: 'PLN_01' }] }) })
                 : null),
         });
@@ -2410,7 +2410,6 @@ async function mainAsync() {
             { id: 8, name: 'Mixed pair', version: 1, mode: '', where: 'PLN_01 / PLN_02', members: [], drifted: [] },
         ],
         candidates: [{ shape_key: 'k1', mode: '', where: 'PLN_01 / PLN_02', members: [1, 2], member_names: ['Style A', 'Style B'] }],
-        styles_with_flow: 2,
     });
     const presetsPage = hash => loadPage({
         composer: savedComposer(), hash: hash,
