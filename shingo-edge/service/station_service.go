@@ -968,9 +968,6 @@ func (s *StationService) CellPictureForStation(stationID int64) (*domain.CellPic
 	if err != nil {
 		return nil, err
 	}
-	if process == nil {
-		return nil, nil
-	}
 	live := s.liveClaims(process.ID)
 	active := map[string]domain.NodeClaim{}
 	if process.ActiveStyleID != nil {
