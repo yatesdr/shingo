@@ -2626,7 +2626,56 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return err == nil && col == 1 && tbl == 1
 			},
 		},
+		{
+			// v53 (2026-11-14): the idle rule's two clocks.
+			// reporting_points.last_part_at, the engine's clock at the last
+			// read that counted a part (NULL until one), and orders.staged_at,
+			// the engine's clock when the order was last mirrored to staged
+			// (NULL until then). Each column guarded, as v50. An order staged
+			// when the column is added is stamped with the migration's own
+			// time (SQLite's, the wall: the engine's clock is not running yet,
+			// and at a plant they agree): its robots get their hour from the
+			// release, rather than being sent back by the first pass of a rule
+			// that cannot see when they arrived. Every other row stays NULL.
+			Version: 53,
+			Name:    "idle_rule_clocks",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v53Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` TEXT`); err != nil {
+						return err
+					}
+					if c.column == "staged_at" {
+						if _, err := tx.Exec(`UPDATE orders SET staged_at = datetime('now') WHERE status = 'staged'`); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				for _, c := range v53Columns {
+					var n int
+					if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil || n != 1 {
+						return false
+					}
+				}
+				return true
+			},
+		},
 	}
+}
+
+// v53Columns are v53's columns (each TEXT, NULL on every existing row).
+var v53Columns = []struct{ table, column string }{
+	{"reporting_points", "last_part_at"},
+	{"orders", "staged_at"},
 }
 
 // v50Columns are v50's runtime-row columns, each with its ADD (run only where

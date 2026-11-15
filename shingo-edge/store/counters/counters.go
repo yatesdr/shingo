@@ -204,11 +204,12 @@ func HourlyTotals(db *sql.DB, processID, from, to int64) (map[int64]int64, error
 // --- reporting points ---
 
 func scanReportingPoint(rp *ReportingPoint, scanner interface{ Scan(...any) error }) error {
-	var lastPollAt sql.NullString
-	if err := scanner.Scan(&rp.ID, &rp.PLCName, &rp.TagName, &rp.StyleID, &rp.LastCount, &lastPollAt, &rp.Enabled, &rp.WarlinkManaged); err != nil {
+	var lastPollAt, lastPartAt sql.NullString
+	if err := scanner.Scan(&rp.ID, &rp.PLCName, &rp.TagName, &rp.StyleID, &rp.LastCount, &lastPollAt, &lastPartAt, &rp.Enabled, &rp.WarlinkManaged); err != nil {
 		return err
 	}
 	rp.LastPollAt = helpers.ScanTimePtr(lastPollAt)
+	rp.LastPartAt = helpers.ScanTimePtr(lastPartAt)
 	return nil
 }
 
@@ -220,7 +221,7 @@ func ListReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
 	// heartbeat tiles query process_id=0, match no cell_part_events (keyed by the
 	// real process_id) and render "No data" despite live production. The whole
 	// no-manual-setup auto-populate path depends on this resolving.
-	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, COALESCE(js.process_id, 0)
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.last_part_at, rp.enabled, rp.warlink_managed, COALESCE(js.process_id, 0)
 		FROM reporting_points rp
 		LEFT JOIN styles js ON js.id = rp.style_id
 		ORDER BY rp.plc_name, rp.tag_name`)
@@ -236,7 +237,7 @@ func ListReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
 // process (UNIQUE(plc_name, tag_name)): the walk has no point filter, so a
 // second enabled point on a process would draw every cart twice.
 func ListPolledReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
-	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, p.id
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.last_part_at, rp.enabled, rp.warlink_managed, p.id
 		FROM reporting_points rp
 		JOIN styles js ON js.id = rp.style_id
 		JOIN processes p ON p.id = js.process_id AND p.counter_plc_name = rp.plc_name AND p.counter_tag_name = rp.tag_name
@@ -252,7 +253,7 @@ func ListPolledReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
 // ListStrayReportingPoints returns the enabled points the poll does not read:
 // on no live process, or not on their process's counter tag.
 func ListStrayReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
-	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, COALESCE(p.id, 0)
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.last_part_at, rp.enabled, rp.warlink_managed, COALESCE(p.id, 0)
 		FROM reporting_points rp
 		LEFT JOIN styles js ON js.id = rp.style_id
 		LEFT JOIN processes p ON p.id = js.process_id
@@ -270,11 +271,12 @@ func scanReportingPointsWithLine(rows *sql.Rows) ([]ReportingPoint, error) {
 	var rps []ReportingPoint
 	for rows.Next() {
 		var rp ReportingPoint
-		var lastPollAt sql.NullString
-		if err := rows.Scan(&rp.ID, &rp.PLCName, &rp.TagName, &rp.StyleID, &rp.LastCount, &lastPollAt, &rp.Enabled, &rp.WarlinkManaged, &rp.ProcessID); err != nil {
+		var lastPollAt, lastPartAt sql.NullString
+		if err := rows.Scan(&rp.ID, &rp.PLCName, &rp.TagName, &rp.StyleID, &rp.LastCount, &lastPollAt, &lastPartAt, &rp.Enabled, &rp.WarlinkManaged, &rp.ProcessID); err != nil {
 			return nil, err
 		}
 		rp.LastPollAt = helpers.ScanTimePtr(lastPollAt)
+		rp.LastPartAt = helpers.ScanTimePtr(lastPartAt)
 		rps = append(rps, rp)
 	}
 	return rps, rows.Err()
@@ -283,7 +285,7 @@ func scanReportingPointsWithLine(rows *sql.Rows) ([]ReportingPoint, error) {
 // GetReportingPoint returns one reporting_point by id.
 func GetReportingPoint(db *sql.DB, id int64) (*ReportingPoint, error) {
 	rp := &ReportingPoint{}
-	if err := scanReportingPoint(rp, db.QueryRow(`SELECT id, plc_name, tag_name, style_id, last_count, last_poll_at, enabled, warlink_managed FROM reporting_points WHERE id = ?`, id)); err != nil {
+	if err := scanReportingPoint(rp, db.QueryRow(`SELECT id, plc_name, tag_name, style_id, last_count, last_poll_at, last_part_at, enabled, warlink_managed FROM reporting_points WHERE id = ?`, id)); err != nil {
 		return nil, err
 	}
 	return rp, nil
@@ -326,8 +328,19 @@ func UpdateReportingPoint(db *sql.DB, id int64, plcName, tagName string, styleID
 // last_poll_at, which is the engine's; SQLite's own now is the wall,
 // and on a clock that runs ahead of it the verdict could never fire.
 func UpdateReportingPointCounter(db *sql.DB, id int64, plcName, tagName string, count int64) (bool, error) {
-	res, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=?
-		WHERE id=? AND plc_name=? AND tag_name=?`, count, clock.Now().UTC().Format(helpers.TimeLayout), id, plcName, tagName)
+	return UpdateReportingPointCounted(db, id, plcName, tagName, count, false)
+}
+
+// UpdateReportingPointCounted is UpdateReportingPointCounter for a read that
+// may have counted parts: with parts it also stamps last_part_at, in the same
+// statement, on the same clock. The poll's counted read is its caller
+// (plc pollReportingPoint); a read with no part (a first read, a counter reset
+// to 0, a re-point's catch-up base) leaves last_part_at where it was.
+func UpdateReportingPointCounted(db *sql.DB, id int64, plcName, tagName string, count int64, parts bool) (bool, error) {
+	now := clock.Now().UTC().Format(helpers.TimeLayout)
+	res, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=?,
+		last_part_at=CASE WHEN ? THEN ? ELSE last_part_at END
+		WHERE id=? AND plc_name=? AND tag_name=?`, count, now, parts, now, id, plcName, tagName)
 	if err != nil {
 		return false, err
 	}
@@ -345,7 +358,7 @@ func SetReportingPointManaged(db *sql.DB, id int64, managed bool) error {
 // tag_name) pair.
 func GetReportingPointByTag(db *sql.DB, plcName, tagName string) (*ReportingPoint, error) {
 	rp := &ReportingPoint{}
-	if err := scanReportingPoint(rp, db.QueryRow(`SELECT id, plc_name, tag_name, style_id, last_count, last_poll_at, enabled, warlink_managed FROM reporting_points WHERE plc_name = ? AND tag_name = ? LIMIT 1`, plcName, tagName)); err != nil {
+	if err := scanReportingPoint(rp, db.QueryRow(`SELECT id, plc_name, tag_name, style_id, last_count, last_poll_at, last_part_at, enabled, warlink_managed FROM reporting_points WHERE plc_name = ? AND tag_name = ? LIMIT 1`, plcName, tagName)); err != nil {
 		return nil, err
 	}
 	return rp, nil
@@ -357,7 +370,7 @@ func GetReportingPointByTag(db *sql.DB, plcName, tagName string) (*ReportingPoin
 // leftover, a deleted process's) is not a cell; a counter switched off still
 // is (liveness is a separate signal).
 func ListCountedReportingPoints(db *sql.DB) ([]ReportingPoint, error) {
-	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.enabled, rp.warlink_managed, p.id
+	rows, err := db.Query(`SELECT rp.id, rp.plc_name, rp.tag_name, rp.style_id, rp.last_count, rp.last_poll_at, rp.last_part_at, rp.enabled, rp.warlink_managed, p.id
 		FROM reporting_points rp
 		JOIN processes p ON p.counter_plc_name = rp.plc_name AND p.counter_tag_name = rp.tag_name
 		ORDER BY rp.plc_name, rp.tag_name`)

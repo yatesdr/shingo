@@ -85,6 +85,25 @@ func GoReorderAtCoreNode(db DBTX, processID int64, coreNode string, at time.Time
 	return nil
 }
 
+// ClearIdleOffAtProcess clears the idle rule's offs (domain.IsIdleOff, by the
+// note it writes) set before lastPart at any position of the process, in one
+// statement, and reports how many cleared. The rule wrote each at a line that
+// had counted nothing for its hour, so a part counted after it is a restart,
+// whether or not this Edge was up to see the stop: lastPart is the line's
+// last counted part (reporting_points.last_part_at), never a reading with no
+// part. An older Core's off and a pause are left as they are.
+func ClearIdleOffAtProcess(db DBTX, processID int64, lastPart time.Time) (int64, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET reorder_hold='', reorder_hold_at='', reorder_hold_note=''
+		WHERE reorder_hold=? AND substr(reorder_hold_note, 1, ?)=? AND reorder_hold_at < ?
+		  AND process_node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`,
+		string(domain.ReorderHoldOff), len(domain.IdleOffNotePrefix), domain.IdleOffNotePrefix,
+		lastPart.UTC().Format(helpers.TimeLayout), processID)
+	if err != nil {
+		return 0, fmt.Errorf("clear the idle rule's offs: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // ClearReorderOffAtProcess clears an off set before before at any position of
 // the process, in one statement: the line has counted a part after a stop
 // (engine/idle_cancel.go), which is one of the two things that end an off. A

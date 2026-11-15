@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -36,7 +37,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.want,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.staged_at, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -209,7 +210,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var o Order
 		var stagedExpireAt sql.NullString
 		var faultSince, faultDeadline, faultRef sql.NullString
-		var departedAt, cellLeftAt sql.NullString
+		var departedAt, cellLeftAt, stagedAt sql.NullString
 		var binID, siblingID, stationWait sql.NullInt64
 		var createdAt, updatedAt, want string
 		var laneHeld int
@@ -217,11 +218,12 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
 		readWant(&o, want)
+		o.StagedAt = helpers.ScanTimePtr(stagedAt)
 		o.LaneHeld = laneHeld == 1
 		o.StationWait = nullInt(stationWait)
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
@@ -257,7 +259,7 @@ func readWant(o *Order, text string) {
 func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
 	var faultSince, faultDeadline, faultRef sql.NullString
-	var departedAt, cellLeftAt sql.NullString
+	var departedAt, cellLeftAt, stagedAt sql.NullString
 	var binID, siblingID, stationWait sql.NullInt64
 	var createdAt, updatedAt, want string
 	var laneHeld int
@@ -265,11 +267,12 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
 	readWant(o, want)
+	o.StagedAt = helpers.ScanTimePtr(stagedAt)
 	o.LaneHeld = laneHeld == 1
 	o.StationWait = nullInt(stationWait)
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
@@ -519,12 +522,22 @@ func AdoptAsked(db *sql.DB, id int64, processNodeID *int64, stagingNode string, 
 // waiting: left in place, a cancelled row went on reading "Waiting for a slot
 // at ...". A non-terminal write leaves them alone; the queue-reason write owns
 // them while the order lives.
+//
+// STAGED STAMPS staged_at with the engine's clock, in the same statement: when
+// the robot parked, which the idle rule's hour does not start before. A leg
+// staged again at a later wait is stamped again.
 func UpdateStatus(db *sql.DB, id int64, newStatus string) error {
-	q := `UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`
-	if protocol.IsTerminal(protocol.Status(newStatus)) {
-		q = `UPDATE orders SET status=?, queue_reason='', queue_code='', updated_at=datetime('now') WHERE id=?`
+	switch st := protocol.Status(newStatus); {
+	case protocol.IsTerminal(st):
+		_, err := db.Exec(`UPDATE orders SET status=?, queue_reason='', queue_code='', updated_at=datetime('now') WHERE id=?`,
+			newStatus, id)
+		return err
+	case st == protocol.StatusStaged:
+		_, err := db.Exec(`UPDATE orders SET status=?, staged_at=?, updated_at=datetime('now') WHERE id=?`,
+			newStatus, clock.Now().UTC().Format(helpers.TimeLayout), id)
+		return err
 	}
-	_, err := db.Exec(q, newStatus, id)
+	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`, newStatus, id)
 	return err
 }
 

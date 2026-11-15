@@ -186,6 +186,10 @@ var requiredColumns = []requiredColumn{
 	{"processes", "flow_composer_enabled"},
 	// The station switch's setting (v52): scanProcess selects it.
 	{"processes", "auto_reorder_switch_hmi"},
+	// The idle rule's clocks (v53): every reporting-point read selects
+	// last_part_at, every order read staged_at.
+	{"reporting_points", "last_part_at"},
+	{"orders", "staged_at"},
 	// The curtain interlock's node columns: scanNode selects all four, so a
 	// failed ALTER would kill every process_nodes read on the box.
 	{"process_nodes", "curtain_enabled"},
