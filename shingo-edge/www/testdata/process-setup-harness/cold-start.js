@@ -519,7 +519,13 @@ async function pinSetup() {
     }
 }
 
-// ── Setup · First style: a part on each position, one way they all swap ────
+// ── Setup · First style: a name, a part on each position, how they swap ────
+//
+// Round 2 (2026-11-15): the name is a field; the positions are rows of
+// Position, Part and Swap; everything the step fills in is a dropdown in its
+// role's colour (Inbound source, Outbound destination, Inbound staging,
+// Outbound staging), one set for the line and one per position whose swap
+// differs; a free row offers "add a part" from Core's catalog.
 async function pinFirstStyle() {
     L.push('', '## Setup › First style on Press A (a style with no flow yet): the step, a choice, its preview and its Save');
     // Once saved, the composer read holds the flow (the fixture's Style A).
@@ -534,52 +540,85 @@ async function pinFirstStyle() {
     page.click('root', { act: 'setup-style' });
     await page.settle();
     const html = () => page.root.innerHTML;
-    const parts = () => [...html().matchAll(/<div class="pd-fsrow"><b>([^<]*)<\/b><button class="pd-sel" data-act="fs-part" data-node="[^"]*">([^<]*)</g)].map(m => m[1] + '=' + T.decode(m[2]));
+    const rows = () => [...html().matchAll(/<div class="pd-fsrow"><b>([^<]*)<\/b>(<button class="pd-sel" data-act="fs-part"[^>]*><span class="t">([^<]*)<\/span>.*?data-act="fs-swap"[^>]*><span class="t">([^<]*)<\/span>|<button class="pd-btn quiet" data-act="fs-addpart")/g)]
+        .map(m => m[1] + '=' + (m[3] !== undefined ? T.decode(m[3]) + ' (' + T.decode(m[4]) + ')' : 'free'));
     const on = re => [...html().matchAll(re)].map(m => m[1]);
+    const picks = () => [...html().matchAll(/<div class="pd-fspick" data-role="([^"]*)">.*?<b>([^<]*)<\/b>.*?data-pick="([^"]*)" data-node="([^"]*)"><span class="t">([^<]*)<\/span>/g)]
+        .map(m => (m[4] ? m[4] + ' ' : '') + m[2] + '=' + T.decode(m[5]) + ' [' + m[1] + ']');
     const say = () => {
-        L.push('  parts: ' + parts().join(' · '));
+        L.push('  name: ' + JSON.stringify(((page.byId('pd-fsname') || {}).value) || '') + ' · rows: ' + rows().join(' · '));
         L.push('  role: ' + on(/<button class="on" data-act="fs-role" data-role="([^"]*)"/g).join() +
-            ' · swap: ' + (on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g).join() || 'set on each') +
+            ' · swap for every position: ' + (on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g).join() || 'none') +
             ' · bar: ' + JSON.stringify(T.text((/<div id="pd-bar" class="pd-fsbar">([\s\S]*?)<\/div>/.exec(html()) || [])[1] || '')) +
             ' · Save style ' + (/data-act="fs-save" disabled/.test(html()) ? 'disabled' : 'enabled'));
-        const filled = /<div class="pd-sufilled">([\s\S]*?)<\/div>/.exec(html());
-        L.push('  filled in: ' + JSON.stringify(filled ? T.text(filled[1]) : ''));
+        L.push('  picked for you: ' + picks().join(' · '));
+        const line = /<div class="pd-suline">([\s\S]*?)<p class="pd-note">([\s\S]*?)<\/p>/.exec(html());
+        L.push('  line so far: ' + JSON.stringify(line ? T.text(line[1]) + ' | ' + T.text(line[2]) : ''));
+        const free = /<p class="pd-fsfree">([^<]*)<\/p>/.exec(html());
+        if (free) L.push('  free: ' + JSON.stringify(T.decode(free[1])));
     };
     check('Start opens the First style step on Setup', page.S.tab === 'setup' && page.S.setupView === 'style', 'tab ' + page.S.tab + ' view ' + page.S.setupView);
     check('one preview of the draft, through the Styles tab\'s door', page.calls.filter(c => /\/flow\/preview$/.test(c.url)).length >= 1, 'no preview');
     say();
+    check('a name somebody chose (Style A) is kept as the parts move: it is not a part', page.S.firstStyle.named === true, 'named ' + page.S.firstStyle.named);
+    check('no "set each one": a row\'s own Swap is the way to a mix', !/data-act="fs-each"/.test(html()), 'fs-each still drawn');
     let from = page.mark();
     const mode = (/data-act="fs-mode" data-mode="([^"]*)"/.exec(html().replace(/<button class="pd-fsmode on"[^>]*>/g, '')) || [])[1];
     page.click('root', { act: 'fs-mode', mode: mode });
     await page.settle();
-    L.push('# another swap for all (' + mode + '): ' + lines(page, from).join(', '));
+    L.push('# another swap for every position (' + mode + '): ' + lines(page, from).join(', '));
     say();
     from = page.mark();
     page.click('root', { act: 'fs-role', role: 'produce' });
     await page.settle();
     L.push('# Produce: ' + lines(page, from).join(', '));
     say();
+    // A ROW'S OWN SWAP: POS_A2 on a 1-Robot Swap, the rest on the line's. It
+    // gets a set of picks of its own, listing only what its swap uses.
+    page.click('root', { act: 'fs-swap', node: 'POS_A2' });
+    await page.settle();
     from = page.mark();
-    page.click('root', { act: 'fs-each' });
+    T.pickerRow(page, 'pd-pop', 'single_robot');
     await page.settle();
-    L.push('# set each one: ' + lines(page, from).join(', ') + ' · a swap per position ' +
-        on(/data-act="fs-mode1" data-node="([^"]*)" data-mode="[^"]*"/g).filter((n, i, a) => a.indexOf(n) === i).length);
-    page.click('root', { act: 'fs-each' });
+    L.push('# POS_A2 on its own swap (1‑Robot Swap): ' + lines(page, from).join(', '));
+    say();
+    check('a position on its own swap has its own set of picks', picks().some(p => /^POS_A2 /.test(p)), picks().join(' · '));
+    // A PICK IS A DROPDOWN OF ITS ROLE'S BOX: POS_A2's outbound staging moves
+    // to STG_3, and the line so far follows.
+    page.click('root', { act: 'fs-pick', pick: 'parkOld', node: 'POS_A2' });
     await page.settle();
-    // A part is on one position: PART-1 picked for ULD_1 moves off POS_A1.
-    page.click('root', { act: 'fs-part', node: 'ULD_1' });
+    const offered = (page.byId('pd-pop') ? page.byId('pd-pop').querySelectorAll('.picker-row') : []).map(r => r.getAttribute('data-value'));
+    L.push('# POS_A2\'s Outbound staging offers: ' + offered.join(', '));
+    from = page.mark();
+    T.pickerRow(page, 'pd-pop', 'STG_3');
+    await page.settle();
+    L.push('# POS_A2\'s Outbound staging → STG_3: ' + lines(page, from).join(', '));
+    say();
+    check('the draft holds the pick', (page.S.model.cells.POS_A2 || {}).parkOld === 'STG_3', JSON.stringify(page.S.model.cells.POS_A2));
+    // A FREE ROW'S "+ add a part": Core's catalog; PART-1, on POS_A1, moves.
+    page.click('root', { act: 'fs-addpart', node: 'ULD_1' });
     await page.settle();
     const pop = page.byId('pd-pop');
     const note = ((pop ? pop.querySelectorAll('.picker-row') : []).find(r => r.getAttribute('data-value') === 'PART-1') || { querySelector: () => null });
-    L.push('# ULD_1\'s part, PART-1 in its list: ' + JSON.stringify((note.querySelector('.picker-note') || { textContent: '' }).textContent));
+    L.push('# ULD_1\'s + add a part, PART-1 in Core\'s catalog: ' + JSON.stringify((note.querySelector('.picker-note') || { textContent: '' }).textContent));
+    from = page.mark();
     T.pickerRow(page, 'pd-pop', 'PART-1');
     await page.settle();
+    L.push('# ULD_1 takes PART-1: ' + lines(page, from).join(', '));
     say();
+    // THE NAME TAKES ANY TEXT; a changed one is the style's rename, written
+    // before the Styles save.
+    const name = page.byId('pd-fsname');
+    name.value = 'FG-7731 finished';
+    page.fire(name, 'input');
     from = page.mark();
     page.click('root', { act: 'fs-save' });
     await page.settle();
     L.push('# Save style: ' + lines(page, from).filter(l => !/^GET /.test(l)).join(', ') + ' · then tab ' + page.S.tab +
         (page.S.setupView ? ' (' + page.S.setupView + ')' : '') + ' · notices ' + JSON.stringify(page.notices.map(n => n.text)));
+    const writes = page.since(from).filter(c => c.method !== 'GET').map(c => c.method + ' ' + c.url);
+    check('a changed name is the rename (PUT /api/styles/1), written before the Styles save',
+        writes[0] === 'PUT /api/styles/1' && writes.some(w => /\/flow\/save$/.test(w)), writes.join(' · '));
     const save = page.since(from).find(c => /\/flow\/save$/.test(c.url));
     check('Save style is the Styles save (flow/save) of the step\'s draft', !!save && Array.isArray(save.body.cells) && save.body.cells.length > 0,
         save ? JSON.stringify(save.body).slice(0, 200) : 'no flow/save');

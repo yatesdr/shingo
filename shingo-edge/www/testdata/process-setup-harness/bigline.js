@@ -244,10 +244,11 @@ const count = (html, s) => html.split(s).length - 1;
 // excSum and excRows read one exception list (shared/exceptions.js) by its
 // data-exc: the rule it says, and how many positions it lists.
 function excList(html, id) {
-    const i = html.indexOf('<div class="exc" data-exc="' + id + '">');
+    // A list on a card of its own is bare (no name column): the same list.
+    const i = html.search(new RegExp('<div class="exc(?: bare)?" data-exc="' + id + '">'));
     if (i < 0) return '';
-    const j = html.indexOf('<div class="exc"', i + 1);
-    return html.slice(i, j < 0 ? undefined : j);
+    const next = html.slice(i + 1).search(/<div class="exc(?: bare)?"[ >]/);
+    return html.slice(i, next < 0 ? undefined : i + 1 + next);
 }
 function excSum(html, id) {
     const m = /<div class="exc-sum"><span>([^<]*)<\/span>/.exec(excList(html, id));

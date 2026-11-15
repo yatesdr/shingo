@@ -23,8 +23,9 @@ every other screen that shows it shows it read-only:
 | production counter | **Settings › Production counter** |
 | the positions, the routing set and the screen that holds the positions | **Settings › Positions and routing**, the set pick (and **Add process** and its Change…, the same pick) |
 | the parts the process runs | **Settings › Parts** |
-| a position's light curtain, and the counter its strokes count at | **Settings › Position settings** |
-| changeover auto-arm | **Settings › Changeover** |
+| a position counted somewhere other than the production counter | **Settings › Counted somewhere else** |
+| where the CATID is read from, and what a confirmed change of it does (auto-arm) | **Settings › Part identity (CATID)** |
+| a position's light curtain | **Settings › Light curtain** |
 | HMI setup, recipe names, and which parts a recipe is applied to | **Settings › Operator setup** |
 | whether the station shows the auto-reorder switch | **Settings › Auto-reorder** |
 | quality hold | **Settings › Quality hold** |
@@ -35,8 +36,11 @@ every other screen that shows it shows it read-only:
 **The set pick is one piece in two places** (`shared/set-pick.js`): four boxes,
 Positions, Inbound, Staging and Outbound, each in its role's colour (the
 `--role-*` tokens, never the robot hues) with its picks as chips, over one
-always-open list. The Add process sheet (and its Change…, the same sheet filled
-in) and Settings › Positions and routing draw it; both save through the same
+always-open list; what holds for many rows of the open box is said once above
+the list (`hint`), not on each row. In a sheet the boxes stay in view at the
+top of the sheet's one scroll while the list goes under them. The Add process
+sheet (and its Change…, the same sheet filled in) and Settings › Positions and
+routing draw it; both save through the same
 doors (`savePositions`, `saveRouting`), so it is one editor drawn twice, not two
 forms. Positions are saved per screen through `PUT …/claimed-nodes` (a line's
 positions on no screen through `PUT …/positions`), each from a list just read.
@@ -124,8 +128,9 @@ production counter`) and a row only where a place differs, each with its
 controls and a ×, then `+ Add …` — never one row per place saying the default.
 It is one shared piece, `exceptionList` in `shared/exceptions.js` (markup only;
 the page's delegated handler acts on its × and its add), with three uses:
-**Settings › Position settings** (Light curtain, Counted at: `+ Add a
-position`), **Styles › Set for this style** under the positions table (what a
+**Settings › Light curtain** and **Settings › Counted somewhere else** (each
+the card's whole subject, so the list is `bare`: no name column of its own, `+
+Add a position` at the card's right edge), **Styles › Set for this style** under the positions table (what a
 position sets for one style: a list per setting that is set, `+ Add a
 setting` for the rest, each list's own `+ Add a position`), and a recipe
 group's own list on its card (**Set for this group**, one row named for the
@@ -155,11 +160,18 @@ page is the foot bar's `Save`.
 
 **Settings is one settings page.** The tab is `settingsPage`
 (`shared/settings.js`; see [Settings pages](33-settings-pages.md)): every
-section open, in setup order — Line · Production counter · Positions and
-routing · Parts · Position settings · Changeover · Operator setup ·
-Auto-reorder · Quality hold · Danger, with Health first while it has items —
-listed down the left with a dot on one that needs attention, each a card, the
-page's full width, and one Save in the foot bar. Nothing on it is saved as it
+section open, grouped by what it is about, each group under a small heading on
+the page and in the list down the left — **The line** (Line · Parts ·
+Positions and routing), **Counting and part identity** (Production counter ·
+Part identity (CATID), holding *When the part changes* · Counted somewhere
+else), **At the station** (Operator setup · Auto-reorder · Quality hold ·
+Light curtain) and **Danger** — with Health first while it has items, a dot in
+the list on a section that needs attention, each a card, the page's full
+width, and one Save in the foot bar. Two half cards share a row and its
+height; a card holding a table or a list takes the full width; every card's
+label column is one width, so values and switches start on one line down the
+page. Nothing on a card is cut: a segment of long answers stacks (`.pd-seg.col`)
+rather than clipping, and a recipe's name and spots wrap. Nothing on it is saved as it
 is picked: a pick, a switch and a typed value are the draft until Save, the
 line's auto-reorder switch included (it is still recorded with who, where and
 when). An on/off setting is a switch with what it means beside it.

@@ -220,14 +220,16 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never
   orders.
 - **Settings**: one page with one Save, the full width, its sections down the left (a dot on one that needs
-  attention) and each a card — Health (while it has items), Line (name, description, group), Production
-  counter (the counter's PLC and tag; outlined amber until it is wired), Positions and routing (the same set
-  pick as Add process, the line's screen under it with Edit and Open, the positions on no screen, and its
-  loader windows), Parts, Position settings (light curtain and counted-at, only where a position differs),
-  Changeover, Operator setup (HMI setup and the recipes: saved flow presets, and the flows found in this
+  attention), each a card, grouped by what it is about. Health first, while it has items. **The line**: Line
+  (name, description, group), Parts, Positions and routing (the same set pick as Add process, the line's screen
+  under it with Edit and Open, the positions on no screen, and its loader windows). **Counting and part
+  identity**: Production counter (the counter's PLC and tag, MES slots and station counters; outlined amber
+  until it is wired), Part identity (CATID) (where it is read from, and *When the part changes*: the
+  changeover auto-arm), Counted somewhere else (positions whose strokes count at a station counter). **At the
+  station**: Operator setup (HMI setup and the recipes: saved flow presets, and the flows found in this
   process's styles, to apply across styles), Auto-reorder (the line's switch, saved with the page, and who last
-  switched it; whether the station shows it), Quality hold (the containment destination), and Danger (delete
-  the process). On/off settings are switches with what they mean beside them. A line has one screen: **+ Add a
+  switched it; whether the station shows it), Quality hold (the containment destination), Light curtain
+  (positions where a release waits for the curtain). **Danger**: delete the process. On/off settings are switches with what they mean beside them. A line has one screen: **+ Add a
   screen** shows only on a line with none, and takes its positions. A loader's or unloader's process, whose
   board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger.
 

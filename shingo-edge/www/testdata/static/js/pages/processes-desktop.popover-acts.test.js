@@ -3904,8 +3904,12 @@ async function settingsSectionsPins(h) {
     // The brief's order (ruling 2026-11-15): Health only while it has items,
     // then the rest. Positions and routing replaced Screens and positions and
     // Routing set on every process but a Core loader's.
-    const ORDER = ['Line', 'Production counter', 'Positions and routing', 'Parts',
-        'Changeover', 'Position settings', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
+    // The cards in their groups' order (2026-11-15, round 2): the line, counting
+    // and part identity, at the station, Danger. Danger's card is headed by
+    // what it does, "Delete this process", under the group's heading.
+    const ORDER = ['Line', 'Parts', 'Positions and routing', 'Production counter', 'Part identity (CATID)', 'Counted somewhere else',
+        'Operator setup', 'Auto-reorder', 'Quality hold', 'Light curtain', 'Danger'];
+    const GROUPS = ['The line', 'Counting and part identity', 'At the station', 'Danger'];
     const page = o => {
         o = o || {};
         const writes = [];
@@ -3935,13 +3939,19 @@ async function settingsSectionsPins(h) {
 
     // THE SECTION LIST AND THE CARDS ARE ONE ORDER (ruling 2026-11-15, item
     // 3): the list down the left is each card's button, in the order the
-    // cards are drawn, and the brief's order is that order.
-    await pin('Settings draws its section cards in setup order, and a section list of the same down the left', async () => {
+    // cards are drawn. GROUPED BY WHAT THEY ARE ABOUT (round 2): a heading per
+    // group on the page, and in the list over a group of more than one card.
+    await pin('Settings draws its section cards in their groups, and a section list of the same down the left', async () => {
         const ctx = page();
         await settle();
         const html = ctx.root.innerHTML;
         const heads = (html.match(/<h2>[^<]*<\/h2>/g) || []).map(x => x.slice(4, -5));
-        if (JSON.stringify(heads) !== JSON.stringify(ORDER)) throw new Error('the sections read ' + JSON.stringify(heads));
+        const wantHeads = ORDER.map(x => (x === 'Danger' ? 'Delete this process' : x));
+        if (JSON.stringify(heads) !== JSON.stringify(wantHeads)) throw new Error('the sections read ' + JSON.stringify(heads));
+        const groups = (html.match(/<h3 class="pd-stgroup">[^<]*<\/h3>/g) || []).map(x => x.replace(/<[^>]+>/g, ''));
+        if (JSON.stringify(groups) !== JSON.stringify(GROUPS)) throw new Error('the groups read ' + JSON.stringify(groups));
+        const navGroups = (html.match(/<span class="pd-stnavg">[^<]*<\/span>/g) || []).map(x => x.replace(/<[^>]+>/g, ''));
+        if (JSON.stringify(navGroups) !== JSON.stringify(GROUPS.slice(0, 3))) throw new Error('the list groups read ' + JSON.stringify(navGroups));
         const cards = (html.match(/<section class="pd-card[^"]*" data-sect="[^"]*"/g) || []).map(x => x.replace(/^.*data-sect="/, '').slice(0, -1));
         if (JSON.stringify(cards) !== JSON.stringify(ORDER)) throw new Error('the cards read ' + JSON.stringify(cards));
         if (html.indexOf('<nav class="pd-stnav" aria-label="Settings sections">') < 0) throw new Error('no section list down the left');
@@ -3950,7 +3960,7 @@ async function settingsSectionsPins(h) {
             throw new Error('the section list is not the cards\' order: list ' + JSON.stringify(jump) + ', cards ' + JSON.stringify(cards));
         }
         for (const gone of ['data-act="st-more"', '<h2>More</h2>', '<h2>General</h2>', 'data-act="ar-shown"', 'class="pd-jump"',
-            '<h2>Screens and positions</h2>', '<h2>Routing set</h2>']) {
+            '<h2>Screens and positions</h2>', '<h2>Routing set</h2>', '<h2>Position settings</h2>', '<h2>Changeover</h2>']) {
             if (html.indexOf(gone) >= 0) throw new Error('Settings still draws ' + gone);
         }
     });
@@ -3963,7 +3973,7 @@ async function settingsSectionsPins(h) {
         const ctx = page({ routing: routing });
         await settle();
         const dots = (ctx.root.innerHTML.match(/data-to="[^"]*" title="[^"]*"/g) || []).map(x => x.replace(/^data-to="([^"]*)" title="([^"]*)"$/, '$1: $2'));
-        const want = ['Production counter: not wired', 'Positions and routing: still to pick: Positions'];
+        const want = ['Positions and routing: still to pick: Positions', 'Production counter: not wired'];
         if (JSON.stringify(dots) !== JSON.stringify(want)) throw new Error('the dots read ' + JSON.stringify(dots));
         const wired = page({ routing: routing, processes: [{ id: 1, name: 'Press 1', group_id: 0, active_style_id: 1, flow_composer_enabled: true,
             counter_plc_name: 'PLC_A', counter_tag_name: 'CountA', counter_enabled: true }] });
@@ -4214,19 +4224,25 @@ async function settingsPositionsPins(h) {
     };
     const prov = ctx => (findIn(ctx.root, '.prov')[0] || {}).textContent || '';
 
+    // EACH SHORT LIST SITS WITH ITS SUBJECT (round 2): Light curtain at the
+    // station, Counted somewhere else with the production counter, each a card
+    // whose heading names the setting, so the list draws no name column.
     await pin('Settings says each position setting as its rule and the positions that differ, not one row per position', async () => {
         const ctx = page('#tab=settings');
         await settle();
         const html = ctx.root.innerHTML;
-        if (html.indexOf('<h2>Position settings</h2>') < 0) throw new Error('Settings draws no Position settings section');
+        for (const card of ['Light curtain', 'Counted somewhere else']) {
+            if (html.indexOf('data-sect="' + card + '"><div class="pd-sect"><h2>' + card + '</h2>') < 0) throw new Error('Settings draws no ' + card + ' card');
+        }
+        if (html.indexOf('<div class="exc-name">') >= 0) throw new Error('a card list draws its own name column under the card heading');
         for (const gone of ['pd-posscreen', 'data-act="pos-remove"', 'data-more="pos-', 'data-act="cu-toggle"', 'data-act="pos-add"']) {
             if (html.indexOf(gone) >= 0) throw new Error('the one-row-per-position wall is still drawn: ' + gone);
         }
         // THE RULE, ONCE: no curtain is on and every position counts at the
         // production counter, so neither list has a row.
-        const sum = id => (html.match(new RegExp('<div class="exc" data-exc="' + id + '">.*?<div class="exc-sum"><span>([^<]*)</span>')) || [])[1];
+        const sum = id => (html.match(new RegExp('<div class="exc bare" data-exc="' + id + '">.*?<div class="exc-sum"><span>([^<]*)</span>')) || [])[1];
         if (sum('curtain') !== 'off at all 4 positions') throw new Error('Light curtain says ' + JSON.stringify(sum('curtain')));
-        if (sum('counted') !== 'all 4 at the production counter') throw new Error('Counted at says ' + JSON.stringify(sum('counted')));
+        if (sum('counted') !== 'all 4 at the production counter') throw new Error('Counted somewhere else says ' + JSON.stringify(sum('counted')));
         if (html.indexOf('<table class="exc-rows">') >= 0) throw new Error('a list draws a row for a position that does not differ');
         if (html.indexOf('data-act="cu-add"') < 0 || html.indexOf('data-act="ca-add"') < 0) throw new Error('a list has no + Add');
         // What the wall also said: a position on no screen, a line of its own
@@ -4268,11 +4284,18 @@ async function settingsPositionsPins(h) {
             throw new Error('the loader window is not offered with its note: ' + JSON.stringify(pk.side(h, 'SMN_001')));
         }
         if (!pk.row(h, 'PLN_005PAL') || pk.off(h, 'PLN_005PAL')) throw new Error('PLN_005PAL is not tickable');
+        // THE GROUP RULE IS SAID ONCE, above the list (round 2: it repeated on
+        // every group row); the row is greyed and says what it holds.
         const group = pk.rows(h).find(r => r.getAttribute('data-value') === 'Press Unloader');
         if (group && !pk.off(h, 'Press Unloader')) throw new Error('a group is offered as one tick');
-        if (group && pk.side(h, 'Press Unloader') !== 'a group: its nodes are positions one at a time') {
+        if (group && pk.side(h, 'Press Unloader') !== 'group · 1 node') {
             throw new Error('the group says ' + JSON.stringify(pk.side(h, 'Press Unloader')));
         }
+        const hints = findIn(h, '.setpick-hint').map(x => x.textContent);
+        if (JSON.stringify(hints) !== JSON.stringify(['A group is one row: its nodes are positions one at a time. Show a group to pick one.'])) {
+            throw new Error('the rule above the list reads ' + JSON.stringify(hints));
+        }
+        if (findIn(h, '.picker-why').some(x => /positions one at a time/.test(x.textContent))) throw new Error('a group row still repeats the rule');
         if (findIn(h, 'button').some(b => /^(all|none)$/i.test(b.textContent))) throw new Error('the picker offers a tick-all');
     });
 

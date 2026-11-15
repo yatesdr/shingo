@@ -21,20 +21,27 @@ Deploy: no migration. Edge only; Core is unchanged.
 - The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
 - Add process is one sheet: name, group, operator screen, the coloured node pick and the parts
 - Setup is three steps, nodes and part, a first style, open the screen; it can be skipped
-- Setup's first style puts a part on each position and fills the routing set's nodes in
+- Setup's first style names the style, puts a part on each position and fills the routing set's nodes in
+- First style shows each name it filled in as a dropdown, inbound and outbound staging apart
+- A position in First style can swap its own way; a free one can add a part from Core's catalog
+- The Styles tab's staging cell labels its inbound and outbound dropdowns
+- Settings groups its sections: the line, counting and part identity, at the station, danger
+- Light curtain and Counted somewhere else are cards of their own; Changeover is under Part identity
+- Nothing on Settings is cut off, and cards in one row are the same height
+- The node pick says the group rule once; on Add process its boxes stay in view while picking
 - Setup is done once the line can run and its operator screen has been opened
 - Settings lists its sections down the left, one card each, across the full width, with one Save
 - Settings' Positions and routing is the same coloured pick as Add process
 - The node roles have their own colours, apart from the robot colours
 - A line has one screen; + Add a screen shows only on a line with none and takes its positions
 - The line's auto-reorder switch saves with the Settings page
-- The Edge home page has a button for each operator screen
+- The Edge home page has a strip of buttons, one for each operator screen
 - #tab=styles typed on an open process opens Styles
 - With WarLink off, the CATID monitor asks WarLink for nothing at start
-- Position settings lists only the positions that differ, each added through the node picker
+- The per-position short lists name only the positions that differ, each added through the node picker
 - Set for this style and a recipe group's list replace the Advanced sheet
 - A recipe group carries no carry-over; carry-over is on a position marked Tool change
-- Counted at takes several positions in one pick and saves with the rest
+- Counted somewhere else takes several positions in one pick and saves with the rest
 - Every chooser on the page is the shared picker; a long part set folds its chips
 - The Styles picture folds free positions, and a group's auto reorder is one row
 - Taking a position off says the settings it clears; positions on no screen go in one write

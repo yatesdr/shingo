@@ -464,6 +464,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* Two fields in one cell stack, because side by side they cannot both fit a
    node name in 14% of the column. */
 .pd-cellsep { display: block; height: 2px; }
+/* A staging chip's word (inbound, outbound) on its own small line above it. */
+.pd-cellk { display: block; margin: 0 0 1px 2px; color: var(--text-muted); font-size: 11px; line-height: 1.2; text-transform: lowercase; }
 
 /* The route: chips in order, with the arrows that move one and an add at the
    end. The separator is drawn, not typed, so it never lands inside a chip. */
@@ -669,6 +671,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-modal .layer-body { margin: 0; padding: 6px 24px 10px; overflow: auto; }
 .pd-modal .layer-foot { padding: 14px 24px; border-top: 1px solid var(--sub-1); gap: 10px; }
 .pd-modal .layer-status { font-size: 12.5px; }
+/* THE PICK IN A SHEET HAS ONE SCROLL, THE SHEET'S (owner, 2026-11-15: the
+   boxes scrolled out of view while picking). The list does not scroll on its
+   own inside the sheet; the boxes stick to the top of the sheet's body while
+   the list goes under them, so what has been picked stays in view. */
+.pd-modal .layer-body .setpick-boxes {
+    position: sticky; top: -6px; z-index: var(--z-sticky); margin: 0 -4px; padding: 6px 4px 8px; background: var(--surface);
+}
+.pd-modal .layer-body .setpick .picker--open .picker-list { max-height: none; }
 .pd-sec { padding: 10px 0 4px; }
 .pd-sec .pd-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pd-sec .pd-lbl .cnt {
@@ -731,12 +741,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    here would compete with the state tags P0 draws in the same column position. */
 .pd-vtag { color: var(--text-muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
 
-/* THE NAME IS ONE LINE. It is the column an engineer scans down, and a preset
-   named from a shape carries the mode word and its positions, so it is long by
-   construction: left to wrap it broke after the positions and orphaned `v1` on
-   a second line. Ellipsised, with the full name in the cell's own title. */
-/* Saved wraps rather than cut: who saved a recipe is half its value. */
-.pd-presettbl td.pn, .pd-presettbl td.pd-spots { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* NOTHING IS CUT (owner, 2026-11-15: "words gettign cut off"). A recipe's name
+   and its spots wrap in their columns rather than ending in an ellipsis; the
+   version tag keeps to the name's last word (.pd-vtag does not break), so it
+   is never orphaned on a line of its own. Saved wraps too: who saved a recipe
+   is half its value. */
+.pd-presettbl td.pn, .pd-presettbl td.pd-spots { white-space: normal; overflow-wrap: anywhere; }
 
 /* The Shape column. CHIPS NEVER WRAP (SPEC §2): a shape over six positions
    ellipsises its list instead of growing the row, because a table whose row
@@ -771,16 +781,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-mem:hover { background: var(--surface-2, var(--surface)); }
 .pd-mem .nm { font-weight: 500; }
 .pd-mem .sp { flex: 1; }
-/* A shape found in the flows, not named yet: one line, its shape, the parts
-   that run it, and Name it…. THE PARTS GIVE WAY: a shape run by six parts
-   wrapped its list onto a second line, cut its positions to `PLN_01 …` and
-   broke Name it… over two lines (HOP P400). The list ellipsises, with every
-   part in its title; the shape keeps its width up to 45% of the line, and
-   Name it… keeps its own. */
-.pd-cand { display: flex; align-items: center; gap: 12px; padding: 3px 0; font-size: 13px; }
-.pd-cand > .pd-shape { flex: 0 0 auto; max-width: 45%; }
-.pd-cand > .pd-dim { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pd-cand > .pd-dimlink { flex: none; white-space: nowrap; }
+/* A shape found in the flows, not named yet: its shape, its positions, the
+   parts that run it, and Name it…, in four columns across Operator setup's
+   full width. NOTHING IS CUT (owner, 2026-11-15: "words gettign cut off"):
+   the positions and the parts wrap in their own columns, and the parts list
+   stops at four with "and N more" (every part in its title). */
+.pd-cand {
+    display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 2fr) auto; align-items: center;
+    gap: 16px; padding: 6px 0; border-top: 1px solid var(--sub-1); font-size: 13px;
+}
+.pd-cand > .pd-cand-at, .pd-cand > .pd-dim { min-width: 0; overflow-wrap: anywhere; }
+.pd-cand > .pd-dimlink { white-space: nowrap; }
 /* AND THE VALUE COLUMN DOES NOT GROW TO IT. A field's value column is the
    grid's 1fr, whose floor is its content's min-content: a list that will not
    wrap made the column as wide as the list, past the sheet, and Name it…
@@ -858,7 +869,19 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-stnav button span { flex: 1; min-width: 0; }
 .pd-stnav button:hover, .pd-stnav button:focus-visible { background: var(--surface); color: var(--text); }
 .pd-stdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--viz-amber); }
-.pd-stcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; min-width: 0; }
+.pd-stcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; min-width: 0; }
+/* A group's heading spans the row; two half cards under it share a row and
+   its height (align-items: stretch). */
+.pd-stgroup {
+    grid-column: 1 / -1; margin: 10px 0 -6px; font-size: 12px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-muted);
+}
+.pd-stcards > .pd-stgroup:first-child, .pd-stcards > .pd-card:first-child + .pd-stgroup { margin-top: 0; }
+.pd-stnavg {
+    padding: 12px 10px 2px; font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-muted);
+}
+.pd-stnav > .pd-stnavg:first-child { padding-top: 0; }
 .pd-stcards > .pd-refusal, .pd-stcards > .pd-notice { grid-column: 1 / -1; }
 .pd-card {
     min-width: 0; padding: 4px 18px 14px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px);
@@ -883,9 +906,11 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     .pd-stnav { position: static; flex-direction: row; flex-wrap: wrap; }
     .pd-stcards { grid-template-columns: minmax(0, 1fr); }
 }
-/* An on/off setting is a switch with what it means beside it. */
+/* An on/off setting is a switch with what it means beside it; a meaning too
+   long for the column wraps beside the switch, not under it. */
 .pd-switch { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
-.pd-swmean { color: var(--text-muted); font-size: 13px; }
+.pd-switch > .pd-chk { flex: none; }
+.pd-swmean { min-width: 0; color: var(--text-muted); font-size: 13px; }
 .pd-chk.on + .pd-swmean { color: var(--text); }
 /* Positions and routing: the screen under the pick. */
 .pd-sphost { min-width: 0; padding: 8px 0 4px; }
@@ -965,15 +990,35 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-supos small { color: var(--text-muted); font-size: 12px; }
 .pd-supos .pd-surole { color: var(--role); font-weight: 700; }
 .pd-sulater { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 6px 0 4px; }
-.pd-sufilled { display: flex; flex-direction: column; gap: 2px; padding: 8px 0 2px; border-top: 1px solid var(--sub-1); font-size: 13px; }
-.pd-sufilled p { margin: 0; }
-.pd-sufilled .setpick-dot, .pd-setup .pd-note .setpick-dot { display: inline-block; vertical-align: middle; }
+.pd-setup .pd-note .setpick-dot { display: inline-block; vertical-align: middle; }
+/* First style's picks, under the line: each a dropdown in its role's colour
+   (the --role-* tokens through data-role), its words beside it. A set per
+   swap: the line's, then a position whose swap differs. */
+.pd-fspicks { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px; border-top: 1px solid var(--sub-1); }
+.pd-fspicks > .pd-sect { border-top: 0; padding: 4px 0 0; }
+.pd-fsset { display: flex; flex-direction: column; gap: 6px; }
+.pd-fssethd { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.pd-fspick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 12px; }
+.pd-fspickw { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; font-size: 13px; }
+.pd-fspickw .setpick-dot { display: inline-block; align-self: center; }
+.pd-fspickw small { flex-basis: 100%; padding-left: 18px; color: var(--text-muted); font-size: 12px; }
+.pd-fspick .pd-sel { min-width: 0; max-width: 100%; border-color: var(--role); }
 /* First style: a part per position, consume or produce, one way they swap. */
 .pd-fsblock { display: flex; flex-direction: column; gap: 8px; }
 .pd-fslbl { font-weight: 600; }
 .pd-fsline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.pd-fsrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 40px; }
-.pd-fsrow > b { min-width: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* The positions, as rows: Position, Part, Swap. A row on its own swap says so
+   in the accent; a free row offers a part of its own. */
+.pd-fsrow {
+    display: grid; grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 12px;
+    min-height: 40px; border-top: 1px solid var(--sub-1);
+}
+.pd-fsrow > b { min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.pd-fsrow > .pd-sel { min-width: 0; max-width: 100%; }
+.pd-fsrow > .pd-sel.own { border-color: var(--accent); }
+.pd-fsrow > .pd-btn { justify-self: start; }
+.pd-fsrow.pd-fshd { min-height: 0; border-top: 0; color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.pd-fsfree { margin: 0; color: var(--text-muted); font-size: 13px; }
 .pd-fsmodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .pd-fsmode {
     display: flex; align-items: flex-start; gap: 12px; min-height: 88px; padding: 14px; border: 1px solid var(--border);
