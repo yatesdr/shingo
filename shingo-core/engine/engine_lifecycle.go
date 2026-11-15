@@ -161,8 +161,7 @@ func (e *Engine) Start() {
 	e.startDemandReconciler()
 
 	// Start periodic reconciliation logging and auto-confirm.
-	e.sayRetiredAbandonKeys()
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
+	e.startReconciliationLoop()
 
 	// ETA medians cache — initial refresh + 10-min background refresh.
 	// Errors are logged but non-fatal: a cold-start failure leaves the
@@ -574,6 +573,14 @@ func (e *Engine) reportMemberLegs() {
 		e.logFn("engine:   claim %s / %s at %s: %s = %s, a member of %s%s",
 			l.Process, l.Style, l.Node, l.Leg, l.Name, l.Group, home)
 	}
+}
+
+// startReconciliationLoop starts the periodic reconciliation (logging and
+// auto-confirm), first saying once whether the config still sets the retired
+// abandon keys.
+func (e *Engine) startReconciliationLoop() {
+	e.sayRetiredAbandonKeys()
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
 }
 
 // sayRetiredAbandonKeys logs, once at start, a config file that still sets the
