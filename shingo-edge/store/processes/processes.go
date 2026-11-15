@@ -794,13 +794,26 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 // check-then-insert race-safe when concurrent callers (engine tick,
 // HMI handler, station service) hit a node whose runtime row hasn't
 // been materialized yet.
+//
+// A FRESH ROW TAKES THE LINE'S SWITCH. A line switched off (its last flip in
+// auto_reorder_flips, FlipAutoReorder) writes a person's off at the rows that
+// exist; a position added since, or one with no row at the flip, gets the same
+// off here, with that flip's who and when, in the same INSERT. A line never
+// flipped, or last switched on, starts its new position on.
 func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	if r, err := GetRuntime(db, processNodeID); err == nil {
 		return r, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if _, err := db.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, processNodeID); err != nil {
+	if _, err := db.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id, reorder_hold, reorder_hold_at, reorder_hold_note)
+		SELECT pn.id,
+		       CASE WHEN f.turned_on = 0 THEN ? ELSE '' END,
+		       CASE WHEN f.turned_on = 0 THEN f.at ELSE '' END,
+		       CASE WHEN f.turned_on = 0 THEN f.by ELSE '' END
+		FROM process_nodes pn
+		LEFT JOIN auto_reorder_flips f ON f.id = (SELECT MAX(id) FROM auto_reorder_flips WHERE process_id = pn.process_id)
+		WHERE pn.id = ?`, string(domain.ReorderHoldPersonOff), processNodeID); err != nil {
 		return nil, err
 	}
 	return GetRuntime(db, processNodeID)
