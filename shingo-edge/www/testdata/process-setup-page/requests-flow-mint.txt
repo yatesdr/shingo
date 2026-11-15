@@ -24,7 +24,7 @@
          "expected_catid": "CAT-M"
        }
   5  GET /api/processes
-  6  GET /api/processes/1/composer
+  6  GET /api/processes/1/composer?map_rev=map-r1
   7  GET /api/processes/1/styles
   8  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)

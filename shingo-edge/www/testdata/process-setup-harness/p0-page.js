@@ -512,6 +512,16 @@ Object.assign(D, {
         await T.stSave(page);
         await T.stSave(page);
     } },
+    // A move and a take-off in one Save: POS_A10 goes to Unloader A, POS_A11
+    // comes off. The impact is asked with POS_A10 still in Screen A's list
+    // (slice 5): a move keeps its curtain and counter, so it is not warned
+    // as cleared; the write is the list without it.
+    posMoveAndUntick: { hash: '#tab=settings', drive: async page => {
+        T.npk(page, 'root', 'scr-11', 'POS_A11', 'drop');
+        T.npk(page, 'root', 'scr-11', 'POS_A10', 'drop');
+        T.npk(page, 'root', 'scr-12', 'POS_A10');
+        await T.stSave(page);
+    } },
     bindLoader: {
         hash: '#tab=settings', extra: MISC_ROUTES,
         page: () => withPage(() => ({ loaderGaps: [{ loader_key: 'LDR_1', process_id: 1 }] })),
@@ -617,6 +627,7 @@ async function pinRequests() {
     await requests('requests-positions.txt', [
         ['Settings › Screens and positions › Screen A: NEW_1, Save', D.posAdd],
         ['Settings › Screens and positions › Screen A: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
+        ['Settings › Screens and positions › POS_A10 to Unloader A and POS_A11 off, Save (the move is not asked about)', D.posMoveAndUntick],
         ['Settings › Screens and positions › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
     ]);
     await requests('requests-settings-misc.txt', [

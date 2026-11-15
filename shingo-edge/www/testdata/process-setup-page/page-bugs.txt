@@ -79,6 +79,11 @@ ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
+## slice 5: a composer read quotes the held map, and map_same keeps it
+ok   the page held a map to quote
+ok   the read quotes its revision
+ok   map_same: the map drawn is the one held
+
 ## slice 5: a process whose positions are all on no screen is not an empty one to a loader
 ok   positions on no screen: no loader block
 ok   no position at all: the block offers the loader

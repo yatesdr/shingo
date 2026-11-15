@@ -13,7 +13,7 @@
   2  GET /api/operator-stations
   3  GET /api/operator-stations/11/claimed-nodes
   4  GET /api/processes
-  5  GET /api/processes/1/composer
+  5  GET /api/processes/1/composer?map_rev=map-r1
   6  GET /api/processes/1/styles
   7  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
@@ -34,7 +34,7 @@
   2  GET /api/operator-stations
   3  GET /api/operator-stations/31/claimed-nodes
   4  GET /api/processes
-  5  GET /api/processes/1/composer
+  5  GET /api/processes/1/composer?map_rev=map-r1
   6  GET /api/processes/1/styles
   7  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
@@ -76,6 +76,6 @@
        }
   4  GET /api/process-nodes
   5  GET /api/processes/1/station-counters
-  6  GET /api/processes/1/composer
+  6  GET /api/processes/1/composer?map_rev=map-r1
 -- notice: success "Saved"
 -- sheet closed

@@ -518,6 +518,39 @@ function silentRefusals() {
     return out;
 }
 
+// SLICE 5: THE MAP IS NOT SENT AGAIN. A composer read after the first quotes
+// the revision of the map the page holds (map_rev); a reply that says map_same
+// carries no map, and the page keeps drawing the one it has.
+block({
+    title: 'slice 5: a composer read quotes the held map, and map_same keeps it',
+    open: () => ({
+        extra: (m, u) => {
+            const [p, q] = u.split('?');
+            if (m === 'GET' && p === '/api/processes/1/composer' && /(^|&)map_rev=/.test(q || '')) {
+                const c = JSON.parse(JSON.stringify(T.FX.composer));
+                delete c.map;
+                c.map_same = true;
+                return { body: c };
+            }
+            return undefined;
+        },
+    }),
+    act: async page => {
+        const held = page.S.composer.map;
+        const from = page.mark();
+        await page.pd('refreshProcess')();
+        await page.settle();
+        const reads = page.since(from).map(lineOf).filter(l => /\/composer/.test(l));
+        return { held: held, reads: reads, after: page.S.composer.map };
+    },
+    checks: [
+        r => ['the page held a map to quote', !!(r.held && r.held.revision), 'map ' + JSON.stringify(r.held && r.held.revision)],
+        r => ['the read quotes its revision', r.reads.length === 1 && r.reads[0] === 'GET /api/processes/1/composer?map_rev=' +
+            encodeURIComponent(r.held.revision), JSON.stringify(r.reads)],
+        r => ['map_same: the map drawn is the one held', r.after === r.held, 'map ' + JSON.stringify(r.after && r.after.revision)],
+    ],
+});
+
 // SLICE 5, ruling 8. A process whose positions are all on no screen is not an
 // empty process: the loader block (made for an empty one, a loader's board
 // being made on it) said "Every loader … has a screen. Nothing to bind." there.

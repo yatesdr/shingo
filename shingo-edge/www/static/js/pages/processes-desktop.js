@@ -84,6 +84,7 @@ const S = {
     processID: 0,
     tab: 'flows',
     composer: null,      // the process-scoped composer read
+    heldMap: null,       // the plant map last read, quoted back on the next read (composerURL)
     styleID: 0,          // the style being edited
     model: null,         // composer-model state (the draft)
     baseline: '',        // toCells JSON at load — what "dirty" is measured against
@@ -735,7 +736,7 @@ async function openProcess(id) {
     S.settingsNotice = '';
     S.notice = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
-    const res = await send('GET', '/api/processes/' + id + '/composer');
+    const res = await send('GET', composerURL(id));
     if (!res.ok) {
         root().innerHTML = appbar() + '<div class="pd-list"><p class="pd-dim">Could not read this process.</p></div>';
         return;
@@ -883,7 +884,12 @@ function syncHash() {
 //
 // So the read is normalised ONCE, here, and the page may then index. The two
 // nested lists inside Cell get the same treatment for the same reason.
+//
+// THE MAP IS KEPT WHEN THE READ SAYS IT IS THE ONE HELD (map_same): the read
+// quoted its revision (composerURL), and the server left it off.
 function takeComposer(data) {
+    if (data && data.map_same && S.heldMap) data.map = S.heldMap;
+    S.heldMap = (data && data.map) || null;
     S.composer = data || {};
     S.composer.styles = S.composer.styles || [];
     S.composer.routing = S.composer.routing || [];
@@ -892,6 +898,15 @@ function takeComposer(data) {
     S.composer.cell = S.composer.cell || {};
     S.composer.cell.positions = S.composer.cell.positions || [];
     S.composer.cell.groups = S.composer.cell.groups || {};
+}
+
+// composerURL is the composer read of process id. THE PLANT MAP IS THE
+// EDGE'S, NOT THE PROCESS'S, and most of the read's bytes: a page that holds
+// one quotes its revision (map_rev), and the reply leaves it off while it is
+// still the Edge's (takeComposer keeps it), on this process or the next.
+function composerURL(id) {
+    const rev = S.heldMap && S.heldMap.revision;
+    return '/api/processes/' + id + '/composer' + (rev ? '?map_rev=' + encodeURIComponent(rev) : '');
 }
 
 // composerStyle is one style of the open process, with the two derivable
@@ -1178,7 +1193,7 @@ function openRecipe(id) {
 // would not reach the row. One composer read per click.
 async function openNewRecipe() {
     // A failed read opens the draft on the routing set the page holds.
-    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    const res = await send('GET', composerURL(S.processID));
     if (res.ok) takeComposer(res.body);
     startShapeDraft([], {});
 }
@@ -3448,7 +3463,7 @@ async function writePartSet(codes) {
     // read back rather than guessed at here.
     // A failed read leaves the list as it was: the write landed, and the
     // list catches up on the next open.
-    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    const res = await send('GET', composerURL(S.processID));
     if (res.ok) {
         const pal = (res.body || {}).palette || [];
         S.composer.palette = pal;
@@ -5262,16 +5277,23 @@ async function savePositions(d) {
         want[st.id] = B().stationNodes(now.filter(n => taken.indexOf(n) < 0).concat(added.filter(n => now.indexOf(n) < 0))).nodes;
     }
     const key = JSON.stringify(d);
+    // THE IMPACT IS ASKED OF WHAT IS TAKEN OFF, NOT OF WHAT MOVES: a position
+    // leaving this list for a sibling screen (or for no screen) is in the list
+    // the impact reads, though not in the write, or the server warns that the
+    // move clears its curtain and counter, which a move keeps.
+    const moving = (from, to) => from.filter(n => to.indexOf(n) < 0 && everywhere.has(n));
     if (S.posWarned !== key) {
         const says = [];
         for (const st of screens) {
             if (!stored(st.id).some(n => d[st.id].indexOf(n) < 0 && !everywhere.has(n))) continue;
-            const impact = await send('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact', { nodes: want[st.id] }, NO_NOTICE);
+            const asked = want[st.id].concat(moving(stored(st.id), d[st.id]).filter(n => want[st.id].indexOf(n) < 0));
+            const impact = await send('POST', '/api/operator-stations/' + st.id + '/claimed-nodes/impact', { nodes: asked }, NO_NOTICE);
             if (!impact.ok) return doorOut(impact, st.name + ': ');
             if (bodyOf(impact).warning) says.push(bodyOf(impact).warning);
         }
         if (loose && loosePositions().some(n => loose.indexOf(n) < 0 && !everywhere.has(n))) {
-            const impact = await send('POST', '/api/processes/' + S.processID + '/positions/impact', { nodes: loose }, NO_NOTICE);
+            const asked = loose.concat(moving(loosePositions(), d.none).filter(n => loose.indexOf(n) < 0));
+            const impact = await send('POST', '/api/processes/' + S.processID + '/positions/impact', { nodes: asked }, NO_NOTICE);
             if (!impact.ok) return doorOut(impact, 'On no screen: ');
             if (bodyOf(impact).warning) says.push(bodyOf(impact).warning);
         }
@@ -5653,7 +5675,7 @@ async function afterSettingsSave(out) {
     // A position or a routing name moved is the Styles tab's too: its pickers
     // and its picture read the composer.
     if (sent('positions') || wrote('routing')) {
-        const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+        const res = await send('GET', composerURL(S.processID));
         if (res.ok) { takeComposer(res.body); S.graph = null; }
     }
     takeSettingsRead(kept);
@@ -7116,7 +7138,7 @@ async function refreshProcess() {
         for (const n of S.stShell.page.dirtySections()) kept[n] = SETTINGS_SECTIONS[n].read();
     }
     await reloadProcesses();
-    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    const res = await send('GET', composerURL(S.processID));
     if (res.ok) {
         takeComposer(res.body);
         S.graph = null;
@@ -8294,7 +8316,7 @@ async function leaveShapeDraft(to) {
     const fromTab = S.shapeDraft ? S.shapeDraft.fromTab : '';
     S.shapeDraft = null;
     // A failed read: the rail catches up on its next read.
-    const res = await send('GET', '/api/processes/' + S.processID + '/composer');
+    const res = await send('GET', composerURL(S.processID));
     if (res.ok) takeComposer(res.body);
     selectStyle(back);
     if (to) showTab(to);
@@ -8406,7 +8428,7 @@ async function saveGroupedRecipe(name, from) {
     closeSheet();
     const keep = d ? { back: d.back, fromTab: d.fromTab } : null;
     // A failed read: the rail catches up on its next read.
-    const read = await send('GET', '/api/processes/' + S.processID + '/composer');
+    const read = await send('GET', composerURL(S.processID));
     if (read.ok) takeComposer(read.body);
     const id = String(bodyOf(out).id || '');
     if (id && (S.composer.presets || []).some(p => String(p.id) === id)) {

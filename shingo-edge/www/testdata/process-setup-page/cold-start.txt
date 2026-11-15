@@ -143,7 +143,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
   style → tab setup, sheet "New style" · GET /api/core-nodes, GET /api/payload-catalog
   counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
-  hmi → tab flows (a recipe draft) · GET …/composer
+  hmi → tab flows (a recipe draft) · GET …/composer?map_rev=map-r1
 
 ## Add process
   fields ["Name","Group"]

@@ -10,21 +10,21 @@
     sheet: open "Edit Screen A", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/operator-stations/11  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Edit Screen A", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/operator-stations/11  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Edit Screen A", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/operator-stations/11  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -43,21 +43,21 @@
     sheet: open "Add operator screen", status "the Edge refused it" (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/operator-stations · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/operator-stations  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Add operator screen", status "Server error (500)" (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/operator-stations · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/operator-stations  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Add operator screen", status "No answer from the server" (bad), OK "Add" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/operator-stations · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/operator-stations · GET /api/operator-stations · GET /api/operator-stations/31/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/operator-stations  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -71,21 +71,21 @@
 ## Screen A’s row on Settings (POS_A11 off, NEW_3 on), Save
 # writes, in order: POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes
 ### POST /api/operator-stations/11/claimed-nodes/impact  ←  400 {"error"} (writeError)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/operator-stations/11/claimed-nodes/impact  ←  500, no body (chi Recoverer)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/operator-stations/11/claimed-nodes/impact  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
@@ -102,21 +102,21 @@
     state: bar.refusal="Not saved. Screen A’s positions could not be read, so nothing was changed. Try again."
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed

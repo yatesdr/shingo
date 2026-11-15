@@ -10,5 +10,5 @@
          "group_id": 3
        }
   2  GET /api/processes
-  3  GET /api/processes/5/composer
+  3  GET /api/processes/5/composer?map_rev=map-r1
 -- sheet closed

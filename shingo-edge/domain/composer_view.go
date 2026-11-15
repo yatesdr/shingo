@@ -120,6 +120,38 @@ type ComposerData struct {
 	// geometry cache is empty, and then D3 says the map has not arrived
 	// rather than drawing an invented one.
 	Map *ComposerMap `json:"map,omitempty"`
+	// MapSame is true, and Map then left off, when the desktop's read quoted
+	// the revision of the map it already holds (GET .../composer?map_rev=) and
+	// that is the revision of the map this Edge holds now. The page keeps
+	// drawing the one it has. Absent otherwise: on a read that quoted nothing,
+	// quoted another revision (Map is this Edge's), or reached an Edge with no
+	// map (Map is absent too, and the page says the map has not arrived). Set
+	// by LeaveOffHeldMap.
+	MapSame bool `json:"map_same,omitempty"`
+}
+
+// LeaveOffHeldMap drops Map and sets MapSame when heldRev is Map's revision:
+// the page that asked already holds this map. With no Map, or an empty or
+// different heldRev, it changes nothing, so an Edge with no map never says
+// "same" whatever the page quotes.
+//
+// THE REVISION IS CORE'S, NOT A FINGERPRINT OF OUR OWN. It is
+// the value the heartbeater already quotes back so Core can leave the
+// geometry off the node-list sync (SceneGeometry.Revision): Core treats one
+// revision as one geometry for that, so the page may for this. The map is
+// most of the desktop read's bytes (plant A's press: 66.2 kB with it, 10.3 kB
+// without; TestProcessComposer_AMapThePageHoldsIsNotSentAgain logs both), and
+// it went again on every open, save and refresh of a page that already had it.
+//
+// AFTER THE BUILD, NOT INSTEAD OF IT. The map is built and then dropped, so
+// the comparison is against the revision of the very map that would have been
+// sent. What the page was paying for was the bytes and their parse; the build
+// is a copy of the cache, small beside the read's queries.
+func (d *ComposerData) LeaveOffHeldMap(heldRev string) {
+	if d == nil || d.Map == nil || heldRev == "" || d.Map.Revision != heldRev {
+		return
+	}
+	d.Map, d.MapSame = nil, true
 }
 
 // ComposerMap is the vendor map's geometry, as the desktop draws it.

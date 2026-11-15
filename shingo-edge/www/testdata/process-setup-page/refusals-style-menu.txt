@@ -10,21 +10,21 @@
     sheet: open "Rename Style B", status "the Edge refused it" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/2  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Rename Style B", status "Server error (500)" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/2  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Rename Style B", status "No answer from the server" (bad), OK "Rename" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/styles/2 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/2  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -43,21 +43,21 @@
     sheet: open "Expected CATID · Style A", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/1  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Expected CATID · Style A", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Expected CATID · Style A", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/styles/1 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/styles/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -76,21 +76,21 @@
     sheet: open "Clone Style A", status "the Edge refused it" (bad), OK "Clone" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/styles/1/clone  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Clone Style A", status "Server error (500)" (bad), OK "Clone" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/styles/1/clone  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Clone Style A", status "No answer from the server" (bad), OK "Clone" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/styles/1/clone · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### POST /api/styles/1/clone  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -109,21 +109,21 @@
     sheet: open "Mark Style B as running?", status "the Edge refused it" (bad), OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/processes/1/active-style  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Mark Style B as running?", status "Server error (500)" (bad), OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/processes/1/active-style  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Mark Style B as running?", status "No answer from the server" (bad), OK "Mark as running" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/processes/1/active-style · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### PUT /api/processes/1/active-style  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -142,21 +142,21 @@
     sheet: open "Delete Style B?", status "the Edge refused it" (bad), OK "Delete" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### DELETE /api/styles/2  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Delete Style B?", status "Server error (500)" (bad), OK "Delete" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### DELETE /api/styles/2  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Delete Style B?", status "No answer from the server" (bad), OK "Delete" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: DELETE /api/styles/2 · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
 ### DELETE /api/styles/2  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out

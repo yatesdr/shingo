@@ -10,21 +10,21 @@
     sheet: open "Add process", status "the Edge refused it" (bad), OK "Create" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes · GET /api/processes · GET /api/processes/5/composer → sheet: closed
+    pressed again: POST /api/processes · GET /api/processes · GET /api/processes/5/composer?map_rev=map-r1 → sheet: closed
 ### POST /api/processes  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Add process", status "Server error (500)" (bad), OK "Create" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes · GET /api/processes · GET /api/processes/5/composer → sheet: closed
+    pressed again: POST /api/processes · GET /api/processes · GET /api/processes/5/composer?map_rev=map-r1 → sheet: closed
 ### POST /api/processes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Add process", status "No answer from the server" (bad), OK "Create" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes · GET /api/processes · GET /api/processes/5/composer → sheet: closed
+    pressed again: POST /api/processes · GET /api/processes · GET /api/processes/5/composer?map_rev=map-r1 → sheet: closed
 ### POST /api/processes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out

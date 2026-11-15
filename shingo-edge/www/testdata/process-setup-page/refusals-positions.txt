@@ -47,7 +47,7 @@
 ## Screen A: POS_A11 off, Save, its list write refused
 # writes, in order: PUT /api/operator-stations/11/claimed-nodes
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
     new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet span.prov: No unsaved changes
@@ -56,7 +56,7 @@
     state: no message set
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
     new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet span.prov: No unsaved changes
@@ -65,7 +65,7 @@
     state: no message set
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
     new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
     new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet span.prov: No unsaved changes
