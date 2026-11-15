@@ -16,7 +16,6 @@
 
 import { esc } from '/static/shared/esc.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
-import { sceneRoute } from '/static/shared/scene-net.js';
 // THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
 // this page puts up is an entry on it — see pageSheet, showSheet and showPop.
 import { openLayer, closeLayer, layerDepth, openSheet, showModal, confirm as layerConfirm } from '/static/shared/layer.js';
@@ -52,7 +51,10 @@ import { partPicker, partSource } from '/static/shared/part-picker.js';
 // them once, before the first openProcess, and they stay; the list's cold
 // load is 12 requests fewer. These names are bound when it lands.
 let renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf;
-let exceptionList, countOf, settingsPage;
+// sceneRoute is the key-route walk's route model (routeOver); it waits with the
+// stack because only a style opened needs it, and the list's cold load stays
+// without shared/scene-net.js and the geometry under it.
+let exceptionList, countOf, settingsPage, sceneRoute;
 let stackLoad = null;
 
 // loadStack puts a copy of each tag in the page's stack templates where its
@@ -84,10 +86,12 @@ function loadStack() {
         import('/static/operator-station/operator-flow.js'),
         import('/static/shared/exceptions.js'),
         import('/static/shared/settings.js'),
-    ]).then(([, flow, exc, set]) => {
+        import('/static/shared/scene-net.js'),
+    ]).then(([, flow, exc, set, net]) => {
         ({ renderFlowPicture, pictureRows, relationPlacement, sentencesFromModel, moduleOf } = flow);
         ({ exceptionList, countOf } = exc);
         ({ settingsPage } = set);
+        ({ sceneRoute } = net);
     });
     return stackLoad;
 }

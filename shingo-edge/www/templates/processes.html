@@ -55,7 +55,8 @@
   (loadStack) puts a copy of each tag where its template stands, once, before
   it opens a process, so the cascade and the script order are the ones these
   tags had in the page. The page's modules that are a process's
-  (operator-flow.js, shared/settings.js, shared/exceptions.js) wait the same
+  (operator-flow.js, shared/settings.js, shared/exceptions.js,
+  shared/scene-net.js) wait the same
   way, by import(). The static-set gate holds the templates' tags to every
   check, as lazy fetches (shared/assets/assetcheck).
 
