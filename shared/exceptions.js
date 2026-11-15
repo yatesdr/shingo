@@ -46,6 +46,10 @@ function attrs(map) {
 //   add       { label, act, ...data } | null: the "+ Add" after the rows
 //   empty     the summary's own add, drawn beside it when there are no rows
 //             (default: the add)
+//   bare      no name column: the list fills its container, and the add sits
+//             at its right edge. For a list that is a card's whole subject,
+//             whose heading already names the setting (label still names it
+//             in the ×'s aria-label).
 //
 // The ×'s act and data are the row's remove; its aria-label names the place
 // and the setting.
@@ -74,8 +78,8 @@ export function exceptionList(spec) {
     };
     const sum = '<div class="exc-sum"><span>' + esc(s.summary || '') + '</span>' +
         (rows.length ? '' : addBtn(s.empty === undefined ? s.add : s.empty)) + '</div>';
-    return '<div class="exc"' + (s.id ? ' data-exc="' + esc(s.id) + '"' : '') + '>' +
-        '<div class="exc-name">' + esc(s.label || '') + (s.sub ? '<small>' + esc(s.sub) + '</small>' : '') + '</div>' +
+    return '<div class="exc' + (s.bare ? ' bare' : '') + '"' + (s.id ? ' data-exc="' + esc(s.id) + '"' : '') + '>' +
+        (s.bare ? '' : '<div class="exc-name">' + esc(s.label || '') + (s.sub ? '<small>' + esc(s.sub) + '</small>' : '') + '</div>') +
         '<div class="exc-body">' + sum +
         (rows.length ? '<table class="exc-rows"><tbody>' + rows.map(row).join('') + '</tbody></table>' + addBtn(s.add) : '') +
         '</div></div>';

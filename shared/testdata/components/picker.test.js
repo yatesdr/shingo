@@ -355,4 +355,14 @@ test('the later rows wait under one line with their count, after the rest, and o
     eq(f.shown(), ['ALN_02on INV TEST [off]']);
 });
 
+test('a quiet exclusion is greyed with its note: its reason is said once, above the list, by the caller', async () => {
+    const f = picker({ open: true, multi: true }, [
+        { value: 'GRP_A', label: 'GRP_A', note: 'group · 2 nodes', reason: 'a group: its nodes are positions one at a time', quiet: true },
+        { value: 'PLN_001', label: 'PLN_001' },
+    ]);
+    f.row('GRP_A').click();
+    eq([f.k.value(), f.row('GRP_A').getAttribute('aria-disabled'), f.row('GRP_A').querySelector('.picker-why'),
+        f.row('GRP_A').querySelector('.picker-note').textContent], [[], 'true', null, 'group · 2 nodes']);
+});
+
 run();

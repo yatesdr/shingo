@@ -319,4 +319,17 @@ test('later: a field sends a top row behind the shell\'s one show', async () => 
     eq(rows.filter((r) => r.later).map((r) => r.value), ['PRESS-1']);
 });
 
+test('quiet: a field marks the rows whose reason it says once, above the list', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const rows = N.nodeRows(s.rows(), {
+        members: 'fold',
+        rule: (n) => (n.type === 'NGRP' ? 'a group: its nodes are positions one at a time' : ''),
+        quiet: (n) => n.type === 'NGRP',
+    });
+    const g = rows.find((r) => r.value === 'GRP-A');
+    eq([g.reason, g.quiet, g.note], ['a group: its nodes are positions one at a time', true, 'group · 2 nodes']);
+    eq(rows.filter((r) => r.quiet).map((r) => r.value).every((v) => v.indexOf('GRP') === 0), true, 'only the groups are quiet');
+});
+
 run();

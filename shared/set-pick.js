@@ -41,6 +41,9 @@ const BOX_CHIPS = 8;
 //   closed(key) why a box cannot be opened (a routing set that could not be
 //              read), or ''
 //   note(key)  a short line drawn in the box under its chips, or ''
+//   hint(key)  one line above the list while that box is open, or '': what
+//              holds for many of its rows, said once (a group's rows in
+//              Positions), so the rows need not each repeat it
 //   filters    the list's prefix filters, or a function returning them
 //   later      the shell's { label } for the rows field.later sends behind
 //   placeholder the list's search hint
@@ -151,6 +154,8 @@ export function createSetPick(host, opts) {
             head.appendChild(el('i', { className: 'setpick-dot', 'aria-hidden': 'true' }));
             head.appendChild(el('b', null, 'Picking ' + b.label));
             head.appendChild(el('small', null, b.sub || ''));
+            const hint = o.hint ? o.hint(b.key) : '';
+            if (hint) head.appendChild(el('small', { className: 'setpick-hint' }, hint));
         }
         pane.setAttribute('data-role', b ? (b.role || b.key) : '');
         root.setAttribute('data-active', active || '');

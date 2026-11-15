@@ -62,6 +62,19 @@ test('a row with no remove has no ×; a list with no add has none', () => {
     ok(h.indexOf('exc-add') < 0);
 });
 
+test('a bare list draws no name column; the × still names the setting', () => {
+    const { mods: [X] } = page('exceptions.js');
+    const none = X.exceptionList({ id: 'curtain', label: 'Light curtain', bare: true, summary: 'off at all 3 positions',
+        add: { label: '+ Add a position', act: 'cu-add' } });
+    ok(none.startsWith('<div class="exc bare" data-exc="curtain">'), 'the list is marked bare: ' + none.slice(0, 60));
+    ok(none.indexOf('exc-name') < 0, 'no name column: ' + none);
+    ok(none.indexOf('</span><button class="pd-btn quiet exc-add" data-act="cu-add">+ Add a position</button></div>') > 0,
+        'the add sits in the summary line, which the stylesheet ends it at: ' + none);
+    const rows = X.exceptionList({ id: 'curtain', label: 'Light curtain', bare: true, summary: '1 of 3 positions',
+        rows: [{ name: 'PLN_07', cells: [], remove: { act: 'cu-off', node: 7 } }], add: { label: '+ Add a position', act: 'cu-add' } });
+    ok(rows.indexOf('aria-label="Remove PLN_07 from Light curtain"') > 0, 'the × says which setting: ' + rows);
+});
+
 test('countOf: the summary\'s words', () => {
     const { mods: [X] } = page('exceptions.js');
     eq(X.countOf(2, 23, 'position'), '2 of 23 positions');

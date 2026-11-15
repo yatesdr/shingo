@@ -12,6 +12,9 @@
 //   reason   why this row cannot be picked: it is drawn greyed with the
 //            reason beside it, and neither a click nor the keyboard reaches it
 //            (an exclusion is shown, never silently dropped)
+//   quiet    with a reason: the reason is said once above the list (the
+//            caller's), so the row is greyed with its note instead of
+//            repeating it — every group row of a positions list
 //   members  rows drawn indented under this one (a group's nodes)
 //   values   what picking the row picks, when it is not [value] (a group that
 //            stands for its members); the row is on when all of them are
@@ -342,7 +345,7 @@ export function createPicker(host, opts) {
             multi ? el('i', { className: 'picker-box', 'aria-hidden': 'true' }) : null,
             el('span', { className: 'picker-label' }, r.label === undefined ? String(r.value) : String(r.label)),
             ...(r.tags || []).map((t) => el('span', { className: 'picker-tag', 'data-tone': t.tone || null }, String(t.label))),
-            off ? el('small', { className: 'picker-why' }, String(r.reason))
+            off && !r.quiet ? el('small', { className: 'picker-why' }, String(r.reason))
                 : (r.note ? el('small', { className: 'picker-note' }, String(r.note)) : null),
             fold ? el('button', { type: 'button', className: 'picker-fold', 'data-fold': String(r.value), 'aria-expanded': fold.open ? 'true' : 'false' },
                 fold.open ? 'hide' : 'show ' + fold.n) : null,

@@ -19,6 +19,10 @@ field but `value` optional:
 - `reason` is why a row **cannot** be picked. The row is drawn greyed with the
   reason beside it, and neither a click nor the keyboard reaches it. A picker
   shows what it excludes and why; it never drops a row in silence.
+- `quiet`, with a `reason`: the reason is said once above the list by the
+  caller (the set pick's `hint`), so the row is greyed with its `note` instead
+  of repeating it. Every group row of a Positions list is one: "a group is one
+  row: its nodes are positions one at a time" is said once, not on each.
 - `members` are rows drawn indented under this one (a group's nodes).
 - `values` is what picking the row picks when that is not its own `value` (a
   group standing for its members). The row is on when all of them are.

@@ -1157,6 +1157,11 @@ nav {
 }
 .pd-seg button:last-child, .set-ui .set-seg button:last-child { border-right: 0; }
 .pd-seg button.on, .set-ui .set-seg button.on { background: var(--surface-2, var(--surface)); color: var(--text); }
+/* A segment of long answers that would not fit its column side by side
+ * stacks them, each a full-width row: clipped words are never the answer. */
+.pd-seg.col, .set-ui .set-seg.col { display: flex; flex-direction: column; align-self: stretch; max-width: 320px; }
+.pd-seg.col button, .set-ui .set-seg.col button { border-right: 0; border-bottom: 1px solid var(--sub-2); text-align: left; }
+.pd-seg.col button:last-child, .set-ui .set-seg.col button:last-child { border-bottom: 0; }
 .pd-btn.danger, .set-ui .set-btn.danger { border-color: var(--viz-coral); color: var(--chip-ink-below); }
 .pd-savebar, .set-ui .set-savebar {
     display: flex; align-items: center; justify-content: flex-end; gap: 12px;
@@ -1392,6 +1397,12 @@ nav {
 }
 .exc-rows td.exc-x button:hover, .exc-rows td.exc-x button:focus-visible { color: var(--text); }
 .exc-add { align-self: flex-start; }
+/* A bare list is a card's whole subject: no name column, the rows across the
+ * card, + Add at the right edge, beside the summary or under the rows. */
+.exc.bare { grid-template-columns: minmax(0, 1fr); }
+.exc.bare .exc-body { align-items: stretch; }
+.exc.bare .exc-sum > .exc-add { margin-left: auto; }
+.exc.bare .exc-body > .exc-add { align-self: flex-end; }
 
 /* ── THE SET PICK (shared/set-pick.js) ───────────────────────────────────
  * A process's positions and routing set off one node list: a row of boxes,
@@ -1437,7 +1448,8 @@ nav {
     display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3);
     border: 1px solid var(--role, var(--border)); border-radius: calc(var(--radius) + 4px); background: var(--bg);
 }
-.setpick-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+.setpick-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); }
+.setpick-head .setpick-hint { flex-basis: 100%; }
 .setpick-head .setpick-dot { align-self: center; }
 .setpick-head small { color: var(--text-muted); font-size: var(--font-xs); }
 .setpick .picker--open .picker-list { max-height: 360px; box-shadow: none; }

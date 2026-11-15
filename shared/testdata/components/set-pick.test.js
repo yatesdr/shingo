@@ -114,4 +114,12 @@ test('a host may move names on a change: set() writes another box', async () => 
     eq([f.s.value('positions'), f.s.value('source')], [['ALN_03'], []]);
 });
 
+test('a box\'s hint is one line above the list while that box is open, and none for a box without one', async () => {
+    const f = await setPick({ hint: (key) => (key === 'positions' ? 'A group is one row.' : '') });
+    const hints = () => f.s.el.querySelectorAll('.setpick-hint').map((h) => h.textContent);
+    eq(hints(), ['A group is one row.']);
+    f.s.open('source');
+    eq(hints(), []);
+});
+
 run();
