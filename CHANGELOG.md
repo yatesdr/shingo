@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.8.1 — 2026-11-15
+
 Deploy: no migration.
 
 - Opening the composer for a screen or a process that no longer exists now says it is not found, instead of a server error
