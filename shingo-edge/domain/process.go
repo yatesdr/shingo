@@ -501,11 +501,10 @@ type NodeClaim struct {
 	// forward and then goes for the replacement itself. One robot leaves the
 	// cell as soon as the press is clear; the other owns the whole refill.
 	//
-	// IT DESCRIBES HARDWARE, not a style. Which robot can reach the
-	// supermarket is a fact about the cell's layout and reach, so two styles on
-	// one press disagreeing about it is operator confusion rather than
-	// configuration — UpsertClaim warns on the drift. Read it through
-	// IndexRobotFetches.
+	// IT IS THE STYLE'S. Two styles on one press may bring the back position
+	// its next carrier with different robots, because the part decides it; a
+	// recipe carries one value, applied to every part built from it. Nothing
+	// warns when two styles differ. Read it through IndexRobotFetches.
 	RefillBy protocol.RefillBy `json:"refill_by"`
 	// KeyRoute names map points a leg from this claim should be routed
 	// through, in order. It is SEER's keyRoute: per the vendor manual

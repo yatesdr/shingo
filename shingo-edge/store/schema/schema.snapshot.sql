@@ -957,8 +957,8 @@ CREATE TABLE style_node_claims (
     changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
     -- Which robot of a press-index pair brings the back position its next
     -- carrier: clearing_robot (Robot 1, R1 evacuates and refills) or
-    -- index_robot (Robot 2, R2 indexes and refills). Describes the cell's
-    -- hardware, so UpsertClaim warns when two styles on one press disagree.
+    -- index_robot (Robot 2, R2 indexes and refills). The style's choice: two
+    -- styles on one press may differ (the part decides), and nothing warns.
     refill_by               TEXT NOT NULL DEFAULT 'clearing_robot',
     -- SEER robot-SELECTION hints, carried through to the fleet request.
     -- key_route is a JSON array of map points to prefer passing through, IN
