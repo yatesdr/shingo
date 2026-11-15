@@ -24,10 +24,12 @@ import (
 // anything changed.
 //
 // TOO NARROW. Hash only the geometry and a lane whose maxspeed was halved
-// reports as continuous. maxspeed is set on 91 of Springfield's 405 curves,
-// and a tech who slows a lane to fix a localization problem has made precisely
-// the change this system exists to evaluate. That failure is silent and in the
-// dangerous direction: the reader believes before and after are comparable.
+// reports as continuous. maxspeed is set on a share of the curves in the
+// robot's .smap (counted once at one plant; the scene has grown since and it
+// was not counted again), and a tech who slows a lane to fix a localization
+// problem has made precisely the change this system exists to evaluate. That
+// failure is silent and in the dangerous direction: the reader believes before
+// and after are comparable.
 //
 // So: two hashes over three classes of field.
 //

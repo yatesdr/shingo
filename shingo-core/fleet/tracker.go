@@ -33,6 +33,14 @@ type UnreadableEmitter interface {
 	EmitOrderReadable(orderID int64, vendorOrderID string)
 }
 
+// RobotChangeEmitter is the OPTIONAL half of TrackerEmitter for a robot the
+// fleet moved an order to without changing the order's state (vendorState is
+// that unchanged state). It is not a status change and must not be read as
+// one: see rds.Poller's reportRobotSwap. Optional, like UnreadableEmitter.
+type RobotChangeEmitter interface {
+	EmitOrderRobotChanged(orderID int64, vendorOrderID, vendorState, fromRobotID, robotID string)
+}
+
 // OrderIDResolver maps vendor order IDs back to ShinGo order IDs.
 type OrderIDResolver interface {
 	ResolveVendorOrderID(vendorOrderID string) (int64, error)

@@ -46,9 +46,10 @@ func TestComposerMap_EveryEndpointIsPlaced(t *testing.T) {
 }
 
 // TestComposerMap_AnEdgeCarriesNoCoordinates is the byte rule, stated as the
-// shape rather than as a number: an edge is two names, a length and an
-// optional pair of handles. A coordinate key coming back here is the 68.8 kB
-// coming back with it.
+// shape rather than as a number: an edge is two names and an optional set of
+// four handles. A coordinate key coming back here is the 68.8 kB coming back
+// with it, and a `len` coming back is the straight-line length the owner took
+// off the wire on 2026-11-14 (follow-up F3: nothing read it).
 func TestComposerMap_AnEdgeCarriesNoCoordinates(t *testing.T) {
 	t.Parallel()
 	fx := seedBudgetFixture(t)
@@ -69,10 +70,10 @@ func TestComposerMap_AnEdgeCarriesNoCoordinates(t *testing.T) {
 	}
 	for k := range keys {
 		switch k {
-		case "from", "to", "len", "h":
+		case "from", "to", "h":
 		default:
-			t.Errorf("a map edge carries %q (%s). An endpoint is a name; the place is Points[name], "+
-				"and a second copy of it ships once per incident edge.", k, strings.TrimSpace(string(raw)))
+			t.Errorf("a map edge carries %q (%s); an edge is from, to and h. An endpoint is a name; the place "+
+				"is Points[name], and a second copy of it ships once per incident edge.", k, strings.TrimSpace(string(raw)))
 		}
 	}
 }

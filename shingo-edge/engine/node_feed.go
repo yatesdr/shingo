@@ -38,9 +38,9 @@ func (e *Engine) ApplyNodeList(resp *protocol.NodeListResponse) {
 			e.holdFeed(protocol.FeedNodes, resp.Digest, "")
 		}
 	}
-	e.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
-	// The same two slices, second consumer: replaced only when the response
-	// carries the whole scene with its revision.
+	e.SetSceneGraph(resp.ScenePoints)
+	// The points again, with the edges, second consumer: replaced only when
+	// the response carries the whole scene with its revision.
 	e.SetSceneGeometry(resp.SceneRevision, resp.ScenePoints, resp.SceneEdges)
 	if resp.SceneRevision != "" {
 		e.holdFeed(protocol.FeedScene, e.SceneRevision(), "")

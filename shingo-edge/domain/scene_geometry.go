@@ -7,8 +7,11 @@ import (
 )
 
 // SceneGeometry is the Edge's copy of the vendor map's geometry: where every
-// scene point is, and the shape of every drivable segment. It is what the
-// station's cell picture draws from.
+// scene point is, and the shape of every drivable segment. The cell picture
+// places its positions by the point coordinates alone (LocateCellPosition; it
+// draws a schematic, not the scene); the desktop composer's Map, the key-route
+// walk's network, is built from it; and the operator station's robot panel
+// draws it, points, segments and handles, from its own door (service.SceneMap).
 //
 // Delivered by Core on the node-list sync when the Edge's revision is stale,
 // held durably (scene_geometry_* tables) and hot (the engine), and replaced

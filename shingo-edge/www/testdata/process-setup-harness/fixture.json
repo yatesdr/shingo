@@ -1018,153 +1018,123 @@
       "edges": [
         {
           "from": "SRC_A1",
-          "to": "LM_1",
-          "len": 4
+          "to": "LM_1"
         },
         {
           "from": "SRC_A2",
-          "to": "LM_1",
-          "len": 4
+          "to": "LM_1"
         },
         {
           "from": "SRC_1",
-          "to": "LM_1",
-          "len": 5
+          "to": "LM_1"
         },
         {
           "from": "LM_1",
-          "to": "LM_2",
-          "len": 8
+          "to": "LM_2"
         },
         {
           "from": "LM_2",
-          "to": "LM_3",
-          "len": 8
+          "to": "LM_3"
         },
         {
           "from": "LM_3",
-          "to": "LM_4",
-          "len": 8
+          "to": "LM_4"
         },
         {
           "from": "LM_4",
-          "to": "LM_5",
-          "len": 8
+          "to": "LM_5"
         },
         {
           "from": "LM_5",
-          "to": "STG_1",
-          "len": 6
+          "to": "STG_1"
         },
         {
           "from": "LM_5",
-          "to": "STG_2",
-          "len": 6
+          "to": "STG_2"
         },
         {
           "from": "LM_5",
-          "to": "STG_3",
-          "len": 6
+          "to": "STG_3"
         },
         {
           "from": "LM_5",
-          "to": "STG_9",
-          "len": 6
+          "to": "STG_9"
         },
         {
           "from": "LM_5",
-          "to": "DST_1",
-          "len": 6
+          "to": "DST_1"
         },
         {
           "from": "LM_5",
-          "to": "DST_2",
-          "len": 6
+          "to": "DST_2"
         },
         {
           "from": "LM_5",
-          "to": "DST_9",
-          "len": 6
+          "to": "DST_9"
         },
         {
           "from": "LM_5",
-          "to": "POS_A1",
-          "len": 6
+          "to": "POS_A1"
         },
         {
           "from": "LM_5",
-          "to": "POS_A2",
-          "len": 6
+          "to": "POS_A2"
         },
         {
           "from": "LM_5",
-          "to": "POS_A3",
-          "len": 6
+          "to": "POS_A3"
         },
         {
           "from": "LM_5",
-          "to": "POS_A4",
-          "len": 6
+          "to": "POS_A4"
         },
         {
           "from": "LM_5",
-          "to": "POS_A5",
-          "len": 6
+          "to": "POS_A5"
         },
         {
           "from": "LM_5",
-          "to": "POS_A6",
-          "len": 6
+          "to": "POS_A6"
         },
         {
           "from": "LM_5",
-          "to": "POS_A7",
-          "len": 6
+          "to": "POS_A7"
         },
         {
           "from": "LM_5",
-          "to": "POS_A8",
-          "len": 6
+          "to": "POS_A8"
         },
         {
           "from": "LM_5",
-          "to": "POS_A9",
-          "len": 6
+          "to": "POS_A9"
         },
         {
           "from": "LM_5",
-          "to": "POS_A10",
-          "len": 6
+          "to": "POS_A10"
         },
         {
           "from": "LM_5",
-          "to": "POS_A11",
-          "len": 6
+          "to": "POS_A11"
         },
         {
           "from": "LM_5",
-          "to": "POS_B1",
-          "len": 6
+          "to": "POS_B1"
         },
         {
           "from": "LM_5",
-          "to": "POS_B2",
-          "len": 6
+          "to": "POS_B2"
         },
         {
           "from": "LM_5",
-          "to": "POS_B3",
-          "len": 6
+          "to": "POS_B3"
         },
         {
           "from": "LM_5",
-          "to": "POS_B4",
-          "len": 6
+          "to": "POS_B4"
         },
         {
           "from": "LM_5",
-          "to": "ULD_1",
-          "len": 6
+          "to": "ULD_1"
         }
       ]
     }

@@ -359,7 +359,7 @@ func lineStates() []lineState {
 		{"the removal at the line, its backfill on its way", seq, cell(func(w *buttonWorld) {
 			w.request()
 			removal := w.lastOrder()
-			driveToInTransit(w.t, w.eng, removal, w.node)
+			releaseAtLine(w.t, w.eng, removal, w.node)
 			if w.lastOrder() == removal {
 				w.t.Fatal("the removal on its way made no backfill")
 			}
@@ -367,7 +367,7 @@ func lineStates() []lineState {
 		{"the removal done, its backfill delivered, not confirmed", seq, cell(func(w *buttonWorld) {
 			w.request()
 			removal := w.lastOrder()
-			driveToInTransit(w.t, w.eng, removal, w.node)
+			releaseAtLine(w.t, w.eng, removal, w.node)
 			w.setStatus(removal, protocol.StatusConfirmed)
 			w.setStatus(w.lastOrder(), protocol.StatusDelivered)
 		}), buttonAnswer{refused: "node KS-LINE: " + swapBusy}},

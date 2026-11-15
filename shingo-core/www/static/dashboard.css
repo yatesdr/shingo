@@ -63,20 +63,39 @@ html, body {
 }
 .dash-clock { font-variant-numeric: tabular-nums; }
 
-/* Live-connection dot. Green pulsing = connected, red = dropped. */
+/* Live-connection dot. Green pulsing = connected, red = dropped.
+ *
+ * The pulse is a ring on ::after that grows and fades with transform and
+ * opacity only, so the compositor runs it: no main-thread repaint per frame.
+ * It is the box-shadow pulse it replaced, frame for frame: the ring is a disc
+ * the dot's size scaled to 2.1 / 0.9 (the old 0.6rem spread on each side of a
+ * 0.9rem dot) while it fades from 0.6 alpha to nothing over the first 70% of
+ * each 2s. It sits above the dot, not below it, and is the dot's own green, so
+ * inside the dot it changes no pixel. Pinned by
+ * TestKioskConnDotPulseIsCompositedAndHonoursReducedMotion. */
 .dash-conn {
+  position: relative;
   width: 0.9rem;
   height: 0.9rem;
   border-radius: 50%;
   background: var(--dash-muted);
   display: inline-block;
 }
-.dash-conn-ok { background: #2ea043; box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6); animation: dash-pulse 2s infinite; }
+.dash-conn-ok { background: #2ea043; }
+.dash-conn-ok::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(46, 160, 67, 0.6);
+  pointer-events: none;
+  animation: dash-pulse 2s infinite;
+}
 .dash-conn-down { background: #f85149; }
 @keyframes dash-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6); }
-  70% { box-shadow: 0 0 0 0.6rem rgba(46, 160, 67, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+  0% { transform: scale(1); opacity: 1; }
+  70% { transform: scale(2.3333); opacity: 0; }
+  100% { transform: scale(1); opacity: 0; }
 }
 
 /* ── Body / table ─────────────────────────────────────────────────── */
@@ -159,78 +178,12 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   pointer-events: none;
   background: radial-gradient(ellipse at center, transparent 72%, rgba(0, 0, 0, 0.15) 100%);
 }
-.map-svg { width: 100%; height: 100%; display: block; background: var(--map-floor, #131a24); }
+/* The scene's own look (the floor, grid, aisles, route lines, robots, name
+ * chips and comets that shared/scene-view.js and shared/comet-layer.js draw)
+ * is shared/scene-view.css, which this page links after this sheet, as the
+ * Edge's robot panel does (owner: one machinery in shared/). What stays here
+ * is the page's own. */
 
-/* Sizes (radius, stroke, font) are set in user units by dashboard-map.js so
- * they scale with the map; CSS here owns colors, opacity, and animation.
- * Per-shape fills/strokes are set as SVG attributes in JS — do NOT set `fill`
- * on those classes, a CSS fill overrides the presentation attribute. */
-
-/* Backdrop: faint grid + corner brackets frame the floor. Grid stroke-width is
- * set in JS user units — a CSS width would not scale with the map. */
-.map-grid { stroke: rgba(255, 255, 255, 0.05); }
-
-/* Travel network: the scene's synced path segments and receded waypoint dots.
- * Lines carry the structure, so they sit a step brighter than the dots. */
-.map-aisle { stroke: var(--map-aisle, #56698a); stroke-linecap: round; stroke-opacity: 0.82; }
-.map-node-travel { fill: var(--map-node, #7e92b3); }
-/* Order source/destination highlight ring (status-colored in JS). */
-.map-node-hot { opacity: 0.95; }
-
-/* Routes are comet-only: no standing line. The comet (a bright leading arrow +
- * fading tail, built in JS) carries the route and lives on .map-comet-layer — a
- * separate <svg> overlaid on the map so the per-tick scene rebuild doesn't
- * restart its animation. The layer ignores pointer events so robot clicks reach
- * the scene. .map-route-base is now only the reduced-motion fallback (a faint
- * static lane line for users who opt out of animation). */
-.map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.map-route-base { stroke-linecap: round; stroke-linejoin: round; }
-.map-comet-head { stroke: none; }
-/* Fetch (empty-run) comet head: hollow outline. Stroke color is set inline
- * (per-status), so this class must NOT force a stroke — it only ensures the
- * `.map-comet-head { stroke: none }` rule above doesn't apply. */
-.map-comet-head-hollow { fill: none; }
-
-/* Route states — all STATIC (no flow); only a moving robot animates.
- * Intent lines recede to neutral aisle steel (structure recedes); frozen and
- * blocked lanes carry their status hue inline at low opacity. */
-.map-route-intent {
-  stroke-linecap: round;
-  stroke-dasharray: 2 6;
-  stroke: var(--map-aisle, #45566e);
-}
-.map-route-frozen { stroke-linecap: round; stroke-linejoin: round; }
-
-/* Robots: moving = chevron with heading + pulsing halo; parked = compact
- * disc, no halo (heading is noise when docked, and haloless discs keep
- * charge rows tidy). The glyph stroke is LIGHT: stacked same-color glyphs
- * separate against each other; a dark stroke piled overlaps into a blob. */
-.map-robot-halo { opacity: 0.16; animation: map-halo 2.6s ease-in-out infinite; }
-@keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
-.map-robot { stroke: rgba(255, 255, 255, 0.55); }
-/* At rest and paused (not taking orders): the fill fades and the outline
- * takes the robot's colour (set inline). Offline: the whole disc dims. */
-.map-robot.is-paused { fill-opacity: 0.25; }
-.map-robot.is-offline { opacity: 0.55; }
-.map-robot-core { fill: #070a0f; }
-/* Each robot's glyphs + chip sit in a [data-robot] group — click to focus its
- * route. Pointer cursor hints the affordance. */
-.map-robot-hit { cursor: pointer; }
-/* Outline on the focused robot — the UI accent (indigo), not a status color:
- * click-to-focus is a UI selection, so it reads as the reserved accent (P13). */
-.map-robot-focus { stroke: var(--accent, #7c7cf0); }
-/* Hairline tying a de-collided name chip back to its robot. */
-.map-chip-leader { stroke: rgba(255, 255, 255, 0.18); }
-
-/* Name chips: dark pill, status-colored hairline border, monospace label. */
-.map-chip { fill: rgba(7, 10, 15, 0.9); stroke-opacity: 0.7; }
-.map-robot-label {
-  fill: #dbe4ee;
-  text-anchor: middle;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-}
 .map-node-label {
   fill: var(--dash-muted);
   text-anchor: middle;
@@ -240,9 +193,11 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Comets are skipped in JS under reduced-motion (routes show as static dim
-   * lines); the halo pulse is the only CSS animation left to silence. */
-  .map-robot-halo { animation: none; }
+  /* Silenced here: the header connection-dot pulse (a still green dot, as
+   * the dot looks between pulses). The robot halo is silenced in
+   * shared/scene-view.css. Not silenced: the fault flare and the new-row
+   * flash. */
+  .dash-conn-ok::after { animation: none; display: none; }
 }
 
 .map-legend { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 0.95rem; color: var(--dash-muted); }
@@ -286,14 +241,6 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
   border-radius: 8px;
 }
 .map-key-items[hidden] { display: none; }
-
-/* Fault flare: larger, louder pulsing halo for blocked/error robots.
- * Drawn as a second outer ring so it compounds with the normal motion halo. */
-.map-robot-fault-flare { animation: map-fault-flare 1.1s ease-in-out infinite; }
-@keyframes map-fault-flare {
-  0%, 100% { opacity: 0.30; }
-  50%       { opacity: 0.65; }
-}
 
 /* ── status rail (right-hand panel on the map board) ─────────────── */
 .map-rail {
@@ -392,7 +339,7 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
 }
 
 /* ── minimap (whole-plant overview, bottom-right of the map region) ── */
-/* pointer-events:none set on the SVG itself; this box is just the frame. */
+/* The minimap <svg> is both the frame and the click target. */
 .map-minimap {
   position: absolute;
   bottom: 0.9rem;

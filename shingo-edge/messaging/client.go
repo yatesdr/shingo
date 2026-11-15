@@ -74,6 +74,15 @@ type Client struct {
 	PartitionKey string
 
 	DebugLog DebugLogFunc
+
+	// eph is the ephemeral topic while the engine holds it open
+	// (ephemeral.go); nil otherwise. Guarded by mu.
+	eph *ephemeralRun
+	// openEphemeral and openEphemeralWriter open the ephemeral topic's reader
+	// and writer (newEphemeralReader, newEphemeralWriter); fields so a test can
+	// put fakes under the read loop and the sender. Set once, in NewClient.
+	openEphemeral       func(brokers []string, topic string) ephemeralReader
+	openEphemeralWriter func(brokers []string) ephemeralWriter
 }
 
 // NewClient creates a messaging client over a settings source. messaging must
@@ -84,6 +93,10 @@ func NewClient(messaging func() config.MessagingConfig) *Client {
 	return &Client{
 		messaging: messaging,
 		stopChan:  make(chan struct{}),
+		openEphemeral: func(brokers []string, topic string) ephemeralReader {
+			return newEphemeralReader(brokers, topic)
+		},
+		openEphemeralWriter: func(brokers []string) ephemeralWriter { return newEphemeralWriter(brokers) },
 	}
 }
 
@@ -336,4 +349,5 @@ func (c *Client) Close() {
 		c.kafkaR.Close()
 		c.kafkaR = nil
 	}
+	c.closeEphemeralLocked()
 }

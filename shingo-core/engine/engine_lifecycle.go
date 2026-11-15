@@ -127,6 +127,11 @@ func (e *Engine) Start() {
 		e.tracker.Start()
 	}
 
+	// The robot-route index from the scene already stored, before the first
+	// connection check below can start a scene sync: a sync's own rebuild then
+	// always lands after this one (rebuildPointIndex).
+	e.rebuildPointIndex()
+
 	// Emit initial connection status
 	e.checkConnectionStatus()
 
@@ -156,8 +161,7 @@ func (e *Engine) Start() {
 	e.startDemandReconciler()
 
 	// Start periodic reconciliation logging and auto-confirm.
-	e.sayRetiredAbandonKeys()
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
+	e.startReconciliationLoop()
 
 	// ETA medians cache — initial refresh + 10-min background refresh.
 	// Errors are logged but non-fatal: a cold-start failure leaves the
@@ -500,7 +504,7 @@ func (e *Engine) tableTurnAlarm(orderID int64, node, detail string) {
 // polledRobotFresh is how old the latest robot poll may be for the table turn
 // to act on it: three poll intervals. Older, and a robot's table angle is a
 // memory, not a reading.
-const polledRobotFresh = 3 * robotPollInterval
+const polledRobotFresh = 3 * protocol.RobotPollInterval
 
 // polledRobotStatus is the table turn's robot read: the robot as the latest
 // poll listed it, and false when that poll is stale or does not list it. It
@@ -569,6 +573,14 @@ func (e *Engine) reportMemberLegs() {
 		e.logFn("engine:   claim %s / %s at %s: %s = %s, a member of %s%s",
 			l.Process, l.Style, l.Node, l.Leg, l.Name, l.Group, home)
 	}
+}
+
+// startReconciliationLoop starts the periodic reconciliation (logging and
+// auto-confirm), first saying once whether the config still sets the retired
+// abandon keys.
+func (e *Engine) startReconciliationLoop() {
+	e.sayRetiredAbandonKeys()
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
 }
 
 // sayRetiredAbandonKeys logs, once at start, a config file that still sets the

@@ -203,7 +203,22 @@ block({
 });
 
 // The Add process sheet's map went with the sheet's routing set (slice 4):
-// Add asks a name and a group, and the routing set and its map are Settings'.
+// Add asks a name and a group, and the routing set is Settings'. The map
+// itself was removed on main too (2026-11-14, the shared-map brief's tier A1),
+// and with it the composer read the sheet made to draw it: the sheet makes no
+// composer read, and draws no Show on map.
+const sheetToggle = page => !!page.scrim.querySelector('[data-act="add-showmap"]') ||
+    /Show on map/.test(String((page.scrim.querySelector('.layer-body') || {}).innerHTML || ''));
+block({
+    title: 'smoke: Add process on a fresh list reads no plant map as it opens (A1)',
+    open: () => ({ search: '' }),
+    act: async page => { page.click('root', { act: 'add-process' }); await page.settle(); },
+    checks: [
+        r => ['no composer read', r.calls.filter(c => c.method === 'GET' && /\/composer$/.test(c.url.split('?')[0])).length === 0,
+            r.calls.map(lineOf).join(' · ') || 'no request'],
+        r => ['no Show on map on the sheet', !sheetToggle(r.page), 'a map toggle is drawn'],
+    ],
+});
 
 // F21 — the address bar's #tab= edited in place (a hashchange, no load).
 block({

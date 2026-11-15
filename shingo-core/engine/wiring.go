@@ -119,6 +119,11 @@ func (e *Engine) wireEventHandlers() {
 		e.recordMissionEvent(evt.Payload)
 	}, EventOrderStatusChanged)
 
+	// ── Vendor robot changes (no state change) ──────────────────────
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderRobotChangedEvent]) {
+		e.handleVendorRobotChange(evt.Payload)
+	}, EventOrderRobotChanged)
+
 	// ── Order failure ───────────────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
 		ev := evt.Payload
@@ -239,19 +244,23 @@ func (e *Engine) wireEventHandlers() {
 		// Edge's ApplyCoreStatus is already the total Core→Edge status mapping
 		// and already runs on this envelope. The echo — Edge confirms, tells
 		// Core, Core completes and tells Edge it confirmed — costs one message
-		// and no writes: that arm returns early when the Edge row is already
-		// terminal, which after an Edge-side confirm it always is.
+		// and no status write: that arm returns early when the Edge row is
+		// already terminal, which after an Edge-side confirm it always is.
 		//
-		// The order is read once here, for this gate and for the completion
-		// handler below (an order its station has no row for: the Stop 1 ruling).
+		// The order is read once here, for this gate, for the robot the notice
+		// carries, and for the completion handler below (an order its station
+		// has no row for: the Stop 1 ruling).
 		order, orderErr := e.db.GetOrder(ev.OrderID)
 		if ev.StationID != "" && ev.EdgeUUID != "" && !(orderErr == nil && order.StationUnaware) {
-			if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID,
-				&protocol.OrderUpdate{
-					OrderUUID: ev.EdgeUUID,
-					Status:    string(protocol.StatusConfirmed),
-					Detail:    "confirmed at Core",
-				}); err != nil {
+			notice := &protocol.OrderUpdate{
+				OrderUUID: ev.EdgeUUID,
+				Status:    string(protocol.StatusConfirmed),
+				Detail:    "confirmed at Core",
+			}
+			if orderErr == nil {
+				notice.RobotID = order.RobotID
+			}
+			if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, notice); err != nil {
 				e.logFn("engine: completion notification to edge: %v", err)
 			} else {
 				e.dbg("completion notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)

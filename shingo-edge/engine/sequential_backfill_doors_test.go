@@ -9,7 +9,7 @@ import (
 )
 
 // sequential_backfill_doors_test.go — census 28, 29, 30: the one-position,
-// one-inbound-carrier interlock (handleSequentialBackfill + orderRefillsNodeItself)
+// one-inbound-carrier interlock (ensureSequentialBackfill + orderRefillsNodeItself)
 // on the doors sequential_changeover_backfill_test.go does not drive.
 //
 // That file pins the changeover SWAP (no backfill) and the produce REQUEST (one
@@ -43,7 +43,7 @@ func TestSequentialConsume_RemovalMintsOneBackfill(t *testing.T) {
 		t.Fatalf("fixture: %v already deliver to SEQC-LINE — Order A should only remove", before)
 	}
 
-	driveToInTransit(t, eng, *rt.ActiveOrderID, nodeID)
+	releaseAtLine(t, eng, *rt.ActiveOrderID, nodeID)
 
 	after := ordersDroppingAt(t, db, "SEQC-LINE")
 	if len(after) != 1 {
@@ -71,7 +71,7 @@ func TestSequentialChangeoverEvacuate_OnePositionGetsOneCarrier(t *testing.T) {
 			before, orderA)
 	}
 
-	driveToInTransit(t, eng, orderA, activeNodeID)
+	releaseAtLine(t, eng, orderA, activeNodeID)
 
 	if after := ordersDroppingAt(t, db, "SEQ-A"); len(after) != 1 {
 		t.Errorf("after the tooling evacuate went in_transit, %d orders deliver to SEQ-A (%v), want 1 — "+
@@ -104,7 +104,7 @@ func TestSequentialEmptyBin_RemovalMintsOneBackfill(t *testing.T) {
 		t.Fatal("fixture: REQUEST EMPTY BIN left no active order on the cell")
 	}
 
-	driveToInTransit(t, eng, *rt.ActiveOrderID, nodeID)
+	releaseAtLine(t, eng, *rt.ActiveOrderID, nodeID)
 
 	after := ordersDroppingAt(t, db, "PRODUCE-NODE")
 	if len(after) != 1 {
@@ -149,7 +149,7 @@ func TestSequentialBackfill_IsCountedAndCarriesItsRemovalsOrigin(t *testing.T) {
 		t.Errorf("the episode expects %s orders, want 2: the removal and the backfill it leaves", fmtExpected(e))
 	}
 
-	driveToInTransit(t, eng, removal.ID, nodeID)
+	releaseAtLine(t, eng, removal.ID, nodeID)
 
 	after := ordersDroppingAt(t, db, "SEQO-LINE")
 	if len(after) != 1 {

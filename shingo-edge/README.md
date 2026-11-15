@@ -140,6 +140,7 @@ regenerates it. Durations take Go duration strings (`5s`, `1h0m0s`).
 | `line_id` | string | _(empty)_ | Namespace / LineID are labels, not identity: nothing composes a station id from them, they have no defaults, and the engine only logs them at start. A plant config that carries them still loads. |
 | `logging.stderr_subsystems` | list of string | `[edge_handler engine heartbeat orders plant_claims plc production_ticks protocol release]` | StderrSubsystems is the allow-list of debuglog subsystems mirrored to stderr (under systemd, the journal). |
 | `messaging.dispatch_topic` | string | `shingo.dispatch` | the topic Core publishes to edges on |
+| `messaging.ephemeral_topic` | string | `shingo.ephemeral` | the live robot feed's short-lived topic (protocol/ephemeral.go): used only while Core names this same topic; empty turns the feed off on this edge |
 | `messaging.kafka.brokers` | list of string | _(empty)_ | Kafka broker addresses, host:port |
 | `messaging.orders_topic` | string | `shingo.orders` | the topic this edge publishes to Core on |
 | `messaging.outbox_drain_interval` | duration | `5s` | how often the outbox drainer publishes pending messages |

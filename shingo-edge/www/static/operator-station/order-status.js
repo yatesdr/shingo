@@ -32,6 +32,17 @@ export const TERMINAL_STATUSES = ['cancelled', 'confirmed', 'failed', 'skipped']
 // the visibility requirement is about. Since C1 the set is pending and queued.
 export const PRE_DISPATCH_STATUSES = ['pending', 'queued'];
 
+// VENDOR-TRACKED: the fleet holds the order and Core watches it, so Core sends
+// its robot's position (protocol.IsVendorTracked / VendorTrackedStatusSQLList,
+// pinned by the Go drift test like the lists above). The robot panel's "has a
+// robot" is this plus a robot id (operator-robot-panel.js robotOrders). A
+// reshuffling parent is not in it: Core tracks its child legs.
+export const VENDOR_TRACKED_STATUSES = ['dispatched', 'faulted', 'in_transit', 'staged'];
+
+export function isVendorTracked(status) {
+    return VENDOR_TRACKED_STATUSES.includes(status);
+}
+
 export function isTerminal(status) {
     return TERMINAL_STATUSES.includes(status);
 }

@@ -29,9 +29,14 @@ func (e *Engine) emitNodeChange(nodeID int64, nodeName, action string) {
 // but nominally distinct named types; Go requires type identity,
 // not structural equivalence, for assignment. The conversion is
 // free at runtime.
+//
+// Robot routes are named from the scene this writes, so the route index is
+// rebuilt after it (rebuildPointIndex).
 func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]string) {
 	gate, prev := e.sceneGate()
-	return scenesync.SyncScenePoints(e.db, scenesync.LogFn(e.logFn), areas, gate, prev)
+	total, locations := scenesync.SyncScenePoints(e.db, scenesync.LogFn(e.logFn), areas, gate, prev)
+	e.rebuildPointIndex()
+	return total, locations
 }
 
 // sceneGate reports the scene hash this sync is being taken against, and when
@@ -84,12 +89,18 @@ func (e *Engine) UpdateNodeZones(locationSet map[string]string, overwrite bool) 
 }
 
 // SceneSync loads scene data from the fleet backend and syncs nodes.
-// It is guarded by an atomic bool to prevent concurrent runs.
+// It is guarded by an atomic bool to prevent concurrent runs. A sync that
+// wrote rebuilds the robot-route index (rebuildPointIndex); one that failed
+// before writing (no scene from the fleet, a sync already running) leaves it.
 func (e *Engine) SceneSync() (int, int, int, error) {
 	syncer, ok := e.fleet.(fleet.SceneSyncer)
 	if !ok {
 		return 0, 0, 0, fmt.Errorf("fleet backend does not support scene sync")
 	}
 	gate, prev := e.sceneGate()
-	return scenesync.Sync(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, syncer, &e.sceneSyncing, gate, prev)
+	total, created, deleted, err := scenesync.Sync(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, syncer, &e.sceneSyncing, gate, prev)
+	if err == nil {
+		e.rebuildPointIndex()
+	}
+	return total, created, deleted, err
 }

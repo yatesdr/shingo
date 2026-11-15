@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingocore/cms/poster"
@@ -36,6 +37,7 @@ import (
 	"shingocore/internal/lockorder"
 	"shingocore/messaging"
 	"shingocore/notify"
+	"shingocore/scenesync"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -219,6 +221,20 @@ type Engine struct {
 	// only by robotRefreshLoop.
 	latestPoll   []fleet.RobotStatus
 	latestPollAt time.Time
+
+	// pointIndex names the fleet's route point ids from the stored scene, for
+	// every poll (resolveRobotPaths). Swapped whole by rebuildPointIndex, at
+	// boot and after each scene sync; pointIndexMu serialises the rebuilds so
+	// a slower one cannot store an older read over a newer one.
+	pointIndex   atomic.Pointer[scenesync.PointIndex]
+	pointIndexMu lockcheck.Mutex[lockorder.PointIndex]
+
+	// robotWatches is every Edge's live robot.watch, and robotPositionsPub
+	// the direct publish the poll answers them on (robot_watch.go). The
+	// publisher is atomic because the composition root sets it after Start,
+	// while the poll may already be reading it.
+	robotWatches      robotWatches
+	robotPositionsPub atomic.Pointer[func(*protocol.Envelope) error]
 
 	// lastSceneSync is when the previous scene observation landed, so a diff
 	// row can record the WINDOW an edit happened in rather than only the

@@ -17,7 +17,7 @@ import (
 // (domain.NewSceneGeometry), and its revision is what the heartbeater quotes
 // on every node-list request so Core can leave the geometry off.
 //
-// Two consumers of the same two slices, deliberately not one: the validator's
+// Two consumers of the same points, deliberately not one: the validator's
 // "nil means could not look" contract and the picture's "keep the last good
 // map" contract are opposites, and one cache cannot honour both.
 

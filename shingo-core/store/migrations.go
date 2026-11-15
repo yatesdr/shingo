@@ -7353,8 +7353,8 @@ func v79ConfidenceMapAndAlarms(tx *sql.Tx) error {
 // LANE and splits the two populations it was conflating.
 //
 // THE KEY WAS WRONG, AND IT WAS WRONG BY UP TO A FACTOR OF TWO. scene_edges
-// stores every drivable lane twice — 405 directed rows at Springfield are 193
-// reciprocal pairs plus 19 genuinely one-way lanes, i.e. 212 pieces of floor.
+// stores one row per direction a robot may drive a lane: most lanes are a
+// reciprocal pair, two rows, and some are one-way, one (study S3, 2026-11-14).
 // Both rows of a pair have identical geometry, so a sample is exactly as close
 // to one as to the other and the winner was float noise: 81.7% of samples had
 // a second-best directed edge within 5 cm of the best. Aggregating on the
@@ -7534,9 +7534,11 @@ func v81SceneVersioning(tx *sql.Tx) error {
 		// Per-lane geometry versions, derived from scene_edges.
 		//
 		// twins_agree records whether the lane's two directed rows still
-		// mirror. All 193 Springfield pairs did on 2026-08-06, including
-		// their Bezier handles, so lane grain is safe — and this is what
-		// makes the day it stops being safe a query rather than a surprise.
+		// mirror (a one-way lane has one row, nothing to mirror). Every
+		// Springfield pair did on 2026-08-06, including their Bezier handles
+		// (the scene has grown since; not measured again), so lane grain is
+		// safe — and this is what makes the day it stops being safe a query
+		// rather than a surprise.
 		`CREATE TABLE IF NOT EXISTS scene_lane_versions (
 			id                 BIGSERIAL PRIMARY KEY,
 			area_name          TEXT NOT NULL,

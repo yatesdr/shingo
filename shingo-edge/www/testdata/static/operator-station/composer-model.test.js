@@ -132,26 +132,41 @@ function initStyle(styleId) {
         lastRun: f.last_run || null,
         flowspec: FLOWSPEC,
         groups: GROUPS,
-        scene: SCENE,
+        route: ROUTE,
         binWord: 'totes',
         advanced: f.advanced || {},
     });
 }
 
 // A travel network with two routes from the supermarket to the press: a short
-// one through LM10/LM11/LM12 and a long detour through LM90. The waypoint walk
-// has to pick the short one, and has to offer only LM points off it.
+// one through LM10/LM11/LM12 (20 m) and a long detour through LM90 (about
+// 82 m). The waypoint walk has to pick the short one, and has to offer only LM
+// points off it. The D11 scene shape the desktop's ComposerMap carries (lead
+// decision D11): points by name, one edge per stored row; the route model
+// measures each row from its points, so no edge carries a `len`.
 const SCENE = {
+    points: {
+        SMN_05: { x: 0, y: 0 }, LM10: { x: 5, y: 0 }, LM11: { x: 10, y: 0 }, LM12: { x: 15, y: 0 },
+        PLN_02: { x: 20, y: 0 }, PLN_03: { x: 15, y: 5 }, LM90: { x: 10, y: 40 },
+    },
     edges: [
-        { from: 'SMN_05', to: 'LM10', len: 5 },
-        { from: 'LM10', to: 'LM11', len: 5 },
-        { from: 'LM11', to: 'LM12', len: 5 },
-        { from: 'LM12', to: 'PLN_02', len: 5 },
-        { from: 'SMN_05', to: 'LM90', len: 40 },
-        { from: 'LM90', to: 'PLN_02', len: 40 },
-        { from: 'LM12', to: 'PLN_03', len: 5 },
+        { from: 'SMN_05', to: 'LM10' },
+        { from: 'LM10', to: 'LM11' },
+        { from: 'LM11', to: 'LM12' },
+        { from: 'LM12', to: 'PLN_02' },
+        { from: 'SMN_05', to: 'LM90' },
+        { from: 'LM90', to: 'PLN_02' },
+        { from: 'LM12', to: 'PLN_03' },
     ],
 };
+
+// THE ROUTE MODEL IS THE REAL ONE: shared/scene-net.js's sceneRoute, loaded the
+// way a browser's module map loads it (shared/testdata/js/shared-modules.js),
+// handed to init as the desktop hands it (processes-desktop.js routeOver).
+const { sceneRoute } = require(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js',
+    'shared-modules.js')).realm()('scene-net.js');
+const routeOver = scene => (from, to) => sceneRoute(scene, from, to);
+const ROUTE = routeOver(SCENE);
 
 // The routing groups' member nodes, as the station view's cell.groups carries
 // them. The dock strip's third line is these, not the press positions.
@@ -1142,7 +1157,7 @@ test('a stored strict_pack opens on and survives an Apply to the wire', () => {
     const s = M.init({
         styleId: 7, styleName: f.name, positions: POSITIONS, routing: ROUTING,
         claims: f.claims, parts: f.parts, lastRun: f.last_run || null, flowspec: FLOWSPEC,
-        groups: GROUPS, scene: SCENE, binWord: 'totes', advanced: advanced,
+        groups: GROUPS, route: ROUTE, binWord: 'totes', advanced: advanced,
     });
     const adv = M.advancedFor(s, 'PLN_01');
     assert.strictEqual(adv.strict_pack, true, 'the sheet opened with the cap off');
@@ -1174,7 +1189,7 @@ test('a strict claim\'s finished-goods fields through opening the sheet and an A
     const s = M.init({
         styleId: 7, styleName: f.name, positions: POSITIONS, routing: ROUTING,
         claims: claims, parts: f.parts, lastRun: f.last_run || null, flowspec: FLOWSPEC,
-        groups: GROUPS, scene: SCENE, binWord: 'totes', advanced: advanced,
+        groups: GROUPS, route: ROUTE, binWord: 'totes', advanced: advanced,
     });
     const adv = M.advancedFor(s, 'PLN_01');
     assert.strictEqual(adv.strict_pack, true, 'the sheet opened with strict pack off');
@@ -1477,12 +1492,13 @@ test('no preview means no sentences, and it does not throw', () => {
 
 // ═══ robot drives via ════════════════════════════════════════════════════════
 
-// THE ONE KEY-ROUTE WALK. It was the station's, inside composer-render.js; the
-// desktop had a second picker that filtered the routing set for
-// `role === 'waypoint'` — a role the schema forbids on purpose — so it offered
-// nothing and the desktop's key-route authoring was inert. The HMI's answers
-// are the ones operators use, so the HMI's walk is the one that survived, and
-// these pin what it offers.
+// THE KEY-ROUTE WALK, which only the desktop's picker asks: the LM points
+// along a position's supply path, over the route model the page hands init
+// (shared/scene-net.js sceneRoute, lead decision D9). It was the station's,
+// inside composer-render.js; the desktop had a second picker that filtered the
+// routing set for `role === 'waypoint'` — a role the schema forbids on purpose
+// — so it offered nothing and the desktop's key-route authoring was inert.
+// These pin what it offers.
 
 test('via: the LM points along the short supply path, in order', () => {
     const s = initStyle(7);
@@ -1492,7 +1508,13 @@ test('via: the LM points along the short supply path, in order', () => {
 test('via: the detour is not offered — the walk is shortest-path', () => {
     const s = initStyle(7);
     assert.ok(!M.viaWaypoints(s, 'PLN_01').includes('LM90'),
-        'LM90 is on a route eight times longer than the one through LM10');
+        'LM90 is on a route four times longer than the one through LM10');
+});
+
+test('via: the route model rides through reduce and a preview, by reference', () => {
+    const s = M.applyPreview(M.reduce(initStyle(7), { type: 'select', node: 'PLN_01' }), {});
+    assert.strictEqual(s.route, ROUTE);
+    assert.deepStrictEqual(M.viaWaypoints(s, 'PLN_01'), ['LM10', 'LM11', 'LM12']);
 });
 
 // A waypoint the vendor map does not have is a route the robot cannot drive,
@@ -1506,7 +1528,7 @@ test('via: every offered point is a point of the scene', () => {
     }
 });
 
-test('via: no scene, no waypoints — the row offers "shortest way" alone', () => {
+test('via: no route model, no waypoints — the row offers "shortest way" alone', () => {
     const bare = M.init({ styleId: 7, positions: POSITIONS, routing: ROUTING, claims: [], groups: GROUPS });
     assert.deepStrictEqual(M.viaWaypoints(bare, 'PLN_01'), []);
 });
@@ -1514,16 +1536,69 @@ test('via: no scene, no waypoints — the row offers "shortest way" alone', () =
 // At most four, evenly spaced (SPEC S5). A press whose supply path crosses
 // twenty LM points must not put twenty chips in a popover on a touch screen.
 test('via: at most four, evenly spaced', () => {
-    const long = { edges: [{ from: 'SMN_05', to: 'LM00', len: 1 }] };
-    for (let i = 0; i < 19; i++) long.edges.push({ from: 'LM' + String(i).padStart(2, '0'), to: 'LM' + String(i + 1).padStart(2, '0'), len: 1 });
-    long.edges.push({ from: 'LM19', to: 'PLN_02', len: 1 });
+    const long = { points: { SMN_05: { x: 0, y: 0 }, PLN_02: { x: 21, y: 0 } }, edges: [{ from: 'SMN_05', to: 'LM00' }] };
+    for (let i = 0; i < 20; i++) long.points['LM' + String(i).padStart(2, '0')] = { x: i + 1, y: 0 };
+    for (let i = 0; i < 19; i++) long.edges.push({ from: 'LM' + String(i).padStart(2, '0'), to: 'LM' + String(i + 1).padStart(2, '0') });
+    long.edges.push({ from: 'LM19', to: 'PLN_02' });
     const s = M.init({
-        styleId: 7, positions: POSITIONS, routing: ROUTING, groups: GROUPS, scene: long,
+        styleId: 7, positions: POSITIONS, routing: ROUTING, groups: GROUPS, route: routeOver(long),
         claims: FIXTURES.styles['7'].claims, flowspec: FLOWSPEC,
     });
     const got = M.viaWaypoints(s, 'PLN_01');
     assert.strictEqual(got.length, 4, 'got ' + got.join(', '));
     assert.deepStrictEqual(got, ['LM00', 'LM05', 'LM10', 'LM15']);
+});
+
+// THE WALK ON THE SHARED ROUTE SCENE (shared/testdata/js/route-scene.json), the
+// scene Core's map and the shared route model are pinned on too. Three ways run
+// from SMN_05 to PLN_02: A straight and two-way (20 m), C straight and stored ONE
+// WAY toward SMN_05 (16.47 m), B two cubic hops (16 m of chord, 21.6 m of arc).
+// The map is the Edge's shape, no length on an edge (the `len` chord left the
+// wire on 2026-11-14, owner F3); the route model weighs B by its arc and keeps C
+// to its stored direction, so the way is A.
+//
+// FLIPPED ON PURPOSE (lead decision D9, 2026-11-14): this walk used to add every
+// row both ways and weigh `len`, and offered LM921 (B, by its chord) and, with
+// B gone, LM931 and LM932 (C, driven backwards). U1 pinned those answers and
+// predicted these.
+function routeSceneMap(drop) {
+    const scene = JSON.parse(fs.readFileSync(
+        path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js', 'route-scene.json'), 'utf8'));
+    const m = { revision: 'synthetic', points: {}, edges: [] };
+    for (const p of scene.points) m.points[p.name] = { class: p.class, x: p.x, y: p.y };
+    for (const e of scene.segments) {
+        if (drop && drop(e)) continue;
+        const edge = { from: e.from, to: e.to };
+        if (e.h) edge.h = e.h.slice();
+        m.edges.push(edge);
+    }
+    return m;
+}
+function routeSceneState(map, groups) {
+    return M.init({
+        styleId: 7, positions: POSITIONS, routing: ROUTING, groups: groups || GROUPS, route: routeOver(map),
+        claims: FIXTURES.styles['7'].claims, flowspec: FLOWSPEC,
+    });
+}
+
+test('via (route scene): arcs, not chords, and only the stored way — A, LM911 and LM912', () => {
+    assert.deepStrictEqual(M.viaWaypoints(routeSceneState(routeSceneMap()), 'PLN_01'), ['LM911', 'LM912']);
+});
+
+test('via (route scene, no B): C is one-way toward SMN_05, so not C backwards — A, LM911 and LM912', () => {
+    const noB = routeSceneMap(e => !!e.h);
+    assert.deepStrictEqual(M.viaWaypoints(routeSceneState(noB), 'PLN_01'), ['LM911', 'LM912']);
+});
+
+// A SOURCE MEMBER OFF THE NETWORK IS WALKED FROM ITS NEAREST VERTEX (D9's ends:
+// a name that is no vertex snaps by place to the nearest vertex a row leaves).
+// The old walk offered nothing for one: it started only at a name an edge
+// named. BAY_9 is half a metre from SMN_05 and on no row.
+test('via (route scene): a source member on no row starts at its nearest vertex with a way out', () => {
+    const map = routeSceneMap();
+    map.points.BAY_9 = { class: 'GeneralLocation', x: -0.5, y: 0 };
+    const groups = Object.assign({}, GROUPS, { 'Supermarket Empty Totes': ['BAY_9'] });
+    assert.deepStrictEqual(M.viaWaypoints(routeSceneState(map, groups), 'PLN_01'), ['LM911', 'LM912']);
 });
 
 // ═══ one definition of "a part needs a position" ═════════════════════════════
@@ -1580,7 +1655,7 @@ for (const id of ['7', '11']) {
 function initWithRouting(routing, off) {
     return M.init({
         styleId: 7, positions: POSITIONS, routing: routing, routingOff: off,
-        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, scene: SCENE,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, route: ROUTE,
     });
 }
 
@@ -1662,7 +1737,7 @@ const FLAT_POSITIONS = [
 function initFlatPress(positions) {
     return M.init({
         styleId: 7, positions: positions || FLAT_POSITIONS, routing: ROUTING, routingOff: {},
-        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, scene: SCENE,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, route: ROUTE,
     });
 }
 
@@ -2187,7 +2262,7 @@ test('positionChoices offers this station’s free positions and never another s
     ];
     const f = FIXTURES.styles['7'];
     const s = M.init({ styleId: 7, styleName: f.name, positions: positions, routing: ROUTING, claims: f.claims,
-        parts: f.parts, flowspec: FLOWSPEC, groups: GROUPS, scene: SCENE, advanced: f.advanced || {} });
+        parts: f.parts, flowspec: FLOWSPEC, groups: GROUPS, route: ROUTE, advanced: f.advanced || {} });
     assert.deepStrictEqual(M.positionChoices(s, 'PLN_01'), ['PLN_03', 'PLN_06', 'PLN_07'],
         'own station and stationless only; not the row itself, another row, or any pair');
     const moved = M.reduce(s, { type: 'movePosition', from: 'PLN_01', to: 'ULN_002' });

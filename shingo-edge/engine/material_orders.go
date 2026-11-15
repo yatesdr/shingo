@@ -536,14 +536,15 @@ func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexO
 
 // BuildSequentialBackfillSteps builds Order B for sequential mode (backfill robot).
 // Robot picks up new material from source and delivers to line.
-// Order B is auto-created by wiring when Order A goes in_transit.
+// Order B is created when the station's release of Order A at the line goes out
+// (ensureSequentialBackfill), not before.
 //  1. pickup(InboundSource)    — pick new from source
 //  2. dropoff(CoreNodeName)    — deliver to line
 func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	// Produce/consume are duals: a consume backfill pulls a payload-matched FULL
 	// bin from the market, a produce backfill a fresh EMPTY carrier, and
-	// refillPickup sets which. This leg is auto-created by the wiring
-	// (handleSequentialBackfill) and never passes through BuildSwapDispatch.
+	// refillPickup sets which. This leg is created at Order A's release at the
+	// line (ensureSequentialBackfill) and never passes through BuildSwapDispatch.
 	return []protocol.ComplexOrderStep{
 		refillPickup(nil, claim),                      // 1
 		{Action: "dropoff", Node: claim.CoreNodeName}, // 2

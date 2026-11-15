@@ -1327,39 +1327,11 @@ func TestComposerShots(t *testing.T) {
 	// the set (2026-09-16, second pass).
 	desktopDOM("D3 routing chips", d5, `class="picker-chip"`)
 	desktopRefuteDOM("no per-row routing switches", d5, `data-act="rs-toggle"`)
-
-	// ── A PLAIN ROUTING NODE IS ON THE MAP ──────────────────────────────
-	//
-	// The map's row loop drew a dashed box around an NGRP group's members and
-	// did `if (!mem.length) continue` for everything else, so a routing row
-	// that is a PLAIN NODE was drawn nowhere at all. Hopkinsville's 4x2 is
-	// entirely plain nodes — SMN_015..021 source and destination, SLN_09..013
-	// staging — so its map showed five positions and nothing else: "I do not
-	// see the nodes marked as inbound staging", "I still don't see the sourcing
-	// nodes flowing to the nodes above it".
-	//
-	// Plant A's set is two GROUPS, which is the case that always worked, so the
-	// case that did not has to be MADE here — a plain node the fixture's map
-	// has a point for, added, read, and taken away again.
-	{
-		const plain = "SMN_011"
-		rowID, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
-			ProcessID: seeded.ProcessID, CoreNodeName: plain, Role: domain.RoutingRoleStaging,
-			Origin: domain.RoutingOriginEngineer, Enabled: true, CalledBy: "shots",
-		})
-		if err != nil {
-			t.Fatalf("add a plain routing node: %v", err)
-		}
-		// A press whose whole set is plain nodes had a map of its own positions
-		// and nothing else; the mark, the name and the ROLE all have to be on
-		// it — a hue alone is not an answer for everyone reading this screen.
-		desktopDOM("D3 plain routing node", d5, `class="mp-rt`)
-		desktopDOM("D3 names it", d5, ">"+plain+"<")
-		desktopDOM("D3 says which role", d5, ">stage<")
-		if _, _, _, err := db.DeleteRoutingNode(seeded.ProcessID, rowID); err != nil {
-			t.Fatalf("remove the plain routing node: %v", err)
-		}
-	}
+	// THE ROUTING SET HAS NO PLANT MAP (2026-11-14, the shared-map brief's tier
+	// A1): Settings' read-back behind Show on map went with its drawing, and so
+	// did the marks the DOM checks here used to find (mp-rt, mp-pos, mp-route).
+	desktopRefuteDOM("D3 draws no map toggle", d5, `data-act="st-showmap"`)
+	desktopRefuteDOM("D3 draws no map marks", d5, `class="mp-`)
 	// EVERY TAB HAS TO REACH ITS OWN END. The page cannot grow (body.pd-body is
 	// 100vh/hidden), so a tab taller than the shell has to scroll INSIDE it —
 	// and a tab that does not is content an engineer simply cannot get to.
@@ -1408,21 +1380,19 @@ func TestComposerShots(t *testing.T) {
 				tab.label, attr("bodyscrollh"), attr("bodyclienth"))
 		}
 	}
-	// The three lists are three ROLES, because composer-model picks a cell's
-	// source and destination by lowest sequence PER ROLE. One list of nodes
-	// could not answer any of the three questions.
-	for _, role := range []string{"Sources", "Staging", "Destinations"} {
-		desktopDOM("D3 "+role, d5, ">"+role+"<")
+	// The routing set's three ROLES are three buckets of Settings' one set
+	// picker, because composer-model picks a cell's source and destination by
+	// lowest sequence PER ROLE. On screen they read Inbound, Staging and
+	// Outbound (processes-desktop.js ROUTING_GROUPS; the keys stay source,
+	// staging and destination), each a bucket button that setBar draws as
+	// `<i class="pd-setdot"></i>WORD <b>COUNT</b>`.
+	for _, role := range []string{"Inbound", "Staging", "Outbound"} {
+		desktopDOM("D3 "+role, d5, "</i>"+role+" <b>")
 	}
-	// Every role list carries the picker that adds to it — the one node input
-	// this page has, and the reason a plant whose map has not reached the edge
-	// is no longer a plant with no way to author a routing set at all.
+	// The buckets share one picker — the one node input this page has, and
+	// the reason a plant whose map has not reached the edge is no longer a
+	// plant with no way to author a routing set at all.
 	desktopDOM("D3 node picker", d5, `class="pd-npk"`)
-	// The map is still the screen's read-back. A routing section over an empty
-	// frame is the shape of D3 with none of its content, and that is exactly
-	// what a missing geometry cache or a bad projection would leave behind.
-	desktopDOM("D3 map", d5, `class="mp-pos`)
-	desktopDOM("D3 supply path", d5, `class="mp-route r1"`)
 	// THE TAB IS GONE, and a page still drawing it is a page with two doors
 	// onto one decision — the thing this screen exists to stop.
 	desktopRefuteDOM("no routing tab", d5, `data-tab="routing"`)

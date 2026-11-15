@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/router"
@@ -305,4 +306,52 @@ func safeIndex(s []string, i int) string {
 		return "<out-of-range>"
 	}
 	return s[i]
+}
+
+// TestReadEphemeral_DispatchesWhatThisSideReadsAndNothingElse pins the
+// ephemeral topic's delivery: a fresh, signed message of a type this side
+// registered, that accept takes, reaches its handler decoded; one of a type
+// this side does not read (Core reading its own robot.positions back), one
+// accept refuses, one past its exp and one signed with another key are
+// dropped, and none of the drops writes a log line, where the router alone
+// would log "no handler registered" for the unread type.
+func TestReadEphemeral_DispatchesWhatThisSideReadsAndNothingElse(t *testing.T) {
+	buf := captureLog(t)
+	key := []byte("k")
+	r := router.New[string]()
+	var got []protocol.RobotWatch
+	router.Register(r, protocol.TypeRobotWatch, func(_ *protocol.Envelope, w *protocol.RobotWatch) { got = append(got, *w) })
+	read := router.ReadEphemeral(key, func(h *protocol.RawHeader) bool { return h.Dst.Role == protocol.RoleCore }, r)
+
+	wire := func(typ string, dst protocol.Address, body any, age time.Duration, signWith []byte) []byte {
+		t.Helper()
+		env, err := protocol.NewEnvelope(typ, protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, dst, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.Timestamp, env.ExpiresAt = env.Timestamp.Add(-age), env.ExpiresAt.Add(-age)
+		raw, err := env.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		signed, err := protocol.Sign(raw, signWith)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signed
+	}
+	core := protocol.Address{Role: protocol.RoleCore}
+	watch := &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1"}}
+	read(wire(protocol.TypeRobotWatch, core, watch, 0, key))
+	read(wire(protocol.TypeRobotPositions, protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, &protocol.RobotPositions{}, 0, key))
+	read(wire(protocol.TypeRobotWatch, protocol.Address{Role: protocol.RoleEdge, Station: "edge.b"}, watch, 0, key))
+	read(wire(protocol.TypeRobotWatch, core, watch, 11*time.Second, key))
+	read(wire(protocol.TypeRobotWatch, core, watch, 0, []byte("another key")))
+
+	if len(got) != 1 || got[0].StationID != "edge.a" || len(got[0].OrderUUIDs) != 1 || got[0].OrderUUIDs[0] != "u-1" {
+		t.Errorf("dispatched %+v, want the one fresh watch to Core, decoded", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("the drops were logged:\n%s", buf.String())
+	}
 }

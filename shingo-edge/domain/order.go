@@ -35,6 +35,12 @@ type Order struct {
 	// order but SEND BACK's pull, which states tops & bottoms only and is known
 	// by it (SendBackOrders). A projection never writes it.
 	Want protocol.Height `json:"want,omitzero"`
+	// RobotID is the robot Core assigned, from the waybill and from any
+	// order.update that names one (orders.robot_id, Edge v50). "" until Core
+	// names one. An empty robot on the wire is absent, never a clear, so a
+	// robot Core later stops holding (a re-handover resets Core's copy) stays
+	// here until Core names the next one.
+	RobotID string `json:"robot_id"`
 	// BinID is Core's ID for the bin associated with this order,
 	// snapshot from OrderDelivered. Nil for multi-bin orders; older Core
 	// builds leave it nil and Edge skips bin delta emission. PLC tick

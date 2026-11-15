@@ -12,6 +12,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/rds"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -105,6 +106,45 @@ func TestVendorStatus_RunningAfterReleaseRecordsVendorState(t *testing.T) {
 	got := testdb.RequireOrderStatus(t, db, "vs-order-1", "in_transit")
 	if got.VendorState != "RUNNING" {
 		t.Errorf("vendor_state = %q after the fleet reported RUNNING, want RUNNING", got.VendorState)
+	}
+}
+
+// DO NOT ANNOUNCE A STATUS CORE REFUSED, for the dispatched arm too. RDS reports
+// an in-transit order unassigned again (TOBEDISPATCHED, then CREATED), which
+// maps to dispatched. Core does not move it, and it used to tell the station
+// `dispatched` anyway, so the station walked back from in_transit while Core
+// held it there. The vendor state is still recorded.
+func TestVendorStatus_UnassignedAfterRunningTellsTheStationNothing(t *testing.T) {
+	t.Parallel()
+	db, _, sim, order, _, _ := dispatchRetrieveOrder(t)
+
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-01")
+	told := len(robotsOnUpdates(t, db, order.EdgeUUID))
+	for _, state := range []rds.OrderState{rds.StateToBeDispatched, rds.StateCreated} {
+		sim.DriveState(order.VendorOrderID, string(state))
+		got := testdb.RequireOrderStatus(t, db, "vs-order-1", "in_transit")
+		if got.VendorState != string(state) {
+			t.Errorf("vendor_state = %q after the fleet reported %s", got.VendorState, state)
+		}
+	}
+	if updates := robotsOnUpdates(t, db, order.EdgeUUID); len(updates) != told {
+		t.Errorf("the station was told %v for a status Core refused", updates[told:])
+	}
+}
+
+// The same rule for a vendor state the adapter does not map. The simulator maps
+// one it does not define to "unknown", and the station used to be told that
+// word as the order's status.
+func TestVendorStatus_UnmappedStateTellsTheStationNothing(t *testing.T) {
+	t.Parallel()
+	db, _, sim, order, _, _ := dispatchRetrieveOrder(t)
+
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-01")
+	told := len(robotsOnUpdates(t, db, order.EdgeUUID))
+	sim.DriveState(order.VendorOrderID, "NOT_A_STATE")
+	testdb.RequireOrderStatus(t, db, "vs-order-1", "in_transit")
+	if updates := robotsOnUpdates(t, db, order.EdgeUUID); len(updates) != told {
+		t.Errorf("the station was told %v for a status Core never wrote", updates[told:])
 	}
 }
 

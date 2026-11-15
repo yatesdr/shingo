@@ -28,6 +28,7 @@ import {
 } from './operator-modal.js';
 import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
+import { syncRobotPanel, robotPanelToggle, robotPanelLinkBack } from './operator-robot-panel.js';
 import { serverNow } from '/static/shared/clock.js';
 import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog, sseStatus } from '/static/shared/bus.js';
 import { clearLostConnectionBanner, showLostConnectionBanner } from '/static/shared/notice.js';
@@ -155,8 +156,16 @@ function redrawSign() {
     const key = JSON.stringify(stationSign());
     if (key === shownSign) return;
     shownSign = key;
-    renderHeader();
+    drawHeader();
     renderGrid();
+}
+
+// drawHeader is the header and, on a cell screen, the robot panel's ROBOTS
+// toggle at the end of its bar: renderHeader empties the bar on every draw.
+function drawHeader() {
+    renderHeader();
+    const toggle = robotPanelToggle(getView());
+    if (toggle) document.getElementById('os-header-actions').appendChild(toggle);
 }
 
 async function doLoadView() {
@@ -254,9 +263,12 @@ async function ensureCellPicture(view) {
 
 function renderAll() {
     if (!getView()) return;
-    renderHeader();
+    drawHeader();
     renderGrid();
     renderFooter();
+    // The robot panel shows, goes, or takes the new view
+    // (operator-robot-panel.js).
+    syncRobotPanel(getView());
     checkPostCutoverFlag();
     const sid = getSelectedNodeID();
     if (sid !== null) {
@@ -630,6 +642,8 @@ onSSE('connected', function () {
     scheduleRefresh();
     streamChanged(true);
     clearLostConnectionBanner();
+    // A robot panel its stream's {available: false} hid is tried again.
+    robotPanelLinkBack();
 });
 // The stream dropped, or its watchdog found it silent: the sign says the
 // server is not answering until it is back (the bus reconnects by itself),

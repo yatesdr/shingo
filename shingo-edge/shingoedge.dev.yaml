@@ -28,6 +28,7 @@ messaging:
       - kafka:9092
   dispatch_topic: shingo.dispatch
   orders_topic: shingo.orders
+  ephemeral_topic: shingo.ephemeral
   outbox_drain_interval: 5s
 
 sim:

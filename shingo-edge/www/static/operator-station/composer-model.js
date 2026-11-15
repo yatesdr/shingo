@@ -583,11 +583,12 @@ function init(opts) {
         // line names. Without it that line is blank; it is never the positions
         // (those are already in the note above it).
         groups: opts.groups || {},
-        // The travel network as an adjacency, built ONCE here rather than on
-        // every panel open. Carried by reference through reduce; see
-        // viaWaypoints. opts.scene is the station's ComposerScene or the
-        // desktop's ComposerMap — both are {edges:[{from,to,len}]}.
-        sceneAdj: sceneIndex(opts.scene),
+        // The route model the key-route walk asks (viaWaypoints): route(from,
+        // to) is the vertex names of the shortest way a robot may drive, or
+        // null. The desktop hands in shared/scene-net.js's sceneRoute over its
+        // process's ComposerMap (lead decision D9); the station hands in none,
+        // so it offers no waypoints. Carried by reference through reduce.
+        route: typeof opts.route === 'function' ? opts.route : null,
         // Every claim on the process, across styles — the third role source.
         processClaims: opts.processClaims || [],
         cells: {},
@@ -639,10 +640,11 @@ function init(opts) {
 // ── reduce ───────────────────────────────────────────────────────────────────
 function reduce(state, action) {
     const s = clone(state);
-    // flowspec and the scene adjacency are DATA, not state — clone() would
-    // deep-copy them on every keypress, and the adjacency is 840 edges.
+    // flowspec and the route model are DATA, not state, and go back by
+    // reference: clone() is a JSON round trip, which copies flowspec (the copy
+    // is dropped here) and leaves a function out altogether.
     s.flowspec = state.flowspec;
-    s.sceneAdj = state.sceneAdj;
+    s.route = state.route;
     const cell = action && action.node ? s.cells[action.node] : null;
     switch (action && action.type) {
 
@@ -1009,7 +1011,7 @@ function applyPreview(state, res, opts) {
     const asked = !!(opts && opts.preflight);
     const s = clone(state);
     s.flowspec = state.flowspec;
-    s.sceneAdj = state.sceneAdj;
+    s.route = state.route;
     s.preview = {
         actions: (res && res.actions) || [],
         // NULL, NOT ZERO, when the server sent no count. A preview of the
@@ -1861,103 +1863,39 @@ function relationLayout(cell, opts) {
 
 // ── robot drives via ─────────────────────────────────────────────────────────
 //
-// ONE KEY-ROUTE WALK, AND IT IS THE HMI'S. The station walked the scene for
-// LM waypoints along a position's supply path; the desktop had its own picker
-// that filtered the routing set for `role === 'waypoint'` — a role the schema
-// forbids on purpose (domain/routing_set.go: "'waypoint' is deliberately not a
-// role. A key route is ordered and validated against the vendor map, not
-// against this list") — so it offered nothing, ever, and the desktop's whole
-// key-route authoring was inert.
+// THE KEY-ROUTE WALK, which only the desktop's picker asks. A position's key
+// route is picked from the LM points along its supply path. The desktop's
+// picker had filtered the routing set for `role === 'waypoint'` — a role the
+// schema forbids on purpose (domain/routing_set.go: "'waypoint' is deliberately
+// not a role. A key route is ordered and validated against the vendor map, not
+// against this list") — so it offered nothing until it read this walk. The
+// station hands in no route model, so this offers it nothing; its strip names
+// the key route a flow already has.
 //
-// The HMI's answers are the ones already pinned and the ones operators use, so
-// they are the ones that survive. The desktop reads this now and gains a
-// picker that works.
-//
-// THE ADJACENCY IS BUILT ONCE, when the composer opens: sceneIndex runs in
-// init and is carried by reference through reduce, the same way flowspec is,
-// because clone() would deep-copy 840 edges on every keystroke. It was rebuilt
-// on every panel open.
-
-function sceneIndex(scene) {
-    const adj = {};
-    for (const e of (scene && scene.edges) || []) {
-        if (!e || !e.from || !e.to) continue;
-        const len = e.len || 1;
-        (adj[e.from] = adj[e.from] || []).push({ to: e.to, len: len });
-        (adj[e.to] = adj[e.to] || []).push({ to: e.from, len: len });
-    }
-    return adj;
-}
-
-// A binary heap, not an array re-sorted on every pop. The scene is 840 edges
-// and the search runs on a touch screen; an O(n log n) sort per step turns a
-// walk into a stutter on the one interaction that is supposed to feel instant.
-//
-// TIES BREAK BY INSERTION ORDER, and that is not a detail. The array version
-// used a STABLE sort, so among equal distances the earliest-pushed point won
-// and the route it produced was the route operators have been offered. A heap
-// makes no such promise on its own, and a different winner at a tie is a
-// different shortest path and a different waypoint list — a silent change to
-// what the HMI offers. The sequence number makes the order the same one.
-function heapLess(a, b) { return a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1]; }
-
-function heapPush(h, d, n) {
-    h.push([d, h.seq = (h.seq || 0) + 1, n]);
-    let i = h.length - 1;
-    while (i > 0) {
-        const p = (i - 1) >> 1;
-        if (!heapLess(h[i], h[p])) break;
-        const t = h[p]; h[p] = h[i]; h[i] = t;
-        i = p;
-    }
-}
-
-function heapPop(h) {
-    const top = h[0], last = h.pop();
-    if (!h.length) return top;
-    h[0] = last;
-    let i = 0;
-    for (;;) {
-        const l = 2 * i + 1, r = l + 1;
-        let m = i;
-        if (l < h.length && heapLess(h[l], h[m])) m = l;
-        if (r < h.length && heapLess(h[r], h[m])) m = r;
-        if (m === i) break;
-        const t = h[m]; h[m] = h[i]; h[i] = t;
-        i = m;
-    }
-    return top;
-}
+// THE WAY IS THE SHARED ROUTE MODEL's (lead decision D9, shared/scene-net.js
+// sceneRoute): the stored rows in the direction a robot may drive them, each
+// weighed by the distance driven along it (the arc on a curved row, the chord
+// on a straight one), an end that is no vertex snapped to the nearest one by
+// place. This walk used to add every row both ways and weigh the Edge's `len`,
+// which is the chord, so it could offer points on a way no robot drives: a
+// one-way lane run backwards, or a bowed aisle taken for shorter than it is.
 
 // viaWaypoints is the LM points along this position's shortest supply path,
-// evenly spaced, at most four. Empty when there is no scene: a waypoint list
-// invented without a map is a route the robot cannot drive, and the row then
-// offers "shortest way" alone.
+// from the first member of its source group, evenly spaced, at most four.
+// Empty with no route model or no way there: a waypoint list invented without
+// a map is a route the robot cannot drive, and the row then offers "shortest
+// way" alone.
 function viaWaypoints(state, node) {
     const c = state.cells[node];
-    const adj = state.sceneAdj;
-    if (!c || !adj) return [];
+    if (!c || !state.route) return [];
     const target = c.mode === 'two_robot_press_index' ? (c.paired || node)
         : (c.mode === 'two_robot' ? (c.staging || node) : node);
     const src = ((state.groups || {})[c.source] || [])[0];
-    if (!src || !adj[src]) return [];
-    const dist = { [src]: 0 }, prev = {}, seen = new Set();
-    const q = [];
-    heapPush(q, 0, src);
-    while (q.length) {
-        const [d, , u] = heapPop(q);
-        if (u === target) break;
-        if (seen.has(u)) continue;
-        seen.add(u);
-        for (const e of adj[u] || []) {
-            const nd = d + e.len;
-            if (dist[e.to] === undefined || nd < dist[e.to]) { dist[e.to] = nd; prev[e.to] = u; heapPush(q, nd, e.to); }
-        }
-    }
-    if (dist[target] === undefined) return [];
-    const path = [];
-    for (let n = target; n !== undefined; n = prev[n]) { path.unshift(n); if (n === src) break; }
-    const lms = path.filter(n => /^LM/.test(n));
+    if (!src) return [];
+    const path = state.route(src, target);
+    if (!path) return [];
+    const lms = [];
+    for (const n of path) if (/^LM/.test(n)) lms.push(n);
     const step = Math.max(1, Math.floor(lms.length / 4));
     return lms.filter((_, i) => i % step === 0).slice(0, 4);
 }

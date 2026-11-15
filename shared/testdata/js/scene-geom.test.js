@@ -152,5 +152,20 @@ check('no choice leaves a portrait plant at 90', g.mapTurn(undefined, 0, 50, 0, 
 check('no choice leaves a landscape plant at 0', g.mapTurn(undefined, 0, 100, 0, 50) === 0);
 check('a turn that is not a quarter is no choice', g.mapTurn(45, 0, 50, 0, 100) === 90);
 
+// laneSpec: one lane's shape, as the robot map's aisles and the localization
+// board both draw it, through the page's projector.
+console.log('laneSpec');
+{
+    const proj = g.makeProjector(false);
+    const straight = g.laneSpec({ a: { x: 0, y: 0 }, b: { x: 2, y: 1 }, h: null }, proj);
+    check('a lane with no handles is a <line> between its projected ends',
+        straight.tag === 'line' && JSON.stringify(straight.attrs) === JSON.stringify({ x1: 0, y1: -0, x2: 2, y2: -1 }),
+        JSON.stringify(straight));
+    const curved = g.laneSpec({ a: { x: 0, y: 0 }, b: { x: 8, y: 0 }, h: [1, -4, 7, -4] }, proj);
+    check('a lane with handles is an unfilled <path> through its projected handles',
+        curved.tag === 'path' && curved.attrs.d === 'M0 0C1 4 7 4 8 0' && curved.attrs.fill === 'none' &&
+        Object.keys(curved.attrs).join(',') === 'd,fill', JSON.stringify(curved));
+}
+
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }
 console.log('scene-geom agreement: all vectors match');

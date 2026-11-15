@@ -42,6 +42,7 @@ import (
 func init() {
 	register(Generator{Name: "protocol/types.go AllTypes", Emit: emitTypeRegistry})
 	register(Generator{Name: "protocol/types.go AllSubjects", Emit: emitSubjectRegistry})
+	register(Generator{Name: "protocol/ephemeral.go EphemeralTypes", Emit: emitEphemeralRegistry})
 	register(Generator{Name: "protocol/expiry.go DefaultTTLFor", Emit: emitTypeTTLs})
 	register(Generator{Name: "protocol/expiry.go DataTTLFor", Emit: emitSubjectTTLs})
 	register(Generator{Name: "protocol struct", Emit: emitStruct})
@@ -464,6 +465,44 @@ func subjectMessages(root string) ([]message, error) {
 	return out, nil
 }
 
+// ephemeralMessages is every protocol.EphemeralTypes entry, in its order. An
+// ephemeral type is read by ONE side: that composition root registers it on
+// the router behind its router.ReadEphemeral, and the other registers nothing,
+// because an entry there would take that side's own sends back off the topic.
+// The direction is toward the side that reads it.
+func ephemeralMessages(root string) ([]message, error) {
+	p, err := loadProto(root)
+	if err != nil {
+		return nil, err
+	}
+	r, err := loadRoots(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []message
+	for _, wire := range protocol.EphemeralTypes() {
+		c, ok := p.constFor("Type", wire)
+		if !ok {
+			return nil, fmt.Errorf("no Type constant holds %q", wire)
+		}
+		core, cok := r.core[c.name]
+		edge, eok := r.edge[c.name]
+		m := message{wire: wire, constName: c.name}
+		switch {
+		case cok && eok:
+			return nil, fmt.Errorf("%s is registered at both composition roots; an ephemeral type is read by one side", c.name)
+		case cok:
+			m.direction, m.payload = dirEdgeToCore, core.payload
+		case eok:
+			m.direction, m.payload = dirCoreToEdge, edge.payload
+		default:
+			return nil, fmt.Errorf("%s: neither composition root reads it", c.name)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
 // payloadLink is a message's payload cell: a link to the struct's section.
 func payloadLink(m message) string {
 	if m.payload == "" {
@@ -500,6 +539,23 @@ func emitSubjectRegistry(root string, args []string) (string, error) {
 	b.WriteString("| Subject | Constant | Direction | Payload |\n|---|---|---|---|\n")
 	for _, m := range ms {
 		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s |\n", m.wire, m.constName, m.direction, payloadLink(m))
+	}
+	return b.String(), nil
+}
+
+func emitEphemeralRegistry(root string, args []string) (string, error) {
+	if len(args) > 0 {
+		return "", fmt.Errorf("takes no arguments")
+	}
+	ms, err := ephemeralMessages(root)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("| Type | Constant | Direction | Payload | TTL |\n|---|---|---|---|---|\n")
+	for _, m := range ms {
+		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n", m.wire, m.constName, m.direction, payloadLink(m),
+			ttlText(protocol.DefaultTTLFor(m.wire)))
 	}
 	return b.String(), nil
 }
@@ -741,7 +797,8 @@ func emitStruct(root string, args []string) (string, error) {
 }
 
 // wireStructs is every protocol struct a message reaches: each message's
-// payload, the envelope, and every struct their fields reference, sorted.
+// payload (the ephemeral topic's included), the envelope, and every struct
+// their fields reference, sorted.
 func wireStructs(root string) ([]string, error) {
 	p, err := loadProto(root)
 	if err != nil {
@@ -755,9 +812,13 @@ func wireStructs(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	ephemeral, err := ephemeralMessages(root)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	queue := []string{"Envelope", "RawHeader"}
-	for _, m := range append(types, subjects...) {
+	for _, m := range append(append(types, subjects...), ephemeral...) {
 		if m.payload != "" {
 			queue = append(queue, m.payload)
 		}

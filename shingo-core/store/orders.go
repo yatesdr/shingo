@@ -1284,6 +1284,12 @@ func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID st
 	return orders.UpdateVendor(db.DB, id, vendorOrderID, vendorState, robotID)
 }
 
+// OrderRobotsByUUID is orders.RobotsByUUID: the station and robot of each
+// order among uuids the fleet holds on a robot, for the live robot feed.
+func (db *DB) OrderRobotsByUUID(uuids []string) ([]orders.OrderRobot, error) {
+	return orders.RobotsByUUID(db.DB, uuids)
+}
+
 func (db *DB) UpdateOrderSourceNode(id int64, sourceNode string) error {
 	return orders.UpdateSourceNode(db.DB, id, sourceNode)
 }

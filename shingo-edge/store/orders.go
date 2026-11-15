@@ -88,9 +88,10 @@ func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
 	return orders.UpdateStatus(db.DB, id, newStatus)
 }
 
-// UpdateOrderWaybill writes the carrier waybill and ETA fields.
-func (db *DB) UpdateOrderWaybill(id int64, waybillID, eta string) error {
-	return orders.UpdateWaybill(db.DB, id, waybillID, eta)
+// UpdateOrderWaybill writes the carrier waybill and ETA fields, and the robot
+// when the waybill names one ("" leaves the stored robot).
+func (db *DB) UpdateOrderWaybill(id int64, waybillID, robotID, eta string) error {
+	return orders.UpdateWaybill(db.DB, id, waybillID, robotID, eta)
 }
 
 // UpdateOrderETA sets the ETA on an order.
@@ -167,6 +168,12 @@ func (db *DB) SetOrderQueueReason(uuid, reason, code string) error {
 // carrying fault_since / fault_deadline / fault_notice_after_s.
 func (db *DB) SetOrderFaultClock(uuid string, since, deadline *time.Time, noticeAfterS int, ref string) error {
 	return orders.SetFaultClock(db.DB, uuid, since, deadline, noticeAfterS, ref)
+}
+
+// SetOrderRobotID writes the robot an order.update names; a no-op when the
+// row already holds it.
+func (db *DB) SetOrderRobotID(uuid, robotID string) error {
+	return orders.SetRobotID(db.DB, uuid, robotID)
 }
 
 // LinkOrderSiblings writes a bidirectional sibling_order_id pointer

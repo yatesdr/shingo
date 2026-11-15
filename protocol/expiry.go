@@ -44,6 +44,10 @@ var defaultTTLs = map[string]time.Duration{
 	TypeOrderCancelled: 30 * time.Minute,
 
 	TypeOrderDelivered: 60 * time.Minute,
+
+	// The ephemeral topic's two (ephemeral.go): worth reading for seconds.
+	TypeRobotWatch:     EphemeralTTL,
+	TypeRobotPositions: EphemeralTTL,
 }
 
 // NoExpiry marks a subject whose envelopes carry NO `exp` on the wire.

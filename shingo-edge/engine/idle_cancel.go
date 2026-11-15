@@ -43,9 +43,10 @@ import (
 // stopped line.
 //
 // WHAT IT SENDS BACK is a parked group: a lone order, or a swap pair, every
-// live leg of which is staged at a station wait (a person's RELEASE) and was
-// authored by this Edge (parkedLeg). Never an order no robot has reached, never
-// one moving, never a leg Core made: cancelling a leg makes Core cancel its
+// live leg of which is staged at a wait Core named the station's (a person's
+// RELEASE) and was authored by this Edge (parkedLeg). Never an order no robot
+// has reached, never one moving, never one Core released (Core releases only
+// its own waits), never a leg Core made: cancelling a leg makes Core cancel its
 // partner (shingo-core/dispatch/swap_peer.go), so a pair is sent back only
 // whole.
 //
@@ -346,14 +347,24 @@ func stagedAt(o *storeorders.Order) time.Time {
 }
 
 // parkedLeg reports whether an order is a robot parked at a station wait for a
-// person's RELEASE, on a row this Edge authored: staged, at a wait the station
-// advances, not held at a lane gate Core owns, and not released already. A
+// person's RELEASE, on a row this Edge authored: staged, at a wait Core named
+// the station's, not held at a lane gate Core owns, and not released already. A
 // release pressed for this wait leaves an intent on the row until Core stages
-// the leg again (orders.release_intent): a leg whose release is held, waiting
-// for Core, is the system's wait, not a person's (sim, 2026-11-14: a pair the
-// sim operator released, held at G3 after an Edge restart, was sent back).
+// the leg at a later station wait (orders.release_intent): a leg whose release
+// is held, waiting for Core, is the system's wait, not a person's (sim,
+// 2026-11-14: a pair the sim operator released, held at G3 after an Edge
+// restart, was sent back).
+//
+// THE STATION'S WAIT, IN CORE'S WORD. Core releases only a wait it owns, and
+// tells the Edge nothing when it does, so the row reads staged while the robot
+// drives on. Its order.staged names the owner, so a leg at Core's wait reads
+// lane, vacate or turn. A blank kind is not the station's here, though the
+// board reads it so (protocol.IsStationWaitKind): it is a leg no order.staged
+// placed, staged by the boot reconcile, whose snapshot names no wait, after an
+// outage longer than the notice's 10 minutes. That leg may be at Core's lane
+// wait or past it, so it waits for a person.
 func parkedLeg(o *storeorders.Order) bool {
-	return o != nil && o.Status == protocol.StatusStaged && protocol.IsStationWaitKind(o.WaitKind) &&
+	return o != nil && o.Status == protocol.StatusStaged && o.WaitKind == protocol.WaitKindStation &&
 		!o.LaneHeld && o.AuthoredBy == storeorders.AuthoredByEdge && o.ReleaseIntent == ""
 }
 

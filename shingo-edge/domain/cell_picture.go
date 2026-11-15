@@ -40,9 +40,10 @@ type CellPicture struct {
 	Version string `json:"version,omitempty"`
 	// NO SceneRevision. It shipped on every picture — the station's, on every
 	// poll, and the desktop's — so a screen could say "is this the map Core
-	// has now", and no screen ever did. The desktop's map caption asks that
-	// question and answers it from ComposerMap.Revision, which is the read
-	// that actually draws the geometry.
+	// has now", and no screen ever did. The reads that carry the geometry
+	// carry its revision: ComposerMap.Revision on the desktop's (whose map
+	// caption showed it until that map's drawing went, 2026-11-14), and the
+	// robot panel's GET /api/operator-stations/{id}/scene, ETag'd on it.
 	//
 	// Groups is NGRP name → member node names, for the dock strip's member
 	// line under each group. Empty when the node list has not arrived.
@@ -82,8 +83,10 @@ type CellPicture struct {
 	// coordinates at all: it says ORDER and DIRECTION, from the names
 	// CellClaim.KeyRoute already carries.
 	//
-	// Geography lives on the desktop's ComposerMap, which has the whole plant
-	// and draws the aisles. The station is not given one.
+	// Geography lives in the Edge's geometry cache: the desktop's ComposerMap
+	// carries the whole plant for its key-route walk, and the station's robot
+	// panel draws it from GET /api/operator-stations/{id}/scene. The picture is
+	// given none.
 }
 
 // CellStaging is one staging slot beside the cell.

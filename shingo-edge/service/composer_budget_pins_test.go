@@ -42,9 +42,10 @@ const composerBlockByteBudget = 22 * 1024
 // composerReadByteBudget is the DESKTOP composer read's serialised size,
 // pre-gzip, with the plant Map in it.
 //
-// 192 KiB, RE-RULED 2026-09-17 FROM THE MEASUREMENT, down from the 200 kB
-// owner ruling of 09-13. The history is worth keeping because every move of
-// this number has been duplication leaving, never minification:
+// 176 KiB, RE-RULED 2026-11-14 FROM THE MEASUREMENT, down from the 192 KiB of
+// 09-17 (itself re-ruled from the 200 kB owner ruling of 09-13). The history is
+// worth keeping because every move of this number has been duplication or a
+// field nothing read leaving, never minification:
 //
 //	324.4 kB  the pre-simplify tip
 //	193.6 kB  a map edge stopped carrying its endpoints' coordinates
@@ -55,19 +56,24 @@ const composerBlockByteBudget = 22 * 1024
 //	184.0 kB  ComposerStyle.Nodes and .Parts left the scopes that carry
 //	          Claims — 15.3 kB of the same strings twice on one object — and
 //	          the LM coordinate list went with the drawing that needed it
+//	169.4 kB  a map edge stopped carrying its straight-line length (`len`,
+//	          184,540 -> 169,394 bytes), which nothing had read since the
+//	          key-route walk moved onto shared/scene-net.js (owner, F3)
 //
-// WHY 192 AND NOT 180. The ceiling has to be tight enough that putting the
-// duplication back FAILS: restoring Nodes and Parts here is +16.3 kB, which
-// 192 catches and 200 did not. Above that it has to leave room for the two
+// WHY 176 AND NOT 192. The ceiling has to be tight enough that putting the
+// duplication back FAILS: restoring Nodes and Parts here is +16.3 kB and
+// restoring `len` +15.1 kB, which 176 catches (180,224 bytes) and 192 no
+// longer did once `len` went. Above that it has to leave room for the two
 // things that legitimately grow — the palette with the plant's part set, and
-// the map with the plant — so it is not pinned to the measurement. 8.5 KiB of
-// headroom (6.4%) is the trade, and TestComposerRead_DesktopByteBudget prints
-// it on every run so the margin cannot quietly go.
+// the map with the plant — so it is not pinned to the measurement. 10.6 KiB
+// of headroom (6.0%, where 192 left 12.3 KiB, 6.4%, at 184.0 kB) is the trade,
+// and TestComposerRead_DesktopByteBudget prints it on every run so the margin
+// cannot quietly go.
 //
 // AND THE FIXTURE IS PESSIMISTIC ABOUT THE PALETTE, deliberately: 240 distinct
 // payload codes on one process, where Springfield's biggest runs 40-90. The
 // palette's real cost at a plant is nearer 0.8 kB than 4.5.
-const composerReadByteBudget = 192 * 1024
+const composerReadByteBudget = 176 * 1024
 
 // TestComposerRead_DesktopByteBudget holds it, and says what the headroom is
 // rather than only whether it passed: a budget that reports nothing until the
@@ -93,13 +99,16 @@ func TestComposerRead_DesktopByteBudget(t *testing.T) {
 
 	// THE STATION'S READ CARRIES NO MAP, so it is not on this budget and must
 	// not quietly acquire one — that is S2.5's rule, and it is the reason the
-	// two reads can have different budgets at all.
+	// two reads can have different budgets at all. The station's robot panel
+	// draws the plant map from its own door, GET
+	// /api/operator-stations/{id}/scene, fetched once and ETag'd, never from a
+	// composer read.
 	station, err := fx.svc.ComposerForStation(fx.processID)
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
 	if station.Map != nil {
-		t.Error("the station's composer read carries the plant map; no screen on the station draws one")
+		t.Error("the station's composer read carries the plant map; the robot panel takes it from /scene, never a composer read")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -630,5 +631,92 @@ func TestPollerBlockFinishedSurvivesAResolveFailure(t *testing.T) {
 	p.poll() // and only once
 	if got := blocks(); got != 1 {
 		t.Fatalf("after the resolver recovered: %d block events, want 1", got)
+	}
+}
+
+// switchResolver answers 100, or fails while fail is set.
+type switchResolver struct{ fail atomic.Bool }
+
+func (r *switchResolver) ResolveRDSOrderID(string) (int64, error) {
+	if r.fail.Load() {
+		return 0, errors.New("resolver unavailable")
+	}
+	return 100, nil
+}
+
+// TestPollerReportsARobotSwapWithinOneState: RDS moves a RUNNING order from one
+// robot to another and the state never changes. The poller emitted only on a
+// state change, so Core heard of the new robot at the order's next transition
+// and named the old one until then. The swap is reported once, on its own
+// event (never as a status change), and a read that names no robot is not
+// one. A swap whose order cannot be resolved is reported by the next read.
+func TestPollerReportsARobotSwapWithinOneState(t *testing.T) {
+	t.Parallel()
+	var vehicle atomic.Value
+	vehicle.Store("AMB-1")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"code":0,"msg":"ok","id":"rds-swap","state":"RUNNING","vehicle":"%s"}`, vehicle.Load().(string))
+	}))
+	defer srv.Close()
+
+	emitter := &mockPollerEmitter{}
+	resolver := &switchResolver{}
+	p := NewPoller(NewClient(srv.URL, 2*time.Second), emitter, resolver, time.Minute)
+	p.Track("rds-swap")
+	seen := func() (int, string) {
+		emitter.mu.Lock()
+		defer emitter.mu.Unlock()
+		return len(emitter.events), strings.Join(emitter.robotChanges, " ")
+	}
+
+	p.poll() // CREATED -> RUNNING on AMB-1: the transition carries the robot
+	p.poll() // the same robot: nothing
+	if n, swaps := seen(); n != 1 || swaps != "" {
+		t.Fatalf("before the swap: %d status events, swaps %q; want 1 and none", n, swaps)
+	}
+
+	vehicle.Store("AMB-2")
+	resolver.fail.Store(true)
+	p.poll() // the swap, but the order cannot be resolved
+	if _, swaps := seen(); swaps != "" {
+		t.Fatalf("an unresolved swap was reported: %q", swaps)
+	}
+	resolver.fail.Store(false)
+	p.poll() // reported now
+	p.poll() // and once
+	vehicle.Store("")
+	p.poll() // a read naming no robot is not a swap
+	vehicle.Store("AMB-2")
+	p.poll() // nor is the robot coming back into the read
+	if n, swaps := seen(); n != 1 || swaps != "RUNNING:AMB-1->AMB-2" {
+		t.Errorf("after the swap: %d status events, swaps %q; want 1 and RUNNING:AMB-1->AMB-2", n, swaps)
+	}
+}
+
+// The first robot read with no transition — an order a restart seeded WAITING
+// (TrackReleased) — is recorded, not reported: the poller cannot tell it from
+// the robot Core already holds. A later change from it is a swap.
+func TestPollerRecordsTheFirstRobotItReadsWithoutATransition(t *testing.T) {
+	t.Parallel()
+	var vehicle atomic.Value
+	vehicle.Store("AMB-1")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"code":0,"msg":"ok","id":"rds-seeded","state":"WAITING","vehicle":"%s"}`, vehicle.Load().(string))
+	}))
+	defer srv.Close()
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(NewClient(srv.URL, 2*time.Second), emitter, &mockResolver{}, time.Minute)
+	p.TrackReleased("rds-seeded", "")
+	p.poll()
+	vehicle.Store("AMB-3")
+	p.poll()
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	if len(emitter.events) != 0 {
+		t.Errorf("status events %+v, want none: the state never changed", emitter.events)
+	}
+	if got := strings.Join(emitter.robotChanges, " "); got != "WAITING:AMB-1->AMB-3" {
+		t.Errorf("swaps %q, want WAITING:AMB-1->AMB-3 only", got)
 	}
 }

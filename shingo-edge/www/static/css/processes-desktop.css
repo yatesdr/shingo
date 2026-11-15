@@ -693,78 +693,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-chip.add { border-style: dashed; color: var(--accent); }
 .pd-sel.dflt { color: var(--text-muted); }
 
-/* ── D3 · the routing set on the map ──────────────────────────────────────
-   Map left, names right. The plant is the substrate ramp and nothing on it is
-   saturated except the two robot paths and the accent waypoints — the same
-   rule the cell picture follows, at plant scale. */
-.pd-map { flex: 1; position: relative; background: var(--bg); overflow: hidden; }
-.pd-map svg { width: 100%; height: 100%; display: block; }
-.pd-map .cap {
-    position: absolute; left: 20px; bottom: 16px; color: var(--text-muted);
-    font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
-}
-.pd-map .zoom { position: absolute; right: 16px; top: 14px; display: flex; gap: 6px; }
-.pd-map .zoom button {
-    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--sub-2);
-    background: var(--surface); color: var(--text-muted); font: inherit; font-weight: 600; cursor: pointer;
-}
-
-/* The routing set's ROW shape is gone with the per-row switches (owner,
-   2026-09-16 second pass): a role is a picker box and its chips are the set,
-   so there is no row, no swatch, no provenance line and no switch to draw.
-   What the map still needs is a way to point at a name, and that is the chip. */
-.pd-npk .picker-chip.flash { border-color: var(--accent); color: var(--text); }
-/* .pd-notice and .pd-refusal moved to shared/components.css (U1), grouped with
-   .set-notice and .set-refusal. */
-/* On Flows the notice sits in the column under the head, inset like the picture. */
-.pd-main > .pd-notice { margin: 0 24px 8px; flex: none; }
-
-/* The map's marks. Structure recedes: every edge is one substrate stroke and
-   the only saturated things are the two robot paths and the waypoints. */
-.mp-edge { stroke: var(--sub-1); stroke-width: 1; fill: none; }
-/* A position is the Positions bucket's colour, the page's text colour: the map
-   sits on the page's --bg in either theme, where --station's white would vanish
-   on a light page. A live one (a cell of the style on screen) is the heavier. */
-.mp-pos { fill: var(--surface); stroke: var(--text); stroke-width: 1.2; }
-.mp-pos.on { stroke: var(--text); stroke-width: 2.4; }
-.mp-post { font-size: 9px; font-weight: 600; fill: var(--text); }
-.mp-smn { fill: var(--sub-5); }
-.mp-grp { fill: none; stroke: var(--sub-5); stroke-width: 1; stroke-dasharray: 3 3; opacity: .6; }
-.mp-grpt { font-size: 10.5px; font-weight: 600; fill: var(--text); }
-.mp-route { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-/* Robot 1's path is wide and under; Robot 2's is thin and over, so a shared
-   aisle shows both instead of one hiding the other. */
-.mp-route.r1 { stroke: var(--robot-1); stroke-width: 7; opacity: .55; }
-.mp-route.r2 { stroke: var(--robot-2); stroke-width: 2.5; }
-.mp-route.r3 { stroke: var(--robot-3); stroke-width: 2.5; }
-/* THE ROUTING SET'S OWN MARKS. A plain routing node used to be drawn nowhere
-   at all — only NGRP groups got a box — so a press whose whole set is plain
-   nodes had a map of its own positions and nothing else. A circle, because the
-   positions are squares; the hue says which role, and a word under it says the
-   same thing in letters, because a hue alone is not an answer for everyone. */
-.mp-rt { stroke: var(--bg); stroke-width: 1.5; fill: var(--sub-5); }
-.mp-rt.source { fill: var(--robot-1); }
-.mp-rt.destination { fill: var(--robot-2); }
-.mp-rt.staging { fill: var(--map-class-5); }
-/* In both roles, which is the ordinary case for a supermarket buffer: the
-   inbound hue with the outbound ring around it, rather than a third colour
-   nothing else on the map uses. */
-.mp-rt.source.destination { fill: var(--robot-1); stroke: var(--robot-2); stroke-width: 2.5; }
-.mp-rtt { font-size: 9px; font-weight: 600; fill: var(--text); }
-.mp-rtr { font-size: 8.5px; font-weight: 600; fill: var(--text-muted); letter-spacing: .04em; }
-/* A group and its members take its role's colour, the set picker's bucket
-   colour, as a plain node's circle does; in two roles, the inbound hue. */
-.mp-grp.source { stroke: var(--robot-1); }
-.mp-grp.destination { stroke: var(--robot-2); }
-.mp-grp.staging { stroke: var(--map-class-5); }
-.mp-grp.source.destination { stroke: var(--robot-1); }
-.mp-smn.source { fill: var(--robot-1); }
-.mp-smn.destination { fill: var(--robot-2); }
-.mp-smn.staging { fill: var(--map-class-5); }
-.mp-smn.source.destination { fill: var(--robot-1); }
-.mp-key { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
-.mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
-
 /* ── D4 · Operator screens, D5 · Settings ─────────────────────────────────
    One sheet shape for both: a section rule, a 230 px label column and the
    value beside it — the same grid the Advanced modal uses, so the desktop has
@@ -980,20 +908,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the
    gate it is the precondition for. Nothing here is a new shape — the rows are
-   the node picker's, the label column is the settings field's, and the map is the
-   same .pd-map at its drawing's aspect (900 x 340, the process sheet's) instead
-   of a flex share, drawn only behind Show on map. */
+   the node picker's and the label column is the settings field's. */
 /* .pd-sfld .v.col moved to shared/components.css (U1), grouped with .set-fld .v.col. */
 .pd-sfld .v.col .pd-npk { margin-top: 6px; }
-.pd-settings .pd-rsmap {
-    flex: none; width: 100%; aspect-ratio: 900 / 340; margin: 10px 0 4px;
-    border: 1px solid var(--sub-2); border-radius: 12px;
-}
-/* The caption carries the buckets' key, each in its colour, then the subject. */
-.pd-rsmap .cap { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; right: 140px; }
-.mp-leg { display: inline-flex; align-items: center; gap: 4px; }
-.mp-leg i { width: 8px; height: 8px; border-radius: 50%; background: var(--bk); }
-
 /* THE SWITCHED-OFF ROWS OF A ROLE, AND THE ONE CONTROL THAT ANSWERS THEM ALL.
  * The backfill lands a derived name disabled and never runs again once the gate
  * is open, so a row nobody adopted stays off forever — seven of them on
@@ -1006,20 +923,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     font-size: 12px;
 }
 .pd-rs-alloff span { flex: 1; min-width: 0; }
-
-/* The sheet's map read-back. Narrower than the routing tab's — a sheet is a
- * column, not a page — and it scrolls with the fields above it rather than
- * pinning, because it is something to glance at while picking and not the
- * thing being worked on. It waits behind Show on map, a pill like the
- * positions' prefixes on the routing set's heading, so the heading keeps its
- * height and Add process fits 900 px with a plant map (U2); shown, it is the
- * body's full width under the three roles. */
-.pd-settings .pd-maptoggle {
-    margin-left: auto; padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
-    background: none; color: var(--text-muted); font: inherit; font-size: var(--font-xs); font-weight: 400;
-    line-height: inherit; letter-spacing: normal; text-transform: none; cursor: pointer;
-}
-.pd-settings .pd-maptoggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 
 /* The preset row's Apply button sits beside the ⋯ rather than wrapping under
  * it: two controls, one line, and the cell is sized for both (presetCols). */
@@ -1068,15 +971,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-ch-acts { display: flex; gap: 6px; align-items: center; }
 
 /* ── the routing roles' colours ──────────────────────────────────────────────
- * One colour per role, used the same way on a picker row's tag and the map's
- * legend (.mp-rt / .mp-pos): the page's text colour for positions, Robot 1's
- * for inbound, the map's orange class colour for staging, Robot 2's for
- * outbound. The Add process sheet's four-bucket checklist that also wore them
+ * One colour per role, on a picker row's tag: the page's text colour for
+ * positions, Robot 1's for inbound, an orange node-class colour
+ * (--map-class-5) for staging, Robot 2's for outbound. The Add process sheet's four-bucket checklist that also wore them
  * went with that sheet (slice 4). */
-.picker-tag[data-tone="source"], .mp-leg.source { --bk: var(--robot-1); }
-.picker-tag[data-tone="staging"], .mp-leg.staging { --bk: var(--map-class-5); }
-.picker-tag[data-tone="destination"], .mp-leg.destination { --bk: var(--robot-2); }
-.picker-tag[data-tone="positions"], .mp-leg.positions { --bk: var(--text); }
+.picker-tag[data-tone="source"] { --bk: var(--robot-1); }
+.picker-tag[data-tone="staging"] { --bk: var(--map-class-5); }
+.picker-tag[data-tone="destination"] { --bk: var(--robot-2); }
+.picker-tag[data-tone="positions"] { --bk: var(--text); }
 .picker-tag[data-tone] { border-color: var(--bk); color: var(--text); }
 
 /* The picture's fold (freeLine): how many free positions it leaves out, and

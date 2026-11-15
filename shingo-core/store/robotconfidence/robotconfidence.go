@@ -207,8 +207,8 @@ func Min(vals []float64) float64 {
 // Segment is one drivable path segment from the synced scene.
 //
 // IT IS DRAWN AND MEASURED AS THE CURVE THE ROBOT DRIVES. The handles were
-// in scene_edges all along — migration v62 added them, 294 of Springfield's
-// 405 rows carry a complete pair — and this package's loader simply did not
+// in scene_edges all along — migration v62 added them, and most of a plant's
+// rows carry a complete pair — and this package's loader simply did not
 // select them, so every distance here was measured against the chord. At
 // Springfield that chord sits up to 1.302 m from the painted lane, and the
 // consequence is not the distance error: it is that 20.3% of samples snap to
@@ -243,9 +243,9 @@ func (s Segment) Curved() bool {
 
 // Lane is the segment's UNDIRECTED identity: the endpoint pair, sorted.
 //
-// THIS IS A CORRECTNESS FIX, NOT A TIDY-UP. scene_edges stores every drivable
-// lane twice — at Springfield 405 directed rows are 193 reciprocal pairs plus
-// 19 genuinely one-way lanes, i.e. 212 pieces of floor. The two rows of a
+// THIS IS A CORRECTNESS FIX, NOT A TIDY-UP. scene_edges stores one row per
+// direction a robot may drive a lane: most lanes are a reciprocal pair, two
+// rows, and some are one-way, one (study S3, 2026-11-14). The two rows of a
 // pair have identical geometry, so a sample sitting on one sits exactly as
 // close to the other and the winner is decided by float noise: 81.7% of
 // samples have a second-best directed edge within 5 cm of the best. Merging
@@ -282,9 +282,9 @@ func (s Segment) Lane() string {
 // there is no honest lane key to be made from them.
 //
 // THE TEMPTING FIX IS WORSE THAN THE PROBLEM. Falling back to the directed
-// instance name looks harmless and is not: those rows would key at 405-lane
-// granularity while every other row in the same table keys at 212, with
-// nothing in the schema saying which is which. That is the same defect as a
+// instance name looks harmless and is not: those rows would key per directed
+// row while every other row in the same table keys per lane, with nothing in
+// the schema saying which is which. That is the same defect as a
 // silent drop — a number that looks measured and is not comparable to the row
 // beside it — wearing a different hat. Sorting two empty names is no better:
 // every such row keys the same way and the whole plant merges into one

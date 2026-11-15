@@ -112,13 +112,17 @@ type ComposerData struct {
 	// style expects, so a scan of either finds it. The station's composer read
 	// only; fetched on CHANGEOVER, never on the poll.
 	PartRows []ComposerPartRow `json:"part_rows,omitempty"`
-	// Map is the plant as the routing-set screen (D3) draws it: placed points
-	// and the shape of every drivable segment, each with its length.
+	// Map is the plant's drivable network in the shared scene shape
+	// (LEAD-NOTES D11): placed points and the shape of every stored segment.
+	// The desktop's key-route walk reads it
+	// (composer-model.js viaWaypoints, over shared/scene-net.js); nothing
+	// draws it since the routing-set map's drawing went (2026-11-14, tier A1).
 	//
 	// THE DESKTOP'S ONLY: the station's composer no longer edits a flow, so it
-	// walks no network (pick-a-part U4 took its Scene away). Nil when the
-	// geometry cache is empty, and then D3 says the map has not arrived
-	// rather than drawing an invented one.
+	// walks no network (pick-a-part U4 took its Scene away); the station's
+	// robot panel takes the map from GET /api/operator-stations/{id}/scene.
+	// Nil when the geometry cache is empty, and then the key-route picker says
+	// there is no plant map rather than walking an invented one.
 	Map *ComposerMap `json:"map,omitempty"`
 	// MapSame is true, and Map then left off, when the desktop's read quoted
 	// the revision of the map it already holds (GET .../composer?map_rev=) and
@@ -154,13 +158,17 @@ func (d *ComposerData) LeaveOffHeldMap(heldRev string) {
 	d.Map, d.MapSame = nil, true
 }
 
-// ComposerMap is the vendor map's geometry, as the desktop draws it.
+// ComposerMap is the vendor map's geometry in the shared scene shape
+// (LEAD-NOTES D11): the desktop composer read's Map, and the robot panel's
+// GET /api/operator-stations/{id}/scene answer (service.SceneMap). The two are
+// one builder's (service sceneMap), so they carry the same keys.
 type ComposerMap struct {
-	// Revision is the cache's, so a screen can say which pull it is drawing.
+	// Revision is the cache's, so a reader can say which pull it holds.
 	Revision string `json:"revision"`
 	// Points is instance_name → placement, for every point in the cache. It is
-	// the whole map because D3 draws the plant faint behind the press: a
-	// subgraph would leave the press floating with nothing to be near.
+	// the whole map because the route model places a name that is no vertex
+	// by its point and snaps it to the nearest vertex (shared/scene-net.js):
+	// a subgraph would lose the places it snaps from.
 	Points map[string]ComposerMapPoint `json:"points"`
 	// Edges is every drivable segment with both endpoints and, on a curved
 	// one, its two control handles. Screen space is the page's business;
@@ -186,19 +194,19 @@ type ComposerMapPoint struct {
 // once per incident edge, so a point on six lanes shipped its coordinates
 // seven times. Measured on the S0 fixture's 383-point/635-edge Hopkinsville
 // map, the Map block went 108.6 kB → 77.2 kB when the copies went.
-// Both readers (the travel graph and D3's path builder) already had the points
-// map in hand.
+// Its readers (the shared scene modules) read the points map with it.
 //
-// composerMap guarantees every endpoint is in Points, so the lookup cannot
+// sceneMap guarantees every endpoint is in Points, so the lookup cannot
 // miss — see it for why that is a repair and not just a precondition.
 //
-// Len is the straight-line length, the same number ComposerEdge carries, so
-// a reader that walks the network for waypoints does not need Scene beside
-// this and does not recompute 635 square roots in the browser.
+// NO LENGTH. Each edge carried its straight-line length (`len`) until
+// 2026-11-14, when the owner took it off the wire (follow-up F3): its one
+// reader, the key-route walk, moved onto shared/scene-net.js (LEAD-NOTES D9),
+// which measures each row from its points and handles, the arc on a curved
+// one. TestComposerMap_AnEdgeCarriesNoCoordinates refuses the key.
 type ComposerMapEdge struct {
 	From    string      `json:"from"`
 	To      string      `json:"to"`
-	Len     float64     `json:"len,omitempty"`
 	Handles *[4]float64 `json:"h,omitempty"`
 }
 
@@ -395,26 +403,6 @@ type ComposerPreset struct {
 	// recipe, never from a body. The desktop's carries it, so a group's
 	// Advanced round-trips through the draft.
 	Groups []RecipeGroup `json:"groups,omitempty"`
-}
-
-// ComposerScene is the travel graph, reduced to what a waypoint search needs.
-//
-// NO GROUP MEMBERSHIP. It used to hang off here, so the desktop asked for a
-// travel graph it never walked in order to reach a membership map — and once
-// it was on the block as well, the same map was on the payload twice.
-// CellPicture.Groups is the one copy, and both surfaces already carry the
-// picture.
-type ComposerScene struct {
-	Edges []ComposerEdge `json:"edges,omitempty"`
-}
-
-// ComposerEdge is one undirected segment of the travel network. Len is its
-// length in metres; the search treats a missing length as 1 so a scene with
-// unmeasured edges still returns waypoints in the right order.
-type ComposerEdge struct {
-	From string  `json:"from"`
-	To   string  `json:"to"`
-	Len  float64 `json:"len,omitempty"`
 }
 
 // ComposerPartRow is one row of the station's part list: the code, the

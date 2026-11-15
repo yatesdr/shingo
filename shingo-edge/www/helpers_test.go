@@ -64,6 +64,9 @@ type stubEngine struct {
 	groups        map[string][]string    // group membership the stub's StationService is wired with
 	plantWide     bool                   // core is Core's plant-wide list (NodeListResponse.PlantWide)
 	loaders       service.LoaderResolver // nil: unwired, so no node is a shared loader window
+	// sceneGeometry is the geometry cache the stub's StationService reads;
+	// nil: nothing held.
+	sceneGeometry *domain.SceneGeometry
 	orderMgr      *orders.Manager
 	// plcMgr is what PLCManager returns: nil unless a test puts a manager
 	// (with a seeded tag cache) here.
@@ -177,7 +180,6 @@ func (s *stubEngine) CoreNodeKinds() domain.CoreNodeKinds {
 }
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo { return nil }
 func (s *stubEngine) ScenePointNames() map[string]bool               { return nil }
-func (s *stubEngine) SceneAdjacency() map[string][]string            { return nil }
 func (s *stubEngine) RequestNodeSync()                               {}
 func (s *stubEngine) RequestCatalogSync()                            {}
 func (s *stubEngine) EditProcessCounter(processID int64, edit domain.ProcessCounterEdit) error {
@@ -470,6 +472,9 @@ func (s *stubEngine) StationService() *service.StationService {
 	if s.loaders != nil {
 		svc.SetLoaderResolver(s.loaders)
 	}
+	if g := s.sceneGeometry; g != nil {
+		svc.SetSceneGeometryResolver(func() *domain.SceneGeometry { return g })
+	}
 	return svc
 }
 func (s *stubEngine) ChangeoverService() *service.ChangeoverService {
@@ -582,6 +587,8 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
 			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
 			r.Patch("/processes/{id}", h.apiPatchProcess)
+			// The desktop's composer read, admin-gated as in router.go.
+			r.Get("/processes/{id}/composer", h.apiProcessComposer)
 			// The flow doors the Presets tab applies through. Registered here
 			// so the write-path suite can post what the apply modal posts;
 			// the ENGINE is a stub in this router, so what these exercise is

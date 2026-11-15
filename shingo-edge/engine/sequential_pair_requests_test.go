@@ -96,7 +96,7 @@ func TestSequentialPair_EachSideRunsItsOwnSwap(t *testing.T) {
 				t.Fatalf("the request on A: %v", err)
 			}
 			removalA := removalOf(t, db, a)
-			driveToInTransit(t, eng, removalA, a)
+			releaseAtLine(t, eng, removalA, a)
 			backfills := ordersDroppingAt(t, db, pairA)
 			if len(backfills) != 1 {
 				t.Fatalf("orders bringing A a bin after its removal left: %v, want one backfill", backfills)
@@ -124,7 +124,7 @@ func TestSequentialPair_EachSideRunsItsOwnSwap(t *testing.T) {
 			if next == removalA {
 				t.Fatal("A's next request made no new removal")
 			}
-			driveToInTransit(t, eng, next, a)
+			releaseAtLine(t, eng, next, a)
 			if got := ordersDroppingAt(t, db, pairA); len(got) != 2 {
 				t.Errorf("orders ever bringing A a bin: %v, want the first backfill and the second", got)
 			}

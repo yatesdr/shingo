@@ -349,6 +349,21 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	protoRouter := buildInboundRouter(eng, edgeHandler, hb, dataDbg)
 	protoRouter.LogRegistration(log.Printf)
+
+	// ── The live robot feed (protocol/ephemeral.go) ────────────────────
+	// The engine opens the ephemeral topic only while Core names it (the
+	// registration and ack handlers above call OfferEphemeralTopic) and this
+	// Edge's config names the same one. Its reader holds one type, the
+	// robot.positions addressed to this station; everything else on the topic
+	// is dropped without a word. Wired before the subscribe, so the first
+	// registration's topic finds the link.
+	ephemeralRouter := router.New[string]()
+	router.Register(ephemeralRouter, protocol.TypeRobotPositions, eng.HandleRobotPositions)
+	eng.SetEphemeralLink(messaging.EphemeralLink{Client: msgClient, Deliver: router.ReadEphemeral(
+		ingestor.SigningKey,
+		func(h *protocol.RawHeader) bool { return h.Dst.Station == stationID },
+		ephemeralRouter,
+	)})
 	ingestor.Dispatch = func(env *protocol.Envelope) {
 		protoRouter.Dispatch(env, env.Type)
 	}
@@ -1122,6 +1137,9 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
 		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		// Core's verified ephemeral topic, or none: the live robot feed's
+		// link opens and closes on what each registration and ack say.
+		eng.OfferEphemeralTopic(reg.EphemeralTopic)
 		// Republish the full claim set on every registration, not just at boot.
 		// This is the path that covers CORE restarting: Core sends
 		// EdgeRegisterRequest to an edge it does not recognise, the edge

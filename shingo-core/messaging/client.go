@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/backoff"
+	"shingo/protocol/clock"
 	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingocore/config"
@@ -72,11 +73,33 @@ type Client struct {
 	// Meanwhile the key travels with the record: an Edge message dumped off the
 	// topic carries its station without being decoded.
 	PartitionKey string
+
+	// ephemeralHandler is what SubscribeEphemeral registered: every message
+	// read off the ephemeral topic, raw (ephemeral.go). Guarded by mu.
+	ephemeralHandler func(data []byte)
+	// openEphemeral opens the ephemeral topic's reader (newEphemeralReader);
+	// a field so a test can put a fake reader under the read loop. Set once,
+	// in NewClient.
+	openEphemeral func(brokers []string, topic string) ephemeralReader
+	// attemptEphemeral is one create-and-verify of the ephemeral topic
+	// (attemptEphemeral), ephemeralRetry the wait between attempts while it
+	// does not verify (ephemeralRetryEvery), and ephemeralClock the clock that
+	// wait is timed on: the wall clock (clock.Real), never the sim clock,
+	// because the broker it waits on is real (docs/dev-env/sim.md: Kafka
+	// backoff stays wall). Fields so a test can stand in a broker that is
+	// silent, then answers, count the attempts, and step the waits itself on a
+	// manual clock instead of sleeping through them. Set once, in NewClient.
+	attemptEphemeral func(brokers []string, timeout time.Duration, topic string) error
+	ephemeralRetry   time.Duration
+	ephemeralClock   clock.Clock
 }
 
 type kafkaState struct {
 	readers map[string]kafkaReader
 	writer  *kafka.Writer
+	// ephemeral is the ephemeral topic once this connection verified it; nil
+	// while it is not configured or not verified (ephemeral.go).
+	ephemeral *ephemeralLink
 }
 
 // kafkaReader is the part of *kafka.Reader that readLoop drives. It is an
@@ -93,6 +116,12 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 		cfg:      cfg,
 		handlers: make(map[string]MessageHandler),
 		stopChan: make(chan struct{}),
+		openEphemeral: func(brokers []string, topic string) ephemeralReader {
+			return newEphemeralReader(brokers, topic)
+		},
+		attemptEphemeral: attemptEphemeral,
+		ephemeralRetry:   ephemeralRetryEvery,
+		ephemeralClock:   clock.Real(),
 	}
 }
 
@@ -142,6 +171,10 @@ func (c *Client) Connect() error {
 			BatchTimeout: writerBatchTimeout,
 		},
 	}
+	// After the durable topics and the writer, and on its own goroutine: the
+	// live robot feed is optional, a topic that will not verify leaves it off
+	// and is tried again each minute, and none of it holds Connect.
+	c.startEphemeralLocked()
 	return nil
 }
 
@@ -453,6 +486,7 @@ func (c *Client) Close() {
 		if c.kafka.writer != nil {
 			c.kafka.writer.Close()
 		}
+		c.kafka.ephemeral.close()
 		c.kafka = nil
 	}
 }

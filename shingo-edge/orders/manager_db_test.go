@@ -447,7 +447,7 @@ func TestHandleDispatchReply_Update_ETAOnlyDoesNotTouchWaybill(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-upd", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
-	_ = db.UpdateOrderWaybill(oid, "WB-old", "OLD-ETA")
+	_ = db.UpdateOrderWaybill(oid, "WB-old", "", "OLD-ETA")
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
 	// waybillID arg is IGNORED on update — this confirms the non-touch.
@@ -471,7 +471,7 @@ func TestHandleDispatchReply_Update_EmptyETAIsNoop(t *testing.T) {
 
 	oid, _ := db.CreateOrder("uuid-upd2", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-	_ = db.UpdateOrderWaybill(oid, "WB-stay", "ETA-stay")
+	_ = db.UpdateOrderWaybill(oid, "WB-stay", "", "ETA-stay")
 
 	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-upd2", ReplyUpdate, "", "", ""), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)

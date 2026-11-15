@@ -82,7 +82,7 @@ var callerTable = []callerPattern{
 	{tag: tagOrder, file: "engine/operator_"},
 	{tag: tagOrder, file: "engine/wiring_completion.go"},
 	{tag: tagOrder, file: "engine/wiring_delivered.go"},
-	{tag: tagOrder, file: "engine/wiring_status_changed.go"},
+	{tag: tagOrder, file: "engine/sequential_backfill.go"},
 	{tag: tagOrder, file: "engine/handler_bin_landed.go"},
 	{tag: tagOrder, file: "engine/handler_bin_picked_up.go"},
 	{tag: tagOrder, file: "engine/handler_bin_return.go"},

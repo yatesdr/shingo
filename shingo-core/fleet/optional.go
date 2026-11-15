@@ -232,6 +232,19 @@ type RobotStatus struct {
 	Suspended      bool
 	Undispatchable Undispatchable
 	Alarms         []RobotAlarm
+	// PathIDs is the route the fleet has planned for the robot and not yet
+	// driven, in the fleet's own point ids, the current point first; empty
+	// when it has no plan. The ids are the vendor's (RDS sends bare point
+	// numbers), so nothing outside the engine reads them and they are kept
+	// out of the JSON: the engine's poll names them into Path.
+	PathIDs []string `json:"-"`
+	// Path is PathIDs as scene point names, written by the engine's poll
+	// (Engine.resolveRobotPaths) before the robot reaches the robot cache,
+	// /api/robots or the robot-update frame. Empty when the robot has no
+	// plan AND when any id could not be named: no route is drawn rather than
+	// a wrong one, and nothing estimates one in its place (owner ruling,
+	// shared-map 2026-11-14).
+	Path []string `json:"path,omitempty"`
 }
 
 // Undispatchable is the fleet's own account of why a robot is not taking

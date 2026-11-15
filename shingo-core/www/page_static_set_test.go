@@ -41,7 +41,7 @@ var corePageBudgets = map[string]struct {
 	"cycle-time.html":            {18, 72 << 10},  // 16, 66151
 	"dashboard-display.html":     {11, 27 << 10},  // 9, 24489
 	"dashboard-frame.html":       {18, 72 << 10},  // 16, 66151
-	"dashboard-map.html":         {11, 66 << 10},  // 9, 60663
+	"dashboard-map.html":         {18, 87 << 10},  // 16, 79801 at the shared-map rebase of sm/u10-panel: scene-rows.js (U6), scene-view.css and robot-motion.js (U10); 13, 77071 at sm/u5-shared: the scene machinery in four shared modules
 	"dashboard-node-report.html": {10, 42 << 10},  // 8, 38352
 	"dashboard.html":             {19, 81 << 10},  // 17, 75297
 	"demand-episode.html":        {18, 72 << 10},  // 16, 66151
@@ -60,7 +60,7 @@ var corePageBudgets = map[string]struct {
 	"overview.html":              {32, 186 << 10}, // 30, 172290
 	"payloads.html":              {19, 83 << 10},  // 17, 76726
 	"rds_explorer.html":          {19, 85 << 10},  // 17, 78632
-	"robots.html":                {26, 117 << 10}, // 24, 108820
+	"robots.html":                {28, 125 << 10}, // 26, 115848 at sm/u6-consumers: the localization board on the robot map's lanes (scene-net.js, components/scene-rows.js; +2 requests, +7028 B gz); 24, 108820
 	"sourcing.html":              {19, 78 << 10},  // 17, 72428
 	"test-orders.html":           {22, 91 << 10},  // 20, 84246 at s3-adapters: the shared picker and its adapters
 }

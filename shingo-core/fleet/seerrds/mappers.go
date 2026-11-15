@@ -132,7 +132,8 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 			Unlock:           r.UndispatchableReason.Unlock,
 			LockHolder:       lockHolder(r.LockInfo),
 		},
-		Alarms: mapRobotAlarms(r.RbkReport.Alarms),
+		Alarms:  mapRobotAlarms(r.RbkReport.Alarms),
+		PathIDs: r.UnfinishedPath,
 	}
 }
 

@@ -398,6 +398,10 @@ function loadShared(deps) {
         mods['exceptions.js'], mods['settings.js']);
 }
 
+// The scene network and route model the page imports, loaded once the way a
+// browser's module map loads them (shared/testdata/js/shared-modules.js).
+const SCENE_NET = require(path.join(SHARED_DIR, 'testdata', 'js', 'shared-modules.js')).realm()('scene-net.js');
+
 // ── the page, booted for real ────────────────────────────────────────────────
 
 function loadPage(loadOpts) {
@@ -584,8 +588,8 @@ function loadPage(loadOpts) {
     // the callback and runs it when it wants the read on the wire.
     global.setInterval = fn => { if (loadOpts.intervals) loadOpts.intervals.push(fn); return 0; };
     global.CSS = { escape: s => String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c) };
-    // The picture and the map are stubbed to fail loudly if they ever run: the
-    // pin's path draws the bar but never the picture (no #pd-svg exists).
+    // The picture is stubbed to fail loudly if it ever runs: the pin's path
+    // draws the bar but never the picture (no #pd-svg exists).
     global.renderFlowPicture = () => { throw new Error('drawPicture must not run in this pin'); };
     // The row words are the table's (front/back under a position), so they
     // are read whenever the table draws; a stub cell has no rows to name.
@@ -593,9 +597,9 @@ function loadPage(loadOpts) {
     global.sentencesFromModel = () => { throw new Error('sentencesFromModel must not run in this pin'); };
     global.relationPlacement = () => { throw new Error('relationPlacement must not run in this pin'); };
     global.moduleOf = () => { throw new Error('moduleOf must not run in this pin'); };
-    for (const fn of ['makeProjector', 'rotate90For', 'dist2', 'cubicLength', 'cubicPathD', 'laneKey']) {
-        global[fn] = () => { throw new Error(fn + ' must not run in this pin'); };
-    }
+    // The key-route walk's route model is the real one (shared/scene-net.js),
+    // as the page imports it.
+    global.sceneRoute = SCENE_NET.sceneRoute;
     win.pictureCalls = [];
     win.pictureViews = [];
     if (loadOpts.realPicture) {
@@ -631,10 +635,11 @@ function loadPage(loadOpts) {
     return { root, pop, bar, main, doc, win, scrim, sheet: () => sheetParts(doc, scrim) };
 }
 
-// operator-flow.js in its own context, the way operator-flow.test.js loads
-// it: scene-geom's exports stripped to declarations, the flow module's imports
-// stripped and its station helpers stubbed, the model beside it on window so
-// sentencesFromModel reads the same api the page does.
+// operator-flow.js in its own context: the flow module's imports stripped and
+// its station helpers stubbed, the model beside it on window so
+// sentencesFromModel reads the same api the page does. No scene-geom.js:
+// operator-flow.js does not import it, and neither file names any of its
+// exports.
 function loadFlow() {
     const dir = path.join(SRC_DIR, '..', '..', 'operator-station');
     const ctx = {
@@ -647,9 +652,6 @@ function loadFlow() {
     };
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(path.join(dir, 'composer-model.js'), 'utf8'), ctx);
-    const geom = fs.readFileSync(
-        path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared', 'scene-geom.js'), 'utf8');
-    vm.runInContext(geom.replace(/^export /mg, ''), ctx);
     const raw = fs.readFileSync(path.join(dir, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, sentencesFromModel, relationPlacement, ' +
@@ -2486,12 +2488,13 @@ async function mainAsync() {
         }
     });
 
-    // ── when this Edge has no plant map ──────────────────────────────────────
+    // ── the plant map: the key route walks it, and nothing draws it ──────────
     //
     // The key route is walked over the plant map, so with no map its picker
     // has nothing to offer for a reason the engineer cannot fix from here, and
-    // it says that reason. The Settings routing panel and the Add-process
-    // sheet draw no map frame around a map that is not there. The routing
+    // it says that reason. Neither the Settings routing panel nor the
+    // Add-process sheet draws the map, with one or without (the routing-set map
+    // was removed, 2026-11-14, the shared-map brief's tier A1). The routing
     // panel's heading line is the page's own description of the set: the
     // server's summary sentence counts backfill rows only.
     const plantMap = () => ({
@@ -2507,15 +2510,9 @@ async function mainAsync() {
         if (map) c.map = map;
         return c;
     };
-    // The real projection, for the pins that draw a real map.
-    function realGeometry() {
-        const src = fs.readFileSync(
-            path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared', 'scene-geom.js'), 'utf8');
-        const geom = vm.runInThisContext('(function(){' + src.replace(/^export\s+/gm, '') +
-            '\nreturn { makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey };})',
-            { filename: 'scene-geom.js' })();
-        Object.assign(global, geom);
-    }
+    // What the removed map drew, and the controls that drew it.
+    const MAP_MARKS = ['Show on map', 'Hide map', 'pd-maptoggle', 'pd-map', 'pd-rsmap', 'rs-zoom', 'pd-sheetmap',
+        'pd-nomap', 'class="mp-', 'data-mapname', 'No plant map on this Edge yet'];
     const viaPop = async map => {
         const ctx = loadPage({ flowspec: true, composer: mapComposer(map) });
         await settle();
@@ -2553,25 +2550,25 @@ async function mainAsync() {
         allowSheet: true, composer: mapComposer(map), hash: '#tab=settings',
         fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null),
     });
-    // Settings' Routing set: its heading, one picker per role below it, the
-    // map behind Show on map on the heading when the Edge has one.
+    // Settings' Routing set: its heading and one picker per role below it.
+    // No map, with a plant map or without (A1).
     const routingHead = '<div class="pd-sect"><h2>Routing set</h2></div>';
-    const noMapNote = '<p class="pd-note">No plant map on this Edge yet. Core sends it with the node list.</p>';
 
-    await pin('the routing panel with no plant map draws one line and no map frame', async () => {
-        const { root } = settingsPage(null);
-        await settle();
-        const h = root.innerHTML;
-        if (h.indexOf('<h2>Routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
-        if (h.indexOf(routingHead) < 0) {
-            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
-        }
-        if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
-        if (h.indexOf(noMapNote) < 0) throw new Error('the no-map line does not read ' + JSON.stringify(noMapNote));
-        for (const frame of ['pd-rsmap', 'rs-zoom', 'pd-nomap', 'no plant map cached']) {
-            if (h.indexOf(frame) >= 0) throw new Error('the no-map routing panel still draws ' + frame);
-        }
-    });
+    for (const [said, map] of [['no plant map', null], ['a plant map', plantMap()]]) {
+        await pin('the routing panel on an Edge with ' + said + ' reads its own heading and draws no map', async () => {
+            const { root } = settingsPage(map);
+            await settle();
+            const h = root.innerHTML;
+            if (h.indexOf('<h2>Routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
+            if (h.indexOf(routingHead) < 0) {
+                throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
+            }
+            if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
+            for (const mark of MAP_MARKS) {
+                if (h.indexOf(mark) >= 0) throw new Error('the routing panel still draws ' + mark);
+            }
+        });
+    }
 
     await pin('taking a routing name out goes through and shows what it orphans', async () => {
         const warning = 'Removed DN_001. Recipes left without their destination (2): "A" and "B".';
@@ -2603,40 +2600,10 @@ async function mainAsync() {
         }
     });
 
-    // THE MAP WAITS BEHIND SHOW ON MAP (HOP, 2026-11-12), as on the process
-    // sheet: the heading carries the toggle, closed, and no frame is drawn
-    // until it is pressed; then the map and its caption, and Hide map.
-    await pin('the routing panel with a plant map draws the map and its caption', async () => {
-        const { root, doc } = settingsPage(plantMap());
-        realGeometry();
-        await settle();
-        const shut = root.innerHTML;
-        if (shut.indexOf(routingHead.slice(0, -'</div>'.length) + '<span class="pd-spacer"></span><button type="button" ' +
-            'class="pd-maptoggle" data-act="st-showmap" aria-controls="pd-rsmapbox" aria-expanded="false">Show on map</button>') < 0) {
-            throw new Error('Show on map is not on the heading, closed');
-        }
-        if (shut.indexOf('class="pd-map pd-rsmap"') >= 0 || shut.indexOf('rs-zoom') >= 0) throw new Error('the map is drawn before Show on map');
-        click(root, doc, { act: 'st-showmap' });
-        const h = root.innerHTML;
-        if (h.indexOf('aria-expanded="true">Hide map</button>') < 0) throw new Error('the toggle does not read Hide map once pressed');
-        if (h.indexOf(routingHead.slice(0, -'</div>'.length)) < 0) {
-            throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
-        }
-        if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
-        if (h.indexOf('<div class="pd-map pd-rsmap" id="pd-rsmapbox">') < 0) throw new Error('the routing map frame is not drawn');
-        if (h.indexOf('<svg viewBox="0 0 900 340"') < 0) throw new Error('the map is not drawn at the sheet’s 900 x 340');
-        if (h.indexOf('plant map from Core · revision 4') < 0) throw new Error('the map caption does not name the revision');
-        for (const b of ['positions', 'source', 'staging', 'destination']) {
-            if (h.indexOf('<span class="mp-leg ' + b + '"><i></i>') < 0) throw new Error('the caption has no ' + b + ' key');
-        }
-        if (h.indexOf('No plant map on this Edge yet') >= 0) throw new Error('a page with a map says it has none');
-    });
-
     const addProcessSheet = async map => {
         const hosts = {};
         for (const k of ['procset', 'parts']) hosts['npk-' + k] = pickerHost('npk-' + k);
         const { root, doc, sheet } = loadPage({ allowSheet: true, composer: mapComposer(map), extraIds: hosts });
-        if (map) realGeometry();
         await settle();
         click(root, doc, { act: 'add-process' });
         await settle();
@@ -2645,12 +2612,14 @@ async function mainAsync() {
         return sheet().el.innerHTML + Object.values(hosts).map(h => h.innerHTML).join('');
     };
 
-    await pin('the Add process sheet with no plant map has no Show on map and no map frame', async () => {
-        const h = await addProcessSheet(null);
-        for (const frame of ['Show on map', 'pd-sheetmap', 'pd-nomap']) {
-            if (h.indexOf(frame) >= 0) throw new Error('the no-map Add process sheet still draws ' + frame);
-        }
-    });
+    for (const [said, map] of [['no plant map', null], ['a plant map', plantMap()]]) {
+        await pin('the Add process sheet on an Edge with ' + said + ' draws no map', async () => {
+            const h = await addProcessSheet(map);
+            for (const mark of MAP_MARKS) {
+                if (h.indexOf(mark) >= 0) throw new Error('the Add process sheet still draws ' + mark);
+            }
+        });
+    }
 
     // ADD PROCESS ASKS TWO THINGS (owner, 2026-11-14): a name and a group.
     // The screen, the positions, the routing set and the parts each have one

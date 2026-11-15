@@ -44,23 +44,13 @@ function check(name, cond, detail) {
 // shape changes so the injection no longer applies, load() throws with a
 // message naming what to fix rather than failing an assertion obscurely.
 //
-// Nothing below tests geometry, but dashboard-map.js configures its projector
-// at module scope from shared/scene-geom.js, so the module does not
-// EVALUATE without it. vm runs a script, not a module: scene-geom's exports are
-// stripped to plain declarations and evaluated into the same context, where the
-// stripped imports resolve to them. Same technique, spelled out, in
+// Nothing below tests geometry, but dashboard-map.js builds its projector and
+// its comet layer at module scope from the shared scene modules, so the module
+// does not EVALUATE without them. vm runs a script, not a module:
+// shared-modules.js loads each shared file into the same context and binds the
+// page's imports to them. Same technique, spelled out, in
 // dashboard-map.curve.test.js.
-function loadSceneGeom(ctx) {
-    const file = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js');
-    const raw = fs.readFileSync(file, 'utf8');
-    const src = raw.replace(/^export /mg, '');
-    if (src === raw) {
-        throw new Error('shared/scene-geom.js no longer declares its exports as ' +
-            '"export function"/"export var" at line start, which this harness strips to ' +
-            'run it as a script; update loadSceneGeom in dashboard-map.stall.test.js');
-    }
-    vm.runInContext(src, ctx);
-}
+const SM = require(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'testdata', 'js', 'shared-modules.js'));
 
 function load() {
     const ctx = {
@@ -98,22 +88,22 @@ function load() {
     let exported = null;
     ctx.__export = function (o) { exported = o; };
     vm.createContext(ctx);
-    loadSceneGeom(ctx);
 
     const file = path.join(SRC_DIR, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
-    // /g, not one shot: dashboard-map.js imports from two modules now, and a
-    // non-global strip leaves the second `import` in a script vm cannot parse.
-    const stripped = raw.replace(/^import[^;]+;\s*/mg, '');
     const INJECT = '  __export({ mergeRobot: mergeRobot, isMoving: isMoving,' +
         ' laneVisible: laneVisible, robots: robots, MOVE_LINGER_MS: MOVE_LINGER_MS,' +
         ' alarmWords: alarmWords, STATUS_COLOR: STATUS_COLOR, restDisc: restDisc });\n})();\n';
-    const src = stripped.replace(/\}\)\(\);\s*$/, INJECT);
-    if (src === stripped) {
+    const src = raw.replace(/\}\)\(\);\s*$/, INJECT);
+    if (src === raw) {
         throw new Error('dashboard-map.js no longer ends in the "})();" IIFE close this ' +
             'harness injects before; update the injection in dashboard-map.stall.test.js');
     }
-    vm.runInContext(src, ctx);
+    const shared = SM.realm(ctx);
+    // The page's own rows-to-scene adapter (components/scene-rows.js, a Core
+    // module the page imports), its scene-geom import bound like the page's.
+    ctx.sceneOfRows = SM.moduleOf(ctx, shared, path.join(SRC_DIR, '..', 'components', 'scene-rows.js')).sceneOfRows;
+    SM.runPage(ctx, src, shared, null, 'dashboard-map.js');
     if (!exported) throw new Error('__export was not reached inside dashboard-map.js');
     return exported;
 }

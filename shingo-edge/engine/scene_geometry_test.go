@@ -63,7 +63,7 @@ func TestSceneGeometry_HotCopyFollowsTheCompleteOrNothingRule(t *testing.T) {
 
 // TestSceneGeometry_NameSetStillComesFromSetSceneGraph: the validator's name
 // set keeps its own path and its own "nil means could not look" contract; the
-// geometry cache is a second consumer of the same slices, not a replacement.
+// geometry cache is a second consumer of the same points, not a replacement.
 func TestSceneGeometry_NameSetStillComesFromSetSceneGraph(t *testing.T) {
 	t.Parallel()
 	e := &Engine{}

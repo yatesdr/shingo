@@ -16,7 +16,9 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v50–v53 first, at every Edge of the plant. Core has no migration, and goes only after every Edge there runs this release: until then Core's old timers are what end a dead Edge's waits.
+## v0.9.0 — 2026-11-15
+
+Deploy: Edge v51–v54 first, at every Edge of the plant. Core has no migration, and goes only after every Edge there runs this release: until then Core's old timers are what end a dead Edge's waits.
 
 - A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
 - A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
@@ -29,7 +31,10 @@ Deploy: Edge v50–v53 first, at every Edge of the plant. Core has no migration,
 - Auto-reorder does not ask on a count that cannot be the part's (a press past two packs or below zero, a line past one pack); the tile says so
 - A line that counts no part for an hour sends back the robots parked there waiting on a RELEASE, and auto-reorder goes off at those positions
 - Not during a changeover, nor within an hour of one ending, of a REQUEST there, or of the robots parking, nor while the counter cannot be read
+- Never a robot Core has released or holds at its own wait, and never one the Edge did not hear park (it parked while the Edge was down): that one waits for a person
 - That off ends when the line counts a part after the stop, or on REQUEST, even if the Edge restarted in between
+- A sequential position's second robot is called when the first is released at the line, not when the first robot is sent, so it no longer waits behind the first with the new bin
+- A sequential robot parked at a line idle past its hour is sent back on its own; a release that went out just before the Edge stopped still calls the second robot when it starts
 - A cancel the Edge sends no longer expires on its way to Core
 - The hour is `demand.idle_cancel_after` in the Edge config
 - Processes Settings has an Auto-reorder card: switch a line's auto-reorder off or on, and choose whether its station shows the switch
@@ -44,6 +49,55 @@ Deploy: Edge v50–v53 first, at every Edge of the plant. Core has no migration,
 - Core no longer cancels a waiting order on a timer; `staging.abandon_stuck` and `abandon_stuck_operator_gated` are ignored and said so at start
 - A robot left waiting at a line with no counter, or at a dead Edge, waits for a person to cancel it in Core
 - Core files the Edge's idle cancel as abandoned, the system's, not as a person's cancel, and counts it as a cancel, not a failure
+
+## v0.8.1 — 2026-11-15
+
+Deploy: no migration.
+
+- Opening the composer for a screen or a process that no longer exists now says it is not found, instead of a server error
+
+## v0.8.0 — 2026-11-15
+
+Deploy: Edge v50. Core has no migration; the two go in either order.
+
+- Core reads the route the fleet has planned for each driving robot, the route the robot map will draw
+- The Edge keeps each order's robot, from the robot's first waybill and from any status update that names one
+- Core names the order's robot on each fleet status update it sends, so a robot changed after the first waybill reaches the station at the order's next step
+- Core sees RDS move an order to another robot while the order stays in one state, and records the new robot and the swap on the mission's timeline
+- When RDS reports a moving order unassigned again, the station is no longer told it went back to dispatched; Core keeps its status and tells it nothing
+- An Edge order no longer reads as just updated each time Core repeats its status, so the stuck-order check counts from its last real change
+- The wall boards' green connection dot pulses as before without repainting the page every frame, and holds still on a screen set to reduce motion
+- The robot map's route comets move as before at up to 30 frames a second, and stop while the tab is hidden or the map is off screen
+- The robot map's minimap draws the plant's lanes once, not again on every robot update
+- Core no longer builds the live robot feed when no open page is listening for it
+- The robot map looks as before but no longer redraws the whole floor on every robot update: the aisles and nodes are drawn again only when the view, the scene, an order's nodes or a docked robot change, and the robots move in place, so a moving robot's glow pulses smoothly instead of restarting each update
+- The robot map's header counts, map key and side lists are rewritten only when what they show changes, not on every robot update
+- Core makes a short-lived Kafka topic, shingo.ephemeral (60 s retention), checks and corrects its settings, and only then tells the Edges about it; a broker that cannot answer at Core's start is tried again each minute
+- While a station shows an order's robot, Core sends it that robot's position and remaining route every robot poll; with nothing shown, Core does no work for it
+- An Edge uses the live robot topic only when Core names it and its own config names the same topic; an older Core or Edge sees nothing new
+- While a screen's robot panel is open, the Edge watches that screen's driving orders and passes it each robot's position and route as Core sends them, named by the screen's own order; with no panel open it watches nothing and sends nothing
+- The robot panel is told whether the live feed is there: not before Core names the live topic, and not once Core has gone unheard as long as the screens' "as of" waits
+- The robot panel's map is the Edge's copy of Core's plant map, fetched once and answered "unchanged" until Core's map changes
+- The robot map's dashed line for an order not yet driving follows the lanes only the way robots may drive them, as the fleet plans, instead of running a one-way lane backwards
+- The robot map draws a driving robot's comet and stopped-robot line along the route the fleet planned for it; a robot with no planned route draws neither, rather than a guess
+- The robot map's comets ask the browser for a frame only when they are about to draw one, about 30 a second instead of every screen refresh, with the same look
+- On the robot map, a robot parked between two close bays sits on the nearer one, and only that bay shows as taken
+- The Processes page's "robot drives via" picker offers waypoints along the way a robot may drive: one-way lanes only in their own direction, a bowed aisle by its real length
+- The Processes page no longer draws the routing set on a plant map (Show on map, in Settings and on the process sheet); the lists and the "robot drives via" picker are unchanged
+- A cell operator screen shows its robots in a panel at the bottom right while one of its orders has a robot: Core's map, robots and comets around the cell, the cell's nodes marked, each robot's ETA; it goes when none does
+- The screen's ROBOTS button turns its panel off or on, remembered in that browser; a tap on the panel hides it until the next order gets a robot, and never presses what is under it
+- A robot the panel has heard nothing of for three robot polls fades where it was last seen and its line says Position lost; with no live robot feed the panel hides and does no work
+- A robot bringing a bin to the cell draws a solid (carrying) comet on the panel from its first comet, read from where the fleet's planned route ends, even when the panel first sees it mid-carry
+- After the live robot feed goes away, the panel comes back on the first view whose Core copies are current again, even when no order changed
+- A hidden screen (screen off, another tab) closes its panel's feed and timers, and opens them again when shown
+- An order whose robot sends no position within three robot polls shows a Position lost line on the panel, naming no robot
+- The station screen's footer says "Operator screen ready", not "Operator Station Ready"
+- Core's robot map and the station's robot panel take their map's look from one shared stylesheet and their moving test, calm limit and pickup radius from one shared module, with the same look and behaviour
+- The robot panel is told Core's robot poll interval by the Edge when its feed opens, so a robot that never sends a position is called lost after three polls from Core's own setting, not a copy of it
+- After Core releases a robot from a lane gate, table turn, vacate or hard release, the robot panel draws it driving with its comet and its ETA instead of calling it Arrived, though the station still shows the order as staged
+- The robot panel marks where each robot is going: its destination node takes the map's highlight and the cell's other nodes a quieter mark, and a destination away from the cell is kept in view
+- The Processes page downloads less: its plant map no longer sends each lane's straight-line length, which nothing used
+- The robot panel's top edge says TAP TO HIDE; a tap anywhere on the panel, the words included, still hides it and the map is the same size
 
 ## v0.7.0 — 2026-11-13
 

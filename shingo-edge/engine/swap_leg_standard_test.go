@@ -84,8 +84,8 @@ func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 						}
 						if mode == protocol.SwapModeSequential {
 							// SEQUENTIAL'S OTHER HALF IS NOT IN THE DISPATCH. Its
-							// backfill leg is minted later by handleSequentialBackfill
-							// when the removal reaches in_transit, and it never passes
+							// backfill leg is minted later by ensureSequentialBackfill
+							// when the removal is released at the line, and it never passes
 							// through BuildSwapDispatch — so a walker that only read
 							// the dispatch would certify half a cycle. It runs at the
 							// cell like any other leg and is held to the same standard.

@@ -26,6 +26,14 @@ type PollerEmitter interface {
 	EmitGraceExpired(orderID int64, rdsOrderID string)
 }
 
+// RobotChangeEmitter is the OPTIONAL half of PollerEmitter for a robot RDS
+// moved an order to without changing the order's state (reportRobotSwap).
+// Optional, like UnreadableEmitter, so emitters that do not care need not grow
+// it.
+type RobotChangeEmitter interface {
+	EmitOrderRobotChanged(orderID int64, rdsOrderID, state, fromRobotID, robotID string)
+}
+
 // OrderIDResolver maps RDS order IDs back to ShinGo order IDs.
 type OrderIDResolver interface {
 	ResolveRDSOrderID(rdsOrderID string) (int64, error)
@@ -55,6 +63,10 @@ type Poller struct {
 	// while leaving the order open (ExpectNextWait). Map: rdsOrderID ->
 	// blockID. Cleared by the next committed transition.
 	awaitingWait map[string]string
+	// vehicles holds, per RDS order, the last robot RDS named for it (never
+	// ""): what a later read is compared with to see a robot swap inside one
+	// state (reportRobotSwap). Cleared alongside `active`.
+	vehicles map[string]string
 	// unreadable holds the orders whose reads are failing, since when and why
 	// (poller_unreadable.go). Lazily made; cleared by a good read or Untrack.
 	unreadable map[string]*unreadableOrder
@@ -94,6 +106,7 @@ func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, 
 		blockStates:     make(map[string]map[string]OrderState),
 		faultedDeadline: make(map[string]time.Time),
 		awaitingWait:    make(map[string]string),
+		vehicles:        make(map[string]string),
 		graceDuration:   gd,
 		stopChan:        make(chan struct{}),
 		doneChan:        make(chan struct{}),
@@ -143,6 +156,7 @@ func (p *Poller) Untrack(rdsOrderID string) {
 	delete(p.blockStates, rdsOrderID)
 	delete(p.faultedDeadline, rdsOrderID)
 	delete(p.awaitingWait, rdsOrderID)
+	delete(p.vehicles, rdsOrderID)
 	delete(p.unreadable, rdsOrderID)
 }
 
@@ -183,6 +197,61 @@ func (p *Poller) reachedNextWait(rdsID string, state OrderState, detail *OrderDe
 		}
 	}
 	return false
+}
+
+// reportRobotSwap reports a robot RDS moved an order to without changing the
+// order's state, through RobotChangeEmitter.
+//
+// THE POLLER EMITS ON STATE CHANGES, AND A ROBOT SWAP IS NOT ONE. RDS may move
+// an order to another robot (it marked all 200 of one plant's most recent
+// orders reassignable on 2026-11-14, and had moved none), and until then a
+// swap inside one state reached Core only at the order's next transition:
+// orders.robot_id, Core's board and mission_events named the old robot for the
+// rest of the state. Pinned by TestPollerReportsARobotSwapWithinOneState.
+//
+// NOT AS A SAME-STATE STATUS EVENT. handleVendorStatusChange reads every
+// status event as a possible transition: it maps the vendor state and moves
+// Core's status when the two differ. They differ for a same-state read after
+// a Core-side release (Core in_transit, RDS still WAITING at the old wait),
+// and a WAITING -> WAITING event there would stage the order again. The
+// poller's own WAITING -> WAITING (reachedNextWait) IS a transition, so the
+// handler cannot tell the two apart; the swap goes on its own event, which
+// writes the robot and nothing else.
+//
+// Only a change from a robot already seen for the order. The first robot seen
+// without a transition (the first read after a restart of an order seeded
+// WAITING by TrackReleased) is recorded, not reported: the poller cannot tell
+// it from the robot Core holds. A robot first seen with a transition rides
+// that transition, as it always has. An empty Vehicle is no change: Core
+// keeps the robot it holds when the fleet names none.
+func (p *Poller) reportRobotSwap(rdsID string, state OrderState, detail *OrderDetail, resolve func() (int64, bool)) {
+	if detail.Vehicle == "" {
+		return
+	}
+	p.mu.Lock()
+	prev, seen := p.vehicles[rdsID]
+	if !seen {
+		p.vehicles[rdsID] = detail.Vehicle
+	}
+	p.mu.Unlock()
+	if !seen || prev == detail.Vehicle {
+		return
+	}
+	rc, ok := p.emitter.(RobotChangeEmitter)
+	if !ok {
+		return
+	}
+	orderID, ok := resolve()
+	if !ok {
+		return // the old robot stays recorded, so the next read reports it
+	}
+	p.mu.Lock()
+	if _, tracked := p.active[rdsID]; tracked {
+		p.vehicles[rdsID] = detail.Vehicle
+	}
+	p.mu.Unlock()
+	p.dbg("robot swap %s in %s: %s -> %s", rdsID, state, prev, detail.Vehicle)
+	rc.EmitOrderRobotChanged(orderID, rdsID, string(state), prev, detail.Vehicle)
 }
 
 // ActiveCount returns the number of orders being polled.
@@ -340,6 +409,7 @@ func (p *Poller) poll() {
 		p.diffBlockStates(rdsID, detail, resolveOrderID)
 
 		if newState == oldState && !p.reachedNextWait(rdsID, newState, detail) {
+			p.reportRobotSwap(rdsID, newState, detail, resolveOrderID)
 			continue
 		}
 
@@ -357,6 +427,9 @@ func (p *Poller) poll() {
 		// transition answers an ExpectNextWait.
 		p.mu.Lock()
 		delete(p.awaitingWait, rdsID)
+		if detail.Vehicle != "" {
+			p.vehicles[rdsID] = detail.Vehicle
+		}
 		if newState == StateFailed {
 			// FAILED is no longer terminal per SEER docs. Record grace deadline
 			// and keep polling so the engine can recover or escalate on expiry.
@@ -369,6 +442,7 @@ func (p *Poller) poll() {
 			delete(p.active, rdsID)
 			delete(p.blockStates, rdsID)
 			delete(p.faultedDeadline, rdsID)
+			delete(p.vehicles, rdsID)
 		} else {
 			p.active[rdsID] = newState
 			// Recovery: order left FAILED state, clear any grace deadline.
@@ -405,6 +479,7 @@ func (p *Poller) checkGraceExpiry() {
 		delete(p.blockStates, rdsID)
 		delete(p.faultedDeadline, rdsID)
 		delete(p.awaitingWait, rdsID)
+		delete(p.vehicles, rdsID)
 		p.mu.Unlock()
 
 		oid, err := p.resolver.ResolveRDSOrderID(rdsID)

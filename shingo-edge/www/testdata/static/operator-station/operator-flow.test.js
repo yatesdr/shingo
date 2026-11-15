@@ -10,9 +10,10 @@
 // overlapping and every text inside its card in operator-flow.geometry.test.js.
 //
 // operator-flow.js imports the station's util/state modules and reads the
-// model off window. vm runs a script: the model first, scene-geom's exports
-// stripped to plain declarations, then the flow module with its imports
-// stripped and the two local helpers it uses stubbed. Exit 0 = pass.
+// model off window. vm runs a script: the model first, then the flow module
+// with its imports stripped and the two local helpers it uses stubbed. No
+// scene-geom.js: operator-flow.js does not import it, and neither file names
+// any of its exports. Exit 0 = pass.
 
 'use strict';
 
@@ -51,11 +52,6 @@ function load() {
     const modelSrc = fs.readFileSync(path.join(SRC_DIR, 'composer-model.js'), 'utf8');
     vm.runInContext(modelSrc, ctx);
     if (!ctx.window.ComposerModel) throw new Error('composer-model.js did not attach to window; update load()');
-    const geomFile = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js');
-    const geomRaw = fs.readFileSync(geomFile, 'utf8');
-    const geomSrc = geomRaw.replace(/^export /mg, '');
-    if (geomSrc === geomRaw) throw new Error('shared/scene-geom.js no longer declares its exports at line start; update load()');
-    vm.runInContext(geomSrc, ctx);
     const raw = fs.readFileSync(path.join(SRC_DIR, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     if (src === raw) throw new Error('operator-flow.js no longer starts its imports/exports at line start; update load()');
