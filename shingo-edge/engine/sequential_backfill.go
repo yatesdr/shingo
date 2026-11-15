@@ -23,7 +23,7 @@ import (
 
 // ensureSequentialBackfill creates Order B for a sequential position once its
 // Order A, the position's active order, has been released at the line node,
-// and only if no B exists yet. Called for each leg whose release went out
+// and only if it was never given one. Called for each leg whose release went out
 // (releaseAct) and, once per start, for each position with an active order and
 // no B (recoverSequentialBackfills). Anything else returns with nothing made.
 func (e *Engine) ensureSequentialBackfill(orderID int64) {
@@ -46,6 +46,11 @@ func (e *Engine) ensureSequentialBackfill(orderID int64) {
 	}
 	// Don't create backfill if one already exists
 	if runtime.StagedOrderID != nil {
+		return
+	}
+	// Nor if A was ever given one (its link to B): a B that ended early, which
+	// clears the position's pointer to it, is not made again at the next start.
+	if order.SiblingOrderID != nil {
 		return
 	}
 

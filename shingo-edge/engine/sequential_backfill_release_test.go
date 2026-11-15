@@ -147,6 +147,34 @@ func TestSequentialBackfill_ARestartBetweenTheReleaseAndB(t *testing.T) {
 	}
 }
 
+// TestSequentialBackfill_ACancelledBIsNotMadeAgainAtAStart: B was made at A's
+// release and then cancelled (here by Core) while A still drives, which clears
+// the position's pointer to it. A start does not make another: A was given its B.
+func TestSequentialBackfill_ACancelledBIsNotMadeAgainAtAStart(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	h.sequentialAB(protocol.ClaimRoleConsume, true)
+	coreWaybill(h, "removal", "AMR-1")
+	coreStagedAt(h, "removal", 0)
+	testutil.MustNoErr(t, orderClick("removal", dispEmpty)(h), "the RELEASE at the line")
+	b := backfillOf(h)
+	if b == nil {
+		t.Fatal("fixture: no B after the release")
+	}
+	h.handler.HandleOrderCancelled(&protocol.Envelope{}, &protocol.OrderCancelled{OrderUUID: b.UUID, Reason: "cancelled at Core"})
+	rt, err := h.db.GetProcessNodeRuntime(h.nodeID)
+	testutil.MustNoErr(t, err, "runtime")
+	if rt.StagedOrderID != nil {
+		t.Fatalf("fixture: the position still points at B %d after its cancel", *rt.StagedOrderID)
+	}
+
+	h.eng.recoverSequentialBackfills()
+
+	if got := backfills(h); len(got) != 1 || got[0] != b.ID {
+		t.Errorf("after the start: backfills %v, want only the cancelled B %d", got, b.ID)
+	}
+}
+
 // TestSequentialBackfill_NoneForARemovalEndedBeforeItsRelease: A cancelled at
 // the line before anyone released it, by a person or by Core. No B, now or at
 // the next start.
