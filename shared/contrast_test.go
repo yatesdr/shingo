@@ -304,6 +304,55 @@ func TestVizTokenContrastAgainstSurfaces(t *testing.T) {
 	}
 }
 
+// roleTokens are a process's node roles (tokens.css "A process's node roles"),
+// in the order the set pick draws its boxes.
+var roleTokens = []string{"--role-positions", "--role-inbound", "--role-staging", "--role-outbound"}
+
+// TestRoleColours holds the four role colours to what their uses need. They
+// are a box's outline, a dot and a chip's border (WCAG 2.2 SC 1.4.11, 3:1),
+// and the routing roles' light values are also ink-dark (4.5:1), on both
+// surfaces in both themes. And they must stay apart from each other: the
+// pick's point is telling the boxes apart at a glance, so every pair clears
+// the Signal palette's distinctionFloor for normal vision and under each
+// dichromacy, both themes, with no knownCollapses ledger of its own.
+func TestRoleColours(t *testing.T) {
+	themes := tokenThemes(t, readShared(t, "tokens.css"))
+	for _, theme := range []string{"light", "dark"} {
+		tbl := themes[theme]
+		colours := make([]RGB, len(roleTokens))
+		for i, name := range roleTokens {
+			hex := resolveToken(tbl, name)
+			if !isHex(hex) {
+				t.Fatalf("%s theme: %s resolved to %q, not a hex colour", theme, name, hex)
+			}
+			colours[i] = mustColor(t, hex)
+			for _, surfaceTok := range []string{"--surface", "--bg"} {
+				floor := AANonText
+				if theme == "light" && name != "--role-positions" {
+					floor = AANormalText
+				}
+				surf := mustColor(t, resolveToken(tbl, surfaceTok))
+				if got := ContrastRatio(colours[i], surf); got < floor {
+					t.Errorf("%s theme: %s (%s) on %s is %.2f:1, below %.1f:1", theme, name, hex, surfaceTok, got, floor)
+				}
+			}
+		}
+		for i := range roleTokens {
+			for j := i + 1; j < len(roleTokens); j++ {
+				a, b := colours[i], colours[j]
+				if d := DeltaE2000RGB(a, b); d < distinctionFloor {
+					t.Errorf("%s theme: %s and %s are %.1f apart, below %.1f", theme, roleTokens[i], roleTokens[j], d, distinctionFloor)
+				}
+				for _, v := range AllCVDTypes() {
+					if d := DeltaE2000RGB(SimulateCVD(a, v), SimulateCVD(b, v)); d < distinctionFloor {
+						t.Errorf("%s theme, %s: %s and %s are %.1f apart, below %.1f", theme, v, roleTokens[i], roleTokens[j], d, distinctionFloor)
+					}
+				}
+			}
+		}
+	}
+}
+
 // vizFloor returns the contrast floor for a role against a given surface
 // token, or 0 when the role is deliberately unfloored.
 func vizFloor(role vizRole, surfaceTok string) float64 {
