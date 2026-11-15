@@ -34,6 +34,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - A first style saves with no operator screen; the empty flow points to Screens and positions
 - The routing set is saved in one write, and saving a style's flow needs a sign-in
 - The list paints with its rows, reads its positions once, and does not resend a plant map
+- A station board with more tiles than its screen's grid holds adds rows, so no tile draws over itself
 
 ## v0.9.0 — 2026-11-15
 
