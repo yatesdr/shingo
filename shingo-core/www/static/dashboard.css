@@ -184,13 +184,6 @@ tr.row-new { animation: row-flash 1.4s ease-out; }
  * Edge's robot panel does (owner: one machinery in shared/). What stays here
  * is the page's own. */
 
-/* Dead, kept as U5 reported them: nothing draws .map-node-travel (travel
- * points draw no dot), .map-node-hot (an order's node takes the accent on its
- * own glyph, scene-view.js drawNodeGlyph) or .map-route-base. */
-.map-node-travel { fill: var(--map-node, #7e92b3); }
-.map-node-hot { opacity: 0.95; }
-.map-route-base { stroke-linecap: round; stroke-linejoin: round; }
-
 .map-node-label {
   fill: var(--dash-muted);
   text-anchor: middle;
