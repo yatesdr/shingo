@@ -256,8 +256,8 @@ func TestSSE_RobotPosReachesOnlyItsOwnStationsClient(t *testing.T) {
 	// robot stream is wired to (openRobotPos).
 	for _, panel := range []string{"panel 3", "panel 4"} {
 		topic := map[string]string{"panel 3": "robot-pos.3", "panel 4": "robot-pos.4"}[panel]
-		if f, ok := nextFrame(t, clients[panel], topic, 2*time.Second); !ok || f.data != `{"available":false}` {
-			t.Fatalf("%s: first frame %+v (%v), want %s {\"available\":false}", panel, f, ok, topic)
+		if f, ok := nextFrame(t, clients[panel], topic, 2*time.Second); !ok || f.data != availableFrame(false) {
+			t.Fatalf("%s: first frame %+v (%v), want %s %s", panel, f, ok, topic, availableFrame(false))
 		}
 	}
 	hub.Broadcast(SSEEvent{Type: "robot-pos.3", Data: map[string]int{"n": 1}})

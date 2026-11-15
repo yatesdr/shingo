@@ -722,10 +722,11 @@ message type, `p` its body; no `data` wrapper), signed, with `exp` 10 s after `t
   `src.station` (a body naming another station is dropped) and keeps it for 15 s (`RobotWatchLease`) after the
   last one; every watch replaces the one before.
 - **`robot.positions`** (`TypeRobotPositions`), Core → one Edge, `dst` station = the watching Edge's uid. One per
-  robot poll (2 s) per station with a live watch, built from that poll. Core honours only the watched orders
-  that are the station's own and that the fleet holds on a robot (dispatched, in transit, staged or faulted,
-  `IsVendorTracked`, with `orders.robot_id` read each poll); an order whose robot the poll did not list
-  connected is left out. **No live watch: no database read, nothing built, nothing sent.**
+  robot poll (2 s, `RobotPollInterval`, which the body carries as `interval_ms`) per station with a live watch,
+  built from that poll. Core honours only the watched orders that are the station's own and that the fleet holds
+  on a robot (dispatched, in transit, staged or faulted, `IsVendorTracked`, with `orders.robot_id` read each
+  poll); an order whose robot the poll did not list connected is left out. **No live watch: no database read,
+  nothing built, nothing sent.**
 
 The bodies are `RobotWatch` and `RobotPositions` (`protocol/ephemeral.go`). Each side reads the topic through
 `router.ReadEphemeral` over a router of its own, which carries only the types that side reads.

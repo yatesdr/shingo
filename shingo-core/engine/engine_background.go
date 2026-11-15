@@ -8,6 +8,7 @@ import (
 	"shingocore/config"
 	"shingocore/fleet"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 )
 
@@ -20,15 +21,15 @@ import (
 // staging sweep interval. (It also released staged bins whose staging had
 // expired; staging no longer expires, resolveNodeStaging.)
 
-// robotPollInterval is robotRefreshLoop's cadence. The hourly robot record
-// caps the time one poll may credit at twice this (robot_hours.go).
-const robotPollInterval = 2 * time.Second
-
 // robotRefreshLoop polls robot status every 2 seconds, answers each live robot
 // watch from the poll, and emits EventRobotsUpdated only when the robot state
 // has actually changed.
+//
+// Its cadence is protocol.RobotPollInterval, the interval every
+// robot.positions says it was sampled at. The hourly robot record caps the
+// time one poll may credit at twice it (robot_hours.go).
 func (e *Engine) robotRefreshLoop() {
-	ticker := clock.Default().NewTicker(robotPollInterval)
+	ticker := clock.Default().NewTicker(protocol.RobotPollInterval)
 	defer ticker.Stop()
 	var prevHash [sha256.Size]byte
 	routesNotDrawn := map[string]routeNotDrawn{}

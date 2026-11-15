@@ -14,13 +14,10 @@ import (
 // screen, {available: false}, and that hidden is zero work for every cause.
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).
 //
-// The panel waits 3 x CORE_POLL_MS (operator-robot-map.js) for an order's
-// first position before any frame has said interval_ms. That is a copy of
-// Core's robot poll cadence, robotPollInterval (2 s), which the protocol does
-// not carry as a constant: the copy is held to the symbol's existence here,
-// not to its value (a value pin would read another module's source). It
-// forbids changing Core's cadence without changing CORE_POLL_MS.
-// EXPIRY: when robotPollInterval is gone.
+// The panel holds no copy of Core's robot poll cadence: it counts a missing
+// first position against the interval_ms the stream's {available} frame
+// carries (protocol.RobotPollInterval, D17; the frame is pinned by
+// TestRobotStream_AvailableOnConnectAndOnEveryChange).
 func TestOperatorRobotPanelJS(t *testing.T) {
 	t.Parallel()
 	nodePath, err := exec.LookPath("node")

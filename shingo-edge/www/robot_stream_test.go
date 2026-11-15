@@ -218,6 +218,14 @@ func waitTrue(t *testing.T, what string, cond func() bool) {
 	}
 }
 
+// availableFrame is an {available} frame's body as a panel reads it: whether
+// positions can come, and the interval Core polls at, protocol.RobotPollInterval,
+// so a panel has it before its first position frame (D17). Spelled out here,
+// not built by robotPosAvailable, so a pin on it holds the wire's shape.
+func availableFrame(available bool) string {
+	return fmt.Sprintf(`{"available":%t,"interval_ms":%d}`, available, protocol.RobotPollInterval.Milliseconds())
+}
+
 // TestRobotStream_OpenWatchesCloseClears pins the watch lifecycle on the real
 // engine. Nothing is watched while no panel is open. A panel's first client
 // sets its station's set (the board's tracked orders, never another
@@ -233,8 +241,8 @@ func TestRobotStream_OpenWatchesCloseClears(t *testing.T) {
 	}
 
 	_, firstM, closeM := r.panel(r.m)
-	if firstM != `{"available":true}` {
-		t.Errorf("M's first frame %s, want {\"available\":true}", firstM)
+	if firstM != availableFrame(true) {
+		t.Errorf("M's first frame %s, want %s", firstM, availableFrame(true))
 	}
 	r.watching("M's panel watches M's board alone", r.uuids("m-1", "both"))
 
@@ -364,7 +372,10 @@ func TestRobotStream_FramesJoinTheEdgeOrderAndNoClientNoFrame(t *testing.T) {
 // panel's first frame and is sent again whenever it moves: false until Core
 // names the ephemeral topic, true once the link opens on a current ack, false
 // when the last ack goes stale by the screens' rule (FeedAsOfAfter), true on
-// the next ack, false when Core stops naming the topic.
+// the next ack, false when Core stops naming the topic. Every one of them,
+// true or false, carries interval_ms, Core's robot poll
+// (protocol.RobotPollInterval), so a panel has the interval before its first
+// position frame (D17).
 func TestRobotStream_AvailableOnConnectAndOnEveryChange(t *testing.T) {
 	t.Parallel()
 	// The stream's clock runs FeedAsOfAfter less 3 s ahead, so an ack goes
@@ -373,24 +384,24 @@ func TestRobotStream_AvailableOnConnectAndOnEveryChange(t *testing.T) {
 	r := newRobotRig(t, func() time.Time { return time.Now().Add(ahead) }, true)
 
 	ch, first, _ := r.panel(r.n)
-	if first != `{"available":false}` {
-		t.Fatalf("first frame before Core named the topic: %s, want {\"available\":false}", first)
+	if first != availableFrame(false) {
+		t.Fatalf("first frame before Core named the topic: %s, want %s", first, availableFrame(false))
 	}
-	next := func(what, want string) {
+	next := func(what string, want bool) {
 		t.Helper()
 		f, ok := nextFrame(t, ch, robotPosTopic(r.n), 5*time.Second)
-		if !ok || f.data != want {
-			t.Fatalf("%s: frame %+v (%v), want %s", what, f, ok, want)
+		if !ok || f.data != availableFrame(want) {
+			t.Fatalf("%s: frame %+v (%v), want %s", what, f, ok, availableFrame(want))
 		}
 	}
 	r.ack("shingo.ephemeral")
-	next("the link opened on a current ack", `{"available":true}`)
-	next("the ack went stale", `{"available":false}`)
+	next("the link opened on a current ack", true)
+	next("the ack went stale", false)
 	r.ack("shingo.ephemeral")
-	next("the next ack", `{"available":true}`)
+	next("the next ack", true)
 	r.ack("")
-	next("Core stopped naming the topic", `{"available":false}`)
-	if _, second, _ := r.panel(r.n); second != `{"available":false}` {
-		t.Errorf("a second panel's first frame %s, want {\"available\":false}", second)
+	next("Core stopped naming the topic", false)
+	if _, second, _ := r.panel(r.n); second != availableFrame(false) {
+		t.Errorf("a second panel's first frame %s, want %s", second, availableFrame(false))
 	}
 }

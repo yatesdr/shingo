@@ -97,8 +97,8 @@ func TestBuildRobotPositions_OwnedOrdersOnAPolledRobot(t *testing.T) {
 		t.Fatalf("built for %+v, want one message each for edge.a and edge.b", got)
 	}
 	a := got[0].body
-	if !a.T.Equal(at.Truncate(time.Millisecond)) || a.IntervalMS != robotPollInterval.Milliseconds() {
-		t.Errorf("edge.a's t/interval = %s/%d, want the poll's time to the ms and %d", a.T, a.IntervalMS, robotPollInterval.Milliseconds())
+	if !a.T.Equal(at.Truncate(time.Millisecond)) || a.IntervalMS != protocol.RobotPollInterval.Milliseconds() {
+		t.Errorf("edge.a's t/interval = %s/%d, want the poll's time to the ms and %d", a.T, a.IntervalMS, protocol.RobotPollInterval.Milliseconds())
 	}
 	want := protocol.RobotPosition{OrderUUID: "u-mine", RobotID: "AMR-01", X: 12.5, Y: -3.25, Heading: 1.5708,
 		Path: []string{"LM7", "LM31", "AP32"}}

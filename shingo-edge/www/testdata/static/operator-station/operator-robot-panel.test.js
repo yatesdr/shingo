@@ -433,12 +433,16 @@ function bootPage(opts) {
 
 // ── helpers over a page ──────────────────────────────────────────────────────
 
+// available is an {available} frame as the Edge sends it (robot_stream.go
+// robotPosAvailable): with interval_ms, Core's robot poll (D17), 2000 unless
+// a pin says another.
+function available(on, intervalMS) { return { available: on, interval_ms: intervalMS === undefined ? 2000 : intervalMS }; }
 // show boots a page onto view v, answers the panel's stream {available: true}
 // and returns the page.
 async function shownPage(v, opts) {
     const h = bootPage(Object.assign({ view: v }, opts || {}));
     await h.boot();
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     return h;
 }
@@ -519,14 +523,14 @@ function tap(h, under) {
     eq([sceneReq.url, sceneReq.opts.cache, sceneReq.opts.headers], ['/api/operator-stations/7/scene', undefined, undefined],
         'the scene GET leaves the browser\'s cache on, so the door\'s ETag revalidates it on a later page life');
     eq(h.visible(), false, 'nothing is on screen before the stream says {available: true}');
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     eq(h.visible(), true, 'shown once the stream says {available: true}');
     eq(h.panel().attrs['aria-label'], 'Robots on this screen. Tap to hide.', 'the panel says what it is in screen words');
     await h.setView(cellView({ 3: [order(501, 'delivered', 'AMR-01', 'PLN_03')] }));
     eq([h.visible(), h.openPanelStream()], [false, null], 'delivered: no order has a robot, the panel goes and its stream closes');
     await h.setView(cellView({ 2: [order(601, 'in_transit', 'AMR-02', 'PLN_02')] }));
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     eq([h.visible(), h.counts.sceneGets, h.counts.imports], [true, 1, 1],
         'the next order with a robot shows it again on the scene and the drawing already held');
@@ -795,19 +799,24 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
 
 // ── 9b. An order with a robot that never gets a position (flat gap: it was
 // never said). Lost 3 x the interval after the panel opened, or after the
-// order was handed over if later; before any frame the interval is Core's
-// poll cadence (2000 ms, robotPollInterval), after one the stream's own. The
-// row says Position lost and names no robot: the stored one may be stale
-// (D14).
+// order was handed over if later. The interval is the last one the stream
+// said: its first frame, {available}, carries Core's poll (D17), so before any
+// position frame the deadline is the {available} frame's interval; after a
+// position frame, that frame's. The row says Position lost and names no robot:
+// the stored one may be stale (D14).
 {
-    const h = await shownPage(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }));
+    const h = bootPage({ view: cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }) });
+    await h.boot();
+    // 1500 ms, not Core's 2 s: the deadline can come only from this frame.
+    h.frame(available(true, 1500));
+    await h.flush();
     const opened = h.map().inspect().openedAt;
-    await h.advance(opened + 6000 - h.now());
-    eq(h.rowEls().length, 0, 'no frame yet, three of Core\'s polls since the panel opened: not lost yet');
+    await h.advance(opened + 4500 - h.now());
+    eq(h.rowEls().length, 0, 'no position frame yet, three of the {available} frame\'s intervals since the panel opened: not lost yet');
     await h.advance(2);
     const li = h.rowEls()[0];
     eq([h.rowEls().length, li && li.className, li && li.children[1].textContent, li && li.children[2].textContent],
-        [1, 'os-rp-row is-lost', '', 'Position lost'], 'past three polls with no position: a row saying Position lost, naming no robot');
+        [1, 'os-rp-row is-lost', '', 'Position lost'], 'past three of them with no position: a row saying Position lost, naming no robot');
     eq([robotGroups(h).length, h.panel().textContent.indexOf('AMR-07')], [0, -1], 'no robot drawn, and the stored robot named nowhere (D14)');
     eq(h.panelTimersPending(), 0, 'lost: no timer left for it');
     // Its robot is heard from: the row is the robot's.
@@ -829,6 +838,18 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     await h.flush();
     eq(h.rows(), ['AMR-07', 'Position lost'], 'past three intervals: its row says Position lost, after the robots drawn');
 }
+// A stream that has said no interval gives nothing to count with: the panel
+// holds no copy of Core's cadence (D17), so it calls nothing lost and arms no
+// timer for it.
+{
+    const h = bootPage({ view: cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }) });
+    await h.boot();
+    h.frame({ available: true });
+    await h.flush();
+    await h.advance(60000);
+    eq([h.visible(), h.rowEls().length, h.panelTimersPending()], [true, 0, 0],
+        'no interval said, a minute with no position: shown, nothing called lost, no timer');
+}
 
 // ── 10. A tap hides it, and the tap never reaches the control under it.
 {
@@ -848,13 +869,13 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     eq([h.visible(), h.openPanelStream()], [false, null], 'hidden until the next order gets a robot: the same order moving on keeps it hidden');
     eq(h.toggle().attrs['aria-pressed'], 'true', 'the toggle is unchanged by the tap');
     await h.setView(cellView({ 3: [order(501, 'staged', 'AMR-07', 'PLN_03')], 4: [order(502, 'dispatched', 'AMR-08', 'PLN_04')] }));
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     eq(h.visible(), true, 'the next order with a robot shows it again');
     tap(h, under);
     h.toggle().click();
     await h.flush();
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     eq([h.visible(), h.toggle().attrs['aria-pressed']], [true, 'true'], 'tapped away, the toggle shows it again, still enabled');
 }
@@ -892,18 +913,18 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     const v = cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] });
     const h = bootPage({ view: v });
     await h.boot();
-    h.frame({ available: false });
+    h.frame(available(false));
     await h.flush();
     eq([h.visible(), h.openPanelStream(), h.panelStreams().length], [false, null, 1], 'no live robot feed here: hidden, its stream closed');
     await h.setView(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03', { eta: '2026-11-14T12:05:00Z' })] }));
     eq(h.panelStreams().length, 1, 'a view refresh that moves no robot order does not try again');
     await h.setView(cellView({ 3: [order(501, 'staged', 'AMR-07', 'PLN_03')] }));
     eq(h.panelStreams().length, 2, 'a robot order that moves on tries again, once');
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     eq(h.visible(), true, 'and shows when the feed answers');
     // Core's link goes down while shown (U9: {available: false} again).
-    h.frame({ available: false });
+    h.frame(available(false));
     await h.flush();
     eq([h.visible(), h.openPanelStream()], [false, null], 'the Core link down: hidden, its stream closed');
     h.fireBus('connected', { build: 'b1' });
@@ -927,7 +948,7 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     // Core goes quiet: the board's copies pass 150 s and it says "as of".
     await h.setView(withFeeds('2026-11-14T11:57:00Z', '2026-11-14T11:57:00Z'));
     eq(h.visible(), true, 'an "as of" alone does not hide the panel: the stream says when Core\'s link is down');
-    h.frame({ available: false });
+    h.frame(available(false));
     await h.flush();
     eq([h.visible(), h.panelStreams().length], [false, 1], 'Core\'s link down: hidden');
     h.mark();
@@ -939,12 +960,12 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     eq(h.panelStreams().length, 1, 'one copy current, one still old: still stale, no retry');
     await h.setView(withFeeds(null, null));
     eq(h.panelStreams().length, 2, 'the first view with every copy current tries the panel again, the orders unchanged');
-    h.frame({ available: true });
+    h.frame(available(true));
     await h.flush();
     eq(h.visible(), true, 'and it is back');
     // Current to current is no flip: a feed refused for another reason (no
     // capability) is not retried by every fresh view.
-    h.frame({ available: false });
+    h.frame(available(false));
     await h.flush();
     await h.setView(withFeeds(null, null));
     eq(h.panelStreams().length, 2, 'a fresh view after a fresh view is no flip: no retry');
@@ -992,13 +1013,13 @@ await zeroWork('tap', async h => { tap(h, h.document.getElementById('os-grid'));
 await zeroWork('no robot order', async h => {
     await h.setView(cellView({ 3: [order(501, 'delivered', 'AMR-07', 'PLN_03')] }));
 });
-await zeroWork('Core link down', async h => { h.frame({ available: false }); });
+await zeroWork('Core link down', async h => { h.frame(available(false)); });
 await zeroWork('{available: false} first', async h => {
     h.toggle().click();
     await h.flush();
     h.toggle().click();
     await h.flush();
-    h.frame({ available: false });
+    h.frame(available(false));
 });
 
 // ── 14b. A hidden page is a hide cause (lead ruling on U10, 5): the stream
@@ -1027,7 +1048,7 @@ await zeroWork('{available: false} first', async h => {
     h.becomeVisible();
     await h.flush();
     eq(h.panelStreams().filter(s => !s.closed).length, 1, 'the page shown again: the panel opens its stream again');
-    h.frame({ available: true });
+    h.frame(available(true));
     h.frame(frameOf([pos(501, 'AMR-07', 30, 0, PATH_WEST, 0), pos(502, 'AMR-08', 40, 10, null, 0)]));
     await h.flush();
     eq([h.visible(), h.rows()], [true, ['AMR-07', 'AMR-08']], 'and draws again from the next positions');

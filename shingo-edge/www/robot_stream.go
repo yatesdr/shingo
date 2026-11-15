@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"maps"
 	"runtime/debug"
@@ -37,8 +38,10 @@ import (
 //     frame per open station holding any of its orders, with this Edge's order
 //     id joined on; a station with no client is never looked at, so no frame is
 //     built for it;
-//   - {available} is each client's first frame, and is sent again whenever it
-//     changes: the ephemeral capability held (engine.RobotPositionsAvailable)
+//   - {available, interval_ms} is each client's first frame, and is sent
+//     again whenever available changes (interval_ms is Core's robot poll,
+//     protocol.RobotPollInterval, so a panel has it before any position):
+//     the ephemeral capability held (engine.RobotPositionsAvailable)
 //     and the Core link up. The Core link is the one Diagnostics shows: the
 //     last heartbeat ack (engine.LastCoreAck), current by the rule every screen
 //     applies to what it holds from Core (engine.CurrentAt: no older than
@@ -84,12 +87,13 @@ type robotPosOrder struct {
 	protocol.RobotPosition
 }
 
-// robotPosAvailable is the {available} frame's body.
+// robotPosAvailable is the {available} frame's body: whether positions can
+// come, and interval_ms, the interval Core polls its robots at
+// (protocol.RobotPollInterval, the interval_ms every position frame carries).
+// A panel then has an interval to count a missing first position against
+// before any position frame has come (LEAD-NOTES D17).
 func robotPosAvailable(available bool) json.RawMessage {
-	if available {
-		return json.RawMessage(`{"available":true}`)
-	}
-	return json.RawMessage(`{"available":false}`)
+	return fmt.Appendf(nil, `{"available":%t,"interval_ms":%d}`, available, protocol.RobotPollInterval.Milliseconds())
 }
 
 // robotStation is one operator station's panels.

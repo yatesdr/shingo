@@ -73,6 +73,13 @@ const (
 	RobotWatchLease    = 15 * time.Second
 )
 
+// RobotPollInterval is Core's robot poll: how often Core reads the fleet's
+// robots (engine robotRefreshLoop), and so how often a live watch is answered.
+// Every robot.positions says it (RobotPositions.IntervalMS), and so does the
+// Edge's {available} frame on a robot panel's stream, so a panel can count
+// missed positions before its first position arrives (LEAD-NOTES D13, D17).
+const RobotPollInterval = 2 * time.Second
+
 // RobotWatch is one Edge's watch request (TypeRobotWatch).
 type RobotWatch struct {
 	// StationID is the watching Edge's station uid. Core keys the watch on the

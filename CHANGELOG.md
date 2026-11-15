@@ -51,6 +51,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - An order whose robot sends no position within three robot polls shows a Position lost line on the panel, naming no robot
 - The station screen's footer says "Operator screen ready", not "Operator Station Ready"
 - Core's robot map and the station's robot panel take their map's look from one shared stylesheet and their moving test, calm limit and pickup radius from one shared module, with the same look and behaviour
+- The robot panel is told Core's robot poll interval by the Edge when its feed opens, so a robot that never sends a position is called lost after three polls from Core's own setting, not a copy of it
 
 ## v0.7.0 — 2026-11-13
 

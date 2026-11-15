@@ -31,9 +31,9 @@
 //     asked again on the next show, never per frame;
 //   - the positions, on the panel's own EventSource,
 //     /events?topics=robot-pos.<id> (D12), opened when it shows and closed
-//     when it hides. Its first frame is {available}; then frames
-//     {t, interval_ms, orders: [{order_id, robot_id, x, y, heading, path?}]}
-//     and {available} again on a change;
+//     when it hides. Its first frame is {available, interval_ms} (D17); then
+//     frames {t, interval_ms, orders: [{order_id, robot_id, x, y, heading,
+//     path?}]} and {available, interval_ms} again on a change;
 //   - the ETA and the order's status, from the view the page already holds.
 //
 // THE CROP is the cell's nodes (this screen's tile nodes on the map) and
@@ -51,8 +51,9 @@
 // draws its robot faded where it was last seen, no route and no comet, and
 // its row says so. An order with a robot that has had no position at all
 // since the panel opened (or since it was handed over, the later) goes lost
-// the same way, on Core's poll cadence until a frame says the interval: its
-// row says Position lost and names no robot (D14; lead ruling on U10, 6).
+// the same way, on the interval the stream's last frame said (its first,
+// {available}, already says Core's: D17): its row says Position lost and
+// names no robot (D14; lead ruling on U10, 6).
 // One timer, armed only while the panel shows, wakes the panel at the first
 // such deadline.
 //
@@ -79,13 +80,6 @@ const NODE_PX = 5;
 const FONT_PX = 12;
 // Position lost after this many intervals with no position (D13).
 const LOST_AFTER = 3;
-// The interval an order with a robot is waited on before its first position,
-// when this page has not had a frame to read interval_ms from: Core's robot
-// poll cadence, `robotPollInterval` in shingo-core/engine/engine_background.go,
-// the value robot.positions carries as interval_ms
-// (protocol.RobotPositions.IntervalMS). The protocol holds no constant for it;
-// the Go wrapper of this file's pins names the symbol (EXPIRY by symbol).
-const CORE_POLL_MS = 2000;
 // When a robot is moving (movedFrom, movingAt), the calm's COMET_LIMIT and the
 // PICKUP_RADIUS are shared/robot-motion.js's, Core's robot map's too.
 // The crop: the set padded by FIT_SLACK of its extent on every side, by
@@ -198,7 +192,8 @@ export function createRobotMap(opts) {
     const tally = { misses: 0 };
     // openedAt is when the stream opened; listedAt, order id -> when the order
     // was first handed over with a robot since then; lastInterval the latest
-    // interval_ms a frame said, held for the page's life.
+    // interval_ms a frame said, {available} or positions, held for the page's
+    // life.
     let openedAt = 0, listedAt = {}, lastInterval = 0;
 
     function show(v, o) {
@@ -271,6 +266,7 @@ export function createRobotMap(opts) {
         let d;
         try { d = JSON.parse(ev.data); } catch (_) { return; }
         if (!d || typeof d !== 'object' || !es) return;
+        if (d.interval_ms > 0) lastInterval = d.interval_ms;
         if (Object.prototype.hasOwnProperty.call(d, 'available')) {
             if (!d.available) { opts.onUnavailable(); return; }
             available = true;
@@ -293,7 +289,6 @@ export function createRobotMap(opts) {
             rec.seenAt = now;
             if (d.interval_ms > 0) rec.interval = d.interval_ms;
         });
-        if (d.interval_ms > 0) lastInterval = d.interval_ms;
         if (revealed) draw();
     }
 
@@ -321,12 +316,13 @@ export function createRobotMap(opts) {
     // neverSeen is the orders with a robot that have had no position since the
     // panel opened, each with when it goes lost: 3 x the interval after the
     // panel opened or the order was handed over, the later. The interval is
-    // the stream's last interval_ms, or Core's poll cadence before any frame.
+    // the stream's last interval_ms; its first frame, {available}, carries
+    // Core's (D17). A stream that has said none gives nothing to count with:
+    // no deadline, never lost (the panel holds no copy of Core's cadence).
     // Its row names no robot: the robot is the stream's to name (D14).
     function neverSeen(now) {
-        const interval = lastInterval || CORE_POLL_MS;
         return orders.filter(function (o) { return !recs[o.id]; }).map(function (o) {
-            const due = Math.max(openedAt, listedAt[o.id] || openedAt) + LOST_AFTER * interval;
+            const due = lastInterval > 0 ? Math.max(openedAt, listedAt[o.id] || openedAt) + LOST_AFTER * lastInterval : Infinity;
             return { o: o, due: due, lost: now > due };
         });
     }

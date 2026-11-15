@@ -166,7 +166,7 @@ func buildRobotPositions(watches []stationWatch, rows []orders.OrderRobot, robot
 	out := make([]stationPositions, 0, len(watches))
 	for _, w := range watches {
 		sp := stationPositions{station: w.station, body: protocol.RobotPositions{
-			T: t, IntervalMS: robotPollInterval.Milliseconds(), Orders: []protocol.RobotPosition{},
+			T: t, IntervalMS: protocol.RobotPollInterval.Milliseconds(), Orders: []protocol.RobotPosition{},
 		}}
 		for _, u := range w.uuids {
 			o, ok := order[u]
