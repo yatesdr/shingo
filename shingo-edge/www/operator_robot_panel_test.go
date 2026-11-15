@@ -9,7 +9,9 @@ import (
 // TestOperatorRobotPanelJS runs the Node pins of the robot panel on a cell
 // operator screen (testdata/static/operator-station/operator-robot-panel.test.js):
 // when it shows and goes (LEAD-NOTES D13), what it draws on the shared scene
-// modules (D6, D10), its crop with one robot, a swap and eight, position lost,
+// modules (D6, D10), each robot's destination accented (D16), driving read
+// from the positions after a Core-side release (owner's F4), its crop with
+// one robot, a swap and eight, position lost,
 // the tap that never reaches the control under it, the toggle remembered per
 // screen, {available: false}, and that hidden is zero work for every cause.
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).

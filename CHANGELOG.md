@@ -53,6 +53,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - Core's robot map and the station's robot panel take their map's look from one shared stylesheet and their moving test, calm limit and pickup radius from one shared module, with the same look and behaviour
 - The robot panel is told Core's robot poll interval by the Edge when its feed opens, so a robot that never sends a position is called lost after three polls from Core's own setting, not a copy of it
 - After Core releases a robot from a lane gate, table turn, vacate or hard release, the robot panel draws it driving with its comet and its ETA instead of calling it Arrived, though the station still shows the order as staged
+- The robot panel marks where each robot is going: its destination node takes the map's highlight and the cell's other nodes a quieter mark, and a destination away from the cell is kept in view
 
 ## v0.7.0 — 2026-11-13
 

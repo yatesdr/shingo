@@ -467,6 +467,21 @@ function chipGroups(h) { const l = h.layer('robots'); return l ? l.children.filt
 function chipRects(h) { return chipGroups(h).map(g => g.children.find(k => k.attrs['class'] === 'map-chip')); }
 function viewBox(h) { const vb = h.svg().attrs.viewBox.split(' ').map(Number); return { minX: vb[0], minY: vb[1], w: vb[2], h: vb[3] }; }
 function proj(x, y) { return [x, -y]; }
+// marksOf is the node glyphs on the nodes layer by the scene point each sits
+// on: hot, the ones with Core's accent (stroke and glow); quiet, the rest.
+function marksOf(h) {
+    const out = { hot: [], quiet: [] };
+    h.layer('nodes').children.forEach(n => {
+        const name = Object.keys(SCENE.points).find(k => {
+            const p = proj(SCENE.points[k].x, SCENE.points[k].y);
+            return +n.attrs.cx === p[0] && +n.attrs.cy === p[1];
+        });
+        (n.attrs.stroke === '#7c7cf0' && /drop-shadow/.test(n.attrs.style || '') ? out.hot : out.quiet).push(name || '?');
+    });
+    out.hot.sort();
+    out.quiet.sort();
+    return out;
+}
 // alongAt is the point at fraction f of a polyline's length.
 function alongAt(pts, f) {
     const segs = [];
@@ -558,9 +573,13 @@ function tap(h, under) {
     const fit = h.map().inspect().fit;
     eq([chip.find(k => k.tagName === 'text').textContent, +chip.find(k => k.tagName === 'text').attrs['font-size'] * fit.s],
         ['AMR-07', 12], 'its chip names the robot at 12 px whatever the zoom');
-    const nodes = h.layer('nodes').children;
-    eq([nodes.length, nodes.every(n => n.attrs.stroke === '#7c7cf0')], [5, true],
-        'the cell\'s five nodes, each marked with the accent');
+    // D16 (owner's F5): the robot's destination takes Core's hot-node accent;
+    // the cell's other nodes the quiet mark (U10 marked all five).
+    eq(marksOf(h), { hot: ['PLN_03'], quiet: ['PLN_01', 'PLN_02', 'PLN_04', 'PLN_05'] },
+        'one robot: its destination, PLN_03, takes the accent, and the cell\'s other four nodes do not');
+    const quiet = h.layer('nodes').children.find(n => n.attrs.stroke === undefined);
+    eq(quiet && [quiet.tagName, quiet.attrs.fill, quiet.attrs['fill-opacity'], quiet.attrs.style], ['circle', '#7e92b3', '0.7', undefined],
+        'the quiet cell mark: the node dot in --map-node, no accent stroke, no glow');
     const comets = h.cometLayer().children;
     eq([comets.length, comets[0].tagName, comets.slice(1).every(c => c.tagName === 'circle')], [10, 'polygon', true],
         'one comet: Core\'s head and nine dots (shared/comet-layer.js)');
@@ -580,6 +599,12 @@ function tap(h, under) {
     eq(h.rows(), ['AMR-07ETA: ~3 min'], 'its row: its id and its ETA, from the order the board holds');
     eq(h.panel().descendants().filter(n => n.tagName === 'text' || n.tagName === 'SPAN').map(n => n.textContent)
         .some(t => /station/i.test(t)), false, 'no word on the panel says station (UI text says screen)');
+    // The order is sent to PLN_04 instead, the same robot and the same nodes
+    // drawn: the accent moves with it, and the crop stays.
+    const fitsBefore = h.map().inspect().fits;
+    await h.setView(cellView({ 3: [order(501, 'in_transit', 'AMR-03', 'PLN_04', { eta: new Date(Date.UTC(2026, 10, 14, 12, 3, 30)).toISOString() })] }));
+    eq([marksOf(h).hot, h.map().inspect().fits], [['PLN_04'], fitsBefore],
+        'its destination moves to PLN_04: the accent moves with it, and the crop is not worked out again');
 }
 
 // ── 4. Empty path and an unroutable hop: no route, no comet (D10).
@@ -612,6 +637,22 @@ function tap(h, under) {
     eq([h.cometLayer().children[0].attrs['class'], h.cometLayer().children[10].attrs['class']], ['map-comet-head', 'map-comet-head-hollow'],
         'the robot leaving from the cell carries (solid); the one still far from its source fetches (hollow): Core\'s orderLeg');
     eq(h.rows(), ['AMR-01', 'AMR-02'], 'one row each; the robot leaving for the supermarket has no ETA to this screen');
+    // D16: both destinations take the accent, the one off the cell too, and it
+    // joins the crop (U10's crop held the cell and the robots only).
+    eq(marksOf(h), { hot: ['PLN_03', 'SMN_01'], quiet: ['PLN_01', 'PLN_02', 'PLN_04', 'PLN_05'] },
+        'a swap: both robots\' destinations take the accent, the supermarket one off the cell included');
+    const smn = proj(SCENE.points.SMN_01.x, SCENE.points.SMN_01.y);
+    ok(within(vb, smn[0], smn[1]), 'the outbound robot\'s destination, SMN_01, off the cell, is in the crop');
+}
+
+// ── 5d. A destination the scene does not place: nothing accented, no error (D16).
+{
+    const h = await shownPage(cellView({ 3: [order(551, 'in_transit', 'AMR-09', 'NOWHERE_9')] }));
+    await drive(h, [pos(551, 'AMR-09', 12, 0, PATH_WEST, 0)], 1, 2000);
+    h.vsync(3000);
+    eq([robotGroups(h).length, marksOf(h), (h.errors || []).length],
+        [1, { hot: [], quiet: ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05'] }, 0],
+        'a destination not on the scene: the robot drawn, no node accented, every cell node the quiet mark, nothing logged');
 }
 
 // ── 5b. A leg leaving the cell, first seen past its pickup: hollow by Core's

@@ -46,12 +46,21 @@
 //     path?}]} and {available, interval_ms} again on a change;
 //   - the ETA and the order's status, from the view the page already holds.
 //
-// THE CROP is the cell's nodes (this screen's tile nodes on the map) and
-// every robot drawn, both of a swap included, padded and fitted to the
-// panel. RDS's path is not fitted: it is drawn as far as the crop shows it.
-// The crop is worked out again only when that set changes (a robot comes or
-// goes, the cell changes), when a robot drawn has left it, or when a name
-// chip would be cut at its edge, never per position. A robot that leaves
+// THE NODES DRAWN are the cell's (this screen's tile nodes on the map) and
+// each drawn robot's destination, its order's delivery node where the scene
+// places it (owner's F5, LEAD-NOTES D16). A destination takes Core's hot-node
+// accent, the way Core's map marks an active order's node; a cell node no
+// shown robot is going to is the quieter cell mark: the same glyph in
+// --map-node (the substrate ramp's step 4, "structural dots: marks that carry
+// meaning"), no accent. A destination the scene does not place marks nothing.
+//
+// THE CROP is the nodes drawn (the cell's and the destinations, so an
+// outbound robot's destination is in view) and every robot drawn, both of a
+// swap included, padded and fitted to the panel. RDS's path is not fitted: it
+// is drawn as far as the crop shows it. The crop is worked out again only
+// when that set changes (a robot comes or goes, a destination or the cell
+// changes), when a robot drawn has left it, or when a name chip would be cut
+// at its edge, never per position. A robot that leaves
 // grows the crop by a quarter of its extent on every side, so a robot
 // driving away refits a few times, not on every position. A cut chip widens
 // the crop on its side, never past the whole plant: zooming out packs the
@@ -367,19 +376,33 @@ export function createRobotMap(opts) {
         return out;
     }
 
-    // cellPlaces is the cell's nodes the scene places, in the scene's own
-    // spelling, sorted by name.
-    function cellPlaces(net, names) {
+    // placesOf is the points named in names (a list) that the scene places, in
+    // the scene's own spelling, each once, sorted by name. A name the scene
+    // does not place is left out.
+    function placesOf(net, names) {
         if (!net) return [];
         const out = [], seen = {};
-        Object.keys(names).forEach(function (n) {
-            const s = net.resolve(n);
+        names.forEach(function (n) {
+            const s = n ? net.resolve(String(n)) : '';
             const p = s && scene.points[s];
             if (!p || seen[s] || !isCoord(p.x) || !isCoord(p.y)) return;
             seen[s] = true;
             out.push({ name: s, x: p.x, y: p.y });
         });
         return out.sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+    }
+
+    // nodeMarks is the nodes drawn (D16): the cell's nodes and each shown
+    // robot's destination (its order's delivery node), each once, sorted by
+    // name; hot on a destination, so it takes Core's accent and a cell node
+    // no shown robot is going to is the quiet mark.
+    function nodeMarks(net, names, list) {
+        const dests = list.map(function (r) { return r.o.delivery_node; });
+        const hot = {};
+        placesOf(net, dests).forEach(function (p) { hot[p.name] = true; });
+        return placesOf(net, Object.keys(names).concat(dests)).map(function (p) {
+            return { name: p.name, x: p.x, y: p.y, hot: !!hot[p.name] };
+        });
     }
 
     function draw() {
@@ -390,19 +413,19 @@ export function createRobotMap(opts) {
         // drawing (F4); its row then says no Arrived.
         list.forEach(function (r) { r.along = r.driving && !!robotRoute(net, r.rec); });
         const names = cellNames();
-        const cell = cellPlaces(net, names);
-        const pts = cell.map(function (c) { return proj(c.x, c.y); })
+        const marks = nodeMarks(net, names, list);
+        const pts = marks.map(function (c) { return proj(c.x, c.y); })
             .concat(list.map(function (r) { return proj(r.rec.x, r.rec.y); }));
         if (!pts.length) {
             sceneView.clear();
             comets.clear();
             fit = null;
         } else {
-            const key = cell.map(function (c) { return c.name; }).join(',') + '|' +
+            const key = marks.map(function (c) { return c.name; }).join(',') + '|' +
                 list.map(function (r) { return r.rec.robot; }).join(',');
             if (!fit || fit.key !== key) refit(net, key, pts, FIT_SLACK, roomFor(list));
             else if (list.some(function (r) { return !inside(proj(r.rec.x, r.rec.y)); })) refit(net, key, pts, LEAVE_SLACK, fit.margins);
-            let routes = drawFrame(net, cell, list, names);
+            let routes = drawFrame(net, marks, list, names);
             // A chip cut at an edge widens the crop on that side, but never past
             // the whole plant: robots knotted tighter than the chips can stack
             // keep their crop, and the chips that cannot fit are cut.
@@ -412,7 +435,7 @@ export function createRobotMap(opts) {
                 const before = fit;
                 refit(net, key, pts, fit.slack, widen(fit.margins, over));
                 if (fit.s < plantScale(pts, before.margins)) { fit = before; break; }
-                routes = drawFrame(net, cell, list, names);
+                routes = drawFrame(net, marks, list, names);
             }
             comets.sync(routes, ROBOT_PX / fit.s, fit.view);
         }
@@ -513,9 +536,9 @@ export function createRobotMap(opts) {
         });
     }
 
-    // drawFrame puts one frame on the scene view and answers the comets it
-    // wants.
-    function drawFrame(net, cell, list, names) {
+    // drawFrame puts one frame on the scene view, marks being the nodes drawn
+    // (nodeMarks), and answers the comets it wants.
+    function drawFrame(net, marks, list, names) {
         const v = fit.view, s = fit.s;
         const robotR = ROBOT_PX / s, nodeR = NODE_PX / s, fontS = FONT_PX / s;
         const reduce = reducedMotion();
@@ -544,11 +567,12 @@ export function createRobotMap(opts) {
             view: v, proj: proj, unit: Math.max(v.w, v.h), nodeR: nodeR, robotR: robotR, fontS: fontS,
             baseKey: baseKey,
             lanes: fit.lanes,
-            nodesKey: baseKey + '|' + cell.map(function (c) { return c.name; }).join(','),
-            // The cell's nodes, each marked as Core marks an order's node: the
-            // glyph takes the accent.
+            nodesKey: baseKey + '|' + marks.map(function (c) { return c.name + (c.hot ? '*' : ''); }).join(','),
+            // The nodes drawn (D16): a destination marked as Core marks an
+            // active order's node, the glyph taking the accent; a cell node no
+            // shown robot is going to, the same glyph without it.
             nodes: function () {
-                return cell.map(function (c) { return { x: c.x, y: c.y, kind: 'class', fill: look.node, hot: true }; });
+                return marks.map(function (c) { return { x: c.x, y: c.y, kind: 'class', fill: look.node, hot: c.hot }; });
             },
             routes: lines,
             robots: list.map(function (r) { return robotFact(r, nodeR); }),
