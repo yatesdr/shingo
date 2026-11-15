@@ -1,6 +1,8 @@
 package service
 
 import (
+	"database/sql"
+	"errors"
 	"log"
 	"sort"
 	"strconv"
@@ -101,8 +103,15 @@ const recentChangeoverWindow = 200
 // managed in one place" (U9 ruling R1) is only true if there is one thing
 // behind both, and a second builder here would be the two-copies problem
 // wearing a different hat.
+//
+// NO SUCH PROCESS IS (nil, nil), which the door answers 404. The store answers
+// a missing row with sql.ErrNoRows, and this used to pass that up as an error,
+// so the door answered 500 (pinned by TestProcesses_Composer_NoSuchProcessIs404).
 func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerData, error) {
 	process, err := s.db.GetProcess(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -143,13 +152,25 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 // staging-role routing nodes (R4). +0 queries: the node list is the one this
 // read already takes for the preset order, and the back positions are a fold
 // over the claims in hand.
+//
+// NO SUCH STATION IS (nil, nil), which the door answers 404, and so is a
+// station whose process row is gone: the Edge runs SQLite with foreign_keys
+// OFF, so deleting a process leaves its stations behind. The store answers a
+// missing row with sql.ErrNoRows, and this used to pass both up as errors, so
+// the door answered 500 (pinned by TestOperatorStations_Composer_NoSuchStationIs404).
 func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerData, error) {
 	station, err := s.db.GetOperatorStation(stationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	processID := station.ProcessID
 	process, err := s.db.GetProcess(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

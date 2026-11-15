@@ -38,6 +38,7 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		// ── Public API (shop floor) ────────────────────────
 		r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
 		r.Get("/operator-stations/{id}/cell", h.apiStationCellPicture)
+		r.Get("/operator-stations/{id}/composer", h.apiStationComposer)
 		r.Get("/operator-stations/{id}/scene", h.apiStationScene)
 
 		r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
@@ -384,6 +385,44 @@ func TestOperatorStations_CellPicture_NoSuchStationIs404(t *testing.T) {
 
 	bad := doRequest(t, router, "GET", "/api/operator-stations/bad/cell", nil, nil)
 	assertStatus(t, bad, http.StatusBadRequest)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Station composer — GET /api/operator-stations/{id}/composer
+// DB call sites: ComposerForStation (→ GetOperatorStation, GetProcess, ...)
+// ═══════════════════════════════════════════════════════════════════════
+
+// TestOperatorStations_Composer_NoSuchStationIs404: a station that is not
+// there is 404, as on /view, /cell and /scene beside it, not 500. It answered
+// 500: ComposerForStation passed the store's sql.ErrNoRows up as an error, so
+// the door's 404 branch was never reached (flat bug, found by U13's read,
+// 2026-11-14; the same shape /cell had). A station whose process row is gone
+// (the Edge runs SQLite with foreign_keys OFF, so deleting a process leaves its
+// stations behind) is 404 the same way. A real station still gets its
+// composer, and an id that is not one is 400.
+func TestOperatorStations_Composer_NoSuchStationIs404(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	pid := seedProcess(t, db, "ComposerLine")
+	sid := seedOperatorStation(t, db, pid, "OS-COMP-1", "ComposerStation")
+
+	ok := doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/composer", nil, nil)
+	assertStatus(t, ok, http.StatusOK)
+
+	resp := doRequest(t, router, "GET", "/api/operator-stations/999999/composer", nil, nil)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertJSONPath(t, resp, "error", "no such station")
+
+	bad := doRequest(t, router, "GET", "/api/operator-stations/bad/composer", nil, nil)
+	assertStatus(t, bad, http.StatusBadRequest)
+
+	orphanPID := seedProcess(t, db, "GoneLine")
+	orphan := seedOperatorStation(t, db, orphanPID, "OS-COMP-2", "OrphanStation")
+	testutil.MustNoErr(t, db.DeleteProcess(orphanPID), "delete the orphan station's process")
+	gone := doRequest(t, router, "GET", "/api/operator-stations/"+itoa(orphan)+"/composer", nil, nil)
+	assertStatus(t, gone, http.StatusNotFound)
+	assertJSONPath(t, gone, "error", "no such station")
 }
 
 // ═══════════════════════════════════════════════════════════════════════

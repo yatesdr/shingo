@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration.
+
+- Opening the composer for a screen or a process that no longer exists now says it is not found, instead of a server error
+
 ## v0.8.0 — 2026-11-15
 
 Deploy: Edge v50. Core has no migration; the two go in either order.

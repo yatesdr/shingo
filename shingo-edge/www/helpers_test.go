@@ -584,6 +584,8 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
 			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
 			r.Patch("/processes/{id}", h.apiPatchProcess)
+			// The desktop's composer read, admin-gated as in router.go.
+			r.Get("/processes/{id}/composer", h.apiProcessComposer)
 			// The flow doors the Presets tab applies through. Registered here
 			// so the write-path suite can post what the apply modal posts;
 			// the ENGINE is a stub in this router, so what these exercise is

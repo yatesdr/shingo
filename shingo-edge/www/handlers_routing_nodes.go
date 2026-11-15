@@ -254,7 +254,7 @@ func (h *Handlers) apiStationComposer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if data == nil {
-		writeError(w, http.StatusNotFound, "no such process")
+		writeError(w, http.StatusNotFound, "no such station")
 		return
 	}
 	data.DropRefusedRows(h.coreNodeKinds())
