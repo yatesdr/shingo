@@ -169,6 +169,18 @@ export function createRobotMap(opts) {
     root.className = 'os-robot-panel';
     root.setAttribute('aria-label', 'Robots on this screen. Tap to hide.');
     root.hidden = true;
+    // THE CLOSE HINT (owner H2): the panel's top edge says a tap hides it, in
+    // the screen's own words for a one-tap target (a tile's TAP TO LOAD). It
+    // is the panel, not a control of its own: a tap on it is a tap on the
+    // panel (the click listener below), and the label above already says it
+    // to a screen reader. Built once with the panel and never written again,
+    // so it costs nothing shown or hidden. A strip above the map, so the map
+    // keeps its box and the crop is unchanged (operator.css .os-rp-hint).
+    const hint = document.createElement('div');
+    hint.className = 'os-rp-hint';
+    hint.setAttribute('aria-hidden', 'true');
+    hint.textContent = 'TAP TO HIDE';
+    root.appendChild(hint);
     const box = document.createElement('div');
     box.className = 'os-rp-map';
     const host = document.createElement('div');

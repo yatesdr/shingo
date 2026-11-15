@@ -12,7 +12,8 @@ import (
 // modules (D6, D10), each robot's destination accented (D16), driving read
 // from the positions after a Core-side release (owner's F4), its crop with
 // one robot, a swap and eight, position lost,
-// the tap that never reaches the control under it, the toggle remembered per
+// the tap that never reaches the control under it, the close hint on its top
+// edge (TAP TO HIDE, owner H2) and a tap on it, the toggle remembered per
 // screen, {available: false}, and that hidden is zero work for every cause.
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).
 //

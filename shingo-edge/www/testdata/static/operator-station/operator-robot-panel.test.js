@@ -921,6 +921,44 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     eq([h.visible(), h.toggle().attrs['aria-pressed']], [true, 'true'], 'tapped away, the toggle shows it again, still enabled');
 }
 
+// ── 10b. The close hint (owner H2): the panel's top edge says a tap hides it,
+// and a tap on the hint is a tap on the panel.
+{
+    const h = await shownPage(cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] }));
+    h.frame(frameOf([pos(501, 'AMR-07', 12, 0, PATH_WEST, 0)]));
+    await h.flush();
+    const hint = h.panel().querySelector('.os-rp-hint');
+    ok(!!hint, 'the shown panel carries the close hint');
+    eq([h.panel().children[0] === hint, h.panel().children[1].attrs['class'], hint.hidden, hint.textContent],
+        [true, 'os-rp-map', false, 'TAP TO HIDE'],
+        'on its top edge, above the map, not hidden: the hint says TAP TO HIDE');
+    eq([hint.attrs['aria-hidden'], hint.tagName, Object.keys(hint.listeners).length, h.panel().attrs['aria-label']],
+        ['true', 'DIV', 0, 'Robots on this screen. Tap to hide.'],
+        'not a control of its own (no button, no listener); the panel\'s label says it to a screen reader');
+    eq(h.panel().children.filter(c => !/^os-rp-(map|rows)$/.test(c.attrs['class'])).map(c => c.textContent), ['TAP TO HIDE'],
+        'the panel\'s only words beside the map and the rows are the hint\'s three: no paragraph');
+    const css = fs.readFileSync(path.join(SRC_DIR, 'operator.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (css.match(/\.os-rp-hint\s*\{([^}]*)\}/) || [])[1] || '';
+    ok(rule !== '' && !/display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0\b|position\s*:\s*(absolute|fixed)/.test(rule),
+        'operator.css draws the hint in the panel\'s flow, shown: not display none, not invisible, not laid over the map', rule);
+    const grid = h.document.getElementById('os-grid');
+    const under = grid.descendants().find(n => (n.listeners.click || []).length > 0);
+    let hits = 0;
+    under.listeners.click = under.listeners.click.map(fn => function (ev) { hits++; return fn.call(this, ev); });
+    // A finger on the hint: pointerdown, pointerup, then click, each sent to
+    // what is on top at that moment, as tap() does for the map.
+    ['pointerdown', 'pointerup', 'click'].forEach(type => h.dispatch(h.visible() ? hint : under, type));
+    eq([hits, h.visible(), h.openPanelStream(), h.toggle().attrs['aria-pressed']], [0, false, null, 'true'],
+        'a tap on the hint hides the panel and closes its stream, the button under it never ran, the toggle unchanged');
+    await h.setView(cellView({ 3: [order(501, 'staged', 'AMR-07', 'PLN_03')] }));
+    eq(h.visible(), false, 'like any tap: hidden until the next order gets a robot');
+    await h.setView(cellView({ 3: [order(501, 'staged', 'AMR-07', 'PLN_03')], 4: [order(502, 'dispatched', 'AMR-08', 'PLN_04')] }));
+    h.frame(available(true));
+    await h.flush();
+    eq([h.visible(), h.panel().querySelector('.os-rp-hint') === hint, hint.textContent], [true, true, 'TAP TO HIDE'],
+        'shown again: the same hint, built once with the panel, saying the same');
+}
+
 // ── 11. The toggle is remembered per screen; a store that fails means enabled.
 {
     const v = cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] });
@@ -1051,6 +1089,10 @@ async function zeroWork(label, hideIt) {
 }
 await zeroWork('toggle off', async h => { h.toggle().click(); });
 await zeroWork('tap', async h => { tap(h, h.document.getElementById('os-grid')); });
+await zeroWork('tap on the hint (owner H2)', async h => {
+    const hint = h.panel().querySelector('.os-rp-hint');
+    ['pointerdown', 'pointerup', 'click'].forEach(type => h.dispatch(h.visible() ? hint : h.document.getElementById('os-grid'), type));
+});
 await zeroWork('no robot order', async h => {
     await h.setView(cellView({ 3: [order(501, 'delivered', 'AMR-07', 'PLN_03')] }));
 });

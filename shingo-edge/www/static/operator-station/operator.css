@@ -1802,11 +1802,12 @@ body.os-pc-active #os-footer { display: none; }
 /* ===== The robot panel (operator-robot-panel.js, operator-robot-map.js) =====
    This screen's robots on the plant map, bottom right over the board: fixed
    page furniture on the chrome rung, under the modals, the toasts and the flow
-   panel. 360 px wide, the map 216 tall (5:3), then one 24 px line per two
-   robots: on a 1280 x 800 screen it covers under a third of the board's width
-   and, with one or two robots, about a third of its height; on the 1024-wide
-   kiosk fit it stays inside the grid with twelve robots. The whole panel is
-   one tap target (a tap hides it), far past --os-touch-min.
+   panel. 360 px wide: a 20 px strip on its top edge that says TAP TO HIDE
+   (owner H2), the map 216 tall (5:3), then one 24 px line per two robots: on
+   a 1280 x 800 screen it covers under a third of the board's width and, with
+   one or two robots, about a third of its height; on the 1024-wide kiosk fit
+   it stays inside the grid with twelve robots. The whole panel is one tap
+   target (a tap hides it), far past --os-touch-min.
 
    THE MAP IS CORE'S LOOK, FROM ONE SHEET: shared/scene-view.css styles what
    shared/scene-view.js and shared/comet-layer.js draw, on Core's robot map
@@ -1827,6 +1828,26 @@ body.os-pc-active #os-footer { display: none; }
     touch-action: manipulation;
 }
 .os-robot-panel[hidden] { display: none; }
+/* The close hint (owner H2): words, not a mark. A lone close mark reads as a
+   small button of its own, under --os-touch-min, when the target is the whole
+   panel; the screen says what a tap does in words (TAP TO LOAD). In the flow,
+   above the map, so the map keeps its box (and the crop its size): the panel
+   grows by the strip, upward from its bottom edge. The rows' surface and rule,
+   the type scale's caption step. */
+.os-rp-hint {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: 20px;
+    padding: 0 var(--sp-2);
+    border-bottom: 1px solid var(--os-border);
+    background: var(--os-surface);
+    font-size: var(--font-xs);
+    font-weight: var(--fw-bold);
+    letter-spacing: 0.04em;
+    color: var(--os-text-muted);
+    white-space: nowrap;
+}
 .os-rp-map { position: relative; height: 216px; }
 .os-rp-scene { position: absolute; inset: 0; }
 

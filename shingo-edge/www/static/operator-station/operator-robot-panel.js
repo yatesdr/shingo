@@ -16,7 +16,8 @@
 //     its child legs, not it.
 //   - A TAP ON THE PANEL hides it until the screen's next order gets a robot.
 //     The toggle is unchanged, and a press while the panel is tap-hidden shows
-//     it again.
+//     it again. The panel's top edge says so: TAP TO HIDE (owner H2,
+//     operator-robot-map.js), part of the one tap target.
 //   - {available: false} on the panel's stream (no live robot feed at this
 //     Edge, or its Core link down: U9's one signal) hides it. The panel is
 //     tried again when the screen's robot orders change (an order gets or
