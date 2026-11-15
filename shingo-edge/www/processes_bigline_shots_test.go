@@ -34,7 +34,8 @@ import (
 //
 // What it writes: bigline-list.png, bigline-styles.png, bigline-styles-set.png
 // (the same page tall enough to show Set for this style under the table),
-// bigline-recipe-groups.png (a recipe draft's group cards), bigline-settings.png.
+// bigline-recipe-groups.png (a recipe draft's group cards), bigline-settings.png,
+// and a process just added: bigline-new-setup.png, bigline-new-settings.png.
 func TestBigLineShots(t *testing.T) {
 	out := os.Getenv("BIGLINE_SHOTS_OUT")
 	if out == "" {
@@ -173,4 +174,43 @@ func TestBigLineShots(t *testing.T) {
 	}
 	shot("bigline-recipe-groups.png", fmt.Sprintf("/processes?process=%d#tab=presets;recipe=%d;groups=1", pid, recipe), 1440, 2100)
 	shot("bigline-settings.png", fmt.Sprintf("/processes?process=%d#tab=settings", pid), 1440, 4200)
+
+	// A PROCESS JUST ADDED (slice 4): Add process asks a name and a group, so
+	// it has no screen, no position and no style. Its Setup tab, then three
+	// positions on no screen (the process's own positions write) and its
+	// Settings, where they are the "On no screen" row.
+	send := func(method, path string, body any) map[string]any {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		req, err := http.NewRequest(method, srv.URL+path, bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if resp.StatusCode/100 != 2 {
+			t.Fatalf("%s %s: %d %v", method, path, resp.StatusCode, out)
+		}
+		return out
+	}
+	made := send("POST", "/api/processes", map[string]any{"name": "NEW-PRESS", "description": "", "group_id": 0})
+	fresh := int64(made["id"].(float64))
+	shot("bigline-new-setup.png", fmt.Sprintf("/processes?process=%d", fresh), 1440, 900)
+	var loose []string
+	for _, n := range fx.Nodes {
+		if _, held := seeded.Nodes[n.Name]; held || (n.NodeTypeCode != nil && *n.NodeTypeCode == "NGRP") || n.ParentName != nil {
+			continue
+		}
+		if loose = append(loose, n.Name); len(loose) == 3 {
+			break
+		}
+	}
+	send("PUT", fmt.Sprintf("/api/processes/%d/positions", fresh), map[string]any{"nodes": loose})
+	shot("bigline-new-settings.png", fmt.Sprintf("/processes?process=%d#tab=settings", fresh), 1440, 1700)
 }
