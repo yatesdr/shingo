@@ -20,6 +20,9 @@ Deploy: Edge v50–v53 first, at every Edge of the plant. Core has no migration,
 
 - A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
 - A held position's station tile says so and why, and the automatic ask waits; REQUEST still asks
+- A held tile's chip names its reorder point and the cause in words (REORDER AT 110: PAUSED, LINE IDLE, CORE GAVE UP, SWITCHED OFF, CHECK COUNT); tapping the tile shows the full sentence
+- Nothing on the station board is said only on hover: a refusal, a keep-staged note, a containment and a disabled button's reason show in the tile's panel or beside the button
+- The station tiles no longer carry the partial line; a held partial's panel still says how long it has been held
 - A cancel Core sends, an abort on the Orders page, or a failed order pauses that position's auto-reorder for 10 minutes
 - When Core gives up on an order that waited too long, that position's auto-reorder goes off until someone says go
 - REQUEST, or turning auto-reorder on in Processes, ends a pause or an off at the position
@@ -30,11 +33,13 @@ Deploy: Edge v50–v53 first, at every Edge of the plant. Core has no migration,
 - A cancel the Edge sends no longer expires on its way to Core
 - The hour is `demand.idle_cancel_after` in the Edge config
 - Processes Settings has an Auto-reorder card: switch a line's auto-reorder off or on, and choose whether its station shows the switch
-- The station board shows AUTO-REORDER ON/OFF where Processes allows it; every flip is listed with who, where and when
+- The station board shows LINE AUTO-REORDER ON/OFF where Processes allows it; every flip is listed with who, where and when
+- With the line switched off and the switch on the board, the tiles carry no SWITCHED OFF chip of their own
 - Auto-reorder cannot be turned on at a line with no counter, or one whose counter cannot be read now
 - A position added to a line whose auto-reorder is switched off starts switched off
 - A Processes save that turns auto-reorder on at a line with no counter is refused and says why
 - The Edge's Replenishment page is gone: a position's reorder point and auto-reorder are set in Processes
+- Abort and Submit on the Orders page need a login; RELEASE stays open to the station
 - Processes can clear a position's reorder point (to 0, which never orders)
 - Core no longer cancels a waiting order on a timer; `staging.abandon_stuck` and `abandon_stuck_operator_gated` are ignored and said so at start
 - A robot left waiting at a line with no counter, or at a dead Edge, waits for a person to cancel it in Core

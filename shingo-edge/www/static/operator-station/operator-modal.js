@@ -244,6 +244,22 @@ export function renderModal(entry) {
             '</div>';
     }
 
+    // The sentences behind the tile's chips (createNodeButton), where a tap
+    // shows them: a touch panel has no hover. The held ask's is the decider's
+    // (auto_reorder_note); it is here on a person's off too, where the header,
+    // not a chip, says the line is off.
+    if (entry.auto_reorder_note) html += panelNote('os-reorder-hold-note', AMBER, entry.auto_reorder_note);
+    if (entry.keep_staged_note) html += panelNote('os-keep-staged-note', AMBER, entry.keep_staged_note);
+    const refused = entry.supply_refused_for_me;
+    if (refused && refused.answered) {
+        html += panelNote('os-refused-note', AMBER, refused.loader_node + ' cannot supply ' + refused.payload_code +
+            (refused.refused_by ? ' — ' + refused.refused_by : ''));
+    }
+    if (entry.containment_flagged) {
+        html += panelNote('os-contained-note', RED,
+            'This payload is quality-contained — its finished-goods deliveries divert to the hold spot until released.');
+    }
+
     // Skip-note chip: surfaces when a linked changeover complex order
     // reached terminal "skipped" — Core's no_source_bin path (the source
     // node was emptied externally, e.g. operator pulled the bin to quality
@@ -547,7 +563,7 @@ export function renderModal(entry) {
         } else {
             const btn = cellCardAction(entry, claim, remaining);
             if (btn) {
-                html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action, btn.title);
+                html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action, btn.why);
             }
             // SEND BACK, secondary to the card's own action: the server
             // decides the line (send_back, domain.SendBackLine) and this
@@ -775,7 +791,7 @@ function cellCardAction(entry, claim, remaining) {
     if (coPurpose) {
         if (curtainHeld) {
             return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
-                title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
+                why: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
         }
         return changeoverReleaseAction(entry, coPurpose);
     }
@@ -786,7 +802,7 @@ function cellCardAction(entry, claim, remaining) {
         // store/station_views.go ComputeSwapReady).
         if (curtainHeld) {
             return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
-                title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
+                why: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
         }
         return { label: releaseWord, cls: 'request', enabled: true,
             action: 'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged' };
@@ -833,7 +849,7 @@ function cellCardAction(entry, claim, remaining) {
         // Sequential / single-robot — single staged, single release.
         if (curtainHeld) {
             return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
-                title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
+                why: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
         }
         return { label: releaseWord, cls: 'request', enabled: true,
             action: 'release-prompt:/api/orders/' + staged.id + '/release' };
@@ -1164,12 +1180,23 @@ function sendBackCard(sb, nodeID) {
     return html + '</div>';
 }
 
-function actionBtn(label, cls, enabled, action, title) {
+// panelNote is one of the tile's sentences in its panel, in a chip's colours.
+const AMBER = 'background:#2a2410;color:#ffd98a;border:1px solid #6a5322';
+const RED = 'background:#3a1f1a;color:#ffb3a8;border:1px solid #6a3028';
+function panelNote(cls, colours, text) {
+    return '<div class="' + cls + '" style="margin:8px 0;padding:10px 14px;border-radius:6px;' +
+        colours + ';font-size:13px;line-height:1.4">' + esc(text) + '</div>';
+}
+
+// actionBtn is one of the panel's buttons. why, given, is the reason a button
+// its own state disables cannot be tapped, written under it: a touch panel has
+// no hover. A button greyed only while its own post is in flight says nothing.
+function actionBtn(label, cls, enabled, action, why) {
+    const said = why && !enabled ? '<div class="os-action-why">' + esc(why) + '</div>' : '';
     enabled = enabled && !posting.has(action);
     return '<button type="button" class="os-action-btn ' + cls + '"' +
         (!enabled ? ' disabled' : '') +
-        (title && !enabled ? ' title="' + esc(title) + '"' : '') +
-        ' data-action="' + esc(action) + '">' + esc(label) + '</button>';
+        ' data-action="' + esc(action) + '">' + esc(label) + '</button>' + said;
 }
 
 // Verb dispatch table. Adding a new prefix-action means one entry here.

@@ -374,13 +374,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// actually does: one click, every leg of the press moves in.
 			r.Post("/processes/{id}/changeover/release", h.apiReleaseChangeoverProcess)
 
-			// Orders — LIFECYCLE ONLY here. These act on an order that already
-			// exists and are driven by the operator station, which is a shop-floor
-			// monitor with no login, so they stay public. Order CREATION moved
-			// behind admin auth (see the admin group below).
+			// Orders — RELEASE ONLY here, of the lifecycle. The operator station,
+			// a shop-floor monitor with no login, posts it (operator-modal.js,
+			// a staged order's RELEASE), and so does the Orders page. Submit and
+			// abort have one caller, the Orders page (orders.js), and sit behind
+			// admin auth below with order creation. Pinned by
+			// TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot.
 			r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
-			r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
-			r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 			r.Get("/orders/active", h.apiGetActiveOrders)
 
 			// Lookups
@@ -413,15 +413,22 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// would need server-level config and still would not tell an
 				// operator apart from a script.
 				//
-				// The per-order lifecycle routes stay public, deliberately —
-				// release / submit / abort are the orders page's and the
-				// operator station's, and that is a shop-floor monitor with no login.
-				// Acting on an order that already exists is a different
-				// authority from minting one.
+				// Release stays public (above): the operator station posts it,
+				// and that is a shop-floor monitor with no login.
 				r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
 				r.Post("/orders/move", h.apiCreateMoveOrder)
 				r.Post("/orders/complex", h.apiCreateComplexOrder)
 				r.Post("/orders/ingest", h.apiCreateIngestOrder)
+
+				// SUBMIT AND ABORT, the Orders page's (orders.js), the only
+				// callers in the static tree and the templates; the station
+				// posts neither. Abort writes a person's pause on its position's
+				// auto-reorder (orders.AbortOrderByPerson): behind login, a
+				// person is signed in to have said it. Until 2026-11-14 both
+				// sat in the public group, on a comment that the station drove
+				// them; it drove release alone.
+				r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
+				r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 
 				// PLCs / WarLink
 				r.Get("/plcs", h.apiListPLCs)

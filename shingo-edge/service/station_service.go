@@ -1555,10 +1555,14 @@ func (s *StationService) buildNodeTile(
 		nodeView.AskPending = s.unloaderAsk(node.CoreNodeName)
 	}
 	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
-	// The chip for a held automatic ask: the sweep's own decider on the claim and
-	// row in hand, on the engine's clock, which stamped the hold.
+	// The chip and the panel's sentence for a held automatic ask: the sweep's
+	// own decider on the claim and row in hand, on the engine's clock, which
+	// stamped the hold. A person's off draws no chip where the header carries
+	// the line's switch (ReorderHoldChip); the panel still says it.
 	if held := domain.AutoReorderHeld(nodeView.ActiveClaim, runtime, clock.Now()); held.Holds() {
 		nodeView.AutoReorderHold, nodeView.AutoReorderNote = held.Hold, held.Sentence
+		nodeView.AutoReorderChip = domain.ReorderHoldChip(nodeView.ActiveClaim, held.Hold,
+			runtime.ReorderHoldNote, process.AutoReorderSwitchHMI)
 	}
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
 	// order for something a loader operator has said they cannot supply.

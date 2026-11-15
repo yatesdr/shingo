@@ -388,8 +388,8 @@ body {
     text-overflow: ellipsis;
 }
 
-/* A carrier left unfinished (partialLine): one line above the part, on every
-   tile that draws a carrier. */
+/* A loader home's clear running with its empty still on it (CLEAR_RUNNING):
+   one line above the bin's label. */
 .os-node-partial {
     position: absolute;
     bottom: 40px;
@@ -805,6 +805,14 @@ body {
 .os-action-btn:disabled {
     opacity: 0.3;
     cursor: default;
+}
+/* Why the button above cannot be tapped (actionBtn): a touch panel has no
+   hover to carry it. */
+.os-action-why {
+    font-size: 13px;
+    line-height: 1.4;
+    color: #aab;
+    margin-top: -4px;
 }
 
 .os-action-btn.request { background: var(--os-blue); }

@@ -131,11 +131,12 @@ export function renderHeader() {
     }
 
     // The line's auto-reorder switch, where Processes shows it on the station
-    // (view.auto_reorder_switch). The server refuses turning it on without a
-    // readable counter and says why.
+    // (view.auto_reorder_switch), named as the line's: a tile's chip is its
+    // own position's (auto_reorder_chip, "REORDER AT 110: ..."). The server
+    // refuses turning it on without a readable counter and says why.
     if (view.auto_reorder_switch) {
         const on = !!view.auto_reorder_switch.on;
-        headerActions.appendChild(headerBtn(on ? 'AUTO-REORDER: ON' : 'AUTO-REORDER: OFF',
+        headerActions.appendChild(headerBtn(on ? 'LINE AUTO-REORDER: ON' : 'LINE AUTO-REORDER: OFF',
             'auto-reorder' + (on ? '' : ' off'), () => confirmAutoReorderFlip(!on)));
     }
 
@@ -151,7 +152,7 @@ function confirmAutoReorderFlip(turnOn) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title',
-        textContent: (turnOn ? 'Turn auto-reorder on for ' : 'Turn auto-reorder off for ') + view.process.name + '?' }));
+        textContent: (turnOn ? 'Turn line auto-reorder on for ' : 'Turn line auto-reorder off for ') + view.process.name + '?' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: turnOn ? 'Positions ask for material on their own again.'
             : 'No position asks for material on its own until someone turns it back on. REQUEST still asks.' }));
@@ -160,7 +161,7 @@ function confirmAutoReorderFlip(turnOn) {
     confirm.addEventListener('click', async () => {
         overlay.remove();
         const ok = await postAction('/api/operator-stations/' + sid + '/auto-reorder', { on: turnOn }, loadViewRef);
-        if (ok) showToast('Auto-reorder ' + (turnOn ? 'on' : 'off'), 'success');
+        if (ok) showToast('Line auto-reorder ' + (turnOn ? 'on' : 'off'), 'success');
     });
     panel.appendChild(confirm);
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
@@ -346,33 +347,6 @@ export function renderGrid() {
     for (const entry of nodes) {
         grid.appendChild(createNodeButton(entry));
     }
-}
-
-// partialLine is the one rendering rule for a carrier left unfinished: its part
-// set, its count above 0 and below the part's capacity, wherever it stands. A
-// held one (waiting in its partial home) says whose and since when; one at its
-// line says it is being finished. Empty for every other carrier. The station's
-// bin carries no count (stationBinState): n is the tile's own count
-// (runtime.remaining_uop_cached), and a held carrier's is Core's held_uop, which
-// does not tick. Nothing is inferred from the order that brought it.
-function partialLine(bs, atLine, count) {
-    if (!bs || !bs.occupied || !bs.payload_code || !(bs.uop_capacity > 0)) return '';
-    var n = bs.held_since ? bs.held_uop : count;
-    if (!(n > 0 && n < bs.uop_capacity)) return '';
-    var s = 'PARTIAL — ' + n + ' of ' + bs.payload_code;
-    if (bs.held_since) {
-        s += ', held for ' + (bs.held_for || 'its line') + ', since ' + heldSinceText(bs.held_since);
-    } else if (atLine) {
-        s += ', finishing';
-    }
-    return s;
-}
-
-// heldSinceText is a held partial's arrival as the floor reads a time.
-function heldSinceText(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 // confirmUnloadHeld is a held partial's tap: no plain CLEAR, because the count
@@ -964,7 +938,8 @@ function createNodeButton(entry) {
     // The residue of a refusal, once it has been answered. NOT the alert — the
     // modal was the alert, and it is gone. This is what answers "why is this cell
     // stopped" for the operator who walks up ten minutes later, for the incoming
-    // shift, and for the team lead, without ever interrupting again.
+    // shift, and for the team lead, without ever interrupting again. Who
+    // refused is in the tile's panel (renderModal): a touch panel has no hover.
     var refusedForMe = entry.supply_refused_for_me;
     if (refusedForMe && refusedForMe.answered) {
         const chip = el('span', {
@@ -973,15 +948,13 @@ function createNodeButton(entry) {
         });
         chip.style.cssText = 'position:absolute;bottom:4px;right:4px;font-size:11px;' +
             'font-weight:700;color:#1a1204;background:#ffd98a;padding:2px 6px;border-radius:4px';
-        chip.title = refusedForMe.loader_node + ' cannot supply ' + refusedForMe.payload_code +
-            (refusedForMe.refused_by ? ' — ' + refusedForMe.refused_by : '');
         btn.appendChild(chip);
     }
 
     // Keep-staged keeper: paused (REQUEST resumes it) or unable to keep its
     // spot. Amber, because it asks someone to do something; the sentence is the
-    // server's (keep_staged_note), shown on hover. Top-left, so it does not sit
-    // on the bottom-left chips.
+    // server's (keep_staged_note), in the tile's panel. Top-left, so it does not
+    // sit on the bottom-left chips.
     if (entry.keep_staged_note) {
         const paused = entry.keep_staged_note.indexOf('paused') !== -1;
         const ks = el('span', {
@@ -990,7 +963,6 @@ function createNodeButton(entry) {
         });
         ks.style.cssText = 'position:absolute;top:4px;left:4px;font-size:11px;' +
             'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a';
-        ks.title = entry.keep_staged_note;
         // A paused keeper resumes from its own chip: the tap is the chip's, not
         // the tile's, so it does not open the node.
         if (paused) {
@@ -1003,37 +975,27 @@ function createNodeButton(entry) {
         btn.appendChild(ks);
     }
 
-    // The position's automatic ask is held: paused after a cancel, off after
-    // the line went idle, switched off by a person, or a count that cannot be
-    // the claim's. Amber like the keeper's
-    // chip, below the tile's name (and the keeper's chip); the sentence is the
-    // server's
-    // (auto_reorder_note), shown on hover. Informational: REQUEST asks as ever.
-    if (entry.auto_reorder_note) {
-        const words = {
-            paused: 'AUTO-REORDER PAUSED',
-            off: 'AUTO-REORDER OFF',
-            person_off: 'AUTO-REORDER SWITCHED OFF',
-            count: 'AUTO-REORDER: CHECK COUNT',
-        };
-        const ar = el('span', {
-            className: 'os-node-alarm',
-            textContent: words[entry.auto_reorder_hold] || 'AUTO-REORDER HELD',
-        });
+    // The position's automatic ask is held: its reorder point and the cause,
+    // the server's words verbatim (auto_reorder_chip, domain.ReorderHoldChip),
+    // "REORDER AT 110: LINE IDLE". None for a person's off where the header
+    // carries the line's switch: the header says it. Amber like the keeper's
+    // chip, below the tile's name (and the keeper's chip). The sentence
+    // (auto_reorder_note) is in the tile's panel. Informational: REQUEST asks
+    // as ever.
+    if (entry.auto_reorder_chip) {
+        const ar = el('span', { className: 'os-node-alarm', textContent: entry.auto_reorder_chip });
         ar.style.cssText = 'position:absolute;left:4px;top:32px;font-size:11px;' +
             'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a';
-        ar.title = entry.auto_reorder_note;
         btn.appendChild(ar);
     }
 
     // The line moved onto this sequential position before its bin arrived:
     // its strokes are logged until the bin lands. Informational; the sentence
-    // is the server's (count_waits).
+    // is the server's (count_waits), in the tile's panel.
     if (entry.count_waits) {
         const waits = el('span', { className: 'os-node-alarm', textContent: 'NO BIN: STROKES LOGGED' });
         waits.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
             'font-weight:700;padding:2px 6px;border-radius:4px;color:#dbe7f5;background:#2b3a4d';
-        waits.title = entry.count_waits;
         btn.appendChild(waits);
     }
 
@@ -1042,7 +1004,7 @@ function createNodeButton(entry) {
     // hold spot automatically. Red, and it does not ask anyone to do
     // anything — the state is the system working — but an operator watching
     // the tile sees the divert coming instead of being surprised by a robot
-    // headed somewhere unexpected.
+    // headed somewhere unexpected. What it means is in the tile's panel.
     if (entry.containment_flagged) {
         const chip = el('span', {
             className: 'os-node-alarm',
@@ -1050,7 +1012,6 @@ function createNodeButton(entry) {
         });
         chip.style.cssText = 'position:absolute;top:4px;right:4px;font-size:11px;' +
             'font-weight:700;color:#fff;background:#842029;padding:2px 6px;border-radius:4px';
-        chip.title = 'This payload is quality-contained — its finished-goods deliveries divert to the hold spot until released.';
         btn.appendChild(chip);
     }
 
@@ -1079,11 +1040,9 @@ function createNodeButton(entry) {
         const awaiting = (ROLE_WORDS[tileRole(entry)] && ROLE_WORDS[tileRole(entry)].awaiting) || 'STOCK';
         const statusText = windowWords(entry, awaiting, hasActiveOrder);
         btn.appendChild(el('span', { className: 'os-node-remaining', textContent: statusText }));
-        const partialHere = partialLine(binState, false, remaining);
-        if (partialHere) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialHere }));
-        // A home whose clear runs with its empty still on it says the job where
-        // a partial's line goes (an empty has none); the board's card says the same.
-        else if (tileRole(entry) === 'produce' && clearRunning(entry)) {
+        // A home whose clear runs with its empty still on it says the job above
+        // the bin's label; the board's card says the same.
+        if (tileRole(entry) === 'produce' && clearRunning(entry)) {
             btn.appendChild(el('span', { className: 'os-node-partial', textContent: CLEAR_RUNNING }));
         }
         if (binLabel) {
@@ -1113,8 +1072,6 @@ function createNodeButton(entry) {
         }
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
-        const partialAtLine = partialLine(entry.bin_state, true, remaining);
-        if (partialAtLine) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialAtLine }));
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
