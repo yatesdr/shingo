@@ -1303,6 +1303,15 @@ No assertion read any of the twelve.
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
 
+### STALE — `TestApiOrders_CreationRequiresAuth_LifecycleDoesNot`
+- test: `TestApiOrders_CreationRequiresAuth_LifecycleDoesNot` · pkg `shingoedge/www` · run `-run '^TestApiOrders_CreationRequiresAuth_LifecycleDoesNot$'` · `shingo-edge/www/handlers_api_orders_test.go:71` @ `aea6321d` · tags `none`
+- code: STALE (it built its own copy of the routes, so a change to `router.go` could never fail it; and Submit and Abort moved behind login (the Orders page is their only caller; Abort writes a person's pause))
+- assertion map: creation needs a login, unchanged; release stays public, unchanged; submit and abort now answer 303 signed out → `TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot` (same file), on the real `NewRouter`.
+- mutation: moving submit or abort back to the public group turns the new test red.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: `shingo-edge/www/router.go`'s comment names the new test
+- verified at: the commit that adds this row
+
 ### STALE — `TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep`
 - test: `TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep` · pkg `shingocore/dispatch` · run `-run '^TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep$'` · `shingo-core/dispatch/compound_staged_docker_test.go:232` @ `aea6321d` · tags `docker`
 - code: STALE (the name and text said an operator-staged row was the abandon sweep's; the sweep is gone (C1) and the row is a person's (it waits on RELEASE))

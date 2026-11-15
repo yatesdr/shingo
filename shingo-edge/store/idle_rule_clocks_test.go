@@ -24,14 +24,16 @@ func TestReportingPoints_TheCountedReadStampsTheLastPart(t *testing.T) {
 
 	_, err = db.UpdateReportingPointCounter(id, "PLC", "TAG", 10) // a first read: no part
 	testutil.MustNoErr(t, err, "first read")
-	rp, _ := db.GetReportingPoint(id)
+	rp, err := db.GetReportingPoint(id)
+	testutil.MustNoErr(t, err, "read the point")
 	if rp.LastPollAt == nil || rp.LastPartAt != nil {
 		t.Fatalf("after a read with no part: last_poll_at %v, last_part_at %v; want set and nil", rp.LastPollAt, rp.LastPartAt)
 	}
 
 	_, err = db.UpdateReportingPointCounted(id, "PLC", "TAG", 12, true) // two parts
 	testutil.MustNoErr(t, err, "counted read")
-	rp, _ = db.GetReportingPoint(id)
+	rp, err = db.GetReportingPoint(id)
+	testutil.MustNoErr(t, err, "read the point")
 	if rp.LastPartAt == nil || !rp.LastPartAt.Equal(*rp.LastPollAt) {
 		t.Fatalf("after a counted read: last_part_at %v, last_poll_at %v; want both, equal", rp.LastPartAt, rp.LastPollAt)
 	}
@@ -42,7 +44,8 @@ func TestReportingPoints_TheCountedReadStampsTheLastPart(t *testing.T) {
 	testutil.MustNoErr(t, err, "age the clocks")
 	_, err = db.UpdateReportingPointCounted(id, "PLC", "TAG", 0, false) // a reset to 0
 	testutil.MustNoErr(t, err, "reset read")
-	rp, _ = db.GetReportingPoint(id)
+	rp, err = db.GetReportingPoint(id)
+	testutil.MustNoErr(t, err, "read the point")
 	if !rp.LastPartAt.Equal(part.Add(-time.Hour)) || !rp.LastPollAt.After(*rp.LastPartAt) {
 		t.Errorf("after a reset: last_part_at %v, last_poll_at %v; want the part clock unmoved, the poll clock moved", rp.LastPartAt, rp.LastPollAt)
 	}
@@ -56,13 +59,15 @@ func TestOrders_TheStagedMirrorStampsWhenTheRobotParked(t *testing.T) {
 	db := testDB(t)
 	id, err := db.CreateOrder("staged-at", "complex", nil, false, 1, "ALN_1", "", "SM_1", protocol.Height{}, false, "P", "", "")
 	testutil.MustNoErr(t, err, "create order")
-	o, _ := db.GetOrder(id)
+	o, err := db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read the order")
 	if o.StagedAt != nil {
 		t.Fatalf("a new order carries staged_at %v, want nil", o.StagedAt)
 	}
 
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusStaged)), "stage")
-	o, _ = db.GetOrder(id)
+	o, err = db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read the order")
 	if o.StagedAt == nil || clock.Now().Sub(*o.StagedAt) > time.Minute || clock.Now().Sub(*o.StagedAt) < -time.Second {
 		t.Fatalf("staged_at = %v after staging, want the engine's now", o.StagedAt)
 	}
@@ -70,12 +75,14 @@ func TestOrders_TheStagedMirrorStampsWhenTheRobotParked(t *testing.T) {
 	testutil.MustNoErr(t, err, "age it")
 
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusInTransit)), "move on")
-	o, _ = db.GetOrder(id)
+	o, err = db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read the order")
 	if o.StagedAt == nil || o.StagedAt.Year() != 2026 || o.StagedAt.Month() != time.January {
 		t.Fatalf("staged_at = %v after in_transit, want it left", o.StagedAt)
 	}
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusStaged)), "stage again")
-	o, _ = db.GetOrder(id)
+	o, err = db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read the order")
 	if o.StagedAt == nil || clock.Now().Sub(*o.StagedAt) > time.Minute {
 		t.Errorf("staged_at = %v after staging again, want restamped", o.StagedAt)
 	}
