@@ -55,32 +55,54 @@ func (c *ksrCell) seqRemoval(label string, press func(c *ksrCell) error) domain.
 }
 
 // seqAtTheLine sends the removal's robot to the line, where it waits for the
-// operator. On its way the removal mints the backfill, which is returned.
-func (c *ksrCell) seqAtTheLine(label string, removal domain.Order) domain.Order {
+// operator. Nothing has called the backfill yet: the release at the line does
+// (seqRelease).
+func (c *ksrCell) seqAtTheLine(label string, removal domain.Order) {
 	c.t.Helper()
 	c.eventually(label+": the removal with the fleet", func() bool {
 		return c.coreOf(removal).VendorOrderID != ""
 	})
 	c.drive(c.coreOf(removal), "RUNNING", "WAITING")
-	var backfill domain.Order
-	c.eventually(label+": the removal waits at the line and its backfill is made", func() bool {
-		for _, o := range c.newRows(removal.ID) {
-			if o.OrderType == protocol.OrderTypeComplex && o.DeliveryNode == ksrLine {
-				backfill = o
-			}
-		}
-		return backfill.ID != 0 && c.edgeRow(removal.ID).Status == protocol.StatusStaged
+	c.eventually(label+": the removal waits at the line", func() bool {
+		return c.edgeRow(removal.ID).Status == protocol.StatusStaged
 	})
+	if b := c.backfillOf(removal); b.ID != 0 {
+		c.dump(label)
+		c.t.Fatalf("%s: backfill %d made while the removal waits at the line unreleased, want none before the release", label, b.ID)
+	}
+}
+
+// backfillOf is the backfill made after a removal (an order bringing the line a
+// bin), or a zero order.
+func (c *ksrCell) backfillOf(removal domain.Order) domain.Order {
+	var backfill domain.Order
+	for _, o := range c.newRows(removal.ID) {
+		if o.OrderType == protocol.OrderTypeComplex && o.DeliveryNode == ksrLine {
+			backfill = o
+		}
+	}
 	return backfill
 }
 
-// seqLand releases the removal and lets the fleet finish it and the backfill:
-// the backfill is delivered and not yet confirmed.
-func (c *ksrCell) seqLand(label string, removal, backfill domain.Order) {
+// seqRelease is the operator's RELEASE of the removal at the line, which calls
+// the backfill; it is returned.
+func (c *ksrCell) seqRelease(label string, removal domain.Order) domain.Order {
 	c.t.Helper()
 	mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(removal.ID,
 		edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}), label+": release")
 	c.settle()
+	var backfill domain.Order
+	c.eventually(label+": the release at the line made the backfill", func() bool {
+		backfill = c.backfillOf(removal)
+		return backfill.ID != 0
+	})
+	return backfill
+}
+
+// seqLand lets the fleet finish the released removal and the backfill: the
+// backfill is delivered and not yet confirmed.
+func (c *ksrCell) seqLand(label string, removal, backfill domain.Order) {
+	c.t.Helper()
 	c.drive(c.coreOf(removal), "RUNNING", "FINISHED")
 	c.eventually(label+": the backfill delivered", func() bool {
 		if co := c.coreOf(backfill); co.VendorOrderID != "" {
@@ -144,11 +166,12 @@ func (c *ksrCell) seqRefused(label string, press func(c *ksrCell) error) {
 }
 
 // One line, one live swap, as in the other swap modes: a second request while
-// the removal waits at the line with its backfill on its way, or while the
-// backfill is delivered and not yet confirmed, is refused and makes nothing.
-// Once the operator confirms the backfill, the next request starts the next
-// cycle: two cycles back to back on every button, each removal making one
-// backfill and each cycle ending with one bin on the line.
+// the removal waits at the line, or while the backfill is delivered and not yet
+// confirmed, is refused and makes nothing. The backfill is called by the
+// removal's release at the line, not before. Once the operator confirms the
+// backfill, the next request starts the next cycle: two cycles back to back on
+// every button, each release making one backfill and each cycle ending with one
+// bin on the line.
 func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 	t.Parallel()
 	for _, d := range seqDoors {
@@ -158,8 +181,9 @@ func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
 			c.settle()
 			removal := c.seqRemoval("the request", d.press)
-			backfill := c.seqAtTheLine("the request", removal)
+			c.seqAtTheLine("the request", removal)
 			c.seqRefused("a second request, the removal at the line", d.press)
+			backfill := c.seqRelease("the request", removal)
 			c.seqLand("the request", removal, backfill)
 			c.seqRefused("a second request, the backfill delivered", d.press)
 			c.seqConfirm("the request", removal, backfill)
@@ -167,7 +191,8 @@ func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
 			c.settle()
 			next := c.seqRemoval("the next request", d.press)
-			backfill = c.seqAtTheLine("the next request", next)
+			c.seqAtTheLine("the next request", next)
+			backfill = c.seqRelease("the next request", next)
 			c.seqLand("the next request", next, backfill)
 			c.seqConfirm("the next request", next, backfill)
 		})
