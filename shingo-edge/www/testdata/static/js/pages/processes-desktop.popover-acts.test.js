@@ -2717,6 +2717,27 @@ async function mainAsync() {
         if (/pure taxonomy/.test(add + root.innerHTML)) throw new Error('"pure taxonomy" is still drawn');
     });
 
+    // SPR SNF3's copy: one back position read "SLN_003 are back positions and
+    // always available".
+    await pin('the routing set names one back position in the singular', async () => {
+        const said = async backs => {
+            const composer = savedComposer();
+            composer.cell.positions = composer.cell.positions.concat(backs.map((n, i) => ({ core_node_name: n, kind: 'back', sequence: 2 + i })));
+            const rows = { rows: [{ id: 1, core_node_name: 'SMN_010', role: 'source', label: 'SMN_010', enabled: true, sequence: 1 }] };
+            const { root } = loadPage({ allowSheet: true, composer, hash: '#tab=settings',
+                fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(rows) : null) });
+            await settle();
+            return (root.innerHTML.match(/<span class="pd-dim">[^<]*always available<\/span>/) || [''])[0];
+        };
+        const got = [await said(['SLN_003']), await said(['SLN_003', 'SLN_004'])];
+        const want = ['<span class="pd-dim">SLN_003 is a back position and always available</span>',
+            '<span class="pd-dim">SLN_003, SLN_004 are back positions and always available</span>'];
+        // Changed: one read "SLN_003 are back positions and always available".
+        if (JSON.stringify(got) !== JSON.stringify(want)) {
+            throw new Error('the back positions line: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+        }
+    });
+
     // TO FIT ONE SCREEN AT 900 PX (U2, F16) the sheet carries no notes: the
     // routing set's and the part set's sentences are Settings'.
     await pin('the Add process sheet repeats no note Settings carries', async () => {

@@ -4682,7 +4682,8 @@ function routingSection() {
             ? '<div class="pd-refusal">' + esc(S.routingError || 'The routing set could not be read.') + '</div>'
             : ROUTING_GROUPS.map(g => stBlock(g[1], ROLE_SUB[g[0]] || '', pickerBox(routeKey(g[0])) +
                 (g[0] === 'staging' && backs.length
-                    ? '<span class="pd-dim">' + esc(backs.join(', ')) + ' are back positions and always available</span>' : ''))).join('') +
+                    ? '<span class="pd-dim">' + esc(backs.join(', ')) +
+                        (backs.length === 1 ? ' is a back position' : ' are back positions') + ' and always available</span>' : ''))).join('') +
                 ROUTING_GROUPS.map(allOffLine).join('')) +
         (way.length ? stBlock('Waypoints', 'from the map, on the shortest supply path — not editable',
             '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
