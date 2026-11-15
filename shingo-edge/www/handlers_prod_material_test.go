@@ -44,14 +44,14 @@ func newProdMaterialRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 // screenLinkRe reads one screen link out of the rendered page.
-var screenLinkRe = regexp.MustCompile(`<a class="btn btn-primary" href="([^"]+)" title="([^"]*)">([^<]*)</a>`)
+var screenLinkRe = regexp.MustCompile(`<a class="btn btn-primary btn-sm" href="([^"]+)" title="([^"]*)">([^<]*)</a>`)
 
 // TestProductionPage_ScreenLinks pins the row of screen links on the home
 // page (/ and /production, both handleProduction): one link per station on
 // this Edge, a disabled one included, in the store's order (process name,
-// then sequence), labelled with the screen's name, drawn above
-// #production-content and absent from its partial, so a refresh never
-// redraws it. With no screens there is no card at all.
+// then sequence), labelled with the screen's name, in one compact strip (no
+// titled card) above #production-content and absent from its partial, so a
+// refresh never redraws it. With no screens there is no strip at all.
 func TestProductionPage_ScreenLinks(t *testing.T) {
 	t.Parallel()
 
@@ -84,6 +84,10 @@ func TestProductionPage_ScreenLinks(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Errorf("screen links:\n  got  %q\n  want %q", got, want)
 		}
+		if !strings.Contains(page, `<nav class="row-wrap items-center mb-3" id="screen-links" aria-label="Operator screens">`) ||
+			strings.Contains(page, "<strong>Screens</strong>") {
+			t.Error("the screens are not one compact strip: a titled card is back, or the strip is not a nav")
+		}
 
 		partial := renderEdgePage(t, h.handleProductionPartial, "/production/partial")
 		if strings.Contains(partial, "screen-links") || strings.Contains(partial, "/operator/station/") {
@@ -98,9 +102,9 @@ func TestProductionPage_ScreenLinks(t *testing.T) {
 		seedProcess(t, dbOf(h), "Line A")
 
 		page := renderEdgePage(t, h.handleProduction, "/")
-		if strings.Contains(page, `id="screen-links"`) || strings.Contains(page, "<strong>Screens</strong>") ||
+		if strings.Contains(page, `id="screen-links"`) || strings.Contains(page, `aria-label="Operator screens"`) ||
 			strings.Contains(page, "/operator/station/") {
-			t.Error("a home page with no screens draws the screen links card")
+			t.Error("a home page with no screens draws the screen strip")
 		}
 		if !strings.Contains(page, `id="production-content"`) {
 			t.Fatal("the page did not render: the check above passed on nothing")
