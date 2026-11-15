@@ -29,6 +29,7 @@ Deploy: Edge v50–v53 first, at every Edge of the plant. Core has no migration,
 - Auto-reorder does not ask on a count that cannot be the part's (a press past two packs or below zero, a line past one pack); the tile says so
 - A line that counts no part for an hour sends back the robots parked there waiting on a RELEASE, and auto-reorder goes off at those positions
 - Not during a changeover, nor within an hour of one ending, of a REQUEST there, or of the robots parking, nor while the counter cannot be read
+- Never a robot Core has released or holds at its own wait, and never one the Edge did not hear park (it parked while the Edge was down): that one waits for a person
 - That off ends when the line counts a part after the stop, or on REQUEST, even if the Edge restarted in between
 - A cancel the Edge sends no longer expires on its way to Core
 - The hour is `demand.idle_cancel_after` in the Edge config
