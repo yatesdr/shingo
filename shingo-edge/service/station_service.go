@@ -608,6 +608,25 @@ func onNoScreen(nodes []processes.Node) []processes.Node {
 	return out
 }
 
+// onAScreen is the loose write's own refusal: the first name of clean that is
+// one of the process's positions on a screen, said with the screen's name.
+// Read from byCoreName (the process read setPositions already made), so it
+// costs no statement.
+func onAScreen(clean []string, byCoreName map[string]processes.Node) error {
+	for _, name := range clean {
+		n, ours := byCoreName[name]
+		if !ours || n.OperatorStationID == nil {
+			continue
+		}
+		screen := n.StationName
+		if screen == "" {
+			screen = fmt.Sprintf("screen %d", *n.OperatorStationID)
+		}
+		return &positionOnScreenError{name: name, screen: screen}
+	}
+	return nil
+}
+
 // setPositions is the one replace both writes are: the positions of one
 // screen (stationID) or the process's positions on no screen (stationID 0),
 // made to match nodeNames. It returns the removed positions it could only
@@ -664,21 +683,13 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 			ErrUnknownCoreNodes, strings.Join(bad, ", "))
 	}
 
-	// THE LOOSE WRITE TAKES NOTHING OFF A SCREEN (ErrPositionOnAScreen). Read
-	// from byCoreName, so it costs no statement, and checked before the first
-	// row is written, so the refusal is total like the one above. A station's
-	// write skips it: a position on a sibling screen MOVES to this one, below.
+	// THE LOOSE WRITE TAKES NOTHING OFF A SCREEN (ErrPositionOnAScreen), checked
+	// before the first row is written, so the refusal is total like the one
+	// above. A station's write skips it: a position on a sibling screen MOVES
+	// to this one, below.
 	if stationID == 0 {
-		for _, name := range clean {
-			n, ours := byCoreName[name]
-			if !ours || n.OperatorStationID == nil {
-				continue
-			}
-			screen := n.StationName
-			if screen == "" {
-				screen = fmt.Sprintf("screen %d", *n.OperatorStationID)
-			}
-			return nil, &positionOnScreenError{name: name, screen: screen}
+		if err := onAScreen(clean, byCoreName); err != nil {
+			return nil, err
 		}
 	}
 
