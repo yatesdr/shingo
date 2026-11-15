@@ -1104,6 +1104,32 @@ await zeroWork('{available: false} first', async h => {
     eq(h.rows(), ['AMR-02Replanning'], 'its row: Replanning');
 }
 
+// ── 17. After a Core-side release (the owner's F4: lane gate, table turn,
+// vacate, hard release). Core moves the order on and tells the Edge nothing
+// (LEAD-NOTES open item 1), so the Edge order stays staged while its robot
+// drives, and staged is vendor-tracked: positions flow and the robot is drawn.
+{
+    const released = extra => cellView({ 3: [order(1701, 'staged', 'AMR-17', 'PLN_03', extra)] });
+    const eta = new Date(Date.UTC(2026, 10, 14, 12, 3, 30)).toISOString();
+    // Staged, driving (two positions apart), with RDS's path to PLN_03.
+    const h = await shownPage(released({ eta: eta }));
+    await drive(h, [pos(1701, 'AMR-17', 12, 0, PATH_WEST, 0)], 1, 2000);
+    h.vsync(3000);
+    eq([robotGroups(h).length, robotGroups(h)[0].children.map(k => k.attrs['class'] || k.tagName)], [1, ['map-robot-halo', 'g', 'map-robot-core']],
+        'staged and driving: the robot is drawn, moving');
+    eq([h.cometLayer() ? h.cometLayer().children.length : 0, h.layer('routes').children.length], [0, 0],
+        'today: staged and driving draws no comet and no lane (the route is gated on the Edge status)');
+    eq(h.rows(), ['AMR-17Arrived'], 'today: staged and driving, its row says Arrived');
+    // The calm: twelve in transit and the released one, all driving.
+    const byTile = { 1: [], 2: [], 3: [order(1701, 'staged', 'AMR-17', 'PLN_03')], 4: [], 5: [] };
+    for (let i = 0; i < 12; i++) byTile[1 + (i % 5)].push(order(1710 + i, 'in_transit', 'AMR-' + (30 + i), 'PLN_03'));
+    const c = await shownPage(cellView(byTile));
+    await drive(c, [pos(1701, 'AMR-17', 2, 20, PATH_WEST, 0)].concat(Array.from({ length: 12 }, (_, i) =>
+        pos(1710 + i, 'AMR-' + (30 + i), 2 + 4 * i, i % 2 ? 0 : 10, PATH_WEST, 0))), 0.5, 2000);
+    c.vsync(3000);
+    eq(c.cometLayer().children.length, 120, 'today: twelve in transit and one staged, all driving: the staged one is not counted, twelve comets');
+}
+
 finished = true;
 console.log('robot panel: ' + passed + ' passed' + (failed ? ', ' + failed + ' failed' : ''));
 if (failed) process.exit(1);
