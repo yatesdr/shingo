@@ -84,9 +84,11 @@ func TestProductionPage_ScreenLinks(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Errorf("screen links:\n  got  %q\n  want %q", got, want)
 		}
-		if !strings.Contains(page, `<nav class="row-wrap items-center mb-3" id="screen-links" aria-label="Operator screens">`) ||
-			strings.Contains(page, "<strong>Screens</strong>") {
-			t.Error("the screens are not one compact strip: a titled card is back, or the strip is not a nav")
+		// A div with the navigation role: every <nav> wears the site's top bar
+		// (components.css), which a strip in the page is not.
+		if !strings.Contains(page, `<div class="row-wrap items-center mb-3" id="screen-links" role="navigation" aria-label="Operator screens">`) ||
+			strings.Contains(page, "<strong>Screens</strong>") || strings.Contains(page[strings.Index(page, `id="screen-links"`)-200:strings.Index(page, `id="screen-links"`)], "<nav") {
+			t.Error("the screens are not one compact strip: a titled card is back, or the strip is a <nav> wearing the top bar")
 		}
 
 		partial := renderEdgePage(t, h.handleProductionPartial, "/production/partial")

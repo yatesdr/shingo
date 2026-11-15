@@ -12,13 +12,15 @@
      titled card. Drawn here from the handler's station list, so it costs the
      page no request, and outside #production-content, so the partial refresh
      never redraws it: the list changes only when screens are made, renamed or
-     removed on Processes. No screens, no strip. */}}
+     removed on Processes. No screens, no strip. A div with the navigation
+     role, not a <nav>: components.css styles every <nav> as the site's top
+     bar (its band, rule and padding). */}}
 {{with .Screens}}
-<nav class="row-wrap items-center mb-3" id="screen-links" aria-label="Operator screens">
+<div class="row-wrap items-center mb-3" id="screen-links" role="navigation" aria-label="Operator screens">
     <span class="text-muted-sm">Screens</span>
     {{range .}}<a class="btn btn-primary btn-sm" href="/operator/station/{{.ID}}" title="{{.ProcessName}}">{{.Name}}</a>
     {{end}}
-</nav>
+</div>
 {{end}}
 
 <div class="card">
