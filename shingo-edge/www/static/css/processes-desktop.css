@@ -772,8 +772,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-mem .nm { font-weight: 500; }
 .pd-mem .sp { flex: 1; }
 /* A shape found in the flows, not named yet: one line, its shape, the parts
-   that run it, and Name it…. */
+   that run it, and Name it…. THE PARTS GIVE WAY: a shape run by six parts
+   wrapped its list onto a second line, cut its positions to `PLN_01 …` and
+   broke Name it… over two lines (HOP P400). The list ellipsises, with every
+   part in its title; the shape keeps its width up to 45% of the line, and
+   Name it… keeps its own. */
 .pd-cand { display: flex; align-items: center; gap: 12px; padding: 3px 0; font-size: 13px; }
+.pd-cand > .pd-shape { flex: 0 0 auto; max-width: 45%; }
+.pd-cand > .pd-dim { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-cand > .pd-dimlink { flex: none; white-space: nowrap; }
 
 /* ── the apply modal ─────────────────────────────────────────────────────
    The Advanced sheet's shell at its one width. Its body is a list of parts

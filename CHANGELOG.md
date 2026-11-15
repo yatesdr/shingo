@@ -37,6 +37,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - A station board with more tiles than its screen's grid holds adds rows, so no tile draws over itself
 - A running style with no changeover on record no longer reads "never run here" beside its running tag
 - Settings names a single back position in the singular
+- A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks
 
 ## v0.9.0 — 2026-11-15
 

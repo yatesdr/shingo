@@ -7689,7 +7689,7 @@ function candidateRow(c) {
     // with nothing to say WHICH swap — and two candidate shapes of one mode
     // would be two identical lines. The parts that run it follow.
     return '<div class="pd-cand" data-cand="' + esc(c.shape_key) + '">' + shapeCell(c.mode, c.where) +
-        '<span class="pd-dim">' + esc(sub) + '</span>' +
+        '<span class="pd-dim" title="' + esc(names.join(', ')) + '">' + esc(sub) + '</span>' +
         '<button class="pd-dimlink" data-act="preset-name-cand" data-cand="' +
         esc(c.shape_key) + '">Name it…</button></div>';
 }
