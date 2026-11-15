@@ -1254,7 +1254,7 @@ import {
       // Pre-dispatch / staged: a dashed intent line at most (no comet, no robot
       // needed). Calmed like the comets — only when quiet or focused.
       if (INTENT_PHASE[o.status]) {
-        if (src && dst && calmOK) routeLines.push({ key: 'intent:' + o.order_id, kind: 'intent', pts: intentPts(o, src, dst), dimmed: dimmed });
+        if (src && dst && calmOK) routeLines.push({ key: 'intent:' + o.order_id, kind: 'intent', pts: intentPts(o, src, dst) });
         return;
       }
 

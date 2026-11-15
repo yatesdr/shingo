@@ -241,12 +241,14 @@ function boltPoints(cx, cy, s) {
   }).join(' ');
 }
 
-// routeSpec is one route line: rt is {key, kind, pts (screen), color, dimmed}.
+// routeSpec is one route line: rt is {key, kind, pts (screen)}, and on a
+// frozen lane also {color, dimmed}.
 //  - 'intent': the dashed line source→delivery of a pre-dispatch or staged
 //    order. No robot is driving that leg, so it gets structure, not motion.
-//    (dimmed is never true here today: under focus only the focused robot's
-//    intent line is drawn, pinned by clickToFocus.)
-//  - 'frozen': a static lane, no flow, drawn where laneVisible says. A
+//    Never dimmed: under focus only the focused robot's intent line is drawn
+//    at all (pinned by clickToFocus).
+//  - 'frozen': a static lane, no flow, drawn where laneVisible says; dimmed
+//    when the caller says (Core's map: while another robot is focused). A
 //    blocked/faulted robot is signalled on the ROBOT glyph itself (robotColor
 //    → red error state), so its lane draws the SAME neutral frozen treatment —
 //    the old loud red route line doubled the signal and was removed (2026-07).
@@ -255,7 +257,7 @@ function routeSpec(rt, robotR) {
   if (rt.kind === 'intent') {
     return { key: rt.key, tag: 'polyline', attrs: {
       points: spelled, class: 'map-route-intent', fill: 'none',
-      'stroke-width': robotR * 0.16, 'stroke-opacity': rt.dimmed ? 0.18 : 0.34
+      'stroke-width': robotR * 0.16, 'stroke-opacity': 0.34
     } };
   }
   return { key: rt.key, tag: 'polyline', attrs: {
