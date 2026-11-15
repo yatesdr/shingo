@@ -2,7 +2,11 @@ package www
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -10,15 +14,17 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 	"shingoedge/store/shifts"
+	"shingoedge/store/stations"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
 // Test router — covers handlers_production.go.
 //
-// The primary page handler (handleProduction, handleProductionPartial)
-// renders templates and is not exercised. The API endpoints in
-// handlers_production.go and the package-level helpers
-// (buildStationViews, enrichViewBinState) are fully testable.
+// The page handler is exercised for its screen links only
+// (TestProductionPage_ScreenLinks); TestEdgePagePickerPins renders it for
+// its pickers. The API endpoints in handlers_production.go and the
+// package-level helpers (buildStationViews, enrichViewBinState) are fully
+// testable.
 // ═══════════════════════════════════════════════════════════════════════
 
 func newProdMaterialRouter(t *testing.T) (*Handlers, *chi.Mux) {
@@ -31,6 +37,75 @@ func newProdMaterialRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
 	})
 	return h, r
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// The screen links across the top of the home page
+// ═══════════════════════════════════════════════════════════════════════
+
+// screenLinkRe reads one screen link out of the rendered page.
+var screenLinkRe = regexp.MustCompile(`<a class="btn btn-primary" href="([^"]+)" title="([^"]*)">([^<]*)</a>`)
+
+// TestProductionPage_ScreenLinks pins the row of screen links on the home
+// page (/ and /production, both handleProduction): one link per station on
+// this Edge, a disabled one included, in the store's order (process name,
+// then sequence), labelled with the screen's name, drawn above
+// #production-content and absent from its partial, so a refresh never
+// redraws it. With no screens there is no card at all.
+func TestProductionPage_ScreenLinks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("two screens", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newTestHandlers(t)
+		h.tmpl = edgePageSet(t)
+		db := dbOf(h)
+		// Seeded out of order, so the order drawn is the store's, not the seed's.
+		lineB := seedProcess(t, db, "Line B")
+		lineA := seedProcess(t, db, "Line A")
+		weld := seedOperatorStation(t, db, lineB, "weld-2", `Weld <b>2</b>`)
+		press, err := db.CreateOperatorStation(stations.Input{ProcessID: lineA, Code: "press-1", Name: "Press 1", Enabled: false})
+		testutil.MustNoErr(t, err, "seed the disabled station")
+
+		page := renderEdgePage(t, h.handleProduction, "/")
+		row := strings.Index(page, `id="screen-links"`)
+		content := strings.Index(page, `id="production-content"`)
+		if row < 0 || content < 0 || row > content {
+			t.Fatalf("the screen links are not drawn above #production-content (row at %d, content at %d)", row, content)
+		}
+		var got []string
+		for _, m := range screenLinkRe.FindAllStringSubmatch(page[row:content], -1) {
+			got = append(got, m[1]+" | "+m[2]+" | "+m[3])
+		}
+		want := []string{
+			fmt.Sprintf("/operator/station/%d | Line A | Press 1", press),
+			fmt.Sprintf("/operator/station/%d | Line B | Weld &lt;b&gt;2&lt;/b&gt;", weld),
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("screen links:\n  got  %q\n  want %q", got, want)
+		}
+
+		partial := renderEdgePage(t, h.handleProductionPartial, "/production/partial")
+		if strings.Contains(partial, "screen-links") || strings.Contains(partial, "/operator/station/") {
+			t.Error("the production partial carries the screen links: every refresh would redraw them")
+		}
+	})
+
+	t.Run("no screens", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newTestHandlers(t)
+		h.tmpl = edgePageSet(t)
+		seedProcess(t, dbOf(h), "Line A")
+
+		page := renderEdgePage(t, h.handleProduction, "/")
+		if strings.Contains(page, `id="screen-links"`) || strings.Contains(page, "<strong>Screens</strong>") ||
+			strings.Contains(page, "/operator/station/") {
+			t.Error("a home page with no screens draws the screen links card")
+		}
+		if !strings.Contains(page, `id="production-content"`) {
+			t.Fatal("the page did not render: the check above passed on nothing")
+		}
+	})
 }
 
 // ═══════════════════════════════════════════════════════════════════════

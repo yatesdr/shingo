@@ -7,6 +7,23 @@
     </div>
 </div>
 
+{{/* One link per operator screen, where Core's Dashboard page puts its wall
+     displays: first, under the title. Drawn here from the handler's station
+     list, so it costs the page no request, and outside #production-content,
+     so the partial refresh never redraws it: the list changes only when
+     screens are made, renamed or removed on Processes. No screens, no card. */}}
+{{with .Screens}}
+<div class="card" id="screen-links">
+    <div class="card-header card-header-row">
+        <strong>Screens</strong>
+    </div>
+    <div class="card-body row-wrap">
+        {{range .}}<a class="btn btn-primary" href="/operator/station/{{.ID}}" title="{{.ProcessName}}">{{.Name}}</a>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
 <div class="card">
     <div class="card-body" style="padding:0">
         <div id="production-content"

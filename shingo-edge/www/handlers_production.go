@@ -320,10 +320,11 @@ func buildAllStationViews(ctx context.Context, eng ServiceAccess) []domain.Opera
 	return views
 }
 
-func buildLinesideRows(eng ServiceAccess) []linesideBucketRow {
+// buildLinesideRows takes the stations the page already read for its screen
+// links rather than reading them a second time.
+func buildLinesideRows(eng ServiceAccess, stations []domain.Station) []linesideBucketRow {
 	processList, _ := eng.ProcessService().List()
 	allNodes, _ := eng.ProcessService().ListNodes()
-	stations, _ := eng.StationService().List()
 
 	processName := make(map[int64]string, len(processList))
 	for _, p := range processList {
@@ -390,7 +391,13 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	linesideRows := buildLinesideRows(h.engine)
+	// Every operator screen on this Edge, loaders' boards included, for the
+	// row of links across the top: a screen is a station row, and the display
+	// route serves any of them. Nothing reads a station's enabled flag (the
+	// display does not, and Processes lists and opens every screen), so none
+	// is left out. The store's order: process name, then sequence, then name.
+	screens, _ := h.engine.StationService().List()
+	linesideRows := buildLinesideRows(h.engine, screens)
 
 	shifts, _ := h.engine.ShiftService().List()
 	shiftsJSON, _ := json.Marshal(shifts)
@@ -441,6 +448,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		"ActiveProcessID":  activeProcessID,
 		"IsAll":            isAll,
 		"StationViews":     stationViews,
+		"Screens":          screens,
 		"CurrentStyle":     currentStyleName,
 		"TargetStyle":      targetStyleName,
 		"LinesideRows":     linesideRows,
