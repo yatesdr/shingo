@@ -71,25 +71,22 @@
 ## Screen A’s row on Settings (POS_A11 off, NEW_3 on), Save
 # writes, in order: POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes
 ### POST /api/operator-stations/11/claimed-nodes/impact  ←  400 {"error"} (writeError)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/12/claimed-nodes · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
     new text: .pd-sheet span.prov: No unsaved changes
-    new text: .picker span.picker-chip: POS_A11
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/operator-stations/11/claimed-nodes/impact  ←  500, no body (chi Recoverer)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/12/claimed-nodes · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
     new text: .pd-sheet span.prov: No unsaved changes
-    new text: .picker span.picker-chip: POS_A11
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### POST /api/operator-stations/11/claimed-nodes/impact  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/12/claimed-nodes · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
     new text: .pd-sheet span.prov: No unsaved changes
-    new text: .picker span.picker-chip: POS_A11
     notice: success "Saved"
     sheet: closed
     state: no message set
@@ -105,25 +102,22 @@
     state: bar.refusal="Not saved. Screen A’s positions could not be read, so nothing was changed. Try again."
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/12/claimed-nodes · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
     new text: .pd-sheet span.prov: No unsaved changes
-    new text: .picker span.picker-chip: POS_A11
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/12/claimed-nodes · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
     new text: .pd-sheet span.prov: No unsaved changes
-    new text: .picker span.picker-chip: POS_A11
     notice: success "Saved"
     sheet: closed
     state: no message set
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/12/claimed-nodes · GET /api/processes/1/composer
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer
     new text: .pd-sheet span.prov: No unsaved changes
-    new text: .picker span.picker-chip: POS_A11
     notice: success "Saved"
     sheet: closed
     state: no message set

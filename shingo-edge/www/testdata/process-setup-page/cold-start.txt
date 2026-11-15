@@ -90,7 +90,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
 ## Press A with no style and no recipe
 rail headings: [] · + New recipe not drawn
 rail foot: ""
-main: "" · buttons ["Change…","Change…","Change…","+ New style","Set up…","New recipe"]
+main: "" · buttons ["Change…","Change…","Change…","+ New style","Change…","Set up…","New recipe"]
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
 
 ## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)
@@ -99,7 +99,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · routing: "none yet" → Set the routing set
   ✓ parts: "11 parts" → Change…
   · style: "none yet" → + New style
-  · screen: "Screen A · not run yet" → Open the screen
+  ✓ screen: "Screen A · not run yet" → Change…
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
 # positions claimed · lands on setup · tabs ["Setup*","Styles","Settings"]
@@ -107,7 +107,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   · routing: "none yet" → Set the routing set [primary]
   ✓ parts: "11 parts" → Change…
   · style: "none yet" → + New style
-  · screen: "Screen A · not run yet" → Open the screen
+  ✓ screen: "Screen A · not run yet" → Change…
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
 # and a routing set · lands on setup · tabs ["Setup*","Styles","Settings"]
@@ -115,7 +115,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
   ✓ parts: "11 parts" → Change…
   · style: "none yet" → + New style [primary]
-  · screen: "Screen A · not run yet" → Open the screen
+  ✓ screen: "Screen A · not run yet" → Change…
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
 # and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Settings"]
@@ -123,21 +123,12 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
   ✓ parts: "11 parts" → Change…
   · style: "Style A · no flow yet" → Draw its flow [primary]
-  · screen: "Screen A · not run yet" → Open the screen
+  ✓ screen: "Screen A · not run yet" → Change…
   · counter: "counting on PLC_A · CountA" → Set up…
   · hmi: "off · no recipe yet" → New recipe
-# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Settings"]
-  ✓ positions: "16 positions" → Change…
-  ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
-  ✓ parts: "11 parts" → Change…
-  ✓ style: "Style A · +1" → Open
-  · screen: "Screen A · not run yet" → Open the screen [primary]
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "off · 1 recipe" → Change…
+# and its flow drawn, never run · lands on flows · tabs ["Styles*","Settings"]
 # run once (active style set) · lands on flows · tabs ["Styles*","Settings"]
-# HMI setup on with no recipe, never run · lands on setup
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "on · no recipe yet" (warn) → New recipe
+# HMI setup on with no recipe, never run · lands on flows
 
 ## where a #tab= link lands (the Recipes tab went to HMI setup on Settings)
   #tab=presets → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
@@ -148,16 +139,13 @@ New style: "New style — a part this process runs: name it, then draw its flow.
   Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes 1 recipe · newest version of each Recipe Spots Applied to Saved Recipe One v1 0 parts — Apply to parts… ⋯ Auto-reorder This line’s switch could not be read. Reload the page to switch it. Show "
 
 ## the Setup tab's actions, from a new process with positions (each on a fresh page)
-  positions → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog
-  routing → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog
+  positions → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
+  routing → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
   style → tab setup, sheet "New style" · GET /api/core-nodes, GET /api/payload-catalog
   counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
   hmi → tab flows (a recipe draft) · GET …/composer
 
 ## Add process
-  from Press A (this Edge has a map): sections ["The process","Positions and routing set","The part set"] · map block there, hidden · "Show on map" on the routing set's heading
-    pressed: "Hide map" aria-expanded=true · the map "Pick a position and a supermarket and they are drawn here." · S.add.map true
-    pressed: "Show on map" aria-expanded=false · the map "" · S.add.map false
-  from Press A, an Edge with no map: sections ["The process","Positions and routing set","The part set"] · map block not drawn
-ok   a screen name left blank is the process's name
+  fields ["Name","Group"]
+ok   Create makes the process and nothing else
 #    then it opens on setup · tabs ["Setup*","Styles","Settings"]

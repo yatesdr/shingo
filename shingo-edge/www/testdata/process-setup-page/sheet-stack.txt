@@ -32,8 +32,8 @@ first press: PUT /api/styles/2 → sheet: open "Rename Style B", status "the Edg
 second press: PUT /api/styles/2 · POST /api/processes/1/flow/preview → sheet: closed
 
 ## closeSheet: what it clears (Add process on Settings)
-open Add process, NEW_1 ticked: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none; sets procset; pickers parts, procset, rt-destination, rt-source, rt-staging, scr-11, scr-12
-after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none; sets ; pickers parts, rt-destination, rt-source, rt-staging, scr-11, scr-12 (Settings’ own pickers stay: their boxes are in #pd-root)
+open Add process, a name typed: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none; pickers parts, rt-destination, rt-source, rt-staging, scr-11, scr-12, scr-none
+after Cancel: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none; pickers parts, rt-destination, rt-source, rt-staging, scr-11, scr-12, scr-none (Settings’ own pickers stay: their boxes are in #pd-root)
 
 ## closeSheet: the apply modal's ticks go with it
 apply modal, Style B ticked: sheet open (#pd-scrim), #pd-scrim markup drawn, layers 1, body overflow "hidden", S.sheet set, question none; S.papply rows 2

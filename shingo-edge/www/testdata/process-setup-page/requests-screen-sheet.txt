@@ -78,8 +78,6 @@
        }
   4  GET /api/process-nodes
   5  GET /api/processes/1/station-counters
-  6  GET /api/operator-stations/11/claimed-nodes
-  7  GET /api/operator-stations/12/claimed-nodes
-  8  GET /api/processes/1/composer
+  6  GET /api/processes/1/composer
 -- notice: success "Saved"
 -- sheet closed

@@ -490,21 +490,13 @@ const DRIVE = {
         page.type('catid', 'CAT-M');
         await sheetOK(page);
     } },
+    // ADD PROCESS ASKS A NAME AND A GROUP (slice 4); the rest is Settings'.
     addProcess: { drive: async page => {
         page.click('root', { act: 'add-process' });
         await page.settle();
         page.type('name', 'Press N');
-        page.type('description', 'a new press');
-        page.type('screen', 'Screen N');
         page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
         pickRow(page, 'pd-advpop', 'data-grpopt', 3);
-        for (const n of ['NEW_1', 'NEW_2']) setPick(page, 'scrim', 'procset', 'positions', n);
-        setPick(page, 'scrim', 'procset', 'source', 'SRC_2');
-        setPick(page, 'scrim', 'procset', 'source', 'GRP_A');
-        setPick(page, 'scrim', 'procset', 'staging', 'STG_9');
-        setPick(page, 'scrim', 'procset', 'destination', 'DST_9');
-        npk(page, 'scrim', 'parts', 'PART-12');
-        npk(page, 'scrim', 'parts', 'PART-1');
         await sheetOK(page);
     } },
     settingsSave: { hash: '#tab=settings', drive: async page => {
@@ -672,9 +664,7 @@ async function actAddProcess() {
     const page = await openPage();
     const from = page.mark();
     await DRIVE.addProcess.drive(page);
-    out['requests-add-process.txt'] = actLines('Add process: name, description, group Presses, screen Screen N on ' +
-        'NEW_1 + NEW_2, sources SRC_2 then GRP_A, staging STG_9, destination DST_9, parts PART-12 then PART-1', page, from)
-        .join('\n') + '\n';
+    out['requests-add-process.txt'] = actLines('Add process: name Press N, group Presses', page, from).join('\n') + '\n';
 }
 
 async function actSettings() {

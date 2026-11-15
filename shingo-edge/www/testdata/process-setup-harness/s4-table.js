@@ -91,11 +91,17 @@ const BUGS = [
                 const shows = k => page.pd('advShows')(k, ctx);
                 const curtain = !!((S.composer.cell.positions || []).find(p => p.core_node_name === n) || {}).curtain;
                 if (shows('sequence')) seq.push(n + ' (' + page.S.model.cells[n].mode + ')');
-                if (shows('curtain_required') !== curtain) cur.push(n + (curtain ? ' has a curtain, hidden' : ' has none, drawn'));
+                // SLICE 4: offered where a curtain is wired, and LISTED where
+                // the flag is set without one (a recipe group lays it on every
+                // claim it mints), so it can be seen and taken off.
+                const set = page.pd('advIsSet')('curtain_required', ctx);
+                if (shows('curtain_required') !== (curtain || set)) {
+                    cur.push(n + (curtain ? ' has a curtain, hidden' : set ? ' is set with none, hidden' : ' has none, drawn'));
+                }
             }
             return [
                 ['Board order is drawn on no line-mode position', !seq.length, seq.join(', ')],
-                ['Curtain required is drawn exactly on the curtained position', !cur.length, cur.join(', ')],
+                ['Curtain required is drawn on the curtained position, and wherever it is set', !cur.length, cur.join(', ')],
             ];
         },
     },

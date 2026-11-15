@@ -403,42 +403,22 @@ async function pinSetup() {
     }
 }
 
-// ── the Add process sheet (U2): the screen's name, the map block ────────────
+// ── the Add process sheet: a name and a group, then Setup (slice 4) ─────────
 async function pinAddProcess() {
     L.push('', '## Add process');
-    for (const [title, o] of [['from Press A (this Edge has a map)', undefined],
-        ['from Press A, an Edge with no map', pressA(c => { c.map = null; })]]) {
-        const page = await T.openPage(o);
-        page.click('root', { act: 'add-process' });
-        await page.settle();
-        const body = page.scrim.querySelector('.layer-body');
-        const html = String(body ? body.innerHTML : '');
-        const secs = [...html.matchAll(/<div class="pd-sec"><div class="pd-lbl">([^<]*)</g)].map(m => m[1]);
-        const toggle = page.scrim.querySelector('[data-act="add-showmap"]');
-        L.push('  ' + title + ': sections ' + JSON.stringify(secs) + ' · map block ' +
-            (/pd-sheetmap/.test(html) ? 'there' + (/id="pd-sheetmapbox" hidden/.test(html) ? ', hidden' : '') : 'not drawn') +
-            (toggle ? ' · ' + JSON.stringify((/data-act="add-showmap"[^>]*>([^<]*)</.exec(html) || [])[1] || '') +
-                ' on the routing set\'s heading' : ''));
-        if (!toggle) continue;
-        // Show on map draws it (nothing picked: the frame's empty sentence);
-        // a second press hides it again.
-        for (let i = 0; i < 2; i++) {
-            page.click('scrim', { act: 'add-showmap' });
-            await page.settle();
-            L.push('    pressed: ' + JSON.stringify(toggle.textContent) + ' aria-expanded=' + toggle.getAttribute('aria-expanded') +
-                ' · the map ' + JSON.stringify(T.text((page.byId('pd-sheetmap') || {}).innerHTML || '').slice(0, 60)) +
-                ' · S.add.map ' + page.S.add.map);
-        }
-    }
     const page = await T.openPage();
     page.click('root', { act: 'add-process' });
     await page.settle();
+    const body = page.scrim.querySelector('.layer-body');
+    const html = String(body ? body.innerHTML : '');
+    const fields = [...html.matchAll(/<label>([^<]*)<small>/g)].map(m => m[1]);
+    L.push('  fields ' + JSON.stringify(fields));
     page.type('name', 'Press N');
     const from = page.mark();
     await T.sheetOK(page);
-    const st = page.since(from).find(c => c.method === 'POST' && /\/api\/operator-stations$/.test(c.url));
-    check('a screen name left blank is the process\'s name', !!st && st.body && st.body.name === 'Press N',
-        st ? 'screen ' + JSON.stringify(st.body && st.body.name) : 'no screen posted; status ' + JSON.stringify(page.status()));
+    const writes = page.since(from).filter(c => c.method !== 'GET');
+    check('Create makes the process and nothing else', writes.length === 1 && /^POST \/api\/processes$/.test(writes[0].method + ' ' + writes[0].url),
+        writes.map(c => c.method + ' ' + c.url).join(' · ') || 'nothing written');
     L.push('#    then it opens on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
 }
 

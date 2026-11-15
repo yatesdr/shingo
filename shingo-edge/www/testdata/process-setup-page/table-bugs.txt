@@ -14,7 +14,7 @@ ok   every row of Style B
 
 ## F15 · Board order only on a loader position; Curtain required only where the node has a curtain
 ok   Board order is drawn on no line-mode position
-ok   Curtain required is drawn exactly on the curtained position
+ok   Curtain required is drawn on the curtained position, and wherever it is set
 
 ## B7 · the key-route picker offers no waypoint already on the route
 ok   POS_A3 via:0 (LM_2 of LM_2 › LM_3)

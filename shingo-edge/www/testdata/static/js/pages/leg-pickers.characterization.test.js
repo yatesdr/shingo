@@ -3,10 +3,11 @@
 // destination) offers a member of a node group.
 //
 // The claim and routing saves refuse a lane on every leg, staging included.
-// The pickers that feed a leg are the two routing pickers (Settings and the
-// Add-process sheet) and the Quality Hold destination picker. Each draws from
-// Core's node list, so each must leave a LANE out, and all three ask one
-// predicate in desktop-bodies.js.
+// The pickers that feed a leg are Settings' routing pickers (one per role)
+// and the Quality Hold destination picker. Each draws from Core's node list,
+// so each must leave a LANE out, and both ask one predicate in
+// desktop-bodies.js. (The Add-process sheet's routing buckets went with that
+// sheet in slice 4: Add asks a name and a group.)
 //
 // TWO HALVES. The rule runs under node against a node list with a lane, a
 // group, a plain node and a lane's slot. The wiring is read off the page's
@@ -91,15 +92,12 @@ test('legExclusion: no node list yet refuses nothing', () => {
     assert.strictEqual(B.legExclusion(undefined, 'SUP-L1'), '');
 });
 
-// The routing rule of each routing picker. The process sheet declares its
-// rule inline in its set picker, `setInit(PROC_SET, {` (four buckets over one
-// list, b the bucket); Settings' role pickers share the function routeRule
-// (one picker per role).
+// The routing rule of each routing picker: Settings' role pickers share the
+// function routeRule (one picker per role). A second routing picker that
+// declares its own rule has to be added here.
 function routingRuleSites() {
     const sites = [];
-    const sheet = PAGE.indexOf('setInit(PROC_SET, {');
-    assert.ok(sheet >= 0, 'the process sheet’s set picker not found');
-    sites.push(PAGE.slice(sheet, PAGE.indexOf('});', sheet)));
+    assert.ok(PAGE.indexOf('setInit(') < 0, 'a set picker is back: add its routing rule to these sites');
     const st = PAGE.indexOf('function routeRule(');
     assert.ok(st >= 0, 'routeRule not found');
     sites.push(PAGE.slice(st, PAGE.indexOf('\n}\n', st)));

@@ -715,7 +715,7 @@ async function pinRefusals() {
     ]);
     await refusals('refusals-style-create.txt', [specOf('+ New style with no recipe (Style C, CAT-C)', U.styleCreate, { again: true })]);
     await refusals('refusals-flow-mint.txt', [specOf('+ New style from Recipe One, a part per slot and a CATID', U.mint, { again: true })]);
-    await refusals('refusals-add-process.txt', [specOf('Add process (the chain of five writes)', U.addProcess, { again: true })]);
+    await refusals('refusals-add-process.txt', [specOf('Add process (one write)', U.addProcess, { again: true })]);
     await refusals('refusals-settings-save.txt', [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]);
     await refusals('refusals-screen-sheet.txt', [
         specOf('Edit Screen A (the note)', U.screenEdit, { again: true }),
@@ -924,14 +924,13 @@ async function pinSheetStack() {
         const page = await open({ hash: '#tab=settings' });
         page.click('root', { act: 'add-process' });
         await page.settle();
-        T.setPick(page, 'scrim', 'procset', 'positions', 'NEW_1');
+        page.type('name', 'Press N');
         const S = page.S;
         const keys = () => Object.keys(S.pickers).sort().join(', ');
-        const sets = () => Object.keys(S.sets).sort().join(', ');
-        const rows = ['open Add process, NEW_1 ticked: ' + stackFacts(page) + '; sets ' + sets() + '; pickers ' + keys()];
+        const rows = ['open Add process, a name typed: ' + stackFacts(page) + '; pickers ' + keys()];
         page.click('scrim', { act: 'sheet-cancel' });
         await page.settle();
-        rows.push('after Cancel: ' + stackFacts(page) + '; sets ' + sets() + '; pickers ' + keys() +
+        rows.push('after Cancel: ' + stackFacts(page) + '; pickers ' + keys() +
             ' (Settings’ own pickers stay: their boxes are in #pd-root)');
         block('closeSheet: what it clears (Add process on Settings)', rows);
     }

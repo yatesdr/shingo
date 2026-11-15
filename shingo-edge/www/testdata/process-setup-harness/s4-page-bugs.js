@@ -202,37 +202,8 @@ block({
     }],
 });
 
-// Smoke (browser walk 2026-11-11): Add process drew "Show on map" only after a
-// process had been opened in the same page load, from that process's composer
-// read the list still held. On a fresh list it had no map at all.
-const sheetToggle = page => !!page.scrim.querySelector('[data-act="add-showmap"]') ||
-    /data-act="add-showmap"/.test(String((page.byId('pd-addmaptoggle') || {}).innerHTML || ''));
-block({
-    title: 'smoke: Add process on a fresh list reads the Edge\'s plant map as it opens',
-    open: () => ({ search: '' }),
-    act: async page => { page.click('root', { act: 'add-process' }); await page.settle(); },
-    checks: [
-        r => ['one composer read for the map', r.calls.filter(c => c.method === 'GET' && /\/composer$/.test(c.url.split('?')[0])).length === 1,
-            r.calls.map(lineOf).join(' · ') || 'no request'],
-        r => ['Show on map is on the routing set\'s heading', sheetToggle(r.page), 'no toggle: the list holds no map'],
-    ],
-});
-block({
-    title: 'smoke: a process opened before lends Add process neither its map nor its zoom',
-    open: () => ({ answer: refuse('GET', '/api/processes/1/composer', { status: 500, body: { error: 'no' } }, 1) }),
-    act: async page => {
-        page.S.mapZoom = 2;
-        page.click('root', { act: 'list' });
-        await page.settle();
-        page.click('root', { act: 'add-process' });
-        await page.settle();
-        return { zoom: page.S.mapZoom };
-    },
-    checks: [
-        r => ['the map read refused: no Show on map', !sheetToggle(r.page), 'drawn from the last process\'s composer'],
-        r => ['the zoom is the sheet\'s own', r.zoom === 1, 'zoom ' + r.zoom + ' carried over'],
-    ],
-});
+// The Add process sheet's map went with the sheet's routing set (slice 4):
+// Add asks a name and a group, and the routing set and its map are Settings'.
 
 // F21 — the address bar's #tab= edited in place (a hashchange, no load).
 block({
@@ -487,11 +458,6 @@ const resume = (title, o) => block({
             'pressed again: ' + (writes(r.again).map(lineOf).join(' · ') || 'no write')],
     ],
 });
-resume('ruling 5: Add process, its positions refused, then pressed again', {
-    open: { answer: refuse('PUT', '/api/operator-stations/31/claimed-nodes', REFUSED) },
-    drive: page => T.DRIVE.addProcess.drive(page),
-    once: /^POST \/api\/(processes|operator-stations)$/, step: /^PUT \/api\/operator-stations\/31\/claimed-nodes$/,
-});
 // Counted at is a draft saved by Save settings, every changed row in one
 // write: a refused save keeps its rows on screen, and Save again sends the
 // same one write.
@@ -532,23 +498,6 @@ resume('ruling 5: + New style from Recipe One, its CATID refused, then pressed a
     drive: page => T.DRIVE.mint.drive(page),
     once: /^POST \/api\/processes\/1\/flow\/mint$/, step: /^PUT \/api\/styles\/9$/,
 });
-block({
-    title: 'ruling 5: Add process half made, then Cancel: what was made is read back',
-    open: () => ({ answer: refuse('PUT', '/api/operator-stations/31/claimed-nodes', REFUSED) }),
-    act: async page => {
-        await T.DRIVE.addProcess.drive(page);
-        const from = page.mark();
-        page.click('scrim', { act: 'sheet-cancel' });
-        await page.settle();
-        return { after: page.since(from) };
-    },
-    checks: [
-        r => ['nothing is deleted', !r.after.some(c => c.method === 'DELETE'), r.after.map(lineOf).join(' · ')],
-        r => ['the process list is read again', r.after.some(c => lineOf(c) === 'GET /api/processes'),
-            'after Cancel: ' + (r.after.map(lineOf).join(' · ') || 'nothing')],
-    ],
-});
-
 // ── F22: no refused write leaves its button silent ──────────────────────────
 //
 // Read off the refusal goldens this run wrote (p0-page.js): every block of a

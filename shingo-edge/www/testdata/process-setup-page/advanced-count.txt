@@ -14,20 +14,22 @@ POS_A9 sequential/produce  setCount=0
 POS_A10 sequential/produce  setCount=0
 
 ## Style B
-POS_A1 two_robot_press_index/consume  setCount=6  listed under=6
+POS_A1 two_robot_press_index/consume  setCount=7  listed under=7
     list "Allowed parts"
     list "Lineside soft threshold"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
+    list "Curtain required"
     list "Auto confirm"
-POS_A2 two_robot_press_index/produce  setCount=7  listed under=7
+POS_A2 two_robot_press_index/produce  setCount=8  listed under=8
     list "Allowed parts"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
     list "Strict pack"
     list "Partials go to"
+    list "Curtain required"
     list "Auto confirm"
 POS_A3 two_robot/consume  setCount=7  listed under=7
     list "Allowed parts"
@@ -37,56 +39,63 @@ POS_A3 two_robot/consume  setCount=7  listed under=7
     list "Tool change"
     list "Curtain required"
     list "Auto confirm"
-POS_A4 two_robot/produce  setCount=7  listed under=7
+POS_A4 two_robot/produce  setCount=8  listed under=8
     list "Allowed parts"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
     list "Strict pack"
     list "Partials go to"
+    list "Curtain required"
     list "Auto confirm"
-POS_A5 single_robot/consume  setCount=6  listed under=6
+POS_A5 single_robot/consume  setCount=7  listed under=7
     list "Allowed parts"
     list "Lineside soft threshold"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
+    list "Curtain required"
     list "Auto confirm"
-POS_A6 single_robot/produce  setCount=7  listed under=7
+POS_A6 single_robot/produce  setCount=8  listed under=8
     list "Allowed parts"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
     list "Strict pack"
     list "Partials go to"
+    list "Curtain required"
     list "Auto confirm"
-POS_A7 sequential/consume  setCount=6  listed under=6
+POS_A7 sequential/consume  setCount=7  listed under=7
     list "Allowed parts"
     list "Lineside soft threshold"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
+    list "Curtain required"
     list "Auto confirm"
-POS_A8 sequential/consume  setCount=6  listed under=6
+POS_A8 sequential/consume  setCount=7  listed under=7
     list "Allowed parts"
     list "Lineside soft threshold"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
+    list "Curtain required"
     list "Auto confirm"
-POS_A9 sequential/produce  setCount=7  listed under=7
+POS_A9 sequential/produce  setCount=8  listed under=8
     list "Allowed parts"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
     list "Strict pack"
     list "Partials go to"
+    list "Curtain required"
     list "Auto confirm"
-POS_A10 sequential/produce  setCount=7  listed under=7
+POS_A10 sequential/produce  setCount=8  listed under=8
     list "Allowed parts"
     list "Auto request part"
     list "Keep staged node"
     list "Tool change"
     list "Strict pack"
     list "Partials go to"
+    list "Curtain required"
     list "Auto confirm"

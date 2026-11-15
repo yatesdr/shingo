@@ -23,14 +23,6 @@ ok   the title: "Press A"
 ## smoke: Settings' Parts row is on the settings grid, as every other row is
 ok   the Parts row is a .pd-sfld
 
-## smoke: Add process on a fresh list reads the Edge's plant map as it opens
-ok   one composer read for the map
-ok   Show on map is on the routing set's heading
-
-## smoke: a process opened before lends Add process neither its map nor its zoom
-ok   the map read refused: no Show on map
-ok   the zoom is the sheet's own
-
 ## F21: #tab= edited in place switches the tab (FINDINGS F21)
 ok   each hash lands on its tab
 
@@ -77,11 +69,6 @@ ok   one save, no preview-and-retry
 ok   PART-NEW is one of this process's parts
 ok   Core's catalog waits behind its button
 
-## ruling 5: Add process, its positions refused, then pressed again
-ok   the refusal is said
-ok   pressed again, nothing is made twice
-ok   pressed again, the failed step is sent
-
 ## Counted at: a refused save keeps its rows, and Save again sends the same one write
 ok   the refusal is said on the bar
 ok   both rows stay on screen
@@ -91,10 +78,6 @@ ok   Save again sends one write, with both rows
 ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
-
-## ruling 5: Add process half made, then Cancel: what was made is read back
-ok   nothing is deleted
-ok   the process list is read again
 
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
 ok   no refusal block leaves the page silent
