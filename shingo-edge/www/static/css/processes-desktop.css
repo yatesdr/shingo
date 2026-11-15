@@ -781,6 +781,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-cand > .pd-shape { flex: 0 0 auto; max-width: 45%; }
 .pd-cand > .pd-dim { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pd-cand > .pd-dimlink { flex: none; white-space: nowrap; }
+/* AND THE VALUE COLUMN DOES NOT GROW TO IT. A field's value column is the
+   grid's 1fr, whose floor is its content's min-content: a list that will not
+   wrap made the column as wide as the list, past the sheet, and Name it…
+   went off the edge with it. With no floor the column is the sheet's and the
+   list is what is cut. */
+.pd-hmirecipes .pd-sfld > .v { min-width: 0; }
 
 /* ── the apply modal ─────────────────────────────────────────────────────
    The Advanced sheet's shell at its one width. Its body is a list of parts
