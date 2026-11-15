@@ -518,6 +518,30 @@ function silentRefusals() {
     return out;
 }
 
+// SLICE 5: A CORE LOADER'S PROCESS (core_boards) has no styles, so no HMI gate
+// line and a Danger line that names only what it has; its windows are Core's,
+// so its screen's positions are chips with no × and no picker.
+block({
+    title: 'slice 5: a Core loader’s process draws no gate, its own Danger line, and its windows read-only',
+    open: () => ({
+        hash: '#tab=settings',
+        page: withPage(p => ({ processes: p.processes.map(x => x.id === 1 ? Object.assign({}, x, { core_boards: true }) : x) })),
+    }),
+    act: async () => {},
+    checks: [
+        r => ['no HMI setup line in the bar', String(r.page.root.innerHTML).indexOf('class="pd-gate"') < 0, 'drawn'],
+        r => ['Danger names its screens and positions only',
+            String(r.page.root.innerHTML).indexOf('its screens and positions go with it') >= 0 &&
+            String(r.page.root.innerHTML).indexOf('its styles, flows') < 0, 'not said'],
+        r => {
+            const html = String(r.page.root.innerHTML);
+            const picker = html.indexOf('id="npk-scr-11"') >= 0;
+            const chips = (html.match(/<span class="picker-chip">POS_A\d+<\/span>/g) || []).length;
+            return ['Screen A’s positions are chips, no picker', !picker && chips === 11, 'picker ' + picker + ', ' + chips + ' chips'];
+        },
+    ],
+});
+
 // SLICE 5: THE MAP IS NOT SENT AGAIN. A composer read after the first quotes
 // the revision of the map the page holds (map_rev); a reply that says map_same
 // carries no map, and the page keeps drawing the one it has.

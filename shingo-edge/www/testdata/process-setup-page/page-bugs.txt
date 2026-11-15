@@ -79,6 +79,11 @@ ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
+## slice 5: a Core loader’s process draws no gate, its own Danger line, and its windows read-only
+ok   no HMI setup line in the bar
+ok   Danger names its screens and positions only
+ok   Screen A’s positions are chips, no picker
+
 ## slice 5: a composer read quotes the held map, and map_same keeps it
 ok   the page held a map to quote
 ok   the read quotes its revision

@@ -217,6 +217,16 @@ function fmtView(title, log) {
     return lines.join('\n');
 }
 
+// partChips is the part set picker's chips as drawn: how many, and the fold's
+// words after them.
+function partChips(page) {
+    const host = page.byId('npk-parts');
+    if (!host) return 'no part set picker';
+    const chips = host.querySelectorAll('.picker-chip').length;
+    const more = host.querySelectorAll('.picker-more').map(b => b.textContent);
+    return chips + (more.length ? ' · then ' + JSON.stringify(more[0]) : '');
+}
+
 async function open(FX, search, hash) {
     const log = [];
     const page = await H.open({ page: FX.page, search: search, hash: hash || '', serve: serverFor(FX, log) });
@@ -275,6 +285,8 @@ const excRows = (html, id) => count(excList(html, id), '<td class="exc-pos">');
         'Counted at says: ' + excSum(html, 'counted') + ' · rows: ' + excRows(html, 'counted'),
         'Counted at, with one station counter, says: ' + excSum(vc.page.root.innerHTML || '', 'counted'),
         'parts in the part set: ' + (S.partSet || FX.server.partSet).length,
+        // The part set's chips fold past PART_FOLD (slice 5): "+ N more · show all".
+        'part set chips drawn: ' + partChips(v.page),
         'recipe versions listed: ' + (html.match(/<tr class="[^"]*" data-preset="/g) || []).length,
         'save bar: ' + (count(html, 'pd-savebar') ? 'yes' : 'no'),
         'markup written, characters: ' + html.length,

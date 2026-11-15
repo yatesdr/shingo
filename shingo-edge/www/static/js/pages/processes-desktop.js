@@ -518,8 +518,10 @@ function appbar() {
         // thing that never changes here (the gate is set in Settings), and the
         // link beside it opened the tab one glance to the left. The gate stays
         // read-only; the words carry the state, so no border and no tone.
-        '<div class="pd-gate">' +
-        (on ? 'HMI setup on: operators set up styles' : 'HMI setup off: operators pick from the styles') + '</div></div>';
+        // A Core loader's process has no styles to pick from: no gate line.
+        (coreBoards(p) ? '' : '<div class="pd-gate">' +
+            (on ? 'HMI setup on: operators set up styles' : 'HMI setup off: operators pick from the styles') + '</div>') +
+        '</div>';
 }
 
 // ── Setup · the cold start (brief U2) ───────────────────────────────────────
@@ -5031,16 +5033,24 @@ function screenKey(id) { return 'scr-' + id; }
 // screenRow is one screen. A screen whose positions could not be read is not
 // offered for editing: its list is a set-to, and one saved over a read that
 // failed would take every position off it.
+//
+// A CORE LOADER'S WINDOWS ARE CORE'S: its screen's positions are drawn as
+// chips with no × and no picker under them (the Loader board line says where
+// they are set). Taking one off here would leave Core's loader with a window
+// no screen works.
 function screenRow(st) {
     const h = healthOf(st);
     const unread = !(String(st.id) in S.stationNodes);
+    const core = coreBoards(process());
     return '<div class="pd-sfld pd-scrrow"><label>' + esc(st.name) +
         '<small>' + esc((unread ? '' : nOf(pickerValue(screenKey(st.id)).length, 'position') + ' · ') + h.text) + '</small>' +
         '<span class="pd-scracts"><button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
         '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></span></label>' +
         '<div class="v col">' + (unread
             ? '<p class="pd-note">This screen’s positions could not be read, so they cannot be changed here. Reload the page.</p>'
-            : pickerBox(screenKey(st.id))) + '</div></div>';
+            : core ? '<div class="picker-chips">' + pickerValue(screenKey(st.id)).map(n =>
+                '<span class="picker-chip">' + esc(n) + '</span>').join('') + '</div>'
+                : pickerBox(screenKey(st.id))) + '</div></div>';
 }
 
 // loaderWindows is the loader windows Core knows about with no screen on this
@@ -5144,8 +5154,10 @@ function settingsPickers(force, keep) {
             placeholder: 'add a group or node',
         });
     }
+    // THE PART SET FOLDS (slice 5): a big line's 46 parts are 46 chips above
+    // the search box; the first PART_FOLD, then "+ N more · show all".
     want(PART_SET_PICKER, {
-        source: 'payloads', selected: (S.partSet || []).slice(),
+        source: 'payloads', selected: (S.partSet || []).slice(), fold: PART_FOLD,
         onChange: () => settingsPickersMoved(PART_SET_PICKER),
         placeholder: 'find a part by name',
     });
@@ -6343,7 +6355,7 @@ function drawSettings() {
             : '');
 
     const danger = '<div class="pd-sect danger"><h2>Danger</h2></div>' +
-        stField('Delete this process', 'its styles, flows, routing set and screens go with it',
+        stField('Delete this process', deleteGoes(),
             '<button class="pd-btn danger" data-act="st-delete">Delete ' + esc(S.settings.name) + '…</button>');
 
     // WHERE THE ENGINEER WAS SURVIVES THE REDRAW. .pd-sheet is the scroller and
@@ -6624,6 +6636,9 @@ function loadCoreNodes() {
 //   allowed   a part picker's codes, in order: all it offers
 //   add       the shell's "Add and use" slot, {label(q), run(q)}
 //   placeholder  the search box's hint, when the default is not the words
+// How many chips the part set shows before "+ N more · show all".
+const PART_FOLD = 12;
+
 function pickerInit(key, opts) {
     const o = opts || {};
     dropPicker(key);
@@ -6642,6 +6657,7 @@ function pickerInit(key, opts) {
         single: !!o.single,
         allowed: o.allowed || null,
         add: o.add || null,
+        fold: o.fold || 0,
         placeholder: o.placeholder || '',
         filters: 0, // the prefixes its checklist was drawn with
         ui: null,   // the adapter's picker drawn for it, while its host is in the page
@@ -6749,6 +6765,7 @@ function drawPicker(key) {
         placeholder: p.placeholder || (parts ? 'find a part by name' : p.checklist ? 'filter by name, or pick a prefix below' : 'find a node by name'),
         filters: p.checklist ? checklistFilters() : null,
         add: p.add || undefined,
+        fold: p.fold || 0,
         onChange: v => { p.sel = Array.isArray(v) ? v.slice() : (v ? [v] : []); if (p.onChange) p.onChange(); },
         onPick: p.onPick ? (next, row) => {
             const had = p.sel.indexOf(row.value) >= 0;
@@ -7911,9 +7928,16 @@ function openGroupPicker(btn, onPick) {
     }, { selected: String(current || 0), placeholder: 'find a group' });
 }
 
+// deleteGoes is what a process's delete takes with it: a Core loader's
+// process has its screens and positions, and nothing of the rest.
+function deleteGoes() {
+    return coreBoards(process()) ? 'its screens and positions go with it'
+        : 'its styles, flows, routing set and screens go with it';
+}
+
 function openDeleteProcess() {
     const p = process() || {};
-    pageSheet('Delete ' + p.name + '?', 'its styles, flows, routing set and screens go with it.',
+    pageSheet('Delete ' + p.name + '?', deleteGoes() + '.',
         '<p class="pd-note">Type the name to confirm. Nothing about this is undoable from here.</p>' +
         sheetField('Process name', '', 'confirm', ''),
         'Delete ' + p.name, () => {

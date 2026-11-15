@@ -1304,6 +1304,8 @@ nav {
     border: 1px solid var(--sub-2); border-radius: 999px; font-size: var(--font-sm);
 }
 .picker-chip button { padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
+/* The fold's "+ N more · show all": a link-weight button after the chips. */
+.picker-more { padding: 0 var(--sp-1); border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--font-sm); cursor: pointer; }
 .picker-q {
     padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--bg); color: var(--text); font: inherit;

@@ -58,6 +58,9 @@ let dropped = null;   // the picker whose dropdown list is open
 //                (a second press clears it)
 //   chips        false: draw no chips (the control that opened it shows the
 //                value)
+//   fold         a number: past that many, the chips stop there and say
+//                "+ N more · show all" (a part set of 46 is a wall of chips
+//                above its own search box); "fold them" puts them back
 //   empty(q)     the line when nothing matches; loading, the not-read-yet line
 //   add          the "Add and use" slot: { label(q), run(q) }. run makes the
 //                thing typed and resolves its value or row (null: nothing was
@@ -83,7 +86,7 @@ export function createPicker(host, opts) {
     const id = 'picker-' + (++seq);
     const multi = !!o.multi;
     const always = !!o.open;
-    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '' };
+    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '', allChips: false };
     st.was = st.sel.slice();
 
     const root = el('div', { className: 'picker' + (multi ? ' picker--multi' : '') + (always ? ' picker--open' : '') });
@@ -158,6 +161,8 @@ export function createPicker(host, opts) {
     });
     if (chips) {
         chips.addEventListener('click', (ev) => {
+            const more = ev.target.closest ? ev.target.closest('[data-more]') : null;
+            if (more) { st.allChips = !st.allChips; drawChips(); return; }
             const b = ev.target.closest ? ev.target.closest('[data-drop]') : null;
             if (!b) return;
             const v = b.getAttribute('data-drop');
@@ -209,11 +214,17 @@ export function createPicker(host, opts) {
     function drawChips() {
         if (!chips) return;
         chips.textContent = '';
-        for (const v of st.sel) {
+        const folds = o.fold > 0 && st.sel.length > o.fold;
+        const shown = folds && !st.allChips ? st.sel.slice(0, o.fold) : st.sel;
+        for (const v of shown) {
             chips.appendChild(el('span', { className: 'picker-chip' }, [
                 labelOf(v),
                 el('button', { type: 'button', 'data-drop': v, 'aria-label': 'Remove ' + labelOf(v) }, '×'),
             ]));
+        }
+        if (folds) {
+            chips.appendChild(el('button', { type: 'button', className: 'picker-more', 'data-more': '' },
+                st.allChips ? 'fold them' : '+ ' + (st.sel.length - o.fold) + ' more · show all'));
         }
     }
 

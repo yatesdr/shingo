@@ -302,4 +302,19 @@ test('write-through: an answer that is not a promise is taken at once; a throw i
     eq([g.k.value(), g.k.el.querySelector('.picker-refused').textContent], ['', 'no answer']);
 });
 
+// FOLD: past `fold` chips the rest wait behind one button (a part set of 46
+// is a wall of chips above its own search box). The selection is untouched.
+test('fold: past that many chips, "+ N more · show all"; pressed, every chip and "fold them"', async () => {
+    const f = picker({ multi: true, open: true, fold: 2, selected: ['PLN_001', 'PLN_003', 'SMN_001', 'SMN_002'] });
+    const chipWords = () => f.k.el.querySelectorAll('.picker-chip, .picker-more').map((n) => n.textContent.replace('×', ''));
+    eq(chipWords(), ['PLN_001', 'PLN_003', '+ 2 more · show all'], 'folded');
+    f.k.el.querySelector('[data-more]').click();
+    eq(chipWords(), ['PLN_001', 'PLN_003', 'SMN_001', 'SMN_002', 'fold them'], 'shown');
+    eq([f.k.value(), f.changes], [['PLN_001', 'PLN_003', 'SMN_001', 'SMN_002'], []], 'the press moves no selection');
+    f.k.el.querySelector('[data-more]').click();
+    eq(chipWords().length, 3, 'folded again');
+    const g = picker({ multi: true, open: true, fold: 4, selected: ['PLN_001', 'PLN_003'] });
+    eq(g.k.el.querySelectorAll('.picker-more').length, 0, 'at or under the fold: no button');
+});
+
 run();
