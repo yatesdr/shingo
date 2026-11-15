@@ -411,20 +411,18 @@ func (s *ProcessService) SetNodeCurtain(nodeID int64, enabled bool, plcName, tag
 		strings.TrimSpace(plcName), strings.TrimSpace(tagName), safeValue)
 }
 
-// CurtainedNodeNames returns, per process id, the names of its live nodes
-// whose curtain interlock is on - the process list's at-a-glance column.
-func (s *ProcessService) CurtainedNodeNames() (map[int64][]string, error) {
-	nodes, err := s.db.ListProcessNodes()
-	if err != nil {
-		return nil, err
-	}
+// CurtainedNodeNames is, per process id, the names of the nodes whose curtain
+// interlock is on, in nodes' order - the process list's at-a-glance column.
+// nodes is every live position (ProcessService.ListNodes), the read the list
+// shares with StationService.CoreBoardProcesses.
+func CurtainedNodeNames(nodes []processes.Node) map[int64][]string {
 	out := map[int64][]string{}
 	for _, n := range nodes {
 		if n.CurtainEnabled {
 			out[n.ProcessID] = append(out[n.ProcessID], n.Name)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // DeleteNode removes a process_node row by id.

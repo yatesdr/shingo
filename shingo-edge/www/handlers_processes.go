@@ -13,6 +13,7 @@ import (
 
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/service"
 )
 
 // --- Processes Admin ---
@@ -53,14 +54,14 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	curtained, err := h.engine.ProcessService().CurtainedNodeNames()
+	// ONE READ of every live position answers both columns: the curtains and
+	// whether Core runs the process's boards.
+	nodes, err := h.engine.ProcessService().ListNodes()
 	if err != nil {
 		return nil, err
 	}
-	coreBoards, err := h.engine.StationService().CoreBoardProcesses()
-	if err != nil {
-		return nil, err
-	}
+	curtained := service.CurtainedNodeNames(nodes)
+	coreBoards := h.engine.StationService().CoreBoardProcesses(nodes)
 	rows := make([]processListRow, len(processes))
 	for i, p := range processes {
 		rows[i] = processListRow{Process: p}

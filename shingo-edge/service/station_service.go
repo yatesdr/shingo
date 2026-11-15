@@ -481,14 +481,11 @@ func (s *StationService) LoaderHolds(coreNodeName string) bool {
 // style this Edge sets up. A process with one press position among loader
 // windows is a press; a process with no position is not a loader's.
 //
-// ONE READ of every live position, whatever the process count; LoaderHolds is
-// the in-memory loader resolver. With no resolver wired no position is a
-// loader's, so the set is empty. A process absent from the map is false.
-func (s *StationService) CoreBoardProcesses() (map[int64]bool, error) {
-	nodes, err := s.db.ListProcessNodes()
-	if err != nil {
-		return nil, err
-	}
+// nodes is every live position (ProcessService.ListNodes), the one read the
+// list shares with CurtainedNodeNames; LoaderHolds is the in-memory loader
+// resolver. With no resolver wired no position is a loader's, so the set is
+// empty. A process absent from the map is false.
+func (s *StationService) CoreBoardProcesses(nodes []processes.Node) map[int64]bool {
 	out := map[int64]bool{}
 	for _, n := range nodes {
 		held, seen := out[n.ProcessID]
@@ -502,7 +499,7 @@ func (s *StationService) CoreBoardProcesses() (map[int64]bool, error) {
 			delete(out, pid)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // binTypeForPayload is the nil-safe read: "" is unknown, never a guess, and a
