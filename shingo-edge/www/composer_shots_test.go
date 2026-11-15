@@ -1383,15 +1383,18 @@ func TestComposerShots(t *testing.T) {
 				tab.label, attr("bodyscrollh"), attr("bodyclienth"))
 		}
 	}
-	// The three lists are three ROLES, because composer-model picks a cell's
-	// source and destination by lowest sequence PER ROLE. One list of nodes
-	// could not answer any of the three questions.
-	for _, role := range []string{"Sources", "Staging", "Destinations"} {
-		desktopDOM("D3 "+role, d5, ">"+role+"<")
+	// The routing set's three ROLES are three buckets of Settings' one set
+	// picker, because composer-model picks a cell's source and destination by
+	// lowest sequence PER ROLE. On screen they read Inbound, Staging and
+	// Outbound (processes-desktop.js ROUTING_GROUPS; the keys stay source,
+	// staging and destination), each a bucket button that setBar draws as
+	// `<i class="pd-setdot"></i>WORD <b>COUNT</b>`.
+	for _, role := range []string{"Inbound", "Staging", "Outbound"} {
+		desktopDOM("D3 "+role, d5, "</i>"+role+" <b>")
 	}
-	// Every role list carries the picker that adds to it — the one node input
-	// this page has, and the reason a plant whose map has not reached the edge
-	// is no longer a plant with no way to author a routing set at all.
+	// The buckets share one picker — the one node input this page has, and
+	// the reason a plant whose map has not reached the edge is no longer a
+	// plant with no way to author a routing set at all.
 	desktopDOM("D3 node picker", d5, `class="pd-npk"`)
 	// THE TAB IS GONE, and a page still drawing it is a page with two doors
 	// onto one decision — the thing this screen exists to stop.
