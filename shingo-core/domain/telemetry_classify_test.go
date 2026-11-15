@@ -160,15 +160,18 @@ func TestClassifyCancelOrigin_CodeDecides(t *testing.T) {
 	if got := ClassifyCancelOrigin("", edge); got != CancelOriginUnclassified {
 		t.Errorf("uncoded Edge changeover cancel = %q, want unclassified (pre-code row)", got)
 	}
-	// The Edge's idle send-back is the machine's: shingo by origin, and a
-	// failure by outcome, as Core's old sweep's uncoded "abandoned: …" rows were.
+	// The Edge's idle send-back is the machine's by origin (shingo) and a
+	// cancel by outcome: designed behaviour, not a failed order. Core's old
+	// sweep's uncoded "abandoned: …" rows still read failed by their prose.
 	idle := protocol.CancelReasonLineIdle
 	if got := ClassifyCancelOrigin(protocol.TermAbandoned, idle); got != CancelOriginShingo {
 		t.Errorf("coded idle send-back origin = %q, want shingo", got)
 	}
-	coded, _ := ClassifyTermCode(protocol.StatusCancelled, protocol.TermAbandoned)
-	if old := ClassifyTermination(string(protocol.StatusCancelled), "abandoned: stuck in staged past 1h0m0s"); coded != old {
-		t.Errorf("coded idle send-back outcome = %q, the old sweep's uncoded abandon = %q; want the same", coded, old)
+	if coded, ok := ClassifyTermCode(protocol.StatusCancelled, protocol.TermAbandoned); !ok || coded != OutcomeCancelled {
+		t.Errorf("coded idle send-back outcome = %q (ok %v), want %q", coded, ok, OutcomeCancelled)
+	}
+	if old := ClassifyTermination(string(protocol.StatusCancelled), "abandoned: stuck in staged past 1h0m0s"); old != OutcomeFailed {
+		t.Errorf("the old sweep's uncoded abandon = %q, want %q (its prose, unchanged)", old, OutcomeFailed)
 	}
 }
 

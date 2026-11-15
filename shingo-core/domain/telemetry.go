@@ -627,11 +627,16 @@ func ClassifyTermCode(status protocol.Status, code protocol.TermCode) (string, b
 		return "", false
 	}
 	switch code {
-	case protocol.TermOperatorCancelled, protocol.TermNotNeeded, protocol.TermPeerTerminal:
+	case protocol.TermOperatorCancelled, protocol.TermNotNeeded, protocol.TermPeerTerminal, protocol.TermAbandoned:
 		// Deliberate or unnecessary — not fulfillment failures. TermNotNeeded
 		// is the skip case; TermPeerTerminal is a leg unwound with its sibling,
 		// and counting both halves of one dead swap as two failures would
-		// double-count the same event.
+		// double-count the same event. TermAbandoned is the Edge's idle
+		// send-back (robots parked at a line that counted nothing for its
+		// hour): the design working, not an order that failed. Its origin
+		// stays shingo's (cancelCodeOrigin). Core's old sweep filed its
+		// abandons uncoded, and those rows still read failed by their prose
+		// (classifyCancelByDetail).
 		if status == protocol.StatusSkipped {
 			return OutcomeSkipped, true
 		}

@@ -153,10 +153,10 @@ func (e *Engine) maybeReturnCarriedBin(bin *bins.Bin, robotID string, robot flee
 // whether the bin it leaves on a deck is safe to order down is a question about
 // the ROBOT, and the trigger's physical gates answer it the same way for every
 // producer — a jack that reads certain and loaded, a robot that is not Busy, a
-// robot the fleet will dispatch. The telemetry buckets "abandoned: ..." as a
-// failure because that is how a dashboard wants to count it; it says nothing
-// about what is on the deck. A FAILED order is a different status and is not
-// returned.
+// robot the fleet will dispatch. The telemetry's outcome bucket (the coded
+// idle send-back a cancel, the old sweep's uncoded rows a failure) says
+// nothing about what is on the deck. A FAILED order is a different status and
+// is not returned.
 //
 // THE EPISODE MUST BE FRESH: the terminal row inside the same window the
 // _TRANSIT sweep uses (terminalWithin). A carrier that ended hours ago is not
