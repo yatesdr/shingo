@@ -149,6 +149,23 @@ function pickRow(page, popID, attr, value) {
     page.fire(row, 'click');
 }
 
+// pickRow on the shared picker (slice 5: every chooser on the page is it): the
+// row whose data-value is `value`, in the last picker the popover holds.
+function pickerRow(page, popID, value) {
+    const pop = page.byId(popID);
+    const pickers = pop ? pop.querySelectorAll('.picker') : [];
+    const p = pickers[pickers.length - 1];
+    const row = p && p.querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(value));
+    if (!row) throw new Error('#' + popID + '\'s picker has no row ' + value + ': ' + (pop || {}).innerHTML);
+    row.click();
+}
+
+// New style's "Start from a recipe" is the shared picker (slice 5).
+function pickRecipe(page, id) {
+    page.click('scrim', { act: 'newstyle-recipe' }, { inside: ['.pd-modal'] });
+    pickerRow(page, 'pd-advpop', id);
+}
+
 // ── 1 · picker option lists ──────────────────────────────────────────────────
 //
 // Every kind the table draws a control for — position, role, mode, the four
@@ -436,9 +453,13 @@ function typeSetting(page, sel, match, value) {
 // and the options it then opens are the same.
 function pickChip(page, n, kind, value) {
     page.click('root', { act: 'pick', node: n, kind: kind });
-    const i = page.pd('optionsFor')(n, kind).findIndex(o => o.value === value);
+    const opts = page.pd('optionsFor')(n, kind);
+    const i = opts.findIndex(o => o.value === value);
     if (i < 0) throw new Error(n + ' ' + kind + ' offers no ' + value);
-    pickRow(page, 'pd-pop', 'data-opt', i);
+    // A node chip is the shared picker, its rows the choices (a note is not
+    // one); role and swap mode stay the page's menus.
+    if (kind === 'role' || kind === 'mode') pickRow(page, 'pd-pop', 'data-opt', i);
+    else pickerRow(page, 'pd-pop', opts.filter(o => !o.note).findIndex(o => o.value === value));
 }
 // The Part chip opens the part popover; its rows answer through the
 // popover's own onclick (onPartPopClick).
@@ -480,10 +501,8 @@ const DRIVE = {
     } },
     mint: { drive: async page => {
         page.click('root', { act: 'new-style' });
-        const chooser = page.byId('pd-newrecipe');
-        if (!chooser) throw new Error('New style draws no recipe chooser');
-        chooser.value = '7';
-        page.fire(chooser, 'change');
+        if (!page.byId('pd-newrecipe')) throw new Error('New style draws no recipe chooser');
+        pickRecipe(page, '7');
         await page.settle();
         page.type('slot0', 'PART-1');
         page.type('slot1', 'PART-3');
@@ -496,7 +515,7 @@ const DRIVE = {
         await page.settle();
         page.type('name', 'Press N');
         page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
-        pickRow(page, 'pd-advpop', 'data-grpopt', 3);
+        pickerRow(page, 'pd-advpop', 3);
         await sheetOK(page);
     } },
     settingsSave: { hash: '#tab=settings', drive: async page => {
@@ -504,17 +523,16 @@ const DRIVE = {
         const st = (key, value) => typeSetting(page, '[data-st]', el => el.dataset.st === key && el.tagName === 'INPUT', value);
         st('name', 'Press A2');
         st('description', 'renamed');
-        // The counter's PLC is a pick from WarLink's PLCs (F12).
-        const plc = page.root.querySelectorAll('select[data-st]').find(el => el.dataset.st === 'counter_plc_name');
-        if (!plc) throw new Error('Settings draws no PLC pick');
-        plc.value = 'PLC_B';
-        page.fire(plc, 'change');
+        // The counter's PLC is a pick from WarLink's PLCs (F12), on the
+        // shared picker (slice 5).
+        page.click('root', { act: 'st-plc' });
+        pickerRow(page, 'pd-stpop', 'PLC_B');
         st('counter_tag_name', 'CountB');
         page.click('root', { act: 'st-toggle', st: 'counter_enabled' });
         page.click('root', { act: 'st-arm', arm: 'prompt' });
         page.click('root', { act: 'st-toggle', st: 'flow_composer_enabled' });
         page.click('root', { act: 'st-group' });
-        pickRow(page, 'pd-stpop', 'data-grpopt', 4);
+        pickerRow(page, 'pd-stpop', 4);
         page.click('root', { act: 'st-toggle', st: 'quality_hold_enabled' });
         page.click('root', { act: 'st-holddest' });
         await page.settle();
@@ -591,7 +609,7 @@ const DRIVE = {
         await page.settle();
         const mode = freeMode(page);
         page.click('root', { act: 'add-position' });
-        pickRow(page, 'pd-pop', 'data-freepos', 'POS_A11');
+        pickerRow(page, 'pd-pop', 'POS_A11');
         pickRow(page, 'pd-pop', 'data-freemode', mode);
         await page.settle();
     } },
@@ -815,12 +833,12 @@ const P0 = require('./p0-page.js');
     await actRouting();
     await actRecipe();
     await P0.run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, stSave, pickRow, typeSetting, decode, text,
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, stSave, pickRow, pickerRow, pickRecipe, typeSetting, decode, text,
         bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
     });
     await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, stSave, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
     await require('./cold-start.js').run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, typeSetting, decode, text,
+        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, pickerRow, typeSetting, decode, text,
         setCurrent: n => { CURRENT = n; }, SEEN,
     });
     await require('./s4-table.js').run({ out, openPage, pickRow, pickChip });

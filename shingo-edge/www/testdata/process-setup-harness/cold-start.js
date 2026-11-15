@@ -47,7 +47,8 @@ function stagingMode(page, node) {
 function addPosition(page, node, mode) {
     page.click('root', { act: 'add-position' });
     for (let i = 0; i < 2; i++) {
-        if (page.rows('pd-pop', 'data-freepos').length) T.pickRow(page, 'pd-pop', 'data-freepos', node);
+        const pop = page.byId('pd-pop');
+        if (pop && pop.querySelectorAll('.picker-row').length && !page.rows('pd-pop', 'data-freemode').length) T.pickerRow(page, 'pd-pop', node);
         else if (page.rows('pd-pop', 'data-freemode').length) T.pickRow(page, 'pd-pop', 'data-freemode', mode);
     }
 }
@@ -327,8 +328,8 @@ async function pinStyleFirst() {
             ' · fields ' + JSON.stringify(labels));
         const chooser = page.byId('pd-newrecipe');
         if (chooser) {
-            const first = (/<option value="([^"]*)"[^>]*>([^<]*)</.exec(chooser.innerHTML) || []);
-            L.push('  the chooser opens on ' + JSON.stringify(first[2] || '') + ' (value ' + JSON.stringify(first[1] || '') + ')');
+            const field = (sheet.querySelectorAll('input').find(el => el.getAttribute('data-f') === 'recipe') || {});
+            L.push('  the chooser opens on ' + JSON.stringify(String(chooser.innerHTML || '').replace(/<[^>]*>/g, '')) + ' (value ' + JSON.stringify(field.value || '') + ')');
         }
     }
 }

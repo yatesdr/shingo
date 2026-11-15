@@ -440,12 +440,17 @@ const countedAdd = nodes => async page => {
 const countedAt = (node, value) => async page => {
     await countedAdd([node])(page);
     if (value === undefined) return;
-    const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === String(node));
-    if (!sel) throw new Error('Settings draws no Counted at for ' + node);
-    sel.value = value;
-    page.fire(sel, 'change');
-    await page.settle();
+    await pickCounter(page, node, value);
 };
+// A Counted at row's counter is the shared picker (slice 5): its button, then
+// the counter's row.
+async function pickCounter(page, node, value) {
+    const btn = page.root.querySelectorAll('[data-act="ca-pick"]').find(el => el.dataset.node === String(node));
+    if (!btn) throw new Error('Settings draws no Counted at for ' + node);
+    page.click('root', { act: 'ca-pick', node: String(node) });
+    T.pickerRow(page, 'pd-stpop', value);
+    await page.settle();
+}
 // Save is the shared settings page's bar (shared/settings.js): its own button.
 const saveSettings = async page => {
     const b = page.root.querySelector('[data-set="save"]');
@@ -484,11 +489,7 @@ Object.assign(D, {
     // 2026-11-14: one pick, one counter). One save, one write.
     scCountedAtTwoOfTwo: { hash: '#tab=settings', extra: TWO_COUNTER_ROUTES, drive: async page => {
         await countedAdd([201, 202])(page);
-        const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === '201');
-        if (!sel) throw new Error('Settings draws no Counted at for 201');
-        sel.value = '52';
-        page.fire(sel, 'change');
-        await page.settle();
+        await pickCounter(page, 201, '52');
         await saveSettings(page);
     } },
     scDelete: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
@@ -953,9 +954,7 @@ async function pinSheetStack() {
     {
         const page = await open();
         page.click('root', { act: 'new-style' });
-        const chooser = page.byId('pd-newrecipe');
-        chooser.value = '7';
-        page.fire(chooser, 'change');
+        T.pickRecipe(page, '7');
         await page.settle();
         const S = page.S;
         const rows = ['New style, Recipe One picked: ' + stackFacts(page) + '; S.newStyle ' + (S.newStyle ? 'set' : 'null')];

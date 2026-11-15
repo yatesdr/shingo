@@ -1958,20 +1958,13 @@ function stationNames() {
         .map(p => p.core_node_name);
 }
 
-// openGroupPick lists `names` in the page's popover and runs `pick` on one.
+// openGroupPick is the shared picker over `names` in the page's popover; a
+// pick runs `pick` on it.
 function openGroupPick(btn, title, names, empty, pick) {
     const pop = $('pd-pop');
     if (!pop) return;
-    pop.innerHTML = '<div class="pd-lbl">' + esc(title) + '</div>' + (names.length
-        ? names.map((n, i) => '<button data-opt="' + i + '">' + esc(n) + '</button>').join('')
-        : '<div class="none">' + esc(empty) + '</div>');
-    showPop(pop, btn);
-    placePopover(pop, btn);
-    pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => {
-        const n = names[Number(b.dataset.opt)];
-        closePop();
-        pick(n);
-    }));
+    openRowPicker(pop, btn, names.map(n => ({ value: n, label: n })), pick,
+        { head: esc(title), empty: empty, placeholder: 'find a position' });
 }
 
 // + Add a press spot: a picker over the station's positions no group holds
@@ -3191,6 +3184,22 @@ function openPicker(btn) {
     // picker below silently offering a single `none` where the station says
     // why. The note is keyed on the options that carry a VALUE.
     const note = opts.some(o => o.value) ? '' : pickerEmptyWord(kind);
+    // A NODE CHIP IS THE SHARED PICKER (slice 5): a search over the model's own
+    // choices, the one on marked, what another position already takes said on
+    // its row. Role and swap mode stay the menus below: two to four answers,
+    // each with its word (style guide 33, rule 6). An empty list keeps its
+    // reason and its Add and use, below.
+    if (!note && kind !== 'role' && kind !== 'mode') {
+        const choices = opts.filter(o => !o.note);
+        openRowPicker(pop, btn, choices.map((o, i) => ({
+            value: String(i), label: o.label, note: o.use ? 'used by ' + o.use : o.where || '',
+        })), v => apply(choices[Number(v)].action), {
+            placeholder: 'find a node',
+            selected: String(choices.findIndex(o => o.on)),
+            head: opts.filter(o => o.note).map(o => esc(o.note)).join(' · '),
+        });
+        return;
+    }
     // An option with a `note` is a line of text, not a choice; `use` marks a
     // choice another position already takes, without disabling it, and
     // `where` says where a choice that is not a routing row stands.
@@ -4790,6 +4799,13 @@ function onScrimClick(e) {
         if (act && act.dataset.act === 'nmove-rm') { e.stopPropagation(); undoNewMove(act.dataset.node); return; }
     }
     if (act && act.dataset.act === 'newstyle-parts') { e.stopPropagation(); closeSheet(); void openSettingsAt('Parts'); return; }
+    if (act && act.dataset.act === 'newstyle-screens') {
+        e.stopPropagation();
+        closeSheet();
+        void openSettingsAt('Screens and positions');
+        return;
+    }
+    if (act && act.dataset.act === 'newstyle-recipe') { e.stopPropagation(); openNewRecipePick(act); return; }
     if (act && act.dataset.act === 'add-pickgroup') {
         e.stopPropagation();
         openGroupPicker(act, id => {
@@ -4872,7 +4888,9 @@ function loaderGapsHere() {
     const owns = gaps.some(g => g.process_id === pid);
     const claims = ((S.composer && S.composer.styles) || []).some(st =>
         (st.claims || []).some(c => c.swap_mode === 'manual_swap'));
-    const empty = !stationsOf(pid).some(st => (S.stationNodes[String(st.id)] || []).length);
+    // Positions on no screen are positions: such a process is not empty.
+    const empty = !stationsOf(pid).some(st => (S.stationNodes[String(st.id)] || []).length) &&
+        !loosePositions().length;
     if (!(owns || claims || empty)) return null;
     return gaps.filter(g => !g.process_id || g.process_id === pid);
 }
@@ -5904,12 +5922,22 @@ function counterName(c) { return window.StationCard ? window.StationCard.nameOf(
 
 function countedAtField(n) {
     const at = S.counted[n.id] || 0;
-    const opts = (at === -1 ? '<option value="-1" selected disabled>Choose a counter</option>' : '') +
-        '<option value="0"' + (at === 0 ? ' selected' : '') + '>Production counter</option>' +
-        (S.stationCounters || []).map(c => '<option value="' + c.id + '"' + (at === c.id ? ' selected' : '') + '>' +
-            esc(counterName(c)) + '</option>').join('') +
-        '<option value="new">New station counter…</option>';
-    return '<select class="pd-inp" data-countedat="' + n.id + '">' + opts + '</select>';
+    const c = (S.stationCounters || []).find(x => x.id === at);
+    const label = at === -1 ? 'Choose a counter' : at === 0 ? 'Production counter' : c ? counterName(c) : 'Production counter';
+    return '<button class="pd-sel' + (at === -1 ? ' bad' : '') + '" data-act="ca-pick" data-node="' + n.id + '">' +
+        esc(label) + '<i class="car"></i></button>';
+}
+
+// openCountedPick is a Counted at row's counter, on the shared picker: the
+// production counter, one of the process's station counters, or a new one.
+function openCountedPick(btn, nodeID) {
+    const pop = $('pd-stpop');
+    if (!pop) return;
+    const rows = [{ value: '0', label: 'Production counter' }]
+        .concat((S.stationCounters || []).map(c => ({ value: String(c.id), label: counterName(c) })))
+        .concat([{ value: 'new', label: 'New station counter…' }]);
+    openRowPicker(pop, btn, rows, v => setCountedAt(nodeID, v, true),
+        { selected: String(S.counted[nodeID] || 0), placeholder: 'find a counter' });
 }
 
 // ── Settings · Position settings ─────────────────────────────────────────────
@@ -6010,21 +6038,38 @@ function positionFacts(nodes) {
 // list opened by a pick (Set for this style's position, after the setting) was
 // closed by the press that picked. Its clicks stop at the list while it is
 // open.
+//
+// opts: multi, placeholder, selected (the value(s) on as it opens), head (a
+// line above the list, already escaped: what is being picked, or why a list is
+// short), empty (the line when nothing is offered or matches).
 function openRowPicker(pop, btn, rows, onPick, opts) {
     const o = opts || {};
-    pop.innerHTML = '';
+    pop.innerHTML = o.head ? '<div class="pd-lbl">' + o.head + '</div>' : '';
+    // The shell replaces its host's content, so a heading needs a host of its own.
+    const host = o.head ? pop.appendChild(document.createElement('div')) : pop;
     let picked = [];
-    const inside = e => e.stopPropagation();
+    // THE PRESS THAT PICKS IS STILL INSIDE when the list closes under it: a
+    // pick that opens the next popover (+ Add a position's mode menu) had its
+    // press reach the document's closer, which shut the new menu at once,
+    // because this listener went with the list. It stays for that press and
+    // goes with it; a list closed any other way takes it at once.
+    let state = 'open';
+    const inside = e => {
+        if (state !== 'closed') e.stopPropagation();
+        if (state !== 'open') pop.removeEventListener('click', inside);
+    };
     pop.addEventListener('click', inside);
     openLayer(pop, { kind: 'popover', anchor: btn, focus: false, onClose: w => {
-        pop.removeEventListener('click', inside);
+        if (state === 'open') { state = 'closed'; pop.removeEventListener('click', inside); }
         if (w !== 'close') closePop();
         if (o.multi && picked.length) onPick(picked.slice());
     } });
-    mountPicker(pop, null, () => rows, {
+    mountPicker(host, null, () => rows, {
         multi: !!o.multi, open: true, chips: false, placeholder: o.placeholder || '',
+        selected: o.selected, empty: o.empty ? () => o.empty : undefined,
         onChange: v => {
             if (o.multi) { picked = v.slice(); return; }
+            state = 'picked';
             closeLayer(pop);
             pop.hidden = true;
             pop.innerHTML = '';
@@ -6108,11 +6153,25 @@ function keepDraft(fresh, was) {
 function plcPick() {
     const cur = S.settings.counter_plc_name || '';
     if (!Array.isArray(S._plcList)) return stText('counter_plc_name');
+    const known = S._plcList.find(p => p.name === cur);
+    // The pick is the shared picker (openPLCPick); the hidden field carries
+    // the value the Tag's typeahead keys on ([data-st="counter_plc_name"]).
+    return '<button class="pd-sel" data-act="st-plc">' + esc(cur ? cur + (known ? '' : ' · not reported by WarLink') : 'none') +
+        '<i class="car"></i></button><input type="hidden" data-st="counter_plc_name" value="' + esc(cur) + '">';
+}
+
+function openPLCPick(btn) {
+    const pop = $('pd-stpop');
+    if (!pop || !Array.isArray(S._plcList)) return;
+    const cur = S.settings.counter_plc_name || '';
     const plcs = S._plcList.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    const opt = (v, text) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(text) + '</option>';
-    return '<select class="pd-inp" data-st="counter_plc_name">' + opt('', 'none') +
-        (cur && !plcs.some(p => p.name === cur) ? opt(cur, cur + ' · not reported by WarLink') : '') +
-        plcs.map(p => opt(p.name, p.name + (p.connected ? ' · connected' : ' · not connected'))).join('') + '</select>';
+    const rows = [{ value: '-', label: 'none' }]
+        .concat(cur && !plcs.some(p => p.name === cur) ? [{ value: cur, label: cur, note: 'not reported by WarLink' }] : [])
+        .concat(plcs.map(p => ({ value: p.name, label: p.name, note: p.connected ? 'connected' : 'not connected' })));
+    openRowPicker(pop, btn, rows, v => {
+        S.settings.counter_plc_name = v === '-' ? '' : v;
+        drawSettings();
+    }, { selected: cur || '-', placeholder: 'find a PLC' });
 }
 
 // loadPLCs reads WarLink's PLCs once per page for the PLC pick; a failed read
@@ -6296,9 +6355,6 @@ function drawSettings() {
     }
     for (const el of body.querySelectorAll('input[data-cn]')) {
         el.addEventListener('input', () => { S.curtain[el.dataset.cn][el.dataset.cf] = el.value; });
-    }
-    for (const el of body.querySelectorAll('select[data-countedat]')) {
-        el.addEventListener('change', () => setCountedAt(Number(el.dataset.countedat), el.value, true));
     }
     bindPickers();
     bindCombos(body);
@@ -7128,28 +7184,16 @@ function rebuildStaleFlow() {
 // runs, over the same card, opened where the cell last ran the recipe
 // (last_moves). The mint sends the moves as overrides — the station's own
 // mintBody bytes, with the node the desktop names for each part.
+//
+// A STYLE FROM A RECIPE IS MADE AT A SCREEN: flow/mint is the station's door
+// and refuses a process with none. With no screen the sheet says so, with the
+// way to one, where the recipe chooser would be; drawing by hand still works
+// (flow/save takes no screen).
 function openNewStyle(recipeID, sel) {
     const presets = S.composer.presets || [];
     const palette = S.composer.palette || [];
-    const recipeOpts = '<option value="">— none, draw it —</option>' +
-        presets.map(p => '<option value="' + esc(p.id) + '"' + (String(p.id) === String(recipeID || '') ? ' selected' : '') +
-            '>' + esc(p.name) + (p.where ? ' · ' + esc(p.where) : '') + '</option>').join('');
-    const slotsHTML = id => {
-        const p = presets.find(x => String(x.id) === String(id));
-        if (!p) return '';
-        const opts = '<option value="">pick a part</option>' +
-            palette.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
-        // A GROUPED RECIPE ASKS FOR EACH PART BY ITS GROUP'S NAME, as the
-        // floor does (SYNTH row 11).
-        const group = s => (p.groups || []).find(g => g.of === s.nodes[0]);
-        return (p.slots || []).map((s, i) =>
-            '<div class="pd-fld"><label>' + esc(group(s) ? group(s).name + ' part' : s.nodes.join(' / ')) +
-            '<small>' + esc(group(s) ? s.nodes.join(' / ') + ' · ' + s.role : s.role) + '</small></label>' +
-            '<div class="v"><select class="pd-inp wide" data-f="slot' + i + '" data-node="' + esc(s.nodes[0]) + '">' +
-            opts + '</select></div></div>').join('') +
-            (palette.length ? '' : '<p class="pd-note">This process has no parts yet — add them in Settings › ' +
-                'Parts this process runs.</p>');
-    };
+    const atScreen = stationsOf(S.processID).length > 0;
+    const recipe = atScreen ? presets.find(p => String(p.id) === String(recipeID || '')) : null;
     S.newStyle = null;
     // THE NAME IS A PART OF THIS PROCESS'S PART SET (HOP, 2026-11-12). A style
     // is a part, and the part set is what this process runs, so with no recipe
@@ -7176,10 +7220,14 @@ function openNewStyle(recipeID, sel) {
     // on the Styles tab. "Start from a recipe" is there only when the process
     // has one to start from.
     pageSheet('New style', 'a part this process runs: name it, then draw its flow.',
-        (presets.length
+        (!presets.length ? '' : atScreen
             ? '<div class="pd-fld"><label>Start from a recipe<small>optional: its spots, with a part on each</small></label>' +
-            '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>'
-            : '') +
+            '<div class="v"><button class="pd-sel wide" data-act="newstyle-recipe" id="pd-newrecipe">' +
+            esc(recipe ? recipe.name : NO_RECIPE) + '<i class="car"></i></button>' +
+            '<input type="hidden" data-f="recipe" value="' + esc(recipe ? recipe.id : '') + '"></div></div>'
+            : '<p class="pd-note">A style from a recipe is made at a screen, and this process has none. ' +
+            '<button class="pd-dimlink" data-act="newstyle-screens">Add one in Settings › Screens and positions</button>' +
+            ', or draw this style by hand.</p>') +
         '<div id="pd-newslots"></div>' +
         '<div id="pd-newspots"></div>' +
         '<div id="pd-newname">' + nameField + '</div>' +
@@ -7199,23 +7247,69 @@ function openNewStyle(recipeID, sel) {
             S.styleID = Number(bodyOf(made).id) || S.styleID;
             await refreshProcess();
         }, false);
-    const pick = id => {
-        const slots = $('pd-newslots');
-        if (slots) slots.innerHTML = slotsHTML(id);
-        // A recipe names the style (R-D); the name field is the one-off's.
-        const name = $('pd-newname');
-        if (name) name.hidden = !!id;
-        startNewSpots(id);
-    };
-    const chooser = $('pd-newrecipe');
-    if (chooser) chooser.addEventListener('change', () => pick(chooser.value));
-    if (recipeID) {
-        pick(String(recipeID));
+    if (recipe) {
+        pickNewRecipe(String(recipe.id));
         if (sel && S.newStyle) {
             const card = recipeCard(S.newStyle.recipe);
             if ((card.spots || []).some(s => s.node === sel)) { S.newStyle.sel = sel; drawNewSpots(); } else tapNewSpot(sel);
         }
     }
+}
+
+const NO_RECIPE = 'none, draw it';
+
+// openNewRecipePick is New style's "Start from a recipe", on the shared
+// picker: none, or one of the cell's recipes, said with where it runs.
+function openNewRecipePick(btn) {
+    const pop = $('pd-advpop');
+    if (!pop) return;
+    const rows = [{ value: '-', label: NO_RECIPE }].concat((S.composer.presets || []).map(p =>
+        ({ value: String(p.id), label: p.name, note: p.where || '' })));
+    openRowPicker(pop, btn, rows, v => pickNewRecipe(v === '-' ? '' : v),
+        { selected: String(sheetValue('recipe') || '-'), placeholder: 'find a recipe' });
+}
+
+// pickNewRecipe sets the sheet to start from recipe id ('' for none): its
+// button and field, a part picker per slot, the name field hidden (a recipe
+// names the style, R-D), and the Spots step.
+function pickNewRecipe(id) {
+    const p = (S.composer.presets || []).find(x => String(x.id) === String(id));
+    const field = sheetEl().querySelector('[data-f="recipe"]');
+    if (field) field.value = p ? String(p.id) : '';
+    const btn = $('pd-newrecipe');
+    if (btn) btn.innerHTML = esc(p ? p.name : NO_RECIPE) + '<i class="car"></i>';
+    const slots = $('pd-newslots');
+    if (slots) { slots.innerHTML = newSlotsHTML(p); bindPickers(); }
+    const name = $('pd-newname');
+    if (name) name.hidden = !!p;
+    startNewSpots(p ? String(p.id) : '');
+}
+
+// newSlotsHTML is a recipe's slots, each a part picker over the process's part
+// set (the one Name's is); the hidden field beside it is what Create reads.
+// A GROUPED RECIPE ASKS FOR EACH PART BY ITS GROUP'S NAME, as the floor does
+// (SYNTH row 11).
+function newSlotsHTML(p) {
+    for (const k of Object.keys(S.pickers)) if (/^nslot\d+$/.test(k)) dropPicker(k);
+    if (!p) return '';
+    const palette = S.composer.palette || [];
+    const group = s => (p.groups || []).find(g => g.of === s.nodes[0]);
+    return (p.slots || []).map((s, i) => {
+        const key = 'nslot' + i;
+        pickerInit(key, {
+            source: 'payloads', single: true, allowed: palette, placeholder: 'pick a part',
+            onChange: () => {
+                const el = sheetEl().querySelector('[data-f="slot' + i + '"]');
+                if (el) el.value = pickerValue(key)[0] || '';
+            },
+        });
+        return '<div class="pd-fld"><label>' + esc(group(s) ? group(s).name + ' part' : s.nodes.join(' / ')) +
+            '<small>' + esc(group(s) ? s.nodes.join(' / ') + ' · ' + s.role : s.role) + '</small></label>' +
+            '<div class="v">' + pickerBox(key) +
+            '<input type="hidden" data-f="slot' + i + '" data-node="' + esc(s.nodes[0]) + '" value=""></div></div>';
+    }).join('') +
+        (palette.length ? '' : '<p class="pd-note">This process has no parts yet — add them in Settings › ' +
+            'Parts this process runs.</p>');
 }
 
 // The frame a sheet's picture is drawn into: the sheet's 732 less its body's
@@ -7480,23 +7574,10 @@ function addFreePosition(btn) {
     if (free.length === 1) { pickFreeMode(btn, free[0], mode); return; }
     const pop = $('pd-pop');
     if (!pop) return;
-    pop.innerHTML = '<div class="pd-lbl">Add a position</div>' +
-        free.map(n => '<button data-freepos="' + esc(n) + '">' + esc(n) + '</button>').join('');
-    showPop(pop, btn);
-    // The footer sits at the foot of the page, so this one always opens
-    // upwards — placePopover reaches the same answer from the room it
-    // measures, and caps the height so a press with many free positions still
-    // fits on the screen.
-    placePopover(pop, btn);
-    // The click is stopped here: the mode menu replaces this one, so the
-    // button is gone from #pd-pop by the time the document's outside-click
-    // closer sees it, and it would close the menu it just opened.
-    pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', e => {
-        e.stopPropagation();
-        const node = b.dataset.freepos;
-        closePop();
-        pickFreeMode(btn, node, mode);
-    }));
+    // The shared picker; its press stops at the list (openRowPicker), so the
+    // mode menu that replaces it is not closed by the press that picked.
+    openRowPicker(pop, btn, free.map(n => ({ value: n, label: n })), node => pickFreeMode(btn, node, mode),
+        { head: 'Add a position', placeholder: 'find a position' });
 }
 
 // THE MODE MENU CARRIES THE CARDS' OWN WORDS (F25): the mode's name, and
@@ -7792,25 +7873,20 @@ async function openContainmentPicker(btn) {
     placePopover(pop, btn);
 }
 
-function openGroupPicker(btn, onPick) {    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
+// openGroupPicker is the process's group, on the shared picker: Settings'
+// Line, or Add process (onPick).
+function openGroupPicker(btn, onPick) {
+    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
     const pop = inSheet ? $('pd-advpop') : $('pd-stpop');
     if (!pop) return;
     const current = onPick ? (S.add ? S.add.groupID : 0) : S.settings.group_id;
-    const opts = [{ id: 0, name: 'Ungrouped' }].concat(S.groups);
-    pop.innerHTML = opts.map(g => '<button data-grpopt="' + g.id + '" class="' +
-        (current === g.id ? 'on' : '') + '">' + esc(g.name) + '</button>').join('');
-    showPop(pop, btn);
-    placePopover(pop, btn);
-    pop.querySelectorAll('[data-grpopt]').forEach(b => b.addEventListener('click', ev => {
-        ev.stopPropagation();
-        closeLayer(pop);
-        pop.hidden = true;
-        pop.innerHTML = '';
-        const id = Number(b.dataset.grpopt);
+    const rows = [{ id: 0, name: 'Ungrouped' }].concat(S.groups).map(g => ({ value: String(g.id), label: g.name }));
+    openRowPicker(pop, btn, rows, v => {
+        const id = Number(v);
         if (onPick) { onPick(id); return; }
         S.settings.group_id = id;
         drawSettings();
-    }));
+    }, { selected: String(current || 0), placeholder: 'find a group' });
 }
 
 function openDeleteProcess() {
@@ -8090,13 +8166,12 @@ function openUsePreset(btn) {
     if (!presets.length) {
         pop.innerHTML = '<div class="none">This cell has no recipes yet. Build one from + New recipe ' +
             'in the rail, or save a style as one — Save as recipe….</div>';
-    } else {
-        pop.innerHTML = presets.map(p =>
-            '<button data-act="use-preset-pick" data-preset="' + esc(p.id) + '">' +
-            esc(p.name) + (p.where ? '<small>' + esc(p.where) + '</small>' : '') + '</button>').join('');
+        showPop(pop, btn);
+        placePopover(pop, btn);
+        return;
     }
-    showPop(pop, btn);
-    placePopover(pop, btn);
+    openRowPicker(pop, btn, presets.map(p => ({ value: String(p.id), label: p.name, note: p.where || '' })),
+        id => usePreset(id), { placeholder: 'find a recipe' });
 }
 
 // usePreset applies a shape to the OPEN draft, after showing what it would
@@ -8790,7 +8865,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1 };
+    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
 // Styles. The Recipes tab's hash still says presets (F23); recipes names it
@@ -8942,6 +9017,8 @@ function onClick(e) {
             }
             case 'ca-add': void openCountedAdd(btn); return;
             case 'ca-off': setCountedAt(Number(btn.dataset.node), '0'); return;
+            case 'ca-pick': openCountedPick(btn, Number(btn.dataset.node)); return;
+            case 'st-plc': openPLCPick(btn); return;
             case 'cu-val': {
                 const d = S.curtain[btn.dataset.node];
                 if (d) d.safe = btn.dataset.val === 'true';
@@ -8993,7 +9070,6 @@ function onClick(e) {
             // D6's own actions.
             case 'preset-menu': openPresetMenu(btn); return;
             case 'use-preset': openUsePreset(btn); return;
-            case 'use-preset-pick': closePop(); usePreset(btn.dataset.preset); return;
             case 'preset-apply': closePop(); openPresetApply(Number(btn.dataset.preset)); return;
             case 'preset-archive': {
                 closePop();

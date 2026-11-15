@@ -79,5 +79,13 @@ ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
+## slice 5: a process whose positions are all on no screen is not an empty one to a loader
+ok   positions on no screen: no loader block
+ok   no position at all: the block offers the loader
+
+## slice 5: New style on a process with no screen says a recipe style is made at one
+ok   no recipe chooser
+ok   the line says why, and goes to Screens and positions
+
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
 ok   no refusal block leaves the page silent

@@ -479,7 +479,7 @@ block({
         await page.settle();
         // The save's outcome is the shared bar's (shared/settings.js).
         const first = page.S.stShell.page.state.refusal;
-        const rows = page.root.querySelectorAll('select[data-countedat]').length;
+        const rows = page.root.querySelectorAll('[data-act="ca-pick"]').length;
         const from = page.mark();
         (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
         await page.settle();
@@ -517,6 +517,47 @@ function silentRefusals() {
     }
     return out;
 }
+
+// SLICE 5, ruling 8. A process whose positions are all on no screen is not an
+// empty process: the loader block (made for an empty one, a loader's board
+// being made on it) said "Every loader … has a screen. Nothing to bind." there.
+block({
+    title: 'slice 5: a process whose positions are all on no screen is not an empty one to a loader',
+    open: () => ({ page: withPage(() => ({ stations: [] })) }),
+    act: async page => {
+        const S = page.S;
+        S.loaderGaps = [{ loader: 'LDR_9', process_id: 0 }];
+        S.curtainNodes = [{ id: 901, process_id: S.processID, core_node_name: 'POS_A1', operator_station_id: null }];
+        const loose = page.pd('loaderGapsHere')();
+        S.curtainNodes = [];
+        const empty = page.pd('loaderGapsHere')();
+        return { loose: loose, empty: empty };
+    },
+    checks: [
+        r => ['positions on no screen: no loader block', r.loose === null, 'gaps ' + JSON.stringify(r.loose)],
+        r => ['no position at all: the block offers the loader', Array.isArray(r.empty) && r.empty.length === 1,
+            'gaps ' + JSON.stringify(r.empty)],
+    ],
+});
+// A style from a recipe is minted at a screen (flow/mint is the station's
+// door): with none, New style says so where the chooser would be, and links
+// to where one is added.
+block({
+    title: 'slice 5: New style on a process with no screen says a recipe style is made at one',
+    open: () => ({ page: withPage(() => ({ stations: [] })) }),
+    act: async page => {
+        page.click('root', { act: 'new-style' });
+        await page.settle();
+        const body = page.scrim.querySelector('.layer-body');
+        return { html: String(body ? body.innerHTML : '') };
+    },
+    checks: [
+        r => ['no recipe chooser', r.html.indexOf('data-act="newstyle-recipe"') < 0, 'drawn'],
+        r => ['the line says why, and goes to Screens and positions',
+            r.html.indexOf('A style from a recipe is made at a screen') >= 0 && r.html.indexOf('data-act="newstyle-screens"') >= 0,
+            r.html.slice(0, 300)],
+    ],
+});
 
 async function run(t) {
     T = t;

@@ -325,6 +325,30 @@ const pk = {
 // cannot find one in the markup string the page wrote (extraIds).
 function pickerHost(id) { const e = madeElement('div'); e.setAttribute('id', id); return e; }
 
+// popRows is the shared picker a popover holds, as rows: { el, value, label,
+// note, on, off }. THE LAST ONE DRAWN: this harness's popover keeps the
+// children an innerHTML write would drop in a browser, so an earlier picker
+// can still be in it (slice 5: every chooser on the page is the shared picker).
+function popRows(pop) {
+    const pickers = findIn(pop, '.picker');
+    const p = pickers[pickers.length - 1];
+    if (!p) return [];
+    return findIn(p, '.picker-row').map(r => ({
+        el: r, value: r.getAttribute('data-value'),
+        label: (findIn(r, '.picker-label')[0] || r).textContent,
+        note: (findIn(r, '.picker-note, .picker-why')[0] || {}).textContent || '',
+        on: r.classList.contains('is-on'), off: r.classList.contains('is-off'),
+    }));
+}
+// popPick presses the row labelled `label` of the popover's picker.
+function popPick(pop, label) {
+    const r = popRows(pop).find(x => x.label === label);
+    if (!r) throw new Error('the popover\'s picker has no row ' + JSON.stringify(label) + ': ' + popRows(pop).map(x => x.label).join(', '));
+    r.el.click();
+}
+// popWords is the rows as "label · note", the on one marked *.
+const popWords = pop => popRows(pop).map(r => (r.on ? '*' : '') + r.label + (r.note ? ' · ' + r.note : '')).join(' | ');
+
 // sheetParts is the open sheet, for a pin: its element (the layer's shell on
 // the body, else #pd-scrim, where Advanced and the apply modal draw), whether
 // one is open, its status line, and its OK pressed as an engineer presses it
@@ -708,7 +732,8 @@ async function mainAsync() {
             throw new Error('the popover is hidden after the click — the document-level closer ' +
                 'hid it before paint, because the act does not stop the event');
         }
-        if (!/use-preset-pick/.test(pop.innerHTML) || !/Two up/.test(pop.innerHTML)) {
+        // The recipes are the shared picker's rows (slice 5), one per recipe.
+        if (!/class="picker-row"/.test(pop.innerHTML) || !/Two up/.test(pop.innerHTML)) {
             throw new Error('the popover does not name the cell\'s presets: ' + pop.innerHTML);
         }
         checks++;
@@ -1609,11 +1634,12 @@ async function mainAsync() {
         add.dataset.act = 'add-position';
         main.appendChild(add);
         bubble(add, 'click', doc);
-        if (pop.hidden !== false || !made['freepos=PLN_02']) {
+        // The free positions are the shared picker's rows (slice 5).
+        if (pop.hidden !== false || !popRows(pop).some(r => r.label === 'PLN_02')) {
             throw new Error('a style with no rows: "+ Add a position" offered no position to start from; pop ' +
                 JSON.stringify(pop.innerHTML.slice(0, 160)));
         }
-        bubble(made['freepos=PLN_02'], 'click', doc);
+        popPick(pop, 'PLN_02');
         if (pop.hidden !== false || pop.innerHTML.indexOf('data-freemode="single_robot"') < 0 || !made['freemode=single_robot']) {
             throw new Error('after the position, the choreographies were not offered: ' + pop.innerHTML.slice(0, 200));
         }
@@ -1704,10 +1730,10 @@ async function mainAsync() {
             throw new Error('+ New recipe read more than the composer: ' + JSON.stringify(ctx.urls));
         }
         act('add-position');
-        if (pop.hidden !== false || !made['freepos=PLN_01']) {
+        if (pop.hidden !== false || !popRows(pop).some(r => r.label === 'PLN_01')) {
             throw new Error('the empty draft\'s first "+ Add a position" did not offer the positions: ' + pop.innerHTML.slice(0, 200));
         }
-        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        popPick(pop, 'PLN_01');
         if (pop.hidden !== false || !made['freemode=two_robot']) {
             throw new Error('the empty draft\'s first position did not then offer the modes: ' + pop.innerHTML.slice(0, 200));
         }
@@ -1720,8 +1746,7 @@ async function mainAsync() {
         }
         for (const k of Object.keys(made)) delete made[k];
         act('add-position');
-        if (pop.hidden !== false || Object.keys(made).some(k => k.indexOf('freemode=') === 0) ||
-            !Object.keys(made).some(k => k.indexOf('freepos=') === 0)) {
+        if (pop.hidden !== false || Object.keys(made).some(k => k.indexOf('freemode=') === 0) || !popRows(pop).length) {
             throw new Error('the next "+ Add a position" did not go straight to the positions: ' + pop.innerHTML.slice(0, 200));
         }
         checks++;
@@ -1759,8 +1784,8 @@ async function mainAsync() {
         act('new-recipe');
         for (let i = 0; i < 4; i++) await drain();
         act('add-position');
-        if (!made['freepos=PLN_01']) throw new Error('setup: the empty draft offered no positions');
-        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        if (!popRows(ctx.pop).some(r => r.label === 'PLN_01')) throw new Error('setup: the empty draft offered no positions');
+        popPick(ctx.pop, 'PLN_01');
         if (!made['freemode=two_robot']) throw new Error('setup: the empty draft offered no modes');
         bubble(made['freemode=two_robot'], 'click', ctx.doc);
         await drain();
@@ -1783,14 +1808,14 @@ async function mainAsync() {
         act('new-recipe');
         for (let i = 0; i < 4; i++) await drain();
         act('add-position');
-        bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        popPick(pop, 'PLN_01');
         bubble(made['freemode=single_robot'], 'click', ctx.doc);
         await drain();
         act('rmpos', { node: 'PLN_01' });
         await drain();
         for (const k of Object.keys(made)) delete made[k];
         act('add-position');
-        if (made['freepos=PLN_01']) bubble(made['freepos=PLN_01'], 'click', ctx.doc);
+        if (popRows(pop).some(r => r.label === 'PLN_01')) popPick(pop, 'PLN_01');
         if (pop.hidden !== false || !made['freemode=two_robot']) {
             throw new Error('a draft emptied by its rows\' × did not offer the modes again: ' +
                 JSON.stringify(pop.innerHTML.slice(0, 200)));
@@ -1961,19 +1986,19 @@ async function mainAsync() {
         });
         await drain();
         await drain();
-        const opts = wireOptions(pop);
         bubble(chip(main, 'PLN_01', 'col:staging:staging'), 'click', doc);
         if (pop.hidden !== false) throw new Error('a click on the staging chip did not open its menu');
-        const want = '<div class="none">required for 1‑Robot Swap</div>' +
-            '<button data-opt="1" class="">SLN_010<span class="use"> · used by PLN_02</span></button>' +
-            '<button data-opt="2" class="">SLN_011</button>';
-        if (pop.innerHTML !== want) {
+        // The shared picker (slice 5): the "required" line is its heading, a
+        // node another position uses says so on its row.
+        const head = (pop.innerHTML.match(/^<div class="pd-lbl">([^<]*)<\/div>/) || [])[1];
+        const want = 'SLN_010 · used by PLN_02 | SLN_011';
+        if (head !== 'required for 1‑Robot Swap' || popWords(pop) !== want) {
             throw new Error('the staging menu does not say "required" and mark the shared node:\n      got  ' +
-                pop.innerHTML + '\n      want ' + want);
+                JSON.stringify(head) + ' ' + popWords(pop) + '\n      want ' + want);
         }
         // Shared staging is a warning, never a refusal: the marked node is
         // still a choice, and choosing it sets it.
-        bubble(opts[0], 'click', doc);
+        popPick(pop, 'SLN_010');
         if (root.innerHTML.indexOf('data-node="PLN_01" data-kind="col:staging:staging" title="' + label(win, 'inbound_staging') + ' SLN_010">') < 0) {
             throw new Error('picking the shared staging node did not set it');
         }
@@ -1998,12 +2023,10 @@ async function mainAsync() {
         await drain();
         bubble(chip(main, 'PLN_01', 'col:staging:staging'), 'click', doc);
         if (pop.hidden !== false) throw new Error('a click on the staging chip did not open its menu');
-        const want = '<div class="none">required for 1‑Robot Swap</div>' +
-            '<button data-opt="1" class="">SLN_010<span class="use"> · used by PLN_02</span></button>' +
-            '<button data-opt="2" class="">SLN_011</button>';
-        if (pop.innerHTML !== want) {
+        const want = 'SLN_010 · used by PLN_02 | SLN_011';
+        if (popWords(pop) !== want) {
             throw new Error('the staging menu counts a field the mode forbids as a use:\n      got  ' +
-                pop.innerHTML + '\n      want ' + want);
+                popWords(pop) + '\n      want ' + want);
         }
         checks++;
         console.log('ok: a two-robot claim\'s forbidden outbound staging does not mark its node "used by"');
@@ -2497,20 +2520,20 @@ async function mainAsync() {
         ctx.main.appendChild(b);
         bubble(b, 'click', ctx.doc);
         if (ctx.pop.hidden !== false) throw new Error('a click on the key-route chip did not open its menu');
-        return ctx.pop.innerHTML;
+        return ctx.pop;
     };
 
     await pin('the key-route picker on an Edge with no plant map says so', async () => {
-        const got = await viaPop(null);
+        const got = (await viaPop(null)).innerHTML;
         const want = '<button data-opt="0" class="on">shortest way</button>' +
             '<div class="none">No plant map on this Edge yet</div>';
         if (got !== want) throw new Error('the key-route menu reads\n      got  ' + got + '\n      want ' + want);
     });
 
     await pin('the key-route picker on an Edge with a plant map offers its waypoints', async () => {
-        const got = await viaPop(plantMap());
-        const want = '<button data-opt="0" class="on">shortest way</button>' +
-            '<button data-opt="1" class="">LM1</button>';
+        // The shared picker (slice 5), the route on marked.
+        const got = popWords(await viaPop(plantMap()));
+        const want = '*shortest way | LM1';
         if (got !== want) throw new Error('the key-route menu reads\n      got  ' + got + '\n      want ' + want);
     });
 
@@ -3069,12 +3092,9 @@ async function recipeGroupPins(h) {
     };
     // Picks the option labelled `label` off the popover a click opened.
     const pickOption = (ctx, open, label) => {
-        const opts = wireOptions(ctx.pop);
         open();
-        const re = new RegExp('data-opt="(\\d+)"[^>]*>(?:<[^>]*>)*' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:<|$)');
-        const m = ctx.pop.innerHTML.match(re);
-        if (!m) throw new Error('setup: no option ' + label + ' in ' + ctx.pop.innerHTML);
-        bubble(opts.find(b => b.dataset.opt === m[1]), 'click', ctx.doc);
+        if (!popRows(ctx.pop).some(r => r.label === label)) throw new Error('setup: no option ' + label + ' in ' + popWords(ctx.pop));
+        popPick(ctx.pop, label);
     };
     const addSpot = (ctx, g, node) => pickOption(ctx, () => click(ctx.main, ctx.doc, { act: 'gspot-add', g: String(g) }), node);
     const setDest = (ctx, head, node) => pickOption(ctx, () => bubble(chip(ctx.main, head, 'dest'), 'click', ctx.doc), node);
@@ -3152,9 +3172,8 @@ async function recipeGroupPins(h) {
         await openRecipe(ctx);
         click(ctx.main, ctx.doc, { act: 'groups-setup' });
         await settle();
-        wireOptions(ctx.pop);
         click(ctx.main, ctx.doc, { act: 'gspot-add', g: '0' });
-        const offered = (ctx.pop.innerHTML.match(/data-opt="\d+"[^>]*>[^<]+/g) || []).map(s => s.replace(/.*>/, '')).join(' ');
+        const offered = popRows(ctx.pop).map(r => r.label).join(' ');
         if (offered !== 'PLN_009 PLN_010 PLN_011 PLN_012 PLN_013 PLN_014 PLN_015') {
             throw new Error('Left Hand offers ' + JSON.stringify(offered) + ' — want this station\'s positions no group holds');
         }
@@ -3165,10 +3184,10 @@ async function recipeGroupPins(h) {
         if (!row) throw new Error('no PLN_010 row in Left Hand: ' + plain(left));
         if (!/data-act="glist-rm"[^>]*data-v="PLN_005"/.test(row)) throw new Error('PLN_010\'s on-deck did not pre-fill PLN_005: ' + plain(row));
         if (!/data-act="gspot-rm"[^>]*data-node="PLN_010"/.test(row)) throw new Error('the added row cannot be taken out');
-        wireOptions(ctx.pop);
         click(ctx.main, ctx.doc, { act: 'gspot-add', g: '1' });
-        if (/>PLN_010</.test(ctx.pop.innerHTML) || />PLN_005</.test(ctx.pop.innerHTML)) {
-            throw new Error('Right Hand is offered a node Left Hand holds: ' + ctx.pop.innerHTML);
+        const right = popRows(ctx.pop).map(r => r.label);
+        if (right.includes('PLN_010') || right.includes('PLN_005')) {
+            throw new Error('Right Hand is offered a node Left Hand holds: ' + right.join(' '));
         }
     });
 
@@ -3671,7 +3690,8 @@ async function recipeGroupPins(h) {
     await pin('Use a recipe shows the shape on the relation picture', async () => {
         const ctx = p6Page(press6Composer(), { realPicture: true });
         await settle();
-        click(ctx.main, ctx.doc, { act: 'use-preset-pick', preset: '7' });
+        click(ctx.main, ctx.doc, { act: 'use-preset' });
+        popPick(ctx.pop, 'Two spot press index');
         if (!ctx.sheet().open) throw new Error('Use a recipe opened no sheet');
         if (ctx.sheet().el.innerHTML.indexOf('id="pd-usvg"') < 0) throw new Error('the Use sheet draws no picture');
         const o = ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1] || {};
