@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -12,13 +11,12 @@ import (
 	"shingoedge/store/processes"
 )
 
-// A PRESS WHOSE STYLES DISAGREE ABOUT WHO BRINGS ITS NEXT CARRIER IS SHOWN,
-// NEVER REFUSED (owner ruling 5). The setting describes the press's robots, so
-// a plant sets it the same on every style; a disagreement is an engineer who
-// edited one style and not the other. The preview carries a warning on the
-// press, the save goes through and its answer carries the same warning, and a
-// press whose styles agree carries none. It was a log line alone.
-func TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused(t *testing.T) {
+// TWO STYLES MAY BRING A PRESS ITS NEXT CARRIER WITH DIFFERENT ROBOTS
+// (owner, 2026-11-14: "thats the whole point of styles. it can change by
+// part"). The preview and the save said otherwise: a warning on the press,
+// "set it the same on every style". A press whose styles differ previews and
+// saves with no next-carrier finding at all.
+func TestFlow_TwoStylesMayDifferOnTheNextCarrier(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, err := db.CreateProcess("RB-PROC", "", "", "", false)
@@ -57,21 +55,19 @@ func TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused(t *testing.
 		}
 		return out
 	}
-	check := func(what string, fs []domain.NodeFinding) {
-		t.Helper()
-		got := refillWarnings(fs)
-		if len(got) != 1 || got[0].CoreNodeName != "RB-PRESS" || got[0].Severity != domain.SeverityWarning ||
-			!strings.Contains(got[0].Message, "RB-ALT says Robot 1") || !strings.Contains(got[0].Message, "Robot 2") {
-			t.Errorf("%s: refill findings = %+v, want one warning on RB-PRESS naming RB-ALT's Robot 1 against this style's Robot 2", what, got)
-		}
-	}
-
 	preview, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{ToStyleID: runStyle, Cells: cells})
 	testutil.MustNoErr(t, err, "preview")
-	check("the preview", preview.Findings)
-
-	res, err := eng.SaveFlow(processID, FlowSaveRequest{Source: domain.ClaimSourceAdmin, ToStyleID: runStyle, Cells: cells,
+	if got := refillWarnings(preview.Findings); len(got) != 0 {
+		t.Errorf("the preview: next-carrier findings %+v, want none: two styles may differ", got)
+	}
+	_, err = eng.SaveFlow(processID, FlowSaveRequest{Source: domain.ClaimSourceAdmin, ToStyleID: runStyle, Cells: cells,
 		Fingerprint: preview.Fingerprint, CalledBy: "engineer"})
 	testutil.MustNoErr(t, err, "the save goes through")
-	check("the save's answer", res.Notes)
+	claims, err := db.ListStyleNodeClaims(runStyle)
+	testutil.MustNoErr(t, err, "claims")
+	for _, c := range claims {
+		if c.CoreNodeName == "RB-PRESS" && c.RefillBy.OrDefault() != protocol.RefillByIndexRobot {
+			t.Errorf("RB-PRESS saved %q, want this style's Robot 2 kept", c.RefillBy)
+		}
+	}
 }

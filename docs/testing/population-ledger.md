@@ -1383,3 +1383,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### STALE — `TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused`
+- test: `TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused` · pkg `shingoedge/engine` · run `-run '^TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused$'` · `shingo-edge/engine/refill_by_disagreement_test.go:21` @ `aea6321d` · tags `none`
+- code: STALE (the behaviour it pinned is ruled wrong: which robot brings a press its next carrier may differ by style, owner 2026-11-14, "thats the whole point of styles. it can change by part". The warning it asserted, `domain.RefillByDisagreementFinding`, is deleted with its preview and save calls)
+- assertion map: rewritten as `TestFlow_TwoStylesMayDifferOnTheNextCarrier` (`shingo-edge/engine/refill_by_per_style_test.go:19`) on the same fixture: the preview of a press whose two styles differ carries no next-carrier finding, the save goes through, and the saved claim keeps this style's Robot 2. Red before the deletion (the warning was present), green after.
+- mutation: the new test was seen red at the base, with the deleted code in place.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

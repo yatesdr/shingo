@@ -609,7 +609,6 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// A WARNING, NOT A REFUSAL, and the direction matters: refusing would make
 	// the flag unsettable, because changing a press with four styles means
 	// four saves and the first three would each be refused by the other three.
-	warnRefillByDrift(db, in)
 
 	var existingID int64
 	var priorSpot, priorSource string
@@ -779,75 +778,6 @@ func modeArmViolation(in NodeClaimInput) error {
 		return fmt.Errorf("%s claims do not use %s; clear it", in.SwapMode, v.Field)
 	}
 	return nil
-}
-
-// warnRefillByDrift logs when this save would leave two styles on the same
-// press disagreeing about which robot brings the next carrier.
-//
-// Scoped to claims on the SAME core node in the same process, because that is
-// what "one press" means; two presses may legitimately differ.
-//
-// Silent on a caller with no opinion (nil) — an import or the compare grid is
-// not asserting anything about the hardware and must not be reported as if it
-// were.
-func warnRefillByDrift(db DBTX, in NodeClaimInput) {
-	if in.RefillBy == nil || in.CoreNodeName == "" {
-		return
-	}
-	want := in.RefillBy.OrDefault()
-	others, err := OtherStylesRefillBy(db, in.StyleID)
-	if err != nil {
-		// Cannot check is not a finding. Saying nothing is right here: the
-		// save proceeds either way and a warning we could not substantiate
-		// would be worse than none.
-		return
-	}
-	var disagree []string
-	for _, o := range others[in.CoreNodeName] {
-		if o.RefillBy != want {
-			disagree = append(disagree, o.Style)
-		}
-	}
-	if len(disagree) > 0 {
-		log.Printf("claim %s: refill_by=%s disagrees with style(s) %s on the same process. "+
-			"Which robot brings the next carrier is a fact about the cell, not about a style, "+
-			"so the process will choreograph differently depending on what it runs. "+
-			"Set it the same on every style for this node.",
-			in.CoreNodeName, want, strings.Join(disagree, ", "))
-	}
-}
-
-// OtherStylesRefillBy is, by core node, what every other live style of
-// styleID's process says about who brings the next carrier there, in
-// style-name order: one statement for the whole process, read by the save's
-// log line (warnRefillByDrift) and the editor's warning on a press whose
-// styles disagree (domain.RefillByDisagreementFinding).
-func OtherStylesRefillBy(db DBTX, styleID int64) (map[string][]domain.StyleRefillBy, error) {
-	rows, err := db.Query(`
-		SELECT c.core_node_name, s.name, c.refill_by
-		FROM style_node_claims c
-		JOIN styles s ON s.id = c.style_id
-		WHERE c.style_id != ?
-		  AND s.deleted_at IS NULL
-		  AND c.retired_at IS NULL
-		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)
-		ORDER BY s.name`,
-		styleID, styleID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]domain.StyleRefillBy{}
-	for rows.Next() {
-		var node string
-		var v domain.StyleRefillBy
-		if err := rows.Scan(&node, &v.Style, &v.RefillBy); err != nil {
-			return nil, err
-		}
-		v.RefillBy = v.RefillBy.OrDefault()
-		out[node] = append(out[node], v)
-	}
-	return out, rows.Err()
 }
 
 func updateClaim(db DBTX, id int64, in NodeClaimInput) error {

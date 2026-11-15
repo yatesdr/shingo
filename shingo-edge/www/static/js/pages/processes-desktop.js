@@ -9229,9 +9229,8 @@ async function previewApplyRow(styleID) {
     // happen is the modal offering a save the server refuses, so a row
     // still carrying a finding keeps its tick and stays out of the count
     // (applyRowReady), and the question it can answer it asks. A warning
-    // is not one: the server saves past it (a press whose styles disagree
-    // about which robot brings its next carrier), and the row's drawing
-    // shows it.
+    // is not one: the server saves past it (two positions staged at one
+    // spot), and the row's drawing shows it.
     row.findings = (j.findings || []).filter(f => f.core_node_name && f.severity !== 'warning');
     // NULL, NOT ZERO, when the body carried no count: a preview of the
     // running style is not planned (R3) and a zero there would read as a
