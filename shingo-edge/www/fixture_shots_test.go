@@ -187,9 +187,8 @@ const press6RecipeLine = "\"Two spot press index\" as SYNTH-round2 §2 writes it
 // The draft states' markers: a state counts as reached when the page shows
 // its marker, in the words the desktop's group editor draws.
 const (
-	draftCardsMarker    = "Add a press spot"     // the group cards (SYNTH row 9's chip)
-	draftAdvancedMarker = "Left Hand · Advanced" // the Advanced sheet's title, in Left Hand's scope
-	draftFloorMarker    = "Left Hand runs on"    // the "On the floor" block (SYNTH row 10)
+	draftCardsMarker = "Add a press spot"  // the group cards (SYNTH row 9's chip)
+	draftFloorMarker = "Left Hand runs on" // the "On the floor" block (SYNTH row 10)
 )
 
 func fixtureCells() []fixtureCell {
@@ -330,10 +329,9 @@ func press6Shots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 			desk+": `;focus=<group>`"),
 		draftShot(sc, press6RecipeName, "draft-row-PLN_010-1440", ";row=PLN_010", draftCardsMarker,
 			"desktop recipe draft, the PLN_010 row clicked (judged by eye)", "mock tab 1, the PLN_010 row clicked",
-			desk+": `;row=<node>`"),
-		draftShot(sc, press6RecipeName, "draft-advanced-left-hand-1440", ";gadv=Left%20Hand", draftAdvancedMarker,
-			"desktop recipe draft, the Advanced sheet in Left Hand's scope", "mock tab 1, Advanced · Edit… on Left Hand",
-			desk+": `;gadv=<group>` and the sheet in group scope"))
+			desk+": `;row=<node>`"))
+	// The Advanced sheet in a group's scope (;gadv=) went in slice 3: a
+	// group's settings are a list on its card, in draft-1440 itself.
 	floor := draftFrame(sc, press6RecipeName, "", draftFloorMarker)
 	floor.scroll = draftFloorMarker
 	specs = append(specs, pageShot(floor, "draft-floor-1440", "desktop recipe draft, scrolled to \"On the floor\" ("+floor.src+")",

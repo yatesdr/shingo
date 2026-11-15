@@ -9,8 +9,8 @@
 // that reach it (no golden: its line numbers move with every edit).
 //
 // WHAT THIS PINS IS WHAT THE PAGE DOES ON TOP OF THE MODEL: which options a
-// picker offers, what the positions table says in each cell, which Advanced
-// fields the sheet draws and counts, and the requests each setup act sends,
+// picker offers, what the positions table says in each cell, which settings
+// Set for this style offers and counts, and the requests each setup act sends,
 // in order. The model's own grid (rowColumns, advancedShows, advancedSet) and
 // desktop-bodies.js's builders are pinned on their own; this is the page's
 // use of them, so a rework that changes either the page or the model shows up
@@ -133,7 +133,7 @@ function tableRows(S) {
 }
 const modeRole = (S, n) => S.model.cells[n].mode + '/' + S.model.cells[n].role;
 
-// One position per (mode, role), in table order: the Advanced pins are per
+// One position per (mode, role), in table order: the settings pins are per
 // choreography, and a second position with the same pair says nothing new.
 function onePerModeRole(S) {
     const seen = new Set();
@@ -240,11 +240,11 @@ async function pinTable() {
     out['positions-table.txt'] = lines.join('\n') + '\n';
 }
 
-// ── 3 · the Advanced field set ───────────────────────────────────────────────
+// ── 3 · the settings a position or a group may set ───────────────────────────
 //
-// advShows(key) for every key ADV_SECTIONS draws, per (mode, role), in two
-// scopes — one position (the row's gear) and a recipe group of that position
-// (a group card's Advanced, over a one-group draft) — each with strict_pack
+// advShows(key) for every field the old Advanced sheet drew, per (mode, role),
+// in two scopes — one position (Set for this style) and a recipe group of that
+// position (its card's list, over a one-group draft) — each with strict_pack
 // off and on, which is the one key whose answer depends on another's value.
 //
 // THE GROUP SCOPE'S DRAFT IS SYNTHETIC: one group whose ★ cell is the row, laid
@@ -252,56 +252,64 @@ async function pinTable() {
 // recipe's slots, so it could not put every (mode, role) under the group
 // sheet; advShows reads only the group index, the ★ node and the model, which
 // this is.
+// THE KEYS ARE EVERY FIELD THE OLD ADVANCED SHEET DREW, in its order, so this
+// golden reads across the change: the sheet went in slice 3 and Set for this
+// style (and a group's list) offers by the same advShows. The carry-over and
+// the tolerance are second values now (of Tool change, of strict pack), and
+// board order is offered nowhere a stored claim can reach.
+const ADV_FIELDS = ['allowed_payload_codes', 'reorder_point', 'auto_reorder', 'lineside_soft_threshold',
+    'auto_request_payload', 'auto_push', 'keep_staged_node', 'evac_nodes', 'changeover_carryover_disposition',
+    'strict_pack', 'pack_tolerance_pct', 'partial_dest', 'refill_by', 'curtain_required', 'auto_confirm', 'sequence'];
+
 async function pinAdvanced() {
     const page = await openPage();
     const pd = page.pd, S = page.S;
-    const keys = pd('ADV_SECTIONS').reduce((all, s) => all.concat(s[1]), []);
-    const shows = ['# advShows(key) per scope × strict_pack × (mode/role) × key, in ADV_SECTIONS order.',
-        '# scope=position is the row\'s gear (openAdvanced); scope=group is a group card\'s Advanced',
-        '# (openGroupAdvanced) over a one-group draft whose ★ cell is that row (GROUP_ADV_KEYS applies).'];
+    const shows = ['# advShows(key) per scope × strict_pack × (mode/role) × key, in the old Advanced sheet\'s order.',
+        '# scope=position is a style\'s position (Set for this style, setCtx({node})); scope=group is a recipe',
+        '# group (its card\'s list, setCtx({g})) over a one-group draft whose ★ cell is that row (GROUP_ADV_KEYS applies).',
+        '# No position here marks a Tool change, so the carry-over (its second value) is hidden on every row.'];
     const scopes = [
-        ['position', n => page.click('root', { act: 'advanced', node: n })],
+        ['position', n => pd('setCtx')({ node: n })],
         ['group', n => {
             S.shapeDraft = { groups: [{ of: n, name: 'Group ' + n, spots: [] }], focus: null, hover: null, refusal: '' };
-            page.click('root', { act: 'gadv', g: '0' });
+            return pd('setCtx')({ g: 0 });
         }],
     ];
-    for (const [scope, openSheet] of scopes) {
+    for (const [scope, ctxOf] of scopes) {
         for (const strict of [false, true]) {
             for (const n of onePerModeRole(S)) {
-                openSheet(n);
-                if (!S.adv || S.adv.node !== n) throw new Error('the ' + scope + ' sheet did not open for ' + n);
-                S.adv.a.strict_pack = strict;
-                for (const k of keys) {
+                const ctx = ctxOf(n);
+                if (!ctx || ctx.node !== n) throw new Error('no ' + scope + ' settings for ' + n);
+                ctx.a.strict_pack = strict;
+                for (const k of ADV_FIELDS) {
                     shows.push(scope + '  strict_pack=' + (strict ? 'on ' : 'off') + '  ' + n + ' ' + modeRole(S, n) + '  ' + k +
-                        '  ' + (pd('advShows')(k) ? 'shown' : 'hidden'));
+                        '  ' + (pd('advShows')(k, ctx) ? 'shown' : 'hidden'));
                 }
-                page.click('scrim', { act: 'adv-cancel' });
                 S.shapeDraft = null;
             }
         }
     }
     out['advanced-shows.txt'] = shows.join('\n') + '\n';
 
-    // advancedCount(node) — the row's "N set" badge — for every row of the
+    // setCount(node) — the row's "N set" chip — for every row of the
     // all-default style (A) and the all-set style (B); for a row with any set,
-    // the sheet its gear opens: each drawn section's title and "N set" count,
-    // and their total, which is the number the badge is there to forecast.
-    const count = ['# advancedCount(node) per style and row; for a row with any set, the sections its sheet draws',
-        '# with their "N set" count, and the sheet\'s total beside the badge\'s.'];
+    // the lists Set for this style draws it under, which is the number the
+    // chip is there to forecast.
+    const count = ['# setCount(node) per style and row; for a row with any set, the lists Set for this style',
+        '# draws it under (one per setting), and how many.'];
     for (const st of S.composer.styles) {
         page.click('root', { style: String(st.id) });
         await page.settle();
         count.push('', '## ' + st.name);
+        const block = page.root.innerHTML.split('id="pd-setfor"')[1] || '';
+        const lists = block.split('<div class="exc" data-exc="set-').slice(1);
         for (const n of tableRows(page.S)) {
-            const badge = pd('advancedCount')(n);
-            if (!badge) { count.push(n + ' ' + modeRole(page.S, n) + '  advancedCount=0'); continue; }
-            page.click('root', { act: 'advanced', node: n });
-            const secs = [...page.scrim.innerHTML.matchAll(/<div class="pd-sec"><div class="pd-lbl">([^<]*)(?:<span class="cnt">(\d+) set<\/span>)?<\/div>/g)];
-            const total = secs.reduce((t, m) => t + Number(m[2] || 0), 0);
-            count.push(n + ' ' + modeRole(page.S, n) + '  advancedCount=' + badge + '  sheet total=' + total);
-            for (const m of secs) count.push('    section ' + JSON.stringify(decode(m[1])) + '  ' + (m[2] || 0) + ' set');
-            page.click('scrim', { act: 'adv-cancel' });
+            const chip = pd('setCount')(n);
+            if (!chip) { count.push(n + ' ' + modeRole(page.S, n) + '  setCount=0'); continue; }
+            const under = lists.filter(l => l.indexOf('<td class="exc-pos">' + n + '</td>') >= 0)
+                .map(l => decode((l.match(/<div class="exc-name">([^<]*)/) || [])[1] || l.slice(0, l.indexOf('"'))));
+            count.push(n + ' ' + modeRole(page.S, n) + '  setCount=' + chip + '  listed under=' + under.length);
+            for (const u of under) count.push('    list ' + JSON.stringify(u));
         }
     }
     out['advanced-count.txt'] = count.join('\n') + '\n';
@@ -310,7 +318,7 @@ async function pinAdvanced() {
 // ── 4 · request sequences ────────────────────────────────────────────────────
 //
 // Each act is driven the way an engineer drives it: a click dispatched to the
-// page's own handler (#pd-root's onClick, #pd-scrim's onAdvClick), a row of a
+// page's own handler (#pd-root's onClick, #pd-scrim's onScrimClick), a row of a
 // popover the page drew clicked through the listener it bound, a field typed
 // where the page reads it (a sheet's [data-f], Settings' [data-st] and curtain
 // inputs through their own input listeners). A golden lists every request the

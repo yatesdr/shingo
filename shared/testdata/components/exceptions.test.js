@@ -66,7 +66,7 @@ test('countOf: the summary\'s words', () => {
     const { mods: [X] } = page('exceptions.js');
     eq(X.countOf(2, 23, 'position'), '2 of 23 positions');
     eq(X.countOf(23, 23, 'position'), 'all 23 positions');
-    eq(X.countOf(1, 1, 'position'), 'all 1 position');
+    eq(X.countOf(1, 1, 'position'), '1 of 1 position');
     eq(X.countOf(0, 23, 'position'), '0 of 23 positions');
     eq(X.countOf(0, 0, 'position'), 'no positions');
 });

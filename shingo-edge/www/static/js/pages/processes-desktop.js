@@ -92,7 +92,7 @@ const S = {
     selected: null,      // the selected position, shared by the picture and the table
     picRows: {},         // node -> 'front' | 'back' | '', from pictureRows (never claim kind)
     openAs: '',          // the one dim cell currently drawn as a chip, because it was clicked
-    adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, partialDest}
+    setAdds: {},         // Set for this style's rows added this visit, not given their value yet
     routing: null,       // D3's rows — every one, the disabled backfills included
     routingError: '',    // the server's refusal, by name
     routingWarning: '',  // what the last removal orphans, by name
@@ -165,11 +165,13 @@ function boot() {
     root().addEventListener('mouseover', e => onGroupHover(e, true));
     root().addEventListener('mouseout', e => onGroupHover(e, false));
     root().addEventListener('input', onGroupName);
+    // Set for this style's numbers, written as they are typed (onSetNumber).
+    root().addEventListener('input', onSetNumber);
     // The picture is drawn 1:1 into the column it has, so a resize is a
     // re-layout and not a re-scale. Only the picture is redrawn.
     window.addEventListener('resize', () => { if (S.model && S.tab === 'flows') drawPicture(); });
     const scrim = $('pd-scrim');
-    if (scrim) scrim.addEventListener('click', onAdvClick);
+    if (scrim) scrim.addEventListener('click', onScrimClick);
     // The page's own Escape, for when nothing is open: while anything is,
     // Escape is the layer's (it listens on the document after this one, so
     // this sees the stack before the layer's close).
@@ -732,7 +734,6 @@ async function openProcess(id) {
     const first = Number(h.style) || (p && p.active_style_id) ||
         (S.composer.styles[0] && S.composer.styles[0].id) || 0;
     selectStyle(first);
-    if (h.adv) openAdvanced(h.adv);
     // #part=<position> opens that position's part popover, for the shots
     // harness and for a link that means "add a part here".
     if (h.part) {
@@ -795,7 +796,6 @@ function openRecipeAt(h) {
         const g = d.groups.findIndex(x => x.spots.some(s => s.core_node_name === h.row));
         if (g >= 0) { d.focus = { g: g, row: h.row }; drawFlows(); }
     }
-    if (h.gadv && byName(h.gadv) >= 0) openGroupAdvanced(byName(h.gadv));
 }
 
 // The list's Settings link: open the process, then land on the tab the
@@ -808,10 +808,10 @@ async function openProcessAt(id, tab) {
     syncHash();
 }
 
-// #style=<id>;adv=<position>;tab=routing opens a particular flow, a particular
-// position's Advanced sheet, or another tab, on load. It is how the shots harness photographs
-// D2 without driving a mouse, the same convention U8's composer states use,
-// and it deep-links a review comment to the exact field being argued about.
+// #style=<id>;tab=settings opens a particular flow or another tab on load. It
+// is how the shots harness photographs a state without driving a mouse, the
+// same convention U8's composer states use, and it deep-links a review comment
+// to the exact place being argued about.
 function hashOpts() {
     const out = {};
     for (const part of String(window.location.hash || '').replace(/^#/, '').split(';')) {
@@ -827,8 +827,8 @@ function hashOpts() {
 // #tab=) — so a reload, a bookmark made after three clicks, or a link pasted
 // out of the address bar lands on the same state. replaceState mints no
 // history entries, so back and forward stay the browser's, not this page's.
-// The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=,
-// ;recipe= with ;groups= ;focus= ;row= ;gadv=, #newstyle= with ;sel=,
+// The boot-only one-shots (#part=, ;preset=, ;apply=, ;tick=,
+// ;recipe= with ;groups= ;focus= ;row=, #newstyle= with ;sel=,
 // ;edit= with ;q=, and the list's #add=1) are
 // consumed once and never re-minted: they exist so the shots harness can
 // reach a state without driving a mouse, and re-writing them would pin every
@@ -922,8 +922,8 @@ function initModel(st, opts) {
         flowspec: window.FLOWSPEC || null,
         groups: cell.groups || {},
         processClaims: S.composer.styles.reduce((all, x) => all.concat(x.claims || []), []),
-        // What the Advanced modal opens on. Read-only in the model: the draft's
-        // own copy appears on a cell only once an engineer presses Apply.
+        // What Set for this style reads. Read-only in the model: the draft's
+        // own copy appears on a cell only once a setting is edited.
         advanced: st.advanced || {},
     });
 }
@@ -932,6 +932,7 @@ function selectStyle(id) {
     // Opening a style leaves any shape draft: the draft is never saved by
     // navigating, only by naming it.
     S.shapeDraft = null;
+    S.setAdds = {};
     const st = composerStyle(id);
     if (!st) {
         // NO SUCH STYLE, so no draft — and the last process's draft has to go
@@ -1445,7 +1446,7 @@ function main() {
         '<button class="pd-btn primary" data-act="save" disabled>Save style</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
-        positionsTable() +
+        positionsTable() + styleSettings() +
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
 
@@ -1891,21 +1892,7 @@ function groupCard(g, i) {
             W('inbound_source') + ' ' + (star.source || 'not set')) +
         '<span class="k">' + esc(W('outbound_destination')) + '</span>' + picker(g.of, 'dest', esc(star.dest || '—'), star.dest ? '' : 'bad',
             W('outbound_destination') + ' ' + (star.dest || 'not set')) + '</div>' +
-        '<div class="pd-lbl">Advanced</div><div class="pd-gadv"><span>' + esc(groupAdvSummary(g)) + '</span>' +
-        '<button class="pd-btn" data-act="gadv" data-g="' + i + '">Edit…</button></div></div>';
-}
-
-// groupAdvSummary is a card's Advanced line, in the sheet's own words.
-function groupAdvSummary(g) {
-    const a = recipeAdvanced(g.advanced || {}, g.of);
-    const out = Object.keys(a).map(key => {
-        const v = a[key];
-        // The sheet says it as a choice of robot, so the card does too.
-        if (key === 'refill_by') return refillRobot(v) + ' supplies';
-        if (typeof v === 'boolean') return W(key) + ' on';
-        return W(key) + ' ' + v;
-    });
-    return out.length ? out.join(' · ') : 'nothing set: a style made from it takes the minted defaults';
+        '<div class="pd-lbl">Set for this group</div>' + groupSettings(g, i) + '</div>';
 }
 
 // ── the card's edits: every one a draft change, nothing written ──
@@ -2151,7 +2138,7 @@ function floorBlock() {
 
 // markRecipeState publishes the draft's state for the shots harness, beside
 // the words it shows: body[data-pd-recipe] = "draft;groups=2;floor=saved;
-// row=PLN_010;gadv=Left Hand" (a group hovered or pinned is ";focus=<name>").
+// row=PLN_010" (a group hovered or pinned is ";focus=<name>").
 function markRecipeState() {
     const d = S.shapeDraft;
     let m = '';
@@ -2164,7 +2151,6 @@ function markRecipeState() {
             const f = groupFocus();
             if (f && f.row) m += ';row=' + f.row;
             else if (f) m += ';focus=' + d.groups[f.g].name;
-            if (S.adv && S.adv.group !== undefined && d.groups[S.adv.group]) m += ';gadv=' + d.groups[S.adv.group].name;
         }
     }
     try { document.body.dataset.pdRecipe = m; } catch (_) { /* nothing to publish on */ }
@@ -2236,8 +2222,7 @@ function positionsTable() {
     // here, as it draws, rather than waiting for the picture to.
     S.picRows = pictureRows(cellFromModel(), pictureOpts());
     const used = usedPositions();
-    const drawn = S.model.positions.map(p => p.core_node_name)
-        .filter(n => S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode);
+    const drawn = drawnRows();
     // R2: A COLUMN NO ROW USES IS NOT DRAWN, and a row whose mode does not
     // use a drawn column leaves its cell empty. An empty table keeps them all:
     // there is no row to judge by.
@@ -2317,8 +2302,8 @@ function positionsTable() {
         // a refusal naming `outbound_destination` read as being about
         // something else.
         //
-        // `Position` and `Advanced` are not claim fields: one is the press's
-        // word for a node and the other is the name of a sheet. `Part` stays
+        // `Position` is not a claim field: it is the press's word for a
+        // node, and the set chip's column has no heading. `Part` stays
         // the floor's word for payload_code (owner-accepted). `Staging` is a
         // group of two, and its chips carry the two names.
         '<table>' + cols + '<thead><tr>' + columns.map(col => '<th>' + esc(col.head) + '</th>').join('') +
@@ -2334,10 +2319,9 @@ function positionsTable() {
 //
 // A SHAPE DRAFT HAS NO PART COLUMN (pick-a-part U2): a recipe never carries
 // one, so the column would be a control whose every value is refused. NOR
-// AUTO REORDER OR ADVANCED (recipe groups): a recipe's save strips every
-// cell's Advanced (domain.StripFlowPayload), so the per-row gear opened a
-// sheet whose every field was dropped without a word. A recipe's Advanced is
-// its groups', on their cards.
+// AUTO REORDER OR THE SET CHIP (recipe groups): a recipe's save strips every
+// cell's Advanced (domain.StripFlowPayload), so a per-row setting would be
+// dropped without a word. A recipe's settings are its groups', on their cards.
 function tableColumns() {
     const shows = field => n => M().advancedShows(S.model, n, field);
     const chips = column => n => M().rowColumns(S.model, n, column).some(c => c.possible);
@@ -2364,14 +2348,16 @@ function tableColumns() {
         { col: 'c-dst', head: W('outbound_destination'), uses: shows('outbound_destination'),
             cell: (n, c) => fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) },
         { col: 'c-reorder', head: W('auto_reorder'), draftless: true, uses: shows('auto_reorder'), cell: n => reorderCell(n) },
-        // Nothing set is the gear alone (its title says defaults): the word
-        // was the widest thing in a column that only has to say when
-        // something IS set.
-        { col: 'c-adv', head: 'Advanced', draftless: true, cell: n => {
-            const set = advancedCount(n);
-            return '<button class="pd-adv' + (set ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '"' +
-                (set ? '' : ' title="Advanced: defaults" aria-label="Advanced: defaults"') + '>' +
-                gearSVG() + (set ? '<b>' + set + ' set</b>' : '') + '</button>';
+        // THE ROW SAYS IT SETS SOMETHING FOR THIS STYLE, and the chip takes
+        // you to it (Set for this style, under the table). A row that sets
+        // nothing draws nothing: the chip marks an exception. It replaces the
+        // gear, which opened a sheet of every field at its default. The count
+        // is the list's own (setCount): one per setting the position is
+        // listed under.
+        { col: 'c-set', head: '', draftless: true, uses: n => setCount(n) > 0, cell: n => {
+            const set = setCount(n);
+            return set ? '<button class="pd-chip pd-setchip" data-act="set-goto" title="see it under Set for this style">' +
+                set + ' set</button>' : '';
         } },
     ];
     return S.shapeDraft ? out.filter(col => !col.draftless) : out;
@@ -2538,7 +2524,7 @@ function viaCell(node) {
 
 // AUTO REORDER IS ON THE ROW (U3): `off`, or the reorder point the position
 // asks at. It is what an engineer sets on every position before a style runs,
-// so it is not behind the Advanced sheet. A new position starts off, consume
+// so it is not one of Set for this style's lists. A new position starts off, consume
 // and produce alike (owner ruling 8); a mode that does not read it draws an
 // empty cell (R2).
 function reorderCell(node) {
@@ -2546,7 +2532,7 @@ function reorderCell(node) {
     const a = M().advancedFor(S.model, node);
     const title = W('reorder_point') + ' ' + (a.reorder_point || 'not set') + ' · ' + W('auto_reorder') + ' ' + (a.auto_reorder ? 'on' : 'off');
     if (!a.auto_reorder) return picker(node, 'reorder', 'off', 'dflt', title);
-    return picker(node, 'reorder', esc(String(a.reorder_point || '—')), a.reorder_point ? '' : 'bad', title);
+    return picker(node, 'reorder', a.reorder_point ? 'on at ' + esc(String(a.reorder_point)) : 'on at —', a.reorder_point ? '' : 'bad', title);
 }
 
 // REORDER_WORDS is the reorder point's sentence: true for both roles, since
@@ -2674,22 +2660,6 @@ function syncPosHead(e) {
     if (!e.target || e.target.id !== 'pd-postbl') return;
     const head = $('pd-poshead');
     if (head) head.scrollLeft = e.target.scrollLeft;
-}
-
-// The row's `N set` badge IS THE SHEET'S TOTAL (B6): the fields its gear's
-// sheet draws, counted by the sheet's own rule (advShows, advIsSet). It
-// counted the model's set beside the cell's three fields, drawn or not, so
-// every consume row read one over the sheet it opened.
-function advancedCount(node) {
-    const c = S.model.cells[node];
-    if (!c) return 0;
-    const ctx = { node: node, a: M().advancedFor(S.model, node), evacNodes: c.evacNodes || [], partialDest: c.partialDest || '' };
-    return ADV_SECTIONS.reduce((n, sec) => n + sec[1].filter(k => advShows(k, ctx) && advIsSet(k, ctx)).length, 0);
-}
-
-function gearSVG() {
-    return '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">' +
-        '<circle cx="6" cy="6" r="2"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1"/></svg>';
 }
 
 // title is the chip's full text, for the case where the column is narrower
@@ -3202,8 +3172,8 @@ function closePop() {
     // scrolled, until a group was picked or the tab redrew.
     const stpop = $('pd-stpop');
     if (stpop) { closeLayer(stpop); stpop.hidden = true; stpop.innerHTML = ''; }
-    // AND SO IS THE DIALOGS' OWN. the Advanced sheet opens its pickers
-    // into #pd-advpop, inside the scrim; Escape closes it before the dialog.
+    // AND SO IS THE SHEETS' OWN. A sheet opens its pickers into #pd-advpop,
+    // which rides in the sheet; Escape closes it before the sheet.
     const advpop = $('pd-advpop');
     if (advpop) { closeLayer(advpop); advpop.hidden = true; advpop.innerHTML = ''; }
     // The placeholder that was clicked goes back to being a dash, unless the
@@ -4395,157 +4365,125 @@ async function openSettings(kept) {
     drawSettings();
 }
 
-// ── D2 · Advanced (SPEC §2 D2) ───────────────────────────────────────────────
+// ── Set for this style, and a recipe group's settings ───────────────────────
 //
-// The modal is the ONLY place these columns appear (ruling R2). Fifteen of the
-// eighteen fields are the model's advanced block; the other three — evacuation
-// positions, evacuation destination and the partial home — are on the cell, a
-// routing fact the flow carries like the destination beside it. Apply dispatches both and marks the flow dirty;
-// nothing is written until Save flow.
+// WHAT A POSITION SETS FOR ONE STYLE, AND A GROUP FOR A RECIPE, ARE EXCEPTION
+// LISTS (shared/exceptions.js): one per setting that is set, under the
+// positions table and on the group's card. They replace the Advanced sheet,
+// which drew every field at its default behind a gear on each row, so one
+// setting on one position was a sheet of a dozen "off". A setting is listed
+// only where it is set, "+ Add a setting" offers the rest, and every edit is
+// a draft edit: a style's through the model (setAdvanced, setEvacNodes,
+// setPartialDest, as the sheet's Apply sent them), saved with Save style; a
+// group's in its `advanced` (domain.RecipeAdvanced), saved with Save recipe.
 //
-// WHAT IS DRAWN IS flowspec's DECISION, not a list here. A field this
-// choreography forbids or never reads is not a control an engineer should be
-// handed, and the same table the server validates against decides it.
-//
-// The sheet lives outside #pd-root so a redraw of the page behind it cannot
-// take it away mid-edit.
-const ADV_SECTIONS = [
+// WHAT IS OFFERED IS flowspec's DECISION, not a list here: a field this
+// choreography forbids or never reads is not offered (advShows).
+
+// SET_SECTIONS are the settings in the order "+ Add a setting" lists them,
+// under the headings it lists them by. Reorder point and Auto reorder are a
+// group's only: a style's position carries them on its row (reorderCell). The
+// pack tolerance is strict pack's second value and the carry-over is Tool
+// change's, so neither is a setting of its own. BOARD ORDER IS NOT HERE: it is
+// drawn on a loader board's claim (manual_swap), and no stored claim is one
+// (protocol.ConfigurableSwapModes).
+const SET_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
     ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
-    // ONE TOOL CHANGE: the marks are the whole of it on every line mode. The
-    // destination override and the carry-over disposition are the marks'
-    // options, drawn with them.
-    ['Changeover specials', ['evac_nodes', 'changeover_carryover_disposition']],
-    // FINISHED GOODS: what a produce position's bin is counted to and where it
-    // goes when it leaves short, in the order an engineer decides them — the
-    // pack cap, the miscount tolerance (drawn only while the cap is on: it has
-    // no reader without it, advShows), then where partials go. One section,
-    // where 'Unfinished carriers' and 'Counting' were two (partials-stage2,
-    // 2026-10-29). Offered on a produce position only (flowspec).
-    ['Finished goods', ['strict_pack', 'pack_tolerance_pct', 'partial_dest']],
+    ['Tool change', ['evac_nodes']],
+    ['Finished goods', ['strict_pack', 'partial_dest']],
     ['Press hardware', ['refill_by']],
-    // THE LIGHT CURTAIN'S STYLE TIE (pick-a-part U5). It had copy and a control
-    // and no section, so nothing drew it: the claim had readers
-    // (engine/release_load.go) and no UI writer.
     ['Light curtain', ['curtain_required']],
     ['Station policy', ['auto_confirm']],
-    // BOARD is one field, and it earns a section rather than a corner of
-    // another: the loader board's draw order is not replenishment, not a
-    // changeover special and not station policy, and putting it under a
-    // heading it does not belong to is how a field becomes unfindable.
-    ['Board', ['sequence']],
 ];
 
-// ADV_COPY — the sheet's eighteen rows: which CLAIM FIELD each one edits, and
-// the one-line help under it.
-//
-// THE HELP IS THIS PAGE'S; THE NAME IS NOT. This used to carry both, so it was
-// a sixth table of words for claim fields — "Reorder point" here, "Reorder
-// Point" in a refusal; "Evacuation positions" here, "Changeover Evac Nodes" in
-// the diagnostic about the same column. The help sentences say what the field
-// DOES on this screen and have no equivalent anywhere else, so they stay; the
-// names come from flowspec like every other word.
-//
-// Two keys are the sheet's own (evac_nodes, partial_dest) because the sheet had
-// short names for them before the fields did; the field each one edits is
-// named here rather than guessed from the key.
-const ADV_COPY = {
-    allowed_payload_codes: ['allowed_payload_codes', 'which parts a robot may bring to this position'],
+// SET_COPY is each setting's claim field (its name, from flowspec, like every
+// word on this page) and the one line of help under it, kept only where it
+// changes what a person would pick. Two keys are the page's own (evac_nodes,
+// partial_dest); the field each edits is named here rather than guessed.
+const SET_COPY = {
+    allowed_payload_codes: ['allowed_payload_codes', 'which parts a robot may bring here'],
     reorder_point: ['reorder_point', REORDER_WORDS],
-    auto_reorder: ['auto_reorder', 'request without the operator'],
+    auto_reorder: ['auto_reorder', ''],
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
-    auto_request_payload: ['auto_request_payload', 'which part a vacated position asks for on its own'],
+    auto_request_payload: ['auto_request_payload', 'the part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
-    keep_staged_node: ['keep_staged_node', 'the node the full or empty comes from instead of the market; a spare is kept on it'],
-    evac_nodes: ['changeover_evac_nodes', 'which positions must be clear. The changeover pauses for Tooling done'],
-    // What each kind of home does, because the picker cannot say it: the
-    // routing row is a name. An unloader home unloads the bin; it does not
-    // hold it for the line.
-    partial_dest: ['partial_destination', 'where a bin released short goes: blank sends it where full bins go, at its real count; a node group holds it there to be finished later; the unloader unloads it there'],
-    changeover_carryover_disposition: ['changeover_carryover_disposition', 'what happens to a part-full bin'],
-    refill_by: ['refill_by', 'the same for every part on this press'],
-    auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
-    sequence: ['sequence', 'where this position sits on the loader board'],
-    curtain_required: ['curtain_required', 'this part\'s full-bin releases wait for the node\'s light curtain - the bin leaving decides, so a part whose exit must not stop the conveyor leaves this off'],
-    strict_pack: ['strict_pack', 'count the bin at this position only up to its pack; parts made past it are held for the next bin of the part'],
-    pack_tolerance_pct: ['pack_tolerance_pct', 'a bin released within this percent of its pack (up to 20) is booked full; further short, or with this blank, it ships its real count and the button reads RELEASE SHORT'],
+    keep_staged_node: ['keep_staged_node', 'a spare waits here, and the full or empty comes from it instead of the market'],
+    evac_nodes: ['changeover_evac_nodes', 'cleared for a setup; the changeover waits for Tooling done'],
+    strict_pack: ['strict_pack', 'counted only up to its pack; parts made past it wait for the next bin'],
+    partial_dest: ['partial_destination', 'where a bin released short goes; a node group holds it to be finished, an unloader unloads it'],
+    // WHICH ROBOT, FOR THIS PART. It said "the same for every part on this
+    // press", and it is stored per style and differs by part (owner,
+    // 2026-11-14); what each answer does is beside the choice (REFILL_NOTE).
+    refill_by: ['refill_by', 'which robot brings this part’s next carrier'],
+    curtain_required: ['curtain_required', 'a full-bin release here waits for the node’s light curtain'],
+    auto_confirm: ['auto_confirm', 'on here, whatever the plant setting'],
 };
 
-const CARRYOVER = {
-    replace: 'replace',
-    keep_lineside: 'keep at the line',
-    outbound_staging: 'hop out and come back',
-};
+// The settings a switch is: the row is the setting, so an add turns it on and
+// × turns it off.
+const SET_SWITCHES = ['auto_reorder', 'auto_push', 'strict_pack', 'curtain_required', 'auto_confirm'];
 
-function openAdvanced(node) {
-    const c = S.model.cells[node];
-    // NOT IN A RECIPE DRAFT: a recipe's save drops every cell's Advanced, so
-    // the per-cell sheet there was work thrown away. A group's is the one a
-    // recipe keeps (openGroupAdvanced).
-    if (!c || S.shapeDraft) return;
-    const a = M().advancedFor(S.model, node);
-    S.adv = {
-        node: node,
-        a: a,
-        // The values the sheet opened with, for advNumber's data-was: the
-        // layer reads a redrawn field against it (typed work, layer.js).
-        was: Object.assign({}, a),
-        evacNodes: (c.evacNodes || []).slice(),
-        partialDest: c.partialDest || '',
-    };
-    S.adv.opened = advSnapshot();
-    drawAdvanced();
+// CARRYOVER is the carry-over's three answers, said as what happens to the
+// bin on a position marked for a tool change when the next style runs the
+// same part there (domain.ClearanceTreatmentAtNode, which the changeover
+// reads from the style being left): replace clears it and another carrier
+// comes back, keep_lineside leaves it, outbound_staging walks it to this
+// position's outbound staging and back once Tooling done is pressed. A part
+// that changes is cleared whatever this says. It read "what happens to a
+// part-full bin", and nothing on that path reads fill.
+const CARRYOVER = { replace: 'Fresh bin', keep_lineside: 'Keep it', outbound_staging: 'Out and back' };
+const CARRYOVER_NOTE = 'If the part stays: Fresh bin clears it and brings another, Keep it leaves it, ' +
+    'Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.';
+
+// setKeys is the settings a scope lists: a style's (not the two its row
+// carries) or a group's (GROUP_ADV_KEYS: no part, no cell fields).
+function setKeys(scope) {
+    const all = [].concat(...SET_SECTIONS.map(s => s[1]));
+    return scope === 'group' ? all.filter(k => GROUP_ADV_KEYS.indexOf(k) >= 0)
+        : all.filter(k => k !== 'reorder_point' && k !== 'auto_reorder');
 }
 
-// advSnapshot is what the sheet says, as text: Apply on a sheet that still
-// says what it opened with changes nothing (advUntouched). `was` is no copy for
-// this, its lists being the sheet's own.
-function advSnapshot() {
-    return JSON.stringify([S.adv.a, S.adv.evacNodes, S.adv.partialDest]);
-}
-function advUntouched() { return !!S.adv && S.adv.opened === advSnapshot(); }
+// A PLACE is where a setting is set: { node } for a style's position, { g }
+// for a recipe group (its index on the draft).
+function placeKey(p) { return p.g !== undefined ? 'g:' + p.g : p.node; }
 
-// openGroupAdvanced is the same sheet in GROUP SCOPE (SYNTH-round2 row 4): the
-// fields a recipe's group may say (GROUP_ADV_KEYS, domain.RecipeAdvanced),
-// drawn as flowspec draws them for the group's ★ cell — the server refuses a
-// field that cell's mode and role forbid (D26) — and Apply writes the group's
-// `advanced`, which the mint lays on every claim it makes from the group. The
-// part rows, the board order and the cell's own evacuation and partial-home
-// fields are not here: a recipe carries no part, and the others are the
-// cell's. The press hardware IS here — a recipe is one press's choreography.
-function openGroupAdvanced(i) {
-    const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[i];
-    if (!g || !S.model.cells[g.of]) return;
-    const a = M().advancedFor(S.model, g.of);
-    for (const key of GROUP_ADV_KEYS) {
-        if (g.advanced && g.advanced[key] !== undefined && g.advanced[key] !== null) a[key] = g.advanced[key];
+// setCtx is one place's settings, read fresh: { node, a, evacNodes,
+// partialDest, group }. A group's are its ★ cell's defaults with its own
+// `advanced` laid over them, as the mint lays them.
+function setCtx(p) {
+    if (p.g !== undefined) {
+        const g = S.shapeDraft.groups[p.g];
+        const a = M().advancedFor(S.model, g.of);
+        for (const key of GROUP_ADV_KEYS) {
+            if (g.advanced && g.advanced[key] !== undefined && g.advanced[key] !== null) a[key] = g.advanced[key];
+        }
+        return { node: g.of, group: p.g, a: a, evacNodes: [], partialDest: '' };
     }
-    S.adv = { node: g.of, group: i, a: a, was: Object.assign({}, a), evacNodes: [], partialDest: '' };
-    S.adv.opened = advSnapshot();
-    drawAdvanced();
+    const c = S.model.cells[p.node] || {};
+    return { node: p.node, a: M().advancedFor(S.model, p.node), evacNodes: (c.evacNodes || []).slice(), partialDest: c.partialDest || '' };
 }
 
-// ctx is the sheet's draft, S.adv: {node, a, evacNodes, partialDest, group};
-// the row's badge passes the same shape built from the cell (advancedCount).
-function advShows(key, ctx) {
-    const d = ctx || S.adv;
+// advShows is whether a setting is offered at a place (ctx, setCtx's).
+function advShows(key, d) {
     // The tolerance is read only through strict pack, so it is drawn only
-    // while the sheet has strict pack on, in either scope. A stored value
-    // stays when the cap is switched off; nothing reads it then.
+    // while strict pack is on, in either scope. A stored value stays when the
+    // cap is switched off; nothing reads it then.
     if (key === 'pack_tolerance_pct' && !d.a.strict_pack) return false;
+    // THE CARRY-OVER IS A TOOL CHANGE'S SECOND VALUE: read only for a marked
+    // position (domain.ClearanceTreatmentAtNode), and refused on a claim that
+    // marks none, so it is drawn only beside marks. A group marks none.
+    if (key === 'changeover_carryover_disposition' && (d.group !== undefined || !d.evacNodes.length)) return false;
     if (d.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, d.node, key);
-    if (key === 'evac_nodes') {
-        return M().advancedShows(S.model, d.node, 'changeover_evac_nodes');
-    }
+    if (key === 'evac_nodes') return M().advancedShows(S.model, d.node, 'changeover_evac_nodes');
     if (key === 'partial_dest') return M().advancedShows(S.model, d.node, 'partial_destination');
-    // THE ROW CARRIES AUTO REORDER (reorderCell), so a position's sheet does
-    // not draw it twice; a recipe group's sheet, which has no row, does.
+    // THE ROW CARRIES AUTO REORDER (reorderCell), so a position does not list
+    // it twice; a recipe group, which has no row, does.
     if (key === 'reorder_point' || key === 'auto_reorder') return false;
-    // F15: BOARD ORDER IS A LOADER BOARD'S, so it is drawn on a loader
-    // position only (a manual_swap claim, which a loader board draws); on a
-    // press it is a number nothing on the floor reads.
+    // F15: BOARD ORDER IS A LOADER BOARD'S, drawn on a loader position only
+    // (a manual_swap claim, which a loader board draws).
     if (key === 'sequence' && (S.model.cells[d.node] || {}).mode !== 'manual_swap') return false;
-    // F15: A CURTAIN TIE NEEDS A CURTAIN. Drawn where the node has one wired
+    // F15: A CURTAIN TIE NEEDS A CURTAIN. Offered where the node has one wired
     // (the cell picture's `curtain`, from the node's curtain switch).
     if (key === 'curtain_required' && !hasCurtain(d.node)) return false;
     return M().advancedShows(S.model, d.node, key);
@@ -4557,8 +4495,7 @@ function hasCurtain(node) {
     return !!((S.composer.cell.positions || []).find(p => p.core_node_name === node) || {}).curtain;
 }
 
-function advValue(key, ctx) {
-    const d = ctx || S.adv;
+function advValue(key, d) {
     if (key === 'evac_nodes') return d.evacNodes;
     if (key === 'partial_dest') return d.partialDest;
     return d.a[key];
@@ -4569,24 +4506,341 @@ function advValue(key, ctx) {
 // Robot 1 are the defaults, not an opinion. BOARD ORDER IS NEVER COUNTED:
 // the store stamps one on every claim it inserts (max + 1), so a value says
 // nothing about whether an engineer set it (F15: "1 set" on every row).
-function advIsSet(key, ctx) {
-    const v = advValue(key, ctx);
+function advIsSet(key, d) {
+    const v = advValue(key, d);
     if (key === 'changeover_carryover_disposition') return !!v && v !== 'replace';
     if (key === 'refill_by') return !!v && v !== 'clearing_robot';
     if (key === 'sequence') return false;
     return Array.isArray(v) ? v.length > 0 : Boolean(v);
 }
 
-function advToggle(key) {
-    return '<button class="pd-chk' + (advValue(key) ? ' on' : '') + '" data-adv="' + key +
-        '" data-advkind="toggle" role="switch" aria-checked="' + (advValue(key) ? 'true' : 'false') + '"></button>';
+// isListed is whether a setting has a row at a place: set, or added this
+// visit and not given its value yet (S.setAdds). A row a control was used on
+// stays too, so picking Robot 1 does not take the row away under the pointer;
+// × is what removes a row.
+function isListed(key, p, d) {
+    return advIsSet(key, d) || !!(S.setAdds || {})[key + '|' + placeKey(p)];
 }
 
-function advNumber(key) {
-    const v = advValue(key), was = S.adv.was[key];
-    return '<input class="pd-inp' + (v ? '' : ' dflt') + '" type="text" inputmode="numeric" ' +
-        'data-adv="' + key + '" data-advkind="number" data-f="adv:' + key + '" ' +
-        'data-was="' + esc(was ? String(was) : '') + '" value="' + esc(v ? String(v) : '') + '" placeholder="—">';
+function keepRow(key, p) { (S.setAdds = S.setAdds || {})[key + '|' + placeKey(p)] = true; }
+
+// setCount is the row's "N set" chip: the settings its position sets for this
+// style, by the list's own rule.
+function setCount(node) {
+    const d = setCtx({ node: node });
+    return setKeys('style').filter(key => advShows(key, d) && advIsSet(key, d)).length;
+}
+
+// drawnRows is the positions the table draws a row for, in its order.
+function drawnRows() {
+    return S.model.positions.map(p => p.core_node_name)
+        .filter(n => S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode);
+}
+
+// setDefault is what × puts back: the value that is no setting.
+function setDefault(key) {
+    if (key === 'allowed_payload_codes' || key === 'evac_nodes') return [];
+    if (key === 'refill_by') return 'clearing_robot';
+    if (key === 'changeover_carryover_disposition') return 'replace';
+    if (key === 'auto_request_payload' || key === 'keep_staged_node' || key === 'partial_dest') return '';
+    if (SET_SWITCHES.indexOf(key) >= 0) return false;
+    return 0;
+}
+
+// setWrite puts one value at a place as a draft edit: a position's through the
+// model, redrawn and previewed; a group's in its `advanced`, redrawn. quiet
+// writes without the redraw, for a number being typed (a redraw would take the
+// field from under the caret); the bar still measures the draft.
+function setWrite(p, key, value, quiet) {
+    if (p.g !== undefined) {
+        const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[p.g];
+        if (!g) return;
+        const d = setCtx(p);
+        d.a[key] = value;
+        const a = recipeAdvanced(d.a, g.of);
+        if (Object.keys(a).length) g.advanced = a; else delete g.advanced;
+        if (quiet) { S.shapeDraft.refusal = ''; return; }
+        groupChanged();
+        return;
+    }
+    const node = p.node;
+    let actions;
+    if (key === 'evac_nodes') {
+        actions = [{ type: 'setEvacNodes', node: node, nodes: value }];
+        // NO MARK, NO CARRY-OVER: the server refuses a carry-over on a claim
+        // that marks nothing, so the last mark taken off puts it back.
+        const a = M().advancedFor(S.model, node);
+        if (!value.length && advIsSet('changeover_carryover_disposition', { a: a })) {
+            a.changeover_carryover_disposition = 'replace';
+            actions.push(advancedAction(node, a));
+        }
+    } else if (key === 'partial_dest') {
+        actions = [{ type: 'setPartialDest', node: node, dest: value }];
+    } else {
+        const a = M().advancedFor(S.model, node);
+        a[key] = value;
+        actions = [advancedAction(node, a)];
+    }
+    if (!quiet) { apply(actions); return; }
+    for (const x of actions) S.model = M().reduce(S.model, x);
+    drawBar();
+    schedulePreview();
+}
+
+// advancedAction is the model's setAdvanced for a position's block. BACK TO
+// WHAT WAS SAVED IS UNTOUCHED: a block that says what the saved style says is
+// sent as null, which the model reads as the saved one, so a setting added
+// and taken off again leaves the draft clean, as the sheet's Cancel did. A
+// written block, even one of defaults, is a change the next save sends (P0
+// :4169).
+function advancedAction(node, a) {
+    const saved = M().advancedFor(M().reduce(S.model, { type: 'setAdvanced', node: node, advanced: null }), node);
+    return { type: 'setAdvanced', node: node, advanced: JSON.stringify(a) === JSON.stringify(saved) ? null : a };
+}
+
+function setRedraw(p) {
+    if (p.g !== undefined) groupChanged(); else drawFlows();
+}
+
+// setAddAt adds a setting at a place. THE FIRST VALUE IT PUTS: a switch is on
+// (its row is the setting), the next carrier is Robot 2 (Robot 1 is the
+// default and has no row), a Tool change marks the position itself. The rest
+// wait in the list, empty, for their value.
+function setAddAt(key, p) {
+    keepRow(key, p);
+    if (SET_SWITCHES.indexOf(key) >= 0) { setWrite(p, key, true); return; }
+    if (key === 'refill_by') { setWrite(p, key, 'index_robot'); return; }
+    if (key === 'evac_nodes' && p.node) { setWrite(p, key, [p.node]); return; }
+    setRedraw(p);
+}
+
+// setRemove is ×: the setting goes back to its default and its row goes.
+function setRemove(key, p) {
+    delete (S.setAdds || {})[key + '|' + placeKey(p)];
+    if (advIsSet(key, setCtx(p))) setWrite(p, key, setDefault(key)); else setRedraw(p);
+}
+
+// setData is a control's data attributes: the setting, the place, and extra.
+function setData(key, p, extra) {
+    const m = Object.assign({ key: key }, p.g !== undefined ? { g: p.g } : { node: p.node }, extra || {});
+    return Object.keys(m).map(k => ' data-' + k + '="' + esc(String(m[k])) + '"').join('');
+}
+
+// setPlace is the place a control names.
+function setPlace(el) {
+    return el.dataset.g !== undefined ? { g: Number(el.dataset.g) } : { node: el.dataset.node };
+}
+
+function setNumber(key, p, d) {
+    const v = advValue(key, d);
+    return '<input class="pd-inp pd-setnum" type="text" inputmode="numeric" data-setnum="' + key + '"' + setData(key, p) +
+        ' value="' + esc(v ? String(v) : '') + '" placeholder="—" aria-label="' + esc(W(SET_COPY[key] ? SET_COPY[key][0] : key)) + '">';
+}
+
+function setChip(key, p, v, label) {
+    return '<button class="pd-chip set" data-act="set-unchip"' + setData(key, p, { v: v }) +
+        ' title="Take ' + esc(label) + ' off">' + esc(label) + ' <i>&times;</i></button>';
+}
+
+function setPickBtn(key, p, label, cls) {
+    return '<button class="pd-sel' + (cls ? ' ' + cls : '') + '" data-act="set-pick"' + setData(key, p) + '>' +
+        '<span class="t">' + label + '</span><i class="car"></i></button>';
+}
+
+// setSeg is a choice of two to four answers, drawn whole (style guide 33,
+// rule 6): the answer on is marked, each one is a press.
+function setSeg(key, p, on, answers, off) {
+    return '<div class="pd-seg">' + answers.map(([v, label]) => {
+        const why = off && off(v);
+        return '<button class="' + (on === v ? 'on' : '') + '" data-act="set-seg"' + setData(key, p, { v: v }) +
+            (why && on !== v ? ' disabled title="' + esc(why) + '"' : '') + '>' + esc(label) + '</button>';
+    }).join('') + '</div>';
+}
+
+// setCells is one row's controls for a setting at a place.
+function setCells(key, p, d) {
+    switch (key) {
+        case 'allowed_payload_codes':
+            return [(d.a.allowed_payload_codes || []).map(c => setChip(key, p, c, M().shortPart(c))).join('') +
+                '<button class="pd-chip add" data-act="set-pick"' + setData(key, p) + '>+ add</button>'];
+        case 'auto_request_payload': {
+            const v = d.a.auto_request_payload;
+            return [setPickBtn(key, p, esc(v ? M().shortPart(v) : 'pick one'), v ? '' : 'bad')];
+        }
+        case 'keep_staged_node':
+        case 'partial_dest': {
+            const v = advValue(key, d);
+            return [setPickBtn(key, p, esc(v || 'pick one'), v ? '' : 'bad')];
+        }
+        case 'reorder_point':
+        case 'lineside_soft_threshold':
+            return [setNumber(key, p, d)];
+        case 'strict_pack':
+            return ['on', '<span class="k">' + esc(W('pack_tolerance_pct')) + '</span> ' + setNumber('pack_tolerance_pct', p, d) + ' %'];
+        case 'refill_by': {
+            const v = d.a.refill_by || 'clearing_robot';
+            return [setSeg(key, p, v, Object.keys(REFILL_ROBOT).map(k => [k, REFILL_ROBOT[k]])),
+                '<span class="pd-dim">' + esc(REFILL_NOTE[v] || REFILL_NOTE.clearing_robot) + '</span>'];
+        }
+        case 'evac_nodes': {
+            const own = toolChangeOwn(p.node);
+            const marks = d.evacNodes.map(n => setChip(key, p, n, n)).join('') +
+                (own.some(n => d.evacNodes.indexOf(n) < 0)
+                    ? '<button class="pd-chip add" data-act="set-pick"' + setData(key, p) + '>+ add</button>' : '');
+            if (!d.evacNodes.length) return [marks];
+            const park = (S.model.cells[p.node] || {}).parkOld;
+            return [marks, '<span class="k">if the part stays</span> ' +
+                setSeg('changeover_carryover_disposition', p, d.a.changeover_carryover_disposition || 'replace',
+                    Object.keys(CARRYOVER).map(k => [k, CARRYOVER[k]]),
+                    v => (v === 'outbound_staging' && !park ? 'this position has no outbound staging' : ''))];
+        }
+        default:
+            return ['on'];
+    }
+}
+
+// toolChangeOwn is the positions a Tool change may mark: the cell's own (the
+// position, its partners, its staging), never the press's others —
+// changeover_evac_nodes marks which of THIS cell's nodes are in the way of a
+// setup, and the save refuses one it does not occupy.
+function toolChangeOwn(node) {
+    const c = S.model.cells[node] || {};
+    return [...new Set([node, c.paired, c.secondPaired, c.staging, c.parkOld].filter(Boolean))];
+}
+
+// setList is one setting's exception list: a row per place it is listed at.
+// A group's has the one row, named for the group.
+function setList(key, places, eligible, group) {
+    const copy = SET_COPY[key];
+    return exceptionList({
+        id: 'set-' + key, label: W(copy[0]), sub: copy[1],
+        summary: group ? '' : countOf(places.length, eligible, 'position'),
+        rows: places.map(p => ({
+            name: group ? group.name : p.node,
+            cells: setCells(key, p, setCtx(p)),
+            remove: Object.assign({ act: 'set-rm', key: key }, p.g !== undefined ? { g: p.g } : { node: p.node }),
+        })),
+        add: !group && places.length < eligible ? { label: '+ Add a position', act: 'set-addpos', key: key } : null,
+    }) + (key === 'evac_nodes' && places.some(p => setCtx(p).evacNodes.length)
+        ? '<p class="pd-note pd-oneline">' + esc(CARRYOVER_NOTE) + '</p>' : '');
+}
+
+// styleSettings is "Set for this style", under the positions table: a list per
+// setting some position of this style sets, and + Add a setting.
+function styleSettings() {
+    const rows = drawnRows();
+    if (!rows.length) return '';
+    const lists = setKeys('style').map(key => {
+        const eligible = rows.filter(n => advShows(key, setCtx({ node: n })));
+        const listed = eligible.filter(n => isListed(key, { node: n }, setCtx({ node: n })));
+        return listed.length ? setList(key, listed.map(n => ({ node: n })), eligible.length) : '';
+    }).join('');
+    return '<div class="pd-setfor" id="pd-setfor"><div class="pd-lbl">Set for this style' +
+        '<span class="hint">only where a position differs from the default</span></div>' + lists +
+        '<button class="pd-btn quiet exc-add" data-act="set-add">+ Add a setting</button></div>';
+}
+
+// groupSettings is a recipe group's own list, on its card: the settings every
+// style the floor makes from the recipe takes on the group's spots.
+function groupSettings(g, i) {
+    const p = { g: i };
+    const d = setCtx(p);
+    const lists = setKeys('group').filter(key => advShows(key, d) && isListed(key, p, d))
+        .map(key => setList(key, [p], 1, g)).join('');
+    return '<div class="pd-gset">' +
+        (lists || '<span class="pd-dim">nothing set: a style made from it takes the minted defaults</span>') +
+        '<button class="pd-btn quiet exc-add" data-act="set-add" data-g="' + i + '">+ Add a setting</button></div>';
+}
+
+// openSetAdd is + Add a setting: the shared picker over the settings, under
+// their headings. A setting no place here may take, or one every place that
+// may take it already sets, is greyed with why. A style's pick then asks for
+// the position, unless only one may take it; a group's is the group.
+function openSetAdd(btn, group) {
+    const pop = $('pd-pop');
+    if (!pop) return;
+    const rows = [];
+    const places = group ? [{ g: group.g }] : drawnRows().map(n => ({ node: n }));
+    const free = {};
+    for (const [section, keys] of SET_SECTIONS) {
+        for (const key of keys) {
+            if (setKeys(group ? 'group' : 'style').indexOf(key) < 0) continue;
+            const may = places.filter(p => advShows(key, setCtx(p)));
+            if (group && !may.length) continue;
+            free[key] = may.filter(p => !isListed(key, p, setCtx(p)));
+            const r = { value: key, label: W(SET_COPY[key][0]), section: section };
+            if (!may.length) r.reason = 'no position of this style takes it';
+            else if (!free[key].length) r.reason = group ? 'set' : 'set on every position that takes it';
+            rows.push(r);
+        }
+    }
+    openRowPicker(pop, btn, rows, key => {
+        if (group || free[key].length === 1) { setAddAt(key, free[key][0]); return; }
+        openSetPosition(btn, key);
+    }, { placeholder: 'find a setting' });
+}
+
+// openSetPosition is the second step, and a list's own + Add a position: the
+// style's positions that may take the setting, one already listed greyed.
+function openSetPosition(btn, key) {
+    const pop = $('pd-pop');
+    if (!pop) return;
+    const rows = drawnRows().filter(n => advShows(key, setCtx({ node: n }))).map(n => {
+        const r = { value: n, label: n };
+        if (isListed(key, { node: n }, setCtx({ node: n }))) r.reason = 'set';
+        return r;
+    });
+    openRowPicker(pop, btn, rows, n => setAddAt(key, { node: n }), { placeholder: 'find a position' });
+}
+
+// openSetPick is a row's own picker: parts, a staging node, a destination, the
+// positions a Tool change marks.
+function openSetPick(btn, key, p) {
+    const pop = $('pd-pop');
+    if (!pop) return;
+    const d = setCtx(p);
+    const routing = S.composer.routing || [];
+    const node = r => ({ value: r.core_node_name, label: r.label || r.core_node_name });
+    keepRow(key, p);
+    switch (key) {
+        case 'allowed_payload_codes': {
+            const have = d.a.allowed_payload_codes || [];
+            const rows = S.model.parts.filter(c => have.indexOf(c) < 0).map(c => ({ value: c, label: M().shortPart(c), search: c }));
+            openRowPicker(pop, btn, rows, list => setWrite(p, key, have.concat(list)), { multi: true, placeholder: 'find parts' });
+            return;
+        }
+        case 'auto_request_payload':
+            openRowPicker(pop, btn, S.model.parts.map(c => ({ value: c, label: M().shortPart(c), search: c })),
+                c => setWrite(p, key, c), { placeholder: 'find a part' });
+            return;
+        // The staging nodes of the routing set: a spot is a node a robot sets
+        // one bin down on and lifts it from, which is what a staging node is.
+        // It may be this position's own inbound staging (the robot waits under
+        // the spare); the save refuses one another position already names.
+        case 'keep_staged_node':
+            openRowPicker(pop, btn, routing.filter(r => r.role === 'staging').map(node),
+                n => setWrite(p, key, n), { placeholder: 'find a staging node' });
+            return;
+        case 'partial_dest':
+            openRowPicker(pop, btn, routing.filter(r => r.role === 'destination').map(node),
+                n => setWrite(p, key, n), { placeholder: 'find a destination' });
+            return;
+        case 'evac_nodes':
+            openRowPicker(pop, btn, toolChangeOwn(p.node).filter(n => d.evacNodes.indexOf(n) < 0).map(n => ({ value: n, label: n })),
+                list => setWrite(p, key, d.evacNodes.concat(list)), { multi: true, placeholder: 'find positions' });
+            return;
+        default:
+    }
+}
+
+// onSetNumber writes a number as it is typed, without a redraw.
+function onSetNumber(e) {
+    const el = e.target;
+    if (!el || !el.dataset || el.dataset.setnum === undefined) return;
+    const digits = String(el.value || '').replace(/[^0-9]/g, '');
+    const p = setPlace(el);
+    keepRow(el.dataset.key, p);
+    setWrite(p, el.dataset.setnum, digits ? Number(digits) : 0, true);
 }
 
 // REFILL_ROBOT is the refill setting's stored words (protocol.RefillBy) as the
@@ -4597,239 +4851,8 @@ const REFILL_NOTE = {
     index_robot: 'Robot 1 evacuates and leaves',
     own_robot: 'Robot 1 evacuates, Robot 2 indexes, and Robot 3 brings the back its carrier when Robot 2 lifts it',
 };
-function refillRobot(v) { return REFILL_ROBOT[v] || REFILL_ROBOT.clearing_robot; }
 
-function advPick(key, label, cls) {
-    return '<button class="pd-sel' + (cls ? ' ' + cls : '') + '" data-adv="' + key +
-        '" data-advkind="pick">' + label + '<i class="car"></i></button>';
-}
-
-function advField(key) {
-    // The row's name is the field's word; the sentence under it is this
-    // screen's. See ADV_COPY.
-    const spec = ADV_COPY[key] || [key, ''];
-    const copy = [W(spec[0]), spec[1]];
-    let control = '';
-    switch (key) {
-        case 'allowed_payload_codes': {
-            const chips = S.adv.a.allowed_payload_codes.map((p, i) =>
-                '<button class="pd-chip set" data-adv="allowed_payload_codes" data-advkind="unchip" data-i="' + i + '">' +
-                esc(M().shortPart(p)) + ' <i>&times;</i></button>').join('');
-            control = chips + '<button class="pd-chip add" data-adv="allowed_payload_codes" data-advkind="pick">+ add</button>';
-            break;
-        }
-        case 'reorder_point': control = advNumber('reorder_point'); break;
-        case 'lineside_soft_threshold': case 'sequence': case 'pack_tolerance_pct': control = advNumber(key); break;
-        case 'curtain_required': control = advToggle(key); break;
-        case 'auto_request_payload': {
-            const v = S.adv.a.auto_request_payload;
-            control = advPick(key, esc(v ? M().shortPart(v) : 'off'), v ? '' : 'dflt');
-            break;
-        }
-        case 'keep_staged_node': {
-            const v = S.adv.a.keep_staged_node;
-            control = advPick(key, esc(v || 'off'), v ? '' : 'dflt');
-            break;
-        }
-        case 'evac_nodes': {
-            const list = S.adv.evacNodes;
-            control = list.length
-                ? advPick(key, esc(list.join(' · ')))
-                : '<button class="pd-chip add" data-adv="evac_nodes" data-advkind="pick">+ pick positions</button>';
-            break;
-        }
-        case 'partial_dest': {
-            const v = S.adv.partialDest;
-            const fallback = S.model.cells[S.adv.node].dest || '';
-            control = advPick(key, v ? esc(v) : '<span class="k">' + esc(W('outbound_destination')) + ' ·</span> ' + esc(fallback || '—'), v ? '' : 'dflt');
-            break;
-        }
-        case 'changeover_carryover_disposition': {
-            const v = S.adv.a.changeover_carryover_disposition || 'replace';
-            control = advPick(key, esc(CARRYOVER[v] || v), v === 'replace' ? 'dflt' : '');
-            break;
-        }
-        case 'refill_by': {
-            // A choice between three named robots, not a flag called "flipped".
-            const v = S.adv.a.refill_by;
-            control = advPick(key, refillRobot(v)) + '<span class="pd-note">' + esc(REFILL_NOTE[v] || REFILL_NOTE.clearing_robot) + '</span>';
-            break;
-        }
-        default: control = advToggle(key);
-    }
-    return '<div class="pd-fld"><label>' + esc(copy[0]) +
-        (copy[1] ? '<small>' + esc(copy[1]) + '</small>' : '') +
-        '</label><div class="v">' + control + '</div></div>';
-}
-
-function drawAdvanced() {
-    const scrim = $('pd-scrim');
-    if (!scrim || !S.adv) return;
-    const node = S.adv.node;
-    let body = '';
-    for (const [title, keys] of ADV_SECTIONS) {
-        const shown = keys.filter(k => advShows(k));
-        if (!shown.length) continue;
-        const n = shown.filter(k => advIsSet(k)).length;
-        body += '<div class="pd-sec"><div class="pd-lbl">' + esc(title) +
-            (n ? '<span class="cnt">' + n + ' set</span>' : '') + '</div>' +
-            shown.map(advField).join('') + '</div>';
-    }
-    const g = S.adv.group !== undefined && S.shapeDraft && S.shapeDraft.groups ? S.shapeDraft.groups[S.adv.group] : null;
-    const title = g ? g.name : node;
-    const sub = g
-        ? ((S.shapeDraft.recipe && S.shapeDraft.recipe.name) || 'This recipe') + ' · settings every style the floor makes ' +
-            'from it takes on ' + g.name + '’s spots. They are saved with the recipe.'
-        : S.model.styleName + ' · settings the flow doesn’t draw. They ride along with this position when the flow is ' +
-            'saved from either screen.';
-    // A SWITCH OR A PICK HERE IS TYPED WORK. The layer asks before Escape or
-    // the backdrop closes a sheet with typed work, but it sees only form
-    // fields, and this sheet's switches and picks are buttons: the backdrop
-    // dropped a flipped Strict pack unasked. data-dirty is the layer's mark.
-    const dirty = S.adv.opened !== undefined && !advUntouched() ? ' data-dirty' : '';
-    scrim.innerHTML = '<div class="pd-modal"' + dirty + ' role="dialog" aria-modal="true" aria-label="' + esc(title) + ' Advanced">' +
-        '<div class="mh"><h2>' + esc(title) + ' · Advanced</h2><p>' + esc(sub) + '</p></div>' +
-        '<div class="mb">' + body + '</div>' +
-        '<div class="mf"><span class="st">Nothing here changes the flow or the picture.</span>' +
-        '<button class="pd-btn" data-act="adv-cancel">Cancel</button>' +
-        '<button class="pd-btn primary" data-act="adv-apply">Apply</button></div>' +
-        '<div class="pd-pop" id="pd-advpop" hidden></div></div>';
-    showSheet(undefined, advancedGone);
-    bindAdvInputs();
-    markRecipeState();
-}
-
-// The number fields write through to S.adv as they are typed. Bound after
-// every write of the sheet's markup: a draw, or Keep editing's restore.
-function bindAdvInputs() {
-    $('pd-scrim').querySelectorAll('[data-advkind="number"]').forEach(el => {
-        el.addEventListener('input', () => {
-            const digits = el.value.replace(/[^0-9]/g, '');
-            S.adv.a[el.dataset.adv] = digits ? Number(digits) : 0;
-        });
-    });
-}
-
-function closeAdvanced() {
-    hideSheet();
-}
-
-// advancedGone is Advanced closing, however it closed: Cancel, Escape, the
-// backdrop, Discard on the layer's question. Its draft goes with it.
-function advancedGone() {
-    $('pd-scrim').innerHTML = '';
-    S.adv = null;
-    markRecipeState();
-}
-
-// Apply: the advanced block through setAdvanced, the two evacuation fields and
-// the partial home through the cell's own actions. Several reduces rather than
-// one because they are different things the model already knows how to do. In
-// group scope the group's `advanced` takes what the sheet says, as the server
-// stores it, and no cell changes.
-function applyAdvanced() {
-    // UNTOUCHED MEANS UNWRITTEN (P0 :4169). The sheet opens on advancedFor,
-    // every default filled in, and Apply wrote that whole block onto the cell:
-    // the flow went dirty and the next save sent the defaults as set.
-    if (advUntouched()) { closeAdvanced(); return; }
-    if (S.adv.group !== undefined) {
-        const g = S.shapeDraft && S.shapeDraft.groups && S.shapeDraft.groups[S.adv.group];
-        if (g) {
-            const a = recipeAdvanced(S.adv.a, g.of);
-            if (Object.keys(a).length) g.advanced = a; else delete g.advanced;
-        }
-        closeAdvanced();
-        groupChanged();
-        return;
-    }
-    const node = S.adv.node;
-    let m = M().reduce(S.model, { type: 'setAdvanced', node: node, advanced: S.adv.a });
-    m = M().reduce(m, { type: 'setEvacNodes', node: node, nodes: S.adv.evacNodes });
-    m = M().reduce(m, { type: 'setPartialDest', node: node, dest: S.adv.partialDest });
-    S.model = m;
-    closeAdvanced();
-    drawFlows();
-    schedulePreview();
-}
-
-function advOptions(key) {
-    const c = S.model.cells[S.adv.node];
-    const routing = S.composer.routing;
-    switch (key) {
-        case 'allowed_payload_codes': {
-            const have = new Set(S.adv.a.allowed_payload_codes);
-            return S.model.parts.filter(p => !have.has(p))
-                .map(p => ({ label: M().shortPart(p), run: () => S.adv.a.allowed_payload_codes.push(p) }));
-        }
-        case 'auto_request_payload':
-            return [{ label: 'off', on: !S.adv.a.auto_request_payload, run: () => { S.adv.a.auto_request_payload = ''; } }]
-                .concat(S.model.parts.map(p => ({
-                    label: M().shortPart(p), on: S.adv.a.auto_request_payload === p,
-                    run: () => { S.adv.a.auto_request_payload = p; },
-                })));
-        // The staging nodes of the routing set: a spot is a node a robot sets
-        // one bin down on and lifts it from, which is what a staging node is.
-        // It may be this position's own inbound staging (the robot waits under
-        // the spare); the save refuses one another position already names.
-        case 'keep_staged_node':
-            return [{ label: 'off', on: !S.adv.a.keep_staged_node, run: () => { S.adv.a.keep_staged_node = ''; } }]
-                .concat(routing.filter(r => r.role === 'staging').map(r => ({
-                    label: r.label || r.core_node_name, on: S.adv.a.keep_staged_node === r.core_node_name,
-                    run: () => { S.adv.a.keep_staged_node = r.core_node_name; },
-                })));
-        case 'changeover_carryover_disposition':
-            return Object.keys(CARRYOVER).map(k => ({
-                label: CARRYOVER[k], on: (S.adv.a.changeover_carryover_disposition || 'replace') === k,
-                run: () => { S.adv.a.changeover_carryover_disposition = k; },
-            }));
-        case 'refill_by':
-            return Object.keys(REFILL_ROBOT).map(k => ({
-                label: REFILL_ROBOT[k], on: refillRobot(S.adv.a.refill_by) === REFILL_ROBOT[k],
-                run: () => { S.adv.a.refill_by = k; },
-            }));
-        case 'evac_nodes': {
-            // THE CELL'S OWN POSITIONS, not the press's. changeover_evac_nodes
-            // marks which of THIS cell's nodes are in the way of a setup.
-            const mine = [S.adv.node, c.paired, c.secondPaired, c.staging, c.parkOld].filter(Boolean);
-            return [...new Set(mine)].map(n => ({
-                label: n, on: S.adv.evacNodes.indexOf(n) >= 0, keepOpen: true,
-                run: () => {
-                    const i = S.adv.evacNodes.indexOf(n);
-                    if (i >= 0) S.adv.evacNodes.splice(i, 1); else S.adv.evacNodes.push(n);
-                },
-            }));
-        }
-        case 'partial_dest':
-            return [{
-                label: W('outbound_destination') + ' · ' + (c.dest || '—'), on: !S.adv.partialDest,
-                run: () => { S.adv.partialDest = ''; },
-            }].concat(routing.filter(r => r.role === 'destination').map(r => ({
-                label: r.label || r.core_node_name, on: S.adv.partialDest === r.core_node_name,
-                run: () => { S.adv.partialDest = r.core_node_name; },
-            })));
-        default: return [];
-    }
-}
-
-function openAdvPicker(btn) {
-    const opts = advOptions(btn.dataset.adv);
-    const pop = $('pd-advpop');
-    if (!pop) return;
-    pop.innerHTML = opts.length
-        ? opts.map((o, i) => '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + esc(o.label) + '</button>').join('')
-        : '<div class="none">Nothing to choose here yet.</div>';
-    showPop(pop, btn);
-    placePopover(pop, btn);
-    pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', ev => {
-        ev.stopPropagation();
-        const o = opts[Number(b.dataset.opt)];
-        o.run();
-        drawAdvanced();
-        if (o.keepOpen) openAdvPicker(root().ownerDocument.querySelector('[data-adv="' + btn.dataset.adv + '"][data-advkind="pick"]') || btn);
-    }));
-}
-
-function onAdvClick(e) {
+function onScrimClick(e) {
     // A node picker in a sheet answers its own clicks (shared/picker.js).
     // A POPOVER OPENED FROM A SHEET CLOSES ON THE NEXT CLICK OUTSIDE IT, which
     // is what #pd-pop's own document listener does for the page. The option
@@ -4898,26 +4921,10 @@ function onAdvClick(e) {
         pickApplyPart(Number(act.dataset.style), act.dataset.node, act.dataset.part);
         return;
     }
-    if (act && act.dataset.act === 'adv-cancel') { closeAdvanced(); return; }
-    if (act && act.dataset.act === 'adv-apply') { applyAdvanced(); return; }
     // The apply modal draws its own footer on #pd-scrim, so its two buttons
     // answer here; every other sheet's are the layer's own.
     if (act && act.dataset.act === 'sheet-cancel') { closeSheet(); return; }
     if (act && act.dataset.act === 'sheet-ok') { runSheet(); return; }
-    if (!S.adv) return;
-    const f = e.target.closest && e.target.closest('[data-advkind]');
-    if (!f) {
-        const pop = $('pd-advpop');
-        if (pop && !(e.target.closest && e.target.closest('.pd-pop'))) { closeLayer(pop); pop.hidden = true; pop.innerHTML = ''; }
-        return;
-    }
-    e.stopPropagation();
-    switch (f.dataset.advkind) {
-        case 'toggle': S.adv.a[f.dataset.adv] = !S.adv.a[f.dataset.adv]; drawAdvanced(); return;
-        case 'unchip': S.adv.a.allowed_payload_codes.splice(Number(f.dataset.i), 1); drawAdvanced(); return;
-        case 'pick': openAdvPicker(f); return;
-        default: return;
-    }
 }
 
 // ── a screen's health and the loader windows (Settings' Screens and positions) ──
@@ -6051,53 +6058,58 @@ function positionFacts(nodes) {
         (retiring.length ? '<p class="pd-note">Off until its active order finishes: ' + esc(retiring.join(', ')) + '.</p>' : '');
 }
 
+// openRowPicker is the shared picker in a popover (pop, anchored to btn) over
+// rows (shared/picker.js's shape: a row with a reason is greyed with it). One
+// pick closes it and hands onPick the value; with multi each tick is one row,
+// there is no tick-all, and what is ticked is handed to onPick, as a list, as
+// the popover closes (Escape, a press outside). Settings' + Add lists and Set
+// for this style's are this one.
+//
+// A PRESS IS INSIDE THE LIST. The shell redraws its rows on a tick, so the
+// row clicked is out of the document by the time the click reaches the page's
+// closer (boot: a click outside every .pd-pop closes it), and closest('.pd-pop')
+// reads it as a click outside: a multi list closed after the first tick, and a
+// list opened by a pick (Set for this style's position, after the setting) was
+// closed by the press that picked. Its clicks stop at the list while it is
+// open.
+function openRowPicker(pop, btn, rows, onPick, opts) {
+    const o = opts || {};
+    pop.innerHTML = '';
+    let picked = [];
+    const inside = e => e.stopPropagation();
+    pop.addEventListener('click', inside);
+    openLayer(pop, { kind: 'popover', anchor: btn, focus: false, onClose: w => {
+        pop.removeEventListener('click', inside);
+        if (w !== 'close') closePop();
+        if (o.multi && picked.length) onPick(picked.slice());
+    } });
+    mountPicker(pop, null, () => rows, {
+        multi: !!o.multi, open: true, chips: false, placeholder: o.placeholder || '',
+        onChange: v => {
+            if (o.multi) { picked = v.slice(); return; }
+            closeLayer(pop);
+            pop.hidden = true;
+            pop.innerHTML = '';
+            if (v) onPick(v);
+        },
+    });
+    placePopover(pop, btn);
+}
+
 // openPositionPicker is + Add's list: the shared picker over this process's
 // positions; a position the setting cannot take is greyed with why (why(n), ''
-// for none). One at a time, or with multi several: each tick is one position,
-// there is no tick-all, and what is ticked is handed to onPick as the list
-// closes (Escape, a press outside).
+// for none). One at a time, or with multi several, handed over as ids.
 function openPositionPicker(btn, nodes, why, onPick, multi) {
     const pop = $('pd-stpop');
     if (!pop) return;
-    pop.innerHTML = '';
     const rows = nodes.map(n => {
         const r = { value: String(n.id), label: posName(n) };
         const no = why(n);
         if (no) r.reason = no;
         return r;
     });
-    if (multi) {
-        let picked = [];
-        // A TICK IS INSIDE THE LIST. The shell redraws its rows on a tick, so
-        // the row clicked is out of the document by the time the click reaches
-        // the page's closer (boot: a click outside every .pd-pop closes it),
-        // and closest('.pd-pop') reads it as a click outside: the list closed
-        // after the first tick. Its clicks stop at the list while it is open.
-        const inside = e => e.stopPropagation();
-        pop.addEventListener('click', inside);
-        openLayer(pop, { kind: 'popover', anchor: btn, focus: false, onClose: w => {
-            pop.removeEventListener('click', inside);
-            if (w !== 'close') closePop();
-            if (picked.length) onPick(picked.map(Number));
-        } });
-        mountPicker(pop, null, () => rows, {
-            multi: true, open: true, chips: false, placeholder: 'find positions',
-            onChange: v => { picked = v.slice(); },
-        });
-        placePopover(pop, btn);
-        return;
-    }
-    showPop(pop, btn);
-    mountPicker(pop, null, () => rows, {
-        open: true, chips: false, placeholder: 'find a position',
-        onChange: v => {
-            closeLayer(pop);
-            pop.hidden = true;
-            pop.innerHTML = '';
-            if (v) onPick(Number(v));
-        },
-    });
-    placePopover(pop, btn);
+    openRowPicker(pop, btn, rows, v => onPick(multi ? v.map(Number) : Number(v)),
+        { multi: !!multi, placeholder: multi ? 'find positions' : 'find a position' });
 }
 
 // openCurtainAdd: + Add under Light curtain, over the positions whose curtain
@@ -6795,8 +6807,7 @@ function bindPickers() {
 // trigger, since the row is gone).
 //
 // #pd-advpop RIDES IN THE BODY rather than on the sheets that want a popover.
-// It is the Advanced sheet's answer to #pd-pop living inside #pd-root, which
-// the scrim covers; a list opened from a sheet against the page's popover
+// It answers #pd-pop living inside #pd-root, which the scrim covers; a list opened from a sheet against the page's popover
 // draws behind the modal. One per sheet — and the sheets that never open one
 // pay an empty div.
 function pageSheet(title, sub, body, confirm, run, danger, opener) {
@@ -6810,8 +6821,8 @@ function pageSheet(title, sub, body, confirm, run, danger, opener) {
         onClose: why => sheetGone(h, why),
     });
     // The sheet's own controls (pickers, choosers, its popover's rows) answer
-    // in onAdvClick, as they did on #pd-scrim: the sheet is outside #pd-root.
-    h.el.addEventListener('click', onAdvClick);
+    // in onScrimClick, as they did on #pd-scrim: the sheet is outside #pd-root.
+    h.el.addEventListener('click', onScrimClick);
     S.sheet = { handle: h };
     bindPickers();
     return h;
@@ -8402,7 +8413,7 @@ async function syncCatalog() {
 // attention". A drifted member is the second one.
 //
 // THERE IS NO PNG FOR THIS TAB. Its layout is the guide's grouped list table
-// (P0's pattern) and its two modals are the Advanced sheet's shell, so every
+// (P0's pattern) and its two modals are the page's modal shell (.pd-modal), so every
 // size and colour here is one the guide already describes. Anything that was
 // not already described is a question in the report rather than a decision.
 
@@ -8689,6 +8700,7 @@ function startShapeDraft(shape, draft) {
     // refusal the server's last word on a save of them.
     S.shapeDraft = Object.assign({ groups: null, focus: null, hover: null, refusal: '' },
         draft, { back: back, fromTab: from });
+    S.setAdds = {};
     S.shapeDraft.baseline = draftKey();
     drawFlows();
 }
@@ -9316,7 +9328,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1 };
+    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
 // Styles. The Recipes tab's hash still says presets (F23); recipes names it
@@ -9411,7 +9423,23 @@ function onClick(e) {
             case 'ch-start': catidStartChangeover(btn.dataset.pid, btn.dataset.style, btn.dataset.name); return;
             case 'save': saveFlow(); return;
             case 'discard': selectStyle(S.styleID); return;
-            case 'advanced': openAdvanced(btn.dataset.node); return;
+            // Set for this style, and a group's list (see setList).
+            case 'set-add': openSetAdd(btn, btn.dataset.g !== undefined ? { g: Number(btn.dataset.g) } : null); return;
+            case 'set-addpos': openSetPosition(btn, btn.dataset.key); return;
+            case 'set-pick': openSetPick(btn, btn.dataset.key, setPlace(btn)); return;
+            case 'set-rm': setRemove(btn.dataset.key, setPlace(btn)); return;
+            case 'set-seg': keepRow(btn.dataset.key, setPlace(btn)); setWrite(setPlace(btn), btn.dataset.key, btn.dataset.v); return;
+            case 'set-unchip': {
+                const p = setPlace(btn);
+                keepRow(btn.dataset.key, p);
+                setWrite(p, btn.dataset.key, (advValue(btn.dataset.key, setCtx(p)) || []).filter(v => v !== btn.dataset.v));
+                return;
+            }
+            case 'set-goto': {
+                const el = $('pd-setfor');
+                if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
+                return;
+            }
             case 'rmpart': apply({ type: 'removePart', payloadCode: btn.dataset.part }); return;
             case 'rmpos': apply({ type: 'removePosition', node: btn.dataset.node }); return;
             // The route's own two verbs. Both compute the whole new list and
@@ -9547,7 +9575,6 @@ function onClick(e) {
             case 'gspot-rm': dropGroupSpot(Number(btn.dataset.g), btn.dataset.node); return;
             case 'glist-add': addGroupList(btn, Number(btn.dataset.g), btn.dataset.node, btn.dataset.field); return;
             case 'glist-rm': dropGroupList(Number(btn.dataset.g), btn.dataset.node, btn.dataset.field, btn.dataset.v); return;
-            case 'gadv': openGroupAdvanced(Number(btn.dataset.g)); return;
             case 'gfocus': pinGroup(Number(btn.dataset.g)); return;
             case 'recipe-open': {
                 const id = btn.dataset.preset;

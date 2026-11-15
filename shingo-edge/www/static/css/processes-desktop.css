@@ -350,13 +350,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    has to fit on one line at 1440. So the chip is a single line that ellipsises
    with its full text in a title, and the columns below are sized so it does
    not have to. */
-.pd-postbl .pd-sel, .pd-postbl .pd-adv { white-space: nowrap; }
+.pd-postbl .pd-sel, .pd-postbl .pd-setchip { white-space: nowrap; }
 /* Tighter chrome INSIDE THE TABLE ONLY. Ten columns share 1059 px at 1440 and
    a chip spends 30 of them on padding, gap and caret before it draws a
    character; the sheets, which have one field per row, keep the roomy one. */
 .pd-postbl .pd-sel { padding: 0 6px; gap: 5px; }
 .pd-postbl .pd-sel .car { margin-left: 0; }
-.pd-postbl .pd-adv { padding: 0 6px; gap: 5px; }
 .pd-postbl .pd-sel { overflow: hidden; }
 /* The chip's label box. text-overflow needs a box of its own — on the flex
    container it does nothing, and a chip too wide for its column clipped
@@ -410,7 +409,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-postbl col.c-via { width: 7.5%; }
 .pd-postbl col.c-dst { width: 11.75%; }
 .pd-postbl col.c-reorder { width: 6%; }
-.pd-postbl col.c-adv { width: 6%; }
+.pd-postbl col.c-set { width: 6%; }
 /* The eleven add to 100. They have to be WRITTEN as eleven: leaving Advanced
    to "whatever is left" left it nothing, because the others already summed to
    100, and its badge then spilled 75 px past the table's right edge. A column
@@ -490,12 +489,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-sel.bad { border-color: var(--viz-coral); }
 .pd-sel .k { color: var(--text-muted); font-size: 11px; }
 .pd-sel .gl { flex: 0 0 auto; width: 22px; height: 22px; }
-.pd-adv {
-    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px;
-    border: 1px solid var(--sub-2); border-radius: 8px; background: none;
-    color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
-}
-.pd-adv.set { color: var(--accent); border-color: var(--accent); }
+/* Set for this style (under the positions table) and a recipe group's list
+   (on its card): the shared exception list (.exc-*). The row's chip says the
+   row is listed there, in the accent, like a set value. */
+.pd-setchip { color: var(--accent); border-color: var(--accent); font-size: 12px; cursor: pointer; }
+.pd-setfor { margin: 18px 24px 0; }
+.pd-setfor .pd-lbl { margin-bottom: 2px; }
+.pd-setfor .exc-rows .k, .pd-gset .exc-rows .k { color: var(--text-muted); font-size: 12px; }
+.pd-setnum { width: 72px; }
+.pd-oneline { margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-gset { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.pd-gset .exc { width: 100%; grid-template-columns: 170px minmax(0, 1fr); }
 
 /* ── D1 · a recipe's groups (recipe groups, 2026-10-24) ─────────────────
    One card per part under the positions table, two to a row at 1440 (the
@@ -507,7 +511,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-groups { flex: none; margin: 14px 24px 0; }
 .pd-grpbar { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-top: 1px solid var(--sub-1); }
 .pd-grpbar .pd-dim { font-size: 12px; }
-.pd-groups > .pd-lbl .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.pd-groups > .pd-lbl .hint, .pd-setfor > .pd-lbl .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-groups > .pd-refusal { margin: 8px 0 0; }
 .pd-grps { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 16px; margin-top: 8px; }
 .pd-grp { background: var(--surface); border: 1px solid var(--sub-2); border-radius: 12px; padding: 12px 14px 14px; min-width: 0; }
@@ -538,7 +542,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-grp > .pd-chip.add { margin-top: 8px; }
 .pd-gkv { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
 .pd-gkv .k { color: var(--text-muted); font-size: 12px; }
-.pd-gadv { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
 .pd-floor { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--sub-1); border-radius: 12px; }
 .pd-floor p { margin: 6px 0 0; font-size: 13px; }
 /* A sheet's picture (New style's Spots step, Use a recipe): the page's own

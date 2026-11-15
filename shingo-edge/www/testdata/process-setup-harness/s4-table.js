@@ -1,4 +1,4 @@
-// s4-table.js — the positions table's and the Advanced sheet's bugs (S4 U3:
+// s4-table.js — the positions table's and its settings' bugs (S4 U3:
 // B4, B5, B6, B7, F15, F26), one block per bug, each on a fresh page of the
 // fixture's plant. A line is `ok <what must hold>` or `BUG <what must hold>:
 // <what happened>`; the golden holds what the page does, and a fixed bug's
@@ -52,30 +52,28 @@ const BUGS = [
             const S = page.S;
             const bad = [];
             for (const n of tableRows(S)) {
-                page.click('root', { act: 'advanced', node: n });
                 const need = steady(S, n, 'changeover_evac_nodes');
                 const allowed = need !== 'forbidden' && need !== 'unused';
-                if (page.pd('advShows')('evac_nodes') !== allowed) bad.push(n + ' (' + S.model.cells[n].mode + ': ' + need + ')');
-                page.click('scrim', { act: 'adv-cancel' });
+                if (page.pd('advShows')('evac_nodes', page.pd('setCtx')({ node: n })) !== allowed) bad.push(n + ' (' + S.model.cells[n].mode + ': ' + need + ')');
             }
             return [['every row', !bad.length, bad.join(', ')]];
         },
     },
     {
-        title: 'B6 · the row\'s "N set" is the sheet\'s own total',
+        // The sheet went in slice 3: the row's chip forecasts Set for this
+        // style's lists, one per setting the position is listed under.
+        title: 'B6 · the row\'s "N set" is the number of Set for this style\'s lists it is in',
         run: async page => {
             const S = page.S;
             const style = S.composer.styles.find(s => s.name === 'Style B');
             page.click('root', { style: String(style.id) });
             await page.settle();
+            const lists = String(page.root.innerHTML).split('<div class="exc" data-exc="set-').slice(1);
             const bad = [];
             for (const n of tableRows(page.S)) {
-                const badge = page.pd('advancedCount')(n);
-                page.click('root', { act: 'advanced', node: n });
-                const secs = [...page.scrim.innerHTML.matchAll(/<div class="pd-sec"><div class="pd-lbl">[^<]*(?:<span class="cnt">(\d+) set<\/span>)?<\/div>/g)];
-                const total = secs.reduce((t, m) => t + Number(m[1] || 0), 0);
-                if (badge !== total) bad.push(n + ' badge ' + badge + ', sheet ' + total);
-                page.click('scrim', { act: 'adv-cancel' });
+                const chip = page.pd('setCount')(n);
+                const listed = lists.filter(l => l.indexOf('<td class="exc-pos">' + n + '</td>') >= 0).length;
+                if (chip !== listed) bad.push(n + ' chip ' + chip + ', lists ' + listed);
             }
             return [['every row of Style B', !bad.length, bad.join('; ')]];
         },
@@ -89,12 +87,11 @@ const BUGS = [
             await page.settle();
             const seq = [], cur = [], counted = [];
             for (const n of tableRows(page.S)) {
-                page.click('root', { act: 'advanced', node: n });
-                const shows = page.pd('advShows');
+                const ctx = page.pd('setCtx')({ node: n });
+                const shows = k => page.pd('advShows')(k, ctx);
                 const curtain = !!((S.composer.cell.positions || []).find(p => p.core_node_name === n) || {}).curtain;
                 if (shows('sequence')) seq.push(n + ' (' + page.S.model.cells[n].mode + ')');
                 if (shows('curtain_required') !== curtain) cur.push(n + (curtain ? ' has a curtain, hidden' : ' has none, drawn'));
-                page.click('scrim', { act: 'adv-cancel' });
             }
             return [
                 ['Board order is drawn on no line-mode position', !seq.length, seq.join(', ')],
@@ -165,13 +162,14 @@ const BUGS = [
             };
             press('set');
             let a = M.advancedFor(page.S.model, 'POS_A11');
-            out.push(['Set 15 writes reorder_point 15 and auto_reorder on; the cell reads 15', a.reorder_point === 15 && a.auto_reorder &&
-                T2(cell('POS_A11')) === '15', 'point ' + a.reorder_point + ', auto ' + a.auto_reorder + ', cell ' + JSON.stringify(T2(cell('POS_A11')))]);
+            // ON AT ITS POINT (brief, 2026-11-14): an armed row reads "on at 15".
+            out.push(['Set 15 writes reorder_point 15 and auto_reorder on; the cell reads on at 15', a.reorder_point === 15 && a.auto_reorder &&
+                T2(cell('POS_A11')) === 'on at 15', 'point ' + a.reorder_point + ', auto ' + a.auto_reorder + ', cell ' + JSON.stringify(T2(cell('POS_A11')))]);
             press('off');
             a = M.advancedFor(page.S.model, 'POS_A11');
             out.push(['Off writes auto_reorder off and keeps the point; the cell reads off', a.reorder_point === 15 && !a.auto_reorder &&
                 T2(cell('POS_A11')) === 'off', 'point ' + a.reorder_point + ', auto ' + a.auto_reorder + ', cell ' + JSON.stringify(T2(cell('POS_A11')))]);
-            const sub = page.pd('ADV_COPY').reorder_point[1];
+            const sub = page.pd('SET_COPY').reorder_point[1];
             out.push(['the reorder point\'s sub-label speaks of the bin, not of what is left in it: ' + JSON.stringify(sub), !/left/.test(sub), 'consume-only words']);
             return out;
         },
@@ -217,21 +215,32 @@ const BUGS = [
         },
     },
     {
-        title: 'Advanced · a flipped switch is typed work, so Escape and the backdrop ask first',
+        // The sheet went in slice 3, and with it the backdrop that could drop a
+        // flipped switch: a switch in Set for this style is the style's draft,
+        // which Save style or Discard changes answers.
+        title: 'Set for this style · a switch added is the style\'s draft, and × takes the draft back',
         run: async page => {
-            const n = tableRows(page.S)[0];
-            const marked = () => /class="pd-modal" data-dirty/.test(String(page.scrim.innerHTML || ''));
-            page.click('root', { act: 'advanced', node: n });
-            const before = marked();
-            page.click('scrim', { advkind: 'toggle', adv: 'strict_pack' });
-            const after = marked();
-            page.click('scrim', { advkind: 'toggle', adv: 'strict_pack' });
-            const back = marked();
-            page.click('scrim', { act: 'adv-cancel' });
+            const n = tableRows(page.S).find(x => page.pd('advShows')('strict_pack', page.pd('setCtx')({ node: x })));
+            const dirty = () => page.pd('dirty')();
+            const before = dirty();
+            page.click('root', { act: 'set-add' });
+            await page.settle();
+            const pick = v => {
+                const r = page.byId('pd-pop').querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === v);
+                if (r) r.click();
+            };
+            pick('strict_pack');
+            await page.settle();
+            pick(n);
+            await page.settle();
+            const after = dirty();
+            page.click('root', { act: 'set-rm', key: 'strict_pack', node: n });
+            await page.settle();
+            const back = dirty();
             return [
-                [n + ': the sheet as it opened is not marked', !before, 'marked before any change'],
-                [n + ': Strict pack flipped marks it data-dirty', after, 'not marked: the backdrop closes it unasked'],
-                [n + ': flipped back, it is not marked', !back, 'still marked'],
+                [n + ': the style as it opened is not dirty', !before, 'dirty before any change'],
+                [n + ': Strict pack added makes the draft dirty', after, 'not dirty: Save style would not send it'],
+                [n + ': taken off again, the draft is clean', !back, 'still dirty'],
             ];
         },
     },
@@ -251,7 +260,7 @@ const BUGS = [
 ];
 
 async function pinTableBugs() {
-    const L = ['# The positions table\'s and Advanced sheet\'s bugs (S4 U3), each on a fresh page of the fixture.',
+    const L = ['# The positions table\'s and its settings\' bugs (S4 U3), each on a fresh page of the fixture.',
         '# "ok" is what must hold; "BUG" is the bug, and what the page did.'];
     for (const b of BUGS) {
         const page = await T.openPage();

@@ -82,10 +82,10 @@ export function exceptionList(spec) {
 }
 
 // countOf is "n of total <noun>s", "all total <noun>s" or "no <noun>": the
-// summary's usual words.
+// summary's usual words. One of one is "1 of 1 <noun>": "all 1" is no phrase.
 export function countOf(n, total, noun, plural) {
     const many = plural || noun + 's';
     if (!total) return 'no ' + many;
-    if (n === total) return 'all ' + total + ' ' + (total === 1 ? noun : many);
+    if (n === total && total > 1) return 'all ' + total + ' ' + many;
     return n + ' of ' + total + ' ' + (total === 1 ? noun : many);
 }

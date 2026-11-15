@@ -121,6 +121,9 @@ function makeElement(id) {
         addEventListener(type, fn) {
             (this.listeners[type] = this.listeners[type] || []).push(fn);
         },
+        removeEventListener(type, fn) {
+            this.listeners[type] = (this.listeners[type] || []).filter(f => f !== fn);
+        },
         appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
         insertBefore(c, ref) {
             c.parentNode = this;
@@ -767,11 +770,11 @@ async function mainAsync() {
 
     // ── the one-shot pin: boot-only hash options are consumed, not re-minted ──
     {
-        const { win } = loadPage({ hash: '#style=1;adv=PLN_01;part=PLN_01', allowSheet: true });
+        const { win } = loadPage({ hash: '#style=1;part=PLN_01', allowSheet: true });
         await drain();
         await drain();
         // openProcess's own syncHash is boot's one navigation write; the
-        // one-shots (;adv=, ;part=) must be gone from it.
+        // one-shot (;part=) must be gone from it.
         if (win.replaceStates.length !== 1) {
             throw new Error('boot must mint exactly one replaceState, got ' +
                 JSON.stringify(win.replaceStates));
@@ -780,7 +783,7 @@ async function mainAsync() {
             throw new Error('boot must restate only the durable state, got ' + win.replaceStates[0]);
         }
         checks++;
-        console.log('ok: boot-only deep links (;adv=, ;part=) are consumed, never re-minted');
+        console.log('ok: boot-only deep links (;part=) are consumed, never re-minted');
     }
 
     // ── the Escape rule: the layer's, innermost first ───────────────────────
@@ -2024,7 +2027,9 @@ async function mainAsync() {
         const { root } = loadPage({ flowspec: true, composer: c });
         await drain();
         await drain();
-        const want = '<tr class="paired"><td colspan="11">PLN_02 is paired core node for PLN_01 · ' +
+        // TEN COLUMNS: the set chip's column is drawn only where a row sets something for
+        // the style, and these rows set nothing (the gear's column was always drawn).
+        const want = '<tr class="paired"><td colspan="10">PLN_02 is paired core node for PLN_01 · ' +
             'PLN_04 is inbound staging for PLN_03 — no row of their own</td></tr>';
         if (root.innerHTML.indexOf(want) < 0) {
             throw new Error('the foot does not name each rowless position by its role:\n      got  ' +
@@ -2365,11 +2370,10 @@ async function mainAsync() {
             'the discarded draft\'s take-off rode into the next preview');
     });
 
-    // ── the Advanced sheet and Presets say what they do ─────────────────────
+    // ── the reorder point and Presets say what they do ─────────────────────
     //
-    // The field's name is the flowspec table's; the help under it is this
-    // page's and says part. The reorder point is the number the engineer set,
-    // with no stamp beside it. Presets count the parts a preset was applied to, and say
+    // The reorder point is the number the engineer set, with no stamp beside
+    // it. Presets count the parts a preset was applied to, and say
     // so; a shape whose positions run different modes has a mark of its own.
 
     const advComposer = () => {
@@ -2377,20 +2381,6 @@ async function mainAsync() {
         c.styles[0].advanced = { PLN_01: { reorder_point: 5 } };
         return c;
     };
-
-    await pin('Advanced names allowed parts in the help, from the table in the label', async () => {
-        const { win, scrim } = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer(),
-        });
-        await settle();
-        if (!scrim.classList.contains('active')) throw new Error('setup: the advanced sheet did not open');
-        const want = '<label>' + label(win, 'allowed_payload_codes') +
-            '<small>which parts a robot may bring to this position</small></label>';
-        if (scrim.innerHTML.indexOf(want) < 0) {
-            const got = (scrim.innerHTML.match(/<label>[^<]*<small>which[^<]*<\/small><\/label>/) || [''])[0];
-            throw new Error('the allowed-parts row reads ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
-        }
-    });
 
     // The reorder point lives on the row's Auto reorder cell (S4 U3).
     const reorderPop = async () => {
@@ -2468,157 +2458,6 @@ async function mainAsync() {
                 JSON.stringify(root.innerHTML.match(/<span class="pd-shape">.*?<\/span><\/span>/g)));
         }
     });
-
-    // ── Escape on Advanced asks before it discards typing ───────────────────
-    //
-    // The sheet's question, on the dialog that draws its own markup into
-    // the scrim. The scrim's inputs are parsed out of the markup the page
-    // wrote, the way a browser would: one element per <input>, attributes as
-    // written, `value` a property typing moves, and a fresh set on every
-    // innerHTML write — so a value the page puts back is one it really wrote.
-    function liveInputs(scrim) {
-        let html = scrim.innerHTML, els = null;
-        Object.defineProperty(scrim, 'innerHTML', {
-            configurable: true,
-            get: () => html,
-            set: v => { html = String(v); els = null; },
-        });
-        const parse = () => {
-            if (els) return els;
-            els = [];
-            for (const tag of html.match(/<input\b[^>]*>/g) || []) {
-                const attrs = {};
-                for (const a of tag.matchAll(/([\w-]+)(?:="([^"]*)")?/g)) {
-                    if (a[1] !== 'input' && !(a[1] in attrs)) attrs[a[1]] = a[2] === undefined ? '' : a[2];
-                }
-                const dataset = {};
-                for (const k of Object.keys(attrs)) if (k.startsWith('data-')) dataset[attrName(k)] = attrs[k];
-                els.push({
-                    tagName: 'INPUT', type: attrs.type || 'text', value: attrs.value || '', defaultValue: attrs.value || '',
-                    checked: 'checked' in attrs, attrs, dataset, listeners: {}, focus() {},
-                    getAttribute: n => (n in attrs ? attrs[n] : null),
-                    hasAttribute: n => n in attrs,
-                    addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
-                });
-            }
-            return els;
-        };
-        scrim.querySelectorAll = sel => {
-            // The layer's own read of a modal's fields (typed work).
-            if (sel === 'input, select, textarea') return parse().slice();
-            const m = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(sel);
-            if (!m) return [];
-            return parse().filter(el => m[1] in el.attrs && (m[2] === undefined || el.attrs[m[1]] === m[2]));
-        };
-        return {
-            find: (attr, v) => parse().find(el => el.attrs[attr] === v),
-            type(el, v) { el.value = v; for (const fn of (el.listeners.input || [])) fn({ target: el }); },
-        };
-    }
-    const escapeOn = doc => { const ev = escapeEvent(); for (const fn of (doc.listeners.keydown || []).slice()) fn(ev); };
-    // THE QUESTION IS THE LAYER'S (shared/layer.js): a confirm on the stack
-    // above the dialog, built on the body, whose Escape is Keep editing; the
-    // dialog under it is never redrawn, so keeping is keeping.
-    const question = () => global.document.body.children.filter(c => c.classList && c.classList.contains('layer-scrim') &&
-        findIn(c, '[role="alertdialog"]').length).pop() || null;
-    const asks = () => { const q = question(); return !!q && q.innerHTML.indexOf('Discard the changes?') >= 0 &&
-        findIn(q, 'button').some(b => b.textContent === 'Keep editing'); };
-    const answer = word => {
-        const b = findIn(question(), 'button').find(x => x.textContent === word);
-        if (!b) throw new Error('the question has no ' + word);
-        b.click();
-    };
-    // The dialogs' own popover. The page draws it hidden inside the dialog's
-    // markup; the stub is the element $('pd-advpop') finds.
-    const advpopStub = () => Object.assign(makeElement('pd-advpop'), { hidden: true });
-    const openAdv = async () => {
-        let live = null;
-        const page = loadPage({
-            hash: '#style=1;adv=PLN_01', allowSheet: true, flowspec: true, composer: advComposer(),
-            onScrim: sc => { live = liveInputs(sc); }, extraIds: { 'pd-advpop': advpopStub() },
-        });
-        await settle();
-        if (!page.scrim.classList.contains('active')) throw new Error('setup: the advanced sheet did not open');
-        // #pd-pop is drawn hidden; the stub element starts shown, and Escape
-        // would close it first.
-        page.pop.hidden = true;
-        return Object.assign(page, { live });
-    };
-    // The dialogs' pickers, opened by a real click: Advanced's carry-over
-    // picker (Generate variants went in pick-a-part U5).
-    const openAdvPick = (scrim, doc) => click(scrim, doc, { advkind: 'pick', adv: 'changeover_carryover_disposition' });
-    const dialogs = [
-        ['Advanced', openAdv, 'PLN_01 · Advanced', l => l.find('data-adv', 'lineside_soft_threshold'), '40',
-            (scrim, doc) => click(scrim, doc, { advkind: 'toggle', adv: 'auto_confirm' })],
-    ];
-    for (const [name, open, heading, field, typed, redraw] of dialogs) {
-        await pin(name + ': Escape over typed input asks, and Keep editing keeps the value', async () => {
-            const { scrim, doc, live } = await open();
-            const el = field(live);
-            if (!el) throw new Error('setup: no typed field in ' + scrim.innerHTML.slice(0, 300));
-            live.type(el, typed);
-            escapeOn(doc);
-            if (!asks()) throw new Error('Escape did not ask; scrim: ' + scrim.innerHTML.slice(0, 300));
-            answer('Keep editing');
-            if (!scrim.classList.contains('active') || scrim.innerHTML.indexOf(heading) < 0) {
-                throw new Error('Keep editing did not put the dialog back; scrim: ' + scrim.innerHTML.slice(0, 300));
-            }
-            const back = field(live);
-            if (!back || back.value !== typed) throw new Error('Keep editing lost the typed value: ' + (back && back.value));
-            escapeOn(doc);
-            if (!asks()) throw new Error('a second Escape after Keep editing did not ask again');
-            answer('Discard');
-            if (scrim.classList.contains('active')) throw new Error('Discard did not close the dialog');
-            escapeOn(doc);
-        });
-        await pin(name + ': typing survives a redraw as typed input', async () => {
-            const { scrim, doc, live } = await open();
-            live.type(field(live), typed);
-            redraw(scrim, doc);
-            if (scrim.innerHTML.indexOf(heading) < 0) throw new Error('setup: the redraw closed the dialog');
-            escapeOn(doc);
-            if (!asks()) throw new Error('Escape after a redraw did not ask; scrim: ' + scrim.innerHTML.slice(0, 300));
-        });
-        await pin(name + ': Escape with nothing typed closes it', async () => {
-            const { scrim, doc } = await open();
-            escapeOn(doc);
-            if (scrim.classList.contains('active') || asks()) throw new Error('a clean dialog did not close on Escape');
-        });
-    }
-
-    // ── Escape closes the dialog's own popover first ────────────────────────
-    //
-    // The innermost popover, then the sheet: with a picker open over Advanced
-    // the first Escape closes only the picker — the dialog and
-    // anything typed into it stay — and the second follows the dialog's rule.
-    for (const [name, open, pick, field, typed] of [
-        ['Advanced', openAdv, openAdvPick, l => l.find('data-adv', 'lineside_soft_threshold'), '40'],
-    ]) {
-        for (const withTyping of [true, false]) {
-            await pin(name + ': Escape closes its open picker first, then ' +
-                (withTyping ? 'asks over typed input' : 'closes a clean dialog'), async () => {
-                const { scrim, doc, live } = await open();
-                if (withTyping) live.type(field(live), typed);
-                const html = scrim.innerHTML;
-                pick(scrim, doc);
-                await settle();
-                const advpop = doc.getElementById('pd-advpop');
-                if (advpop.hidden !== false) throw new Error('setup: the picker did not open');
-                escapeOn(doc);
-                if (advpop.hidden !== true) throw new Error('the first Escape left the picker open');
-                if (!scrim.classList.contains('active') || scrim.innerHTML !== html || asks()) {
-                    throw new Error('the first Escape did more than close the picker; scrim: ' + scrim.innerHTML.slice(0, 200));
-                }
-                if (withTyping && field(live).value !== typed) throw new Error('the typed value did not stay');
-                escapeOn(doc);
-                if (withTyping) {
-                    if (!asks()) throw new Error('the second Escape did not ask over typed input');
-                } else if (scrim.classList.contains('active')) {
-                    throw new Error('the second Escape did not close the clean dialog');
-                }
-            });
-        }
-    }
 
     // ── when this Edge has no plant map ──────────────────────────────────────
     //
@@ -3071,7 +2910,7 @@ async function mainAsync() {
         if (/\.pd-pill\b/.test(css)) throw new Error('processes-desktop.css still styles .pd-pill');
     });
 
-    await recipeGroupPins({ pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs });
+    await recipeGroupPins({ pin, okJSON, click, wireSheet, wireOptions, chip, settle });
     if (!nodeProcess.argv[2]) await settingsPositionsPins({ pin, okJSON, click, wireSheet, settle });
     if (!nodeProcess.argv[2]) await settingsSectionsPins({ pin, okJSON, click, settle });
 
@@ -3200,7 +3039,7 @@ const plain = html => String(html).replace(/<\/?(div|p|br|tr|td|th|li|h\d)\b[^>]
 const between = (h, a, b) => { const i = h.indexOf(a); if (i < 0) return ''; const j = h.indexOf(b, i + a.length); return h.slice(i, j < 0 ? undefined : j); };
 
 async function recipeGroupPins(h) {
-    const { pin, okJSON, click, wireSheet, wireOptions, chip, settle, liveInputs } = h;
+    const { pin, okJSON, click, wireSheet, wireOptions, chip, settle } = h;
     const PRESS6_PAGE = {
         processes: [{ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }],
         styles: [{ id: 1, process_id: 1, name: 'SYN-RUN' }],
@@ -3210,10 +3049,8 @@ async function recipeGroupPins(h) {
     // by `answer` (200 by default), and the Recipes tab's read.
     const p6Page = (composer, extra, answer) => {
         const posts = [];
-        let live = null;
         const ctx = loadPage(Object.assign({}, PRESS6_PAGE, {
             flowspec: true, allowSheet: true, composer: composer,
-            onScrim: sc => { live = liveInputs(sc); },
             fetch: (url, init) => {
                 if (/\/api\/processes\/\d+\/composer$/.test(url)) return okJSON(composer);
                 if (/\/presets$/.test(url) && !(init && init.method)) return okJSON({ presets: [], candidates: [] });
@@ -3224,7 +3061,7 @@ async function recipeGroupPins(h) {
                 return null;
             },
         }, extra || {}));
-        return Object.assign(ctx, { posts: posts, live: () => live });
+        return Object.assign(ctx, { posts: posts });
     };
     const openRecipe = async (ctx, id) => {
         click(ctx.main, ctx.doc, { act: 'recipe-open', preset: id || '7' });
@@ -3284,23 +3121,6 @@ async function recipeGroupPins(h) {
         return;
     }
 
-    // THE PER-ROW GEAR IS GONE FROM A RECIPE DRAFT. A recipe's save strips
-    // every cell's Advanced (domain.StripFlowPayload), so the gear opened a
-    // sheet whose every field was dropped without a word. A group's
-    // Advanced is the one a recipe keeps.
-    await pin('a recipe draft draws no per-row Advanced gear', async () => {
-        const ctx = p6Page(press6Composer());
-        await settle();
-        if (ctx.root.innerHTML.indexOf('data-act="advanced"') < 0) throw new Error('setup: the style has no gear to lose');
-        await openRecipe(ctx);
-        const h = ctx.root.innerHTML;
-        if (h.indexOf('Recipe · Two spot press index') < 0) throw new Error('setup: the draft did not open');
-        if (h.indexOf('data-act="advanced"') >= 0 || h.indexOf('<th>Advanced</th>') >= 0) {
-            throw new Error('the recipe draft still draws the per-row gear: ' +
-                (h.match(/<button class="pd-adv[^>]*>/) || [''])[0]);
-        }
-    });
-
     await pin('Set up groups lays out a card per part, pre-filled from the cells', async () => {
         const ctx = p6Page(press6Composer());
         await settle();
@@ -3323,7 +3143,7 @@ async function recipeGroupPins(h) {
         if (!/data-act="glist-add"[^>]*>\+ on deck</.test(left)) throw new Error('no + on deck on the ★ row');
         if (/>\+ third<|>\+ lane</.test(left)) throw new Error('a list the ★ cell leaves blank is offered: ' + plain(left));
         if (!/data-act="gspot-add"[^>]*>\+ Add a press spot</.test(left)) throw new Error('no + Add a press spot');
-        if (!/data-act="gadv" data-g="0"[^>]*>Edit…</.test(left)) throw new Error('no Advanced · Edit… on Left Hand');
+        if (left.indexOf('Set for this group') < 0 || !/data-act="set-add" data-g="0"/.test(left)) throw new Error('no Set for this group on Left Hand');
     });
 
     await pin('+ Add a press spot offers the positions no group holds, and pre-fills the ★ row\'s lists', async () => {
@@ -3371,131 +3191,226 @@ async function recipeGroupPins(h) {
         }
     });
 
-    // A PRODUCE POSITION'S FINISHED-GOODS ROWS: one section, in the order an
-    // engineer decides them — strict pack, its tolerance (drawn only while
-    // strict pack is on), where partials go — and the partial home's help says
-    // what each kind of home does. In group scope the same section, less the
-    // cell's partial home, and the tolerance rides the recipe's save. Pinned
-    // before the tolerance existed, when the sheet drew the partial home under
-    // Unfinished carriers and strict pack under Counting.
-    await pin('a produce position\'s sheet draws its finished-goods rows', async () => {
-        const fgOf = scrim => scrim.innerHTML.split('<div class="pd-sec">').slice(1).map(sec => {
-            const title = (sec.match(/<div class="pd-lbl">([^<]*)/) || [])[1];
-            const keys = [...new Set((sec.match(/data-adv="[^"]*"/g) || []).map(s => s.slice(10, -1)))];
-            return title + ': ' + keys.join(',');
-        }).filter(s => /strict_pack|pack_tolerance_pct|partial_dest/.test(s)).join(' | ');
-        const extra = () => ({ extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
-        const ctx = p6Page(press6Composer(), extra());
+    // ── Set for this style, and a recipe group's list (slice 3) ─────────────
+    //
+    // The Advanced sheet is gone: what a position sets for a style is a list
+    // under the positions table, a list per setting it sets, and a group's is
+    // the same list on its card (shared/exceptions.js). Pickers are the shared
+    // picker, drawn into #pd-pop (a built host here, so a pick is a click).
+    const lbl = (win, f) => {
+        const w = win.FLOWSPEC && win.FLOWSPEC.labels && win.FLOWSPEC.labels[f];
+        if (!w) throw new Error('setup: the flowspec table has no label for ' + f);
+        return w;
+    };
+    const setPage = (composer) => {
+        const host = pickerHost('pd-pop');
+        const ctx = p6Page(composer, { extraIds: { 'pd-pop': host } });
+        return Object.assign(ctx, { host: host });
+    };
+    const withAdvanced = (adv, claims) => {
+        const c = press6Composer();
+        c.styles[0].advanced = adv;
+        if (claims) c.styles[0].claims.forEach(cl => Object.assign(cl, claims[cl.core_node_name] || {}));
+        return c;
+    };
+    // typeNumber types into one of the list's number fields, the way the page
+    // reads it: its root input listener, off the field's data attributes.
+    const typeNumber = (ctx, data, v) => {
+        const el = makeElement('');
+        Object.assign(el.dataset, data);
+        el.value = v;
+        ctx.main.appendChild(el);
+        bubble(el, 'input', ctx.doc);
+    };
+    const savedBody = async ctx => {
+        click(ctx.main, ctx.doc, { act: 'save' });
         await settle();
-        click(ctx.main, ctx.doc, { act: 'advanced', node: 'PLN_010' });
-        const fg = () => fgOf(ctx.scrim);
-        if (ctx.sheet().el.innerHTML.indexOf('<h2>PLN_010 · Advanced</h2>') < 0) throw new Error('setup: the sheet is not PLN_010\'s');
-        const off = 'Finished goods: strict_pack,partial_dest';
-        if (fg() !== off) throw new Error('strict pack off: ' + fg() + '\n      want ' + off);
-        const home = plain(ctx.sheet().el.innerHTML.split('<div class="pd-fld">').find(f => f.indexOf('data-adv="partial_dest"') >= 0) || '');
-        if (home.indexOf('Partials go to') !== 0) throw new Error('the partial home is not named Partials go to: ' + home);
-        for (const says of ['where full bins go, at its real count', 'a node group holds it there to be finished later', 'the unloader unloads it there']) {
-            if (home.indexOf(says) < 0) throw new Error('the partial home\'s help does not say "' + says + '": ' + home);
-        }
-        if (/called back/.test(home)) throw new Error('the partial home still says a bin waits to be called back: ' + home);
-        click(ctx.scrim, ctx.doc, { advkind: 'toggle', adv: 'strict_pack' });
-        const on = 'Finished goods: strict_pack,pack_tolerance_pct,partial_dest';
-        if (fg() !== on) throw new Error('strict pack on: ' + fg() + '\n      want ' + on);
+        const posted = ctx.posts.find(p => /\/flow\/save$/.test(p.url));
+        if (!posted) throw new Error('Save style posted nothing');
+        return JSON.parse(posted.body);
+    };
+    const cellOf = (body, n) => (body.cells || []).find(c => c.core_node_name === n) || {};
+    // segWords is a choice's answers, in order, from the first segment after
+    // `after` in html: "Robot 1 / Robot 2 / Robot 3".
+    const segWords = (html, after) => {
+        const i = html.indexOf(after + '<div class="pd-seg">');
+        if (i < 0) return '';
+        const seg = html.slice(i).match(/<div class="pd-seg">(.*?)<\/div>/);
+        return seg ? (seg[1].match(/>[^<]+<\/button>/g) || []).map(b => b.slice(1, -9)).join(' / ') : '';
+    };
 
-        // Group scope: Right Hand's Advanced, strict pack on, a tolerance typed.
-        const g = p6Page(press6Composer(), extra());
+    await pin('Set for this style lists a setting where a position sets it, by its name, with its help once', async () => {
+        const ctx = setPage(withAdvanced({ PLN_010: { refill_by: 'index_robot' } }));
         await settle();
-        await openRecipe(g);
-        click(g.main, g.doc, { act: 'groups-setup' });
-        await settle();
-        click(g.main, g.doc, { act: 'gadv', g: '1' });
-        if (fgOf(g.scrim) !== 'Finished goods: strict_pack') throw new Error('group scope, strict pack off: ' + fgOf(g.scrim));
-        click(g.scrim, g.doc, { advkind: 'toggle', adv: 'strict_pack' });
-        if (fgOf(g.scrim) !== 'Finished goods: strict_pack,pack_tolerance_pct') throw new Error('group scope, strict pack on: ' + fgOf(g.scrim));
-        const live = g.live();
-        live.type(live.find('data-adv', 'pack_tolerance_pct'), '5');
-        click(g.scrim, g.doc, { act: 'adv-apply' });
-        await settle();
-        click(g.main, g.doc, { act: 'shape-save' });
-        wireSheet(g.scrim, 'Two spot press index');
-        g.sheet().ok();
-        await settle();
-        const posted = g.posts.find(p => /\/presets$/.test(p.url));
-        if (!posted) throw new Error('the save posted nothing');
-        const adv = JSON.parse(posted.body).groups[1].advanced;
-        const want = '{"strict_pack":true,"pack_tolerance_pct":5}';
-        if (JSON.stringify(adv) !== want) throw new Error('Right Hand\'s Advanced sent ' + JSON.stringify(adv) + '\n      want ' + want);
+        const h = ctx.root.innerHTML;
+        if (h.indexOf('data-act="advanced"') >= 0 || h.indexOf('<th>Advanced</th>') >= 0) throw new Error('the gear is still drawn');
+        const list = between(h, 'data-exc="set-refill_by"', '</table>');
+        if (!list) throw new Error('no Next carrier list under Set for this style: ' + plain(between(h, 'id="pd-setfor"', 'pd-bar')));
+        const name = '<div class="exc-name">' + lbl(ctx.win, 'refill_by') + '<small>which robot brings this part’s next carrier</small></div>';
+        if (list.indexOf(name) < 0) throw new Error('the list is not named with its help: ' + list.slice(0, 200));
+        if (/same for every part/.test(h)) throw new Error('the next carrier still says it is the same for every part');
+        if (plain(list).indexOf('1 of 2 positions') < 0) throw new Error('the summary is not "1 of 2 positions": ' + plain(list));
+        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list) || /exc-pos">PLN_012/.test(list)) throw new Error('the rows are not PLN_010 alone: ' + plain(list));
+        if (!/class="on" data-act="set-seg" data-key="refill_by" data-node="PLN_010" data-v="index_robot"/.test(list)) throw new Error('Robot 2 is not the answer on: ' + list);
+        if (plain(list).indexOf('Robot 1 evacuates and leaves') < 0) throw new Error('what Robot 2 means is not beside it');
+        const row = n => between(h, 'data-row="' + n + '"', '</tr>');
+        if (row('PLN_010').indexOf('data-act="set-goto"') < 0 || plain(row('PLN_010')).indexOf('1 set') < 0) throw new Error('PLN_010\'s row has no "1 set" chip');
+        if (row('PLN_012').indexOf('set-goto') >= 0) throw new Error('PLN_012 sets nothing and carries a chip');
     });
 
-    await pin('Advanced · Edit… is the sheet in group scope, and Apply rides the save as groups[i].advanced', async () => {
-        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
+    await pin('+ Add a setting offers what the positions take, greyed with why; a pick asks for the position', async () => {
+        const ctx = setPage(press6Composer());
+        await settle();
+        click(ctx.main, ctx.doc, { act: 'set-add' });
+        const rows = pk.rows(ctx.host).map(r => r.getAttribute('data-value') + (r.classList.contains('is-off') ? ' (' + pk.side(ctx.host, r.getAttribute('data-value')) + ')' : ''));
+        for (const want of ['strict_pack', 'partial_dest', 'refill_by', 'evac_nodes', 'curtain_required (no position of this style takes it)']) {
+            if (rows.indexOf(want) < 0) throw new Error('the list lacks ' + want + ': ' + rows.join(', '));
+        }
+        if (rows.some(r => /^(reorder_point|auto_reorder|sequence|changeover_carryover_disposition|pack_tolerance_pct)/.test(r))) {
+            throw new Error('the list offers a field that is no setting of its own here: ' + rows.join(', '));
+        }
+        pk.pick(ctx.host, 'strict_pack');
+        await settle();
+        pk.pick(ctx.host, 'PLN_010');
+        await settle();
+        const list = between(ctx.root.innerHTML, 'data-exc="set-strict_pack"', '</table>');
+        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list)) throw new Error('strict pack is not listed on PLN_010: ' + plain(list));
+        if (list.indexOf('data-setnum="pack_tolerance_pct"') < 0) throw new Error('the tolerance is not strict pack\'s second value: ' + list);
+        typeNumber(ctx, { setnum: 'pack_tolerance_pct', key: 'pack_tolerance_pct', node: 'PLN_010' }, '5');
+        const body = await savedBody(ctx);
+        const a = cellOf(body, 'PLN_010').advanced || {};
+        if (a.strict_pack !== true || a.pack_tolerance_pct !== 5) throw new Error('PLN_010 saved ' + JSON.stringify(a));
+        if ((cellOf(body, 'PLN_012').advanced || {}).strict_pack) throw new Error('PLN_012 saved a strict pack nobody set');
+    });
+
+    await pin('Partials go to says what each kind of home does, once', async () => {
+        const ctx = setPage(withAdvanced({}, { PLN_012: { partial_destination: 'ULN_005' } }));
+        await settle();
+        const list = between(ctx.root.innerHTML, 'data-exc="set-partial_dest"', '</table>');
+        const want = '<div class="exc-name">' + lbl(ctx.win, 'partial_destination') +
+            '<small>where a bin released short goes; a node group holds it to be finished, an unloader unloads it</small></div>';
+        if (list.indexOf(want) < 0) throw new Error('the partial home reads ' + plain(list));
+        if (!/data-act="set-pick" data-key="partial_dest" data-node="PLN_012"><span class="t">ULN_005</.test(list)) throw new Error('its row does not show ULN_005: ' + list);
+    });
+
+    // CARRY-OVER IS A TOOL CHANGE'S SECOND VALUE (domain.ClearanceTreatmentAtNode
+    // reads it only for a marked position; the claim validator refuses it on
+    // a claim that marks none): drawn only beside marks, in words from the
+    // code, and the last mark taken off takes it back to Fresh bin.
+    await pin('carry-over is drawn only beside a Tool change mark, and goes with the last mark', async () => {
+        const ctx = setPage(withAdvanced({ PLN_010: { changeover_carryover_disposition: 'keep_lineside' } },
+            { PLN_010: { changeover_evac_nodes: ['PLN_010'] } }));
+        await settle();
+        const h = ctx.root.innerHTML;
+        const list = between(h, 'data-exc="set-evac_nodes"', '</table>');
+        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list) || /exc-pos">PLN_012/.test(list)) throw new Error('Tool change is not listed on PLN_010 alone: ' + plain(list));
+        if (segWords(list, 'if the part stays</span> ') !== 'Fresh bin / Keep it / Out and back') {
+            throw new Error('the carry-over is not the mark\'s second value: ' + list);
+        }
+        if (!/class="on" data-act="set-seg" data-key="changeover_carryover_disposition" data-node="PLN_010" data-v="keep_lineside"/.test(list)) throw new Error('Keep it is not on: ' + list);
+        if (!/data-v="outbound_staging" disabled title="this position has no outbound staging"/.test(list)) throw new Error('Out and back is offered with no outbound staging: ' + list);
+        if (h.indexOf('If the part stays: Fresh bin clears it and brings another, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.') < 0) {
+            throw new Error('the carry-over help is not written from the code: ' + plain(between(h, 'data-exc="set-evac_nodes"', 'exc-add')));
+        }
+        if (/part-full bin/.test(h)) throw new Error('the carry-over still talks of a part-full bin');
+        click(ctx.main, ctx.doc, { act: 'set-unchip', key: 'evac_nodes', node: 'PLN_010', v: 'PLN_010' });
+        await settle();
+        const after = between(ctx.root.innerHTML, 'data-exc="set-evac_nodes"', '</table>');
+        if (!after || /if the part stays/.test(after)) throw new Error('with no mark the row should stay, without its carry-over: ' + plain(after));
+        const c = cellOf(await savedBody(ctx), 'PLN_010');
+        if ((c.changeover_evac_nodes || []).length || (c.advanced || {}).changeover_carryover_disposition !== 'replace') {
+            throw new Error('PLN_010 saved marks ' + JSON.stringify(c.changeover_evac_nodes) + ' and carry-over ' + JSON.stringify((c.advanced || {}).changeover_carryover_disposition));
+        }
+    });
+
+    // A recipe's save strips every cell's Advanced (domain.StripFlowPayload), so
+    // a recipe draft has no set chip and no Set for this style: a group's list
+    // is the one a recipe keeps.
+    await pin('a recipe draft draws no set chip and no Set for this style', async () => {
+        const ctx = setPage(withAdvanced({ PLN_010: { refill_by: 'index_robot' } }));
+        await settle();
+        if (ctx.root.innerHTML.indexOf('data-act="set-goto"') < 0) throw new Error('setup: the style has no chip to lose');
+        await openRecipe(ctx);
+        const h = ctx.root.innerHTML;
+        if (h.indexOf('Recipe · Two spot press index') < 0) throw new Error('setup: the draft did not open');
+        if (h.indexOf('set-goto') >= 0 || h.indexOf('id="pd-setfor"') >= 0) throw new Error('the recipe draft draws a style\'s settings');
+    });
+
+    const groupPage = async () => {
+        const ctx = setPage(press6Composer());
         await settle();
         await openRecipe(ctx);
         click(ctx.main, ctx.doc, { act: 'groups-setup' });
         await settle();
-        click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
-        const sheet = ctx.sheet().el.innerHTML;
-        if (sheet.indexOf('<h2>Right Hand · Advanced</h2>') < 0) throw new Error('the sheet is not Right Hand\'s: ' + plain(sheet).slice(0, 200));
-        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'partial_dest']) {
-            if (sheet.indexOf('data-adv="' + key + '"') >= 0) throw new Error('group scope draws ' + key + ', which a recipe may not say');
-        }
-        // refill_by (then index_robot_supplies) joined the list 2026-11-05: a recipe that cannot
-        // say which robot fetches the empty minted every floor style Robot 1.
-        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'refill_by', 'strict_pack', 'curtain_required']) {
-            if (sheet.indexOf('data-adv="' + key + '"') < 0) throw new Error('group scope hides ' + key);
-        }
-        const live = ctx.live();
-        live.type(live.find('data-adv', 'reorder_point'), '1');
-        click(ctx.scrim, ctx.doc, { advkind: 'toggle', adv: 'auto_reorder' });
-        click(ctx.scrim, ctx.doc, { act: 'adv-apply' });
-        await settle();
-        const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
-        if (plain(right).indexOf('Reorder point 1 · Auto reorder on') < 0) throw new Error('Right Hand\'s card says ' + plain(right));
-        if (/data-act="advanced"/.test(ctx.root.innerHTML)) throw new Error('setup: a per-row gear is back');
+        return ctx;
+    };
+    const savedGroups = async ctx => {
         click(ctx.main, ctx.doc, { act: 'shape-save' });
         wireSheet(ctx.scrim, 'Two spot press index');
         ctx.sheet().ok();
         await settle();
         const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
         if (!posted) throw new Error('the save posted nothing');
-        const body = JSON.parse(posted.body);
-        const adv = body.groups && body.groups[1] && body.groups[1].advanced;
-        if (JSON.stringify(adv) !== '{"reorder_point":1,"auto_reorder":true}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
-        if (body.groups[0].advanced) throw new Error('Left Hand sent an Advanced nobody set: ' + JSON.stringify(body.groups[0].advanced));
-        if ((body.cells || []).some(c => c.advanced)) throw new Error('a cell carries an Advanced the save would drop');
+        return JSON.parse(posted.body);
+    };
+    const groupAdd = (ctx, g, key) => {
+        click(ctx.main, ctx.doc, { act: 'set-add', g: String(g) });
+        pk.pick(ctx.host, key);
+    };
+
+    await pin('a group\'s + Add a setting offers its own keys only, and they ride the save as groups[i].advanced', async () => {
+        const ctx = await groupPage();
+        click(ctx.main, ctx.doc, { act: 'set-add', g: '1' });
+        const offered = pk.rows(ctx.host).map(r => r.getAttribute('data-value'));
+        for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'partial_dest', 'changeover_carryover_disposition']) {
+            if (offered.indexOf(key) >= 0) throw new Error('a group is offered ' + key + ', which a recipe may not say');
+        }
+        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'refill_by', 'strict_pack', 'curtain_required']) {
+            if (offered.indexOf(key) < 0) throw new Error('a group is not offered ' + key + ': ' + offered.join(', '));
+        }
+        pk.pick(ctx.host, 'reorder_point');
+        await settle();
+        typeNumber(ctx, { setnum: 'reorder_point', key: 'reorder_point', g: '1' }, '1');
+        groupAdd(ctx, 1, 'auto_reorder');
+        await settle();
+        const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        if (right.indexOf('Set for this group') < 0 || right.indexOf('data-exc="set-reorder_point"') < 0 || right.indexOf('data-exc="set-auto_reorder"') < 0) {
+            throw new Error('Right Hand\'s card does not list its two settings: ' + plain(right));
+        }
+        const body = await savedGroups(ctx);
+        if (JSON.stringify(body.groups[1].advanced) !== '{"reorder_point":1,"auto_reorder":true}') throw new Error('Right Hand sent ' + JSON.stringify(body.groups[1].advanced));
+        if (body.groups[0].advanced) throw new Error('Left Hand sent settings nobody set: ' + JSON.stringify(body.groups[0].advanced));
+        if ((body.cells || []).some(c => c.advanced)) throw new Error('a cell carries settings the save would drop');
     });
 
     // SPR Press 6, 2026-11-05: the floor's styles minted Robot 1 because the
     // recipe had nowhere to say Robot 2. The engineer picks it once, on the
     // group, and the save carries it.
-    await pin('Advanced in group scope picks which robot fetches the empty, and the save sends it', async () => {
-        const ctx = p6Page(press6Composer(), { extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) } });
-        await settle();
-        await openRecipe(ctx);
-        click(ctx.main, ctx.doc, { act: 'groups-setup' });
-        await settle();
-        click(ctx.main, ctx.doc, { act: 'gadv', g: '1' });
-        const advpop = ctx.doc.getElementById('pd-advpop');
-        const opts = wireOptions(advpop);
-        click(ctx.scrim, ctx.doc, { advkind: 'pick', adv: 'refill_by' });
-        await settle();
-        if (advpop.innerHTML !== '<button data-opt="0" class="on">Robot 1</button><button data-opt="1" class="">Robot 2</button>' +
-            '<button data-opt="2" class="">Robot 3</button>') {
-            throw new Error('the robot picker is not Robot 1 (on) / Robot 2 / Robot 3: ' + advpop.innerHTML);
-        }
-        bubble(opts[1], 'click', ctx.doc);
-        click(ctx.scrim, ctx.doc, { act: 'adv-apply' });
+    await pin('a group\'s Next carrier is a choice of three robots, and the save sends it', async () => {
+        const ctx = await groupPage();
+        groupAdd(ctx, 1, 'refill_by');
         await settle();
         const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
-        if (plain(right).indexOf('Robot 2 supplies') < 0) throw new Error('Right Hand\'s card says ' + plain(right));
-        click(ctx.main, ctx.doc, { act: 'shape-save' });
-        wireSheet(ctx.scrim, 'Two spot press index');
-        ctx.sheet().ok();
+        const seg = (right.match(/<div class="pd-seg">.*?<\/div>/) || [''])[0];
+        if (segWords(right, '') !== 'Robot 1 / Robot 2 / Robot 3' || !/class="on"[^>]*data-v="index_robot"/.test(seg)) {
+            throw new Error('the choice is not Robot 1 / Robot 2 (on) / Robot 3: ' + seg);
+        }
+        click(ctx.main, ctx.doc, { act: 'set-seg', key: 'refill_by', g: '1', v: 'own_robot' });
+        click(ctx.main, ctx.doc, { act: 'set-seg', key: 'refill_by', g: '1', v: 'index_robot' });
         await settle();
-        const posted = ctx.posts.find(p => /\/presets$/.test(p.url));
-        if (!posted) throw new Error('the save posted nothing');
-        const adv = JSON.parse(posted.body).groups[1].advanced;
-        if (JSON.stringify(adv) !== '{"refill_by":"index_robot"}') throw new Error('Right Hand\'s Advanced sent: ' + JSON.stringify(adv));
+        const body = await savedGroups(ctx);
+        if (JSON.stringify(body.groups[1].advanced) !== '{"refill_by":"index_robot"}') throw new Error('Right Hand sent ' + JSON.stringify(body.groups[1].advanced));
+    });
+
+    await pin('a group\'s strict pack carries its tolerance, and the save sends both', async () => {
+        const ctx = await groupPage();
+        groupAdd(ctx, 1, 'strict_pack');
+        await settle();
+        const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        if (right.indexOf('data-setnum="pack_tolerance_pct"') < 0) throw new Error('no tolerance beside strict pack: ' + plain(right));
+        typeNumber(ctx, { setnum: 'pack_tolerance_pct', key: 'pack_tolerance_pct', g: '1' }, '5');
+        const body = await savedGroups(ctx);
+        if (JSON.stringify(body.groups[1].advanced) !== '{"strict_pack":true,"pack_tolerance_pct":5}') throw new Error('Right Hand sent ' + JSON.stringify(body.groups[1].advanced));
     });
 
     // THE DEPLOY NOTE, CLICK BY CLICK: the body is SYNTH-round2 §2's recipe,
@@ -3636,23 +3551,21 @@ async function recipeGroupPins(h) {
     });
 
     // THE SHOTS HARNESS'S ONE-SHOTS: every state photographed is a URL.
-    await pin('#tab=presets;recipe= opens the draft, and ;groups= ;focus= ;row= ;gadv= reach each state', async () => {
+    await pin('#tab=presets;recipe= opens the draft, and ;groups= ;focus= ;row= reach each state', async () => {
         const a = p6Page(press6Composer(), { hash: '#tab=presets;recipe=7;groups=1;focus=Right Hand' });
         await settle();
         if (a.root.innerHTML.indexOf('Recipe · Two spot press index') < 0) throw new Error(';recipe= opened no draft');
         if (!/<div class="pd-grp focus" data-gcard="1"/.test(a.root.innerHTML)) throw new Error(';groups=1;focus=Right Hand did not focus Right Hand');
         if (a.doc.body.dataset.pdRecipe !== 'draft;groups=2;focus=Right Hand') throw new Error('marker ' + JSON.stringify(a.doc.body.dataset.pdRecipe));
         const b = p6Page(press6Composer({ grouped: true, dest7: 'ULN_005' }), {
-            hash: '#tab=presets;recipe=7;row=PLN_010;gadv=Left Hand',
-            extraIds: { 'pd-advpop': Object.assign(makeElement('pd-advpop'), { hidden: true }) },
+            hash: '#tab=presets;recipe=7;row=PLN_010',
         });
         await settle();
         if (!/<tr class="focus" data-grow="PLN_010"/.test(b.root.innerHTML)) throw new Error(';row=PLN_010 did not click the row');
-        if (b.scrim.innerHTML.indexOf('<h2>Left Hand · Advanced</h2>') < 0) throw new Error(';gadv=Left Hand opened no sheet');
-        if (b.doc.body.dataset.pdRecipe !== 'draft;groups=2;floor=saved;row=PLN_010;gadv=Left Hand') {
+        if (b.doc.body.dataset.pdRecipe !== 'draft;groups=2;floor=saved;row=PLN_010') {
             throw new Error('marker ' + JSON.stringify(b.doc.body.dataset.pdRecipe));
         }
-        if (b.win.replaceStates.some(u => /recipe=|groups=|focus=|row=|gadv=/.test(u))) {
+        if (b.win.replaceStates.some(u => /recipe=|groups=|focus=|row=/.test(u))) {
             throw new Error('a one-shot was minted back into the address: ' + b.win.replaceStates.join(' | '));
         }
     });

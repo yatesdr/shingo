@@ -24,7 +24,7 @@
 //
 //   sheet-stack.txt: the page's sheet stack — openSheet, runSheet's one run
 //     per press, what closeSheet clears, the Escape rule innermost first, the
-//     discard question, the Advanced sheet — and the facts about scroll lock
+//     discard question, Set for this style's list — and the facts about scroll lock
 //     and focus.
 //
 // THE PLANT IS U0's (fixture.json); the routes an act needs that the base
@@ -540,7 +540,7 @@ const presetMenu = (item, typed) => async page => {
     await pressOK(page);
 };
 // The apply modal on Style B: tick, answer each "which part?" with its first
-// part, then Save. The modal's controls answer on the scrim (onAdvClick).
+// part, then Save. The modal's controls answer on the scrim (onScrimClick).
 async function applyTick(page) {
     page.click('root', { act: 'preset-apply', preset: '7' });
     await page.settle();
@@ -787,7 +787,7 @@ async function pinRefusals() {
 // The overlay stack (shared/layer.js, which this page's own stack moved into):
 // what opening, running, closing and Escape do, one act per block. Every block
 // starts on a fresh page. A sheet is the layer's shell (pageSheet) or
-// #pd-scrim (Advanced and the apply modal, which draw their own markup); the
+// #pd-scrim (the apply modal, which draws its own markup); the
 // discard question is the layer's confirm, on the stack above the sheet.
 function stackFacts(page) {
     const S = page.S, scrim = page.byId('pd-scrim');
@@ -795,7 +795,7 @@ function stackFacts(page) {
     return 'sheet ' + (page.sheetOpen() ? 'open (' + (page.scrim === scrim ? '#pd-scrim' : 'the layer\'s shell') + ')' : 'closed') +
         ', #pd-scrim markup ' + (scrim.innerHTML ? 'drawn' : 'empty') + ', layers ' + page.pd('layerDepth')() +
         ', body overflow ' + JSON.stringify(page.doc.body.style.overflow || '') +
-        ', S.sheet ' + (S.sheet ? 'set' : 'null') + ', S.adv ' + (S.adv ? 'set' : 'null') +
+        ', S.sheet ' + (S.sheet ? 'set' : 'null') +
         ', question ' + (q ? JSON.stringify(q.text) + ' [' + q.buttons.join(' · ') + ']' : 'none');
 }
 function popFacts(page) {
@@ -844,7 +844,7 @@ async function pinSheetStack() {
     const open = async o => { const p = await T.openPage(o); pages.push(p); return p; };
     T.setCurrent('sheet-stack.txt');
     const L = ['# The sheet stack on shared/layer.js (pageSheet / runSheet / closeSheet / Escape / the discard question /',
-        '# Advanced), one act per block, each on a fresh page. "facts" is the sheet, the layer\'s depth, body scroll',
+        '# Set for this style), one act per block, each on a fresh page. "facts" is the sheet, the layer\'s depth, body scroll',
         '# lock, the page\'s sheet state and the question; "focus" is every element focus() was called on during the act.'];
     const block = (title, rows) => { L.push('', '## ' + title); for (const r of rows) L.push(r); };
     const focusSince = (page, n) => {
@@ -998,49 +998,44 @@ async function pinSheetStack() {
         await esc(page, rows);
         block('Escape: a popover in a sheet (#pd-advpop), then the sheet (nothing typed)', rows);
     }
-    const advNode = () => 'POS_A1';
+    // SET FOR THIS STYLE IS NO SHEET (slice 3: it replaced the Advanced
+    // sheet). Its + Add a setting is a popover the first Escape closes, and a
+    // value typed into it is the style's draft, which Save style or Discard
+    // changes answers; Escape takes nothing away.
+    const pickIn = async (page, id, value) => {
+        const r = page.byId(id).querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === value);
+        if (!r) return false;
+        r.click();
+        await page.settle();
+        return true;
+    };
     {
         const page = await open();
         const rows = [];
-        page.click('root', { act: 'advanced', node: advNode() });
-        rows.push('Advanced open on POS_A1: ' + stackFacts(page), ...modalShape(page).filter(l => /^(modal|header|footer)/.test(l)));
-        const pick = page.scrim.querySelectorAll('[data-advkind="pick"]')[0];
-        if (pick) {
-            page.click('scrim', Object.assign({}, pick.dataset), { cls: [] });
-            rows.push('its first picker (' + pick.dataset.adv + ') clicked: ' + popFacts(page));
-            await esc(page, rows);
-        }
+        const from = page.mark();
+        page.click('root', { act: 'set-add' });
+        await page.settle();
+        rows.push('Set for this style › + Add a setting: ' + stackFacts(page) + '; ' + popFacts(page));
         await esc(page, rows);
-        block('Escape: Advanced\'s own picker, then Advanced (nothing typed)', rows);
+        rows.push('nothing picked: dirty=' + page.pd('dirty')() + '; requests ' + (page.since(from).filter(c => !isPreview(c)).map(lineOf).join(' · ') || 'none'));
+        block('Escape: Set for this style\'s setting list (a popover on the tab, no sheet)', rows);
     }
     {
         const page = await open();
         const rows = [];
-        page.click('root', { act: 'advanced', node: advNode() });
-        const num = page.scrim.querySelectorAll('[data-advkind="number"]')[0];
-        if (!num) throw new Error('Advanced on POS_A1 draws no number field');
-        const key = num.dataset.adv;
+        page.click('root', { act: 'set-add' });
+        await page.settle();
+        if (!await pickIn(page, 'pd-pop', 'lineside_soft_threshold')) throw new Error('+ Add a setting offers no lineside_soft_threshold');
+        await pickIn(page, 'pd-pop', 'POS_A1');
+        const num = page.root.querySelectorAll('[data-setnum]').find(e => e.dataset.setnum === 'lineside_soft_threshold' && e.dataset.node === 'POS_A1');
+        if (!num) throw new Error('Set for this style draws no lineside_soft_threshold field on POS_A1');
         num.value = '7';
-        page.fire(num, 'input');
-        rows.push('typed 7 into ' + key + ': S.adv.a.' + key + '=' + page.S.adv.a[key]);
-        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        // Escape on the question is Keep editing: Escape closes the innermost
-        // entry, and the question is a confirm on the stack, which always
-        // resolves (S2-components lead decision 4).
-        page.key('Escape');
-        await page.settle();
-        const back = page.scrim.querySelectorAll('[data-advkind="number"]').find(e => e.dataset.adv === key);
-        rows.push('Escape again, with the question up (Keep editing) → sheet ' + JSON.stringify(sheetTitle(page)) + ', ' + key + ' field reads ' +
-            JSON.stringify(back ? back.value : '(gone)') + ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
-        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        page.dialog().press('Keep editing');
-        await page.settle();
-        rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
-        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        page.dialog().press('Discard');
-        await page.settle();
-        rows.push('Discard → ' + stackFacts(page));
-        block('the discard question on Advanced: a typed number, Escape, Escape, Escape, Keep editing, Escape, Discard', rows);
+        // A BUBBLING input, as a browser sends it: the list's numbers are read
+        // by one listener on the page root (onSetNumber), not one per field.
+        num.dispatchEvent({ type: 'input' });
+        rows.push('typed 7 into lineside_soft_threshold on POS_A1: dirty=' + page.pd('dirty')() + '; ' + stackFacts(page));
+        await esc(page, rows, p => 'dirty=' + p.pd('dirty')());
+        block('Set for this style: a number typed is the style draft\'s, and Escape takes nothing away', rows);
     }
     {
         const page = await open({ extra: STYLE_ROUTES });
@@ -1088,26 +1083,6 @@ async function pinSheetStack() {
         await esc(page, rows, p => 'S.selected ' + JSON.stringify(p.S.selected));
         await esc(page, rows, p => 'S.selected ' + JSON.stringify(p.S.selected));
         block('Escape with no layer: the selected position lets go (then nothing)', rows);
-    }
-    // A BUG, PINNED AS IS: Apply on a sheet nothing was changed in writes an
-    // all-defaults advanced block onto the cell (setAdvanced with the sheet's
-    // whole draft, processes-desktop.js:4169), so the flow reads dirty and the
-    // next Save sends the block.
-    {
-        const page = await open();
-        const rows = [];
-        page.click('root', { act: 'advanced', node: advNode() });
-        rows.push('open: ' + stackFacts(page));
-        page.click('scrim', { act: 'adv-cancel' });
-        await page.settle();
-        rows.push('Cancel: ' + stackFacts(page));
-        page.click('root', { act: 'advanced', node: advNode() });
-        const from = page.mark();
-        page.click('scrim', { act: 'adv-apply' });
-        await page.settle();
-        rows.push('reopened, Apply with nothing changed: ' + stackFacts(page) + '; dirty=' + page.pd('dirty')() + '; requests ' +
-            (page.since(from).map(lineOf).join(' · ') || 'none'));
-        block('the Advanced sheet: open, Cancel, open, Apply', rows);
     }
     // THE FACTS, MEASURED over every page the blocks above opened: the lock
     // is the layer's counted one, and focus is every focus() call made in them.

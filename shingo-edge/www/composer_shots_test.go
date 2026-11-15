@@ -929,12 +929,10 @@ func TestComposerShots(t *testing.T) {
 	for _, gone := range []string{"New bins from", "Old bins to", "Robot drives via"} {
 		desktopRefuteDOM("D1 invents no second name", d1, gone)
 	}
-	// D2 is D1 with one position's Advanced sheet open. The hash is the page's
-	// own deep link (#style=;adv=), not a shot-only door: the harness cannot
-	// drive a mouse and a state only a mouse can reach is a state no shot
-	// checks.
-	d2 := fmt.Sprintf("/processes?process=%d#style=%d;adv=PLN_01", seeded.ProcessID, seeded.Styles[idx])
-	desktopShot("D2-advanced.png", d2)
+	// D2 WAS D1 with one position's Advanced sheet open (#style=;adv=). The
+	// sheet went in slice 3: what a position sets for the style is Set for
+	// this style, under the table on D1 itself, with no state to open.
+	desktopDOM("D2 Set for this style", d1, `id="pd-setfor"`)
 	desktopDOM("P0 processes", "/processes", `class="pd-tbl"`)
 
 	// ── EDIT PROCESS CHANGES ONE FIELD AND NOTHING ELSE ─────────────────
@@ -1234,7 +1232,6 @@ func TestComposerShots(t *testing.T) {
 			}
 		}
 	}
-	desktopDOM("D2 advanced", d2, `class="pd-modal"`)
 	d4 := fmt.Sprintf("/processes?process=%d#tab=screens", seeded.ProcessID)
 	d5 := fmt.Sprintf("/processes?process=%d#tab=settings", seeded.ProcessID)
 	desktopShot("D4-operator-screens.png", d4)

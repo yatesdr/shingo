@@ -32,7 +32,9 @@ import (
 //
 //	BIGLINE_SHOTS_OUT=<dir> go test -tags shots ./www -run TestBigLineShots -count=1
 //
-// What it writes: bigline-list.png, bigline-styles.png, bigline-settings.png.
+// What it writes: bigline-list.png, bigline-styles.png, bigline-styles-set.png
+// (the same page tall enough to show Set for this style under the table),
+// bigline-recipe-groups.png (a recipe draft's group cards), bigline-settings.png.
 func TestBigLineShots(t *testing.T) {
 	out := os.Getenv("BIGLINE_SHOTS_OUT")
 	if out == "" {
@@ -162,5 +164,13 @@ func TestBigLineShots(t *testing.T) {
 	}
 	shot("bigline-list.png", "/processes", 1440, 900)
 	shot("bigline-styles.png", fmt.Sprintf("/processes?process=%d", pid), 1440, 1500)
+	shot("bigline-styles-set.png", fmt.Sprintf("/processes?process=%d", pid), 1440, 1800)
+	// A recipe group's own settings, on its card: the newest One Spot, its
+	// groups set up (;groups=1, the page's own one-shot), nothing saved.
+	var recipe int64
+	if err := db.DB.QueryRow(`SELECT MAX(id) FROM flow_presets WHERE process_id = ? AND name = ?`, pid, recipes[0].name).Scan(&recipe); err != nil {
+		t.Fatalf("the One Spot recipe: %v", err)
+	}
+	shot("bigline-recipe-groups.png", fmt.Sprintf("/processes?process=%d#tab=presets;recipe=%d;groups=1", pid, recipe), 1440, 2100)
 	shot("bigline-settings.png", fmt.Sprintf("/processes?process=%d#tab=settings", pid), 1440, 4200)
 }

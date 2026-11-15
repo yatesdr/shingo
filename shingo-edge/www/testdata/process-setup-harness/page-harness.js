@@ -47,7 +47,7 @@
 //     NOT FOLLOWED: an outerHTML write (redrawPositionsTable) leaves its
 //     container's markup as it was.
 //   - Clicks: click() hands the host's own listener (#pd-root's onClick,
-//     #pd-scrim's onAdvClick) an event whose target answers closest() from
+//     #pd-scrim's onScrimClick) an event whose target answers closest() from
 //     the data attributes the pin gives it, then the document's closer
 //     unless a listener stopped it — the bubble, without the tree.
 //   - fetch: every call is recorded (method, url, parsed body) and answered
@@ -573,8 +573,8 @@ async function open(opts) {
         return out;
     }
     // A SHEET FIELD IS ONE ELEMENT WHICHEVER SELECTOR REACHES IT: an input
-    // carrying data-f found by another selector (Advanced's numbers, found by
-    // [data-advkind="number"] to bind and by [data-f] to test for typed work)
+    // carrying data-f found by another selector (a sheet's numbers, found by
+    // their own attribute to bind and by [data-f] to test for typed work)
     // is the field, so what the page types through one is what it reads
     // through the other.
     function fieldOr(c, t, hay) {
@@ -824,7 +824,7 @@ async function open(opts) {
         // closest() answers the page's handlers from those, and from the
         // ancestors named in `inside` ('.pd-modal' for a button in a sheet).
         // The host's click listeners run — 'root' is #pd-root's onClick,
-        // 'scrim' is #pd-scrim's onAdvClick — then the document's closer,
+        // 'scrim' is #pd-scrim's onScrimClick — then the document's closer,
         // unless a listener stopped the event.
         click(host, data, o) {
             o = o || {};
