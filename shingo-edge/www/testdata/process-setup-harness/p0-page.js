@@ -389,7 +389,13 @@ const ON_SETTINGS = { hash: '#tab=settings', extra: CATID_ROUTES };
 const D = {
     chStart: Object.assign({ drive: strip('ch-start') }, ON_SETTINGS),
     chPin: Object.assign({ drive: async page => { await strip('ch-pin')(page); await pressOK(page); } }, ON_SETTINGS),
-    chPinPick: Object.assign({ drive: async page => { await strip('ch-pin-pick')(page); await pressOK(page); } }, ON_SETTINGS),
+    // "Pin to a style…" is the shared picker (slice 5); the first style, as
+    // the select it replaced opened on.
+    chPinPick: Object.assign({ drive: async page => {
+        await strip('ch-pin-pick')(page);
+        T.pickerRow(page, 'pd-stpop', '1');
+        await pressOK(page);
+    } }, ON_SETTINGS),
     chChargeAsk: Object.assign({ drive: strip('ch-charge') }, ON_SETTINGS),
     chRepoint: Object.assign({ drive: async page => { await strip('ch-repoint')(page); await pressOK(page); } }, ON_SETTINGS),
     chCharge: Object.assign({ drive: async page => { await strip('ch-charge')(page); await pressOK(page); } }, ON_SETTINGS),

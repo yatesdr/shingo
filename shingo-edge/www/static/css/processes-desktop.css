@@ -782,10 +782,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-modal .pd-note { margin-left: 0; }
 /* .pd-seg, .pd-btn.danger and .pd-savebar moved to shared/components.css (U1). */
-.pd-nchip {
-    display: inline-block; margin: 0 6px 0 0; padding: 3px 10px; border-radius: 999px;
-    border: 1px solid var(--sub-2); font-size: 12px; color: var(--text-muted);
-}
 .pd-acts { text-align: right; white-space: nowrap; }
 .pd-acts .pd-dimlink { margin-left: 14px; }
 .pd-modal .mf .st.bad { color: var(--chip-ink-below); }
@@ -931,12 +927,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-scl-head .pd-dimlink { margin-left: 0; }
 .pd-scl-head .pd-dim { min-width: 0; overflow-wrap: anywhere; }
 
-/* A process with no part yet — the state an Add process lands in. Prose at the
-   note's colour and the field grid's measure; it is a sentence, not a panel. */
-.pd-empty { padding: 28px 4px; max-width: 64ch; }
-.pd-empty p { margin: 0 0 10px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
-.pd-empty b { color: var(--text); font-weight: 600; }
-
 /* ── Setup: the cold start (U2) ─────────────────────────────────────────
    Settings' width and rhythm; a row is its number (✓ once done), what it is,
    what the process has now, and its one action. Only the next row's action is
@@ -1076,13 +1066,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-ch-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
     margin-top: 4px; padding: 4px 6px; border-left: 3px solid; border-radius: 2px; }
 .pd-ch-acts { display: flex; gap: 6px; align-items: center; }
-
-/* A Settings section written as each pick is made says so beside its heading:
- * the save bar's Save and Discard do not cover it. */
-.pd-wt {
-    padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
-    color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
-}
 
 /* ── the routing roles' colours ──────────────────────────────────────────────
  * One colour per role, used the same way on a picker row's tag and the map's

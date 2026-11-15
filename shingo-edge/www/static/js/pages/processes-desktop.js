@@ -21,7 +21,7 @@ import {
 } from '/static/shared/scene-geom.js';
 // THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
 // this page puts up is an entry on it — see pageSheet, showSheet and showPop.
-import { openLayer, closeLayer, layerDepth, openSheet, showModal, hideModal, confirm as layerConfirm } from '/static/shared/layer.js';
+import { openLayer, closeLayer, layerDepth, openSheet, showModal, confirm as layerConfirm } from '/static/shared/layer.js';
 // THE ONE HTTP DOOR (style guide §17). Every request this page sends goes
 // through send: it never throws, it answers {ok, status, body, error,
 // fieldErrors} with status 0 when nothing answered and 401 for a lapsed
@@ -428,6 +428,19 @@ function catidPin(pid, styleID, catid, name) {
 // catidRepoint is the slot item's click: the process counts on the slot the
 // PLC counts on, through the counter edit (refused while a changeover is
 // open); its part identity follows to that slot's CATID.
+// openCatidPinPick is the strip's "Pin to a style…": the shared picker over
+// the styles the item carries; a pick asks, as Pin to <suggestion> does.
+function openCatidPinPick(btn) {
+    const pop = $('pd-stpop');
+    if (!pop) return;
+    let styles = [];
+    try { styles = JSON.parse(btn.dataset.styles || '[]'); } catch (_) { styles = []; }
+    openRowPicker(pop, btn, styles.map(s => ({ value: String(s.id), label: s.name })), v => {
+        const st = styles.find(s => String(s.id) === v);
+        catidPin(btn.dataset.pid, v, btn.dataset.catid, st ? st.name : '');
+    }, { head: 'Pin CATID ' + esc(btn.dataset.catid) + ' to', placeholder: 'find a style' });
+}
+
 function catidRepoint(pid, tag) {
     pageSheet('Count ' + tag + '?',
         'the process counts on this slot from its next read, and its part identity follows to that slot’s CATID.', '',
@@ -6430,9 +6443,6 @@ function drawSettings() {
 
     // A typed value is the draft at once; the shared page marks the bar on the
     // same input, after this listener.
-    for (const el of body.querySelectorAll('select[data-st]')) {
-        el.addEventListener('change', () => { S.settings[el.dataset.st] = el.value; });
-    }
     for (const el of body.querySelectorAll('[data-st]')) {
         if (el.tagName !== 'INPUT') continue;
         el.addEventListener('input', () => { S.settings[el.dataset.st] = el.value; });
@@ -6600,12 +6610,6 @@ function showSheet(html, onClose) {
     return showModal(scrim, { closeOnBackdrop: true, preserveState: true, onClose: onClose });
 }
 
-function hideSheet() {
-    const scrim = $('pd-scrim');
-    if (!scrim) return;
-    hideModal(scrim, { preserveState: true });
-    scrim.innerHTML = '';
-}
 
 // sheetEl is the element the open sheet lives in: its layer handle's, or
 // #pd-scrim. Every read of a sheet's fields goes through it.
@@ -8961,7 +8965,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1 };
+    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1, 'ch-pin-pick': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
 // Styles. The Recipes tab's hash still says presets (F23); recipes names it
@@ -9045,11 +9049,7 @@ function onClick(e) {
         switch (btn.dataset.act) {
             case 'list': if (draftHold(drawList)) return; drawList(); return;
             case 'ch-pin': catidPin(btn.dataset.pid, btn.dataset.style, btn.dataset.catid, btn.dataset.name); return;
-            case 'ch-pin-pick': {
-                const pick = root().querySelector('select[data-ch-pick="' + CSS.escape(btn.dataset.catid) + '"]');
-                if (pick) catidPin(btn.dataset.pid, pick.value, btn.dataset.catid, pick.selectedOptions[0].textContent);
-                return;
-            }
+            case 'ch-pin-pick': openCatidPinPick(btn); return;
             case 'ch-repoint': catidRepoint(btn.dataset.pid, btn.dataset.tag); return;
             case 'ch-charge': catidCharge(btn.dataset.hold); return;
             case 'ch-writeoff': catidWriteOff(btn.dataset.hold); return;
