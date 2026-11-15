@@ -560,6 +560,9 @@ async function pinFirstStyle() {
     check('Start opens the First style step on Setup', page.S.tab === 'setup' && page.S.setupView === 'style', 'tab ' + page.S.tab + ' view ' + page.S.setupView);
     check('one preview of the draft, through the Styles tab\'s door', page.calls.filter(c => /\/flow\/preview$/.test(c.url)).length >= 1, 'no preview');
     say();
+    // The swap the step starts on, read off its own card (a mode is never
+    // spelled here: the page's cards name them).
+    const startMode = on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g)[0];
     check('a name somebody chose (Style A) is kept as the parts move: it is not a part', page.S.firstStyle.named === true, 'named ' + page.S.firstStyle.named);
     check('no "set each one": a row\'s own Swap is the way to a mix', !/data-act="fs-each"/.test(html()), 'fs-each still drawn');
     let from = page.mark();
@@ -573,14 +576,15 @@ async function pinFirstStyle() {
     await page.settle();
     L.push('# Produce: ' + lines(page, from).join(', '));
     say();
-    // A ROW'S OWN SWAP: POS_A2 on a 1-Robot Swap, the rest on the line's. It
-    // gets a set of picks of its own, listing only what its swap uses.
+    // A ROW'S OWN SWAP: POS_A2 back on the swap the step started on, the rest
+    // on the line's. It gets a set of picks of its own, listing only what its
+    // swap uses.
     page.click('root', { act: 'fs-swap', node: 'POS_A2' });
     await page.settle();
     from = page.mark();
-    T.pickerRow(page, 'pd-pop', 'single_robot');
+    T.pickerRow(page, 'pd-pop', startMode);
     await page.settle();
-    L.push('# POS_A2 on its own swap (1‑Robot Swap): ' + lines(page, from).join(', '));
+    L.push('# POS_A2 on its own swap (the one the step started on): ' + lines(page, from).join(', '));
     say();
     check('a position on its own swap has its own set of picks', picks().some(p => /^POS_A2 /.test(p)), picks().join(' · '));
     // A PICK IS A DROPDOWN OF ITS ROLE'S BOX: POS_A2's outbound staging moves

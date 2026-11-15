@@ -202,7 +202,7 @@ ok   no "set each one": a row's own Swap is the way to a mix
   picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging]
   line so far: "Inbound GRP_A → POS_A1 2‑Robot Swap · PART-1 POS_A2 2‑Robot Swap · PART-10 POS_A3 2‑Robot Swap · PART-11 POS_A4 2‑Robot Swap · PART-2 POS_A5 2‑Robot Swap · PART-3 POS_A6 2‑Robot Swap · PART-4 POS_A7 2‑Robot Swap · PART-5 POS_A8 2‑Robot Swap · PART-6 POS_A9 2‑Robot Swap · PART-7 POS_A10 2‑Robot Swap · PART-8 POS_A11 2‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1 | Inbound staging STG_1"
   free: "1 position left free: ULD_1. Each takes a part of its own (“+ add a part”); a part is on one position."
-# POS_A2 on its own swap (1‑Robot Swap): POST …/flow/preview
+# POS_A2 on its own swap (the one the step started on): POST …/flow/preview
   name: "Style A" · rows: POS_A1=PART-1 (2‑Robot Swap) · POS_A2=PART-10 (1‑Robot Swap) · POS_A3=PART-11 (2‑Robot Swap) · POS_A4=PART-2 (2‑Robot Swap) · POS_A5=PART-3 (2‑Robot Swap) · POS_A6=PART-4 (2‑Robot Swap) · POS_A7=PART-5 (2‑Robot Swap) · POS_A8=PART-6 (2‑Robot Swap) · POS_A9=PART-7 (2‑Robot Swap) · POS_A10=PART-8 (2‑Robot Swap) · POS_A11=PART-9 (2‑Robot Swap) · ULD_1=free
   role: produce · swap for every position: two_robot · bar: "Ready: 11 positions." · Save style enabled
   picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging] · POS_A2 Inbound source=GRP_A [inbound] · POS_A2 Outbound destination=DST_1 [outbound] · POS_A2 Inbound staging=STG_1 [staging] · POS_A2 Outbound staging=STG_2 [staging]
