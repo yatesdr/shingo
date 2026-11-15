@@ -35,7 +35,8 @@ import (
 // What it writes: bigline-list.png, bigline-styles.png, bigline-styles-set.png
 // (the same page tall enough to show Set for this style under the table),
 // bigline-recipe-groups.png (a recipe draft's group cards), bigline-settings.png,
-// and a process just added: bigline-new-setup.png, bigline-new-settings.png.
+// a process just added: bigline-new-setup.png, bigline-new-settings.png, and a
+// Core loader's process: bigline-loader.png.
 func TestBigLineShots(t *testing.T) {
 	out := os.Getenv("BIGLINE_SHOTS_OUT")
 	if out == "" {
@@ -213,4 +214,52 @@ func TestBigLineShots(t *testing.T) {
 	}
 	send("PUT", fmt.Sprintf("/api/processes/%d/positions", fresh), map[string]any{"nodes": loose})
 	shot("bigline-new-settings.png", fmt.Sprintf("/processes?process=%d#tab=settings", fresh), 1440, 1700)
+
+	// A CORE LOADER'S PROCESS (slice 5). Core sends a shared-window loader whose
+	// four windows (BLD_W1..BLD_W4, invented) are Core nodes, the engineer adds
+	// a process for it, and "Make a screen for this loader" (the real door,
+	// CreateLoaderBoard) puts the windows on a screen made for it. Every
+	// position of BIG-LOADER is then a loader window, so its list row reads
+	// core_boards true and the page draws it as Settings only, the loader's
+	// setup pointing at Core.
+	//
+	// LAST, so every shot above is the line it always was: the windows join
+	// the Core node list only here, and a node list is a whole replace.
+	windows := []string{"BLD_W1", "BLD_W2", "BLD_W3", "BLD_W4"}
+	positions := make([]protocol.LoaderPosition, 0, len(windows))
+	for i, w := range windows {
+		nodes = append(nodes, protocol.NodeInfo{Name: w})
+		positions = append(positions, protocol.LoaderPosition{CoreNodeName: w, Ordinal: i + 1})
+	}
+	eng.SetCoreNodes(nodes, false)
+	parts := testdb.BigLineParts()
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{{
+		Name: "BIG Loader", LoaderKey: "loader:big", Role: "produce", Layout: "shared_window",
+		Replenishment: "operator", OutboundDest: testdb.BigLineSource, InboundSource: testdb.BigLineDestination,
+		Positions: positions,
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: parts[0]}, {PayloadCode: parts[1]}},
+	}}); err != nil {
+		t.Fatalf("core loaders: %v", err)
+	}
+	made = send("POST", "/api/processes", map[string]any{"name": "BIG-LOADER", "description": "", "group_id": 0})
+	loaderPID := int64(made["id"].(float64))
+	send("POST", "/api/loader-boards", map[string]any{"loader_key": "loader:big", "process_id": loaderPID})
+	resp, err := http.Get(srv.URL + "/api/processes")
+	if err != nil {
+		t.Fatalf("GET /api/processes: %v", err)
+	}
+	var rows []map[string]any
+	err = json.NewDecoder(resp.Body).Decode(&rows)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("decode /api/processes: %v", err)
+	}
+	coreBoards := map[string]any{}
+	for _, r := range rows {
+		coreBoards[fmt.Sprint(r["name"])] = r["core_boards"]
+	}
+	if coreBoards["BIG-LOADER"] != true || coreBoards["BIG-PRESS"] != false {
+		t.Fatalf("core_boards: BIG-LOADER %v, BIG-PRESS %v; want true and false", coreBoards["BIG-LOADER"], coreBoards["BIG-PRESS"])
+	}
+	shot("bigline-loader.png", fmt.Sprintf("/processes?process=%d", loaderPID), 1440, 1100)
 }
