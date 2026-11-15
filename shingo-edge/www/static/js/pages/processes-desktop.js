@@ -103,7 +103,7 @@ const S = {
     settingsError: '',
     settingsNotice: '',   // a success, which is not a refusal and is not drawn as one
     notice: '',          // the same, on the Flows and Presets tabs: what the last write saved
-    flowSaved: null,     // {styleID, at}: the last Save flow, which the bar names until the next edit
+    flowSaved: null,     // {styleID, at}: the last Save style, which the bar names until the next edit
     sheet: null,         // the open sheet: {handle} (its layer entry), and {run} for the apply modal's own OK
     menuFrom: null,      // the control the open popover menu hangs off: a sheet a row opens returns focus there
     mapZoom: 1,
@@ -284,8 +284,9 @@ function drawList() {
             // answer visible on the page that lists them. The two doors are
             // the two things an engineer comes here to do — work a flow, or
             // change what the process is — and each fact has exactly one
-            // editor: a process's name and group on Settings, its positions
-            // on Operator screens, its routing set and part set beside them.
+            // editor: a process's name and group on Settings › Line, its
+            // positions under Screens and positions, its routing set and part
+            // set beside them.
             '<td class="pd-acts">' +
             '<button class="pd-dimlink" data-act="open-flows" data-process="' + p.id + '">Styles</button>' +
             '<button class="pd-dimlink" data-act="open-settings" data-process="' + p.id + '">Settings</button>' +
@@ -789,9 +790,8 @@ async function openProcess(id) {
         }
         // ;recipe=<id> opens that recipe as a draft, the rail row's click;
         // ;groups=1 then presses Set up groups, ;focus=<group> hovers a group,
-        // ;row=<node> clicks a spot's row and ;gadv=<group> opens its Advanced
-        // (recipe groups) — every state of the engineer's editor a shot of the
-        // mock's tab 1 has to reach.
+        // ;row=<node> clicks a spot's row (recipe groups) — every state of
+        // the engineer's editor a shot of the mock's tab 1 has to reach.
         if (h.recipe) openRecipeAt(h);
     }
     else if (h.tab === 'settings') {
@@ -1169,7 +1169,7 @@ function recipeRow(r) {
 // one keep it as their provenance.
 //
 // A RECIPE THAT HAS GROUPS OPENS WITH ITS CARDS, as the desktop read carries
-// them — a group's Advanced included, so a re-save keeps it (SYNTH-round2 row
+// them — a group's settings included, so a re-save keeps them (SYNTH-round2 row
 // 4). One that has none opens without, and stays v0's until an engineer
 // presses Set up groups (row 5: never generated).
 function openRecipe(id) {
@@ -1490,7 +1490,7 @@ function main() {
         // SAVE AS PRESET IS MADE FROM THE SAVED FLOW, so it is disabled while
         // the draft is dirty: a preset named from an unsaved draft would be a
         // shape the station does not run, under a name that claims it does.
-        // drawBar() enables it on the same measurement that disables Save flow.
+        // drawBar() enables it on the same measurement that disables Save style.
         '<button class="pd-btn" data-act="save-preset" disabled>Save as recipe…</button>' +
         // USE A PRESET, ON THE SCREEN THAT EDITS A FLOW (owner: "is presets
         // pickable on both"). The HMI's strip has offered the cell's named
@@ -1540,7 +1540,7 @@ function shapeDraftMain() {
 //
 // AN ENGINEER SETS GROUPS ON A RECIPE: Left Hand and Right Hand on a two-off,
 // the press spots each part may run on, the on-deck spots allowed for each,
-// and Advanced per group; the floor's Spots step then offers exactly that and
+// and what is set for each group; the floor's Spots step then offers that and
 // nothing else (owner, 2026-10-22). The editor is this draft, not a screen of
 // its own: the positions table above stays the ★ cells' editor and the plain
 // path's (O-11), and the cards under it are the groups.
@@ -1901,7 +1901,7 @@ function groupsSection() {
         return '<div class="pd-groups" id="pd-groups"><div class="pd-grpbar">' +
             '<button class="pd-btn" data-act="groups-setup">Set up groups</button>' +
             '<span class="pd-dim">a card per part: the spots it may run on, what may serve each one, ' +
-            'and its own Advanced. Nothing is saved until Save recipe.</span></div></div>';
+            'and what is set for it. Nothing is saved until Save recipe.</span></div></div>';
     }
     syncGroups();
     return '<div class="pd-groups" id="pd-groups">' +
@@ -2769,11 +2769,11 @@ function drawBar() {
     // the desktop the picture never edits, and the way in is the table's row
     // or its "+ Add a position".
     // "BELOW" ONLY WHEN SOMETHING IS BELOW. The footer's "+ Add a position"
-    // is drawn for a free position; with none (a screen with no position yet,
-    // or no screen) the bar sent the engineer to a control that was not there.
+    // is drawn for a free position; with none the process has no position
+    // yet, and they are added in Settings, on a screen or on none (positions
+    // come before the screen).
     const empty = freePositions().length ? 'Add a position below'
-        : stationsOf(S.processID).length ? 'Its screen has no position yet: add them on Settings'
-            : 'Add an operator screen first: a flow uses its screen’s positions';
+        : 'This process has no position yet: add them in Settings › Screens and positions';
     const detail = b.tone === 'empty' ? empty : String(b.detail || '')
         .replace('Tap the position and pick a choreography.', 'Pick its ' + W('swap_mode').toLowerCase() + ' on its row.')
         .replace('Tap the position and pick one.', 'Pick it on its row.');
@@ -2812,7 +2812,7 @@ function drawBar() {
 }
 
 // A SAVE SAYS IT SAVED. The bar read `No unsaved changes` before a save and
-// after one, so a Save flow that landed looked like a click that did nothing.
+// after one, so a Save style that landed looked like a click that did nothing.
 // The time it saved stays on the bar until the next edit makes it dirty
 // again, and only on the flow that was saved.
 function provText() {
@@ -3270,7 +3270,7 @@ function closePop() {
 // part picked here joins the part set AND lands on this position in one tap.
 //
 // TWO KINDS OF WRITE, SAID APART. Putting a part on a position is a draft
-// edit, saved with Save flow like every other chip. Adding a part to the
+// edit, saved with Save style like every other chip. Adding a part to the
 // process, or taking one out with ×, writes the part set straight away — it is
 // the same PUT the Edit sheet sends, and it is not part of any one flow.
 async function openPartPop(btn, node) {
@@ -7552,7 +7552,7 @@ function openNewGroup() {
 }
 
 // "+ Add a position" is a MODEL OP, not a server write: it turns on a position
-// the press already has, in the draft, and nothing is written until Save flow.
+// the press already has, in the draft, and nothing is written until Save style.
 // One free position is the whole decision, so it is made without a dialog;
 // more than one and the engineer says which.
 // THE MODE COMES WITH IT, because on this screen a cell without one does not
@@ -8201,7 +8201,7 @@ function openUsePreset(btn) {
 // instead of a ticked list.
 //
 // NOTHING IS WRITTEN HERE. It changes the draft, exactly as every picker on
-// this page does, and Save flow is still the only door onto the server. That
+// this page does, and Save style is still the only door onto the server. That
 // is what makes this a CALLER rather than a second apply: the write path is
 // unchanged. It stamps NO provenance — saveFlow sends no source_preset_id;
 // only the apply modal's rows do (desktop-bodies flowPresetApplySave).
@@ -8211,7 +8211,7 @@ function openUsePreset(btn) {
 // what the Spots step allows (domain.LegalSpotMoves) — the same pre-fill the
 // HMI opens on. The recipe's own nodes otherwise. The positions table it lands
 // on is the pick step: every spot is a picker, and nothing is written until
-// Save flow.
+// Save style.
 //
 // THE SHEET DRAWS THE SHAPE ON THE RELATION PICTURE (SYNTH-round2 row 17),
 // where the pre-fill puts it, before the lines that say what changes.
