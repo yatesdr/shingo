@@ -55,6 +55,7 @@ Deploy: Edge v50. Core has no migration; the two go in either order.
 - After Core releases a robot from a lane gate, table turn, vacate or hard release, the robot panel draws it driving with its comet and its ETA instead of calling it Arrived, though the station still shows the order as staged
 - The robot panel marks where each robot is going: its destination node takes the map's highlight and the cell's other nodes a quieter mark, and a destination away from the cell is kept in view
 - The Processes page downloads less: its plant map no longer sends each lane's straight-line length, which nothing used
+- The robot panel's top edge says TAP TO HIDE; a tap anywhere on the panel, the words included, still hides it and the map is the same size
 
 ## v0.7.0 — 2026-11-13
 
