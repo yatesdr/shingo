@@ -9,20 +9,19 @@ import "shingo/protocol"
 // the vendor's universe, where a plain waypoint (class LM) is the primary use.
 // Validating a route against the node list therefore refuses correct routes,
 // confidently. Core has mirrored the whole scene graph since the SEER adapter
-// was written; these two slices are it arriving.
+// was written; its point slice is it arriving. (The drivable segments ride the
+// same response; only the geometry cache, scene_geometry.go, keeps them.)
 //
 // IN-MEMORY ONLY, and re-delivered on every node-list sync — the same contract
 // as the payload→dunnage catalog beside it. Freshness is node-sync freshness,
 // and an Edge that has not heard from Core answers "I don't know", which the
 // key-route validator degrades to a warning rather than a refusal.
 
-// SetSceneGraph caches the scene points and drivable segments delivered by Core
-// on each NodeListResponse. Called from the node-list-response handler alongside
-// SetCoreNodes and SetPayloadBinTypes.
-func (e *Engine) SetSceneGraph(points []protocol.ScenePointInfo, edges []protocol.SceneEdgeInfo) {
+// SetSceneGraph caches the scene points delivered by Core on each
+// NodeListResponse. Called from ApplyNodeList (node_feed.go) on every reply.
+func (e *Engine) SetSceneGraph(points []protocol.ScenePointInfo) {
 	e.sceneGraphMu.Lock()
 	e.scenePoints = points
-	e.sceneEdges = edges
 	e.sceneGraphMu.Unlock()
 }
 
@@ -31,13 +30,6 @@ func (e *Engine) ScenePoints() []protocol.ScenePointInfo {
 	e.sceneGraphMu.RLock()
 	defer e.sceneGraphMu.RUnlock()
 	return e.scenePoints
-}
-
-// SceneEdges returns the cached drivable segments.
-func (e *Engine) SceneEdges() []protocol.SceneEdgeInfo {
-	e.sceneGraphMu.RLock()
-	defer e.sceneGraphMu.RUnlock()
-	return e.sceneEdges
 }
 
 // ScenePointNames is the cached map points as a name set, which is the shape

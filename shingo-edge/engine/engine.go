@@ -219,10 +219,9 @@ type Engine struct {
 	// The vendor map's own universe — see scene_graph.go. In-memory only and
 	// re-delivered on every node-list sync, like the catalog above.
 	scenePoints  []protocol.ScenePointInfo
-	sceneEdges   []protocol.SceneEdgeInfo
 	sceneGraphMu lockcheck.RWMutex[lockorder.SceneGraph]
 	// The map's geometry — see scene_geometry.go. Replaced only by a complete
-	// response, unlike the two slices above; its own lock because the two
+	// response, unlike the point slice above; its own lock because the two
 	// caches change on different responses.
 	sceneGeometry   *domain.SceneGeometry
 	sceneGeometryMu lockcheck.RWMutex[lockorder.SceneGeometry]

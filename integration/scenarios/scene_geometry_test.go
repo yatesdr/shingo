@@ -75,7 +75,7 @@ func TestScenario_SceneGeometryRoundTripsAndTheRevisionShortCircuits(t *testing.
 	edgeSubjects := router.NewSubject()
 	router.RegisterSubject(edgeSubjects, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
 		last = resp
-		edge.Engine.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
+		edge.Engine.SetSceneGraph(resp.ScenePoints)
 		edge.Engine.SetSceneGeometry(resp.SceneRevision, resp.ScenePoints, resp.SceneEdges)
 	})
 	edgeIngestor := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {

@@ -23,7 +23,7 @@ func TestSceneGraph_CachesWhatTheSyncDelivers(t *testing.T) {
 		{InstanceName: "WP_AISLE_N", ClassName: "LM"},
 		{InstanceName: "SMN.001", ClassName: "AP"},
 		{InstanceName: "", ClassName: "LM"}, // unnamed points cannot be routed to
-	}, nil)
+	})
 
 	names := e.ScenePointNames()
 	if !names["WP_AISLE_N"] {
