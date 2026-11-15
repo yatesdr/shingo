@@ -987,6 +987,27 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     eq([readonly.toggle().attrs['aria-pressed'], readonly.openPanelStream()], ['false', null], 'a store that cannot be written: the toggle still holds for the page');
 }
 
+// ── 11a. A screen nobody has pressed ROBOTS on, as built (U10): the toggle
+// reads enabled, the first dispatch shows the panel, the store holds nothing
+// until a press (only "off" is ever written), and a tap hides the panel for
+// the orders that had a robot without touching the toggle or the store.
+{
+    const v = cellView({ 3: [order(501, 'dispatched', 'AMR-07', 'PLN_03')] });
+    const h = bootPage({ view: cellView({ 3: [order(501, 'queued', '', 'PLN_03')] }) });
+    await h.boot();
+    eq([h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7'], h.counts.imports, h.panelStreams().length],
+        ['true', undefined, 0, 0], 'never pressed: the toggle reads on, nothing stored, nothing loaded before a robot order');
+    await h.setView(v);
+    h.frame(available(true));
+    await h.flush();
+    eq([h.visible(), h.counts.imports, h.panelStreams().length, h.stored['shingo.robot-panel.7']], [true, 1, 1, undefined],
+        'its first dispatch: the panel shows, its drawing loaded and its stream open, and still nothing stored');
+    tap(h, h.document.getElementById('os-grid'));
+    await h.flush();
+    eq([h.visible(), h.openPanelStream(), h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7']], [false, null, 'true', undefined],
+        'a tap: hidden and its stream closed; the toggle still on and the store untouched');
+}
+
 // ── 12. {available: false} hides it, and what tries it again.
 {
     const v = cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] });
