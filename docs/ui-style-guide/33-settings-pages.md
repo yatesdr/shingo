@@ -29,8 +29,12 @@ Save in the foot bar ([Desktop composer patterns](16-desktop-composer-patterns-u
 5. **A duration is one box with its unit in it** (`45 min`, `10 s`, `1 h`).
    Parsed to a Go duration on the wire; a Go string typed in is accepted. Never
    `45m0s` on screen.
-6. **Two to four short answers are a segment, not a select.** A switch for
-   on/off. No pop-over menu on a settings page.
+6. **Two to four fixed answers are a segment, not a select.** A switch for
+   on/off. **A list of unknown length opens the shared picker**
+   ([Picker](34-picker.md)) from a button that shows the current answer: a
+   group, a PLC, a counter, a style. It is never a native select, and never
+   a hand-built menu. The rule is for settings pages: the Styles tab's
+   positions table is not one, and its role and swap-mode menus stay menus.
 7. **A row that is off hides what depends on it** (computed from state, see
    [Forms](13-forms.md)).
    Rarely changed values sit behind one row that shows their current values in

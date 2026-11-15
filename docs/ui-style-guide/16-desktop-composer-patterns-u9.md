@@ -83,11 +83,13 @@ that can change is a chip that opens a popover list — never a native `<select>
 (a select's dropdown is the browser drawing its own chrome over ours, and it
 cannot carry a glyph). Every pick applies immediately to the draft and redraws
 the picture; nothing is written until the page's one save button. **Every
-chooser on the page is the shared picker** ([Picker](34-picker.md):
+list of unknown length on the page is the shared picker** ([Picker](34-picker.md):
 `shared/picker.js` and its node and part adapters), node groups first — a
 chip's list, a routing role, a screen's positions, the part set, + Add a
-setting — so a list on this page reads, searches and greys a row the way every
-other does.
+setting, a group, a PLC, a counter — so a list on this page reads, searches
+and greys a row the way every other does. The role and swap-mode chips, two to
+four fixed answers each, open a short menu: the table is not a settings page
+([Settings pages](33-settings-pages.md) rule 6).
 
 **Free positions fold.** The Styles picture draws the positions the style uses
 and the nodes their rows name (partners, staging), then one line, `N more
