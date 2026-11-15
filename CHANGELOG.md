@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.9.0 — 2026-11-15
+
 Deploy: Edge v51–v54 first, at every Edge of the plant. Core has no migration, and goes only after every Edge there runs this release: until then Core's old timers are what end a dead Edge's waits.
 
 - A line position's auto-reorder can be held there (paused, off, or switched off) without touching its style's setting
