@@ -8,8 +8,15 @@
 //     every tile a loader's, draws its own top line and no header). It is the
 //     page whose header carries the style chip, the door to its cell picture.
 //   - THE TOGGLE ENABLES THE PANEL FOR THIS SCREEN, remembered per operator
-//     station in this browser. A missing or unreadable store means enabled; a
-//     store that cannot be written still flips the toggle for this page life.
+//     station in this browser as "on" or "off". IT IS OFF UNTIL AN OPERATOR
+//     TURNS IT ON (owner, 2026-11-15: "easier to roll out at the plant is off
+//     by default then let operators opt in"): a screen with nothing stored,
+//     where nobody has pressed ROBOTS, or a store that cannot be read, shows
+//     no panel, loads nothing and opens no stream, as hidden does. A store
+//     that cannot be written still flips the toggle for this page life. The
+//     button's colours say which it is with no order running: on, its outline
+//     is the accent; off, the outline recedes and the word dims (owner: "the
+//     colors do enough there").
 //   - WHILE ENABLED, the panel shows when one of the screen's orders has a
 //     robot (robotOrders: a status Core sends positions for, with a robot id)
 //     and goes when none does. A reshuffling parent has no robot: Core tracks
@@ -47,20 +54,21 @@ import { isVendorTracked } from './order-status.js';
 
 const STORE_KEY = 'shingo.robot-panel.' + stationID;
 
-// readEnabled: only "off" is stored; anything else, or a store that throws,
-// is enabled.
+// readEnabled: on only when "on" is stored. Nothing stored (never pressed),
+// "off", or a store that throws, is off.
 function readEnabled() {
     try {
-        return localStorage.getItem(STORE_KEY) !== 'off';
+        return localStorage.getItem(STORE_KEY) === 'on';
     } catch (_) {
-        return true;
+        return false;
     }
 }
 
+// writeEnabled stores both states: "on" must be written, now that nothing
+// stored means off.
 function writeEnabled(on) {
     try {
-        if (on) localStorage.removeItem(STORE_KEY);
-        else localStorage.setItem(STORE_KEY, 'off');
+        localStorage.setItem(STORE_KEY, on ? 'on' : 'off');
     } catch (_) {
         // A store that cannot be written: the toggle still holds for this page.
     }

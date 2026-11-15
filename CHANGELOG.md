@@ -36,6 +36,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - A line has one screen; + Add a screen shows only on a line with none and takes its positions
 - The line's auto-reorder switch saves with the Settings page
 - The Edge home page has a strip of buttons, one for each operator screen
+- A cell screen's robot panel is off until an operator presses ROBOTS on that screen; the button's colours say off or on
 - #tab=styles typed on an open process opens Styles
 - With WarLink off, the CATID monitor asks WarLink for nothing at start
 - The per-position short lists name only the positions that differ, each added through the node picker
