@@ -1528,14 +1528,17 @@ function main() {
     // THE SUBTITLE IS THE DRAFT'S. It was read off the saved style, so a mode
     // changed in the table below left the head naming the old one until the
     // flow was saved: two answers to "what is this flow" on one screen. Only
-    // `last run` is the style's, because a draft has never run.
+    // `last run` is the style's, because a draft has never run. The running
+    // style with no changeover on record says nothing of its runs: "never run
+    // here" beside its running pill was two answers again (SPR Press 6, whose
+    // style was set running without a changeover).
     const cells = M().toCells(S.model);
     const modes = [...new Set(cells.map(c => c.swap_mode))].map(m => M().modeLabels()[m] || m).join(' + ');
     const sub = [
         modes || 'no flow yet',
         cells.length + ' position' + (cells.length === 1 ? '' : 's'),
-        st.last_run ? 'last run ' + st.last_run : 'never run here',
-    ].join(' · ');
+        st.last_run ? 'last run ' + st.last_run : isRunning ? '' : 'never run here',
+    ].filter(Boolean).join(' · ');
     return '<div class="pd-main">' +
         // THE ACTIONS SIT ON THE TITLE ROW, right-aligned beside the sub line,
         // the way the reference draws them. They were on a row of their own

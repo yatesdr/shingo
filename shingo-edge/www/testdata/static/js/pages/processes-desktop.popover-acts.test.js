@@ -2148,6 +2148,22 @@ async function mainAsync() {
         }
     });
 
+    await pin('the running style with no changeover on record: no "never run here" beside running', async () => {
+        // SPR Press 6's copy: its running style was set without a changeover,
+        // so last_run is empty and the head read "never run here" beside the
+        // running pill.
+        const composer = savedComposer();
+        delete composer.styles[0].last_run;
+        const { root } = loadPage({ flowspec: true, composer });
+        await settle();
+        const got = (root.innerHTML.match(/<div class="sub">[^<]*/) || [''])[0];
+        const want = '<div class="sub">1‑Robot Swap · 1 position';
+        // Changed: it read "1‑Robot Swap · 1 position · never run here".
+        if (got !== want) {
+            throw new Error('the running style\'s sub line: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+        }
+    });
+
     await pin('Save flow leaves "Saved 14:05" on the bar', async () => {
         const RealDate = Date;
         global.Date = class extends RealDate {
