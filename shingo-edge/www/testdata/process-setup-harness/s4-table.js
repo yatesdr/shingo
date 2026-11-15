@@ -169,7 +169,7 @@ const BUGS = [
             a = M.advancedFor(page.S.model, 'POS_A11');
             out.push(['Off writes auto_reorder off and keeps the point; the cell reads off', a.reorder_point === 15 && !a.auto_reorder &&
                 T2(cell('POS_A11')) === 'off', 'point ' + a.reorder_point + ', auto ' + a.auto_reorder + ', cell ' + JSON.stringify(T2(cell('POS_A11')))]);
-            const sub = page.pd('SET_COPY').reorder_point[1];
+            const sub = page.pd('SET_COPY').reorder[1];
             out.push(['the reorder point\'s sub-label speaks of the bin, not of what is left in it: ' + JSON.stringify(sub), !/left/.test(sub), 'consume-only words']);
             return out;
         },

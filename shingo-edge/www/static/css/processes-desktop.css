@@ -1119,3 +1119,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-set .picker-chip { border-color: var(--bk); }
 .picker-tag[data-tone] { border-color: var(--bk); color: var(--text); }
 .pd-set .picker--open .picker-list { max-height: 380px; }
+
+/* The picture's fold (freeLine): how many free positions it leaves out, and
+   "show them", under the picture, on the positions box's margins. */
+.pd-freeline { margin: 2px 24px 0; color: var(--text-muted); font-size: 12px; }

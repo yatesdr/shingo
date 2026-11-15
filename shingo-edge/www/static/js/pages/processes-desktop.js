@@ -93,6 +93,7 @@ const S = {
     picRows: {},         // node -> 'front' | 'back' | '', from pictureRows (never claim kind)
     openAs: '',          // the one dim cell currently drawn as a chip, because it was clicked
     setAdds: {},         // Set for this style's rows added this visit, not given their value yet
+    showFree: false,     // the picture and the POSITIONS line draw the free positions too
     routing: null,       // D3's rows — every one, the disabled backfills included
     routingError: '',    // the server's refusal, by name
     routingWarning: '',  // what the last removal orphans, by name
@@ -1204,8 +1205,33 @@ function bindRailSearch() {
 }
 
 // The model's own cell shape, in the shape renderFlowPicture draws — the same
-// adapter the station uses, from the same place.
-function cellFromModel() { return M().pictureCells(S.model, draftCell()); }
+// adapter the station uses, from the same place, over the folded cell.
+function cellFromModel() { return M().pictureCells(S.model, foldedCell(draftCell(), S.model)); }
+
+// foldedCell is the cell the picture draws. FREE POSITIONS FOLD (owner,
+// 2026-11-14, as the Stop 1 render drew it): the positions the style uses
+// and the ones its rows name (partners, staging), and the rest behind "N more
+// positions on this process are free · show them" (freeLine). On a 23-position
+// press running one position that was 21 empty boxes. A flow that uses
+// nothing yet draws them all: there is nothing to fold to.
+function foldedCell(base, model) {
+    if (S.showFree || !model) return base;
+    const used = usedPositions(model);
+    if (!used.size) return base;
+    const positions = (base.positions || []).filter(p => used.has(p.core_node_name));
+    return positions.length === (base.positions || []).length ? base : Object.assign({}, base, { positions: positions });
+}
+
+// freeLine is the fold's line under the picture: how many positions the
+// picture leaves out, and the one control that shows them (or folds them back).
+function freeLine() {
+    const free = freePositions().length;
+    if (!free || !usedPositions(S.model).size) return '';
+    return '<div class="pd-freeline">' + (S.showFree
+        ? esc(nOf(free, 'free position')) + ' shown · <button class="pd-dimlink" data-act="free-toggle">fold them</button>'
+        : esc(free + ' more position' + (free === 1 ? '' : 's') + ' on this process ' + (free === 1 ? 'is' : 'are') + ' free') +
+            ' · <button class="pd-dimlink" data-act="free-toggle">show them</button>') + '</div>';
+}
 
 // draftCell is the cell a draft is drawn over: the process's whole cell, or —
 // in a recipe draft — the recipe's own station's (SYNTH round 2 row 23).
@@ -1445,7 +1471,7 @@ function main() {
         ((S.composer.presets || []).length ? '<button class="pd-btn" data-act="use-preset">Use a recipe ▾</button>' : '') +
         '<button class="pd-btn primary" data-act="save" disabled>Save style</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
-        '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
+        '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' + freeLine() +
         positionsTable() + styleSettings() +
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
@@ -1469,7 +1495,7 @@ function shapeDraftMain() {
         '<div class="act"><button class="pd-btn quiet" data-act="shape-cancel">Back</button>' +
         '<button class="pd-btn primary" data-act="shape-save">Save recipe…</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
-        '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
+        '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' + freeLine() +
         positionsTable() + groupsSection() +
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
@@ -1792,7 +1818,7 @@ function groupPicture() {
         });
     });
     for (const v of Object.keys(feeds)) if (!lines[v]) lines[v] = ['feeds ' + feeds[v].join(' · ')];
-    const cell = M().pictureCells(m, draftCell());
+    const cell = M().pictureCells(m, foldedCell(draftCell(), m));
     const here = new Set((cell.positions || []).map(p => p.core_node_name));
     for (const r of S.composer.presets || []) {
         if (d.recipe && String(r.id) === String(d.recipe.id)) continue;
@@ -2161,15 +2187,19 @@ function markRecipeState() {
 // have no row of their own. What is left is free, and free is what "+ Add a
 // position" adds. Its own function because the footer names the free ones and
 // the click that follows has to add one of exactly those.
-function usedPositions() {
+//
+// model is S.model unless the picture of a draft with groups asks about its
+// own (groupPicture lays the groups' spots into a copy).
+function usedPositions(model) {
+    const m = model || S.model;
     const used = new Set();
-    for (const pos of S.model.positions) {
+    for (const pos of m.positions) {
         const n = pos.core_node_name;
-        const c = S.model.cells[n];
+        const c = m.cells[n];
         if (!c || !c.on || !c.mode) continue;
         used.add(n);
         for (const col of ['partner', 'staging']) {
-            for (const chip of M().rowColumns(S.model, n, col)) if (chip.value) used.add(chip.value);
+            for (const chip of M().rowColumns(m, n, col)) if (chip.value) used.add(chip.value);
         }
     }
     return used;
@@ -2267,10 +2297,14 @@ function positionsTable() {
     // station card's chips and its Remove line (Amendment A): a control is
     // drawn as a control. The free names stay as the quiet half, because they
     // are what the button is offering rather than a second control.
+    // THE FREE NAMES FOLD WITH THE PICTURE (owner, 2026-11-14): two lines of
+    // names on a big line, a count until "show them" (freeLine).
+    const folded = !S.showFree && used.size;
     const addCtl = free.length
         ? '<span class="pd-posadd" id="pd-posadd">' +
         '<button class="pd-btn" data-act="add-position">+ Add a position</button>' +
-        '<span>' + esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free') + '</span></span>'
+        '<span>' + (folded ? esc(free.length + ' free') : esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free')) +
+        '</span></span>'
         : '';
     const addRow = free.length
         ? '<tr class="pd-addrow"><td colspan="' + columns.length + '"><button class="pd-addrowbtn" data-act="add-position">' +
@@ -4381,15 +4415,16 @@ async function openSettings(kept) {
 // choreography forbids or never reads is not offered (advShows).
 
 // SET_SECTIONS are the settings in the order "+ Add a setting" lists them,
-// under the headings it lists them by. Reorder point and Auto reorder are a
-// group's only: a style's position carries them on its row (reorderCell). The
+// under the headings it lists them by. AUTO REORDER (`reorder`, the page's own
+// key over reorder_point and auto_reorder) is a group's only, one row reading
+// "on at <point>" as a style's position reads it on its row (reorderCell). The
 // pack tolerance is strict pack's second value and the carry-over is Tool
 // change's, so neither is a setting of its own. BOARD ORDER IS NOT HERE: it is
 // drawn on a loader board's claim (manual_swap), and no stored claim is one
 // (protocol.ConfigurableSwapModes).
 const SET_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
-    ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
+    ['Replenishment', ['reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
     ['Tool change', ['evac_nodes']],
     ['Finished goods', ['strict_pack', 'partial_dest']],
     ['Press hardware', ['refill_by']],
@@ -4403,8 +4438,7 @@ const SET_SECTIONS = [
 // partial_dest); the field each edits is named here rather than guessed.
 const SET_COPY = {
     allowed_payload_codes: ['allowed_payload_codes', 'which parts a robot may bring here'],
-    reorder_point: ['reorder_point', REORDER_WORDS],
-    auto_reorder: ['auto_reorder', ''],
+    reorder: ['auto_reorder', REORDER_WORDS],
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
     auto_request_payload: ['auto_request_payload', 'the part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
@@ -4422,7 +4456,7 @@ const SET_COPY = {
 
 // The settings a switch is: the row is the setting, so an add turns it on and
 // × turns it off.
-const SET_SWITCHES = ['auto_reorder', 'auto_push', 'strict_pack', 'curtain_required', 'auto_confirm'];
+const SET_SWITCHES = ['auto_push', 'strict_pack', 'curtain_required', 'auto_confirm'];
 
 // CARRYOVER is the carry-over's three answers, said as what happens to the
 // bin on a position marked for a tool change when the next style runs the
@@ -4440,8 +4474,8 @@ const CARRYOVER_NOTE = 'If the part stays: Fresh bin clears it, Keep it leaves i
 // carries) or a group's (GROUP_ADV_KEYS: no part, no cell fields).
 function setKeys(scope) {
     const all = [].concat(...SET_SECTIONS.map(s => s[1]));
-    return scope === 'group' ? all.filter(k => GROUP_ADV_KEYS.indexOf(k) >= 0)
-        : all.filter(k => k !== 'reorder_point' && k !== 'auto_reorder');
+    return scope === 'group' ? all.filter(k => k === 'reorder' || GROUP_ADV_KEYS.indexOf(k) >= 0)
+        : all.filter(k => k !== 'reorder');
 }
 
 // A PLACE is where a setting is set: { node } for a style's position, { g }
@@ -4474,6 +4508,7 @@ function advShows(key, d) {
     // position (domain.ClearanceTreatmentAtNode), and refused on a claim that
     // marks none, so it is drawn only beside marks. A group marks none.
     if (key === 'changeover_carryover_disposition' && (d.group !== undefined || !d.evacNodes.length)) return false;
+    if (key === 'reorder') return d.group !== undefined && M().advancedShows(S.model, d.node, 'auto_reorder');
     if (d.group !== undefined) return GROUP_ADV_KEYS.indexOf(key) >= 0 && M().advancedShows(S.model, d.node, key);
     if (key === 'evac_nodes') return M().advancedShows(S.model, d.node, 'changeover_evac_nodes');
     if (key === 'partial_dest') return M().advancedShows(S.model, d.node, 'partial_destination');
@@ -4507,6 +4542,7 @@ function advValue(key, d) {
 // the store stamps one on every claim it inserts (max + 1), so a value says
 // nothing about whether an engineer set it (F15: "1 set" on every row).
 function advIsSet(key, d) {
+    if (key === 'reorder') return !!d.a.auto_reorder || !!d.a.reorder_point;
     const v = advValue(key, d);
     if (key === 'changeover_carryover_disposition') return !!v && v !== 'replace';
     if (key === 'refill_by') return !!v && v !== 'clearing_robot';
@@ -4609,6 +4645,7 @@ function setRedraw(p) {
 function setAddAt(key, p) {
     keepRow(key, p);
     if (SET_SWITCHES.indexOf(key) >= 0) { setWrite(p, key, true); return; }
+    if (key === 'reorder') { setWrite(p, 'auto_reorder', true); return; }
     if (key === 'refill_by') { setWrite(p, key, 'index_robot'); return; }
     if (key === 'evac_nodes' && p.node) { setWrite(p, key, [p.node]); return; }
     setRedraw(p);
@@ -4617,7 +4654,15 @@ function setAddAt(key, p) {
 // setRemove is ×: the setting goes back to its default and its row goes.
 function setRemove(key, p) {
     delete (S.setAdds || {})[key + '|' + placeKey(p)];
-    if (advIsSet(key, setCtx(p))) setWrite(p, key, setDefault(key)); else setRedraw(p);
+    if (!advIsSet(key, setCtx(p))) { setRedraw(p); return; }
+    // AUTO REORDER OFF IS THE POINT CLEARED TOO, as the row's Clear the point
+    // does: 0 is the opt-out, and a point left behind would read as set.
+    if (key === 'reorder') {
+        setWrite(p, 'reorder_point', 0, true);
+        setWrite(p, 'auto_reorder', false);
+        return;
+    }
+    setWrite(p, key, setDefault(key));
 }
 
 // setData is a control's data attributes: the setting, the place, and extra.
@@ -4631,9 +4676,12 @@ function setPlace(el) {
     return el.dataset.g !== undefined ? { g: Number(el.dataset.g) } : { node: el.dataset.node };
 }
 
-function setNumber(key, p, d) {
+// setNumber is a number field for key; row is the setting whose row it sits
+// in, kept listed while it is typed into (strict pack's tolerance, the
+// reorder row's point).
+function setNumber(key, p, d, row) {
     const v = advValue(key, d);
-    return '<input class="pd-inp pd-setnum" type="text" inputmode="numeric" data-setnum="' + key + '"' + setData(key, p) +
+    return '<input class="pd-inp pd-setnum" type="text" inputmode="numeric" data-setnum="' + key + '"' + setData(row || key, p) +
         ' value="' + esc(v ? String(v) : '') + '" placeholder="—" aria-label="' + esc(W(SET_COPY[key] ? SET_COPY[key][0] : key)) + '">';
 }
 
@@ -4672,11 +4720,12 @@ function setCells(key, p, d) {
             const v = advValue(key, d);
             return [setPickBtn(key, p, esc(v || 'pick one'), v ? '' : 'bad')];
         }
-        case 'reorder_point':
+        case 'reorder':
+            return [(d.a.auto_reorder ? 'on at ' : 'off · point ') + setNumber('reorder_point', p, d, 'reorder')];
         case 'lineside_soft_threshold':
             return [setNumber(key, p, d)];
         case 'strict_pack':
-            return ['on', '<span class="k">' + esc(W('pack_tolerance_pct')) + '</span> ' + setNumber('pack_tolerance_pct', p, d) + ' %'];
+            return ['on', '<span class="k">' + esc(W('pack_tolerance_pct')) + '</span> ' + setNumber('pack_tolerance_pct', p, d, 'strict_pack') + ' %'];
         case 'refill_by': {
             const v = d.a.refill_by || 'clearing_robot';
             return [setSeg(key, p, v, Object.keys(REFILL_ROBOT).map(k => [k, REFILL_ROBOT[k]])),
@@ -9504,6 +9553,10 @@ function onClick(e) {
             case 'preset-older':
                 S.presets.older = !S.presets.older;
                 drawPresets();
+                return;
+            case 'free-toggle':
+                S.showFree = !S.showFree;
+                drawFlows();
                 return;
             case 'cand-more':
                 S.presets.cands = !S.presets.cands;

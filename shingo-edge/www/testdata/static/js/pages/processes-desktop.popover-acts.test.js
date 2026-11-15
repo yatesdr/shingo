@@ -2846,14 +2846,25 @@ async function mainAsync() {
             },
         };
         const { pic, svg } = pictureFrame(1084);
-        const { doc, main, win } = loadPage({ composer, extraIds: { 'pd-svg': svg }, realPicture: true });
+        const { doc, main, win, root } = loadPage({ composer, extraIds: { 'pd-svg': svg }, realPicture: true });
         main.appendChild(pic);
         await settle();
         const names = () => (win.pictureViews[win.pictureViews.length - 1].cell.positions || []).map(p => p.core_node_name).join(' ');
         const last = () => win.pictureCalls[win.pictureCalls.length - 1] || {};
         if (!win.pictureCalls.length) throw new Error('setup: the page never drew the picture');
         if (last().relation !== true) throw new Error('the style picture of a process with a recipe asked for relation: ' + last().relation);
+        // FREE POSITIONS FOLD (owner, 2026-11-14): the style uses PLN_02 and
+        // its pair PLN_01, and "show them" draws the whole process cell.
+        if (names() !== 'PLN_01 PLN_02') throw new Error('the style picture draws more than it uses; it drew ' + names());
+        if (root.innerHTML.indexOf('<div class="pd-freeline">2 more positions on this process are free · ' +
+            '<button class="pd-dimlink" data-act="free-toggle">show them</button></div>') < 0) {
+            throw new Error('no fold line: ' + (root.innerHTML.match(/<div class="pd-freeline">.*?<\/div>/) || ['(none)'])[0]);
+        }
+        if (root.innerHTML.indexOf('<span>2 free</span>') < 0) throw new Error('the POSITIONS line does not fold its free names');
+        click(main, doc, { act: 'free-toggle' });
+        await settle();
         if (names() !== 'PLN_01 PLN_02 PLN_03 ULN_02') throw new Error('the style picture draws the whole process cell; it drew ' + names());
+        if (root.innerHTML.indexOf('<span>PLN_03 · ULN_02 are free</span>') < 0) throw new Error('shown, the POSITIONS line does not name the free ones');
         const row = makeElement('');
         row.dataset.act = 'recipe-open';
         row.dataset.preset = '7';
@@ -3364,17 +3375,21 @@ async function recipeGroupPins(h) {
         for (const key of ['allowed_payload_codes', 'auto_request_payload', 'sequence', 'evac_nodes', 'partial_dest', 'changeover_carryover_disposition']) {
             if (offered.indexOf(key) >= 0) throw new Error('a group is offered ' + key + ', which a recipe may not say');
         }
-        for (const key of ['reorder_point', 'auto_reorder', 'keep_staged_node', 'refill_by', 'strict_pack', 'curtain_required']) {
+        // AUTO REORDER IS ONE ROW (owner, 2026-11-14), "on at <point>" as a
+        // style's row reads: one setting, not Reorder point and Auto reorder.
+        for (const key of ['reorder', 'keep_staged_node', 'refill_by', 'strict_pack', 'curtain_required']) {
             if (offered.indexOf(key) < 0) throw new Error('a group is not offered ' + key + ': ' + offered.join(', '));
         }
-        pk.pick(ctx.host, 'reorder_point');
+        if (offered.indexOf('reorder_point') >= 0 || offered.indexOf('auto_reorder') >= 0) throw new Error('auto reorder is two settings: ' + offered.join(', '));
+        pk.pick(ctx.host, 'reorder');
         await settle();
-        typeNumber(ctx, { setnum: 'reorder_point', key: 'reorder_point', g: '1' }, '1');
-        groupAdd(ctx, 1, 'auto_reorder');
-        await settle();
-        const right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
-        if (right.indexOf('Set for this group') < 0 || right.indexOf('data-exc="set-reorder_point"') < 0 || right.indexOf('data-exc="set-auto_reorder"') < 0) {
-            throw new Error('Right Hand\'s card does not list its two settings: ' + plain(right));
+        let right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        const row = between(right, 'data-exc="set-reorder"', '</table>');
+        if (!/on at <input[^>]*data-setnum="reorder_point" data-key="reorder" data-g="1"/.test(row)) throw new Error('the row does not read "on at <point>": ' + row);
+        typeNumber(ctx, { setnum: 'reorder_point', key: 'reorder', g: '1' }, '1');
+        right = between(groupsHTML(ctx.root), 'data-gcard="1"', '<div class="pd-floor"');
+        if (right.indexOf('Set for this group') < 0 || (right.match(/data-exc="set-/g) || []).length !== 1) {
+            throw new Error('Right Hand\'s card does not list the one row: ' + plain(right));
         }
         const body = await savedGroups(ctx);
         if (JSON.stringify(body.groups[1].advanced) !== '{"reorder_point":1,"auto_reorder":true}') throw new Error('Right Hand sent ' + JSON.stringify(body.groups[1].advanced));
@@ -3456,6 +3471,10 @@ async function recipeGroupPins(h) {
         addSpot(ctx, 0, 'PLN_010');
         await settle();
         addSpot(ctx, 1, 'PLN_012');
+        await settle();
+        // The free positions shown: this pin reads every position's card,
+        // the ones no group holds faint (the fold is pinned on its own).
+        click(ctx.main, ctx.doc, { act: 'free-toggle' });
         await settle();
         const last = () => ctx.win.pictureCalls[ctx.win.pictureCalls.length - 1];
         const pairs = '{"PLN_005":["PLN_006","PLN_010"],"PLN_008":["PLN_007","PLN_012"]}';
