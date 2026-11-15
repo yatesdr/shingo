@@ -128,8 +128,6 @@ function load(document) {
     };
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, 'composer-model.js'), 'utf8'), ctx);
-    const geomRaw = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js'), 'utf8');
-    vm.runInContext(geomRaw.replace(/^export /mg, ''), ctx);
     const escRaw = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'esc.js'), 'utf8');
     vm.runInContext(escRaw.replace(/^export /mg, ''), ctx);
     const raw = fs.readFileSync(path.join(SRC_DIR, 'operator-flow.js'), 'utf8');

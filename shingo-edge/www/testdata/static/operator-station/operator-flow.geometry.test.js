@@ -57,11 +57,6 @@ function load() {
     const modelSrc = fs.readFileSync(path.join(SRC_DIR, 'composer-model.js'), 'utf8');
     vm.runInContext(modelSrc, ctx);
     if (!ctx.window.ComposerModel) throw new Error('composer-model.js did not attach to window; update load()');
-    const geomFile = path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'scene-geom.js');
-    const geomRaw = fs.readFileSync(geomFile, 'utf8');
-    const geomSrc = geomRaw.replace(/^export /mg, '');
-    if (geomSrc === geomRaw) throw new Error('shared/scene-geom.js no longer declares its exports at line start; update load()');
-    vm.runInContext(geomSrc, ctx);
     const raw = fs.readFileSync(path.join(SRC_DIR, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     if (src === raw) throw new Error('operator-flow.js no longer starts its imports/exports at line start; update load()');
