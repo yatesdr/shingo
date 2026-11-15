@@ -218,12 +218,13 @@ func SwitchedOffOnTiles(tiles []StationNodeView) bool {
 	return false
 }
 
-// AutoReorderSwitch is a line's switch as Processes shows it: whether the
-// station shows it, how many of the line's positions a person has switched off
-// of how many, and the last flips.
+// AutoReorderSwitch is a line's switch as Processes shows it: how many of the
+// line's positions a person has switched off, of how many, and the last flip
+// (nil when the line was never flipped). Settings › Auto-reorder reads exactly
+// these; the station setting is the process row's (auto_reorder_switch_hmi),
+// read with the row.
 type AutoReorderSwitch struct {
-	ShownOnStation bool              `json:"shown_on_station"`
-	Positions      int               `json:"positions"`
-	SwitchedOff    int               `json:"switched_off"`
-	Flips          []AutoReorderFlip `json:"flips"`
+	Positions   int              `json:"positions"`
+	SwitchedOff int              `json:"switched_off"`
+	LastFlip    *AutoReorderFlip `json:"last_flip,omitempty"`
 }

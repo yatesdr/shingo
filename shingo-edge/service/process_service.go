@@ -458,9 +458,6 @@ func (s *ProcessService) ClearNodeRuntimeOrders(processNodeID int64) error {
 	return s.db.ClearProcessNodeRuntimeOrders(processNodeID)
 }
 
-// autoReorderFlipsShown is how many flips Processes lists for a line.
-const autoReorderFlipsShown = 10
-
 // SetAutoReorderSwitchHMI shows or hides a line's auto-reorder switch on the
 // station board.
 func (s *ProcessService) SetAutoReorderSwitchHMI(processID int64, allowed bool) error {
@@ -478,9 +475,13 @@ func (s *ProcessService) AutoReorderSwitch(processID int64) (*domain.AutoReorder
 	if err != nil {
 		return nil, err
 	}
-	flips, err := processes.ListAutoReorderFlips(s.db.DB, processID, autoReorderFlipsShown)
+	flips, err := processes.ListAutoReorderFlips(s.db.DB, processID, 1)
 	if err != nil {
 		return nil, err
 	}
-	return &domain.AutoReorderSwitch{ShownOnStation: p.AutoReorderSwitchHMI, Positions: positions, SwitchedOff: off, Flips: flips}, nil
+	sw := &domain.AutoReorderSwitch{Positions: positions, SwitchedOff: off}
+	if len(flips) > 0 {
+		sw.LastFlip = &flips[0]
+	}
+	return sw, nil
 }

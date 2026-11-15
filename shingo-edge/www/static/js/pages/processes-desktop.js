@@ -5922,8 +5922,9 @@ async function loadCountingSlots() {
 }
 
 // loadStationCounters reads the process's station counters ([] on a failed read).
-// loadAutoReorder reads the line's auto-reorder switch: whether the station
-// shows it, how many positions a person has switched off, the last flips.
+// loadAutoReorder reads the line's auto-reorder switch: how many positions a
+// person has switched off, of how many, and the last flip. Whether the station
+// shows it is the process row's (auto_reorder_switch_hmi).
 async function loadAutoReorder() {
     const res = await send('GET', '/api/processes/' + S.processID + '/auto-reorder', undefined, NO_NOTICE);
     S.autoReorder = res.ok ? res.body : null;
@@ -6296,7 +6297,7 @@ function autoReorderSection() {
     const off = a.switched_off > 0;
     const when = at => { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleString(); };
     const state = off ? 'Off' + (a.switched_off < a.positions ? ' at ' + a.switched_off + ' of ' + a.positions + ' positions' : '') : 'On';
-    const last = (a.flips || [])[0];
+    const last = a.last_flip;
     const said = last
         ? (last.turned_on ? 'on' : 'off') + ' by ' + last.by + (last.source === 'station' ? ' from the station' : '') + ', ' + when(last.at)
         : 'never switched';

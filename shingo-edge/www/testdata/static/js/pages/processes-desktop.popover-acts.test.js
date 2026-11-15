@@ -3718,7 +3718,7 @@ async function settingsSectionsPins(h) {
     const page = o => {
         o = o || {};
         const writes = [];
-        let sw = { shown_on_station: false, positions: 4, switched_off: 0, flips: [] };
+        let sw = { positions: 4, switched_off: 0 };
         const ctx = loadPage(Object.assign(o.stations ? { stations: o.stations, stationNodes: o.stationNodes } : {},
             o.composer ? { composer: o.composer } : {}, {
             allowSheet: true, hash: '#tab=settings',
@@ -3729,8 +3729,8 @@ async function settingsSectionsPins(h) {
                 if (method === 'GET') return null;
                 writes.push({ method: method, url: url, body: init.body ? JSON.parse(init.body) : null });
                 if (url === '/api/processes/1/auto-reorder') {
-                    sw = { shown_on_station: false, positions: 4, switched_off: 4,
-                        flips: [{ turned_on: false, by: 's.brown', source: 'processes', at: '2026-11-14T10:32:00Z' }] };
+                    sw = { positions: 4, switched_off: 4,
+                        last_flip: { turned_on: false, by: 's.brown', source: 'processes', at: '2026-11-14T10:32:00Z' } };
                 }
                 return okJSON({ ok: true });
             },

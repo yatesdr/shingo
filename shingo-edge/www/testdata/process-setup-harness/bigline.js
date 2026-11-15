@@ -177,7 +177,7 @@ function serverFor(FX, log) {
         ['GET', /^\/api\/processes\/\d+\/station-counters$/, () => FX.server.stationCounters],
         ['GET', /^\/api\/processes\/\d+\/counting-slots$/, () => ({ slots: [] })],
         ['GET', /^\/api\/processes\/\d+\/catid-health$/, () => ({ items: [] })],
-        ['GET', /^\/api\/processes\/\d+\/auto-reorder$/, () => ({ shown_on_station: false, positions: 23, switched_off: 0, flips: [] })],
+        ['GET', /^\/api\/processes\/\d+\/auto-reorder$/, () => ({ positions: 23, switched_off: 0 })],
         ['GET', /^\/api\/operator-stations$/, () => FX.page.stations],
         ['GET', /^\/api\/operator-stations\/\d+\/claimed-nodes$/, u => FX.page.stationNodes[id(u, /stations\/(\d+)\//)] || []],
         ['GET', /^\/api\/process-nodes$/, () => FX.server.processNodes],
