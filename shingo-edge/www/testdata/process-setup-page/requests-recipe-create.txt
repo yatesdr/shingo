@@ -1,11 +1,10 @@
 ## Save as recipe… on the saved Style A (from_style_id)
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/presets
+  1  POST /api/processes/1/presets
        {
          "name": "From A",
          "from_style_id": 1
        }
-  3  GET /api/processes/1/presets
+  2  GET /api/processes/1/presets
 -- sheet closed
 
 ## + New recipe, then + Add a position: two_robot_press_index on POS_A11
@@ -14,8 +13,7 @@
 -- bar ok
 
 ## Save recipe… on that draft (cells, no groups)
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/presets
+  1  POST /api/processes/1/presets
        {
          "name": "Fresh",
          "cells": [
@@ -30,8 +28,8 @@
            }
          ]
        }
-  3  GET /api/processes/1/composer
-  4  POST /api/processes/1/flow/preview
+  2  GET /api/processes/1/composer
+  3  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
@@ -40,8 +38,7 @@
 -- groups ["A of POS_A1","B of POS_A3"]
 
 ## Save recipe… with groups (saveGroupedRecipe), the name as it opens
-  1  GET /api/core-nodes
-  2  POST /api/processes/1/presets
+  1  POST /api/processes/1/presets
        {
          "name": "Recipe One",
          "cells": [
@@ -91,8 +88,8 @@
            }
          ]
        }
+  2  GET /api/processes/1/composer
   3  GET /api/processes/1/composer
-  4  GET /api/processes/1/composer
-  5  POST /api/processes/1/flow/preview
+  4  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed

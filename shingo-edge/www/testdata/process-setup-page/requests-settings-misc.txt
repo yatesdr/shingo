@@ -9,12 +9,11 @@
 -- sheet closed
 
 ## the list › Add group: Welders 2
-  1  GET /api/core-nodes
-  2  POST /api/process-groups
+  1  POST /api/process-groups
        {
          "name": "Welders 2",
          "description": ""
        }
-  3  GET /api/process-groups
-  4  GET /api/catid-health
+  2  GET /api/process-groups
+  3  GET /api/catid-health
 -- sheet closed

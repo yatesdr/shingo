@@ -6709,13 +6709,16 @@ function redrawPicker(key, clean) {
 }
 
 // Every declared picker whose host is in the document, drawn. BOTH LISTS,
-// EACH READ ONCE: a sheet can carry pickers of both kinds — Add process
-// carries four node pickers and one part picker — and a picker drawn before
-// its list lands says so and fills itself when it does. A checklist drawn
-// before the node list is drawn again then, its filters being the list's
-// prefixes.
+// EACH READ ONCE: a page can carry pickers of both kinds (Settings carries a
+// node picker per screen and role and the part set's), and a picker drawn
+// before its list lands says so and fills itself when it does. A checklist
+// drawn before the node list is drawn again then, its filters being the
+// list's prefixes. NO PICKER, NO READ: Add process on the list asks a name
+// and a group, and read Core's node list for nothing.
 function bindPickers() {
-    for (const key of Object.keys(S.pickers)) drawPicker(key);
+    const keys = Object.keys(S.pickers);
+    for (const key of keys) drawPicker(key);
+    if (!keys.length) return;
     loadCoreNodes().then(() => {
         for (const key of Object.keys(S.pickers)) {
             const p = S.pickers[key];

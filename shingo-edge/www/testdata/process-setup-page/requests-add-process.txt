@@ -1,6 +1,5 @@
 ## Add process: name Press N, group Presses
-  1  GET /api/core-nodes
-  2  POST /api/processes
+  1  POST /api/processes
        {
          "name": "Press N",
          "description": "",
@@ -10,6 +9,6 @@
          "changeover_auto_arm": "auto",
          "group_id": 3
        }
-  3  GET /api/processes
-  4  GET /api/processes/5/composer
+  2  GET /api/processes
+  3  GET /api/processes/5/composer
 -- sheet closed

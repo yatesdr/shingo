@@ -1,6 +1,5 @@
 ## Edit Screen A: the note (its positions are its row on Settings)
-  1  GET /api/core-nodes
-  2  PUT /api/operator-stations/11
+  1  PUT /api/operator-stations/11
        {
          "process_id": 1,
          "code": "scr-a",
@@ -11,18 +10,17 @@
          "controller_node_id": "",
          "enabled": true
        }
-  3  GET /api/operator-stations
-  4  GET /api/operator-stations/11/claimed-nodes
-  5  GET /api/processes
-  6  GET /api/processes/1/composer
-  7  GET /api/processes/1/styles
-  8  POST /api/processes/1/flow/preview
+  2  GET /api/operator-stations
+  3  GET /api/operator-stations/11/claimed-nodes
+  4  GET /api/processes
+  5  GET /api/processes/1/composer
+  6  GET /api/processes/1/styles
+  7  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
 ## Add operator screen: Screen C (its positions are picked in its row)
-  1  GET /api/core-nodes
-  2  POST /api/operator-stations
+  1  POST /api/operator-stations
        {
          "process_id": 1,
          "code": "",
@@ -33,12 +31,12 @@
          "controller_node_id": "",
          "enabled": true
        }
-  3  GET /api/operator-stations
-  4  GET /api/operator-stations/31/claimed-nodes
-  5  GET /api/processes
-  6  GET /api/processes/1/composer
-  7  GET /api/processes/1/styles
-  8  POST /api/processes/1/flow/preview
+  2  GET /api/operator-stations
+  3  GET /api/operator-stations/31/claimed-nodes
+  4  GET /api/processes
+  5  GET /api/processes/1/composer
+  6  GET /api/processes/1/styles
+  7  POST /api/processes/1/flow/preview
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
