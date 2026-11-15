@@ -953,9 +953,6 @@ func (s *StationService) CellPictureForStation(stationID int64) (*domain.CellPic
 	if err != nil {
 		return nil, err
 	}
-	if station == nil {
-		return nil, nil
-	}
 	process, err := s.db.GetProcess(station.ProcessID)
 	if err != nil {
 		return nil, err

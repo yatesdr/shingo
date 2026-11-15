@@ -106,9 +106,6 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 	if err != nil {
 		return nil, err
 	}
-	if process == nil {
-		return nil, nil
-	}
 	styles, err := s.db.ListStylesByProcess(processID)
 	if err != nil {
 		return nil, err
@@ -151,16 +148,10 @@ func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerDa
 	if err != nil {
 		return nil, err
 	}
-	if station == nil {
-		return nil, nil
-	}
 	processID := station.ProcessID
 	process, err := s.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
-	}
-	if process == nil {
-		return nil, nil
 	}
 	styles, err := s.db.ListStylesByProcess(processID)
 	if err != nil {
