@@ -44,6 +44,56 @@ func TestApiConfig_ListProcesses(t *testing.T) {
 	}
 }
 
+// TestApiConfig_ListProcesses_CoreBoardsIsEveryPositionALoaderWindow pins
+// core_boards on the list's row: true only for a process with a position and
+// every position (enabled or not, on a screen or not) a Core loader's window,
+// so the page can draw a loader's or unloader's process as Core's to set up.
+// One loader window among press positions is a press; no position at all is
+// not a loader's either. The key is always on the row, false included.
+func TestApiConfig_ListProcesses_CoreBoardsIsEveryPositionALoaderWindow(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	loader, err := domain.NewSharedWindowLoader(domain.LoaderID("LD-BOARDS"), domain.RoleConsume,
+		domain.ReplenishmentOperator, []domain.Window{{Node: "LDW_001"}, {Node: "LDW_002"}}, nil)
+	if err != nil {
+		t.Fatalf("NewSharedWindowLoader: %v", err)
+	}
+	h.engine.(*stubEngine).loaders = oneLoader{l: loader}
+
+	loaderLine := seedProcess(t, db, "CoreBoards Loader")
+	ldrScreen := seedOperatorStation(t, db, loaderLine, "CB-LDR", "CoreBoards Loader Screen")
+	seedProcessNode(t, db, loaderLine, ldrScreen, "LDW_001")
+	off := seedProcessNode(t, db, loaderLine, 0, "LDW_002")
+	if _, err := db.Exec(`UPDATE process_nodes SET enabled = 0 WHERE id = ?`, off); err != nil {
+		t.Fatalf("disable LDW_002: %v", err)
+	}
+	press := seedProcess(t, db, "CoreBoards Press")
+	seedProcessNode(t, db, press, 0, "LDW_001")
+	seedProcessNode(t, db, press, 0, "CB-PRESS-POS")
+	bare := seedProcess(t, db, "CoreBoards Bare")
+
+	resp := doRequest(t, router, "GET", "/api/processes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var rows []map[string]any
+	decodeJSON(t, resp, &rows)
+	got := map[int64]any{}
+	for _, r := range rows {
+		id, _ := r["id"].(float64)
+		v, has := r["core_boards"]
+		if !has {
+			t.Errorf("process %v's row carries no core_boards; the page reads false from the key, not its absence", r["name"])
+		}
+		got[int64(id)] = v
+	}
+	for pid, want := range map[int64]bool{loaderLine: true, press: false, bare: false} {
+		if got[pid] != want {
+			t.Errorf("process %d core_boards = %v, want %v", pid, got[pid], want)
+		}
+	}
+}
+
 func TestApiConfig_CreateProcess(t *testing.T) {
 	t.Parallel()
 	h, router := newAdminRouter(t)

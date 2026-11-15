@@ -329,6 +329,18 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/operator-stations/{id}/claimed-nodes/impact": {want: 200, req: on(func(w *walk) (string, any) {
 			return sp(w) + "/claimed-nodes/impact", map[string]any{"nodes": []string{"PLN_01"}}
 		})},
+		// The press's positions on no screen (plant A's PLN_02 and PLN_05),
+		// saved as they are. No board draws them, but the press's screen
+		// view still moves: the save bumps the node generation every cell
+		// picture is versioned by (processes.BumpNodeGeneration), as a
+		// screen's own claimed-nodes save does.
+		"PUT /api/processes/{id}/positions": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/positions", map[string]any{"nodes": []string{"PLN_02", "PLN_05"}}
+		})},
+		// The loose list's removal warning is a read, like the screen's.
+		"POST /api/processes/{id}/positions/impact": {want: 200, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/positions/impact", map[string]any{"nodes": []string{"PLN_02"}}
+		})},
 		"POST /api/loader-boards": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
 			return "/api/loader-boards", map[string]any{"loader_key": "loader:walk-2", "process_id": w.loaderProc}
 		})},

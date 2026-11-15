@@ -76,6 +76,8 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
 			r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
 			r.Post("/operator-stations/{id}/claimed-nodes/impact", h.apiStationRemovalImpact)
+			r.Put("/processes/{id}/positions", h.apiSetProcessPositions)
+			r.Post("/processes/{id}/positions/impact", h.apiProcessPositionsImpact)
 
 			r.Get("/process-nodes", h.apiListConfiguredProcessNodes)
 			r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
@@ -508,6 +510,59 @@ func TestOperatorStations_SetStationClaimedNodes_NamesPositionsKeptByAnActiveOrd
 	}
 }
 
+// positionsReply is the claimed-nodes PUT's reply, and the loose PUT's.
+type positionsReply struct {
+	Status string   `json:"status"`
+	Kept   []string `json:"kept"`
+	Nodes  []string `json:"nodes"`
+}
+
+// The save answers with the list it leaves, so the page takes its read-back
+// from the reply instead of a second GET — and that list is the GET's, the
+// server's reading of what was sent and not an echo of it: a group the
+// server expanded comes back as its nodes, and a position the save could
+// only disable comes back because it is still on the screen.
+func TestOperatorStations_SetStationClaimedNodes_RepliesWithTheListItLeaves(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	h.engine.(*stubEngine).groups = map[string][]string{"GRP-REPLY": {"reply-node-b", "reply-node-a"}}
+
+	pid := seedProcess(t, db, "ReplyListLine")
+	sid := seedOperatorStation(t, db, pid, "OS-REPLY-1", "ReplyListStation")
+	busyID := seedProcessNode(t, db, pid, sid, "reply-node-busy")
+	if _, err := db.CreateOrder("reply-node-busy-order", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	body := map[string]any{"nodes": []string{"GRP-REPLY", "reply-node-c"}}
+	resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var reply positionsReply
+	decodeJSON(t, resp, &reply)
+	if reply.Status != "ok" || len(reply.Kept) != 1 || reply.Kept[0] != "reply-node-busy" {
+		t.Errorf("status %q kept %v, want ok and [reply-node-busy]", reply.Status, reply.Kept)
+	}
+
+	resp = doRequest(t, router, "GET", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var after []string
+	decodeJSON(t, resp, &after)
+	if strings.Join(reply.Nodes, ",") != strings.Join(after, ",") {
+		t.Errorf("the reply's nodes %v are not the list the GET reads after %v", reply.Nodes, after)
+	}
+	// The kept row keeps the sequence it had, so where it sorts is the GET's
+	// business; what it holds is not.
+	held := map[string]bool{}
+	for _, n := range after {
+		held[n] = true
+	}
+	if len(after) != 4 || !held["reply-node-a"] || !held["reply-node-b"] || !held["reply-node-c"] || !held["reply-node-busy"] {
+		t.Errorf("the screen holds %v, want the group's two nodes, reply-node-c and the kept reply-node-busy", after)
+	}
+}
+
 // A name that is already a live position of another process is bad input,
 // like a name Core does not have: 400, naming the other process.
 func TestOperatorStations_SetStationClaimedNodes_OtherProcessPositionIsBadRequest(t *testing.T) {
@@ -530,6 +585,156 @@ func TestOperatorStations_SetStationClaimedNodes_OtherProcessPositionIsBadReques
 	decodeJSON(t, resp, &reply)
 	if !strings.Contains(reply.Error, "CrossProcessOwnerLine") {
 		t.Errorf("error does not name the other process: %q", reply.Error)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Process positions on no screen — Set, Impact
+// The same replace as a screen's claimed-nodes, over the process's rows
+// whose operator_station_id IS NULL (StationService.SetLoosePositions).
+// ═══════════════════════════════════════════════════════════════════════
+
+// loosePositionsRead is the following GET the page could make: the
+// process's rows on no screen from /api/process-nodes, in its order
+// (sequence, then name).
+func loosePositionsRead(t *testing.T, router *chi.Mux, cookie *http.Cookie, processID int64) []processes.Node {
+	t.Helper()
+	resp := doRequest(t, router, "GET", "/api/process-nodes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var all []processes.Node
+	decodeJSON(t, resp, &all)
+	out := []processes.Node{}
+	for _, n := range all {
+		if n.ProcessID == processID && n.OperatorStationID == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func nodeNamesOf(nodes []processes.Node) string {
+	names := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		names = append(names, n.CoreNodeName)
+	}
+	return strings.Join(names, ",")
+}
+
+// A process with no screen gets its positions in one write: the rows exist
+// on no screen, a group sent is its nodes, and the reply's nodes are the
+// list a following read gives. Removing one with an order still running at
+// it keeps it, disabled, named in kept and still in nodes.
+func TestOperatorStations_SetProcessPositions_OnNoScreen(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	h.engine.(*stubEngine).groups = map[string][]string{"GRP-LOOSE": {"loose-node-b", "loose-node-a"}}
+	pid := seedProcess(t, db, "LoosePositionsLine")
+
+	body := map[string]any{"nodes": []string{"GRP-LOOSE", "loose-node-c"}}
+	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var reply positionsReply
+	decodeJSON(t, resp, &reply)
+	if reply.Status != "ok" || reply.Kept == nil || len(reply.Kept) != 0 {
+		t.Errorf("status %q kept %v, want ok and an empty (not absent) kept", reply.Status, reply.Kept)
+	}
+	rows := loosePositionsRead(t, router, cookie, pid)
+	if got := nodeNamesOf(rows); got != "loose-node-b,loose-node-a,loose-node-c" {
+		t.Errorf("positions on no screen = %s, want the group's nodes in its place, then loose-node-c", got)
+	}
+	if strings.Join(reply.Nodes, ",") != nodeNamesOf(rows) {
+		t.Errorf("the reply's nodes %v are not the list a read gives after (%s)", reply.Nodes, nodeNamesOf(rows))
+	}
+
+	busyID := rows[0].ID
+	if _, err := db.CreateOrder("loose-node-b-order", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	resp = doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions", map[string]any{"nodes": []string{"loose-node-c"}}, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	reply = positionsReply{}
+	decodeJSON(t, resp, &reply)
+	if len(reply.Kept) != 1 || reply.Kept[0] != "loose-node-b" {
+		t.Errorf("kept = %v, want [loose-node-b]: an order is still running at it", reply.Kept)
+	}
+	rows = loosePositionsRead(t, router, cookie, pid)
+	if strings.Join(reply.Nodes, ",") != nodeNamesOf(rows) {
+		t.Errorf("the reply's nodes %v are not the list a read gives after (%s)", reply.Nodes, nodeNamesOf(rows))
+	}
+	// The kept row keeps its sequence (1, as loose-node-c's now is), so the two
+	// sort by name; what matters is that both are there and loose-node-a is not.
+	if got := nodeNamesOf(rows); got != "loose-node-b,loose-node-c" {
+		t.Errorf("positions on no screen = %s, want the kept loose-node-b and loose-node-c", got)
+	}
+	if rows[0].Enabled {
+		t.Error("the kept loose-node-b is enabled; a position the save could only keep is disabled")
+	}
+}
+
+// A position on one of the process's screens is not the loose list's to
+// take: 400, naming the position and the screen, and nothing written.
+func TestOperatorStations_SetProcessPositions_APositionOnAScreenIsBadRequest(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	pid := seedProcess(t, db, "LooseOnScreenLine")
+	sid := seedOperatorStation(t, db, pid, "OS-LOOSE-1", "Loose Front Screen")
+	seedProcessNode(t, db, pid, sid, "on-screen-node")
+
+	body := map[string]any{"nodes": []string{"loose-new-node", "on-screen-node"}}
+	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions", body, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	assertJSONPath(t, resp, "error", "on-screen-node is on Loose Front Screen; take it off there first")
+	if rows := loosePositionsRead(t, router, cookie, pid); len(rows) != 0 {
+		t.Errorf("a refused save wrote %s", nodeNamesOf(rows))
+	}
+	names, err := db.GetStationNodeNames(sid)
+	testutil.MustNoErr(t, err, "GetStationNodeNames")
+	if strings.Join(names, ",") != "on-screen-node" {
+		t.Errorf("the screen holds %v after a refused save, want [on-screen-node]", names)
+	}
+}
+
+// The loose write's other answers: a slot another process models is 400 by
+// name, as on a screen; a process that does not exist is 404; a bad id is
+// 400. The impact read writes nothing and answers {"warning": ...}.
+func TestOperatorStations_SetProcessPositions_RefusalsAndImpact(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	pidOther := seedProcess(t, db, "LooseOwnerLine")
+	seedProcessNode(t, db, pidOther, 0, "loose-owned-slot")
+	pid := seedProcess(t, db, "LooseClaimantLine")
+
+	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions",
+		map[string]any{"nodes": []string{"loose-owned-slot"}}, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	decodeJSON(t, resp, &refusal)
+	if !strings.Contains(refusal.Error, "LooseOwnerLine") {
+		t.Errorf("error does not name the other process: %q", refusal.Error)
+	}
+
+	resp = doRequest(t, router, "PUT", "/api/processes/999999/positions", map[string]any{"nodes": []string{"x"}}, cookie)
+	assertStatus(t, resp, http.StatusNotFound)
+	resp = doRequest(t, router, "PUT", "/api/processes/bad/positions", map[string]any{"nodes": []string{"x"}}, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	assertJSONPath(t, resp, "error", "invalid process id")
+
+	set := map[string]any{"nodes": []string{"loose-impact-a", "loose-impact-b"}}
+	assertStatus(t, doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/positions", set, cookie), http.StatusOK)
+	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/positions/impact",
+		map[string]any{"nodes": []string{"loose-impact-a"}}, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	assertJSONPath(t, resp, "warning", "")
+	if got := nodeNamesOf(loosePositionsRead(t, router, cookie, pid)); got != "loose-impact-a,loose-impact-b" {
+		t.Errorf("the impact read changed the positions: %s", got)
 	}
 }
 
@@ -1114,6 +1319,8 @@ func TestOperatorStations_AdminAuth_RequiresLogin(t *testing.T) {
 		{"GET", "/api/operator-stations/1/claimed-nodes"},
 		{"PUT", "/api/operator-stations/1/claimed-nodes"},
 		{"POST", "/api/operator-stations/1/claimed-nodes/impact"},
+		{"PUT", "/api/processes/1/positions"},
+		{"POST", "/api/processes/1/positions/impact"},
 		{"GET", "/api/process-nodes"},
 		{"GET", "/api/process-nodes/station/1"},
 		{"POST", "/api/process-nodes"},

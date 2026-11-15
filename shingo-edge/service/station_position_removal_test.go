@@ -75,6 +75,47 @@ func TestRemovalImpact_ARecipeThatClaimsThePositionIsNamed(t *testing.T) {
 	}
 }
 
+// TestLooseRemovalImpact_IsTheScreensWarningForPositionsOnNoScreen: the
+// press's positions on no screen get the screen's warning. Plant A's press
+// already has two (PLN_02, PLN_05); a loose list that keeps them warns about
+// nothing, though it leaves out every position on Screen A4 — those are not
+// the loose list's to remove. Then the screen's rows let go of theirs, as a
+// press set up before its screen has them, and dropping PLN_03 from the loose
+// list is told the sentence the screen's sheet is told.
+func TestLooseRemovalImpact_IsTheScreensWarningForPositionsOnNoScreen(t *testing.T) {
+	t.Parallel()
+	svc, station := removalFixture(t)
+	st, err := svc.db.GetOperatorStation(station)
+	testutil.MustNoErr(t, err, "GetOperatorStation")
+	loose, err := svc.LoosePositionNames(st.ProcessID)
+	testutil.MustNoErr(t, err, "LoosePositionNames")
+	if len(loose) == 0 {
+		t.Fatal("setup: plant A's press has no position on no screen to keep")
+	}
+	onScreen := without(t, svc, station, "PLN_03")
+
+	got, err := svc.LooseRemovalImpact(st.ProcessID, loose)
+	testutil.MustNoErr(t, err, "LooseRemovalImpact with the screen's positions left out")
+	if got != "" {
+		t.Errorf("a loose list warned about positions on a screen: %q", got)
+	}
+
+	_, err = svc.db.Exec(`UPDATE process_nodes SET operator_station_id = NULL WHERE operator_station_id = ?`, station)
+	testutil.MustNoErr(t, err, "take the positions off the screen")
+	got, err = svc.LooseRemovalImpact(st.ProcessID, append(append([]string{"PLN_03"}, loose...), onScreen...))
+	testutil.MustNoErr(t, err, "LooseRemovalImpact keeping all")
+	if got != "" {
+		t.Errorf("a loose list that removes nothing warned: %q", got)
+	}
+	got, err = svc.LooseRemovalImpact(st.ProcessID, append(append([]string{}, loose...), onScreen...))
+	testutil.MustNoErr(t, err, "LooseRemovalImpact")
+	want := `Removing PLN_03 leaves recipe "Swap pair" and 3 styles "PART SYN-A-S002", "PART SYN-A-S007" and ` +
+		`"PART SYN-A-S008" naming a position this process no longer has. Save again to remove it anyway.`
+	if got != want {
+		t.Errorf("removing PLN_03 on no screen:\n got %q\nwant %q", got, want)
+	}
+}
+
 // TestRemovalImpact_TheActiveStyleIsCalledOut: the style the press is running
 // is marked among the styles that claim the position.
 func TestRemovalImpact_TheActiveStyleIsCalledOut(t *testing.T) {

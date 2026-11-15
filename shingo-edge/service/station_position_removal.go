@@ -21,7 +21,32 @@ func (s *StationService) RemovalImpact(stationID int64, nodeNames []string) (str
 	if err != nil {
 		return "", err
 	}
-	owned, err := s.db.ListProcessNodesByStation(stationID)
+	return s.removalImpact(station.ProcessID, stationID, nodeNames)
+}
+
+// LooseRemovalImpact is RemovalImpact for the list SetLoosePositions takes:
+// the warning over the process's positions on no screen that nodeNames
+// leaves out. A position on a screen is not that list's to remove, so it is
+// never named. Nothing is written; one read when nothing is removed, the
+// same four more when something is.
+func (s *StationService) LooseRemovalImpact(processID int64, nodeNames []string) (string, error) {
+	return s.removalImpact(processID, 0, nodeNames)
+}
+
+// removalImpact is the warning both share, as setPositions is the save both
+// share: the positions the write owns (the station's, or with stationID 0
+// the process's on no screen) that nodeNames, read as the save reads it,
+// leaves out, and what still names them.
+func (s *StationService) removalImpact(processID, stationID int64, nodeNames []string) (string, error) {
+	var owned []processes.Node
+	var err error
+	if stationID != 0 {
+		owned, err = s.db.ListProcessNodesByStation(stationID)
+	} else {
+		var nodes []processes.Node
+		nodes, err = s.db.ListProcessNodesByProcess(processID)
+		owned = onNoScreen(nodes)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -35,7 +60,7 @@ func (s *StationService) RemovalImpact(stationID int64, nodeNames []string) (str
 	if len(removed) == 0 {
 		return "", nil
 	}
-	claims, err := s.positionClaims(station.ProcessID, removed)
+	claims, err := s.positionClaims(processID, removed)
 	if err != nil {
 		return "", err
 	}

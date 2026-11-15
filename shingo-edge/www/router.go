@@ -532,6 +532,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
 				r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
 				r.Post("/operator-stations/{id}/claimed-nodes/impact", h.apiStationRemovalImpact)
+				// The same write for the process's positions on NO screen: a
+				// press set up before it has one (handlers_station_claims.go).
+				r.Put("/processes/{id}/positions", h.apiSetProcessPositions)
+				r.Post("/processes/{id}/positions/impact", h.apiProcessPositionsImpact)
 				// A Core loader with no operator screen anywhere on this edge.
 				r.Post("/loader-boards", h.apiCreateLoaderBoard)
 

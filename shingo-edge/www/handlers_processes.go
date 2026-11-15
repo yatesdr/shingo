@@ -17,11 +17,13 @@ import (
 
 // --- Processes Admin ---
 
-// processListRow is the list's row shape: the process plus its DERIVED
-// quality-containment state. Embedded, so the JSON stays flat and every
-// existing consumer reads it unchanged. The state is derived from the
-// claims, not stored on the process — the claim is the one source of truth
-// and the divert reads it; these two fields are the settings draft's read.
+// processListRow is the list's row shape: the process plus what the list
+// DERIVES for it — its quality-containment state, its curtained nodes, and
+// whether Core runs its boards. Embedded, so the JSON stays flat and every
+// existing consumer reads it unchanged. The containment state is derived
+// from the claims, not stored on the process — the claim is the one source
+// of truth and the divert reads it; those two fields are the settings
+// draft's read.
 type processListRow struct {
 	domain.Process
 	QualityHoldEnabled     bool   `json:"quality_hold_enabled"`
@@ -29,6 +31,13 @@ type processListRow struct {
 	// CurtainNodes names the process's live nodes whose curtain interlock is
 	// on. The interlock is configured per node; this is the list's summary.
 	CurtainNodes []string `json:"curtain_nodes,omitempty"`
+	// CoreBoards is true when Core runs this process's boards: it has a
+	// position and every position is a Core loader's window
+	// (StationService.CoreBoardProcesses) — a loader's or unloader's
+	// process, whose setup is Core's loader settings, not styles here.
+	// Always on the row, false included, so a reader never has to tell
+	// "false" from "not sent".
+	CoreBoards bool `json:"core_boards"`
 }
 
 // processListRows is every process as the list draws it. The page's first
@@ -48,6 +57,10 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	coreBoards, err := h.engine.StationService().CoreBoardProcesses()
+	if err != nil {
+		return nil, err
+	}
 	rows := make([]processListRow, len(processes))
 	for i, p := range processes {
 		rows[i] = processListRow{Process: p}
@@ -56,6 +69,7 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 			rows[i].QualityHoldDestination = dest
 		}
 		rows[i].CurtainNodes = curtained[p.ID]
+		rows[i].CoreBoards = coreBoards[p.ID]
 	}
 	return rows, nil
 }
