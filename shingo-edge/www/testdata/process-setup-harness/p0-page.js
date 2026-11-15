@@ -503,29 +503,42 @@ Object.assign(D, {
         await pressOK(page);
     } },
 });
+// PRESS A WITH ONE SCREEN: Unloader A gone, ULD_1 on no screen with the back
+// positions, so Settings offers "Put them on Screen A" (a line has one
+// screen, ruling 2026-11-15).
+const oneScreenPage = () => withPage(p => ({ stations: p.stations.filter(st => st.id !== 12),
+    stationNodes: { 11: p.stationNodes['11'] } }));
+const ONE_SCREEN_ROUTES = route([
+    ['GET', /^\/api\/process-nodes$/, () => T.FX.server.processNodes.map(n => (n.operator_station_id === 12
+        ? Object.assign({}, n, { operator_station_id: null, station_name: '' }) : n))],
+    ['GET', /^\/api\/operator-stations$/, () => T.FX.page.stations.filter(st => st.id !== 12)],
+    ['POST', /^\/api\/processes\/1\/positions\/impact$/, () => ({ warning: '' })],
+    ['PUT', /^\/api\/processes\/1\/positions$/, () => ({ status: 'ok', kept: [] })],
+]);
 Object.assign(D, {
-    // A position is picked in its screen's row under Screens and positions,
-    // then Save.
+    // A position is ticked in the Positions box under Positions and routing
+    // (the set pick, ruling 2026-11-15), then Save: it goes on the line's
+    // first screen.
     posAdd: { hash: '#tab=settings', drive: async page => {
-        T.npk(page, 'root', 'scr-11', 'NEW_1');
+        T.setPick(page, 'st', 'positions', 'NEW_1');
         await T.stSave(page);
     } },
-    // And taken off there: what still names it is read first, and Save again
+    // And taken out there: what still names it is read first, and Save again
     // takes it off (Settings' per-row Remove was a second door to the same
     // write).
     posUntick: { hash: '#tab=settings', drive: async page => {
-        T.npk(page, 'root', 'scr-11', 'POS_A11', 'drop');
+        T.setPick(page, 'st', 'positions', 'POS_A11', 'drop');
         await T.stSave(page);
         await T.stSave(page);
     } },
-    // A move and a take-off in one Save: POS_A10 goes to Unloader A, POS_A11
-    // comes off. The impact is asked with POS_A10 still in Screen A's list
-    // (slice 5): a move keeps its curtain and counter, so it is not warned
-    // as cleared; the write is the list without it.
-    posMoveAndUntick: { hash: '#tab=settings', drive: async page => {
-        T.npk(page, 'root', 'scr-11', 'POS_A11', 'drop');
-        T.npk(page, 'root', 'scr-11', 'POS_A10', 'drop');
-        T.npk(page, 'root', 'scr-12', 'POS_A10');
+    // A move and a take-off in one Save, on a one-screen line: "Put them on
+    // Screen A" moves the positions on no screen onto it, and POS_A11 comes
+    // off. Only the take-off is asked about: a move keeps its curtain and
+    // counter (slice 5); the screen's write takes the moved ones.
+    posMoveAndUntick: { hash: '#tab=settings', page: oneScreenPage, extra: ONE_SCREEN_ROUTES, drive: async page => {
+        T.setPick(page, 'st', 'positions', 'POS_A11', 'drop');
+        page.click('root', drawn(page, 'pd-scrlines', 'loose-onto'));
+        await page.settle();
         await T.stSave(page);
     } },
     bindLoader: {
@@ -631,10 +644,10 @@ async function pinRequests() {
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
-        ['Settings › Screens and positions › Screen A: NEW_1, Save', D.posAdd],
-        ['Settings › Screens and positions › Screen A: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
-        ['Settings › Screens and positions › POS_A10 to Unloader A and POS_A11 off, Save (the move is not asked about)', D.posMoveAndUntick],
-        ['Settings › Screens and positions › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
+        ['Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)', D.posAdd],
+        ['Settings › Positions and routing › the Positions box: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
+        ['Settings › Positions and routing on a one-screen Press A: POS_A11 off and Put them on Screen A, Save (the move is not asked about)', D.posMoveAndUntick],
+        ['Settings › Positions and routing › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
     ]);
     await requests('requests-settings-misc.txt', [
         ['Settings › Sync from Core', D.sync],
@@ -733,12 +746,12 @@ async function pinRefusals() {
     ]);
     await refusals('refusals-style-create.txt', [specOf('+ New style with no recipe (Style C, CAT-C)', U.styleCreate, { again: true })]);
     await refusals('refusals-flow-mint.txt', [specOf('+ New style from Recipe One, a part per slot and a CATID', U.mint, { again: true })]);
-    await refusals('refusals-add-process.txt', [specOf('Add process (one write)', U.addProcess, { again: true })]);
+    await refusals('refusals-add-process.txt', [specOf('Add process (its five writes: the process, its screen, its positions, its routing set, its part set)', U.addProcess, { again: true })]);
     await refusals('refusals-settings-save.txt', [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]);
     await refusals('refusals-screen-sheet.txt', [
         specOf('Edit Screen A (the note)', U.screenEdit, { again: true }),
-        specOf('Add operator screen (Screen C)', U.screenAdd, { again: true }),
-        specOf('Screen A’s row on Settings (POS_A11 off, NEW_3 on), Save', U.screenPositions),
+        specOf('+ Add a screen on Press A with no screen (Screen C, taking its positions)', U.screenAdd, { again: true }),
+        specOf('the Positions box on Settings (POS_A11 off, NEW_3 on), Save', U.screenPositions),
     ]);
     await refusals('refusals-part-set.txt', [
         specOf('Part popover: + PART-12 (on a fresh page)', U.partPopAdd),
@@ -783,8 +796,8 @@ async function pinRefusals() {
         specOf('Remove Station 1', D.scDelete, { again: true }),
     ]);
     await refusals('refusals-positions.txt', [
-        specOf('Screen A: NEW_1, Save', D.posAdd),
-        specOf('Screen A: POS_A11 off, Save, its list write refused', D.posUntick, { refuse: /^PUT / }),
+        specOf('the Positions box: NEW_1, Save', D.posAdd),
+        specOf('the Positions box: POS_A11 off, Save, its list write refused', D.posUntick, { refuse: /^PUT / }),
         specOf('Make a screen for LDR_1', D.bindLoader),
     ]);
     await refusals('refusals-settings-misc.txt', [

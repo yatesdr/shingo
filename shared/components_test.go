@@ -15,7 +15,7 @@ import (
 var updateComponentsGolden = flag.Bool("update-components-golden", false,
 	"rewrite testdata/components/golden/*.txt from the shared components as they run")
 
-// TestSharedComponentSpecs runs the specs of the four shared UI components:
+// TestSharedComponentSpecs runs the specs of the shared UI components:
 // layer.js (the one overlay stack), notice.js (toast and banner), http.js (the
 // HTTP door) and picker.js (the picker's shell). Each spec is a node script in
 // testdata/components that loads its component unmodified in the helper pins'
@@ -27,7 +27,7 @@ func TestSharedComponentSpecs(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the component specs")
 	}
-	for _, name := range []string{"layer", "notice", "http", "picker", "node-picker", "exceptions"} {
+	for _, name := range []string{"layer", "notice", "http", "picker", "node-picker", "exceptions", "set-pick"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			out, err := exec.Command(nodePath, filepath.Join("testdata", "components", name+".test.js")).CombinedOutput()

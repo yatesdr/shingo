@@ -286,6 +286,27 @@ block({
     }],
 });
 
+// The set pick on Settings sits in #pd-root: a click on a box's title
+// bubbles through the page's onClick, which opens a process from any
+// [data-open] it finds. The title carried one once, and the click opened
+// process NaN.
+block({
+    title: 'set pick: a click on a box of Settings\' set pick opens that box and navigates nowhere',
+    open: () => ({ hash: '#tab=settings' }),
+    act: async page => {
+        const host = page.byId('sp-st');
+        const box = host.querySelectorAll('.setpick-box').find(b => b.getAttribute('data-box') === 'destination');
+        box.querySelector('.setpick-t').click();
+        await page.settle();
+    },
+    checks: [
+        r => ['the box opens', !!r.page.S.setPicks.st && r.page.S.setPicks.st.api.active() === 'destination',
+            'open ' + (r.page.S.setPicks.st ? r.page.S.setPicks.st.api.active() : 'no set pick')],
+        r => ['no request names a process NaN', !r.calls.some(c => /NaN/.test(c.url)), r.calls.map(lineOf).join(' · ')],
+        r => ['the page stays on Press A', r.page.S.processID === 1, 'processID ' + r.page.S.processID],
+    ],
+});
+
 // Census #3 — a routing name added in Settings, then the Styles tab. The save
 // reads the composer back, whose routing is what the Styles pickers offer.
 block({
@@ -310,7 +331,7 @@ block({
         };
     },
     act: async page => {
-        T.npk(page, 'root', 'rt-source', 'SRC_2');
+        T.setPick(page, 'st', 'source', 'SRC_2');
         await T.stSave(page);
         page.click('root', { tab: 'flows' });
         await page.settle();
@@ -320,6 +341,9 @@ block({
         return ['POS_A5\'s Inbound source offers SRC_2', offered.indexOf('SRC_2') >= 0, 'offers ' + JSON.stringify(offered)];
     }],
 });
+
+// Settings' set pick's box (the routing set's roles are its boxes now).
+const setPickValue = (page, box) => (page.S.setPicks.st ? page.S.setPicks.st.api.value(box) : []);
 
 // The P0 flat bugs on this page (REPORT-v2-stop1-P0, "S4 flat bugs").
 // A refused routing-set save is said on the bar, and its picks stay picked
@@ -331,10 +355,10 @@ const barSays = r => {
 block({
     title: 'P0 :3746: a refused routing-set save is said, and the name picked stays',
     open: () => ({ hash: '#tab=settings', answer: refuse('PUT', '/api/processes/1/routing-nodes', REFUSED) }),
-    act: async page => { T.npk(page, 'root', 'rt-source', 'SRC_2'); await T.stSave(page); },
+    act: async page => { T.setPick(page, 'st', 'source', 'SRC_2'); await T.stSave(page); },
     checks: [barSays,
-        r => ['SRC_2 is still picked', (r.page.S.pickers['rt-source'] || { sel: [] }).sel.indexOf('SRC_2') >= 0,
-            'Inbound ' + JSON.stringify((r.page.S.pickers['rt-source'] || {}).sel)]],
+        r => ['SRC_2 is still picked', setPickValue(r.page, 'source').indexOf('SRC_2') >= 0,
+            'Inbound ' + JSON.stringify(setPickValue(r.page, 'source'))]],
 });
 block({
     title: 'P0 :3626: a refused Turn all on is said, and the names stay picked',
@@ -343,7 +367,7 @@ block({
     checks: [barSays,
         r => {
             const off = (r.page.S.routing || []).filter(x => x.role === 'staging' && !x.enabled).map(x => x.core_node_name);
-            const sel = (r.page.S.pickers['rt-staging'] || { sel: [] }).sel;
+            const sel = setPickValue(r.page, 'staging');
             return ['the switched-off names stay picked', off.length > 0 && off.every(n => sel.indexOf(n) >= 0),
                 'off ' + JSON.stringify(off) + ', Staging ' + JSON.stringify(sel)];
         }],
@@ -625,7 +649,7 @@ block({
     },
     checks: [
         r => ['no recipe chooser', r.html.indexOf('data-act="newstyle-recipe"') < 0, 'drawn'],
-        r => ['the line says why, and goes to Screens and positions',
+        r => ['the line says why, and goes to Positions and routing',
             r.html.indexOf('A style from a recipe is made at a screen') >= 0 && r.html.indexOf('data-act="newstyle-screens"') >= 0,
             r.html.slice(0, 300)],
     ],

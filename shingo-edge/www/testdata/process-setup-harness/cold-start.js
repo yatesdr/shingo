@@ -17,7 +17,9 @@ const L = [];
 const clone = x => JSON.parse(JSON.stringify(x));
 
 // A composer read for Press A with some of it taken away, answered in place
-// of the fixture's own; page overrides the page data (the process row).
+// of the fixture's own; page overrides the page data (the process row, the
+// screens), and the screens' re-read answers the same screens, so a screen
+// never opened on the page is never opened on the server either.
 function pressA(edit, pageEdit) {
     const composer = clone(T.FX.composer);
     if (edit) edit(composer);
@@ -25,8 +27,12 @@ function pressA(edit, pageEdit) {
     if (pageEdit) pageEdit(page);
     return {
         page: page,
-        extra: (method, url) => (method === 'GET' && /^\/api\/processes\/1\/composer$/.test(url.split('?')[0])
-            ? { body: clone(composer) } : undefined),
+        extra: (method, url) => {
+            const u = url.split('?')[0];
+            if (method === 'GET' && /^\/api\/processes\/1\/composer$/.test(u)) return { body: clone(composer) };
+            if (method === 'GET' && u === '/api/operator-stations') return { body: clone(page.stations) };
+            return undefined;
+        },
     };
 }
 
@@ -334,49 +340,140 @@ async function pinStyleFirst() {
     }
 }
 
-// ── the Setup tab (U2): the tabs and the four rows at each state ────────────
+// ── the Setup tab (ruling 2026-11-15): three steps, and when it is finished ──
+//
+// SETUP IS THREE STEPS: Nodes and part (the Add process sheet, opened again by
+// Change…), First style (a part on each position and one way they swap, saved
+// by the Styles save), Run it (the screen, opened). IT IS FINISHED WHEN THE
+// LINE CAN RUN AND ITS SCREEN HAS BEEN OPENED: positions, an inbound, an
+// outbound, a part, a style with a flow, a screen holding a position, and that
+// screen's last_seen_at. SKIP is this browser's (pd.setup.skipped.<pid>).
 const tabsOf = page => [...page.root.innerHTML.matchAll(/<button class="([^"]*)" data-tab="([^"]*)">([^<]*)</g)]
     .map(m => m[3] + (/\bon\b/.test(m[1]) ? '*' : ''));
+// A step: its state (done, now, next), its title and what it holds, then its
+// body's words and its controls (a primary one marked).
 function setupLines(page) {
     const html = page.root.innerHTML;
-    const parts = html.split(/(?=<div class="pd-step[^"]*" data-setup-row=)/).slice(1);
-    return parts.map(h => {
-        const key = (/data-setup-row="([^"]*)"/.exec(h) || [])[1];
-        const done = /^<div class="pd-step done"/.test(h);
-        const val = T.text((/<div class="pd-stepval[^"]*">([^<]*)</.exec(h) || [])[1] || '');
-        const warn = /pd-stepval warn/.test(h);
-        const b = /<(?:button|a) class="pd-btn( primary)?"[^>]*>([^<]*)</.exec(h) || [];
-        return '  ' + (done ? '✓ ' : '· ') + key + ': ' + JSON.stringify(val) + (warn ? ' (warn)' : '') +
-            ' → ' + (b[2] || '?') + (b[1] ? ' [primary]' : '');
-    });
+    const out = [];
+    const head = /<div class="pd-sutitle">([\s\S]*?)<\/div>/.exec(html);
+    if (head) out.push('  title: ' + JSON.stringify(T.text(head[1])));
+    for (const h of html.split(/(?=<li class="pd-sus )/).slice(1)) {
+        const li = h.slice(0, h.indexOf('</li>') + 5);
+        const state = (/^<li class="pd-sus ([a-z]+)"/.exec(li) || [])[1];
+        const t = /<div class="pd-susb"><b>([^<]*)<\/b><small>([^<]*)<\/small>([\s\S]*)<\/div><\/li>$/.exec(li) || [];
+        const acts = [...String(t[3] || '').matchAll(/<(button|a) class="pd-btn( primary)?"([^>]*)>([^<]*)</g)]
+            .map(m => m[4] + (m[2] ? ' [primary]' : '') + ' (' + ((/data-act="([^"]*)"/.exec(m[3]) || [])[1] || (/href="([^"]*)"/.exec(m[3]) || [])[1] || '') + ')');
+        out.push('  ' + state + ' ' + T.decode(t[1] || '?') + ': ' + JSON.stringify(T.decode(t[2] || '')) + (acts.length ? ' → ' + acts.join(' · ') : ''));
+        const words = T.text(String(t[3] || '').replace(/<(button|a) class="pd-btn[\s\S]*?<\/(button|a)>/g, ''));
+        if (words) out.push('      ' + JSON.stringify(words));
+    }
+    const end = /<div class="pd-sucard col"><div><b>([^<]*)<\/b><small>([^<]*)<\/small>/.exec(html);
+    if (!out.some(l => /^  [a-z]+ /.test(l)) && end) out.push('  ' + JSON.stringify(T.decode(end[1] + ' ' + end[2])));
+    const side = /<div class="pd-suside">([\s\S]*?)<div class="pd-pop"/.exec(html);
+    if (side) out.push('  beside: ' + JSON.stringify(T.text(side[1])));
+    const bar = /<button class="pd-dimlink pd-skip" data-act="(setup-[a-z]+)">([^<]*)</.exec(html);
+    out.push('  app bar: ' + (bar ? JSON.stringify(bar[2]) + ' (' + bar[1] + ')' : 'no skip or show'));
+    return out;
 }
+const NEVER_SEEN = pg => { for (const st of pg.stations) delete st.last_seen_at; };
+const NO_FLOW = c => { c.styles = c.styles.slice(0, 1).map(st => Object.assign(st, { claims: [], claim_count: 0, claim_modes: [], last_run: '' })); c.presets = []; };
 const STATES = [
-    ['a new process: nothing yet', c => { c.cell.positions = []; c.routing = []; c.styles = []; c.presets = []; }],
+    ['a new process: nothing yet', c => { c.cell.positions = []; c.routing = []; c.styles = []; c.presets = []; c.palette = []; }],
     ['positions claimed', c => { c.routing = []; c.styles = []; c.presets = []; }],
     ['and a routing set', c => { c.styles = []; c.presets = []; }],
-    ['and a style with no flow yet', c => { c.styles = c.styles.slice(0, 1).map(st => Object.assign(st, { claims: [], claim_count: 0, claim_modes: [], last_run: '' })); c.presets = []; }],
-    ['and its flow drawn, never run', c => { c.styles.forEach(st => { st.last_run = ''; }); }],
+    ['and a style with no flow yet', NO_FLOW],
+    ['and its flow drawn: the line can run, its screen never opened', c => { c.styles.forEach(st => { st.last_run = ''; }); }],
 ];
-const NOT_RUN = pg => { pg.processes[0].active_style_id = 0; pg.processes[0].flow_composer_enabled = false; };
+const NOT_RUN = pg => { pg.processes[0].active_style_id = 0; pg.processes[0].flow_composer_enabled = false; NEVER_SEEN(pg); };
+// A request as one line: a write with its body, but a flow preview's or
+// save's (their cells are the table's goldens).
+const lines = (page, from) => page.since(from).map(c => c.method + ' ' + c.url.replace('/api/processes/1', '…') +
+    (c.method !== 'GET' && c.body !== undefined && !/\/flow\/(preview|save)$/.test(c.url) ? ' ' + JSON.stringify(c.body) : ''));
+// Setup's own re-read of the screens (SETUP_POLL_MS, 5 s); the rail's 10 s
+// re-read of the styles runs on every tab and is not Setup's.
+const setupTicks = page => page.intervals().filter(t => t.ms === 5000);
+
 async function pinSetup() {
-    L.push('', '## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)');
+    L.push('', '## the Setup tab: Press A opened at each state, its screens never opened (the steps: state title: what it holds → its controls)');
     for (const [title, edit] of STATES) {
         const page = await T.openPage(pressA(edit, NOT_RUN));
-        L.push('# ' + title + ' · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
+        L.push('# ' + title + ' · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)) +
+            ' · ' + (setupTicks(page).length ? 're-reads the screens every 5 s' : 'no re-read of the screens'));
         L.push(...setupLines(page));
     }
+
+    L.push('', '## when Setup is finished: the line can run AND its screen has been opened (last_seen_at)');
     {
         const page = await T.openPage(pressA(c => { c.styles.forEach(st => { st.last_run = ''; }); }));
-        L.push('# run once (active style set) · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
+        L.push('# the line can run, its screen seen 30 s ago · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
     }
     {
-        const page = await T.openPage(pressA(c => { c.presets = []; c.styles.forEach(st => { st.last_run = ''; }); }, pg => { pg.processes[0].active_style_id = 0;
-            pg.processes[0].flow_composer_enabled = true; }));
-        L.push('# HMI setup on with no recipe, never run · lands on ' + page.S.tab);
-        L.push(...setupLines(page).filter(l => /hmi|counter/.test(l)));
+        const page = await T.openPage(pressA(NO_FLOW));
+        L.push('# its screen seen, no style with a flow · lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
     }
-    L.push('', '## where a #tab= link lands (the Recipes tab went to HMI setup on Settings)');
-    for (const hash of ['#tab=presets', '#tab=recipes', '#tab=presets;preset=7', '#tab=settings', '#tab=setup']) {
+    {
+        // The Run it step's re-read: the screens answer seen at the next tick.
+        let seen = false;
+        const o = pressA(c => { c.styles.forEach(st => { st.last_run = ''; }); }, NOT_RUN);
+        const base = o.extra;
+        o.extra = (m, u) => (m === 'GET' && u.split('?')[0] === '/api/operator-stations' && seen
+            ? { body: T.FX.page.stations.map(st => Object.assign({}, st, { last_seen_at: '2026-11-11T14:05:20' })) } : base(m, u));
+        const page = await T.openPage(o);
+        const ticks = setupTicks(page);
+        check('waiting on Run it, the screens are re-read every 5 s, one timer', ticks.length === 1,
+            JSON.stringify(page.intervals().map(t => t.ms)));
+        let from = page.mark();
+        await ticks[0].fn();
+        await page.settle();
+        check('a tick with no screen opened is one read and changes nothing', lines(page, from).join() === 'GET /api/operator-stations' &&
+            page.S.tab === 'setup' && /Waiting for the screen to be opened/.test(page.root.innerHTML), lines(page, from).join(' · ') + ' tab ' + page.S.tab);
+        seen = true;
+        from = page.mark();
+        await ticks[0].fn();
+        await page.settle();
+        L.push('# the screen opened, on the next tick: ' + lines(page, from).join(', '));
+        L.push(...setupLines(page));
+        check('it says the line is set up and stops re-reading', /is set up<\/h1>/.test(page.root.innerHTML) && setupTicks(page).length === 0,
+            'timers ' + setupTicks(page).length);
+        check('the tab stays while the engineer is on it', tabsOf(page).indexOf('Setup*') >= 0, JSON.stringify(tabsOf(page)));
+        page.click('root', { tab: 'flows' });
+        await page.settle();
+        check('and goes once they leave it', tabsOf(page).indexOf('Setup') < 0 && tabsOf(page).indexOf('Setup*') < 0, JSON.stringify(tabsOf(page)));
+    }
+
+    L.push('', '## Skip and Show setup (this browser\'s, per process)');
+    {
+        const page = await T.openPage(pressA(STATES[1][1], NOT_RUN));
+        page.click('root', { act: 'setup-skip' });
+        await page.settle();
+        L.push('# Skip setup: tab ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)) + ' · stored ' + JSON.stringify(page.storage) +
+            ' · ' + JSON.stringify((/<button class="pd-dimlink pd-skip" data-act="(setup-[a-z]+)">([^<]*)</.exec(page.root.innerHTML) || []).slice(1)));
+        check('Skip opens Settings with no Setup tab, and offers Show setup', page.S.tab === 'settings' && tabsOf(page).every(t => !/^Setup/.test(t)) &&
+            /data-act="setup-show">Show setup</.test(page.root.innerHTML), 'tab ' + page.S.tab + ' tabs ' + JSON.stringify(tabsOf(page)));
+    }
+    {
+        const page = await T.openPage(Object.assign(pressA(STATES[1][1], NOT_RUN), { storage: { 'pd.setup.skipped.1': '1' } }));
+        L.push('# opened again, skipped: lands on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
+        page.click('root', { act: 'setup-show' });
+        await page.settle();
+        L.push('# Show setup: tab ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)) + ' · stored ' + JSON.stringify(page.storage));
+        check('Show setup brings the tab back and forgets the skip', page.S.tab === 'setup' && !('pd.setup.skipped.1' in page.storage),
+            'tab ' + page.S.tab + ' stored ' + JSON.stringify(page.storage));
+    }
+    {
+        const page = await T.openPage(Object.assign(pressA(c => { c.styles.forEach(st => { st.last_run = ''; }); }, NOT_RUN),
+            { storage: { 'pd.setup.skipped.1': '1' } }));
+        check('skipped, a line that can run offers no Show setup', !/data-act="setup-show"/.test(page.root.innerHTML) && page.S.tab === 'flows',
+            'tab ' + page.S.tab);
+    }
+    {
+        const page = await T.openPage(pressA(null, pg => { pg.processes[0].core_boards = true; NEVER_SEEN(pg); }));
+        check('a Core loader\'s process has no Setup, and nothing to skip', tabsOf(page).every(t => !/^Setup/.test(t)) &&
+            !/data-act="setup-(skip|show)"/.test(page.root.innerHTML), JSON.stringify(tabsOf(page)));
+    }
+
+    L.push('', '## where a #tab= link lands (the Recipes tab went to Operator setup on Settings; #tab=styles is the Styles tab)');
+    for (const hash of ['#tab=presets', '#tab=recipes', '#tab=presets;preset=7', '#tab=settings', '#tab=setup', '#tab=styles']) {
         const page = await T.openPage({ hash: hash });
         await page.settle();
         const html = page.root.innerHTML;
@@ -388,23 +485,143 @@ async function pinSetup() {
     {
         const page = await T.openPage({ hash: '#tab=settings' });
         const at = page.root.innerHTML.indexOf('id="pd-hmirecipes"');
-        L.push('  Settings › HMI setup: ' + JSON.stringify(T.text(page.root.innerHTML.slice(at, at + 2000)).slice(0, 220)));
+        L.push('  Settings › Operator setup: ' + JSON.stringify(T.text(page.root.innerHTML.slice(at, at + 2000)).slice(0, 220)));
     }
 
-    L.push('', '## the Setup tab\'s actions, from a new process with positions (each on a fresh page)');
-    for (const key of ['positions', 'routing', 'style', 'counter', 'hmi']) {
-        const page = await T.openPage(pressA(STATES[1][1], NOT_RUN));
+    L.push('', '## the Setup tab\'s actions (each on a fresh page; its requests)');
+    const ACTS = [
+        ['Pick them (step 1, a new process with positions)', STATES[1][1], 'setup-edit'],
+        ['Start (step 2, a routing set and no style: one is made, named by the first part)', STATES[2][1], 'setup-style'],
+        ['Start (step 2, a style with no flow yet)', NO_FLOW, 'setup-style'],
+        ['Production counter (Later, on Settings)', STATES[1][1], 'setup-later', { to: 'Production counter' }],
+    ];
+    for (const [title, edit, act, more] of ACTS) {
+        // A style Start makes is in the composer's next read.
+        let made = false;
+        const o = pressA(edit, NOT_RUN);
+        const base = o.extra;
+        o.extra = (m, u) => {
+            if (m === 'POST' && u === '/api/styles') { made = true; return undefined; }
+            if (made && m === 'GET' && /^\/api\/processes\/1\/composer$/.test(u.split('?')[0])) {
+                const r = base(m, u);
+                r.body.styles = [{ id: 6, name: 'PART-1', claims: [], claim_count: 0, claim_modes: [], parts: [], advanced: {} }];
+                return r;
+            }
+            return base(m, u);
+        };
+        const page = await T.openPage(o);
         const from = page.mark();
-        page.click('root', { act: 'setup-go', setup: key });
+        page.click('root', Object.assign({ act: act }, more || {}));
         await page.settle();
         const sheet = page.sheetOpen() ? page.scrim.querySelector('.layer-head') : null;
-        L.push('  ' + key + ' → tab ' + page.S.tab + (page.S.shapeDraft ? ' (a recipe draft)' : '') +
-            (sheet ? ', sheet ' + JSON.stringify(sheet.childNodes[0].textContent) : '') +
-            ' · ' + page.since(from).map(c => c.method + ' ' + c.url.replace('/api/processes/1', '…')).join(', '));
+        L.push('  ' + title + ' → tab ' + page.S.tab + (page.S.setupView ? ' (' + page.S.setupView + ' step)' : '') +
+            (sheet ? ', sheet ' + JSON.stringify(sheet.childNodes[0].textContent) : '') + ' · ' + lines(page, from).join(', '));
     }
 }
 
-// ── the Add process sheet: a name and a group, then Setup (slice 4) ─────────
+// ── Setup · First style: a part on each position, one way they all swap ────
+async function pinFirstStyle() {
+    L.push('', '## Setup › First style on Press A (a style with no flow yet): the step, a choice, its preview and its Save');
+    // Once saved, the composer read holds the flow (the fixture's Style A).
+    let saved = false;
+    const o = pressA(NO_FLOW, NOT_RUN);
+    const unsaved = o.extra;
+    o.extra = (m, u) => {
+        if (m === 'POST' && /\/flow\/save$/.test(u)) { saved = true; return undefined; }
+        return saved && m === 'GET' && /^\/api\/processes\/1\/composer$/.test(u.split('?')[0]) ? undefined : unsaved(m, u);
+    };
+    const page = await T.openPage(o);
+    page.click('root', { act: 'setup-style' });
+    await page.settle();
+    const html = () => page.root.innerHTML;
+    const parts = () => [...html().matchAll(/<div class="pd-fsrow"><b>([^<]*)<\/b><button class="pd-sel" data-act="fs-part" data-node="[^"]*">([^<]*)</g)].map(m => m[1] + '=' + T.decode(m[2]));
+    const on = re => [...html().matchAll(re)].map(m => m[1]);
+    const say = () => {
+        L.push('  parts: ' + parts().join(' · '));
+        L.push('  role: ' + on(/<button class="on" data-act="fs-role" data-role="([^"]*)"/g).join() +
+            ' · swap: ' + (on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g).join() || 'set on each') +
+            ' · bar: ' + JSON.stringify(T.text((/<div id="pd-bar" class="pd-fsbar">([\s\S]*?)<\/div>/.exec(html()) || [])[1] || '')) +
+            ' · Save style ' + (/data-act="fs-save" disabled/.test(html()) ? 'disabled' : 'enabled'));
+        const filled = /<div class="pd-sufilled">([\s\S]*?)<\/div>/.exec(html());
+        L.push('  filled in: ' + JSON.stringify(filled ? T.text(filled[1]) : ''));
+    };
+    check('Start opens the First style step on Setup', page.S.tab === 'setup' && page.S.setupView === 'style', 'tab ' + page.S.tab + ' view ' + page.S.setupView);
+    check('one preview of the draft, through the Styles tab\'s door', page.calls.filter(c => /\/flow\/preview$/.test(c.url)).length >= 1, 'no preview');
+    say();
+    let from = page.mark();
+    const mode = (/data-act="fs-mode" data-mode="([^"]*)"/.exec(html().replace(/<button class="pd-fsmode on"[^>]*>/g, '')) || [])[1];
+    page.click('root', { act: 'fs-mode', mode: mode });
+    await page.settle();
+    L.push('# another swap for all (' + mode + '): ' + lines(page, from).join(', '));
+    say();
+    from = page.mark();
+    page.click('root', { act: 'fs-role', role: 'produce' });
+    await page.settle();
+    L.push('# Produce: ' + lines(page, from).join(', '));
+    say();
+    from = page.mark();
+    page.click('root', { act: 'fs-each' });
+    await page.settle();
+    L.push('# set each one: ' + lines(page, from).join(', ') + ' · a swap per position ' +
+        on(/data-act="fs-mode1" data-node="([^"]*)" data-mode="[^"]*"/g).filter((n, i, a) => a.indexOf(n) === i).length);
+    page.click('root', { act: 'fs-each' });
+    await page.settle();
+    // A part is on one position: PART-1 picked for ULD_1 moves off POS_A1.
+    page.click('root', { act: 'fs-part', node: 'ULD_1' });
+    await page.settle();
+    const pop = page.byId('pd-pop');
+    const note = ((pop ? pop.querySelectorAll('.picker-row') : []).find(r => r.getAttribute('data-value') === 'PART-1') || { querySelector: () => null });
+    L.push('# ULD_1\'s part, PART-1 in its list: ' + JSON.stringify((note.querySelector('.picker-note') || { textContent: '' }).textContent));
+    T.pickerRow(page, 'pd-pop', 'PART-1');
+    await page.settle();
+    say();
+    from = page.mark();
+    page.click('root', { act: 'fs-save' });
+    await page.settle();
+    L.push('# Save style: ' + lines(page, from).filter(l => !/^GET /.test(l)).join(', ') + ' · then tab ' + page.S.tab +
+        (page.S.setupView ? ' (' + page.S.setupView + ')' : '') + ' · notices ' + JSON.stringify(page.notices.map(n => n.text)));
+    const save = page.since(from).find(c => /\/flow\/save$/.test(c.url));
+    check('Save style is the Styles save (flow/save) of the step\'s draft', !!save && Array.isArray(save.body.cells) && save.body.cells.length > 0,
+        save ? JSON.stringify(save.body).slice(0, 200) : 'no flow/save');
+    check('and Setup is back on its steps, the one to do now Run it', page.S.tab === 'setup' && !page.S.setupView &&
+        /<li class="pd-sus now"><span class="pd-susn">3<\/span>/.test(page.root.innerHTML), 'tab ' + page.S.tab + ' view ' + page.S.setupView);
+}
+
+// ── Setup's Change…: the process sheet again, titled Edit process ──────────
+//
+// SAVE WRITES ONLY WHAT MOVED, through Settings' own doors (savePositions,
+// saveRouting, writePartSet): the sheet filled in from what was read, one
+// change, and that change's write alone.
+async function pinEditProcess() {
+    L.push('', '## Setup › Change… (Edit process): Save writes only what moved, through Settings\' doors');
+    const run = async (title, change) => {
+        const page = await T.openPage(pressA(c => { c.styles = []; c.presets = []; }, NOT_RUN));
+        page.click('root', { act: 'setup-edit' });
+        await page.settle();
+        const head = page.scrim.querySelector('.layer-head');
+        const sp = page.byId('sp-proc');
+        const chips = key => (sp.querySelectorAll('.setpick-box').find(b => b.getAttribute('data-box') === key) || { querySelectorAll: () => [] })
+            .querySelectorAll('.setpick-n').map(n => n.textContent).join();
+        if (!change) {
+            L.push('  the sheet: ' + JSON.stringify(head ? head.childNodes[0].textContent : '') + ' · boxes hold ' +
+                ['positions', 'source', 'staging', 'destination'].map(k => k + ' ' + chips(k)).join(', ') +
+                ' · name ' + JSON.stringify((page.scrim.querySelector('[data-f="name"]') || {}).value) +
+                ' · screens ' + JSON.stringify(T.text(String((page.scrim.querySelector('.layer-body') || {}).innerHTML || '').replace(/[\s\S]*<label>Operator screens/, 'Operator screens').slice(0, 200)).slice(0, 60)));
+        }
+        if (change) change(page);
+        await page.settle();
+        const from = page.mark();
+        await T.sheetOK(page);
+        L.push('  ' + title + ': ' + (lines(page, from).filter(l => !/^GET /.test(l)).join(', ') || 'no write') +
+            ' · sheet ' + (page.sheetOpen() ? 'open' : 'closed') + ' · notices ' + JSON.stringify(page.notices.map(n => n.text)));
+    };
+    await run('nothing changed, Save');
+    await run('Outbound + NEW_1, Save', page => T.setPick(page, 'proc', 'destination', 'NEW_1'));
+    await run('the name typed Press A2, Save', page => page.type('name', 'Press A2'));
+    await run('the part set less PART-11, Save', page => T.npk(page, 'scrim', 'parts', 'PART-11', 'drop'));
+}
+
+// ── the Add process sheet: one sheet makes a line (ruling 2026-11-15) ───────
 async function pinAddProcess() {
     L.push('', '## Add process');
     const page = await T.openPage();
@@ -412,14 +629,20 @@ async function pinAddProcess() {
     await page.settle();
     const body = page.scrim.querySelector('.layer-body');
     const html = String(body ? body.innerHTML : '');
-    const fields = [...html.matchAll(/<label>([^<]*)<small>/g)].map(m => m[1]);
+    const fields = [...html.matchAll(/<label>([^<]*)<small>([^<]*)<\/small>/g)].map(m => m[1] + ' (' + T.decode(m[2]) + ')');
     L.push('  fields ' + JSON.stringify(fields));
+    const sp = page.byId('sp-proc');
+    const boxes = sp ? sp.querySelectorAll('.setpick-box').map(b => b.getAttribute('data-box') + (b.classList.contains('is-needed') ? ' (needed)' : '')) : [];
+    L.push('  the set pick: ' + JSON.stringify(boxes) + ' · open on ' + JSON.stringify(sp && (sp.querySelectorAll('.setpick-box').find(b => b.classList.contains('is-on')) || { getAttribute: () => '' }).getAttribute('data-box')));
+    L.push('  still to pick: ' + JSON.stringify(T.text((page.byId('pd-still') || {}).innerHTML || '')));
     page.type('name', 'Press N');
     const from = page.mark();
     await T.sheetOK(page);
     const writes = page.since(from).filter(c => c.method !== 'GET');
-    check('Create makes the process and nothing else', writes.length === 1 && /^POST \/api\/processes$/.test(writes[0].method + ' ' + writes[0].url),
-        writes.map(c => c.method + ' ' + c.url).join(' · ') || 'nothing written');
+    check('Create on a name alone makes the process and its screen, named after it, and nothing else',
+        writes.map(c => c.method + ' ' + c.url).join(' · ') === 'POST /api/processes · POST /api/operator-stations' &&
+        writes[1].body.name === 'Press N' && writes[1].body.process_id === 5,
+        writes.map(c => c.method + ' ' + c.url + ' ' + JSON.stringify(c.body && c.body.name)).join(' · ') || 'nothing written');
     L.push('#    then it opens on ' + page.S.tab + ' · tabs ' + JSON.stringify(tabsOf(page)));
 }
 
@@ -453,6 +676,8 @@ async function run(t) {
     await bugHmiNoRecipe();
     await pinStyleFirst();
     await pinSetup();
+    await pinFirstStyle();
+    await pinEditProcess();
     await pinAddProcess();
     T.out['cold-start.txt'] = L.join('\n') + '\n';
 }

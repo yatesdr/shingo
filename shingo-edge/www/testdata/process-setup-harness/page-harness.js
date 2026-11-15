@@ -57,8 +57,11 @@
 //     rejection): see ctx.fetch below.
 //   - Timers: setTimeout queues; settle() drains microtasks and runs the
 //     queue until both are empty. setInterval and requestAnimationFrame are
-//     collected and never run (the rail's re-read and the re-measure pass
-//     are not acts a pin drives).
+//     collected and never run by settle() (the rail's re-read and the
+//     re-measure pass are not acts a pin drives); a pin that drives one runs
+//     it from page.intervals() (Setup's Run it re-read of the screens).
+//   - localStorage: one in-memory store per page (page.storage), so what the
+//     page keeps in this browser (Setup skipped) is what it reads back.
 //   - formatClock / formatTime (shared/clock.js): the timestamp as given —
 //     the plant clock is not what these pins are about.
 //   - Date: a fixed instant, so a "Saved 14:05" can never make a golden flap.
@@ -129,12 +132,12 @@ function classList(set) {
 
 // The modules a page imports from shared/ that run here for real: the
 // components (layer.js, notice.js, http.js, picker.js and its node and part
-// adapters, exceptions.js, settings.js), the DOM file they build with, and the
+// adapters, exceptions.js, the set pick, settings.js), the DOM file they build with, and the
 // scene network the key-route walk asks (scene-net.js) with the geometry under
 // it (scene-geom.js). esc.js and clock.js stay the realm globals they always
 // were (see open).
 const SHARED_REAL = new Set(['dom.js', 'notice.js', 'http.js', 'layer.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'exceptions.js',
-    'settings.js', 'scene-geom.js', 'scene-net.js']);
+    'set-pick.js', 'settings.js', 'scene-geom.js', 'scene-net.js']);
 const sharedFile = spec => {
     const m = /^\/static\/shared\/([\w.-]+\.js)$/.exec(spec);
     return m && SHARED_REAL.has(m[1]) ? m[1] : null;
@@ -182,17 +185,23 @@ const unescapeAttr = s => String(s).replace(/&quot;/g, '"').replace(/&lt;/g, '<'
 //   search    window.location.search ('?process=1' opens process 1)
 //   hash      window.location.hash (the page's own deep links)
 //   serve     (method, url, body) => {status?, body} | undefined
+//   storage   localStorage's keys at boot, or none
 async function open(opts) {
     const h = {
         calls: [],       // every fetch, in order: {method, url, body}
         typed: {},       // sheet field name -> typed value
         timers: [],      // pending setTimeout callbacks
+        intervals: [],   // every setInterval: {id, fn, ms, cleared}
+        storage: {},     // window.localStorage, by key
         focused: [],     // every element the page called focus() on, in order
         winListeners: {},// window.addEventListener's, by type
         notices: [],     // every toast notice.js showed, in order: see noticeAppended
         noticeAt: {},    // a mark (a call count) -> how many notices had shown by then
     };
     let timerID = 0;
+    // A store a pin opens the page with (opts.storage): what this browser
+    // kept from before.
+    Object.assign(h.storage, opts.storage || {});
 
     // ── elements ────────────────────────────────────────────────────────────
     //
@@ -669,7 +678,13 @@ async function open(opts) {
         CSS: { escape: s => String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c) },
         setTimeout: fn => { const id = ++timerID; h.timers.push({ id, fn }); return id; },
         clearTimeout: id => { h.timers = h.timers.filter(t => t.id !== id); },
-        setInterval: () => 0, clearInterval() {},
+        setInterval: (fn, ms) => { const id = ++timerID; h.intervals.push({ id, fn, ms, cleared: false }); return id; },
+        clearInterval: id => { for (const t of h.intervals) if (t.id === id) t.cleared = true; },
+        localStorage: {
+            getItem: k => (Object.prototype.hasOwnProperty.call(h.storage, k) ? h.storage[k] : null),
+            setItem: (k, v) => { h.storage[k] = String(v); },
+            removeItem: k => { delete h.storage[k]; },
+        },
         requestAnimationFrame: () => 0,
         formatTime: ts => String(ts || ''), formatClock: ts => String(ts || ''),
         Node: NodeBase,
@@ -825,6 +840,9 @@ async function open(opts) {
         noticesSince(i) { return h.notices.slice(h.noticeAt[i] !== undefined ? h.noticeAt[i] : h.notices.length); },
         since(i) { return h.calls.slice(i); },
         settle: () => settle(h),
+        // The intervals still running (not cleared), and the store.
+        intervals: () => h.intervals.filter(t => !t.cleared),
+        storage: h.storage,
         // click dispatches a click the way a browser's bubble reaches the
         // page, short of a tree: the target carries `data` (its data-*
         // attributes, camelCased as dataset spells them) and `cls`; its

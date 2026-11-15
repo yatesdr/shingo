@@ -92,14 +92,15 @@ test('legExclusion: no node list yet refuses nothing', () => {
     assert.strictEqual(B.legExclusion(undefined, 'SUP-L1'), '');
 });
 
-// The routing rule of each routing picker: Settings' role pickers share the
-// function routeRule (one picker per role). A second routing picker that
-// declares its own rule has to be added here.
+// The routing rule of each routing picker: the set pick's role boxes, on the
+// process sheet and on Settings, share the function setPickField (one field
+// per box). A second routing picker that declares its own rule has to be
+// added here.
 function routingRuleSites() {
     const sites = [];
-    assert.ok(PAGE.indexOf('setInit(') < 0, 'a set picker is back: add its routing rule to these sites');
-    const st = PAGE.indexOf('function routeRule(');
-    assert.ok(st >= 0, 'routeRule not found');
+    assert.ok(PAGE.indexOf('setInit(') < 0, 'a page-local set picker is back: add its routing rule to these sites');
+    const st = PAGE.indexOf('function setPickField(');
+    assert.ok(st >= 0, 'setPickField not found');
     sites.push(PAGE.slice(st, PAGE.indexOf('\n}\n', st)));
     return sites;
 }
@@ -107,7 +108,7 @@ function routingRuleSites() {
 test('the routing pickers each ask the leg rule in their role', () => {
     const sites = routingRuleSites();
     sites.forEach((s, i) => {
-        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name), (?:b|role)\)/.test(s),
+        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name|n\.name), (?:b|role|box)\)/.test(s),
             'routing picker #' + (i + 1) + ' does not ask legExclusion in its role:\n' + s);
     });
 });

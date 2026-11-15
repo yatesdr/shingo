@@ -301,4 +301,22 @@ test('parts: a picker over no list offers its allowed codes alone; one over a li
     eq([reads, k2.el.querySelectorAll('.picker-row').map((n) => n.getAttribute('data-value'))], [1, ['PART-A', 'PART-B', 'PART-C']]);
 });
 
+test('members fold: a group says how many it holds and its nodes wait under its show; none: they are not drawn', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const fold = N.nodeRows(s.rows(), { members: 'fold' }).find((r) => r.value === 'GRP-A');
+    const none = N.nodeRows(s.rows(), { members: 'none' }).find((r) => r.value === 'GRP-A');
+    eq([fold.note, fold.fold, fold.members.map((m) => m.value)], ['group · 2 nodes', true, ['SLOT-A1', 'SLOT-A2']]);
+    eq([none.note, none.fold, none.members], ['group · 2 nodes', undefined, undefined]);
+    const plain = N.nodeRows(s.rows(), {}).find((r) => r.value === 'GRP-A');
+    eq([plain.note, plain.fold], ['group', undefined]);
+});
+
+test('later: a field sends a top row behind the shell\'s one show', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const rows = N.nodeRows(s.rows(), { later: (n) => n.name === 'PRESS-1' });
+    eq(rows.filter((r) => r.later).map((r) => r.value), ['PRESS-1']);
+});
+
 run();

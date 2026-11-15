@@ -39,6 +39,7 @@
     then: GET /api/processes
     new text: #pd-stbody button.pd-sel: Presses
     new text: #pd-stbody button.pd-sel: PLC_A
+    new text: #pd-stbody span.pd-swmean: On · this line’s strokes are counted
     new text: #pd-stbody button.on: Cut over automatically
     new text: #pd-stbody button: Prompt the operator
     new text: #pd-stbody button.pd-btn.danger: Delete Press A…
@@ -51,6 +52,7 @@
     then: GET /api/processes
     new text: #pd-stbody button.pd-sel: Presses
     new text: #pd-stbody button.pd-sel: PLC_A
+    new text: #pd-stbody span.pd-swmean: On · this line’s strokes are counted
     new text: #pd-stbody button.on: Cut over automatically
     new text: #pd-stbody button: Prompt the operator
     new text: #pd-stbody button.pd-btn.danger: Delete Press A…
@@ -63,6 +65,7 @@
     then: GET /api/processes
     new text: #pd-stbody button.pd-sel: Presses
     new text: #pd-stbody button.pd-sel: PLC_A
+    new text: #pd-stbody span.pd-swmean: On · this line’s strokes are counted
     new text: #pd-stbody button.on: Cut over automatically
     new text: #pd-stbody button: Prompt the operator
     new text: #pd-stbody button.pd-btn.danger: Delete Press A…
@@ -73,137 +76,83 @@
     unhandled rejection: none
 ### PATCH /api/processes/1  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes
-    new text: … and 9 more runs (the tab redrew)
+    new text: … and 10 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup failed; quality hold not sent; light curtain not sent."
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  400 {"error"} (writeError)
     then: GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold failed: the Edge refused it; light curtain not sent.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 9 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold failed: the Edge refused it; light curtain not sent."
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  500, no body (chi Recoverer)
     then: GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold failed: Server error (500); light curtain not sent.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 9 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold failed: Server error (500); light curtain not sent."
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold failed: No answer from the server; light curtain not sent.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 9 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold failed: No answer from the server; light curtain not sent."
     unhandled rejection: none
 ### POST /api/processes/1/containment-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes
-    new text: … and 9 more runs (the tab redrew)
+    new text: … and 11 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold failed; light curtain not sent."
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A1: the Edge refused it.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 10 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A1: the Edge refused it."
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A1: Server error (500).
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 10 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A1: Server error (500)."
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A1: No answer from the server.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 10 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A1: No answer from the server."
     unhandled rejection: none
 ### POST /api/process-nodes/201/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/processes
-    new text: … and 9 more runs (the tab redrew)
+    new text: … and 12 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed."
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  400 {"error"} (writeError)
     then: GET /api/process-nodes · GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A3: the Edge refused it.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 10 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A3: the Edge refused it."
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  500, no body (chi Recoverer)
     then: GET /api/process-nodes · GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A3: Server error (500).
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 10 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A3: Server error (500)."
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/process-nodes · GET /api/processes
-    new text: #pd-stbody button.pd-sel: Presses
-    new text: #pd-stbody button.pd-sel: PLC_A
-    new text: #pd-stbody button.on: Cut over automatically
-    new text: #pd-stbody button: Prompt the operator
-    new text: #pd-stbody button.pd-btn.danger: Delete Press A…
-    new text: .pd-sheet div.set-refusal: Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A3: No answer from the server.
-    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: … and 10 more runs (the tab redrew)
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed: POS_A3: No answer from the server."
     unhandled rejection: none
 ### POST /api/process-nodes/203/curtain-setting  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/process-nodes · GET /api/processes
-    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
-    new text: … and 9 more runs (the tab redrew)
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Positions and routing.
+    new text: … and 41 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Line, counter and changeover saved; operator setup saved; quality hold saved; light curtain failed."

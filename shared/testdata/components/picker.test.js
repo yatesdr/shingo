@@ -317,4 +317,42 @@ test('fold: past that many chips, "+ N more · show all"; pressed, every chip an
     eq(g.k.el.querySelectorAll('.picker-more').length, 0, 'at or under the fold: no button');
 });
 
+test('a folded group is one row until its show is pressed, and its show picks nothing', async () => {
+    const rows = [
+        { value: 'PLN_001', label: 'PLN_001' },
+        { value: 'GRP_A', label: 'GRP_A', fold: true, members: [{ value: 'SMN_001', label: 'SMN_001' }, { value: 'SMN_002', label: 'SMN_002' }] },
+    ];
+    const f = picker({ open: true, multi: true }, rows);
+    eq(f.shown(), ['PLN_001', 'GRP_Ashow 2']);
+    f.k.el.querySelector('[data-fold="GRP_A"]').click();
+    eq([f.shown(), f.k.value()], [['PLN_001', 'GRP_Ahide', '  SMN_001', '  SMN_002'], []]);
+    f.row('SMN_002').click();
+    eq(f.k.value(), ['SMN_002']);
+    f.k.el.querySelector('[data-fold="GRP_A"]').click();
+    eq(f.shown(), ['PLN_001', 'GRP_Ashow 2']);
+});
+
+test('a search that finds a folded member shows it under its group', async () => {
+    const rows = [{ value: 'GRP_A', label: 'GRP_A', fold: true, members: [{ value: 'SMN_001', label: 'SMN_001' }, { value: 'SMN_002', label: 'SMN_002' }] }];
+    const f = picker({ open: true, multi: true }, rows);
+    f.typeQ('002');
+    eq(f.shown(), ['GRP_Ahide <', '  SMN_002']);
+});
+
+test('the later rows wait under one line with their count, after the rest, and open while searching', async () => {
+    const rows = [
+        { value: 'ALN_02', label: 'ALN_02', later: true, reason: 'on INV TEST' },
+        { value: 'ALN_04', label: 'ALN_04' },
+        { value: 'ALN_05', label: 'ALN_05' },
+    ];
+    const f = picker({ open: true, multi: true, later: { label: 'In use by other processes' } }, rows);
+    const line = () => f.k.el.querySelector('.picker-later').textContent;
+    eq([f.shown(), line()], [['ALN_04', 'ALN_05'], 'In use by other processes · 1show']);
+    f.k.el.querySelector('[data-later]').click();
+    eq([f.shown(), line()], [['ALN_04', 'ALN_05', 'ALN_02on INV TEST [off]'], 'In use by other processes · 1hide']);
+    f.k.el.querySelector('[data-later]').click();
+    f.typeQ('ALN_02');
+    eq(f.shown(), ['ALN_02on INV TEST [off]']);
+});
+
 run();

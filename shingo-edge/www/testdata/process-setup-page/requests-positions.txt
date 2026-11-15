@@ -1,4 +1,4 @@
-## Settings › Screens and positions › Screen A: NEW_1, Save
+## Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)
   1  GET /api/operator-stations/11/claimed-nodes
   2  PUT /api/operator-stations/11/claimed-nodes
        {
@@ -23,7 +23,7 @@
 -- notice: success "Saved"
 -- sheet closed
 
-## Settings › Screens and positions › Screen A: POS_A11 off, Save, and Save again (the impact is read first)
+## Settings › Positions and routing › the Positions box: POS_A11 off, Save, and Save again (the impact is read first)
   1  GET /api/operator-stations/11/claimed-nodes
   2  POST /api/operator-stations/11/claimed-nodes/impact
        {
@@ -61,10 +61,9 @@
 -- notice: success "Saved"
 -- sheet closed
 
-## Settings › Screens and positions › POS_A10 to Unloader A and POS_A11 off, Save (the move is not asked about)
+## Settings › Positions and routing on a one-screen Press A: POS_A11 off and Put them on Screen A, Save (the move is not asked about)
   1  GET /api/operator-stations/11/claimed-nodes
-  2  GET /api/operator-stations/12/claimed-nodes
-  3  POST /api/operator-stations/11/claimed-nodes/impact
+  2  POST /api/operator-stations/11/claimed-nodes/impact
        {
          "nodes": [
            "POS_A1",
@@ -76,17 +75,15 @@
            "POS_A7",
            "POS_A8",
            "POS_A9",
-           "POS_A10"
+           "POS_A10",
+           "POS_B1",
+           "POS_B2",
+           "POS_B3",
+           "POS_B4",
+           "ULD_1"
          ]
        }
-  4  PUT /api/operator-stations/12/claimed-nodes
-       {
-         "nodes": [
-           "ULD_1",
-           "POS_A10"
-         ]
-       }
-  5  PUT /api/operator-stations/11/claimed-nodes
+  3  PUT /api/operator-stations/11/claimed-nodes
        {
          "nodes": [
            "POS_A1",
@@ -97,16 +94,26 @@
            "POS_A6",
            "POS_A7",
            "POS_A8",
-           "POS_A9"
+           "POS_A9",
+           "POS_A10",
+           "POS_B1",
+           "POS_B2",
+           "POS_B3",
+           "POS_B4",
+           "ULD_1"
          ]
        }
-  6  GET /api/process-nodes
-  7  GET /api/processes/1/station-counters
-  8  GET /api/processes/1/composer?map_rev=map-r1
+  4  PUT /api/processes/1/positions
+       {
+         "nodes": []
+       }
+  5  GET /api/process-nodes
+  6  GET /api/processes/1/station-counters
+  7  GET /api/processes/1/composer?map_rev=map-r1
 -- notice: success "Saved"
 -- sheet closed
 
-## Settings › Screens and positions › Loader windows › Make a screen on Press A (LDR_1)
+## Settings › Positions and routing › Loader windows › Make a screen on Press A (LDR_1)
   1  POST /api/loader-boards
        {
          "loader_key": "LDR_1",

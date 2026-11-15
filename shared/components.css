@@ -1347,6 +1347,17 @@ nav {
     flex: 0 0 auto; padding: 0 var(--sp-2); border: 1px solid var(--sub-4); border-radius: 999px;
     color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
 }
+/* A role's tag wears the role's colour (the --role-* tokens), its name in ink. */
+.picker-tag[data-tone] { border-color: var(--role, var(--sub-4)); color: var(--text); }
+/* A folded group's "show N" and the later rows' line. */
+.picker-fold {
+    margin-left: auto; padding: 0 var(--sp-2); border: 0; background: none; color: var(--accent);
+    font: inherit; font-size: var(--font-xs); cursor: pointer; white-space: nowrap;
+}
+.picker-later {
+    display: flex; align-items: center; gap: var(--sp-2); min-height: 40px; padding: var(--sp-1) var(--sp-3);
+    border-top: 1px solid var(--sub-2); color: var(--text-muted); font-size: var(--font-sm);
+}
 .picker-add { color: var(--accent); }
 .picker-add.is-busy { color: var(--text-muted); cursor: progress; }
 /* A write-through pick out with the caller (onPick), and its refusal. */
@@ -1381,3 +1392,52 @@ nav {
 }
 .exc-rows td.exc-x button:hover, .exc-rows td.exc-x button:focus-visible { color: var(--text); }
 .exc-add { align-self: flex-start; }
+
+/* ── THE SET PICK (shared/set-pick.js) ───────────────────────────────────
+ * A process's positions and routing set off one node list: a row of boxes,
+ * each a role in its own colour with what is picked in it, and the list for
+ * the open box under them. The colour is the box's data-role, read through
+ * --role, and always comes with the role's name: the open box's border, its
+ * dot, its chips' borders, the outline of one still needed (dashed) and the
+ * list's frame. One still needed says "needed"; an empty optional one says so. */
+[data-role="positions"], .picker-tag[data-tone="positions"] { --role: var(--role-positions); }
+[data-role="inbound"], .picker-tag[data-tone="inbound"] { --role: var(--role-inbound); }
+[data-role="staging"], .picker-tag[data-tone="staging"] { --role: var(--role-staging); }
+[data-role="outbound"], .picker-tag[data-tone="outbound"] { --role: var(--role-outbound); }
+.setpick { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.setpick-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-3); }
+.setpick-box {
+    display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; min-height: 120px; padding: var(--sp-3);
+    border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--bg); cursor: pointer;
+}
+.setpick-box.is-on { border: 2px solid var(--role); padding: calc(var(--sp-3) - 1px); background: var(--surface); }
+.setpick-box.is-needed:not(.is-on) { border: 2px dashed var(--role); padding: calc(var(--sp-3) - 1px); }
+.setpick-box.is-closed { cursor: not-allowed; opacity: .6; }
+.setpick-t {
+    display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; padding: 0; border: 0; background: none;
+    color: var(--text); font: inherit; font-weight: var(--fw-bold); text-align: left; cursor: inherit;
+}
+.setpick-n { margin-left: auto; color: var(--text-muted); font-size: var(--font-sm); }
+.setpick-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--role); }
+.setpick-need {
+    padding: 0 var(--sp-1); border: 1px solid var(--sub-2); border-radius: 4px;
+    color: var(--text-muted); font-size: var(--font-xs); font-weight: var(--fw-bold);
+}
+.setpick-need.is-needed { border-color: var(--role); background: var(--role); color: var(--bg); }
+.setpick-sub, .setpick-none, .setpick-note { color: var(--text-muted); font-size: var(--font-xs); }
+.setpick-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.setpick-chip {
+    display: inline-flex; align-items: center; gap: var(--sp-1); max-width: 100%; padding: 0 var(--sp-2);
+    border: 1px solid var(--role); border-radius: 999px; background: var(--bg); font-size: var(--font-sm);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.setpick-chip button { padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
+.setpick-more { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--font-sm); cursor: pointer; }
+.setpick-list {
+    display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3);
+    border: 1px solid var(--role, var(--border)); border-radius: calc(var(--radius) + 4px); background: var(--bg);
+}
+.setpick-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+.setpick-head .setpick-dot { align-self: center; }
+.setpick-head small { color: var(--text-muted); font-size: var(--font-xs); }
+.setpick .picker--open .picker-list { max-height: 360px; box-shadow: none; }

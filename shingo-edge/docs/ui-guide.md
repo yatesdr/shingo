@@ -200,13 +200,18 @@ process, what it is running, its styles, whether operators may set up styles at 
 counter, its curtain nodes, its operator screens and its state. A part-identity health strip above the list
 flags each process whose PLC reports a part the Edge cannot place, with the verb that resolves it.
 
-**Add process** asks a name and a group, then opens the new process on Setup. Opening a process gives two
-tabs, Styles and Settings, with Setup before them while the process cannot run yet:
+**Add process** is one sheet: the name, the group, the operator screen (blank: named after the process), the
+set pick (one list in four coloured boxes: Positions, Inbound, Staging, Outbound) and the parts. Only the name
+is needed; Create makes the process and its screen, with the positions on it, and opens the process on Setup.
+Opening a process gives two tabs, Styles and Settings, with Setup before them until the line is set up:
 
-- **Setup**: what the process still needs to run, in order — positions, routing set, parts, a first style, an
-  operator screen — each row a link to the Settings section or the Styles tab where it is set, and under *Not
-  needed to run* the production counter (needed for auto reorder) and HMI setup. It goes once a screen holds a
-  position and the rest are done.
+- **Setup**: a short path to a first line, in three steps — **Nodes and part** (the Add process sheet; Change…
+  opens it again, filled in), **First style** (a part on each position, consume or produce, and one way they
+  all swap; inbound, outbound and staging are filled from the routing set and saved through the Styles tab's
+  save), and **Run it** (open the operator screen; start the first changeover or make the first call). Beside
+  them, the line so far and what can wait for Settings. It is finished when the line can run and its screen
+  has been opened, then says so and goes. **Skip setup, use Settings** hides it in this browser; **Show setup**
+  brings it back while the process cannot run.
 - **Styles**: a rail of the recipes and styles, and each style's flow, as the same picture and model the
   operator station uses, with its positions table and, under it, *Set for this style* (what a position sets for
   this style, only where it differs from the default). Changes are saved with **Save style**; **+ New style**
@@ -214,13 +219,16 @@ tabs, Styles and Settings, with Setup before them while the process cannot run y
   running**, the admin's style switch for when the plant changed parts without shingo. A position's reorder
   point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never
   orders.
-- **Settings**: one page with one Save, its sections in setup order — Line (name, description, group),
-  Production counter (the counter's PLC and tag), Screens and positions (the HMIs that work this process, the
-  positions each holds, the positions on no screen yet, and its loader windows), Routing set, Parts, Position
-  settings (light curtain and counted-at, only where a position differs), Changeover, Operator setup (HMI setup
-  and the recipes: saved flow presets, and the flows found in this process's styles, to apply across styles),
-  Auto-reorder (the line's switch and who last flipped it, and whether the station shows it), Quality hold
-  (the containment destination), and Danger (delete the process). A loader's or unloader's process, whose
+- **Settings**: one page with one Save, the full width, its sections down the left (a dot on one that needs
+  attention) and each a card — Health (while it has items), Line (name, description, group), Production
+  counter (the counter's PLC and tag; outlined amber until it is wired), Positions and routing (the same set
+  pick as Add process, the line's screen under it with Edit and Open, the positions on no screen, and its
+  loader windows), Parts, Position settings (light curtain and counted-at, only where a position differs),
+  Changeover, Operator setup (HMI setup and the recipes: saved flow presets, and the flows found in this
+  process's styles, to apply across styles), Auto-reorder (the line's switch, saved with the page, and who last
+  switched it; whether the station shows it), Quality hold (the containment destination), and Danger (delete
+  the process). On/off settings are switches with what they mean beside them. A line has one screen: **+ Add a
+  screen** shows only on a line with none, and takes its positions. A loader's or unloader's process, whose
   board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger.
 
 A process's production counter is its reporting point: the Edge keeps the reporting point that binds that tag

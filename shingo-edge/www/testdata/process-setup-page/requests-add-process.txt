@@ -1,5 +1,8 @@
-## Add process: name Press N, group Presses
-  1  POST /api/processes
+## Add process: name Press N, its screen left blank, group Presses, positions NEW_1 and NEW_2, Inbound SRC_2, Outbound DST_1, part PART-1, then Create (the process, its screen, its positions, its routing set in one write, its part set)
+  1  GET /api/core-nodes
+  2  GET /api/payload-catalog
+  3  GET /api/process-nodes
+  4  POST /api/processes
        {
          "name": "Press N",
          "description": "",
@@ -9,6 +12,44 @@
          "changeover_auto_arm": "auto",
          "group_id": 3
        }
-  2  GET /api/processes
-  3  GET /api/processes/5/composer?map_rev=map-r1
+  5  POST /api/operator-stations
+       {
+         "process_id": 5,
+         "code": "",
+         "name": "Press N",
+         "note": "",
+         "area_label": "",
+         "sequence": 0,
+         "controller_node_id": "",
+         "enabled": true
+       }
+  6  PUT /api/operator-stations/31/claimed-nodes
+       {
+         "nodes": [
+           "NEW_1",
+           "NEW_2"
+         ]
+       }
+  7  PUT /api/processes/5/routing-nodes
+       {
+         "nodes": [
+           {
+             "core_node_name": "SRC_2",
+             "role": "source"
+           },
+           {
+             "core_node_name": "DST_1",
+             "role": "destination"
+           }
+         ]
+       }
+  8  PUT /api/processes/5/payloads
+       {
+         "payloads": [
+           "PART-1"
+         ]
+       }
+  9  GET /api/processes
+ 10  GET /api/operator-stations
+ 11  GET /api/processes/5/composer?map_rev=map-r1
 -- sheet closed

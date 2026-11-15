@@ -44,6 +44,7 @@ import { toast } from '/static/shared/notice.js';
 // each field with its own rule (pickerInit, drawPicker).
 import { mountPicker, nodePicker, nodeRows, nodeSource } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
+import { createSetPick } from '/static/shared/set-pick.js';
 
 // THE COMPOSER STACK IS A PROCESS'S, NOT THE LIST'S (slice 5): the flow
 // picture, Settings' page shell and its exception lists, and the classic
@@ -155,6 +156,8 @@ const S = {
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
     coreNodes: null,     // Core's node list as the Edge sent it (NODES' rows), null until read
     pickers: {},         // every open node picker, by key — see pickerInit
+    setPicks: {},        // every set pick drawn, by key: {pid, api} — see mountSetPick
+    looseOnto: false,    // Settings' draft puts the positions on no screen onto the line's screen
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
     stShell: null,       // Settings' shell for one visit: {pid, top, sheet, body, page} (settingsShell)
     stPickersPid: 0,     // the process Settings' pickers were declared for (settingsPickers)
@@ -165,7 +168,11 @@ const S = {
     partPop: null,       // the open part popover: {node, q, note, catalogFailed}
     partSet: null,       // the STORED half of the open process's part set; null = not read
     newStyle: null,      // the New style sheet's Spots step: {recipe, moves, sel} — see drawNewSpots
-    fromSetup: false,    // the style on screen was opened by Setup's First style row: its Save goes back there
+    fromSetup: false,    // the style on screen was opened by Setup's First style step: its Save goes back there
+    setupView: '',       // Setup's step on screen: '' (the three steps) or 'style' (First style)
+    firstStyle: null,    // the First style step's choices: {styleID, parts:{node:code}, role, mode, each, modes, filled}
+    setupEnd: 0,         // the process whose Setup just finished on screen: the tab stays until it is left
+    setupPoll: null,     // Run it's re-read of the screens while it waits for one to be opened
 };
 
 function root() { return $('pd-root'); }
@@ -574,87 +581,95 @@ function appbar() {
         // link beside it opened the tab one glance to the left. The gate stays
         // read-only; the words carry the state, so no border and no tone.
         // A Core loader's process has no styles to pick from: no gate line.
-        (coreBoards(p) ? '' : '<div class="pd-gate">' +
+        (S.tab === 'setup' && S.setupEnd !== S.processID ? '<button class="pd-dimlink pd-skip" data-act="setup-skip">Skip setup, use Settings</button>'
+            : setupHidden() ? '<button class="pd-dimlink pd-skip" data-act="setup-show">Show setup</button>' : '') +
+        (coreBoards(p) || S.tab === 'setup' ? '' : '<div class="pd-gate">' +
             (on ? 'HMI setup on: operators set up styles' : 'HMI setup off: operators pick from the styles') + '</div>') +
         '</div>';
 }
 
-// ── Setup · the cold start (brief U2) ───────────────────────────────────────
+// ── Setup · a short path to a first line ─────────────────────────────────────
 //
-// A PROCESS THAT CANNOT RUN YET OPENS ON WHAT IT STILL NEEDS (owner rulings 1
-// and 6, 2026-11-10): five rows in the order an engineer does them, each with
-// what the process has now and the one thing to do, and only the first row not
-// yet done is the primary button. Once all five are done the tab is gone.
+// FOR SOMEONE MAKING THEIR FIRST LINE, AND SKIPPABLE (owner, 2026-11-15: "walk
+// someone through quickly and easily to just get a basic line going then they
+// can come back later and do advanced setup ... but make it skippable if a
+// more advanced person is there"). Three steps, each done where it is shown:
+//   1. Nodes and part: the Add process sheet answers it; Change… opens that
+//      sheet again, filled in.
+//   2. First style: a part on each position and one way they all swap, filled
+//      from the routing set, saved through the Styles tab's own save.
+//   3. Run it: the screen Add made, opened. "they should leave with having an
+//      operator screen they can click to start a swap on."
+// No step lands on Settings. Beside them, the line so far and what can wait.
 //
-// IT GOES WHEN THE PROCESS CAN RUN, not once it has (owner, 2026-11-14): the
-// screen row is done when a screen holds a position, which is all the floor
-// needs to start the first changeover. It waited for a style to have run.
+// SETUP IS FINISHED WHEN THE LINE CAN RUN AND ITS SCREEN HAS BEEN OPENED
+// (owner, 2026-11-15: "some lines might not have changeovers ... basically
+// when operator screen is opened"), not at the first changeover. Opened is the
+// screen's own seen fact, last_seen_at, which its event stream writes when it
+// connects (StationService.Touch). The tab then says the line is set up, and
+// goes once the engineer leaves it.
 //
-// EVERY ROW IS A LINK TO WHERE THAT THING IS SET, a Settings section or the
-// Styles tab, so no door lives only here: Setup goes away, the doors do not.
+// SKIP IS THIS BROWSER'S, per process (setupSkipped). It hides the tab and
+// opens Settings; while the process still cannot run, a small "Show setup"
+// brings it back. A loader's or unloader's process has no Setup: Core runs
+// its board.
 //
-// EVERYTHING HERE IS READ OFF WHAT THE PAGE HOLDS: the composer read (its
-// positions, routing set and styles), the routing rows when Settings has read
-// them (they are fresher: its pickers write through), the screens and the
-// process row. The tab costs no request and no timer.
-function setupRows() {
+// EVERYTHING HERE IS READ OFF WHAT THE PAGE HOLDS: the composer read, the
+// routing rows when Settings has read them, the screens and the process row.
+// Run it alone re-reads the screens, every 5 s, while it waits for one to be
+// opened.
+const SETUP_POLL_MS = 5000;
+
+// setupFacts is what the steps are drawn from.
+function setupFacts() {
     const p = process() || {};
     const c = S.composer || {};
     const positions = ((c.cell || {}).positions || []).map(x => x.core_node_name);
     const routing = (S.routing || c.routing || []).filter(r => r.enabled !== false);
-    const inRole = role => routing.filter(r => r.role === role).length;
+    const role = r => routing.filter(x => x.role === r).map(x => x.core_node_name);
     const styles = (c.styles || []).map(st => Object.assign({}, st, M().styleFacts(st)));
     const flowed = styles.filter(st => st.claim_count);
     const screens = stationsOf(S.processID);
     const working = screens.filter(st => (S.stationNodes[String(st.id)] || []).length);
-    const ran = !!p.active_style_id || styles.some(st => st.last_run);
-    const running = runningStyle(p);
-    const counts = [[inRole('source'), 'inbound'], [inRole('staging'), 'staging'],
-        [inRole('destination'), 'outbound']].filter(x => x[0]).map(x => x[0] + ' ' + x[1]);
-    const count = (n, one, many) => n + ' ' + (n === 1 ? one : many);
-    // THE PART SET IS A ROW (HOP, 2026-11-12): a part forgotten on Add process
-    // surfaced only when the first style could not offer it. palette is what
-    // the process can run (the stored set and what its claims already run).
     const parts = c.palette || [];
-    return [
-        {
-            key: 'positions', label: 'Positions', sub: 'the spots this process works',
-            done: positions.length > 0, value: positions.length ? count(positions.length, 'position', 'positions') : 'none yet',
-            verb: positions.length ? 'Change…' : 'Add positions',
-        },
-        {
-            key: 'routing', label: 'Routing set', sub: 'where its bins come from and go',
-            done: inRole('source') > 0 && inRole('destination') > 0,
-            value: counts.length ? counts.join(' · ') : 'none yet',
-            verb: inRole('source') && inRole('destination') ? 'Change…' : 'Set the routing set',
-        },
-        {
-            key: 'parts', label: 'Parts', sub: 'what this process can run',
-            done: parts.length > 0, value: parts.length ? count(parts.length, 'part', 'parts') : 'none yet',
-            verb: parts.length ? 'Change…' : 'Add parts',
-        },
-        {
-            key: 'style', label: 'First style', sub: 'a part and its flow',
-            done: flowed.length > 0,
-            value: flowed.length ? flowed[0].name + (flowed.length > 1 ? ' · +' + (flowed.length - 1) : '')
-                : styles.length ? styles[0].name + ' · no flow yet' : 'none yet',
-            verb: flowed.length ? 'Open' : styles.length ? 'Draw its flow' : '+ New style',
-        },
-        {
-            key: 'screen', label: 'Operator screen', sub: 'start the first changeover here',
-            done: working.length > 0,
-            value: !screens.length ? 'none yet' : !working.length ? screens[0].name + ' · no position on it'
-                : working[0].name + (running ? ' · running ' + running.name : ran ? ' · has run' : ' · not run yet'),
-            verb: !screens.length ? 'Add operator screen' : working.length ? 'Change…' : 'Put positions on it',
-        },
-    ];
+    const nodes = positions.length > 0 && role('source').length > 0 && role('destination').length > 0 && parts.length > 0;
+    const canRun = nodes && flowed.length > 0 && working.length > 0;
+    return {
+        p: p, positions: positions, inbound: role('source'), staging: role('staging'), outbound: role('destination'),
+        parts: parts, styles: styles, flowed: flowed, screens: screens, working: working, nodes: nodes, canRun: canRun,
+        seen: working.find(st => st.last_seen_at) || null,
+    };
 }
 
-// needsSetup: the process cannot run yet, so the Setup tab is drawn, first.
-// A loader's or unloader's is never set up here: Core runs its board.
+// setupSkipKey is the browser's own record that this process's Setup was
+// skipped. Storage that throws (a private window, blocked site data) is no
+// skip: Setup shows.
+function setupSkipKey(pid) { return 'pd.setup.skipped.' + pid; }
+function setupSkipped(pid) {
+    try { return window.localStorage.getItem(setupSkipKey(pid)) === '1'; } catch (_) { return false; }
+}
+function setSetupSkipped(pid, on) {
+    try {
+        if (on) window.localStorage.setItem(setupSkipKey(pid), '1'); else window.localStorage.removeItem(setupSkipKey(pid));
+    } catch (_) { /* this browser keeps no record; Setup shows */ }
+}
+
+// needsSetup: the Setup tab is drawn, first. Until the line can run and its
+// screen has been opened, unless skipped here; and once that happens while it
+// is on screen, until the engineer leaves it (S.setupEnd).
 function needsSetup() {
     if (!S.processID || !S.composer || coreBoards(process())) return false;
-    return setupRows().some(r => !r.done);
+    if (S.setupEnd === S.processID) return true;
+    if (setupSkipped(S.processID)) return false;
+    const f = setupFacts();
+    return !(f.canRun && f.seen);
+}
+
+// setupHidden: skipped here while the process still cannot run, so the app
+// bar offers "Show setup".
+function setupHidden() {
+    if (!S.processID || !S.composer || coreBoards(process()) || !setupSkipped(S.processID)) return false;
+    return !setupFacts().canRun;
 }
 
 // coreBoards: Core runs this process's boards (process.core_boards: every
@@ -662,25 +677,8 @@ function needsSetup() {
 // pointer to Core: no Setup, no Styles, no flow picture (owner, 2026-11-14).
 function coreBoards(p) { return !!(p && p.core_boards); }
 
-// The two rows below the line: things a process runs without.
-function setupExtras() {
-    const p = process() || {};
-    const plc = p.counter_plc_name || '', tag = p.counter_tag_name || '';
-    return [
-        {
-            // NEEDED FOR AUTO REORDER, NOT TO RUN: it does not hold the tab
-            // open (owner, 2026-11-14).
-            key: 'counter', label: 'Production counter', sub: 'needed for auto reorder',
-            value: plc && tag ? (p.counter_enabled ? 'counting on ' : 'off · ') + plc + ' · ' + tag : 'not wired',
-            verb: 'Set up…',
-        },
-        Object.assign({ key: 'hmi', label: 'HMI setup', sub: 'operators set a style up from a recipe' }, hmiSetupFacts()),
-    ];
-}
-
-// hmiSetupFacts is HMI setup's value and its action, said the same on the
-// Setup tab and beside the switch on Settings (F36): one of HMI setup and its
-// recipes, so a switch with no recipe behind it says so and offers one.
+// hmiSetupFacts is HMI setup's value and its action (F36): one of HMI setup
+// and its recipes, so a switch with no recipe behind it says so and offers one.
 function hmiSetupFacts() {
     const p = process() || {};
     const n = (S.composer && S.composer.presets || []).length;
@@ -694,60 +692,393 @@ function hmiSetupFacts() {
     };
 }
 
-function setupRowHTML(r, primary, n) {
-    const act = r.href
-        ? '<a class="pd-btn' + (primary ? ' primary' : '') + '" href="' + esc(r.href) + '">' + esc(r.verb) + '</a>'
-        : '<button class="pd-btn' + (primary ? ' primary' : '') + '" data-act="setup-go" data-setup="' + r.key + '">' +
-        esc(r.verb) + '</button>';
-    return '<div class="pd-step' + (r.done ? ' done' : '') + '" data-setup-row="' + r.key + '">' +
-        '<span class="pd-stepn">' + (r.done ? '✓' : n ? String(n) : '') + '</span>' +
-        '<div class="pd-steplbl"><b>' + esc(r.label) + '</b><small>' + esc(r.sub) + '</small></div>' +
-        '<div class="pd-stepval' + (r.warn ? ' warn' : '') + '">' + esc(r.value) + '</div>' + act + '</div>';
-}
+// SETUP_LATER is what a line runs without, each a link to its Settings card.
+const SETUP_LATER = [['Production counter', 'Production counter'], ['Auto-reorder', 'Auto-reorder'],
+    ['Light curtain', 'Position settings'], ['Operator setup', 'Operator setup'], ['Quality hold', 'Quality hold']];
 
 function drawSetup() {
-    if (!needsSetup()) { S.tab = 'flows'; drawFlows(); syncHash(); return; }
-    const rows = setupRows();
-    const next = rows.findIndex(r => !r.done);
-    root().innerHTML = appbar() + '<div class="pd-sheet pd-setup">' +
-        '<div class="pd-sect"><h2>Setup</h2><span class="pd-dim">' +
-        rows.filter(r => r.done).length + ' of ' + rows.length + ' done · what this process needs to run</span></div>' +
-        '<div class="pd-steps">' + rows.map((r, i) => setupRowHTML(r, i === next, i + 1)).join('') + '</div>' +
-        '<div class="pd-sect"><h2>Not needed to run</h2></div>' +
-        '<div class="pd-steps">' + setupExtras().map(r => setupRowHTML(r, false, 0)).join('') + '</div>' +
+    if (!needsSetup()) { stopSetupPoll(); S.tab = 'flows'; drawFlows(); syncHash(); return; }
+    const f = setupFacts();
+    if (S.setupView === 'style' && !f.flowed.length && firstStyleTarget()) { drawFirstStyle(f); return; }
+    S.setupView = '';
+    const doneN = [f.nodes, f.flowed.length > 0, f.canRun && !!f.seen].filter(Boolean).length;
+    const left = f.canRun && f.seen ? setupEndHTML(f)
+        : '<div class="pd-sutitle"><h1>Set up ' + esc(f.p.name || '') + '</h1><span class="pd-dim">' + doneN + ' of 3 done</span></div>' +
+        '<ol class="pd-sustep">' + stepNodes(f) + stepStyle(f) + stepRun(f) + '</ol>';
+    root().innerHTML = appbar() + '<div class="pd-sheet pd-setup"><div class="pd-sugrid"><div class="pd-sumain">' + left + '</div>' +
+        '<div class="pd-suside">' + lineSoFar(f, null) + setupLaterHTML() + '</div></div>' +
         '<div class="pd-pop" id="pd-pop" hidden></div></div>';
+    if (f.canRun && !f.seen) startSetupPoll(); else stopSetupPoll();
 }
 
-// setupGo is a row's one action. Each goes where that thing is set: Settings
-// at its section, the Styles tab, New recipe.
-async function setupGo(key) {
-    const rows = setupRows().concat(setupExtras());
-    const r = rows.find(x => x.key === key);
-    if (!r) return;
-    if (key === 'positions') { await openSettingsAt('Screens and positions'); return; }
-    if (key === 'routing') { await openSettingsAt('Routing set'); return; }
-    if (key === 'parts') { await openSettingsAt('Parts'); return; }
-    if (key === 'counter') { await openSettingsAt('Production counter'); return; }
-    if (key === 'hmi') {
-        if (r.verb === 'New recipe') { await openNewRecipe(); return; }
-        await openSettingsAt('Operator setup');
-        return;
+// A step: its number (✓ once done; the one to do now lit), its title, what it
+// holds, and what to do.
+function stepHTML(n, state, title, sub, body) {
+    return '<li class="pd-sus ' + state + '"><span class="pd-susn">' + (state === 'done' ? '✓' : n) + '</span>' +
+        '<div class="pd-susb"><b>' + esc(title) + '</b><small>' + esc(sub) + '</small>' + body + '</div></li>';
+}
+
+function stepNodes(f) {
+    const first = list => list.length ? list[0] + (list.length > 1 ? ' +' + (list.length - 1) : '') : '';
+    if (f.nodes) {
+        const holds = [nOf(f.positions.length, 'position'), first(f.inbound) + ' in', first(f.outbound) + ' out',
+            nOf(f.parts.length, 'part')].join(' · ');
+        return stepHTML(1, 'done', 'Nodes and part', holds,
+            '<div class="pd-susact"><button class="pd-btn" data-act="setup-edit">Change…</button>' +
+            '<span class="pd-dim">opens the sheet you filled in</span></div>');
     }
-    if (key === 'style') {
-        // Its Save comes back here (saveFlow), while Setup has a step left.
-        S.fromSetup = true;
-        const styles = S.composer.styles || [];
-        if (!styles.length) { openNewStyle(); return; }
+    const need = [f.positions.length ? '' : 'Positions', f.inbound.length ? '' : 'Inbound', f.outbound.length ? '' : 'Outbound',
+        f.parts.length ? '' : 'a part'].filter(Boolean);
+    return stepHTML(1, 'now', 'Nodes and part', 'still to pick: ' + need.join(', '),
+        '<div class="pd-susact"><button class="pd-btn primary" data-act="setup-edit">Pick them</button>' +
+        '<span class="pd-dim">the sheet you made the process with</span></div>');
+}
+
+function stepStyle(f) {
+    if (f.flowed.length) {
+        const st = f.flowed[0];
+        return stepHTML(2, 'done', 'First style', st.name + (f.flowed.length > 1 ? ' · +' + (f.flowed.length - 1) : ''),
+            '<div class="pd-susact"><button class="pd-btn" data-act="setup-styles">Open it on Styles</button></div>');
+    }
+    if (!f.nodes) return stepHTML(2, 'next', 'First style', 'a part on each position and how they swap', '');
+    return stepHTML(2, 'now', 'First style', 'a part on each position and how they swap',
+        '<div class="pd-sucard"><div><b>Make the first style</b><small>Pick how the positions swap. Inbound, Outbound and any ' +
+        'Staging come from step 1.</small></div><button class="pd-btn primary" data-act="setup-style">Start</button></div>');
+}
+
+function stepRun(f) {
+    const sub = 'open the operator screen, then start the first changeover or make the first call';
+    if (!f.nodes || !f.flowed.length) return stepHTML(3, 'next', 'Run it', sub, f.working.length
+        ? '<p class="pd-dim">The screen “' + esc(f.working[0].name) + '” is already made and holds ' + nOf((S.stationNodes[String(f.working[0].id)] || []).length, 'position') + '.</p>' : '');
+    if (!f.working.length) {
+        const st = f.screens[0];
+        return stepHTML(3, 'now', 'Run it', sub, '<div class="pd-sucard"><div><b>' +
+            (st ? 'The screen “' + esc(st.name) + '” holds no position yet' : 'This line has no operator screen yet') + '</b>' +
+            '<small>' + (st ? 'Put the positions on it, then open it.' : 'Add one; it takes the positions.') + '</small></div>' +
+            (st ? '<button class="pd-btn primary" data-act="setup-onto">Put the positions on it</button>'
+                : '<button class="pd-btn primary" data-act="screen-add">+ Add a screen</button>') + '</div>');
+    }
+    const st = f.working[0];
+    const style = f.flowed[0];
+    const press = (n, what) => '<div class="pd-supress"><span class="pd-susn">' + n + '</span><b>' + esc(what) + '</b></div>';
+    return stepHTML(3, 'now', 'Run it', sub, '<div class="pd-sucard col">' +
+        '<div class="pd-surow"><div><b>The operator screen “' + esc(st.name) + '” is ready</b><small>It holds ' +
+        esc((S.stationNodes[String(st.id)] || []).join(', ')) + ' and the style ' + esc(style.name) + '.</small></div>' +
+        '<a class="pd-btn primary" href="/operator/station/' + st.id + '" target="_blank" rel="noopener">Open the screen</a></div>' +
+        '<div class="pd-supresses">' + press(1, 'Press CHANGEOVER') + press(2, 'Pick ' + style.name) + press(3, 'Press Start') + '</div>' +
+        '<p class="pd-dim">A line that has no changeover makes its first call from the screen instead.</p>' +
+        '<p class="pd-suwait"><i class="pd-cnt warn"><i></i></i>Waiting for the screen to be opened. This step ticks by itself.</p></div>');
+}
+
+// setupEndHTML is Setup's last word: the line is set up, and where its three
+// doors are. The tab goes once the engineer leaves it.
+function setupEndHTML(f) {
+    const st = f.seen || f.working[0];
+    return '<div class="pd-sutitle"><h1>' + esc(f.p.name || '') + ' is set up</h1><span class="pd-dim">3 of 3 done</span></div>' +
+        '<div class="pd-sucard col"><div><b>Its operator screen “' + esc(st.name) + '” has been opened.</b>' +
+        '<small>Setup closes now. Everything else is on Settings.</small></div>' +
+        '<div class="pd-susact"><a class="pd-btn primary" href="/operator/station/' + st.id + '">Open the screen</a>' +
+        '<button class="pd-btn" data-tab="flows">Styles</button><button class="pd-btn" data-tab="settings">Settings</button></div></div>';
+}
+
+// lineSoFar is the picture of the line beside the steps: where the bin comes
+// from, the positions (each with what its first style runs there), where the
+// bin goes, and its staging. model, when given, is the First style draft.
+function lineSoFar(f, model) {
+    const cells = model ? model.cells : null;
+    const st = f.flowed[0];
+    const claimOf = n => (st && st.claims || []).find(c => c.core_node_name === n);
+    const posBox = n => {
+        const c = cells && cells[n];
+        const cl = claimOf(n);
+        const sub = c && c.on && c.mode ? (M().modeLabels()[c.mode] || c.mode) + (c.part ? ' · ' + M().shortPart(c.part) : '')
+            : cl ? (M().modeLabels()[cl.swap_mode] || cl.swap_mode) + (cl.payload_code ? ' · ' + M().shortPart(cl.payload_code) : '')
+                : 'no style yet';
+        return '<div class="pd-supos" data-role="positions"><b>' + esc(n) + '</b><small>' + esc(sub) + '</small></div>';
+    };
+    const end = (role, label, names) => '<div class="pd-supos" data-role="' + role + '"' + (names.length ? '' : ' data-empty') + '>' +
+        '<small class="pd-surole">' + esc(label) + '</small><b>' + esc(names.length ? names.join(', ') : 'none yet') + '</b></div>';
+    const staging = f.staging.length ? 'Staging: ' + f.staging.join(', ') + '.' : 'Staging: none. Optional; a swap that needs one will ask.';
+    return '<div class="pd-card"><div class="pd-sect"><h2>Your line so far</h2></div><div class="pd-suline">' +
+        end('inbound', 'Inbound', f.inbound) + '<span class="pd-dim">→</span>' +
+        (f.positions.length ? f.positions.map(posBox).join('') : '<span class="pd-dim">no positions yet</span>') +
+        '<span class="pd-dim">→</span>' + end('outbound', 'Outbound', f.outbound) + '</div>' +
+        '<p class="pd-note"><i class="setpick-dot" data-role="staging"></i> ' + esc(staging) + '</p>' +
+        (model ? firstStyleFilled(f, model) : '') + '</div>';
+}
+
+function setupLaterHTML() {
+    return '<div class="pd-card"><div class="pd-sect"><h2>Later, on Settings · not needed to run</h2></div><div class="pd-sulater">' +
+        SETUP_LATER.map(x => '<button class="pd-dimlink" data-act="setup-later" data-to="' + esc(x[1]) + '">' + esc(x[0]) + '</button>').join('') +
+        '</div></div>';
+}
+
+// The Run it step re-reads the screens while it waits for one to be opened.
+function startSetupPoll() {
+    if (S.setupPoll) return;
+    const pid = S.processID;
+    S.setupPoll = setInterval(async () => {
+        if (S.tab !== 'setup' || S.processID !== pid) { stopSetupPoll(); return; }
+        await reloadStations();
+        const f = setupFacts();
+        if (f.canRun && f.seen) {
+            stopSetupPoll();
+            S.setupEnd = pid;
+            setSetupSkipped(pid, false);
+            if (S.tab === 'setup' && S.processID === pid) drawSetup();
+        }
+    }, SETUP_POLL_MS);
+}
+function stopSetupPoll() {
+    if (S.setupPoll) clearInterval(S.setupPoll);
+    S.setupPoll = null;
+}
+
+// setupGo is a step's action.
+async function setupGo(act) {
+    if (act === 'edit') { await openEditProcess(); return; }
+    if (act === 'styles') {
+        const f = setupFacts();
         S.tab = 'flows';
-        const flowed = styles.find(st => M().styleFacts(st).claim_count);
-        selectStyle((flowed || styles[0]).id);
+        selectStyle((f.flowed[0] || f.styles[0] || {}).id || 0);
         syncHash();
         return;
     }
-    if (key === 'screen') {
-        await openSettingsAt('Screens and positions');
-        if (!stationsOf(S.processID).length) void openScreenSheet(0);
+    if (act === 'style') { await startFirstStyle(); return; }
+    if (act === 'skip') {
+        setSetupSkipped(S.processID, true);
+        stopSetupPoll();
+        await openSettingsAt('Line');
+        return;
     }
+    if (act === 'onto') {
+        // The screen takes the positions on no screen; with none, the sheet.
+        const st = stationsOf(S.processID)[0];
+        await loadCurtainNodes();
+        const loose = loosePositions();
+        if (!st || !loose.length) { await openEditProcess(); return; }
+        const want = B().stationNodes((S.stationNodes[String(st.id)] || []).concat(loose));
+        const out = await send('PUT', '/api/operator-stations/' + st.id + '/claimed-nodes', want, NO_NOTICE);
+        if (!out.ok) { toast(said(out), 'error'); return; }
+        await refreshStationNodes(st.id);
+        await loadCurtainNodes();
+        await refreshProcess();
+        return;
+    }
+    if (act === 'show') {
+        setSetupSkipped(S.processID, false);
+        S.tab = 'setup';
+        drawSetup();
+        syncHash();
+    }
+}
+
+// ── Setup · First style ──────────────────────────────────────────────────────
+//
+// A PART ON EACH POSITION AND ONE WAY THEY ALL SWAP. A part is on one position
+// (the composer's rule, setPart), so each position takes one from the part
+// set, in order, changeable; one left with none stays free. One swap covers
+// them all, and "set each one" gives each its own. Inbound and Outbound are
+// the routing set's first of each (the model's own default), and a swap that
+// needs a staging spot is given the routing set's first; the step says what it
+// filled. It is the Styles tab's draft (S.model), previewed and saved by the
+// Styles tab's own doors (flow/preview, saveFlow): no second writer. "Open the
+// full flow table" goes there with it; saving comes back here.
+//
+// A press's back positions are never rows: they are a swap's partner, and the
+// model pairs them (ensurePartner).
+
+const FIRST_ROLES = [['consume', 'Consume', 'the line uses the parts'], ['produce', 'Produce', 'the line makes the parts']];
+
+// firstStyleTarget is the style the step draws: the first with no flow.
+function firstStyleTarget() {
+    return (S.composer.styles || []).find(st => !M().styleFacts(st).claim_count) || null;
+}
+
+function firstStyleRows() {
+    return ((S.composer.cell || {}).positions || []).filter(p => p.kind !== 'back').map(p => p.core_node_name);
+}
+
+// startFirstStyle opens the step: on the style with no flow, or on a new one
+// named by the first part (a style is named by its part).
+async function startFirstStyle() {
+    let st = firstStyleTarget();
+    if (!st) {
+        const part = (S.composer.palette || [])[0];
+        if (!part) return;
+        const made = await send('POST', '/api/styles', B().styleCreate(part, S.processID, ''), NO_NOTICE);
+        if (!made.ok) { toast(said(made), 'error'); return; }
+        S.styleID = Number(bodyOf(made).id) || 0;
+        S.setupView = 'style';
+        await refreshProcess();
+        st = firstStyleTarget();
+        if (!st) return;
+    }
+    const rows = firstStyleRows();
+    const palette = S.composer.palette || [];
+    const parts = {};
+    rows.forEach((n, i) => { if (palette[i]) parts[n] = palette[i]; });
+    S.firstStyle = { styleID: st.id, parts: parts, role: 'consume', mode: 'single_robot', each: false, modes: {} };
+    S.setupView = 'style';
+    S.tab = 'setup';
+    buildFirstStyle();
+    drawSetup();
+    syncHash();
+    void previewFirstStyle();
+}
+
+// buildFirstStyle is the step's draft as the composer's own actions on the
+// style: each position with a part added in its swap, its role, its part,
+// and the staging its swap needs from the routing set.
+function buildFirstStyle() {
+    const d = S.firstStyle;
+    const st = composerStyle(d.styleID);
+    if (!st) return;
+    S.styleID = st.id;
+    S.selected = null;
+    let m = initModel(st);
+    const staging = (S.composer.routing || []).filter(r => r.role === 'staging' && r.enabled !== false && !isPositionRow(r.core_node_name))
+        .sort((a, b) => (a.sequence || 0) - (b.sequence || 0)).map(r => r.core_node_name);
+    const set = { staging: 'setStaging', parkOld: 'setParkOld' };
+    d.filled = [];
+    for (const n of firstStyleRows()) {
+        const part = d.parts[n];
+        if (!part) continue;
+        const mode = d.each ? (d.modes[n] || d.mode) : d.mode;
+        m = M().reduce(m, { type: 'addPosition', node: n, mode: mode });
+        if (d.role === 'produce') m = M().reduce(m, { type: 'setRole', node: n, role: 'produce' });
+        m = M().reduce(m, { type: 'addPart', payloadCode: part });
+        m = M().reduce(m, { type: 'setPart', node: n, payloadCode: part });
+        for (const chip of M().rowColumns(m, n, 'staging')) {
+            if (!chip.required || chip.value || !set[chip.key] || !staging.length) continue;
+            m = M().reduce(m, { type: set[chip.key], node: n, staging: staging[0] });
+            d.filled.push({ node: n, key: chip.key, name: staging[0] });
+        }
+    }
+    S.model = m;
+    S.baseline = '';
+}
+
+// firstStyleFilled says what the step filled from the routing set.
+function firstStyleFilled(f, model) {
+    const on = Object.keys(model.cells).filter(n => model.cells[n].on);
+    if (!on.length) return '';
+    const src = [...new Set(on.map(n => model.cells[n].source).filter(Boolean))];
+    const dst = [...new Set(on.map(n => model.cells[n].dest).filter(Boolean))];
+    const stg = [...new Set((S.firstStyle.filled || []).map(x => x.name))];
+    const why = { single_robot: 'a 1‑Robot Swap sets a bin down there on its way', two_robot: 'a 2‑Robot Swap stages the new bin there' };
+    const modes = [...new Set(on.map(n => model.cells[n].mode))];
+    return '<div class="pd-sufilled"><b>Filled in for you</b>' +
+        (src.length ? '<p><i class="setpick-dot" data-role="inbound"></i> Inbound <b>' + esc(src.join(', ')) + '</b></p>' : '') +
+        (dst.length ? '<p><i class="setpick-dot" data-role="outbound"></i> Outbound <b>' + esc(dst.join(', ')) + '</b></p>' : '') +
+        (stg.length ? '<p><i class="setpick-dot" data-role="staging"></i> Staging <b>' + esc(stg.join(', ')) + '</b>' +
+            (modes.length === 1 && why[modes[0]] ? ': ' + esc(why[modes[0]]) : '') + '</p>' : '') + '</div>';
+}
+
+function drawFirstStyle(f) {
+    const d = S.firstStyle;
+    if (!d || !S.model || S.model.styleId !== d.styleID) { S.setupView = ''; drawSetup(); return; }
+    const labels = M().modeLabels();
+    const order = Object.keys(MODE_WORDS).filter(m => labels[m]);
+    const rows = firstStyleRows();
+    const shortList = rows.join(', ');
+    const modeSeg = node => '<div class="pd-seg">' + order.map(m => '<button class="' + ((d.modes[node] || d.mode) === m ? 'on' : '') +
+        '" data-act="fs-mode1" data-node="' + esc(node) + '" data-mode="' + esc(m) + '">' + esc(labels[m]) + '</button>').join('') + '</div>';
+    const rowHTML = n => '<div class="pd-fsrow"><b>' + esc(n) + '</b>' +
+        '<button class="pd-sel" data-act="fs-part" data-node="' + esc(n) + '">' + esc(d.parts[n] ? M().shortPart(d.parts[n]) : 'no part · left free') +
+        '<i class="car"></i></button>' + (d.each && d.parts[n] ? modeSeg(n) : '') + '</div>';
+    const cards = order.map(m => '<button class="pd-fsmode' + (d.mode === m && !d.each ? ' on' : '') + '" data-act="fs-mode" data-mode="' + esc(m) + '">' +
+        gl(m, 26, {}) + '<span><b>' + esc(labels[m]) + '</b><small>' + esc(MODE_WORDS[m]) + '</small></span></button>').join('');
+    const roleSeg = '<div class="pd-seg">' + FIRST_ROLES.map(r => '<button class="' + (d.role === r[0] ? 'on' : '') + '" data-act="fs-role" data-role="' +
+        r[0] + '">' + esc(r[1]) + '</button>').join('') + '</div>';
+    const roleSub = (FIRST_ROLES.find(r => r[0] === d.role) || [])[2] || '';
+    const left = '<div class="pd-sutitle"><h1>First style</h1><span class="pd-dim">step 2 of 3</span></div>' +
+        '<div class="pd-fsblock"><span class="pd-fslbl">Parts</span><span class="pd-dim">a part on each position; the first names the style</span>' +
+        rows.map(rowHTML).join('') + '</div>' +
+        '<div class="pd-fsblock"><span class="pd-fslbl">Consume or produce</span><div class="pd-fsline">' + roleSeg +
+        '<span class="pd-dim">' + esc(roleSub) + '</span></div></div>' +
+        '<div class="pd-fsblock"><div class="pd-fsline"><span class="pd-fslbl">How do the positions swap?</span><span class="pd-dim">' +
+        (d.each ? 'set on each position above · <button class="pd-dimlink" data-act="fs-each">same for all</button>'
+            : 'same for ' + esc(shortList) + ' · <button class="pd-dimlink" data-act="fs-each">set each one</button>') + '</span></div>' +
+        (d.each ? '' : '<div class="pd-fsmodes">' + cards + '</div>') + '</div>' +
+        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
+        '<button class="pd-dimlink" data-act="fs-table">Open the full flow table</button>' +
+        '<button class="pd-btn" data-act="fs-back">Back</button>' +
+        '<button class="pd-btn primary" data-act="fs-save"' + (firstStyleReady() ? '' : ' disabled') + '>Save style</button></div>';
+    root().innerHTML = appbar() + '<div class="pd-sheet pd-setup"><div class="pd-sugrid"><div class="pd-sumain">' + left + '</div>' +
+        '<div class="pd-suside">' + lineSoFar(f, S.model) + '</div></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
+}
+
+// firstStyleBar is the step's one line: ready, with its orders, or the first
+// thing to fix, in the Styles bar's own words (composer-model bar).
+function firstStyleBar() {
+    if (!Object.values(S.firstStyle.parts).some(Boolean)) return '<span class="pd-dim">Give a position a part to make the style.</span>';
+    const b = M().bar(S.model);
+    const pv = S.model.preview || {};
+    if (b.tone === 'blocked') return '<i class="pd-cnt warn"><i></i></i><b>' + esc(b.heading) + '</b> <span class="pd-dim">' + esc(b.detail || '') + '</span>';
+    if (!pv.fingerprint) return '<span class="pd-dim">Checking…</span>';
+    const n = Object.keys(S.model.cells).filter(k => S.model.cells[k].on).length;
+    return '<i class="pd-cnt ok"><i></i></i>Ready: ' + esc(nOf(n, 'position')) +
+        (typeof pv.orderCount === 'number' ? ', ' + esc(nOf(pv.orderCount, 'order')) : '') + '.';
+}
+
+function firstStyleReady() {
+    return !!S.model && !!(S.model.preview || {}).fingerprint && M().bar(S.model).tone !== 'blocked' &&
+        Object.values(S.firstStyle.parts).some(Boolean);
+}
+
+// previewFirstStyle is the Styles tab's preview of the draft (flow/preview).
+async function previewFirstStyle() {
+    if (!S.model || !S.firstStyle) return;
+    const forStyle = S.model.styleId;
+    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview', {
+        to_style_id: forStyle, cells: M().toCells(S.model), taken_off: M().takenOff(S.model),
+    }, { notice: false });
+    if (!S.model || S.model.styleId !== forStyle || S.setupView !== 'style') return;
+    S.model = M().applyPreview(S.model, answerBody(res));
+    if (S.tab === 'setup') drawSetup();
+}
+
+// firstStyleChanged rebuilds the draft after a choice and previews it again.
+function firstStyleChanged() {
+    buildFirstStyle();
+    drawSetup();
+    void previewFirstStyle();
+}
+
+// openFirstPart is a position's part, from the part set: one part is on one
+// position, so picking one another position has moves it here.
+function openFirstPart(btn) {
+    const pop = $('pd-pop');
+    const d = S.firstStyle;
+    const node = btn.dataset.node;
+    if (!pop || !d) return;
+    const at = code => Object.keys(d.parts).find(n => n !== node && d.parts[n] === code);
+    const rows = [{ value: '-', label: 'no part · leave it free' }].concat((S.composer.palette || []).map(code =>
+        ({ value: code, label: M().shortPart(code), note: at(code) ? 'on ' + at(code) + ', moves here' : '' })));
+    openRowPicker(pop, btn, rows, v => {
+        const code = v === '-' ? '' : v;
+        for (const n of Object.keys(d.parts)) if (code && d.parts[n] === code) delete d.parts[n];
+        if (code) d.parts[node] = code; else delete d.parts[node];
+        firstStyleChanged();
+    }, { selected: d.parts[node] || '-', placeholder: 'find a part' });
+}
+
+// saveFirstStyle is the Styles tab's save of the draft; it comes back to Setup.
+async function saveFirstStyle() {
+    if (!firstStyleReady()) return;
+    S.fromSetup = true;
+    await saveFlow();
+}
+
+// openFirstTable takes the draft to the Styles tab's full flow table.
+function openFirstTable() {
+    S.fromSetup = true;
+    S.setupView = '';
+    S.tab = 'flows';
+    drawFlows();
+    syncHash();
+    schedulePreview();
 }
 
 // openSettingsAt opens Settings scrolled to the section whose heading starts
@@ -772,6 +1103,7 @@ async function openProcess(id) {
             esc(err && err.message ? err.message : String(err)) + '). Reload to try again.</p></div>';
         return;
     }
+    if (S.processID !== id) { S.setupEnd = 0; S.setupView = ''; S.firstStyle = null; stopSetupPoll(); }
     S.processID = id;
     S.tab = 'flows';
     // Everything derived from the last process goes with it: another press's
@@ -832,7 +1164,7 @@ async function openProcess(id) {
     // A PROCESS THAT CANNOT RUN YET OPENS ON SETUP, unless the link names
     // another tab or a style.
     if (h.tab === 'setup' || (!h.tab && !h.style && !h.newstyle && needsSetup())) { S.tab = 'setup'; drawSetup(); }
-    else if (h.tab === 'screens') await openSettingsAt('Screens');
+    else if (h.tab === 'screens') await openSettingsAt(coreBoards(p) ? 'Screens' : 'Positions and routing');
     else if (h.tab === 'presets' || h.tab === 'recipes') {
         await openPresets();
         // #tab=presets;preset=<id> opens the recipes (beside HMI setup on
@@ -2846,7 +3178,7 @@ function drawBar() {
     // yet, and they are added in Settings, on a screen or on none (positions
     // come before the screen).
     const empty = freePositions().length ? 'Add a position below'
-        : 'This process has no position yet: add them in Settings › Screens and positions';
+        : 'This process has no position yet: add them in Settings › Positions and routing';
     const detail = b.tone === 'empty' ? empty : String(b.detail || '')
         .replace('Tap the position and pick a choreography.', 'Pick its ' + W('swap_mode').toLowerCase() + ' on its row.')
         .replace('Tap the position and pick one.', 'Pick it on its row.');
@@ -2963,7 +3295,13 @@ async function saveFlow() {
         if (out.kind === 'stale') schedulePreview();
         return;
     }
-    if (out.kind === 'findings') { S.model = M().applyPreview(S.model, json); drawFlows(); return; }
+    if (out.kind === 'findings') {
+        S.model = M().applyPreview(S.model, json);
+        // From Setup's First style, the findings are shown on the table.
+        if (S.tab === 'setup') { S.setupView = ''; S.tab = 'flows'; syncHash(); }
+        drawFlows();
+        return;
+    }
     // Saved: the draft becomes the new baseline and the read is refreshed so the
     // rail's counts and last-run follow.
     S.baseline = JSON.stringify(M().toCells(S.model));
@@ -2981,8 +3319,7 @@ async function saveFlow() {
         S.tab = 'setup';
         drawSetup();
         syncHash();
-        toast('Saved' + (style ? ' ' + style.name : '') + '. Next: ' +
-            (setupRows().find(r => !r.done) || {}).label + '.', 'info');
+        toast('Saved' + (style ? ' ' + style.name : '') + '. Next: Run it.', 'info');
     }
 }
 
@@ -3626,7 +3963,8 @@ function sayDropped(node, before, after) {
 // ── D3 · the routing set's roles, and the key route's waypoints ──────────────
 //
 // The routing set is the places this press may draw bins from, stage them at
-// and send them to, picked by name off one list in four buckets (setInit).
+// and send them to, picked by name off one list in four boxes (the set pick,
+// shared/set-pick.js).
 //
 // IT HAS NO PLANT MAP ANY MORE. Settings and the process sheet drew the set,
 // its two route legs and the press on Core's plant behind Show on map; that
@@ -3655,18 +3993,162 @@ function waypointNames() {
 // destination. The keys are the data's, the API's and every test's; the words
 // are what an engineer reads, and "Sources" beside "Destinations" read as two
 // unrelated lists rather than the two ends of one trip.
+//
+// THE WORDS SAY WHERE THE BIN IS, for produce and consume alike (owner,
+// 2026-11-15: no "full" bin, no "finished" one, "just where the bin comes
+// from"): a consume line's inbound brings a full bin and a produce line's an
+// empty one, and the role is the same place either way.
 const ROUTING_GROUPS = [
-    ['source', 'Inbound', "a flow's inbound source"],
-    ['staging', 'Staging', "a flow's inbound or outbound staging"],
-    ['destination', 'Outbound', "a flow's outbound destination"],
+    ['source', 'Inbound', 'where the bin comes from'],
+    ['staging', 'Staging', 'where a bin waits'],
+    ['destination', 'Outbound', 'where the bin goes'],
 ];
 
 function isPositionRow(name) {
     return S.composer.cell.positions.some(p => p.core_node_name === name);
 }
 
-// BUCKETS are the set picker's four: positions, then the three roles.
-const BUCKETS = [['positions', 'Positions', 'the spots this process works']].concat(ROUTING_GROUPS);
+// SET_BOXES are the set pick's four (shared/set-pick.js): positions, then the
+// three roles, each in its role's colour (the --role-* tokens). Positions,
+// Inbound and Outbound are needed for a flow to have anywhere to work; Staging
+// only some swaps use.
+const ROLE_OF = { positions: 'positions', source: 'inbound', staging: 'staging', destination: 'outbound' };
+const SET_BOXES = [['positions', 'Positions', 'the spots this process works']].concat(ROUTING_GROUPS)
+    .map(g => ({ key: g[0], label: g[1], sub: g[2], role: ROLE_OF[g[0]], need: g[0] === 'staging' ? 'optional' : 'needed' }));
+
+// ── the set pick on this page (shared/set-pick.js) ───────────────────────────
+//
+// ONE PIECE, TWO PLACES: the process sheet (Add process and its Change…) and
+// Settings' Positions and routing. Each is S.setPicks[key] = {pid, api}, the
+// pick for process pid (0 for one not made yet). What a box may take is its
+// field (setPickField):
+//   - Positions: a node another process holds is greyed with its name; a
+//     group's row folds its nodes, which are positions one at a time.
+//   - Inbound and Outbound: a position of this process is greyed (every flow
+//     on it may use it already), and a group's members are not drawn: where
+//     Core picks, a source or destination names the group (legExclusion).
+//   - Staging: the same, except that a staging spot names the exact node, so
+//     a group's nodes fold under it, pickable once shown.
+// A node another process holds is behind "In use by other processes".
+//
+// TICKING A NODE INTO POSITIONS TAKES IT OUT OF THE ROLES (as the sheet did
+// before it was shared): one node is a position or a routing name, never both
+// (ErrRoutingNodeIsPosition).
+const ST_SET = 'st';
+const HELD_ELSEWHERE = 'In use by other processes';
+
+function setPickValue(key, box) {
+    const sp = S.setPicks[key];
+    return sp ? sp.api.value(box) : [];
+}
+
+// heldElsewhere: another process holds name as a position, and no Core
+// loader shares it (a shared loader window may be on several).
+function heldElsewhere(name, pid) {
+    return (S.livePositions || []).some(n => n.core_node_name === name && n.process_id !== pid) && !sharedLoaderNode(name);
+}
+
+function setPickField(key, box, pid) {
+    const later = n => heldElsewhere(n.name, pid);
+    if (box === 'positions') {
+        return {
+            rule: n => (n.type === 'NGRP' || isGroupRow(n.raw) ? 'a group: its nodes are positions one at a time' : positionHeld(n.name, pid)),
+            note: n => {
+                const other = (S.livePositions || []).find(x => x.core_node_name === n.name && x.process_id !== pid);
+                return other && sharedLoaderNode(n.name) ? 'loader window · also on ' + other.process_name : '';
+            },
+            members: 'fold', later: later,
+        };
+    }
+    return {
+        rule: n => (setPickValue(key, 'positions').indexOf(n.name) >= 0
+            ? 'a position of this process — available to every flow on it already'
+            : B().legExclusion(S.coreNodes, n.name, box)),
+        note: n => (pid ? routeNote(box, n.name) : ''),
+        members: box === 'staging' ? 'fold' : 'none', later: later,
+    };
+}
+
+// mountSetPick draws pick `key` into the element hostId for process o.pid,
+// from sel ({box: [names]}). A pick already drawn for that process is moved
+// into the new host, not drawn again, so a redraw of the page around it keeps
+// its open box, its search and its scroll; o.fresh draws it anew.
+function mountSetPick(key, hostId, sel, o) {
+    const host = $(hostId);
+    if (!host) return null;
+    const have = S.setPicks[key];
+    if (have && have.pid === o.pid && !o.fresh) {
+        host.appendChild(have.api.el);
+        return have.api;
+    }
+    if (have) have.api.destroy();
+    const api = createSetPick(host, {
+        boxes: SET_BOXES, source: NODES, selected: sel, active: o.active,
+        field: box => setPickField(key, box, o.pid),
+        closed: o.closed, note: o.note,
+        filters: checklistFilters, later: { label: HELD_ELSEWHERE },
+        placeholder: 'filter by name, or pick a prefix',
+        onChange: (box, sp) => {
+            if (box === 'positions') {
+                const pos = sp.value('positions');
+                for (const g of ROUTING_GROUPS) {
+                    const was = sp.value(g[0]);
+                    const left = was.filter(n => pos.indexOf(n) < 0);
+                    if (left.length !== was.length) sp.set(g[0], left);
+                }
+            }
+            if (o.onChange) o.onChange(box);
+        },
+    });
+    S.setPicks[key] = { pid: o.pid, api: api };
+    loadCoreNodes();
+    return api;
+}
+
+function dropSetPick(key) {
+    const sp = S.setPicks[key];
+    if (sp) sp.api.destroy();
+    delete S.setPicks[key];
+}
+
+// stillNeeded is the boxes of a pick that a line needs and that are empty, by
+// name: Positions, Inbound, Outbound.
+function stillNeeded(key) {
+    return SET_BOXES.filter(b => b.need === 'needed' && !setPickValue(key, b.key).length).map(b => b.label);
+}
+
+// processPositions is the open process's positions: each screen's in its
+// order, then those on no screen.
+function processPositions() {
+    const out = [];
+    for (const st of stationsOf(S.processID)) {
+        for (const n of S.stationNodes[String(st.id)] || []) if (out.indexOf(n) < 0) out.push(n);
+    }
+    for (const n of loosePositions()) if (out.indexOf(n) < 0) out.push(n);
+    return out;
+}
+
+// screensDraft is a positions box as savePositions' draft ({screen id: its
+// list, none: the positions on no screen}). A position stays where it is; a
+// new one goes on the line's screen (the first, on a line that has two from
+// before); on a line with no screen it is on none. onto: the positions on no
+// screen go on the screen too ("Put them on").
+function screensDraft(names, onto) {
+    const screens = stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes);
+    const loose = loosePositions();
+    const d = {};
+    const placed = new Set();
+    for (const st of screens) {
+        d[st.id] = (S.stationNodes[String(st.id)] || []).filter(n => names.indexOf(n) >= 0);
+        d[st.id].forEach(n => placed.add(n));
+    }
+    const stay = onto && screens.length ? [] : loose.filter(n => names.indexOf(n) >= 0);
+    stay.forEach(n => placed.add(n));
+    const fresh = names.filter(n => !placed.has(n));
+    if (screens.length) d[screens[0].id] = d[screens[0].id].concat(fresh);
+    if (loose.length || !screens.length) d.none = stay.concat(screens.length ? [] : fresh);
+    return d;
+}
 
 // WHAT BACKFILL MEANS, IN WORDS, ON THE ROW (owner ruling 2026-09-10, Q5).
 //
@@ -3769,7 +4251,7 @@ function switchedOffIn(role) {
 // beside it carries the names: an engineer agreeing to seven wants to know it
 // is seven of the names they are looking at.
 function allOffLine(g) {
-    const picked = pickerValue(routeKey(g[0]));
+    const picked = setPickValue(ST_SET, g[0]);
     const off = switchedOffIn(g[0]).filter(r => picked.indexOf(r.core_node_name) < 0);
     if (!off.length) return '';
     return '<div class="pd-rs-alloff"><span class="pd-dim">' +
@@ -3782,9 +4264,10 @@ function allOffLine(g) {
 // rsAllOn puts every switched-off name of one role into its picker's draft;
 // the save switches them on (the routing write adopts a row it names).
 function rsAllOn(role) {
-    const p = S.pickers[routeKey(role)];
-    if (!p) return;
-    for (const r of switchedOffIn(role)) if (p.sel.indexOf(r.core_node_name) < 0) p.sel.push(r.core_node_name);
+    const sp = S.setPicks[ST_SET];
+    if (!sp) return;
+    const have = sp.api.value(role);
+    sp.api.set(role, have.concat(switchedOffIn(role).map(r => r.core_node_name).filter(n => have.indexOf(n) < 0)));
     drawSettings();
 }
 
@@ -4412,7 +4895,7 @@ function onScrimClick(e) {
     if (act && act.dataset.act === 'newstyle-screens') {
         e.stopPropagation();
         closeSheet();
-        void openSettingsAt('Screens and positions');
+        void openSettingsAt('Positions and routing');
         return;
     }
     if (act && act.dataset.act === 'newstyle-recipe') { e.stopPropagation(); openNewRecipePick(act); return; }
@@ -4655,43 +5138,92 @@ function loaderWindows() {
         '<p class="pd-dim">' + esc(loaderBindingSentence()) + '</p>' + loaderGapRows());
 }
 
-// ── Settings · Routing set ───────────────────────────────────────────────────
+// ── Settings · Positions and routing ─────────────────────────────────────────
 //
-// Where this process draws bins from, stages them and sends them: one picker
-// per role, the shared node picker, a group drawn with its members. A name may
-// sit in several roles (a buffer is inbound and outbound) and never in a role
-// and on a screen (ErrRoutingNodeIsPosition). Inside a role the order is the
-// order picked: the first is a new position's default. A draft, saved by the
-// one Save in one write that adds and takes out together
+// THE SAME PICK AS ADD PROCESS, on the page's one Save (owner, 2026-11-15:
+// "that pick for the nodes was really good the plants like it"). Under it,
+// the screen. A line has one (owner: "lines shouldnt have two screens"), made
+// with the process, and a position picked here goes on it. A line with none
+// offers "+ Add a screen", which takes the positions on no screen. A line
+// that has two from before (two at SPR) shows each with its positions as they
+// are; a new position goes on the first, and nothing here moves one between
+// them. A loader's process keeps its screens' rows (screensSection).
+// A routing name may sit in several roles (a buffer is inbound and outbound),
+// never in a role and on a screen (ErrRoutingNodeIsPosition). Inside a role
+// the order picked is the order saved, the first a new position's default;
+// the roles are one write that adds and takes out together
 // (SETTINGS_SECTIONS.routing).
-const ROLE_SUB = {
-    source: 'where full bins come from',
-    staging: 'where a bin waits before it goes in',
-    destination: 'where finished bins go',
-};
-
-function routeKey(role) { return 'rt-' + role; }
-
-function routingSection() {
+function positionsRoutingSection() {
     const way = waypointNames();
-    const backs = alwaysAvailableStaging();
-    return '<div class="pd-sect"><h2>Routing set</h2></div>' +
-        // A SET THAT COULD NOT BE READ IS NOT AN EMPTY SET: three empty roles
-        // over a failed read invite re-adding names the process already has.
-        (routingUnread()
-            ? '<div class="pd-refusal">' + esc(S.routingError || 'The routing set could not be read.') + '</div>'
-            : ROUTING_GROUPS.map(g => stBlock(g[1], ROLE_SUB[g[0]] || '', pickerBox(routeKey(g[0])) +
-                (g[0] === 'staging' && backs.length
-                    ? '<span class="pd-dim">' + esc(backs.join(', ')) +
-                        (backs.length === 1 ? ' is a back position' : ' are back positions') + ' and always available</span>' : ''))).join('') +
-                ROUTING_GROUPS.map(allOffLine).join('')) +
-        (way.length ? stBlock('Waypoints', 'from the map, on the shortest supply path — not editable',
-            '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
+    return '<div class="pd-sect"><h2>Positions and routing</h2><span class="pd-dim">the same pick as Add process</span></div>' +
+        '<div class="pd-sphost" id="sp-' + ST_SET + '"></div>' +
+        '<div class="pd-scrlines" id="pd-scrlines"></div>' +
+        loaderWindows() +
+        (routingUnread() ? '' : ROUTING_GROUPS.map(allOffLine).join('')) +
+        (way.length ? '<p class="pd-note">Waypoints, from the map, on the shortest supply path (not editable): ' + esc(way.join(' · ')) + '</p>' : '') +
         (S.routingError && !routingUnread() ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
         (S.routingWarning ? '<div class="pd-warn">' + esc(S.routingWarning) + '</div>' : '');
 }
 
-// ── Settings' pickers: drafts, one per screen, one per role, the part set ───
+// settingsSetSel is Settings' pick as the process stands: its positions and
+// its routing set's enabled names, each role in its order.
+function settingsSetSel() {
+    const sel = { positions: processPositions() };
+    for (const g of ROUTING_GROUPS) sel[g[0]] = routingRowsFor(g[0]).map(r => r.core_node_name);
+    return sel;
+}
+
+// backPositionsLine is Staging's note: the press's own back positions are
+// staging already, and are not routing rows (alwaysAvailableStaging).
+function backPositionsLine() {
+    const backs = alwaysAvailableStaging();
+    if (!backs.length) return '';
+    return backs.join(', ') + (backs.length === 1 ? ' is a back position' : ' are back positions') + ' and always available';
+}
+
+// settingsSetMoved: a box moved. The screen lines follow the draft, the
+// section list's dot follows what is still needed, and the bar is marked.
+function settingsSetMoved() {
+    drawScreenLines();
+    redrawSettingsNav();
+    if (S.stShell && S.stShell.pid === S.processID) S.stShell.page.update();
+}
+
+// drawScreenLines is the line under the pick: each screen with what it will
+// hold once saved, its health, Edit and Open; the positions on no screen; and
+// "+ Add a screen" on a line that has none.
+function drawScreenLines() {
+    const el = $('pd-scrlines');
+    if (!el) return;
+    const screens = stationsOf(S.processID);
+    const names = setPickValue(ST_SET, 'positions');
+    const d = screensDraft(names, S.looseOnto);
+    const loose = d.none || [];
+    const lines = screens.map(st => {
+        const unread = !(String(st.id) in S.stationNodes);
+        const n = unread ? 0 : (d[st.id] || []).length;
+        return '<div class="pd-scrline"><span>Screen <b>' + esc(st.name) + '</b> ' +
+            (unread ? '· its positions could not be read, so they cannot be changed here. Reload the page.'
+                : (screens.length === 1 && n && !loose.length ? 'holds all ' + nOf(n, 'position') : 'holds ' + nOf(n, 'position'))) +
+            ' · ' + esc(healthOf(st).text) + '</span>' +
+            '<span class="pd-scracts"><button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
+            '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></span></div>';
+    });
+    if (loose.length) {
+        lines.push('<div class="pd-scrline"><span>' + esc(nOf(loose.length, 'position') + ' on no screen: ' + loose.join(', ')) + '</span>' +
+            (screens.length === 1 ? '<button class="pd-btn quiet" data-act="loose-onto">Put them on ' + esc(screens[0].name) + '</button>' : '') + '</div>');
+    }
+    if (S.looseOnto && screens.length === 1) {
+        lines.push('<p class="pd-note">The positions on no screen go on ' + esc(screens[0].name) + ' when this is saved.</p>');
+    }
+    if (!screens.length) {
+        lines.push('<div class="pd-scrline"><span>No screen works this process yet: an operator reaches it once one holds its positions.</span>' +
+            '<button class="pd-btn" data-act="screen-add">+ Add a screen</button></div>');
+    }
+    el.innerHTML = lines.join('');
+}
+
+// ── Settings' pickers: a loader's screens, and the part set ──────────────────
 //
 // DECLARED ONCE PER VISIT TO A PROCESS, not per draw: a redraw (every pick,
 // a refresh after a sheet) keeps what is picked and not yet saved. After a
@@ -4727,15 +5259,6 @@ function settingsPickers(force, keep) {
         onChange: () => screensMoved(0),
         placeholder: 'add a position',
     });
-    for (const g of ROUTING_GROUPS) {
-        want(routeKey(g[0]), {
-            selected: routingRowsFor(g[0]).map(r => r.core_node_name),
-            exclude: n => routeRule(g[0], n),
-            annotate: n => routeNote(g[0], n),
-            onChange: () => settingsPickersMoved(routeKey(g[0])),
-            placeholder: 'add a group or node',
-        });
-    }
     // THE PART SET FOLDS (slice 5): a big line's 46 parts are 46 chips above
     // the search box; the first PART_FOLD, then "+ N more · show all".
     want(PART_SET_PICKER, {
@@ -4745,15 +5268,9 @@ function settingsPickers(force, keep) {
     });
 }
 
-// The names the drafts hold: on any screen, and in any role.
-function draftPositions() {
-    const out = new Set();
-    for (const st of stationsOf(S.processID)) for (const n of pickerValue(screenKey(st.id))) out.add(n);
-    for (const n of pickerValue(LOOSE)) out.add(n);
-    return out;
-}
+// draftRoles is the roles the routing boxes' draft holds name in.
 function draftRoles(name) {
-    return ROUTING_GROUPS.filter(g => pickerValue(routeKey(g[0])).indexOf(name) >= 0).map(g => g[1]);
+    return ROUTING_GROUPS.filter(g => setPickValue(ST_SET, g[0]).indexOf(name) >= 0).map(g => g[1]);
 }
 
 // screenRule is why a screen may not take a node: it is in the routing set
@@ -4805,17 +5322,9 @@ function screensMoved(stationID) {
 // list stays open while the engineer picks.
 function settingsPickersMoved(key) {
     for (const k of Object.keys(S.pickers)) {
-        if (k !== key && (k.indexOf('scr-') === 0 || k.indexOf('rt-') === 0) && S.pickers[k].ui) S.pickers[k].ui.refresh();
+        if (k !== key && k.indexOf('scr-') === 0 && S.pickers[k].ui) S.pickers[k].ui.refresh();
     }
     if (S.stShell && S.stShell.pid === S.processID) S.stShell.page.update();
-}
-
-// routeRule is why role may not take a node: it is a position of this process
-// (already open to every flow on it), or the leg rule refuses it for the role
-// (a lane, or a member of a group where Core picks: legExclusion).
-function routeRule(role, name) {
-    if (draftPositions().has(name)) return 'a position of this process — available to every flow on it already';
-    return B().legExclusion(S.coreNodes, name, role);
 }
 
 // routeNote is where a name the process already has switched off came from:
@@ -5098,12 +5607,22 @@ const SETTINGS_SECTIONS = {
     // Before the routing set: a node moving off a screen into a role has to
     // stop being a position first, and one moving the other way stops being a
     // routing name when its screen claims it (SetNodes).
+    // THE POSITIONS ARE THE SET PICK'S POSITIONS BOX, as each screen's list
+    // and the positions on no screen (screensDraft); a loader's process keeps
+    // a row per screen. `none` is there while a position is on no screen.
     positions: {
-        label: 'screens and positions',
-        // `none` is the no-screen row's, while it is drawn.
-        read: () => Object.assign(Object.fromEntries(stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes)
-            .map(st => [st.id, pickerValue(screenKey(st.id))])), looseShown() ? { none: pickerValue(LOOSE) } : {}),
+        label: 'positions',
+        read: () => (coreBoards(process())
+            ? Object.assign(Object.fromEntries(stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes)
+                .map(st => [st.id, pickerValue(screenKey(st.id))])), looseShown() ? { none: pickerValue(LOOSE) } : {})
+            : screensDraft(S.setPicks[ST_SET] ? setPickValue(ST_SET, 'positions') : processPositions(), S.looseOnto)),
         put: v => {
+            if (!coreBoards(process())) {
+                const names = [];
+                for (const id of Object.keys(v)) for (const n of v[id]) if (names.indexOf(n) < 0) names.push(n);
+                if (S.setPicks[ST_SET]) S.setPicks[ST_SET].api.set('positions', names);
+                return;
+            }
             for (const id of Object.keys(v)) {
                 const k = id === 'none' ? LOOSE : screenKey(id);
                 if (S.pickers[k]) S.pickers[k].sel = v[id].slice();
@@ -5112,12 +5631,30 @@ const SETTINGS_SECTIONS = {
         write(v) { this.put(v); drawSettings(); },
         save: savePositions,
     },
+    // THE ROUTING SET IS THE SET PICK'S THREE ROLE BOXES. A set that could
+    // not be read is not part of the draft (null), and Save leaves it alone.
     routing: {
         label: 'routing set',
-        read: () => (routingUnread() ? null : Object.fromEntries(ROUTING_GROUPS.map(g => [g[0], pickerValue(routeKey(g[0]))]))),
-        put: v => { if (v) for (const g of ROUTING_GROUPS) if (S.pickers[routeKey(g[0])]) S.pickers[routeKey(g[0])].sel = (v[g[0]] || []).slice(); },
+        read: () => {
+            if (routingUnread() || coreBoards(process())) return null;
+            const sel = S.setPicks[ST_SET] ? null : settingsSetSel();
+            return Object.fromEntries(ROUTING_GROUPS.map(g => [g[0], sel ? sel[g[0]] : setPickValue(ST_SET, g[0])]));
+        },
+        put: v => { if (v && S.setPicks[ST_SET]) for (const g of ROUTING_GROUPS) S.setPicks[ST_SET].api.set(g[0], v[g[0]] || []); },
         write(v) { this.put(v); drawSettings(); },
         save: saveRouting,
+    },
+    // THE LINE'S AUTO-REORDER SWITCH SAVES WITH THE PAGE (owner, 2026-11-15:
+    // "just do it on settings when saved. keep things simple and consistent"),
+    // replacing 2026-11-14's "written as it is pressed". The server still
+    // records who switched it, from where and when; the station's own switch
+    // is unchanged.
+    lineReorder: {
+        label: 'auto-reorder for the line',
+        read: () => (S.autoReorder ? { on: !!S.arLine } : null),
+        put: v => { if (v) S.arLine = !!v.on; },
+        write(v) { this.put(v); drawSettings(); },
+        save: async d => doorOut(await send('POST', '/api/processes/' + S.processID + '/auto-reorder', { on: d.on }, NO_NOTICE)),
     },
     parts: {
         label: 'parts',
@@ -5265,7 +5802,7 @@ async function afterSettingsSave(out) {
         sent('process', 'gate', 'hold', 'reorder', 'curtain') ? reloadProcesses() : null,
         wrote('routing') ? loadRouting() : null,
         wrote('parts') ? loadProcessPayloads(S.processID).then(codes => { S.partSet = codes; }) : null,
-        wrote('reorder') ? loadAutoReorder() : null]);
+        wrote('reorder') || wrote('lineReorder') ? loadAutoReorder() : null]);
     // A position or a routing name moved is the Styles tab's too: its pickers
     // and its picture read the composer.
     if (sent('positions') || wrote('routing')) {
@@ -5291,9 +5828,16 @@ function takeSettingsRead(kept) {
         for (const st of stationsOf(S.processID)) keepPickers[screenKey(st.id)] = true;
         keepPickers[LOOSE] = true;
     }
-    if ('routing' in kept) for (const g of ROUTING_GROUPS) keepPickers[routeKey(g[0])] = true;
     if ('parts' in kept) keepPickers[PART_SET_PICKER] = true;
     settingsPickers(true, keepPickers);
+    // The set pick takes what was read as its starting point, box by box,
+    // except the sections that were refused, which keep their drafts.
+    const sp = S.setPicks[ST_SET];
+    if (sp && sp.pid === S.processID) {
+        const read = settingsSetSel();
+        if (!('positions' in kept)) { sp.api.set('positions', read.positions, { clean: true }); S.looseOnto = false; }
+        if (!('routing' in kept)) for (const g of ROUTING_GROUPS) sp.api.set(g[0], read[g[0]], { clean: true });
+    }
     for (const n of Object.keys(kept)) SETTINGS_SECTIONS[n].put(kept[n]);
 }
 
@@ -5407,11 +5951,9 @@ function hasPressIndexClaim() {
 function healthSection() {
     const h = window.CatidHealth;
     if (!h) return '';
-    const slotTags = new Set((S.countingSlots || []).map(s => s.tag));
-    const items = (S.catidItems || []).filter(it =>
-        !(it.kind === 'counter_slot_lockstep' && it.data && slotTags.has(it.data.tag)));
+    const items = healthItems();
     if (!items.length) return '';
-    const need = items.filter(it => it.severity === 'red' || it.severity === 'amber').length;
+    const need = healthNeed();
     return '<div class="pd-sect"><h2>Health</h2><span class="pd-cnt' + (need ? ' warn' : '') + '"><i></i>' +
         (need ? need + ' to look at' : 'nothing needs anyone now') + '</span></div>' +
         '<div class="pd-sfld pd-scl-fld"><label>Items<small>worst first; hover one for its detail</small></label>' +
@@ -5447,17 +5989,9 @@ async function loadCountingSlots() {
 async function loadAutoReorder() {
     const res = await send('GET', '/api/processes/' + S.processID + '/auto-reorder', undefined, NO_NOTICE);
     S.autoReorder = res.ok ? res.body : null;
-}
-
-// flipAutoReorder switches the line on or off, as it is pressed, outside the
-// draft: the Save bar's state is whatever it was. A refusal (no counter, or
-// one that cannot be read now) is the server's sentence, said under the row.
-async function flipAutoReorder(on) {
-    S.autoReorderError = '';
-    const res = await send('POST', '/api/processes/' + S.processID + '/auto-reorder', { on: on }, NO_NOTICE);
-    if (!res.ok) S.autoReorderError = said(res);
-    await loadAutoReorder();
-    drawSettings();
+    // The draft's switch starts where the line is: on unless a person has
+    // switched a position off.
+    S.arLine = S.autoReorder ? !(S.autoReorder.switched_off > 0) : null;
 }
 
 async function loadStationCounters() {
@@ -5569,7 +6103,7 @@ function positionSettings() {
     const head = '<div class="pd-sect"><h2>Position settings</h2>' +
         '<span class="pd-dim">only where a position differs</span></div>';
     const nodes = S.curtainNodes || [];
-    if (!nodes.length) return head + '<p class="pd-note">This process has no positions yet: pick them under Screens and positions.</p>';
+    if (!nodes.length) return head + '<p class="pd-note">This process has no positions yet: pick them under Positions and routing.</p>';
     return head + curtainExceptions(nodes) + countedAtExceptions(nodes) + positionFacts(nodes);
 }
 
@@ -5809,41 +6343,101 @@ async function loadPLCs() {
 // bar. The row says the state and the last switch. Whether the station shows
 // the switch is a setting, in the page's draft (SETTINGS_SECTIONS.reorder).
 function autoReorderSection() {
-    const head = '<div class="pd-sect"><h2>Auto-reorder</h2></div>';
-    const station = stField('Show the switch on the station', '', stToggle('auto_reorder_switch_hmi'));
+    const head = '<div class="pd-sect"><h2>Auto-reorder</h2><span class="pd-dim">needs the production counter</span></div>';
+    const station = stField('Show the switch on the station', '', stSwitch('auto_reorder_switch_hmi',
+        'On · operators can switch the line there too', 'Off · the line is switched here only'));
     const a = S.autoReorder;
     if (!a) return head + '<p class="pd-note">This line’s switch could not be read. Reload the page to switch it.</p>' + station;
-    const off = a.switched_off > 0;
+    const on = !!S.arLine;
+    const stored = !(a.switched_off > 0);
+    const partial = a.switched_off > 0 && a.switched_off < a.positions;
+    const mean = on ? 'On · positions armed on their style rows ask on their own'
+        : on === stored && partial ? 'Off at ' + a.switched_off + ' of ' + a.positions + ' positions'
+            : 'Off · no position asks on its own';
     const when = at => { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleString(); };
-    const state = off ? 'Off' + (a.switched_off < a.positions ? ' at ' + a.switched_off + ' of ' + a.positions + ' positions' : '') : 'On';
     const last = a.last_flip;
     const said = last
-        ? (last.turned_on ? 'on' : 'off') + ' by ' + last.by + (last.source === 'station' ? ' from the station' : '') + ', ' + when(last.at)
+        ? 'switched ' + (last.turned_on ? 'on' : 'off') + ' by ' + last.by + (last.source === 'station' ? ' from the station' : '') + ', ' + when(last.at)
         : 'never switched';
     return head +
-        stField('This line', 'positions armed on their style rows ask on their own',
-            '<b class="pd-arstate">' + esc(state) + '</b><span class="pd-dim">' + esc(said) + '</span>' +
-            '<button class="pd-btn" data-act="ar-flip" data-on="' + (off ? '1' : '') + '">' + (off ? 'Switch on' : 'Switch off') + '</button>') +
-        (S.autoReorderError ? '<div class="pd-refusal">' + esc(S.autoReorderError) + '</div>' : '') +
+        stField('This line', said, '<span class="pd-switch"><button class="pd-chk' + (on ? ' on' : '') + '" data-act="ar-toggle" role="switch" aria-checked="' +
+            (on ? 'true' : 'false') + '"></button><span class="pd-swmean">' + esc(mean) + '</span></span>') +
         station;
 }
 
-// THE JUMP LIST is the sections in their order, each a button to its heading:
-// a page of eleven sections is not scrolled through to reach the ninth.
-const SETTINGS_ORDER = ['Line', 'Production counter', 'Screens and positions', 'Routing set', 'Parts',
-    'Position settings', 'Changeover', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
+// THE SECTION LIST is the sections in their order down the left, each a
+// button to its card, with a dot on one that needs attention (stAttention): a
+// page of eleven sections is not scrolled through to reach the ninth, and the
+// one still to fill in says so before it is reached. Health heads it while
+// there is something on it.
+const SETTINGS_ORDER = ['Health', 'Line', 'Production counter', 'Positions and routing', 'Parts',
+    'Changeover', 'Position settings', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
+
+// settingsOrder is SETTINGS_ORDER as this process's Settings draws it: Health
+// only while it has items.
+function settingsOrder() {
+    return SETTINGS_ORDER.filter(h => h !== 'Health' || healthSection());
+}
+
+// redrawSettingsNav draws the section list again, its dots from the page as it
+// is now.
+function redrawSettingsNav() {
+    const nav = root().querySelector('.pd-stnav');
+    if (nav) nav.outerHTML = settingsNav(settingsOrder());
+}
 
 // LOADER_ORDER is a loader's or unloader's Settings (coreBoards).
 const LOADER_ORDER = ['Line', 'Screens and positions', 'Loader board', 'Danger'];
 
-function settingsJump(order) {
-    return '<nav class="pd-jump" aria-label="Settings sections">' + (order || SETTINGS_ORDER).map(h =>
-        '<button type="button" data-act="st-jump" data-to="' + esc(h) + '">' + esc(h) + '</button>').join('') + '</nav>';
+// stAttention is why a section's dot is lit, or '': Health with an item to
+// look at, a production counter not wired, a line still missing positions,
+// an inbound or an outbound, and a line with no part.
+function stAttention(name) {
+    const p = process() || {};
+    if (name === 'Health') return healthNeed() ? 'something to look at' : '';
+    if (name === 'Production counter') return p.counter_plc_name && p.counter_tag_name ? '' : 'not wired';
+    // The pick is mounted after the cards are drawn, so the first draw reads
+    // what it will be mounted with. A routing set that could not be read has
+    // its boxes closed: nothing in them is known to be missing, so only
+    // Positions can ask.
+    if (name === 'Positions and routing') {
+        const sp = S.setPicks[ST_SET];
+        const sel = sp && sp.pid === S.processID ? sp.api.values() : settingsSetSel();
+        const need = SET_BOXES.filter(b => b.need === 'needed' && !(sel[b.key] || []).length &&
+            (b.key === 'positions' || !routingUnread())).map(b => b.label);
+        return need.length ? 'still to pick: ' + need.join(', ') : '';
+    }
+    // A part a saved flow runs is one the line may run (the palette).
+    if (name === 'Parts') return S.partSet !== null && !pickerValue(PART_SET_PICKER).length && !(S.composer.palette || []).length ? 'no part yet' : '';
+    return '';
 }
 
-// settingsHeading is Settings' section heading that starts with text.
+function settingsNav(order) {
+    return '<nav class="pd-stnav" aria-label="Settings sections">' + order.map(h => {
+        const why = stAttention(h);
+        return '<button type="button" data-act="st-jump" data-to="' + esc(h) + '"' + (why ? ' title="' + esc(why) + '"' : '') + '>' +
+            '<span>' + esc(h) + '</span>' + (why ? '<i class="pd-stdot" aria-label="' + esc(why) + '"></i>' : '') + '</button>';
+    }).join('') + '</nav>';
+}
+
+// stCard is one section as a card: its markup (which opens with its heading),
+// whether it takes the page's full width, and its tone ('warn': the outline
+// says it still needs filling in).
+function stCard(name, html, wide, tone) {
+    if (!html) return '';
+    return '<section class="pd-card' + (wide ? ' wide' : '') + (tone ? ' ' + tone : '') + '" data-sect="' + esc(name) + '">' + html + '</section>';
+}
+
+// settingsHeading is the card whose heading starts with text, or that heading.
 function settingsHeading(text) {
-    return [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(text) === 0) || null;
+    const h = [...root().querySelectorAll('h2')].find(x => String(x.textContent || '').indexOf(text) === 0) || null;
+    return h ? (h.closest ? h.closest('.pd-card') || h : h) : null;
+}
+
+// stSwitch is an on/off setting as a switch with what it means beside it,
+// in the state it is in.
+function stSwitch(key, on, off) {
+    return '<span class="pd-switch">' + stToggle(key) + '<span class="pd-swmean">' + esc(S.settings[key] ? on : off) + '</span></span>';
 }
 
 function drawSettings() {
@@ -5868,14 +6462,14 @@ function drawSettings() {
     const counter = '<div class="pd-sect"><h2>Production counter</h2>' +
         (card ? card.titleHTML(view)
             : '<span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' + esc(counting ? 'counting' : 'not wired') + '</span>') +
-        '</div>' +
+        '<span class="pd-dim">needed for auto-reorder</span></div>' +
         // WarLink's own list, not one Shingo keeps: a PLC missing here is one
         // WarLink was never told about, so the field says where to add it.
         stField('PLC', 'PLCs set up in WarLink', plcPick()) +
         stField('Tag', '', stCombo('counter_tag_name', 'counter', '[data-st="counter_plc_name"]', '')) +
         // Auto-reorder needs the line's counter configured and reading: the
         // server refuses switching it on otherwise.
-        stField('Counting', 'needed for auto-reorder', stToggle('counter_enabled')) +
+        stField('Counting', '', stSwitch('counter_enabled', 'On · this line’s strokes are counted', 'Off · not counted; auto-reorder needs it')) +
         (hasPressIndexClaim() ? '<p class="pd-note">' + esc(PRESS_INDEX_COUNTING) + '</p>' : '') +
         identityField() + (card ? card.countingHTML(view) : '');
 
@@ -5892,8 +6486,6 @@ function drawSettings() {
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
         (S.partSet === null
             ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
-            // stField, not the sheets' pickerField: its .pd-fld is the sheet's
-            // 230 px grid, so this one row's box started left of every other.
             : stField('Parts', 'what this process may run — the catalog is Core’s', pickerBox(PART_SET_PICKER))) +
         '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
 
@@ -5915,7 +6507,8 @@ function drawSettings() {
     // as its provenance.
     const setup = '<div class="pd-sect"><h2>Operator setup</h2><span class="pd-spacer"></span>' +
         '<button class="pd-btn" data-act="new-recipe">New recipe</button></div>' +
-        stField('Operators set styles up', 'from a recipe, on the station', stToggle('flow_composer_enabled')) +
+        stField('Operators set styles up', '', stSwitch('flow_composer_enabled',
+            'On · operators set styles up from a recipe, on the station', 'Off · operators pick from the styles')) +
         hmiRecipes();
 
     // QUALITY HOLD — a per-process opt-in. Off (the default) means every
@@ -5929,8 +6522,8 @@ function drawSettings() {
     const holdOn = !!S.settings.quality_hold_enabled;
     const dest = S.settings.quality_hold_destination || '';
     const hold = '<div class="pd-sect"><h2>Quality hold</h2></div>' +
-        stField('Contain finished goods on a quality alert', 'off: they go to their outbound destination',
-            stToggle('quality_hold_enabled')) +
+        stField('Contain finished goods on a quality alert', '', stSwitch('quality_hold_enabled',
+            'On · they go to the containment destination', 'Off · finished goods go to their outbound destination')) +
         (holdOn
             ? stField('Containment destination', '',
                 '<button class="pd-sel" data-act="st-holddest">' +
@@ -5949,17 +6542,41 @@ function drawSettings() {
     const body = shell.body;
     const wasAt = shell.sheet.scrollTop || 0;
     shell.top.innerHTML = appbar();
+    const notes = (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
+        (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '');
     // A LOADER'S OR UNLOADER'S SETTINGS ARE ITS LINE AND ITS SCREENS, and
     // where the rest is set: Core runs its board (coreBoards). Danger stays,
     // the one way to delete the process.
-    const loaderBody = () => settingsJump(LOADER_ORDER) + line + screensSection() +
-        '<div class="pd-sect"><h2>Loader board</h2></div>' +
-        '<p class="pd-note">Core runs this board: its windows, parts and order are set on Core, under Loaders.</p>' + danger;
-    body.innerHTML = (coreBoards(p) ? loaderBody()
-        : settingsJump() + healthSection() + line + counter + screensSection() + routingSection() + partsSect +
-            positions + changeover + setup + autoReorderSection() + hold + danger) +
-        (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
-        (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '');
+    if (coreBoards(p)) {
+        body.innerHTML = '<div class="pd-stlayout">' + settingsNav(LOADER_ORDER) + '<div class="pd-stcards">' + notes +
+            stCard('Line', line) + stCard('Screens and positions', screensSection(), true) +
+            stCard('Loader board', '<div class="pd-sect"><h2>Loader board</h2></div>' +
+                '<p class="pd-note">Core runs this board: its windows, parts and order are set on Core, under Loaders.</p>') +
+            stCard('Danger', danger, false, 'danger') + '</div></div>';
+    } else {
+        const health = healthSection();
+        const order = settingsOrder();
+        const wired = !!(p.counter_plc_name && p.counter_tag_name);
+        body.innerHTML = '<div class="pd-stlayout">' + settingsNav(order) + '<div class="pd-stcards">' + notes +
+            stCard('Health', health, true) +
+            stCard('Line', line) +
+            stCard('Production counter', counter, false, wired ? '' : 'warn') +
+            stCard('Positions and routing', positionsRoutingSection(), true) +
+            stCard('Parts', partsSect) +
+            stCard('Changeover', changeover) +
+            stCard('Position settings', positions, true) +
+            stCard('Operator setup', setup, (S.composer.presets || []).length > 0) +
+            stCard('Auto-reorder', autoReorderSection()) +
+            stCard('Quality hold', hold) +
+            stCard('Danger', danger, false, 'danger') + '</div></div>';
+        mountSetPick(ST_SET, 'sp-' + ST_SET, settingsSetSel(), {
+            pid: S.processID,
+            closed: b => (b !== 'positions' && routingUnread() ? S.routingError || 'the routing set could not be read' : ''),
+            note: b => (b === 'staging' ? backPositionsLine() : ''),
+            onChange: settingsSetMoved,
+        });
+        drawScreenLines();
+    }
 
     // A typed value is the draft at once; the shared page marks the bar on the
     // same input, after this listener.
@@ -5975,6 +6592,18 @@ function drawSettings() {
     if (wasAt) shell.sheet.scrollTop = wasAt;
     // A draft changed from code (a pick, a switch) is the bar's to mark too.
     shell.page.update();
+}
+
+// healthItems is the items Health draws: the process's, less a second counter
+// of a stroke the MES slots row already says on its slot's line.
+function healthItems() {
+    const slotTags = new Set((S.countingSlots || []).map(s => s.tag));
+    return (S.catidItems || []).filter(it => !(it.kind === 'counter_slot_lockstep' && it.data && slotTags.has(it.data.tag)));
+}
+
+// healthNeed is how many of Health's items need someone now (red or amber).
+function healthNeed() {
+    return healthItems().filter(it => it.severity === 'red' || it.severity === 'amber').length;
 }
 
 // bindCombos wires the curtain's per-node typeahead fields. The list is FILTERED BY
@@ -6428,12 +7057,13 @@ function bindPickers() {
 // It answers #pd-pop living inside #pd-root, which the scrim covers; a list opened from a sheet against the page's popover
 // draws behind the modal. One per sheet — and the sheets that never open one
 // pay an empty div.
-function pageSheet(title, sub, body, confirm, run, danger, opener) {
+// wide: the process sheet, whose set pick draws its four boxes side by side.
+function pageSheet(title, sub, body, confirm, run, danger, opener, wide) {
     if (S.sheet && S.sheet.handle) S.sheet.handle.close('replaced');
     const h = openSheet({
         title: title, sub: sub, ok: confirm, danger: !!danger, opener: opener || undefined,
         body: body + '<div class="pd-pop" id="pd-advpop" hidden></div>',
-        cardClass: 'layer-card layer-sheet pd-modal',
+        cardClass: 'layer-card layer-sheet pd-modal' + (wide ? ' pd-wide' : ''),
         backdrop: true,
         run: () => run(),
         onClose: why => sheetGone(h, why),
@@ -6501,6 +7131,8 @@ function sheetGone(h, why) {
     // the engineer when this sheet is opened again. Settings' own pickers are
     // in #pd-root and stay.
     for (const k of Object.keys(S.pickers)) if (!$('npk-' + k)) dropPicker(k);
+    // So is the process sheet's set pick; Settings' is kept across tabs.
+    dropSetPick(PROC_SET);
     // The apply modal's ticks and previews go with it: reopening it must start
     // from nothing ticked (explicit re-apply), not from what was ticked last
     // time and previewed against a flow that has since been saved.
@@ -6837,7 +7469,7 @@ function openNewStyle(recipeID, sel) {
             esc(recipe ? recipe.name : NO_RECIPE) + '<i class="car"></i></button>' +
             '<input type="hidden" data-f="recipe" value="' + esc(recipe ? recipe.id : '') + '"></div></div>'
             : '<p class="pd-note">A style from a recipe is made at a screen, and this process has none. ' +
-            '<button class="pd-dimlink" data-act="newstyle-screens">Add one in Settings › Screens and positions</button>' +
+            '<button class="pd-dimlink" data-act="newstyle-screens">Add one in Settings › Positions and routing</button>' +
             ', or draw this style by hand.</p>') +
         '<div id="pd-newslots"></div>' +
         '<div id="pd-newspots"></div>' +
@@ -7333,16 +7965,14 @@ async function addAndUse(node, field, name) {
     return '';
 }
 
-// ── Add process: a name and a group, then Setup ─────────────────────────────
+// ── Add process, and its Change… (the same sheet, filled in) ────────────────
 //
-// ADD PROCESS ASKS TWO THINGS (owner, 2026-11-14): what the process is called
-// and the group it sits in on the list. Everything else a process needs has
-// one home each, on Settings in setup order, and the Setup tab the new process
-// lands on links to each in turn: positions, routing set, parts, the first
-// style, and the operator screen last. It made a screen up front, and asked
-// for positions, the routing set and parts in one sheet that Edit process
-// reopened filled in; that sheet was a second door to four Settings sections,
-// and it is gone with Edit process.
+// ONE SHEET MAKES A LINE (owner, 2026-11-15): its name, its group, its
+// operator screen, its positions and routing set on the set pick, and its
+// parts. Only the name is needed: Setup walks through the rest, and its
+// Change… opens this sheet again, filled in (HOP, 2026-11-12: correcting a
+// process is answering the questions that made it). The screen is made with
+// the process, so the line someone leaves Setup with has one to open.
 
 // The part set's picker, Settings' "Parts this process runs".
 const PART_SET_PICKER = 'parts';
@@ -7360,43 +7990,273 @@ async function loadProcessPayloads(processID) {
     return Array.isArray(res.body) ? res.body : [];
 }
 
-function openAddProcess() {
-    S.add = { groupID: 0 };
-    const body = '<div class="pd-addproc">' +
-        sheetField('Name', 'what this process is called here', 'name', '') +
-        '<div class="pd-fld"><label>Group<small>groups processes on the list</small></label>' +
-        '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">Ungrouped<i class="car"></i></button></div></div>' +
-        '</div>';
-    pageSheet('Add process', 'Setup then walks through what it needs to run.', body, 'Create', submitAddProcess, false);
-    const el = sheetEl().querySelector('[data-f="name"]');
-    if (el) el.addEventListener('input', () => {
-        if (S.add && S.add.refused) { S.add.refused = false; sheetStatus('', false); }
-    });
+const PROC_SET = 'proc';
+
+function openAddProcess() { processSheet(null); }
+
+// openEditProcess is Setup's Change…: the sheet over the open process, read
+// fresh first. Each door behind it writes destructively (claimed-nodes and the
+// part set are set-tos), so a screen whose positions could not be read opens
+// nothing, and a part set or routing set that could not be read is left alone
+// by Save.
+async function openEditProcess() {
+    const p = process();
+    if (!p) return;
+    const screens = stationsOf(p.id);
+    const [, parts, , ...lists] = await Promise.all([loadCoreNodes(), loadProcessPayloads(p.id), loadCurtainNodes(),
+        ...screens.map(st => readStationNodes(st.id))]);
+    if (lists.some(l => !l)) {
+        toast('A screen’s positions could not be read, so they cannot be changed yet. Try again.', 'error');
+        return;
+    }
+    screens.forEach((st, i) => { S.stationNodes[String(st.id)] = lists[i].slice(); });
+    if (!S.routing) await loadRouting();
+    processSheet({ p: p, screens: screens, parts: parts, routingRead: !routingUnread() });
 }
 
-// submitAddProcess makes the process and opens it, on Setup: one write. The
-// gate stays shut (brief U0, 2026-10-18): a new process opens to the floor
-// only when an engineer turns it on in Settings.
+// processSheet draws the process sheet: Add process (edit null) or its
+// Change… (edit: what openEditProcess read).
+function processSheet(edit) {
+    const pid = edit ? edit.p.id : 0;
+    S.add = { groupID: edit ? (edit.p.group_id || 0) : 0, edit: edit };
+    const sel = { positions: [], source: [], staging: [], destination: [] };
+    if (edit) {
+        sel.positions = processPositions();
+        for (const g of ROUTING_GROUPS) sel[g[0]] = routingRowsFor(g[0]).map(r => r.core_node_name);
+        S.add.before = {
+            process: settingsDraftFor(edit.p),
+            screen: edit.screens.length === 1 ? edit.screens[0].name : '',
+            sel: JSON.parse(JSON.stringify(sel)),
+            parts: edit.parts ? edit.parts.slice() : null,
+        };
+    }
+    pickerInit(PART_SET_PICKER, { source: 'payloads', selected: edit && edit.parts ? edit.parts : [], fold: PART_FOLD,
+        placeholder: 'find a part by name' });
+    const group = S.groups.find(g => g.id === S.add.groupID);
+    // A LINE HAS ONE SCREEN (owner, 2026-11-15). One made before that with
+    // two is named here, and each of its screens is its own on Settings.
+    let screenField = sheetField('Operator screen', 'blank: named after the process', 'screen', '');
+    if (edit && edit.screens.length === 1) screenField = sheetField('Operator screen', 'its HMI', 'screen', edit.screens[0].name);
+    else if (edit && edit.screens.length > 1) {
+        screenField = '<div class="pd-fld"><label>Operator screens<small>each set on Settings</small></label>' +
+            '<div class="v"><span class="pd-dim">' + esc(edit.screens.map(st => st.name).join(' · ')) + '</span></div></div>';
+    }
+    const unread = what => '<p class="pd-note pd-warn">This process’s ' + what + ' could not be read, so Save leaves it alone. ' +
+        'Reload the page to change it.</p>';
+    const body = '<div class="pd-addproc pd-procsheet">' +
+        '<div class="pd-two">' + sheetField('Name', 'what this process is called here', 'name', edit ? edit.p.name : '') +
+        screenField + '</div>' +
+        '<div class="pd-fld"><label>Group<small>groups processes on the list</small></label>' +
+        '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
+        esc(group ? group.name : 'Ungrouped') + '<i class="car"></i></button></div></div>' +
+        '<div class="pd-sec"><div class="pd-lbl">Nodes</div><span class="pd-dim">click a box, then tick nodes into it</span></div>' +
+        (edit && !edit.routingRead ? unread('routing set') : '') +
+        '<div class="pd-sphost" id="sp-' + PROC_SET + '"></div>' +
+        '<div class="pd-sec"><div class="pd-lbl">Parts</div></div>' +
+        pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s') +
+        (edit && edit.parts === null ? unread('part set') : '') +
+        '<p class="pd-still" id="pd-still"></p></div>';
+    pageSheet(edit ? 'Edit process' : 'Add process',
+        edit ? 'what this process is, what works it, and where its bins come from and go.'
+            : 'Name it, pick its nodes, pick a part. Only the name is needed now; Setup walks you through the rest.',
+        body, edit ? 'Save' : 'Create', edit ? submitEditProcess : submitAddProcess, false, undefined, true);
+    mountSetPick(PROC_SET, 'sp-' + PROC_SET, sel, {
+        pid: pid, fresh: true,
+        closed: b => (edit && !edit.routingRead && b !== 'positions' ? 'the routing set could not be read' : ''),
+        onChange: drawStill,
+    });
+    loadLivePositions().then(() => { const sp = S.setPicks[PROC_SET]; if (sp) sp.api.refresh(); });
+    drawStill();
+    // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the
+    // up-front check clears this way: a refusal from the write chain is the
+    // record of what was already made, and typing must not erase it.
+    for (const f of ['name', 'screen']) {
+        const el = sheetEl().querySelector('[data-f="' + f + '"]');
+        if (el) el.addEventListener('input', () => {
+            if (S.add && S.add.refused) { S.add.refused = false; sheetStatus('', false); }
+        });
+    }
+    // The screen's name follows the process's until one is typed.
+    const nameBox = sheetEl().querySelector('[data-f="name"]');
+    const screenBox = sheetEl().querySelector('[data-f="screen"]');
+    if (nameBox && screenBox && !screenBox.value) {
+        nameBox.addEventListener('input', () => { screenBox.placeholder = nameBox.value.trim() || 'blank: named after the process'; });
+    }
+}
+
+// drawStill is the sheet's line over its buttons: what the line still needs,
+// in the colour of the first box it names, and that Setup finishes it too.
+function drawStill() {
+    const el = $('pd-still');
+    if (!el) return;
+    const need = stillNeeded(PROC_SET);
+    const first = SET_BOXES.find(b => b.label === need[0]);
+    el.innerHTML = need.length
+        ? '<i class="setpick-dot" data-role="' + esc(first.role) + '"></i>Still to pick: <b>' + esc(need.join(', ')) +
+            '</b>. You can also finish it in Setup.'
+        : '';
+}
+
+// submitAddProcess is Create: a chain of writes, each once per sheet, that
+// stops at the first refusal and resumes there on the next press (ruling 5),
+// saying what already landed:
+//   1. the process; 2. its screen, named as typed or after the process (a
+//   line with no screen cannot be run); 3. the positions on that screen;
+//   4. the routing set, inbound, staging and outbound, each in picked order
+//   (the lowest of a role is a new position's default), in one write;
+//   5. the part set. The flow-composer gate stays shut (brief U0).
 async function submitAddProcess() {
     const name = String(sheetValue('name') || '').trim();
     if (!name) { S.add.refused = true; sheetStatus('A process needs a name.', true); return; }
+    const screen = String(sheetValue('screen') || '').trim() || name;
     S.add.refused = false;
     sheetStatus('Creating…');
-    const made = await send('POST', '/api/processes', B().processCreate({ name: name, description: '', group_id: S.add.groupID }), NO_NOTICE);
-    if (!made.ok) { sheetStatus(said(made), true); return; }
+    const chain = chainMade();
+    if (!chain.processID) {
+        const made = await send('POST', '/api/processes', B().processCreate({ name: name, description: '', group_id: S.add.groupID }), NO_NOTICE);
+        if (!made.ok) { sheetStatus(said(made), true); return; }
+        chain.processID = Number(bodyOf(made).id);
+        chain.done = ['The process was created'];
+        chainHalf(async () => { await reloadProcesses(); await reloadStations(); if (!S.processID) drawList(); });
+    }
+    const processID = chain.processID;
+    const done = chain.done;
+    const stop = (what, out) => sheetStatus(done.join('; ') + '. ' + what + (out.shown ? ' was not written.' : ' was refused: ' + out.error), true);
+    if (!chain.stationID) {
+        const st = await send('POST', '/api/operator-stations', B().stationWrite(null, processID, false, { name: screen, note: '' }), NO_NOTICE);
+        if (!st.ok) { stop('Its operator screen', st); return; }
+        chain.stationID = Number(bodyOf(st).id);
+        done.push('its screen added');
+    }
+    const stationID = chain.stationID;
+    const claimed = setPickValue(PROC_SET, 'positions');
+    if (claimed.length && !chain.claimed) {
+        const nodes = await send('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes', B().stationNodes(claimed), NO_NOTICE);
+        if (!nodes.ok) { stop('Its positions', nodes); return; }
+        chain.claimed = true;
+        done.push('its positions claimed');
+    }
+    const rows = [];
+    for (const g of ROUTING_GROUPS) for (const n of setPickValue(PROC_SET, g[0])) rows.push({ core_node_name: n, role: g[0] });
+    if (rows.length && !chain.routed) {
+        const out = await send('PUT', '/api/processes/' + processID + '/routing-nodes', B().routingSet(rows), NO_NOTICE);
+        if (!out.ok) { stop('Its routing set', out); return; }
+        chain.routed = true;
+        done.push('its routing set written');
+    }
+    const partSet = pickerValue(PART_SET_PICKER);
+    if (partSet.length && !chain.parts) {
+        const out = await send('PUT', '/api/processes/' + processID + '/payloads', B().processPayloads(partSet), NO_NOTICE);
+        if (!out.ok) { stop('Its part set', out); return; }
+        chain.parts = true;
+        done.push('its part set written');
+    }
+    chainDone();
     closeSheet();
+    dropSetPick(PROC_SET);
     await reloadProcesses();
-    await openProcess(Number(bodyOf(made).id));
+    await reloadStations();
+    await openProcess(processID);
 }
 
-// ── D4's screen sheet, D5's group picker and its danger ──────────────────────
-// Both station handlers decode the WHOLE StationInput and write every field.
-// A body with only a name and a note would blank the screen's code, area,
-// sequence and controller, reset its device mode, and (enabled defaulting to
-// false) switch a live HMI off to fix a typo in its note. So an edit starts
-// from the station as it stands, which is also better than the retired page,
-// whose saveStation blanked those four on every edit. A new screen takes what
-// that page sent for one (ffa4ff0d): fixed_hmi, enabled.
+// submitEditProcess is the Change… sheet's Save: what moved, through the doors
+// Settings saves with, in the order one write needs another, stopping at the
+// first refusal with what already landed named:
+//   1. the process row (name, group); 2. the screen, renamed, or made when the
+//   line has none and is given a name or positions (it takes every position on
+//   no screen); 3. the positions (savePositions, which asks first when one is
+//   taken off: Save again takes it off); 4. the routing set, in one write that
+//   adds and takes out (saveRouting); 5. the part set, when it was read.
+// Each step moves its `before` forward as it lands, so a press after a refusal
+// resumes where it stopped.
+async function submitEditProcess() {
+    const e = S.add.edit;
+    const p = e.p;
+    const before = S.add.before;
+    const typed = (f, was) => (sheetEl().querySelector('[data-f="' + f + '"]') ? String(sheetValue(f) || '').trim() : was);
+    const name = typed('name', p.name || '');
+    if (!name) { S.add.refused = true; sheetStatus('A process needs a name.', true); return; }
+    S.add.refused = false;
+    const done = S.add.done || (S.add.done = []);
+    const stop = (what, out) => sheetStatus((done.length ? done.join('; ') + '. ' : '') + what +
+        (out.shown ? ' was not written.' : ' was refused: ' + out.error), true);
+    sheetStatus('Saving…');
+    S.saveNotes = [];
+
+    const draft = Object.assign(settingsDraftFor(p), { name: name, group_id: S.add.groupID || 0 });
+    if (JSON.stringify(draft) !== JSON.stringify(before.process)) {
+        const out = await send('PUT', '/api/processes/' + p.id, B().processSettings(p, draft), NO_NOTICE);
+        if (!out.ok) { stop('The process', out); return; }
+        before.process = draft;
+        done.push('The process was saved');
+    }
+
+    const positions = setPickValue(PROC_SET, 'positions');
+    const screenName = e.screens.length < 2 ? typed('screen', before.screen) : '';
+    let made = false;
+    if (e.screens.length === 1 && screenName && screenName !== before.screen) {
+        const st = e.screens[0];
+        const out = await send('PUT', '/api/operator-stations/' + st.id, stationBody(st, true, { name: screenName, note: st.note || '' }), NO_NOTICE);
+        if (!out.ok) { stop('Its operator screen', out); return; }
+        before.screen = screenName;
+        done.push('its screen renamed');
+    } else if (!e.screens.length && (screenName || positions.length)) {
+        const out = await send('POST', '/api/operator-stations',
+            B().stationWrite(null, p.id, false, { name: screenName || name, note: '' }), NO_NOTICE);
+        if (!out.ok) { stop('Its operator screen', out); return; }
+        await reloadStations();
+        S.stationNodes[String(Number(bodyOf(out).id))] = [];
+        e.screens = stationsOf(p.id);
+        made = true;
+        done.push('its screen added');
+    }
+
+    if (made || JSON.stringify(positions) !== JSON.stringify(before.sel.positions)) {
+        const out = await savePositions(screensDraft(positions, made));
+        if (!out.ok) { stop('Its positions', out); return; }
+        before.sel.positions = positions.slice();
+        done.push('its positions set');
+    }
+
+    if (e.routingRead) {
+        const now = {};
+        const was = {};
+        for (const g of ROUTING_GROUPS) { now[g[0]] = setPickValue(PROC_SET, g[0]); was[g[0]] = before.sel[g[0]]; }
+        if (JSON.stringify(now) !== JSON.stringify(was)) {
+            const out = await saveRouting(now);
+            if (!out.ok) { stop('Its routing set', out); return; }
+            for (const g of ROUTING_GROUPS) before.sel[g[0]] = now[g[0]].slice();
+            done.push('its routing set written');
+            S.saveNotes.push('The routing set was saved.');
+        }
+    }
+
+    if (before.parts !== null) {
+        const want = pickerValue(PART_SET_PICKER);
+        if (JSON.stringify(want) !== JSON.stringify(before.parts)) {
+            const out = await writePartSet(want);
+            if (!out.ok) { stop('Its part set', out); return; }
+            before.parts = want.slice();
+            done.push('its part set saved');
+            S.saveNotes.push('The part set was saved.');
+        }
+    }
+
+    const summary = S.saveNotes.join(' ') || (done.length ? 'Saved.' : 'Nothing had changed.');
+    S.saveNotes = [];
+    closeSheet();
+    dropSetPick(PROC_SET);
+    await reloadStations();
+    await refreshProcessStationNodes();
+    await Promise.all([loadRouting(), loadCurtainNodes()]);
+    S.partSet = null;
+    await loadPartSet();
+    // Settings' own pick is built on what this sheet changed: drawn anew.
+    dropSetPick(ST_SET);
+    await refreshProcess();
+    if (S.tab === 'settings') { S.settingsNotice = summary; drawSettings(); } else toast(summary, 'info');
+}
+
 function stationBody(st, editing, change) {
     return B().stationWrite(st, S.processID, editing, change);
 }
@@ -7413,25 +8273,56 @@ function keptPositionsSentence(names) {
 // Settings › Screens and positions, the one editor of a screen's positions
 // (owner ruling 2026-11-14: one editor per fact); this sheet wrote the same
 // claimed-nodes list from a second picker.
+// A NEW SCREEN TAKES THE POSITIONS ON NO SCREEN (the setup inventory's trap:
+// a screen added after its positions took none of them, and its row had no
+// picker until a Save, so the same three were picked twice). It is offered
+// only on a line with no screen (owner, 2026-11-15: a line has one), and it
+// takes every position the Positions box holds, saved or not yet.
 async function openScreenSheet(stationID) {
     const st = stationsOf(S.processID).find(s => s.id === Number(stationID)) || {};
     const editing = !!st.id;
+    let made = 0;
+    const takes = editing || stationsOf(S.processID).length ? []
+        : (S.setPicks[ST_SET] && S.setPicks[ST_SET].pid === S.processID ? setPickValue(ST_SET, 'positions') : loosePositions());
     pageSheet(editing ? 'Edit ' + st.name : 'Add operator screen',
-        editing ? 'the HMI an operator works this process from. Its positions are its row in Settings.'
-            : 'the HMI an operator works this process from. Pick its positions in its row once it is added.',
-        sheetField('Name', 'what the screen is called on the floor', 'name', st.name) +
-        sheetField('Note', 'anything the next engineer should know about it', 'note', st.note),
+        editing ? 'the HMI an operator works this process from. Its positions are the Positions box in Settings.'
+            : 'the HMI an operator works this process from.',
+        sheetField('Name', 'what the screen is called on the floor', 'name', editing ? st.name : (process() || {}).name || '') +
+        sheetField('Note', 'anything the next engineer should know about it', 'note', st.note) +
+        (takes.length ? '<p class="pd-note">It takes ' + (takes.length === 1 ? 'the position' : 'the ' + takes.length + ' positions') +
+            ' on no screen: ' + esc(takes.join(', ')) + '.</p>' : ''),
         editing ? 'Save' : 'Add',
         async () => {
-            const wrote = await send(editing ? 'PUT' : 'POST',
-                editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
-                stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }), NO_NOTICE);
-            if (!wrote.ok) { sheetStatus(said(wrote), true); return; }
-            const id = editing ? st.id : Number(bodyOf(wrote).id);
+            // A press after its positions were refused resumes there: the
+            // screen it already made is not made twice.
+            let id = made;
+            if (!id) {
+                const wrote = await send(editing ? 'PUT' : 'POST',
+                    editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
+                    stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }), NO_NOTICE);
+                if (!wrote.ok) { sheetStatus(said(wrote), true); return; }
+                id = editing ? st.id : Number(bodyOf(wrote).id);
+                if (!editing) made = id;
+            }
+            if (takes.length) {
+                const put = await send('PUT', '/api/operator-stations/' + id + '/claimed-nodes', B().stationNodes(takes), NO_NOTICE);
+                if (!put.ok) { sheetStatus('The screen was added. Its positions were refused: ' + said(put), true); await reloadStations(); return; }
+            }
             closeSheet();
             await reloadStations();
             await refreshStationNodes(id);
+            if (takes.length) await loadCurtainNodes();
             await refreshProcess();
+            // WHAT IT TOOK IS SAVED: the Positions box starts from what the
+            // screen now holds, so the bar does not call the screen's own
+            // positions unsaved.
+            const sp = S.setPicks[ST_SET];
+            if (takes.length && sp && sp.pid === S.processID && S.tab === 'settings' && S.stShell) {
+                sp.api.set('positions', processPositions(), { clean: true });
+                S.looseOnto = false;
+                S.stShell.page.rebase(['positions']);
+                drawSettings();
+            }
         },
         false);
 }
@@ -7569,7 +8460,7 @@ function presetsView() { return (S.presets && S.presets.view) || null; }
 // Settings there. Settings reads the recipes view with the rest of its reads.
 async function openPresets() {
     S.presets = S.presets || { view: null, error: '', expanded: 0 };
-    await openSettingsAt('HMI');
+    await openSettingsAt('Operator setup');
 }
 
 // A LOGIN PAGE IS NOT "COULD NOT REACH" (P0 bug, :7138). The read parsed the
@@ -7916,7 +8807,7 @@ async function leaveShapeDraft(to) {
     if (res.ok) takeComposer(res.body);
     selectStyle(back);
     if (to) showTab(to);
-    else if (fromTab === 'settings') await openSettingsAt('HMI');
+    else if (fromTab === 'settings') await openSettingsAt('Operator setup');
     else if (fromTab === 'setup') { S.tab = 'setup'; drawSetup(); syncHash(); }
 }
 
@@ -8483,7 +9374,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1, 'ch-pin-pick': 1 };
+    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1, 'ch-pin-pick': 1, 'fs-part': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
 // Styles. The Recipes tab's hash still says presets (F23); recipes names it
@@ -8491,6 +9382,9 @@ const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position
 function hashTab(t) {
     if (!t) return 'flows';
     if (t === 'recipes') return 'presets';
+    // The tab reads Styles; its id is flows. #tab=styles typed on an open
+    // process went nowhere (it is no id).
+    if (t === 'styles') return 'flows';
     // The Operator screens tab is Settings' Screens and positions now; a link
     // to it lands there.
     if (t === 'screens') return 'settings';
@@ -8515,6 +9409,7 @@ function showTab(t) {
 function tabTo(t) {
     // A tab picked by hand is the engineer leaving the walkthrough.
     S.fromSetup = false;
+    if (t !== 'setup') { S.setupEnd = 0; S.setupView = ''; stopSetupPoll(); }
     if (!S.shapeDraft || t === S.tab) { showTab(t); return; }
     const go = () => void leaveShapeDraft(t);
     if (!draftHold(go)) go();
@@ -8639,7 +9534,8 @@ function onClick(e) {
                 drawSettings();
                 return;
             }
-            case 'ar-flip': void flipAutoReorder(btn.dataset.on === '1'); return;
+            case 'ar-toggle': S.arLine = !S.arLine; drawSettings(); return;
+            case 'loose-onto': S.looseOnto = true; settingsSetMoved(); return;
             case 'preset-older':
                 S.presets.older = !S.presets.older;
                 drawPresets();
@@ -8776,7 +9672,21 @@ function onClick(e) {
                 return;
             }
             case 'add-position': addFreePosition(btn); return;
-            case 'setup-go': void setupGo(btn.dataset.setup); return;
+            case 'setup-edit': void setupGo('edit'); return;
+            case 'setup-styles': void setupGo('styles'); return;
+            case 'setup-style': void setupGo('style'); return;
+            case 'setup-onto': void setupGo('onto'); return;
+            case 'setup-skip': void setupGo('skip'); return;
+            case 'setup-show': void setupGo('show'); return;
+            case 'setup-later': void openSettingsAt(btn.dataset.to); return;
+            case 'fs-mode': S.firstStyle.mode = btn.dataset.mode; S.firstStyle.each = false; S.firstStyle.modes = {}; firstStyleChanged(); return;
+            case 'fs-mode1': S.firstStyle.modes[btn.dataset.node] = btn.dataset.mode; firstStyleChanged(); return;
+            case 'fs-role': S.firstStyle.role = btn.dataset.role; firstStyleChanged(); return;
+            case 'fs-each': S.firstStyle.each = !S.firstStyle.each; S.firstStyle.modes = {}; firstStyleChanged(); return;
+            case 'fs-part': openFirstPart(btn); return;
+            case 'fs-table': openFirstTable(); return;
+            case 'fs-back': S.setupView = ''; drawSetup(); return;
+            case 'fs-save': void saveFirstStyle(); return;
             default: break;
         }
     }

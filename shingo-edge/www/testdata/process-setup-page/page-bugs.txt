@@ -40,6 +40,11 @@ ok   the rows follow the node adapter's
 ## census #4: Core's nodes are offered groups first, nodes with no type last
 ok   GRP_Q first with A_PLAIN and DST_7 under it, Z_PLAIN last
 
+## set pick: a click on a box of Settings' set pick opens that box and navigates nowhere
+ok   the box opens
+ok   no request names a process NaN
+ok   the page stays on Press A
+
 ## census #3: a source added in Settings is offered on the Styles tab
 ok   POS_A5's Inbound source offers SRC_2
 
@@ -99,7 +104,7 @@ ok   no position at all: the block offers the loader
 
 ## slice 5: New style on a process with no screen says a recipe style is made at one
 ok   no recipe chooser
-ok   the line says why, and goes to Screens and positions
+ok   the line says why, and goes to Positions and routing
 
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
 ok   no refusal block leaves the page silent

@@ -841,9 +841,58 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }
 
-/* Settings' shell (settingsShell): the sections are drawn in its body under
-   the jump list, whose line is the first section's top edge. */
-.pd-settings > .pd-stbody > .pd-jump + .pd-sect { border-top: 0; }
+/* ── Settings: the section list and the cards (owner, 2026-11-15) ──────────
+   The page takes the full width: the sections down the left, each a link to
+   its card with a dot on one that needs attention, and the cards two to a row,
+   a wide one across both. A card's heading is its first line; a link lands
+   with it in view. The production counter's card is outlined amber while it is
+   not wired, Danger's in the danger ink. Core's config pages keep their own
+   width (.set-ui.set-page). */
+.pd-sheet.pd-settings { max-width: none; }
+.pd-stlayout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+.pd-stnav { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.pd-stnav button {
+    display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: var(--radius);
+    background: none; color: var(--text-muted); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer;
+}
+.pd-stnav button span { flex: 1; min-width: 0; }
+.pd-stnav button:hover, .pd-stnav button:focus-visible { background: var(--surface); color: var(--text); }
+.pd-stdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--viz-amber); }
+.pd-stcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; min-width: 0; }
+.pd-stcards > .pd-refusal, .pd-stcards > .pd-notice { grid-column: 1 / -1; }
+.pd-card {
+    min-width: 0; padding: 4px 18px 14px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px);
+    background: var(--surface); scroll-margin-top: 16px;
+}
+.pd-card.wide { grid-column: 1 / -1; }
+.pd-card.warn { border-color: var(--viz-amber); }
+.pd-card.danger { border-color: var(--chip-ink-below); }
+.pd-card > .pd-sect:first-child { border-top: 0; }
+/* A card's label column is narrower than the page's 300 px, and a note under
+   a field starts where the values do. */
+.pd-card .pd-sfld { grid-template-columns: 210px minmax(0, 1fr); }
+.pd-card .pd-note { margin-left: 224px; }
+.pd-card > .pd-sect + .pd-note, .pd-card .pd-scrlines + .pd-note { margin-left: 0; }
+/* Inside a card a value column holds its control, never wider than the card:
+   the wide input (420 px elsewhere) and a combo take the column's width. */
+.pd-card .pd-sfld .v { min-width: 0; }
+.pd-card .pd-inp.wide, .pd-card .pd-combo { min-width: 0; width: 100%; max-width: 420px; }
+.pd-setup .pd-card .pd-note, .pd-card .pd-sphost ~ .pd-note { text-align: left; margin: 2px 0 0; }
+@media (max-width: 1280px) {
+    .pd-stlayout { grid-template-columns: minmax(0, 1fr); }
+    .pd-stnav { position: static; flex-direction: row; flex-wrap: wrap; }
+    .pd-stcards { grid-template-columns: minmax(0, 1fr); }
+}
+/* An on/off setting is a switch with what it means beside it. */
+.pd-switch { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.pd-swmean { color: var(--text-muted); font-size: 13px; }
+.pd-chk.on + .pd-swmean { color: var(--text); }
+/* Positions and routing: the screen under the pick. */
+.pd-sphost { min-width: 0; padding: 8px 0 4px; }
+.pd-scrlines { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 6px; }
+.pd-scrline { display: flex; align-items: center; gap: 12px; min-height: 32px; font-size: 13px; }
+.pd-scrline > span:first-child { flex: 1; min-width: 0; color: var(--text-muted); }
+.pd-scrline b { color: var(--text); }
 
 /* Settings · Position settings: a light curtain's row fits the value column.
    A PLC name is short; a tag is a struct path and keeps the wider box. */
@@ -868,31 +917,81 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-scl-head .pd-dimlink { margin-left: 0; }
 .pd-scl-head .pd-dim { min-width: 0; overflow-wrap: anywhere; }
 
-/* ── Setup: the cold start (U2) ─────────────────────────────────────────
-   Settings' width and rhythm; a row is its number (✓ once done), what it is,
-   what the process has now, and its one action. Only the next row's action is
-   primary, so the eye goes there. */
-.pd-sheet.pd-setup { max-width: 1040px; }
-.pd-steps { display: flex; flex-direction: column; margin: 2px 0 10px; }
-.pd-step {
-    display: grid; grid-template-columns: 28px 260px 1fr auto; align-items: center;
-    gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--sub-1);
+/* ── Setup: the short path (owner, 2026-11-15) ─────────────────────────────
+   The steps on the left, the line so far and what can wait on the right, the
+   page's full width. A step is its number (✓ once done, lit while it is the
+   one to do), its title, what it holds and what to do; the one to do is a card
+   outlined in the accent. The line so far draws each role in its colour. */
+.pd-sheet.pd-setup { max-width: none; }
+.pd-sugrid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: start; padding-top: 12px; }
+@media (max-width: 1100px) { .pd-sugrid { grid-template-columns: minmax(0, 1fr); } }
+.pd-sumain, .pd-suside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.pd-sutitle { display: flex; align-items: baseline; gap: 12px; }
+.pd-sutitle h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.pd-sustep { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pd-sus { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 16px; padding-bottom: 24px; }
+.pd-sus:last-child { padding-bottom: 0; }
+.pd-susn, .pd-supress .pd-susn {
+    width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--sub-3);
+    display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--text-muted);
 }
-.pd-step:last-child { border-bottom: 0; }
-.pd-stepn {
-    width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--sub-3);
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 600; color: var(--text-muted);
+.pd-sus.done .pd-susn { border-color: var(--viz-green); color: var(--viz-green); }
+.pd-sus.now .pd-susn, .pd-supress .pd-susn { border-color: var(--accent-solid); background: var(--accent-solid); color: var(--on-accent-solid); }
+.pd-susb { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pd-susb > b { font-size: 17px; }
+.pd-susb > small { color: var(--text-muted); font-size: 13px; }
+.pd-sus.next .pd-susb > b { color: var(--text-muted); }
+.pd-susact { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pd-sucard {
+    display: flex; align-items: center; gap: 16px; padding: 16px 18px; border: 1px solid var(--accent);
+    border-radius: calc(var(--radius) + 4px); background: var(--surface);
 }
-.pd-stepn:empty { border-color: transparent; }
-.pd-step.done .pd-stepn { border-color: var(--viz-green); color: var(--viz-green); }
-.pd-steplbl b { display: block; font-size: 14px; font-weight: 600; }
-.pd-steplbl small { display: block; color: var(--text-muted); font-size: 12px; }
-.pd-stepval { color: var(--text-muted); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
-.pd-stepval.warn { color: var(--chip-ink-near); }
-.pd-step .pd-btn { justify-self: end; white-space: nowrap; text-decoration: none; }
-/* Open the screen is a link to the HMI, drawn as the button it is. */
-.pd-step a.pd-btn { display: inline-flex; align-items: center; }
+.pd-sucard.col { flex-direction: column; align-items: stretch; }
+.pd-sucard > div:first-child, .pd-surow > div:first-child { flex: 1; min-width: 0; }
+.pd-sucard small { display: block; color: var(--text-muted); font-size: 13px; }
+.pd-surow { display: flex; align-items: center; gap: 16px; }
+.pd-sucard a.pd-btn { display: inline-flex; align-items: center; text-decoration: none; }
+.pd-supresses { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pd-supress { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.pd-supress .pd-susn { width: 28px; height: 28px; flex: none; }
+.pd-suwait { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
+.pd-suline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 0; }
+.pd-supos {
+    display: flex; flex-direction: column; min-width: 120px; padding: 10px 12px;
+    border: 1px solid var(--role, var(--border)); border-radius: 8px; background: var(--bg);
+}
+.pd-supos[data-role="positions"] { border-color: var(--border); }
+.pd-supos[data-empty] { border-style: dashed; }
+.pd-supos small { color: var(--text-muted); font-size: 12px; }
+.pd-supos .pd-surole { color: var(--role); font-weight: 700; }
+.pd-sulater { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 6px 0 4px; }
+.pd-sufilled { display: flex; flex-direction: column; gap: 2px; padding: 8px 0 2px; border-top: 1px solid var(--sub-1); font-size: 13px; }
+.pd-sufilled p { margin: 0; }
+.pd-sufilled .setpick-dot, .pd-setup .pd-note .setpick-dot { display: inline-block; vertical-align: middle; }
+/* First style: a part per position, consume or produce, one way they swap. */
+.pd-fsblock { display: flex; flex-direction: column; gap: 8px; }
+.pd-fslbl { font-weight: 600; }
+.pd-fsline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pd-fsrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 40px; }
+.pd-fsrow > b { min-width: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pd-fsmodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pd-fsmode {
+    display: flex; align-items: flex-start; gap: 12px; min-height: 88px; padding: 14px; border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 4px); background: var(--bg); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.pd-fsmode.on { border: 2px solid var(--accent); padding: 13px; background: var(--surface); }
+.pd-fsmode small { display: block; color: var(--text-muted); font-size: 13px; }
+.pd-fsfoot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pd-fsbar { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.pd-skip { font-weight: 600; }
+/* The process sheet is wider than the others: its set pick's four boxes sit
+   side by side. Two fields share a line; the line over its buttons says what
+   is still to pick. */
+.pd-modal.pd-wide { width: 1040px; }
+.pd-procsheet .pd-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.pd-procsheet .pd-two .pd-fld { grid-template-columns: minmax(0, 1fr); }
+.pd-still { display: flex; align-items: center; gap: 8px; min-height: 20px; margin: 8px 0 0; font-size: 13px; }
+.pd-still:empty { display: none; }
 /* Operator setup's recipes on Settings (F36): the recipes table and "Found in
    your flows", each a field under the switch. A switch on with no recipe is
    the one state here that needs someone. */
@@ -901,22 +1000,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-hmirecipes { position: relative; }
 .pd-hmirecipes > .pd-refusal { margin-left: 314px; }
 .pd-hmirecipes .pd-presettbl { width: 100%; }
-
-/* Settings' jump list (settingsJump): the sections in order, held at the
-   sheet's top edge as it scrolls; a heading jumped to lands below it. */
-.pd-jump {
-    position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
-    display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 0; border-bottom: 1px solid var(--sub-1);
-}
-.pd-jump button {
-    background: none; border: 0; padding: 2px 0; font: inherit; font-size: 12.5px;
-    color: var(--text-muted); cursor: pointer;
-}
-.pd-jump button:hover { color: var(--accent); }
-.pd-settings h2 { scroll-margin-top: 48px; }
-
-/* Settings · Auto-reorder: the line's state, its last switch, the action. */
-.pd-arstate { font-weight: 600; }
 
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the
@@ -982,17 +1065,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-ch-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
     margin-top: 4px; padding: 4px 6px; border-left: 3px solid; border-radius: 2px; }
 .pd-ch-acts { display: flex; gap: 6px; align-items: center; }
-
-/* ── the routing roles' colours ──────────────────────────────────────────────
- * One colour per role, on a picker row's tag: the page's text colour for
- * positions, Robot 1's for inbound, an orange node-class colour
- * (--map-class-5) for staging, Robot 2's for outbound. The Add process sheet's four-bucket checklist that also wore them
- * went with that sheet (slice 4). */
-.picker-tag[data-tone="source"] { --bk: var(--robot-1); }
-.picker-tag[data-tone="staging"] { --bk: var(--map-class-5); }
-.picker-tag[data-tone="destination"] { --bk: var(--robot-2); }
-.picker-tag[data-tone="positions"] { --bk: var(--text); }
-.picker-tag[data-tone] { border-color: var(--bk); color: var(--text); }
 
 /* The picture's fold (freeLine): how many free positions it leaves out, and
    "show them", under the picture, on the positions box's margins. */

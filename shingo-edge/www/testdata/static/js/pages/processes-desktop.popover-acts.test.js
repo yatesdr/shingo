@@ -325,6 +325,32 @@ const pk = {
 // cannot find one in the markup string the page wrote (extraIds).
 function pickerHost(id) { const e = madeElement('div'); e.setAttribute('id', id); return e; }
 
+// sp reads and drives a set pick (shared/set-pick.js) the page drew into its
+// host: a box by its key, what its chips hold, a click on its title (opens
+// it), a chip's ×, the open list's rows (pk, on the host), and the "In use by
+// other processes" fold under the list.
+const sp = {
+    box: (host, key) => findIn(host, '.setpick-box').find(b => b.getAttribute('data-box') === key) || null,
+    open(host, key) {
+        const b = sp.box(host, key);
+        if (!b) throw new Error('the set pick draws no box ' + key + ': ' + host.innerHTML.slice(0, 300));
+        findIn(b, '.setpick-t')[0].click();
+    },
+    chips: (host, key) => findIn(sp.box(host, key) || madeElement('div'), '.setpick-chip').map(c => c.children[0].textContent),
+    drop(host, key, v) {
+        const b = findIn(sp.box(host, key), '[data-drop]').find(x => x.getAttribute('data-drop') === v);
+        if (!b) throw new Error('box ' + key + ' has no chip ' + v);
+        b.click();
+    },
+    active: host => (findIn(host, '.setpick-box').find(b => b.classList.contains('is-on')) || { getAttribute: () => '' }).getAttribute('data-box'),
+    later: host => (findIn(host, '.picker-later')[0] || { textContent: '' }).textContent,
+    showLater(host) {
+        const b = findIn(host, '[data-later]')[0];
+        if (!b) throw new Error('the list has no "show" for its later rows: ' + host.innerHTML.slice(0, 300));
+        b.click();
+    },
+};
+
 // popRows is the shared picker a popover holds, as rows: { el, value, label,
 // note, on, off }. THE LAST ONE DRAWN: this harness's popover keeps the
 // children an innerHTML write would drop in a browser, so an earlier picker
@@ -381,7 +407,7 @@ function sheetParts(doc, scrim) {
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
 function loadShared(deps) {
     const mods = { 'notice.js': { toast: deps.toast } };
-    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js', 'settings.js']) {
+    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js', 'set-pick.js', 'settings.js']) {
         const names = [];
         const binds = [];
         const src = fs.readFileSync(path.join(SHARED_DIR, file), 'utf8')
@@ -395,7 +421,7 @@ function loadShared(deps) {
             { filename: file })(mods);
     }
     return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js'],
-        mods['exceptions.js'], mods['settings.js']);
+        mods['exceptions.js'], mods['set-pick.js'], mods['settings.js']);
 }
 
 // The scene network and route model the page imports, loaded once the way a
@@ -546,7 +572,7 @@ function loadPage(loadOpts) {
         send: shared.send, createPicker: shared.createPicker,
         nodePicker: shared.nodePicker, nodeSource: shared.nodeSource, nodeWhy: shared.nodeWhy,
         partPicker: shared.partPicker, partSource: shared.partSource,
-        mountPicker: shared.mountPicker, nodeRows: shared.nodeRows,
+        mountPicker: shared.mountPicker, nodeRows: shared.nodeRows, createSetPick: shared.createSetPick,
         exceptionList: shared.exceptionList, countOf: shared.countOf, settingsPage: shared.settingsPage,
     });
     // The sheets' writes build their bodies through the real body module.
@@ -1032,17 +1058,19 @@ async function mainAsync() {
         console.log('ok: an unplaced part is taken off the flow from its own door, and only it');
     }
 
-    // ── a screen's row on Settings names a position another process holds ───
+    // ── Settings' Positions box names a position another process holds ──────
     {
-        // One position belongs to one process; the save refuses a second. A
-        // screen's row (Settings › Screens and positions, the one editor of a
-        // screen's positions) says so before the engineer tries: a name that
-        // is a live position of ANOTHER process is greyed "on <that process>",
-        // from Settings' one read of /api/process-nodes. A sibling screen's
-        // claim on this process is pickable and says picking moves it, and wins
-        // when a name is both. One of this process's positions on no screen
-        // says so.
-        const box = pickerHost('npk-scr-10');
+        // One position belongs to one process; the save refuses a second.
+        // Settings' Positions and routing (the set pick, one editor of the
+        // process's positions, ruling 2026-11-15) says so before the engineer
+        // tries: a name that is a live position of ANOTHER process is greyed
+        // "on <that process>", from Settings' one read of /api/process-nodes,
+        // and waits behind "In use by other processes" so a list of free nodes
+        // is not scrolled past it. Every position of this process, on either
+        // screen or on none, is in the box, and the screen lines under it say
+        // which screen holds what and which are on none.
+        const host = pickerHost('sp-st');
+        const scrLines = pickerHost('pd-scrlines');
         const fetched = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
         const { root } = loadPage({
@@ -1052,7 +1080,7 @@ async function mainAsync() {
                 { id: 11, process_id: 1, name: 'Screen B' },
             ],
             stationNodes: { '10': ['PLN_01'], '11': ['PLN_02'] },
-            extraIds: { 'npk-scr-10': box },
+            extraIds: { 'sp-st': host, 'pd-scrlines': scrLines },
             fetch: url => {
                 fetched.push(url);
                 if (url === '/api/core-nodes') {
@@ -1062,8 +1090,8 @@ async function mainAsync() {
                 if (url === '/api/process-nodes') {
                     return ok([
                         { process_id: 1, core_node_name: 'PLN_01', process_name: 'Press 1', operator_station_id: 10 },
+                        { process_id: 1, core_node_name: 'PLN_02', process_name: 'Press 1', operator_station_id: 11 },
                         { process_id: 1, core_node_name: 'PLN_04', process_name: 'Press 1' },
-                        { process_id: 2, core_node_name: 'PLN_02', process_name: 'Press 2' },
                         { process_id: 2, core_node_name: 'PLN_03', process_name: 'Press 2' },
                     ]);
                 }
@@ -1071,27 +1099,42 @@ async function mainAsync() {
             },
         });
         for (let i = 0; i < 6; i++) await drain();
-        if (root.innerHTML.indexOf('<h2>Screens and positions</h2>') < 0) throw new Error('setup: Settings drew no Screens and positions');
+        if (root.innerHTML.indexOf('<h2>Positions and routing</h2>') < 0) throw new Error('setup: Settings drew no Positions and routing');
+        if (root.innerHTML.indexOf('<h2>Screens and positions</h2>') >= 0) throw new Error('a process that is not a loader still draws Screens and positions');
         const pn = fetched.filter(u => u === '/api/process-nodes').length;
         if (pn !== 1) {
             throw new Error('Settings must read /api/process-nodes exactly once for its rows, got ' + pn + ' in ' + JSON.stringify(fetched));
         }
-        pk.open(box);
+        if (sp.active(host) !== 'positions') throw new Error('the set pick does not open on Positions: ' + sp.active(host));
+        const chips = sp.chips(host, 'positions');
+        if (JSON.stringify(chips) !== '["PLN_01","PLN_02","PLN_04"]') {
+            throw new Error('the Positions box is not every position, each screen\'s then those on none: ' + JSON.stringify(chips));
+        }
+        if (pk.row(host, 'PLN_03')) throw new Error('a position another process holds is drawn among the free nodes');
+        if (sp.later(host).indexOf('In use by other processes · 1') !== 0) {
+            throw new Error('the later fold reads ' + JSON.stringify(sp.later(host)));
+        }
+        sp.showLater(host);
         // A row is pickable, or greyed (the shell's excluded row), its note or
         // reason beside it.
         const row = name => {
-            if (!pk.row(box, name)) throw new Error('no picker row for ' + name + ': ' + box.innerHTML.slice(0, 400));
-            return (pk.off(box, name) ? 'greyed: ' : '') + pk.side(box, name);
+            if (!pk.row(host, name)) throw new Error('no picker row for ' + name + ': ' + host.innerHTML.slice(0, 400));
+            return (pk.off(host, name) ? 'greyed: ' : '') + (pk.on(host, name) ? 'ticked: ' : '') + pk.side(host, name);
         };
         const got = {};
         for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']) got[n] = row(n);
-        const expect = { PLN_01: '', PLN_02: 'on Screen B · picking moves it here', PLN_03: 'greyed: on Press 2',
-            PLN_04: 'on no screen yet', PLN_05: '' };
+        const expect = { PLN_01: 'ticked: ', PLN_02: 'ticked: ', PLN_03: 'greyed: on Press 2', PLN_04: 'ticked: ', PLN_05: '' };
         if (JSON.stringify(got) !== JSON.stringify(expect)) {
             throw new Error('picker notes wrong: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(expect));
         }
+        const lines = plain(scrLines.innerHTML);
+        for (const want of ['Screen Screen A holds 1 position', 'Screen Screen B holds 1 position', '1 position on no screen: PLN_04']) {
+            if (lines.indexOf(want) < 0) throw new Error('the screen lines do not say ' + JSON.stringify(want) + ': ' + lines);
+        }
+        // Two screens: nothing here moves the positions on none onto one.
+        if (scrLines.innerHTML.indexOf('data-act="loose-onto"') >= 0) throw new Error('a line with two screens offers "Put them on"');
         checks++;
-        console.log('ok: a screen\'s row marks another process\'s position "on <process>" from one read');
+        console.log('ok: Settings\' Positions box greys another process\'s position "on <process>" behind "In use by other processes", from one read');
     }
 
     // ── Settings says which removed position the server had to keep ─────────
@@ -1102,14 +1145,14 @@ async function mainAsync() {
     // a Save that only said "Saved" would leave the engineer believing the
     // position was gone.
     async function saveScreenWithReply(reply) {
-        const box = pickerHost('npk-scr-10');
+        const box = pickerHost('sp-st');
         const puts = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
         const { root } = loadPage({
             hash: '#tab=settings',
             stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
             stationNodes: { '10': ['PLN_01', 'PLN_02'] },
-            extraIds: { 'npk-scr-10': box },
+            extraIds: { 'sp-st': box },
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
                 // Nothing names PLN_02, so the removal goes through on the first Save.
@@ -1129,11 +1172,10 @@ async function mainAsync() {
             },
         });
         for (let i = 0; i < 6; i++) await drain();
-        // The engineer takes PLN_02 off the screen with its chip's ×, then Save.
-        // (The chips are drawn once the node list has been read: opened.)
-        pk.open(box);
+        // The engineer takes PLN_02 out of the Positions box with its chip's
+        // ×, then Save: the screen that held it is written without it.
         for (let i = 0; i < 4; i++) await drain();
-        pk.drop(box, 'PLN_02');
+        sp.drop(box, 'positions', 'PLN_02');
         for (let i = 0; i < 2; i++) await drain();
         const save = findIn(root, '[data-set="save"]')[0];
         if (!save || save.disabled) throw new Error('setup: Save is not there to press after the ×');
@@ -1184,7 +1226,7 @@ async function mainAsync() {
     // warning is shown and the save waits for a second Save; it is a warning,
     // not a refusal. Nothing to warn about and the save goes straight through.
     async function removeFromScreen(preview, saves) {
-        const box = pickerHost('npk-scr-10');
+        const box = pickerHost('sp-st');
         const puts = [];
         const previews = [];
         const ok = body => Promise.resolve({ ok: true, json: async () => body });
@@ -1192,7 +1234,7 @@ async function mainAsync() {
             hash: '#tab=settings',
             stations: [{ id: 10, process_id: 1, name: 'Screen A', enabled: true }],
             stationNodes: { '10': ['PLN_01', 'PLN_02'] },
-            extraIds: { 'npk-scr-10': box },
+            extraIds: { 'sp-st': box },
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
                 if (url === '/api/operator-stations/10/claimed-nodes/impact' && method === 'POST') {
@@ -1213,10 +1255,8 @@ async function mainAsync() {
                 return null;
             },
         });
-        for (let i = 0; i < 6; i++) await drain();
-        pk.open(box);
-        for (let i = 0; i < 4; i++) await drain();
-        pk.drop(box, 'PLN_02');
+        for (let i = 0; i < 10; i++) await drain();
+        sp.drop(box, 'positions', 'PLN_02');
         for (let i = 0; i < 2; i++) await drain();
         const save = findIn(root, '[data-set="save"]')[0];
         const after = [];
@@ -2562,36 +2602,56 @@ async function mainAsync() {
         ],
         summary: 'Derived from 1 backfill row.',
     };
-    const settingsPage = map => loadPage({
-        allowSheet: true, composer: mapComposer(map), hash: '#tab=settings',
-        fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null),
+    // Settings' Positions and routing: the set pick's host, and its heading.
+    const settingsPage = map => {
+        const host = pickerHost('sp-st');
+        const ctx = loadPage({
+            allowSheet: true, composer: mapComposer(map), hash: '#tab=settings', extraIds: { 'sp-st': host },
+            fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(routingView) : null),
+        });
+        return Object.assign(ctx, { host: host });
+    };
+    // Its heading line is the page's own; the routing set is the set pick's
+    // three role boxes, each with what it is in where-the-bin-is words
+    // (ruling 2026-11-15). No map, with a plant map or without (A1).
+    const routingHead = '<div class="pd-sect"><h2>Positions and routing</h2><span class="pd-dim">the same pick as Add process</span></div>';
+    const boxSubs = host => ['positions', 'source', 'staging', 'destination'].map(k => {
+        const b = sp.box(host, k);
+        return b ? findIn(b, '.setpick-t')[0].textContent.replace(/(needed|optional)?\d+$/, '') + ': ' + findIn(b, '.setpick-sub')[0].textContent : k + ': none';
     });
-    // Settings' Routing set: its heading and one picker per role below it.
-    // No map, with a plant map or without (A1).
-    const routingHead = '<div class="pd-sect"><h2>Routing set</h2></div>';
 
     for (const [said, map] of [['no plant map', null], ['a plant map', plantMap()]]) {
-        await pin('the routing panel on an Edge with ' + said + ' reads its own heading and draws no map', async () => {
-            const { root } = settingsPage(map);
+        await pin('the Positions and routing card on an Edge with ' + said + ' reads its own heading and role words, and draws no map', async () => {
+            const { root, host } = settingsPage(map);
             await settle();
             const h = root.innerHTML;
-            if (h.indexOf('<h2>Routing set</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
+            if (h.indexOf('<h2>Positions and routing</h2>') < 0) throw new Error('setup: the routing panel is not drawn');
             if (h.indexOf(routingHead) < 0) {
-                throw new Error('the routing heading reads ' + JSON.stringify((h.match(/<h2>Routing set<\/h2>.*?<\/div>/) || [''])[0]));
+                throw new Error('the heading reads ' + JSON.stringify((h.match(/<h2>Positions and routing<\/h2>.*?<\/div>/) || [''])[0]));
             }
-            if (h.indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
+            if (h.indexOf('<h2>Routing set</h2>') >= 0) throw new Error('a Routing set section is still drawn beside the set pick');
+            const subs = boxSubs(host);
+            const want = ['Positions: the spots this process works', 'Inbound: where the bin comes from',
+                'Staging: where a bin waits', 'Outbound: where the bin goes'];
+            if (JSON.stringify(subs) !== JSON.stringify(want)) throw new Error('the boxes read ' + JSON.stringify(subs));
+            if (JSON.stringify([sp.chips(host, 'source'), sp.chips(host, 'destination')]) !== '[["SMN_010"],["DN_001"]]') {
+                throw new Error('the role boxes do not hold the routing set: ' + JSON.stringify([sp.chips(host, 'source'), sp.chips(host, 'destination')]));
+            }
+            if ((h + host.innerHTML).indexOf('backfill') >= 0) throw new Error('the server’s backfill sentence is still drawn');
             for (const mark of MAP_MARKS) {
-                if (h.indexOf(mark) >= 0) throw new Error('the routing panel still draws ' + mark);
+                if ((h + host.innerHTML).indexOf(mark) >= 0) throw new Error('the routing panel still draws ' + mark);
             }
         });
     }
 
-    await pin('taking a routing name out goes through and shows what it orphans', async () => {
+    // THE ROUTING PICKERS' WRITE IS ONE PUT WITH REMOVALS, now from the set
+    // pick's role boxes on the page's one Save.
+    await pin('taking a routing name out of its box goes through on Save, in one write, and shows what it orphans', async () => {
         const warning = 'Removed DN_001. Recipes left without their destination (2): "A" and "B".';
         const sent = [];
-        const dest = pickerHost('npk-rt-destination');
+        const host = pickerHost('sp-st');
         const { root } = loadPage({
-            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'npk-rt-destination': dest },
+            allowSheet: true, composer: mapComposer(null), hash: '#tab=settings', extraIds: { 'sp-st': host },
             fetch: (url, init) => {
                 if (url === '/api/processes/1/routing-nodes' && init && init.method === 'PUT') {
                     sent.push(JSON.parse(init.body));
@@ -2602,23 +2662,27 @@ async function mainAsync() {
         });
         await settle();
         // The routing set is a draft: Outbound's chip ×, then Save.
-        pk.open(dest);
+        sp.drop(host, 'destination', 'DN_001');
         await settle();
-        pk.drop(dest, 'DN_001');
-        await settle();
+        if (sent.length) throw new Error('the × wrote before Save: ' + JSON.stringify(sent));
         findIn(root, '[data-set="save"]')[0].click();
         for (let i = 0; i < 4; i++) await settle();
         if (sent.length !== 1 || JSON.stringify(sent[0].remove) !== '[{"core_node_name":"DN_001","role":"destination"}]') {
             throw new Error('the removal sent ' + JSON.stringify(sent));
+        }
+        if (JSON.stringify(sent[0].nodes) !== '[{"core_node_name":"SMN_010","role":"source"}]') {
+            throw new Error('the one write does not carry what the boxes still hold: ' + JSON.stringify(sent[0].nodes));
         }
         if (root.innerHTML.indexOf('<div class="pd-notice">' + warning.replace(/"/g, '&quot;')) < 0) {
             throw new Error('the warning is not said after the save');
         }
     });
 
-    const addProcessSheet = async map => {
-        const hosts = {};
-        for (const k of ['procset', 'parts']) hosts['npk-' + k] = pickerHost('npk-' + k);
+    // The process sheet's set pick and part picker draw into hosts this
+    // harness cannot find in the sheet's markup string.
+    const procHosts = () => ({ 'sp-proc': pickerHost('sp-proc'), 'npk-parts': pickerHost('npk-parts'), 'pd-still': pickerHost('pd-still') });
+    const addProcessSheet = async (map, hosts) => {
+        hosts = hosts || procHosts();
         const { root, doc, sheet } = loadPage({ allowSheet: true, composer: mapComposer(map), extraIds: hosts });
         await settle();
         click(root, doc, { act: 'add-process' });
@@ -2637,17 +2701,132 @@ async function mainAsync() {
         });
     }
 
-    // ADD PROCESS ASKS TWO THINGS (owner, 2026-11-14): a name and a group.
-    // The screen, the positions, the routing set and the parts each have one
-    // home on Settings, and Setup walks through them; the sheet that asked
-    // them all and Edit process that reopened it are gone.
-    await pin('Add process asks a name and a group, and nothing else', async () => {
-        const h = await addProcessSheet(plantMap());
-        if (h.indexOf('data-f="name"') < 0 || h.indexOf('<label>Group<small>groups processes on the list</small></label>') < 0) {
-            throw new Error('the sheet does not ask a name and a group: ' + h.slice(0, 300));
+    // ONE SHEET MAKES A LINE (owner, 2026-11-15): its name, its operator
+    // screen (blank: named after the process), its group, its positions and
+    // routing set on the set pick, and its parts. Only the name is needed.
+    await pin('Add process asks a name, its operator screen, a group, the set pick and its parts', async () => {
+        const hosts = procHosts();
+        const h = await addProcessSheet(plantMap(), hosts);
+        for (const want of ['data-f="name"', '<label>Operator screen<small>blank: named after the process</small></label>', 'data-f="screen"',
+            '<label>Group<small>groups processes on the list</small></label>', 'id="sp-proc"', 'id="npk-parts"']) {
+            if (h.indexOf(want) < 0) throw new Error('the sheet does not draw ' + want + ': ' + h.slice(0, 400));
         }
-        for (const gone of ['data-f="screen"', 'data-f="description"', 'Show on map', 'pd-sheetmap', 'find a part by name', 'data-bucket=']) {
+        const boxes = findIn(hosts['sp-proc'], '.setpick-box').map(b => b.getAttribute('data-box') + (b.classList.contains('is-needed') ? '!' : ''));
+        if (JSON.stringify(boxes) !== '["positions!","source!","staging","destination!"]') throw new Error('the set pick\'s boxes read ' + JSON.stringify(boxes));
+        if (sp.active(hosts['sp-proc']) !== 'positions') throw new Error('the set pick opens on ' + sp.active(hosts['sp-proc']));
+        if (hosts['npk-parts'].innerHTML.indexOf('find a part by name') < 0) throw new Error('no part picker under Parts');
+        for (const gone of ['data-f="description"', 'Show on map', 'pd-sheetmap', 'data-bucket=']) {
             if (h.indexOf(gone) >= 0) throw new Error('the Add process sheet still asks ' + gone);
+        }
+    });
+
+    // CREATE IS MAIN'S CHAIN (ruling 2026-11-15, item 2): the process, its
+    // screen named as typed or after the process, the positions claimed on
+    // that screen, the routing set in one write with its roles in the order
+    // picked, the part set. It stops at the first refusal, saying what already
+    // landed, and the next press resumes there: nothing made is made twice.
+    const createPage = (refuse) => {
+        const hosts = procHosts();
+        const writes = [];
+        const nodes = ['PLN_07', 'PLN_08', 'SMN_010', 'SMN_011', 'STG_01', 'DN_001'].map(name => ({ name, node_type: 'storage' }));
+        const ctx = loadPage({
+            allowSheet: true, composer: savedComposer(), extraIds: hosts,
+            fetch: (url, init) => {
+                const method = (init && init.method) || 'GET';
+                if (url === '/api/core-nodes') return okJSON(nodes);
+                if (url === '/api/payload-catalog') return okJSON([{ code: 'PART-A', name: 'Part A' }, { code: 'PART-B', name: 'Part B' }]);
+                if (url === '/api/process-nodes') return okJSON([]);
+                if (method === 'GET') return null;
+                writes.push({ method: method, url: url, body: JSON.parse(init.body) });
+                if (url === refuse) {
+                    refuse = '';
+                    return Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'SMN_011 is a lane' }) });
+                }
+                if (url === '/api/processes') return okJSON({ id: 5 });
+                if (url === '/api/operator-stations') return okJSON({ id: 40 });
+                return okJSON({ status: 'ok' });
+            },
+        });
+        return Object.assign(ctx, { hosts: hosts, writes: writes });
+    };
+    const typeProc = (ctx, name, screen) => {
+        const n = makeElement(''), s = makeElement('');
+        n.value = name;
+        s.value = screen;
+        ctx.scrim._sheetFields = { name: n, screen: s };
+    };
+    const stillLine = ctx => plain(ctx.hosts['pd-still'].innerHTML);
+
+    await pin('Create is one chain of five writes; a refusal stops it, says what landed, and the next Create resumes there', async () => {
+        const ctx = createPage('/api/processes/5/routing-nodes');
+        const writes = ctx.writes;
+        await settle();
+        typeProc(ctx, 'Press 9', '');
+        click(ctx.root, ctx.doc, { act: 'add-process' });
+        await settle();
+        const set = ctx.hosts['sp-proc'];
+        pk.pick(set, 'PLN_07');
+        pk.pick(set, 'PLN_08');
+        sp.open(set, 'source');
+        pk.pick(set, 'SMN_011');
+        pk.pick(set, 'SMN_010');
+        sp.open(set, 'staging');
+        pk.pick(set, 'STG_01');
+        sp.open(set, 'destination');
+        pk.pick(set, 'DN_001');
+        pk.pick(ctx.hosts['npk-parts'], 'PART-B');
+        await settle();
+        if (writes.length) throw new Error('a pick wrote before Create: ' + JSON.stringify(writes));
+        if (stillLine(ctx)) throw new Error('the still-to-pick line speaks with every needed box filled: ' + JSON.stringify(stillLine(ctx)));
+        ctx.sheet().ok();
+        for (let i = 0; i < 3; i++) await settle();
+        const want = [
+            ['POST', '/api/processes'],
+            ['POST', '/api/operator-stations'],
+            ['PUT', '/api/operator-stations/40/claimed-nodes'],
+            ['PUT', '/api/processes/5/routing-nodes'],
+        ];
+        const got = writes.map(w => [w.method, w.url]);
+        if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('the chain up to the refusal wrote ' + JSON.stringify(got));
+        if (writes[1].body.process_id !== 5 || writes[1].body.name !== 'Press 9') {
+            throw new Error('the screen is not named after the process, on it: ' + JSON.stringify(writes[1].body));
+        }
+        if (JSON.stringify(writes[2].body) !== '{"nodes":["PLN_07","PLN_08"]}') throw new Error('the positions claimed ' + JSON.stringify(writes[2].body));
+        const rows = JSON.stringify(writes[3].body);
+        if (rows !== JSON.stringify({ nodes: [{ core_node_name: 'SMN_011', role: 'source' }, { core_node_name: 'SMN_010', role: 'source' },
+            { core_node_name: 'STG_01', role: 'staging' }, { core_node_name: 'DN_001', role: 'destination' }] })) {
+            throw new Error('the routing set is not one write, roles in the order picked: ' + rows);
+        }
+        const status = ctx.scrim._lastSheetStatus.textContent;
+        const says = 'The process was created; its screen added; its positions claimed. Its routing set was refused: SMN_011 is a lane';
+        if (status !== says) throw new Error('the refusal reads ' + JSON.stringify(status) + '\n      want ' + JSON.stringify(says));
+        if (!ctx.sheet().open) throw new Error('the sheet closed on a refusal');
+        ctx.sheet().ok();
+        for (let i = 0; i < 4; i++) await settle();
+        const again = writes.slice(4).map(w => [w.method, w.url]);
+        if (JSON.stringify(again) !== JSON.stringify([['PUT', '/api/processes/5/routing-nodes'], ['PUT', '/api/processes/5/payloads']])) {
+            throw new Error('the second Create did not resume at the refused write: ' + JSON.stringify(again));
+        }
+        if (JSON.stringify(writes[5].body) !== '{"payloads":["PART-B"]}') throw new Error('the part set wrote ' + JSON.stringify(writes[5].body));
+        if (ctx.sheet().open) throw new Error('the sheet is still open after the chain landed');
+    });
+
+    // ONLY THE NAME IS NEEDED: a process with nothing picked is the process and
+    // its screen, named as typed, and nothing else is written.
+    await pin('Create with only a name writes the process and its typed screen, and no empty set', async () => {
+        const ctx = createPage('');
+        await settle();
+        typeProc(ctx, 'Press 9', 'Press 9 HMI');
+        click(ctx.root, ctx.doc, { act: 'add-process' });
+        await settle();
+        if (stillLine(ctx) !== 'Still to pick: Positions, Inbound, Outbound. You can also finish it in Setup.') {
+            throw new Error('the still-to-pick line reads ' + JSON.stringify(stillLine(ctx)));
+        }
+        ctx.sheet().ok();
+        for (let i = 0; i < 3; i++) await settle();
+        const got = ctx.writes.map(w => w.method + ' ' + w.url + ' ' + (w.body.name || ''));
+        if (JSON.stringify(got) !== JSON.stringify(['POST /api/processes Press 9', 'POST /api/operator-stations Press 9 HMI'])) {
+            throw new Error('Create wrote ' + JSON.stringify(got));
         }
     });
 
@@ -2718,20 +2897,23 @@ async function mainAsync() {
     });
 
     // SPR SNF3's copy: one back position read "SLN_003 are back positions and
-    // always available".
+    // always available". The line is the Staging box's note on the set pick.
     await pin('the routing set names one back position in the singular', async () => {
         const said = async backs => {
             const composer = savedComposer();
             composer.cell.positions = composer.cell.positions.concat(backs.map((n, i) => ({ core_node_name: n, kind: 'back', sequence: 2 + i })));
             const rows = { rows: [{ id: 1, core_node_name: 'SMN_010', role: 'source', label: 'SMN_010', enabled: true, sequence: 1 }] };
-            const { root } = loadPage({ allowSheet: true, composer, hash: '#tab=settings',
+            const host = pickerHost('sp-st');
+            loadPage({ allowSheet: true, composer, hash: '#tab=settings', extraIds: { 'sp-st': host },
                 fetch: url => (url === '/api/processes/1/routing-nodes' ? okJSON(rows) : null) });
             await settle();
-            return (root.innerHTML.match(/<span class="pd-dim">[^<]*always available<\/span>/) || [''])[0];
+            const notes = ['positions', 'source', 'destination'].filter(k => findIn(sp.box(host, k), '.setpick-note').length);
+            if (notes.length) throw new Error('the back positions are said under ' + JSON.stringify(notes) + ' too');
+            return serializeMade(findIn(sp.box(host, 'staging'), '.setpick-note')[0] || textNode(''));
         };
         const got = [await said(['SLN_003']), await said(['SLN_003', 'SLN_004'])];
-        const want = ['<span class="pd-dim">SLN_003 is a back position and always available</span>',
-            '<span class="pd-dim">SLN_003, SLN_004 are back positions and always available</span>'];
+        const want = ['<small class="setpick-note">SLN_003 is a back position and always available</small>',
+            '<small class="setpick-note">SLN_003, SLN_004 are back positions and always available</small>'];
         // Changed: one read "SLN_003 are back positions and always available".
         if (JSON.stringify(got) !== JSON.stringify(want)) {
             throw new Error('the back positions line: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
@@ -3719,19 +3901,23 @@ async function recipeGroupPins(h) {
 // read on, never switched, and read back off once anything is posted to it.
 async function settingsSectionsPins(h) {
     const { pin, okJSON, click, settle } = h;
-    const ORDER = ['Line', 'Production counter', 'Screens and positions', 'Routing set', 'Parts',
-        'Position settings', 'Changeover', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
+    // The brief's order (ruling 2026-11-15): Health only while it has items,
+    // then the rest. Positions and routing replaced Screens and positions and
+    // Routing set on every process but a Core loader's.
+    const ORDER = ['Line', 'Production counter', 'Positions and routing', 'Parts',
+        'Changeover', 'Position settings', 'Operator setup', 'Auto-reorder', 'Quality hold', 'Danger'];
     const page = o => {
         o = o || {};
         const writes = [];
-        let sw = { positions: 4, switched_off: 0 };
+        let sw = o.autoReorder || { positions: 4, switched_off: 0 };
         const ctx = loadPage(Object.assign(o.stations ? { stations: o.stations, stationNodes: o.stationNodes } : {},
-            o.composer ? { composer: o.composer } : {}, {
-            allowSheet: true, hash: '#tab=settings',
+            o.composer ? { composer: o.composer } : {}, o.processes ? { processes: o.processes } : {}, {
+            allowSheet: true, hash: '#tab=settings', extraIds: { 'sp-st': pickerHost('sp-st'), 'pd-scrlines': pickerHost('pd-scrlines') },
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
                 if (url === '/api/processes/1/auto-reorder' && method === 'GET') return okJSON(sw);
                 if (url === '/api/processes/1/presets' && o.presets) return okJSON(o.presets);
+                if (url === '/api/processes/1/routing-nodes' && method === 'GET' && o.routing) return okJSON({ rows: o.routing });
                 if (method === 'GET') return null;
                 writes.push({ method: method, url: url, body: init.body ? JSON.parse(init.body) : null });
                 if (url === '/api/processes/1/auto-reorder') {
@@ -3745,19 +3931,62 @@ async function settingsSectionsPins(h) {
     };
     const prov = ctx => (findIn(ctx.root, '.prov')[0] || {}).textContent || '';
     const switched = (ctx, key) => (ctx.root.innerHTML.match(new RegExp('data-st="' + key + '" role="switch" aria-checked="(true|false)"')) || [])[1];
-    const lineRow = html => (html.match(/<b class="pd-arstate">.*?<\/button>/) || [''])[0];
+    const lineRow = html => (html.match(/<button class="pd-chk[^"]*" data-act="ar-toggle".*?<\/span>/) || [''])[0];
 
-    await pin('Settings draws its sections in setup order, and a jump list of the same', async () => {
+    // THE SECTION LIST AND THE CARDS ARE ONE ORDER (ruling 2026-11-15, item
+    // 3): the list down the left is each card's button, in the order the
+    // cards are drawn, and the brief's order is that order.
+    await pin('Settings draws its section cards in setup order, and a section list of the same down the left', async () => {
         const ctx = page();
         await settle();
         const html = ctx.root.innerHTML;
-        const heads = (html.match(/<h2>[^<]*<\/h2>/g) || []).map(x => x.slice(4, -5)).filter(x => x !== 'Health');
+        const heads = (html.match(/<h2>[^<]*<\/h2>/g) || []).map(x => x.slice(4, -5));
         if (JSON.stringify(heads) !== JSON.stringify(ORDER)) throw new Error('the sections read ' + JSON.stringify(heads));
+        const cards = (html.match(/<section class="pd-card[^"]*" data-sect="[^"]*"/g) || []).map(x => x.replace(/^.*data-sect="/, '').slice(0, -1));
+        if (JSON.stringify(cards) !== JSON.stringify(ORDER)) throw new Error('the cards read ' + JSON.stringify(cards));
+        if (html.indexOf('<nav class="pd-stnav" aria-label="Settings sections">') < 0) throw new Error('no section list down the left');
         const jump = (html.match(/data-act="st-jump" data-to="[^"]*"/g) || []).map(x => x.replace(/^.*data-to="/, '').slice(0, -1));
-        if (JSON.stringify(jump) !== JSON.stringify(ORDER)) throw new Error('the jump list reads ' + JSON.stringify(jump));
-        for (const gone of ['data-act="st-more"', '<h2>More</h2>', '<h2>General</h2>', 'data-act="ar-shown"']) {
+        if (JSON.stringify(jump) !== JSON.stringify(cards)) {
+            throw new Error('the section list is not the cards\' order: list ' + JSON.stringify(jump) + ', cards ' + JSON.stringify(cards));
+        }
+        for (const gone of ['data-act="st-more"', '<h2>More</h2>', '<h2>General</h2>', 'data-act="ar-shown"', 'class="pd-jump"',
+            '<h2>Screens and positions</h2>', '<h2>Routing set</h2>']) {
             if (html.indexOf(gone) >= 0) throw new Error('Settings still draws ' + gone);
         }
+    });
+
+    // A DOT WHERE SOMETHING STILL NEEDS FILLING IN, with why, said where it is
+    // reached: a counter not wired, a line with no position.
+    await pin('the section list lights a dot, with why, on a counter not wired and a line still missing a position', async () => {
+        const routing = [{ id: 1, core_node_name: 'SMN_010', role: 'source', label: 'SMN_010', enabled: true, sequence: 1 },
+            { id: 2, core_node_name: 'DN_001', role: 'destination', label: 'DN_001', enabled: true, sequence: 1 }];
+        const ctx = page({ routing: routing });
+        await settle();
+        const dots = (ctx.root.innerHTML.match(/data-to="[^"]*" title="[^"]*"/g) || []).map(x => x.replace(/^data-to="([^"]*)" title="([^"]*)"$/, '$1: $2'));
+        const want = ['Production counter: not wired', 'Positions and routing: still to pick: Positions'];
+        if (JSON.stringify(dots) !== JSON.stringify(want)) throw new Error('the dots read ' + JSON.stringify(dots));
+        const wired = page({ routing: routing, processes: [{ id: 1, name: 'Press 1', group_id: 0, active_style_id: 1, flow_composer_enabled: true,
+            counter_plc_name: 'PLC_A', counter_tag_name: 'CountA', counter_enabled: true }] });
+        await settle();
+        if (/data-to="Production counter" title=/.test(wired.root.innerHTML)) throw new Error('a wired counter still has its dot');
+        if (wired.root.innerHTML.indexOf('<section class="pd-card warn" data-sect="Production counter">') >= 0) throw new Error('a wired counter\'s card is still outlined');
+        if (ctx.root.innerHTML.indexOf('<section class="pd-card warn" data-sect="Production counter">') < 0) throw new Error('a counter not wired is not outlined');
+    });
+
+    // A SECTION LINK SCROLLS ITS CARD INTO VIEW (item 6): settingsHeading
+    // answers the card, not the h2 inside it.
+    await pin('a section link scrolls its card into view', async () => {
+        const ctx = page();
+        await settle();
+        const card = makeElement('');
+        card.classList.add('pd-card');
+        const h2 = makeElement('');
+        h2.textContent = 'Auto-reorder';
+        card.appendChild(h2);
+        ctx.root.querySelectorAll = sel => (sel === 'h2' ? [h2] : []);
+        click(ctx.root, ctx.doc, { act: 'st-jump', to: 'Auto-reorder' });
+        await settle();
+        if (!card.lastScroll) throw new Error('the card was not scrolled to' + (h2.lastScroll ? ' (its heading was)' : ''));
     });
 
     // ONE LINE EACH (owner, 2026-11-14): the note under Changeover's choice,
@@ -3793,33 +4022,53 @@ async function settingsSectionsPins(h) {
         if (rows() !== 5 || tail() !== 'all 5 · first 3 only') throw new Error('shown: ' + rows() + ' rows, ' + JSON.stringify(tail()));
     });
 
-    // SWITCHING IS AN ACTION (owner, 2026-11-14): written as it is pressed,
-    // recorded, and never the Save bar's: a clean bar stays clean, and a
-    // draft changed before it is still the draft after.
-    await pin('Switch off acts at once, is recorded, and stays out of the Save bar', async () => {
+    // THE LINE'S SWITCH SAVES WITH THE PAGE (owner, 2026-11-15: "just do it
+    // on settings when saved"), replacing 2026-11-14's "written as it is
+    // pressed": a press is a draft, its meaning said beside it; Save sends it
+    // on its own door, and the read-back says who switched it.
+    await pin('the line\'s auto-reorder switch is a draft: only Save sends it, and the read-back says who switched it', async () => {
         const ctx = page();
         await settle();
-        const on = '<b class="pd-arstate">On</b><span class="pd-dim">never switched</span>' +
-            '<button class="pd-btn" data-act="ar-flip" data-on="">Switch off</button>';
+        const on = '<button class="pd-chk on" data-act="ar-toggle" role="switch" aria-checked="true"></button>' +
+            '<span class="pd-swmean">On · positions armed on their style rows ask on their own</span>';
         if (lineRow(ctx.root.innerHTML) !== on) throw new Error('the line reads ' + JSON.stringify(lineRow(ctx.root.innerHTML)));
-        click(ctx.root, ctx.doc, { act: 'ar-flip', on: '' });
+        if (ctx.root.innerHTML.indexOf('<small>never switched</small>') < 0) throw new Error('the line does not say it was never switched');
+        if (ctx.root.innerHTML.indexOf('data-act="ar-flip"') >= 0) throw new Error('the pressed-at-once Switch off is still drawn');
+        // Twice is where it was: nothing to save.
+        click(ctx.root, ctx.doc, { act: 'ar-toggle' });
+        click(ctx.root, ctx.doc, { act: 'ar-toggle' });
         await settle();
+        if (ctx.writes.length || prov(ctx) !== 'No unsaved changes') throw new Error('off and on again: ' + JSON.stringify(ctx.writes) + ', ' + prov(ctx));
+        click(ctx.root, ctx.doc, { act: 'ar-toggle' });
+        await settle();
+        if (ctx.writes.length) throw new Error('the switch wrote before Save: ' + JSON.stringify(ctx.writes));
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('the switch is not in the draft: ' + prov(ctx));
+        const off = '<button class="pd-chk" data-act="ar-toggle" role="switch" aria-checked="false"></button>' +
+            '<span class="pd-swmean">Off · no position asks on its own</span>';
+        if (lineRow(ctx.root.innerHTML) !== off) throw new Error('pressed, the line reads ' + JSON.stringify(lineRow(ctx.root.innerHTML)));
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 3; i++) await settle();
         if (JSON.stringify(ctx.writes) !== JSON.stringify([{ method: 'POST', url: '/api/processes/1/auto-reorder', body: { on: false } }])) {
-            throw new Error('Switch off wrote ' + JSON.stringify(ctx.writes));
+            throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
         }
-        const off = lineRow(ctx.root.innerHTML);
-        if (off.indexOf('<b class="pd-arstate">Off</b><span class="pd-dim">off by s.brown, ') !== 0 ||
-            off.indexOf('data-on="1">Switch on</button>') < 0) {
-            throw new Error('after Switch off the line reads ' + JSON.stringify(off));
+        if (lineRow(ctx.root.innerHTML) !== off) throw new Error('read back, the line reads ' + JSON.stringify(lineRow(ctx.root.innerHTML)));
+        if (!/<small>switched off by s\.brown, [^<]+<\/small>/.test(ctx.root.innerHTML)) throw new Error('the read-back does not say who switched it');
+        if (prov(ctx) !== 'No unsaved changes') throw new Error('the bar after Save reads ' + prov(ctx));
+    });
+
+    // A LINE SWITCHED OFF AT SOME OF ITS POSITIONS says so while the switch
+    // stands where it was read.
+    await pin('a line off at some positions says how many, until the switch is pressed', async () => {
+        const ctx = page({ autoReorder: { positions: 4, switched_off: 2 } });
+        await settle();
+        if (lineRow(ctx.root.innerHTML).indexOf('<span class="pd-swmean">Off at 2 of 4 positions</span>') < 0) {
+            throw new Error('the line reads ' + JSON.stringify(lineRow(ctx.root.innerHTML)));
         }
-        if (prov(ctx) !== 'No unsaved changes') throw new Error('Switch off marked the bar: ' + prov(ctx));
-        click(ctx.root, ctx.doc, { act: 'st-toggle', st: 'flow_composer_enabled' });
+        click(ctx.root, ctx.doc, { act: 'ar-toggle' });
         await settle();
-        if (prov(ctx) !== 'Unsaved changes') throw new Error('setup: the toggle did not mark the bar: ' + prov(ctx));
-        click(ctx.root, ctx.doc, { act: 'ar-flip', on: '1' });
-        await settle();
-        if (ctx.writes.length !== 2 || JSON.stringify(ctx.writes[1].body) !== '{"on":true}') throw new Error('Switch on wrote ' + JSON.stringify(ctx.writes));
-        if (prov(ctx) !== 'Unsaved changes') throw new Error('Switch on cleared the draft: ' + prov(ctx));
+        if (lineRow(ctx.root.innerHTML).indexOf('<span class="pd-swmean">On · positions armed on their style rows ask on their own</span>') < 0) {
+            throw new Error('pressed, the line reads ' + JSON.stringify(lineRow(ctx.root.innerHTML)));
+        }
     });
 
     await pin('Show the switch on the station is a setting: Save sends it on its own door', async () => {
@@ -3913,38 +4162,57 @@ async function settingsPositionsPins(h) {
         o = o || {};
         const writes = [];
         const reads = [];
-        const scrHost = pickerHost('npk-scr-18');
-        const looseHost = pickerHost('npk-scr-none');
+        // Settings' set pick and the screen lines under it (ruling
+        // 2026-11-15): the one editor of the process's positions now, except
+        // on a Core loader's process.
+        const spHost = pickerHost('sp-st');
+        const linesHost = pickerHost('pd-scrlines');
+        const stations = o.stations || [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }];
         const ctx = loadPage({
-            allowSheet: true, hash: hash, extraIds: { 'npk-scr-18': scrHost, 'npk-scr-none': looseHost },
+            allowSheet: true, hash: hash, extraIds: { 'sp-st': spHost, 'pd-scrlines': linesHost },
             processes: [Object.assign({ id: 1, name: 'Press 6', group_id: 0, active_style_id: 1, flow_composer_enabled: true }, o.process || {})],
-            stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }, { id: 25, process_id: 1, name: 'Unloader' }],
-            stationNodes: { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
+            stations: stations,
+            stationNodes: o.stationNodes || { 18: ['PLN_005', 'PLN_006BCD'], 25: ['ULN_002'] },
             fetch: (url, init) => {
                 const method = (init && init.method) || 'GET';
                 if (method === 'GET') reads.push(url);
-                if (url === '/api/process-nodes') return okJSON(live());
+                if (url === '/api/process-nodes') return okJSON((o.live || live)());
                 if (url === '/api/core-nodes') return okJSON(coreNodes);
+                if (url === '/api/operator-stations' && method === 'GET') return okJSON(o.stationsRead ? o.stationsRead() : stations);
+                if (url === '/api/operator-stations' && method === 'POST') {
+                    writes.push({ method: method, url: url, body: JSON.parse(init.body) });
+                    return okJSON({ id: 40 });
+                }
                 // The positions on no screen: the process's own set-to.
                 const lp = /^\/api\/processes\/1\/positions(\/impact)?$/.exec(url);
                 if (lp && method !== 'GET') {
                     writes.push({ method: method, url: url, body: JSON.parse(init.body) });
                     return okJSON(lp[1] ? { warning: o.warning || '' } : { status: 'ok', kept: [], nodes: JSON.parse(init.body).nodes });
                 }
+                if (url === '/api/processes/1/routing-nodes' && method === 'PUT') {
+                    writes.push({ method: method, url: url, body: JSON.parse(init.body) });
+                    return okJSON({ status: 'ok' });
+                }
+                if (url === '/api/processes/1/routing-nodes' && !o.routingFails) {
+                    return okJSON({ rows: [
+                        { id: 1, core_node_name: 'SMN_002', role: 'source', label: 'SMN_002', enabled: true, sequence: 1 },
+                        { id: 2, core_node_name: 'DN_001', role: 'destination', label: 'DN_001', enabled: true, sequence: 1 },
+                    ] });
+                }
                 const m = /^\/api\/operator-stations\/(\d+)\/claimed-nodes(\/impact)?$/.exec(url);
                 if (!m) return null;
                 if (method === 'GET') {
                     return o.readFails ? Promise.resolve({ ok: false, status: 500, json: async () => ({}) })
-                        : okJSON(claimed[m[1]] || []);
+                        : okJSON((o.claimed || claimed)[m[1]] || []);
                 }
                 writes.push({ method: method, url: url, body: JSON.parse(init.body) });
                 if (m[2]) return okJSON({ warning: o.warning || '' });
                 return okJSON(Object.assign({ status: 'ok', kept: [] }, o.answer ? { nodes: o.answer } : {}));
             },
         });
-        return Object.assign(ctx, { writes: writes, reads: reads, scrHost: scrHost, looseHost: looseHost });
+        return Object.assign(ctx, { writes: writes, reads: reads, spHost: spHost, linesHost: linesHost });
     };
-    const rowOf = (html, name) => (html.match(new RegExp('<button[^>]*>(?:<i class="box"></i>)?' + name + '(?:<small>[^<]*</small>)?</button>')) || [''])[0];
+    const prov = ctx => (findIn(ctx.root, '.prov')[0] || {}).textContent || '';
 
     await pin('Settings says each position setting as its rule and the positions that differ, not one row per position', async () => {
         const ctx = page('#tab=settings');
@@ -3961,60 +4229,100 @@ async function settingsPositionsPins(h) {
         if (sum('counted') !== 'all 4 at the production counter') throw new Error('Counted at says ' + JSON.stringify(sum('counted')));
         if (html.indexOf('<table class="exc-rows">') >= 0) throw new Error('a list draws a row for a position that does not differ');
         if (html.indexOf('data-act="cu-add"') < 0 || html.indexOf('data-act="ca-add"') < 0) throw new Error('a list has no + Add');
-        // What the wall also said: a position on no screen, a row of its own
-        // under Screens and positions now (slice 4).
-        if (html.indexOf('<label>On no screen<small>1 position · a screen has not taken them yet</small></label>') < 0) {
-            throw new Error('PLN_009 on no screen is not said');
-        }
+        // What the wall also said: a position on no screen, a line of its own
+        // under the set pick now (Positions and routing).
+        const lines = plain(ctx.linesHost.innerHTML);
+        if (lines.indexOf('1 position on no screen: PLN_009') < 0) throw new Error('PLN_009 on no screen is not said: ' + lines);
     });
 
-    // A SCREEN'S POSITIONS ARE ITS ROW'S PICKER ON SETTINGS (slice 4: Edit
-    // process went, and with it the sheet's four-bucket checklist). The same
-    // rules: another process's position is greyed with its name, the screen's
-    // own are ticked, a move from a sibling screen says so, a position on no
-    // screen and a shared loader window are offered with their notes, and a
-    // group is never one box.
-    await pin('a screen\'s picker greys another process\'s position, ticks its own, says what a move does, offers a loader window', async () => {
+    // THE PROCESS'S POSITIONS ARE THE SET PICK'S POSITIONS BOX (ruling
+    // 2026-11-15). The same rules as the per-screen pickers had: another
+    // process's position is greyed with its name (behind "In use by other
+    // processes"), every position of this process is ticked whichever screen
+    // holds it, a shared loader window is offered with its note, and a group
+    // is never one tick: its nodes are positions one at a time.
+    await pin('the Positions box greys another process\'s position, ticks its own, offers a loader window, never ticks a group', async () => {
         const ctx = page('#tab=settings');
         await settle();
-        const h = ctx.scrHost;
-        pk.open(h);
+        const h = ctx.spHost;
+        if (sp.active(h) !== 'positions') throw new Error('the set pick opens on ' + sp.active(h));
+        if (JSON.stringify(sp.chips(h, 'positions')) !== '["PLN_005","PLN_006BCD","PLN_009BCD","ULN_002","PLN_009"]') {
+            throw new Error('the Positions box holds ' + JSON.stringify(sp.chips(h, 'positions')));
+        }
+        sp.showLater(h);
+        // A group's nodes wait under its "show"; ULN_002, on the Unloader
+        // screen, is one of them.
+        if (pk.row(h, 'ULN_002')) throw new Error('a member of a group is drawn before its show');
+        const fold = findIn(h, '[data-fold]').find(b => b.getAttribute('data-fold') === 'Press Unloader');
+        if (!fold) throw new Error('the group has no show for its nodes');
+        fold.click();
         const state = n => (pk.off(h, n) ? 'off' : pk.on(h, n) ? 'on' : '') + ' ' + JSON.stringify(pk.side(h, n));
-        const want = { PLN_001: 'off "on Press 4"', PLN_005: 'on ""', ULN_002: ' "on Unloader · picking moves it here"' };
+        const want = { PLN_001: 'off "on Press 4"', PLN_005: 'on ""', ULN_002: 'on ""', PLN_009: 'on ""' };
         for (const n of Object.keys(want)) {
             if (state(n) !== want[n]) throw new Error(n + ' draws ' + state(n) + '\n      want ' + want[n]);
         }
-        const before = h.innerHTML;
+        const before = JSON.stringify(sp.chips(h, 'positions'));
         pk.pick(h, 'PLN_001');
-        if (pk.on(h, 'PLN_001') || h.innerHTML !== before) throw new Error('a click on a held node ticked it: ' + state('PLN_001'));
+        if (pk.on(h, 'PLN_001') || JSON.stringify(sp.chips(h, 'positions')) !== before) throw new Error('a click on a held node ticked it: ' + state('PLN_001'));
         if (pk.off(h, 'SMN_001') || pk.side(h, 'SMN_001') !== 'loader window · also on Bin Loader') {
             throw new Error('the loader window is not offered with its note: ' + JSON.stringify(pk.side(h, 'SMN_001')));
         }
         if (!pk.row(h, 'PLN_005PAL') || pk.off(h, 'PLN_005PAL')) throw new Error('PLN_005PAL is not tickable');
-        if (pk.off(h, 'PLN_009') || pk.side(h, 'PLN_009') !== 'on no screen yet') {
-            throw new Error('a position on no screen is not offered to put on one: ' + JSON.stringify(pk.side(h, 'PLN_009')));
+        const group = pk.rows(h).find(r => r.getAttribute('data-value') === 'Press Unloader');
+        if (group && !pk.off(h, 'Press Unloader')) throw new Error('a group is offered as one tick');
+        if (group && pk.side(h, 'Press Unloader') !== 'a group: its nodes are positions one at a time') {
+            throw new Error('the group says ' + JSON.stringify(pk.side(h, 'Press Unloader')));
         }
-        if (pk.rows(h).some(r => r.textContent.indexOf('Press Unloader') >= 0)) throw new Error('a group is offered as a box');
         if (findIn(h, 'button').some(b => /^(all|none)$/i.test(b.textContent))) throw new Error('the picker offers a tick-all');
+    });
+
+    // A BOX CLICK OPENS THE BOX, AND NOTHING ELSE. Settings' set pick sits in
+    // #pd-root, so its clicks bubble through the page's own onClick on the
+    // way up, as a browser's do (here: the host hung in #pd-root). That
+    // onClick opens a process from any [data-open]; the box's title carried
+    // one once, and the click opened process NaN.
+    await pin('a click on a box of Settings\' set pick opens that box and navigates nowhere', async () => {
+        const ctx = page('#tab=settings');
+        await settle();
+        ctx.root.appendChild(ctx.spHost);
+        const before = ctx.reads.length;
+        sp.open(ctx.spHost, 'destination');
+        for (let i = 0; i < 2; i++) await settle();
+        if (sp.active(ctx.spHost) !== 'destination') throw new Error('the box did not open: ' + sp.active(ctx.spHost));
+        const after = ctx.reads.slice(before);
+        if (after.some(u => /NaN/.test(u))) throw new Error('the box click opened process NaN: ' + JSON.stringify(after));
+        if (after.length) throw new Error('the box click read ' + JSON.stringify(after));
+    });
+
+    // A FRESH SETTINGS IS CLEAN: the set pick starts where the process is, so
+    // nothing reads as unsaved before anything is picked.
+    await pin('a fresh Settings load is clean: "No unsaved changes", the set pick holding what was read', async () => {
+        const ctx = page('#tab=settings');
+        await settle();
+        if (prov(ctx) !== 'No unsaved changes') throw new Error('a fresh Settings reads ' + JSON.stringify(prov(ctx)));
+        if (ctx.spHost.querySelector('.setpick') && findIn(ctx.spHost, '.setpick')[0].hasAttribute('data-dirty')) {
+            throw new Error('the set pick is marked dirty on a fresh load');
+        }
     });
 
     // ONE READ PER CHANGED SCREEN (owner, 2026-11-14): the read before its
     // write, so a position another screen or engineer put there since is kept;
-    // what the write leaves comes back in its answer, not in a second read.
-    await pin('Save sends the screen\'s list as the server holds it, plus the picks, and reads it once', async () => {
+    // what the write leaves comes back in its answer, not in a second read. A
+    // position picked in the Positions box goes on the line's first screen.
+    await pin('Save sends the first screen\'s list as the server holds it, plus the picks, and reads it once', async () => {
         const answered = ['PLN_005', 'PLN_006BCD', 'PLN_009BCD', 'PLN_005PAL', 'PLN_006PAL'];
         const ctx = page('#tab=settings', { answer: answered });
         await settle();
-        pk.open(ctx.scrHost);
-        pk.pick(ctx.scrHost, 'PLN_005PAL');
-        pk.pick(ctx.scrHost, 'PLN_006PAL');
+        pk.pick(ctx.spHost, 'PLN_005PAL');
+        pk.pick(ctx.spHost, 'PLN_006PAL');
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('a pick in the Positions box did not mark the bar: ' + prov(ctx));
         const reads = () => ctx.reads.filter(u => u === '/api/operator-stations/18/claimed-nodes').length;
         const was = reads();
         findIn(ctx.root, '[data-set="save"]')[0].click();
         for (let i = 0; i < 6; i++) await settle();
-        const put = ctx.writes.find(w => w.method === 'PUT');
-        if (!put || put.url !== '/api/operator-stations/18/claimed-nodes') throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
-        if (JSON.stringify(put.body.nodes) !== JSON.stringify(answered)) throw new Error('Save sent ' + JSON.stringify(put.body.nodes) + '\n      want ' + JSON.stringify(answered));
+        const puts = ctx.writes.filter(w => w.method === 'PUT');
+        if (puts.length !== 1 || puts[0].url !== '/api/operator-stations/18/claimed-nodes') throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
+        if (JSON.stringify(puts[0].body.nodes) !== JSON.stringify(answered)) throw new Error('Save sent ' + JSON.stringify(puts[0].body.nodes) + '\n      want ' + JSON.stringify(answered));
         if (reads() - was !== 1) throw new Error('the screen was read ' + (reads() - was) + ' times for one save, want 1 (before the write)');
     });
 
@@ -4023,8 +4331,7 @@ async function settingsPositionsPins(h) {
     await pin('a screen list that cannot be read is not written over', async () => {
         const ctx = page('#tab=settings', { readFails: true });
         await settle();
-        pk.open(ctx.scrHost);
-        pk.pick(ctx.scrHost, 'PLN_005PAL');
+        pk.pick(ctx.spHost, 'PLN_005PAL');
         findIn(ctx.root, '[data-set="save"]')[0].click();
         for (let i = 0; i < 6; i++) await settle();
         if (ctx.writes.some(w => w.method === 'PUT')) throw new Error('a write was sent: ' + JSON.stringify(ctx.writes));
@@ -4032,31 +4339,141 @@ async function settingsPositionsPins(h) {
         if (bar.indexOf('positions could not be read, so nothing was changed') < 0) throw new Error('the bar does not say why: ' + JSON.stringify(bar));
     });
 
-    // POSITIONS COME BEFORE THE SCREEN (owner's setup order): the ones no
-    // screen holds are a row of their own, saved through the process's own
-    // set-to (PUT …/positions); a position on a screen is that screen's.
-    await pin('the positions on no screen are their own row, saved in one write', async () => {
+    // POSITIONS COME BEFORE THE SCREEN (owner's setup order): one on no screen
+    // stays on none, and its list is the process's own set-to (PUT
+    // …/positions); a position picked new goes on the line's screen, and no
+    // screen is written for one taken off none.
+    await pin('a position on no screen stays on none; taking it out is the process\'s own set-to, asked about first', async () => {
         const ctx = page('#tab=settings');
         await settle();
-        const h = ctx.looseHost;
-        pk.open(h);
-        if (!pk.on(h, 'PLN_009')) throw new Error('PLN_009, on no screen, is not on the row');
-        if (!pk.off(h, 'PLN_005') || pk.side(h, 'PLN_005') !== 'on Press 6 Operator Screen') {
-            throw new Error('a position on a screen is offered here: ' + JSON.stringify(pk.side(h, 'PLN_005')));
-        }
-        pk.pick(h, 'PLN_005PAL');
+        sp.drop(ctx.spHost, 'positions', 'PLN_009');
+        await settle();
+        if (plain(ctx.linesHost.innerHTML).indexOf('on no screen') >= 0) throw new Error('the lines still say a position is on no screen: ' + plain(ctx.linesHost.innerHTML));
         findIn(ctx.root, '[data-set="save"]')[0].click();
         for (let i = 0; i < 6; i++) await settle();
-        const put = ctx.writes.find(w => w.method === 'PUT');
-        if (!put || put.url !== '/api/processes/1/positions' || JSON.stringify(put.body.nodes) !== '["PLN_009","PLN_005PAL"]') {
-            throw new Error('the save wrote ' + JSON.stringify(ctx.writes));
+        const got = ctx.writes.map(w => w.method + ' ' + w.url + ' ' + JSON.stringify(w.body.nodes));
+        if (JSON.stringify(got) !== JSON.stringify(['POST /api/processes/1/positions/impact []', 'PUT /api/processes/1/positions []'])) {
+            throw new Error('the save wrote ' + JSON.stringify(got));
         }
-        if (ctx.writes.some(w => /claimed-nodes/.test(w.url))) throw new Error('a screen was written for a position on none');
+    });
+
+    // ONE SCREEN, AND POSITIONS ON NONE: "Put them on <screen>" is a draft
+    // like any pick, and Save puts them on it (the screen adopts a position
+    // on no screen).
+    await pin('on a one-screen line, "Put them on" is a draft: Save claims the positions on no screen onto it', async () => {
+        const ctx = page('#tab=settings', {
+            stations: [{ id: 18, process_id: 1, name: 'Press 6 Operator Screen' }], stationNodes: { 18: ['PLN_005', 'PLN_006BCD'] },
+            claimed: { 18: ['PLN_005', 'PLN_006BCD'] },
+            live: () => live().filter(n => n.core_node_name !== 'ULN_002'),
+        });
+        await settle();
+        const onto = '<button class="pd-btn quiet" data-act="loose-onto">Put them on Press 6 Operator Screen</button>';
+        if (ctx.linesHost.innerHTML.indexOf(onto) < 0) throw new Error('the one-screen line does not offer ' + onto + ': ' + ctx.linesHost.innerHTML);
+        click(ctx.root, ctx.doc, { act: 'loose-onto' });
+        await settle();
+        if (ctx.writes.length) throw new Error('"Put them on" wrote before Save: ' + JSON.stringify(ctx.writes));
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('"Put them on" did not mark the bar: ' + prov(ctx));
+        if (plain(ctx.linesHost.innerHTML).indexOf('The positions on no screen go on Press 6 Operator Screen when this is saved.') < 0) {
+            throw new Error('the lines do not say what Save will do: ' + plain(ctx.linesHost.innerHTML));
+        }
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 6; i++) await settle();
+        const claim = ctx.writes.find(w => w.method === 'PUT' && w.url === '/api/operator-stations/18/claimed-nodes');
+        if (!claim || JSON.stringify(claim.body.nodes) !== '["PLN_005","PLN_006BCD","PLN_009"]') throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
+        if (ctx.writes.some(w => /\/impact$/.test(w.url))) throw new Error('a move onto the screen was asked about as a removal: ' + JSON.stringify(ctx.writes));
+    });
+
+    // THE SET PICK SAVES BOTH: a position and a routing name moved in one
+    // visit are the screen's write and the routing set's one write, on the
+    // one Save.
+    await pin('one Save writes the Positions box to its screen and the role boxes as one routing PUT', async () => {
+        const ctx = page('#tab=settings');
+        await settle();
+        pk.pick(ctx.spHost, 'PLN_005PAL');
+        sp.open(ctx.spHost, 'destination');
+        pk.pick(ctx.spHost, 'PLN_006PAL');
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 6; i++) await settle();
+        const puts = ctx.writes.filter(w => w.method === 'PUT').map(w => w.url);
+        if (JSON.stringify(puts) !== '["/api/operator-stations/18/claimed-nodes","/api/processes/1/routing-nodes"]') {
+            throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
+        }
+        const rt = ctx.writes.find(w => /routing-nodes$/.test(w.url)).body;
+        if (JSON.stringify(rt.nodes.filter(r => r.role === 'destination')) !== '[{"core_node_name":"DN_001","role":"destination"},{"core_node_name":"PLN_006PAL","role":"destination"}]') {
+            throw new Error('the routing write is not the boxes in order: ' + JSON.stringify(rt));
+        }
+        if (prov(ctx) !== 'No unsaved changes') throw new Error('the bar after Save reads ' + JSON.stringify(prov(ctx)));
+    });
+
+    // A SET THAT COULD NOT BE READ IS NOT AN EMPTY SET: its three role boxes
+    // say so and do not open, and Save leaves the routing set alone while the
+    // positions still save.
+    await pin('a routing set that could not be read closes the role boxes, Save leaves it alone, and no dot asks for its names', async () => {
+        const ctx = page('#tab=settings', { routingFails: true });
+        await settle();
+        const closed = ['source', 'staging', 'destination'].map(k => sp.box(ctx.spHost, k).classList.contains('is-closed'));
+        if (JSON.stringify(closed) !== '[true,true,true]') throw new Error('the role boxes open over an unread set: ' + JSON.stringify(closed));
+        sp.open(ctx.spHost, 'source');
+        if (sp.active(ctx.spHost) !== 'positions') throw new Error('a closed box opened');
+        pk.pick(ctx.spHost, 'PLN_005PAL');
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 6; i++) await settle();
+        if (ctx.writes.some(w => /routing-nodes/.test(w.url))) throw new Error('Save wrote over a routing set it could not read: ' + JSON.stringify(ctx.writes));
+        if (!ctx.writes.some(w => w.url === '/api/operator-stations/18/claimed-nodes')) throw new Error('the positions did not save: ' + JSON.stringify(ctx.writes));
+        // Nor does the section list ask for names in a set it could not read
+        // (read off a full redraw: this harness's root answers no
+        // querySelector, so settingsSetMoved's in-place swap is not followed).
+        pk.pick(ctx.spHost, 'PLN_006PAL');
+        click(ctx.root, ctx.doc, { act: 'st-toggle', st: 'flow_composer_enabled' });
+        await settle();
+        const dot = (ctx.root.innerHTML.match(/data-to="Positions and routing" title="([^"]*)"/) || [])[1] || '';
+        if (/Inbound|Outbound/.test(dot)) throw new Error('the section dot asks for names in a routing set that could not be read: ' + JSON.stringify(dot));
+    });
+
+    // "+ ADD A SCREEN" IS A LINE WITH NO SCREEN'S, AND IT TAKES THE POSITIONS
+    // (ruling 2026-11-15, item 4): the sheet says which, the screen is made
+    // and claims them, and the Positions box starts from what it now holds,
+    // so the bar does not call the screen's own positions unsaved.
+    await pin('"+ Add a screen" on a line with no screen takes its positions, and the bar is clean after', async () => {
+        const loose = () => live().map(n => (n.process_id === 1 ? Object.assign({}, n, { operator_station_id: null, station_name: '' }) : n));
+        let made = false;
+        const after = [{ id: 40, process_id: 1, name: 'Press 6' }];
+        const ctx = page('#tab=settings', {
+            stations: [], stationNodes: {}, live: () => (made ? live().map(n => (n.process_id === 1 ? Object.assign({}, n, { operator_station_id: 40 }) : n)) : loose()),
+            stationsRead: () => (made ? after : []),
+            claimed: { 40: ['PLN_005', 'PLN_006BCD', 'ULN_002', 'PLN_009'] },
+        });
+        await settle();
+        if (plain(ctx.linesHost.innerHTML).indexOf('4 positions on no screen: PLN_005, ULN_002, PLN_006BCD, PLN_009') < 0) {
+            throw new Error('setup: the positions are not on none: ' + plain(ctx.linesHost.innerHTML));
+        }
+        if (ctx.linesHost.innerHTML.indexOf('data-act="screen-add">+ Add a screen</button>') < 0) throw new Error('a line with no screen offers no "+ Add a screen"');
+        if (ctx.linesHost.innerHTML.indexOf('data-act="loose-onto"') >= 0) throw new Error('a line with no screen offers "Put them on"');
+        click(ctx.root, ctx.doc, { act: 'screen-add' });
+        await settle();
+        const sheet = ctx.sheet();
+        if (!sheet.open) throw new Error('setup: the screen sheet did not open');
+        if (sheet.el.innerHTML.indexOf('It takes the 4 positions on no screen: PLN_005, ULN_002, PLN_006BCD, PLN_009.') < 0) {
+            throw new Error('the sheet does not say what it takes: ' + plain(sheet.el.innerHTML));
+        }
+        const name = makeElement(''), note = makeElement('');
+        name.value = 'Press 6';
+        note.value = '';
+        ctx.scrim._sheetFields = { name: name, note: note };
+        made = true;
+        sheet.ok();
+        for (let i = 0; i < 4; i++) await settle();
+        const got = ctx.writes.map(w => w.method + ' ' + w.url);
+        if (JSON.stringify(got) !== '["POST /api/operator-stations","PUT /api/operator-stations/40/claimed-nodes"]') throw new Error('the sheet wrote ' + JSON.stringify(ctx.writes));
+        if (JSON.stringify(ctx.writes[1].body.nodes) !== '["PLN_005","ULN_002","PLN_006BCD","PLN_009"]') throw new Error('the screen claimed ' + JSON.stringify(ctx.writes[1].body));
+        if (ctx.sheet().open) throw new Error('the sheet stayed open');
+        if (prov(ctx) !== 'No unsaved changes') throw new Error('the bar after "+ Add a screen" reads ' + JSON.stringify(prov(ctx)));
+        if (plain(ctx.linesHost.innerHTML).indexOf('Screen Press 6 holds all 4 positions') < 0) throw new Error('the line does not say the screen holds them: ' + plain(ctx.linesHost.innerHTML));
     });
 
     // A LOADER'S OR UNLOADER'S PAGE (owner, 2026-11-14): Core runs its board,
     // so it is Line, its screens and a pointer to Core: no Setup, no Styles,
-    // no flow picture.
+    // no flow picture. Its screens keep their own rows (no set pick).
     await pin('a process whose boards Core runs opens on Settings: Line, its screens, a pointer to Core', async () => {
         const ctx = page('', { process: { core_boards: true } });
         await settle();
@@ -4066,21 +4483,19 @@ async function settingsPositionsPins(h) {
         if (JSON.stringify(heads) !== '["Line","Screens and positions","Loader board","Danger"]') throw new Error('its sections read ' + JSON.stringify(heads));
         if (html.indexOf('Core runs this board') < 0) throw new Error('no pointer to Core');
         if (/os-flow-picture/.test(html)) throw new Error('a flow picture is drawn');
+        if (html.indexOf('id="sp-st"') >= 0 || findIn(ctx.spHost, '.setpick').length) throw new Error('a loader\'s Settings draws the set pick');
+        if (html.indexOf('data-act="setup-show"') >= 0 || html.indexOf('data-act="setup-skip"') >= 0) throw new Error('a loader\'s process offers Setup');
     });
 
-    // ONE DOOR TAKES A POSITION OFF A SCREEN: its row under Settings ›
-    // Screens and positions. Save asks what still names the position first,
-    // and Save again takes it off (Settings' per-row Remove was a second door
-    // to the same write, and went with the one-row-per-position wall). THE
+    // ONE DOOR TAKES A POSITION OFF THE LINE: the Positions box. Save asks
+    // what still names the position first, and Save again takes it off. THE
     // WRITE IS THE SERVER'S LIST: PLN_009BCD, which the page was not loaded
     // with, is not dropped by it.
-    await pin('taking a position off a screen\'s row asks what still names it, and Save again takes it off', async () => {
+    await pin('taking a position out of the Positions box asks what still names it, and Save again takes it off', async () => {
         const says = 'PLN_005 is named by recipe Two up. Save again to remove it anyway.';
         const ctx = page('#tab=settings', { warning: says });
         await settle();
-        pk.open(ctx.scrHost);
-        await settle();
-        pk.drop(ctx.scrHost, 'PLN_005');
+        sp.drop(ctx.spHost, 'positions', 'PLN_005');
         await settle();
         const save = findIn(ctx.root, '[data-set="save"]')[0];
         save.click();

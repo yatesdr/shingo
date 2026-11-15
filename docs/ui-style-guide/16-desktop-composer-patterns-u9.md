@@ -4,9 +4,9 @@ Verified against: 74c3eb77
 
 The Edge Processes page (`shingo-edge/www/static/js/pages/processes-desktop.js`)
 is the engineer's half of the flow composer: a process list, and per process
-two tabs, **Styles** and **Settings**, with a **Setup** tab before them only
-while the process cannot run yet. There is no Operator screens tab and no
-Recipes tab: the screens are rows under **Settings › Screens and positions**,
+two tabs, **Styles** and **Settings**, with a **Setup** tab before them until
+the line is set up. There is no Operator screens tab and no Recipes tab: the
+screen is a line under **Settings › Positions and routing**,
 and the recipes sit under **Settings › Operator setup** (a `#tab=presets` or
 `#tab=recipes` link lands there). A loader's or unloader's process — Core runs
 its board, the process row's `core_boards` — has Settings alone: Line, Screens
@@ -21,8 +21,7 @@ every other screen that shows it shows it read-only:
 |---|---|
 | name, description, group | **Settings › Line** |
 | production counter | **Settings › Production counter** |
-| the operator screens, the positions each holds, and the positions on no screen | **Settings › Screens and positions** |
-| routing set | **Settings › Routing set** |
+| the positions, the routing set and the screen that holds the positions | **Settings › Positions and routing**, the set pick (and **Add process** and its Change…, the same pick) |
 | the parts the process runs | **Settings › Parts** |
 | a position's light curtain, and the counter its strokes count at | **Settings › Position settings** |
 | changeover auto-arm | **Settings › Changeover** |
@@ -31,34 +30,35 @@ every other screen that shows it shows it read-only:
 | quality hold | **Settings › Quality hold** |
 | a style's flow, and what a position sets for that style | **Styles** (the positions table, and *Set for this style* under it) |
 | a recipe's shape, and what a recipe group sets | **Styles**, from the rail (open a recipe, or **+ New recipe**) |
-| a name and a group, once, when the process is made | **Add process**, which lands on **Setup** |
+| a process, its screen, its positions, routing set and parts, when it is made | **Add process**, which lands on **Setup**; Setup's Change… is the same sheet |
 
-The process list finds a process and opens it; it has no edit sheet of its
-own, and neither does a process: the Edit process sheet is deleted. A second
-editor for a fact is two forms that can disagree about it, and the one the
-engineer did not open is the one holding the stale value. When a fact gains a
-better editor, the old one is deleted with its routes rather than kept in step.
-The positions a process works have one door, **Settings › Screens and
-positions**: each screen's row writes through `PUT …/claimed-nodes`, the **On
-no screen** row through `PUT …/positions`, and each sends only a list it has
-just read. **Positions come before the screen**: a process's positions that no
-screen has taken yet are the On no screen row, and a screen added later takes
-them. **"+ Add a position" on the Styles tab is not a positions editor
+**The set pick is one piece in two places** (`shared/set-pick.js`): four boxes,
+Positions, Inbound, Staging and Outbound, each in its role's colour (the
+`--role-*` tokens, never the robot hues) with its picks as chips, over one
+always-open list. The Add process sheet (and its Change…, the same sheet filled
+in) and Settings › Positions and routing draw it; both save through the same
+doors (`savePositions`, `saveRouting`), so it is one editor drawn twice, not two
+forms. Positions are saved per screen through `PUT …/claimed-nodes` (a line's
+positions on no screen through `PUT …/positions`), each from a list just read.
+**A line has one screen**, made with the process; a new position goes on it.
+A line with none offers **+ Add a screen**, which takes the positions on no
+screen; one with two from before shows each with its positions, and nothing
+there moves a position between them. **"+ Add a position" on the Styles tab is not a positions editor
 either**: it turns a position on in the draft, nothing is written until the
 flow is saved, and which positions the process works is still Settings' to
 say. One phrase for it everywhere: "Add a position".
 
-**Setup: what the process still needs, each row a link.** A process that
-cannot run yet opens on Setup, its rows in the order an engineer does them —
-positions, routing set, parts, the first style, the operator screen last —
-each saying what the process has now and the one thing to do, the first row
-not done the primary button. Below them, under *Not needed to run*, the
-production counter (`needed for auto reorder`) and HMI setup. **Every row is
-a link to where that thing is set**, a Settings section or the Styles tab, so
-no door lives only on Setup: the tab goes away and the doors do not. It goes
-once the process **can** run — all five rows done, the screen's when a screen
-holds a position — not once a style has run. Add process asks a name and a
-group only and lands here; everything else has one home each.
+**Setup: a short path to a first line, skippable.** A new process opens on
+Setup: three steps, each done where it is shown — **Nodes and part** (the Add
+process sheet answered it; Change… opens it again), **First style** (a part on
+each position, consume or produce, one way they all swap, filled from the
+routing set and saved by the Styles tab's own save), and **Run it** (the screen,
+opened, with its three presses written out). No step lands on Settings. Beside
+them, the line so far and what can wait for Settings. It is finished when the
+line **can** run and its screen **has been opened** (the screen's
+`last_seen_at`), not at a first changeover: some lines have none. **Skip setup,
+use Settings** hides it in this browser; **Show setup** brings it back while the
+process cannot run.
 
 **The app-bar gate sentence.** Plain muted text on the right of the app bar
 (`.pd-gate`: no border, no tone, no pill) states a setting that is decided
@@ -155,14 +155,14 @@ page is the foot bar's `Save`.
 
 **Settings is one settings page.** The tab is `settingsPage`
 (`shared/settings.js`; see [Settings pages](33-settings-pages.md)): every
-section open, in setup order — Line · Production counter · Screens and
-positions · Routing set · Parts · Position settings · Changeover · Operator
-setup · Auto-reorder · Quality hold · Danger, with Health above Line while it
-has items — a jump list of them at the top, and one Save in the foot bar.
-Nothing on it is saved as it is picked: a pick, a switch and a typed value are
-the draft until Save. Switching the line's auto-reorder on or off is the one
-exception, because it is an action and not a setting: written as it is
-pressed, with who, where and when, and never counted by the bar.
+section open, in setup order — Line · Production counter · Positions and
+routing · Parts · Position settings · Changeover · Operator setup ·
+Auto-reorder · Quality hold · Danger, with Health first while it has items —
+listed down the left with a dot on one that needs attention, each a card, the
+page's full width, and one Save in the foot bar. Nothing on it is saved as it
+is picked: a pick, a switch and a typed value are the draft until Save, the
+line's auto-reorder switch included (it is still recorded with who, where and
+when). An on/off setting is a switch with what it means beside it.
 
 **Recipes: two sections, and the second one is an offer.** A screen that names
 reusable shapes has two lists on it and they are different kinds of thing. On

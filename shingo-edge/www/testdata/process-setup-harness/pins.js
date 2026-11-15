@@ -33,6 +33,14 @@ const path = require('path');
 const H = require('./page-harness.js');
 
 const FX = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
+// A RUNNING PRESS'S SCREENS HAVE BEEN OPENED. Setup is finished once the line
+// can run and its screen has been opened, the screen's last_seen_at (owner
+// ruling 2026-11-15); until then a process opens on Setup. Press A runs Style
+// A, so its screens (and Press B's) are seen here, 30 s before the harness's
+// fixed clock (page-harness.js: 2026-11-11 14:05:30, local). fixture.json
+// carries no last_seen_at; the Setup pins (cold-start.js) take it away where
+// they mean a screen never opened.
+for (const st of FX.page.stations) if (!st.last_seen_at) st.last_seen_at = '2026-11-11T14:05:00';
 const out = {};
 
 // ── the fixture's server ─────────────────────────────────────────────────────
@@ -116,14 +124,14 @@ function server(extra) {
 
 
 // o.page / o.search / o.extra replace the fixture's page data, the query and
-// add routes; o.answer(method, url, body), when given, may answer any call
+// add routes; o.storage is this browser's localStorage at boot; o.answer(method, url, body), when given, may answer any call
 // first (the refusal pins' one refused write).
 function openPage(o) {
     o = o || {};
     const base = server(o.extra);
     const serve = o.answer ? (m, u, b) => o.answer(m, u, b) || base(m, u, b) : base;
     return H.open({ page: o.page || FX.page, search: o.search === undefined ? '?process=1' : o.search,
-        hash: o.hash || '', serve: serve });
+        hash: o.hash || '', serve: serve, storage: o.storage });
 }
 
 // The rows the positions table draws, in its order: a position that is on
@@ -399,12 +407,38 @@ function npk(page, host, key, name, how) {
     if (!row) throw new Error(key + ' draws no row ' + name);
     row.click();
 }
-// The positions and the routing set are one set picker (setInit): its four
-// buckets over one list. A bucket is opened by its button, then the name is
-// picked in the list as npk picks it.
-function setPick(page, host, key, bucket, name, how) {
-    page.click(host, { act: 'set-bucket', set: key, bucket: bucket }, host === 'scrim' ? { inside: ['.pd-modal'] } : undefined);
-    npk(page, host, key, name, how);
+// The positions and the routing set are the shared set pick
+// (shared/set-pick.js) drawn into #sp-<key>: proc on the process sheet, st
+// on Settings. A box is opened by a click on its title, then a name is ticked
+// in the one list under the boxes, as an engineer does; a name is dropped by
+// its chip's × in its box. A row behind "In use by other processes" or a
+// group's "show" is opened first, as an engineer would have to.
+function setPick(page, key, box, name, how) {
+    const host = page.byId('sp-' + key);
+    if (!host) throw new Error('no set pick ' + key + ' is drawn');
+    const boxEl = () => host.querySelectorAll('.setpick-box').find(x => x.getAttribute('data-box') === box);
+    if (!boxEl()) throw new Error('set pick ' + key + ' has no box ' + box);
+    if (how === 'drop') {
+        // A box past eight chips says "+ N more"; the chip is behind it.
+        const chip = () => boxEl().querySelectorAll('[data-drop]').find(d => d.getAttribute('data-drop') === name);
+        const more = boxEl().querySelector('[data-more]');
+        if (!chip() && more && /more$/.test(more.textContent)) more.click();
+        if (!chip()) throw new Error(key + '/' + box + ' has no chip ' + name);
+        chip().click();
+        return;
+    }
+    if (!boxEl().classList.contains('is-on')) boxEl().querySelector('.setpick-t').click();
+    if (!boxEl().classList.contains('is-on')) throw new Error(key + '/' + box + ' did not open');
+    const find = () => host.querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === name);
+    for (let i = 0; i < 12 && !find(); i++) {
+        const f = host.querySelectorAll('[data-later]').find(x => x.textContent === 'show') ||
+            host.querySelectorAll('[data-fold]').find(x => x.getAttribute('aria-expanded') === 'false');
+        if (!f) break;
+        f.click();
+    }
+    const row = find();
+    if (!row) throw new Error(key + '/' + box + ' draws no row ' + name);
+    row.click();
 }
 async function sheetOK(page) {
     page.click('scrim', { act: 'sheet-ok' });
@@ -483,6 +517,23 @@ function freeMode(page) {
     return mode;
 }
 
+// PRESS A WITH NO SCREEN: its two screens gone and every position of it on
+// none, the line "+ Add a screen" is drawn on (ruling 2026-11-15, item 4).
+function noScreenPage() {
+    const page = JSON.parse(JSON.stringify(FX.page));
+    page.stations = page.stations.filter(st => st.process_id !== 1);
+    page.stationNodes = {};
+    return page;
+}
+function noScreenRoutes(method, url) {
+    const u = url.split('?')[0];
+    if (method === 'GET' && u === '/api/process-nodes') {
+        return { body: FX.server.processNodes.map(n => (n.process_id === 1 ? Object.assign({}, n, { operator_station_id: null, station_name: '' }) : n)) };
+    }
+    if (method === 'GET' && u === '/api/operator-stations') return { body: FX.page.stations.filter(st => st.process_id !== 1) };
+    return undefined;
+}
+
 const DRIVE = {
     flowEdit: { drive: async page => {
         pickChip(page, 'POS_A5', 'source', 'SRC_1');
@@ -509,13 +560,21 @@ const DRIVE = {
         page.type('catid', 'CAT-M');
         await sheetOK(page);
     } },
-    // ADD PROCESS ASKS A NAME AND A GROUP (slice 4); the rest is Settings'.
+    // ONE SHEET MAKES A LINE (ruling 2026-11-15): a name, the screen left
+    // blank (named after the process), a group, two positions, an inbound and
+    // an outbound on the set pick, and a part. Create is its five writes.
     addProcess: { drive: async page => {
         page.click('root', { act: 'add-process' });
         await page.settle();
         page.type('name', 'Press N');
         page.click('scrim', { act: 'add-pickgroup' }, { inside: ['.pd-modal'] });
         pickerRow(page, 'pd-advpop', 3);
+        setPick(page, 'proc', 'positions', 'NEW_1');
+        setPick(page, 'proc', 'positions', 'NEW_2');
+        setPick(page, 'proc', 'source', 'SRC_2');
+        setPick(page, 'proc', 'destination', 'DST_1');
+        npk(page, 'scrim', 'parts', 'PART-1');
+        await page.settle();
         await sheetOK(page);
     } },
     settingsSave: { hash: '#tab=settings', drive: async page => {
@@ -554,26 +613,30 @@ const DRIVE = {
         }
         await stSave(page);
     } },
-    // A screen's name and note are its sheet; its positions are its row under
-    // Settings › Screens and positions, saved by the one Save.
+    // A screen's name and note are its sheet; its positions are the Positions
+    // box under Settings › Positions and routing, saved by the one Save.
     screenEdit: { drive: async page => {
         page.click('root', { act: 'screen-edit', station: '11' });
         await page.settle();
         page.type('note', 'front HMI, moved');
         await sheetOK(page);
     } },
-    screenAdd: { drive: async page => {
+    // "+ Add a screen" is a line with no screen's (ruling 2026-11-15, item 4):
+    // Press A with its two screens gone, its positions on none. The sheet
+    // takes the positions in the Positions box.
+    screenAdd: { hash: '#tab=settings', page: () => noScreenPage(), extra: noScreenRoutes, drive: async page => {
         page.click('root', { act: 'screen-add' });
         await page.settle();
         page.type('name', 'Screen C');
         page.type('note', 'spare');
         await sheetOK(page);
     } },
-    // Screen A's row: POS_A11 off and NEW_3 on, then Save; a position taken
-    // off is asked about first, and Save again takes it off.
+    // The Positions box: POS_A11 off and NEW_3 on, then Save; a position taken
+    // off is asked about first, and Save again takes it off. NEW_3 goes on
+    // the line's first screen.
     screenPositions: { hash: '#tab=settings', drive: async page => {
-        npk(page, 'root', 'scr-11', 'POS_A11', 'drop');
-        npk(page, 'root', 'scr-11', 'NEW_3');
+        setPick(page, 'st', 'positions', 'POS_A11', 'drop');
+        setPick(page, 'st', 'positions', 'NEW_3');
         await page.settle();
         await stSave(page);
         await stSave(page);
@@ -588,10 +651,11 @@ const DRIVE = {
     // Settings' part set and routing set are drafts: a pick, then Save.
     partSettingsAdd: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-13'); await stSave(page); } },
     partSettingsDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'parts', 'PART-11', 'drop'); await stSave(page); } },
-    routingAddNew: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-source', 'SRC_2'); await stSave(page); } },
-    routingAdopt: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-destination', 'DST_9'); await stSave(page); } },
-    routingDrop: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-staging', 'STG_3', 'drop'); await stSave(page); } },
-    routingToggleOff: { hash: '#tab=settings', drive: async page => { npk(page, 'root', 'rt-staging', 'STG_1'); await stSave(page); } },
+    // The routing set is the set pick's three role boxes on Settings.
+    routingAddNew: { hash: '#tab=settings', drive: async page => { setPick(page, 'st', 'source', 'SRC_2'); await stSave(page); } },
+    routingAdopt: { hash: '#tab=settings', drive: async page => { setPick(page, 'st', 'destination', 'DST_9'); await stSave(page); } },
+    routingDrop: { hash: '#tab=settings', drive: async page => { setPick(page, 'st', 'staging', 'STG_3', 'drop'); await stSave(page); } },
+    routingToggleOff: { hash: '#tab=settings', drive: async page => { setPick(page, 'st', 'staging', 'STG_1'); await stSave(page); } },
     routingAllOn: { hash: '#tab=settings', drive: async page => {
         page.click('root', { act: 'rs-all-on', role: 'staging' });
         await page.settle();
@@ -682,7 +746,9 @@ async function actAddProcess() {
     const page = await openPage();
     const from = page.mark();
     await DRIVE.addProcess.drive(page);
-    out['requests-add-process.txt'] = actLines('Add process: name Press N, group Presses', page, from).join('\n') + '\n';
+    out['requests-add-process.txt'] = actLines('Add process: name Press N, its screen left blank, group Presses, positions NEW_1 and ' +
+        'NEW_2, Inbound SRC_2, Outbound DST_1, part PART-1, then Create (the process, its screen, its positions, its routing ' +
+        'set in one write, its part set)', page, from).join('\n') + '\n';
 }
 
 async function actSettings() {
@@ -709,16 +775,17 @@ async function actScreenSheet() {
         lines.push(...actLines('Edit Screen A: the note (its positions are its row on Settings)', page, from), '');
     }
     {
-        const page = await openPage();
+        const d = DRIVE.screenAdd;
+        const page = await openPage({ hash: d.hash, page: d.page(), extra: d.extra });
         const from = page.mark();
-        await DRIVE.screenAdd.drive(page);
-        lines.push(...actLines('Add operator screen: Screen C (its positions are picked in its row)', page, from), '');
+        await d.drive(page);
+        lines.push(...actLines('Settings › + Add a screen on Press A with no screen: Screen C, taking the positions on no screen', page, from), '');
     }
     {
         const page = await openPage({ hash: DRIVE.screenPositions.hash });
         const from = page.mark();
         await DRIVE.screenPositions.drive(page);
-        lines.push(...actLines('Settings › Screens and positions › Screen A: POS_A11 off and NEW_3 on, Save; the removal is asked about first, ' +
+        lines.push(...actLines('Settings › Positions and routing › the Positions box: POS_A11 off and NEW_3 on, Save; the removal is asked about first, ' +
             'and Save again takes it off', page, from));
     }
     out['requests-screen-sheet.txt'] = lines.join('\n') + '\n';

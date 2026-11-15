@@ -2,12 +2,10 @@
 # answer; the requests that followed it; each run of text that appeared on the page (container,
 # innermost element); the sheet; the page's message state; any rejection the page left unhandled.
 
-## Screen A: NEW_1, Save
+## the Positions box: NEW_1, Save
 # writes, in order: PUT /api/operator-stations/11/claimed-nodes
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-stbody span.pd-dim: 13 positions on 2 screens
-    new text: #pd-stbody small: 12 positions · never seen
     new text: .pd-sheet div.set-refusal: Not saved. Screen A: the Edge refused it
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
@@ -15,8 +13,6 @@
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-stbody span.pd-dim: 13 positions on 2 screens
-    new text: #pd-stbody small: 12 positions · never seen
     new text: .pd-sheet div.set-refusal: Not saved. Screen A: Server error (500)
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
@@ -24,8 +20,6 @@
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-stbody span.pd-dim: 13 positions on 2 screens
-    new text: #pd-stbody small: 12 positions · never seen
     new text: .pd-sheet div.set-refusal: Not saved. Screen A: No answer from the server
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
@@ -33,8 +27,6 @@
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: #pd-stbody span.pd-dim: 13 positions on 2 screens
-    new text: #pd-stbody small: 12 positions · never seen
     new text: .pd-sheet div.set-refusal: Not saved.
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
@@ -44,12 +36,10 @@
     state: bar.refusal="Not saved."
     unhandled rejection: none
 
-## Screen A: POS_A11 off, Save, its list write refused
+## the Positions box: POS_A11 off, Save, its list write refused
 # writes, in order: PUT /api/operator-stations/11/claimed-nodes
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
     then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
-    new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
-    new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
@@ -57,8 +47,6 @@
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
     then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
-    new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
-    new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
@@ -66,8 +54,6 @@
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
-    new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
-    new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet span.prov: No unsaved changes
     notice: success "Saved"
     sheet: closed
@@ -75,8 +61,6 @@
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/operator-stations/11/claimed-nodes
-    new text: #pd-stbody span.pd-dim: 11 positions on 2 screens
-    new text: #pd-stbody small: 10 positions · never seen
     new text: .pd-sheet div.set-refusal: Not saved. Screen A’s positions could not be read, so nothing was changed. Try again.
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
@@ -108,7 +92,8 @@
     unhandled rejection: none
 ### POST /api/loader-boards  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: GET /api/operator-stations · GET /api/process-nodes · GET /api/processes
-    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Screens and positions.
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Positions and routing.
+    new text: #pd-scrlines span: holds 15 positions · online · 30 s ago
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in

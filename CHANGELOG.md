@@ -18,10 +18,19 @@ binary is built from has changed since the last tag, the section opens with
 
 Deploy: no migration. Edge only; Core is unchanged.
 
-- The Processes page is two tabs, Styles and Settings, plus Setup while a new process cannot run yet
-- Add process asks a name and a group, then opens on Setup; Edit process is gone
-- Setup walks positions, routing set, parts, the first style and the screen, each a link to its home
-- Settings is one page in setup order with one Save, and holds the screens' positions and the routing set
+- The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
+- Add process is one sheet: name, group, operator screen, the coloured node pick and the parts
+- Setup is three steps, nodes and part, a first style, open the screen; it can be skipped
+- Setup's first style puts a part on each position and fills the routing set's nodes in
+- Setup is done once the line can run and its operator screen has been opened
+- Settings lists its sections down the left, one card each, across the full width, with one Save
+- Settings' Positions and routing is the same coloured pick as Add process
+- The node roles have their own colours, apart from the robot colours
+- A line has one screen; + Add a screen shows only on a line with none and takes its positions
+- The line's auto-reorder switch saves with the Settings page
+- The Edge home page has a button for each operator screen
+- #tab=styles typed on an open process opens Styles
+- With WarLink off, the CATID monitor asks WarLink for nothing at start
 - Position settings lists only the positions that differ, each added through the node picker
 - Set for this style and a recipe group's list replace the Advanced sheet
 - A recipe group carries no carry-over; carry-over is on a position marked Tool change
@@ -31,7 +40,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - Taking a position off says the settings it clears; positions on no screen go in one write
 - A Core loader's process shows its line, its screens and where Core's loader settings are
 - Two styles may bring a press its next carrier with different robots
-- A first style saves with no operator screen; the empty flow points to Screens and positions
+- A first style saves with no operator screen; the empty flow points to Positions and routing
 - The routing set is saved in one write, and saving a style's flow needs a sign-in
 - The list paints with its rows, reads its positions once, and does not resend a plant map
 - A station board with more tiles than its screen's grid holds adds rows, so no tile draws over itself

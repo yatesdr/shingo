@@ -67,9 +67,13 @@ const PARTS = Array.from({ length: 46 }, (_, i) => 'BP-PART-' + pad(i + 1, 2));
 function bigLine(o) {
     o = o || {};
     const positions = MAIN.concat(UNL);
+    // A RUNNING PRESS'S SCREENS HAVE BEEN OPENED (last_seen_at, 30 s before
+    // page-harness.js's fixed clock): until a screen of a line that can run is
+    // seen, the process opens on Setup (owner ruling 2026-11-15).
+    const seenAt = '2026-11-11T14:05:00';
     const stations = [
-        { id: 61, process_id: 1, name: 'BIG-PRESS Operator Screen', code: 'big-press', note: '', area_label: '', sequence: 1, controller_node_id: '', enabled: true },
-        { id: 62, process_id: 1, name: 'BIG Unloader', code: 'big-unl', note: '', area_label: '', sequence: 2, controller_node_id: '', enabled: true },
+        { id: 61, process_id: 1, name: 'BIG-PRESS Operator Screen', code: 'big-press', note: '', area_label: '', sequence: 1, controller_node_id: '', enabled: true, last_seen_at: seenAt },
+        { id: 62, process_id: 1, name: 'BIG Unloader', code: 'big-unl', note: '', area_label: '', sequence: 2, controller_node_id: '', enabled: true, last_seen_at: seenAt },
     ];
     const process = {
         id: 1, name: 'BIG-PRESS', description: 'Synthetic big press', group_id: 7, active_style_id: 1,

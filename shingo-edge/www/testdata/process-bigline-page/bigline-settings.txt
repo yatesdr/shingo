@@ -9,4 +9,4 @@ parts in the part set: 46
 part set chips drawn: 12 · then "+ 34 more · show all"
 recipe versions listed: 3
 save bar: yes
-markup written, characters: 13209
+markup written, characters: 13000

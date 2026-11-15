@@ -19,6 +19,12 @@
 //   tags     [{label, tone}]: short marks after the label, each in its tone's
 //            colour (the page's CSS colours [data-tone]) — what else the row
 //            already is, said where it is picked
+//   fold     its members are drawn only once its "show N" is pressed, or
+//            when the search box matches one: a group of twenty is one row
+//            until somebody wants a member
+//   later    drawn after every other row, behind one "show" (opts.later):
+//            the nodes another process holds, which a list of free ones
+//            should not have to scroll past
 //
 // ONE LIST OPEN AT A TIME. A dropdown picker's list is a popover on the layer
 // (layer.js), so Escape and a press outside close it before the sheet under
@@ -61,6 +67,8 @@ let dropped = null;   // the picker whose dropdown list is open
 //   fold         a number: past that many, the chips stop there and say
 //                "+ N more · show all" (a part set of 46 is a wall of chips
 //                above its own search box); "fold them" puts them back
+//   later        { label }: the line the later rows fold under ("In use by
+//                other processes"); its count and show/hide are the shell's
 //   empty(q)     the line when nothing matches; loading, the not-read-yet line
 //   add          the "Add and use" slot: { label(q), run(q) }. run makes the
 //                thing typed and resolves its value or row (null: nothing was
@@ -86,7 +94,8 @@ export function createPicker(host, opts) {
     const id = 'picker-' + (++seq);
     const multi = !!o.multi;
     const always = !!o.open;
-    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '', allChips: false };
+    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '', allChips: false,
+        unfolded: new Set(), later: false };
     st.was = st.sel.slice();
 
     const root = el('div', { className: 'picker' + (multi ? ' picker--multi' : '') + (always ? ' picker--open' : '') });
@@ -155,6 +164,17 @@ export function createPicker(host, opts) {
     // on a list that had gone.
     box.addEventListener('mousedown', (ev) => ev.preventDefault());
     box.addEventListener('click', (ev) => {
+        // A fold's show/hide opens or closes it and picks nothing.
+        const fold = ev.target.closest ? ev.target.closest('[data-fold], [data-later]') : null;
+        if (fold) {
+            if (fold.hasAttribute('data-later')) st.later = !st.later;
+            else {
+                const v = fold.getAttribute('data-fold');
+                if (st.unfolded.has(v)) st.unfolded.delete(v); else st.unfolded.add(v);
+            }
+            drawRows();
+            return;
+        }
         const hit = ev.target.closest ? ev.target.closest('.picker-row, .picker-add') : null;
         const k = hit && st.keys.find((x) => x.node === hit);
         if (k) choose(k);
@@ -252,18 +272,39 @@ export function createPicker(host, opts) {
         let section = null;
         let shown = 0;
         let drawn = 0;
-        for (const r of all.concat(st.extra.filter((x) => !seen.has(String(x.value))))) {
+        const rows = all.concat(st.extra.filter((x) => !seen.has(String(x.value))));
+        const now = rows.filter((r) => !r.later);
+        const later = rows.filter((r) => r.later);
+        // THE LATER ROWS FOLD UNDER ONE LINE, open while searching: a node
+        // typed by name is found wherever it is.
+        const laterOpen = st.later || !!q;
+        const one = (r) => {
             const self = hits(r, q);
-            const members = (r.members || []).filter((m) => self || hits(m, q));
-            if (!self && !members.length) continue;
+            const kids = r.members || [];
+            const members = kids.filter((m) => self || hits(m, q));
+            if (!self && !members.length) return;
+            // A FOLDED ROW'S MEMBERS wait for its show, unless the search is
+            // what found them.
+            const closed = !!r.fold && kids.length > 0 && !st.unfolded.has(String(r.value)) && !(q && !self);
             if (r.section && r.section !== section) {
                 section = r.section;
                 box.appendChild(el('div', { className: 'picker-sect', role: 'presentation' }, r.section));
             }
-            row(r, false);
-            for (const m of members) row(m, true);
+            row(r, false, r.fold && kids.length ? { open: !closed, n: kids.length } : null);
+            const drawnMembers = closed ? [] : members;
+            for (const m of drawnMembers) row(m, true);
             shown++;
-            drawn += 1 + members.length;
+            drawn += 1 + drawnMembers.length;
+        };
+        now.forEach(one);
+        if (later.length) {
+            const label = (o.later && o.later.label) || 'More';
+            box.appendChild(el('div', { className: 'picker-later', role: 'presentation' }, [
+                el('span', null, label + ' · ' + later.length),
+                q ? null : el('button', { type: 'button', className: 'picker-fold', 'data-later': '' }, laterOpen ? 'hide' : 'show'),
+            ]));
+            section = null;
+            if (laterOpen) later.forEach(one);
         }
         if (o.add && q && !everyRow().some((r) => String(r.label === undefined ? r.value : r.label).toLowerCase() === q
             || String(r.value).toLowerCase() === q)) {
@@ -286,7 +327,7 @@ export function createPicker(host, opts) {
         mark();
     }
 
-    function row(r, member) {
+    function row(r, member, fold) {
         const vals = valuesOf(r);
         const on = vals.length > 0 && vals.every((v) => st.sel.indexOf(v) >= 0);
         const off = !!r.reason;
@@ -303,6 +344,8 @@ export function createPicker(host, opts) {
             ...(r.tags || []).map((t) => el('span', { className: 'picker-tag', 'data-tone': t.tone || null }, String(t.label))),
             off ? el('small', { className: 'picker-why' }, String(r.reason))
                 : (r.note ? el('small', { className: 'picker-note' }, String(r.note)) : null),
+            fold ? el('button', { type: 'button', className: 'picker-fold', 'data-fold': String(r.value), 'aria-expanded': fold.open ? 'true' : 'false' },
+                fold.open ? 'hide' : 'show ' + fold.n) : null,
         ]);
         box.appendChild(node);
         if (!off) st.keys.push({ row: r, node });
