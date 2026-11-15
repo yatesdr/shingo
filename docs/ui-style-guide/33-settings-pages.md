@@ -6,6 +6,10 @@ A settings page is the shape of the Edge Processes page's Settings tab,
 shared so the Core and Edge Configuration pages are built from it too. The
 CSS is one set of rules in `shared/components.css`; the behaviour is
 `settingsPage` in `shared/settings.js`. Sizes and colours come from those rules.
+The Processes page's Settings tab is a `settingsPage` itself: its sections in
+the order a process is set up, a jump list of them at the top, and its one
+Save in the foot bar ([Desktop composer patterns](16-desktop-composer-patterns-u9.md)
+› Settings is one settings page).
 
 ### What a settings page looks like
 
@@ -34,14 +38,19 @@ CSS is one set of rules in `shared/components.css`; the behaviour is
 8. **A secret is never rendered.** Placeholder says `saved` or `none saved`;
    blank keeps it; a `Remove` control clears it.
 9. **A list is rows in the value column** with `Remove` on the row and `Add …`
-   after the last.
+   after the last. A setting kept per place (a position's light curtain, the
+   counter it counts at) is an exception list (`exceptionList`,
+   `shared/exceptions.js`): the rule once, a row only where a place differs
+   with its ×, then `+ Add a position`; never a row per place saying the
+   default.
 10. **One Save for the page**, in the foot bar: `No unsaved changes` /
     `Unsaved changes`, `Discard`, `Save` (disabled until dirty). This is the
     stated exception to save-on-change ([Dialog UX](11-dialog-ux-confirmation-prompt-toast.md)):
     a settings page drafts and saves together, because a half-typed address
     must never be applied. An action
     that is not a setting (Test connection, Send a test, Refresh, Back up now,
-    Change password) is its own button and does not touch the draft.
+    Change password, switching a line's auto-reorder) is its own button and
+    does not touch the draft.
 11. **After a save that needs a restart**, a notice above the bar names the
     fields until the process restarts.
 

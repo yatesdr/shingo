@@ -66,8 +66,9 @@ session fresh.
 A page that opens several dialogs opens them through **one shell**. On the
 Edge Processes page that is `openSheet` (`processes-desktop.js`): one
 `.pd-modal` card on the `.modal-overlay` scrim, header, body, a footer with the
-sheet's status line, Cancel and the action. Advanced and every one-field sheet
-use the same card, so the desktop has one dialog and not one per feature.
+sheet's status line, Cancel and the action. Add process, New style, the screen
+sheet and every one-field sheet use the same card, so the desktop has one
+dialog and not one per feature.
 
 **One width, derived from the field the sheet holds.** A sheet field is a
 230 px label column, a 14 px gap and a 420 px wide input; add 24 px of body
@@ -84,7 +85,7 @@ layers the page stacks, innermost first, and acts on the first it finds: an
 open popover closes — the page's (`#pd-pop`), Settings' group list
 (`#pd-stpop`), or a picker a dialog opened over itself (`#pd-advpop`);
 else, while the discard question is up, Escape does nothing; else the open
-layer — Advanced, then an `openSheet` sheet — asks or closes (below); else, on
+`openSheet` sheet asks or closes (below); else, on
 the Styles tab, a pinned recipe group and then the selected position are let
 go. Closing the sheet under an open menu would leave the menu floating over
 nothing.
@@ -93,7 +94,7 @@ nothing.
 nobody has typed into closes it. On a sheet with typed work it opens
 *Discard the changes?* with **Keep editing**, which puts every field back
 exactly as it was, and **Discard**, which closes the layer the way its own
-Cancel does. Advanced and every `openSheet` sheet ask the same question, and
+Cancel does. Every `openSheet` sheet asks the same question, and
 while it is up Escape does nothing: only its two buttons answer it. "Typed" is read off the DOM, not kept in a ledger: a field whose
 property (`value`, `checked`) differs from the attribute it was drawn with has
 been edited. The question is for Escape — a key that elsewhere only closes

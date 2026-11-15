@@ -132,7 +132,8 @@ three parts:
 
 **Route:** `/operator/station/{id}`
 
-The touch screen at an operator station (one per screen configured on a process's Operator screens tab). It
+The touch screen at an operator station (one per screen configured under a process's Settings, Screens and
+positions). It
 needs no login, has no theme toggle and lays itself out at a fixed 1024 px width so a small kiosk screen scales
 it whole.
 
@@ -199,18 +200,28 @@ process, what it is running, its styles, whether operators may set up styles at 
 counter, its curtain nodes, its operator screens and its state. A part-identity health strip above the list
 flags each process whose PLC reports a part the Edge cannot place, with the verb that resolves it.
 
-Opening a process gives four tabs:
+**Add process** asks a name and a group, then opens the new process on Setup. Opening a process gives two
+tabs, Styles and Settings, with Setup before them while the process cannot run yet:
 
+- **Setup**: what the process still needs to run, in order — positions, routing set, parts, a first style, an
+  operator screen — each row a link to the Settings section or the Styles tab where it is set, and under *Not
+  needed to run* the production counter (needed for auto reorder) and HMI setup. It goes once a screen holds a
+  position and the rest are done.
 - **Styles**: a rail of the recipes and styles, and each style's flow, as the same picture and model the
-  operator station uses, with its positions table. Changes are saved with **Save flow**; **+ New style** puts
-  parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as running**,
-  the admin's style switch for when the plant changed parts without shingo.
-- **Operator screens**: the HMIs that work this process, and its loader windows.
-- **Settings**: General, Production counter (the counter's PLC and tag), Changeover, HMI, Parts this process
-  runs, Quality hold (the containment destination), Auto-reorder (the line's switch, whether the station shows
-  it, and every flip), Styles, the Routing set, and Danger (delete the process). A position's reorder point
-  and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never orders.
-- **Recipes**: saved flow presets, and the flows found in this process's styles, to apply across styles.
+  operator station uses, with its positions table and, under it, *Set for this style* (what a position sets for
+  this style, only where it differs from the default). Changes are saved with **Save style**; **+ New style**
+  puts parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as
+  running**, the admin's style switch for when the plant changed parts without shingo. A position's reorder
+  point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never
+  orders.
+- **Settings**: one page with one Save, its sections in setup order — Line (name, description, group),
+  Production counter (the counter's PLC and tag), Screens and positions (the HMIs that work this process, the
+  positions each holds, the positions on no screen yet, and its loader windows), Routing set, Parts, Position
+  settings (light curtain and counted-at, only where a position differs), Changeover, Operator setup (HMI setup
+  and the recipes: saved flow presets, and the flows found in this process's styles, to apply across styles),
+  Auto-reorder (the line's switch and who last flipped it, and whether the station shows it), Quality hold
+  (the containment destination), and Danger (delete the process). A loader's or unloader's process, whose
+  board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger.
 
 A process's production counter is its reporting point: the Edge keeps the reporting point that binds that tag
 to the active style in step whenever the process is saved or changes over, and PLC polling reads it from there.

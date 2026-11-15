@@ -52,8 +52,10 @@ field but `value` optional:
   answers: the selection as the server now holds it (an array, or
   `{ values }`), drawn as clean; or a refusal (`{ error }`, or nothing), and
   the chips stay as they were with the reason beside them. One pick at a time;
-  no timer. A list whose truth is the server (a routing set) uses it, so the
-  page never shows a pick the Edge has not taken.
+  no timer. A pick that is itself a server write uses it (the Processes page's
+  add-and-use on a positions-table row, which adds the node to the routing set
+  and then uses it), so the page never shows a pick the Edge has not taken. A
+  picker on a settings page is a draft instead, saved by the page's one Save.
 
 ```js
 import { createPicker } from '/static/shared/picker.js';
