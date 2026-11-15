@@ -308,7 +308,6 @@ const ctx = { console, Math, Set, Map, Number, isFinite, JSON, Object, Array, St
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(%q, 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(%q, 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(%q, 'utf8').replace(/^export /mg, ''), ctx);
 const flow = fs.readFileSync(%q, 'utf8').replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
 vm.runInContext(flow + '\n__out = { renderFlowPicture, sentencesFromModel, relationPlacement };', ctx);
 const F = ctx.__out, M = ctx.window.ComposerModel;
@@ -324,7 +323,7 @@ for (const inp of JSON.parse(fs.readFileSync(%q, 'utf8'))) {
   const model = M.init({
     styleId: st.id, styleName: st.name,
     positions: (cell.positions || []).map(p => ({ core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence })),
-    routing: comp.routing || [], routingOff: comp.routing_off || {}, scene: comp.map || null,
+    routing: comp.routing || [], routingOff: comp.routing_off || {},
     claims: st.claims || [], parts: [], palette: comp.palette || [], catid: st.catid || '',
     lastRun: st.last_run || null, flowspec: ctx.window.FLOWSPEC, groups: cell.groups || {},
     processClaims: (comp.styles || []).reduce((all, x) => all.concat(x.claims || []), []),
@@ -336,7 +335,7 @@ for (const inp of JSON.parse(fs.readFileSync(%q, 'utf8'))) {
   out[inp.name + '-desktop'] = F.renderFlowPicture({ cell: pic }, dob) + '\n<!-- height ' + dob.height + ' -->\n';
 }
 process.stdout.write(JSON.stringify(out));
-`, st+"/flowspec-data.js", st+"/composer-model.js", abs("..", "..", "shared", "scene-geom.js"),
+`, st+"/flowspec-data.js", st+"/composer-model.js",
 		st+"/operator-flow.js", filepath.ToSlash(listPath))
 	harnessPath := filepath.Join(dir, "golden.js")
 	if err := os.WriteFile(harnessPath, []byte(harness), 0o644); err != nil {

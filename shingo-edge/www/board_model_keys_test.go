@@ -226,18 +226,20 @@ func fullOrder() domain.Order {
 		StagedExpireAt: &at, BinID: &n, PayloadCode: "PART-A", PayloadDesc: "d", SiblingOrderID: &n,
 		QueueReason: "r", QueueCode: "c", FaultSince: &at, FaultDeadline: &at, FaultNoticeAfterS: 1,
 		AuthoredBy: "a", OriginID: "o", OriginClass: "c", LaneHeld: true, StationWait: &wait, WaitKind: "k",
-		ReleaseHeld: "h", DepartedAt: &at, Departed: true, CreatedAt: at, UpdatedAt: at,
+		ReleaseHeld: "h", DepartedAt: &at, Departed: true, CreatedAt: at, UpdatedAt: at, RobotID: "r",
 		ProcessName: "p", ProcessNodeName: "pn", StationName: "sn"}
 }
 
 // stationOrderKeys are the keys of a tile's order row on the station's JSON:
 // the ones the glass reads (operator-modal.js, operator-window-state.js,
 // operator-render.js, operator-board-model.js, operator-state.js,
-// operator-util.js). The rest of domain.Order stays on the Go tile for the
-// engine and the Production page's template.
+// operator-util.js, operator-robot-panel.js, operator-robot-map.js): robot_id
+// is the robot panel's (whether an order has a robot at all). The rest of
+// domain.Order stays on the Go tile for the engine and the Production page's
+// template.
 var stationOrderKeys = []string{
 	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "fault_line", "id", "lane_held", "order_type",
-	"payload_code", "queue_code", "queue_reason", "sibling_order_id", "source_node", "status",
+	"payload_code", "queue_code", "queue_reason", "robot_id", "sibling_order_id", "source_node", "status",
 }
 
 // TestStationView_OrderRowsCarryTheKeysTheGlassReads: a tile's order on the

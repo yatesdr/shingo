@@ -203,6 +203,7 @@ type MessagingConfig struct {
 	Kafka               KafkaConfig   `yaml:"kafka"`
 	DispatchTopic       string        `yaml:"dispatch_topic"`        // the topic Core publishes to edges on
 	OrdersTopic         string        `yaml:"orders_topic"`          // the topic this edge publishes to Core on
+	EphemeralTopic      string        `yaml:"ephemeral_topic"`       // the live robot feed's short-lived topic (protocol/ephemeral.go): used only while Core names this same topic; empty turns the feed off on this edge
 	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"` // how often the outbox drainer publishes pending messages
 	StationID           string        `yaml:"station_id"`            // an identity override for a bench edge with no station_uid (Config.StationID)
 	SigningKey          string        `yaml:"signing_key"`           // optional HMAC-SHA256 shared secret for envelope signing
@@ -518,6 +519,7 @@ func Defaults() *Config {
 		Messaging: MessagingConfig{
 			DispatchTopic:       "shingo.dispatch",
 			OrdersTopic:         "shingo.orders",
+			EphemeralTopic:      "shingo.ephemeral",
 			OutboxDrainInterval: DefaultOutboxDrainInterval,
 			Kafka: KafkaConfig{
 				Brokers: []string{},

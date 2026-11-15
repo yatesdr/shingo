@@ -128,6 +128,14 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 			CurrentStation: r.At,
 			TableAngle:     table.TableAngle,
 			TaskStatus:     taskStatus,
+			// No planned route, so no route drawn. The driver has no route
+			// to report: a block completes after a transit time and the
+			// robot is then AT the block's node (FleetRobot.At), with
+			// nothing in between, no position (every row is (0,0)) and no
+			// scene for Core to name points from (SceneSyncer is not
+			// implemented, above). Inventing one here would be the estimate
+			// the owner ruled out (shared-map 2026-11-14).
+			PathIDs: nil,
 		})
 	}
 	return robots, nil

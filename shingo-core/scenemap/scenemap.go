@@ -13,9 +13,10 @@
 // None of it needed telemetry. It was visible in this file alone.
 //
 // WHAT THIS PACKAGE DELIBERATELY DOES NOT PARSE. The .smap also carries the
-// drivable network — advancedCurveList, 405 entries at Springfield, the same
-// 405 rows Core already holds in scene_edges from RDS, agreeing to 0.000000 m
-// on all 182 shared points. Parsing it here would give the plant two
+// drivable network — advancedCurveList, the same curves Core already holds in
+// scene_edges from RDS, which agreed to 0.000000 m on every shared point when
+// they were compared at one plant (the scene has grown since; not compared
+// again). Parsing it here would give the plant two
 // queryable copies of one network on two transports with nothing saying which
 // wins. The curves stay in the archived blob, unparsed, and scene_edges
 // remains the one answer to "where is lane X".

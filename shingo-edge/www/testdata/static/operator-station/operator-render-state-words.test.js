@@ -99,6 +99,7 @@ function render(v) {
         header: elById('os-header-info').textContent,
         chip: chipValue(),
         badge: elById('os-footer-badge').textContent,
+        status: elById('os-footer-status').textContent,
     };
 }
 
@@ -112,6 +113,11 @@ let r = render(Object.assign({}, base, {
 eq(r.badge, 'Running PIA15', 'running: footer badge');
 eq(r.header, 'Press 4 - Running PIA15', 'running: header line says the same words as the badge');
 eq(r.chip, 'PIA15', 'running: style chip names the style');
+// The footer's status line with no changeover: UI text says screen, never
+// station (docs/terminology.md, Operator Station). It said "Operator Station
+// Ready" until 2026-11-14.
+eq(r.status, 'Operator screen ready', 'running: the footer says the screen is ready, in the UI\'s word');
+eq(/station/i.test(r.status), false, 'running: the footer status says no "station"');
 
 // ── Changing over: target differs from active ──
 r = render(Object.assign({}, base, {

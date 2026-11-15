@@ -1,8 +1,9 @@
 package service
 
 import (
+	"database/sql"
+	"errors"
 	"log"
-	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -50,7 +51,9 @@ import (
 //
 // The forks, and the pin for each:
 //
-//   - Map rides the desktop read only; the station draws no plant map.
+//   - Map rides the desktop read only, for its key-route walk. The station's
+//     robot panel draws the plant map from its own door, GET
+//     /api/operator-stations/{id}/scene (SceneMap), never from a composer read.
 //     TestComposerRead_DesktopByteBudget holds that the station read has no Map.
 //     (The station's collapsed Scene went with its flow editor, pick-a-part U4.)
 //   - ComposerStyle.Nodes and .Parts ride the PICKER scope only, and per-style
@@ -100,13 +103,17 @@ const recentChangeoverWindow = 200
 // managed in one place" (U9 ruling R1) is only true if there is one thing
 // behind both, and a second builder here would be the two-copies problem
 // wearing a different hat.
+//
+// NO SUCH PROCESS IS (nil, nil), which the door answers 404. The store answers
+// a missing row with sql.ErrNoRows, and this used to pass that up as an error,
+// so the door answered 500 (pinned by TestProcesses_Composer_NoSuchProcessIs404).
 func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerData, error) {
 	process, err := s.db.GetProcess(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
-	}
-	if process == nil {
-		return nil, nil
 	}
 	styles, err := s.db.ListStylesByProcess(processID)
 	if err != nil {
@@ -145,21 +152,27 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 // staging-role routing nodes (R4). +0 queries: the node list is the one this
 // read already takes for the preset order, and the back positions are a fold
 // over the claims in hand.
+//
+// NO SUCH STATION IS (nil, nil), which the door answers 404, and so is a
+// station whose process row is gone: the Edge runs SQLite with foreign_keys
+// OFF, so deleting a process leaves its stations behind. The store answers a
+// missing row with sql.ErrNoRows, and this used to pass both up as errors, so
+// the door answered 500 (pinned by TestOperatorStations_Composer_NoSuchStationIs404).
 func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerData, error) {
 	station, err := s.db.GetOperatorStation(stationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
-	}
-	if station == nil {
-		return nil, nil
 	}
 	processID := station.ProcessID
 	process, err := s.db.GetProcess(processID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
-	}
-	if process == nil {
-		return nil, nil
 	}
 	styles, err := s.db.ListStylesByProcess(processID)
 	if err != nil {
@@ -434,22 +447,49 @@ func (s *StationService) changeoverHistory(processID int64) (map[int64]string, [
 	return lastRun, recent
 }
 
-// composerMap is the geometry cache as D3 draws it, with each edge's length
-// alongside its shape. Nil when the cache is empty — the screen then says the
-// map has not arrived, which is true and is better than a plant drawn from
-// the node list with the positions guessed.
-//
-// Built from the same per-cache memo composerScene reads, so the lengths on
-// the two shapes are one computation and cannot disagree.
+// composerMap is the geometry cache in the shared scene shape (LEAD-NOTES
+// D11) for the desktop composer read: SceneMap's builder and keys. Its one
+// reader is the desktop's key-route walk (composer-model.js viaWaypoints, over
+// shared/scene-net.js), which measures each row from its points and handles;
+// nothing draws it since the routing-set map's drawing went (2026-11-14, tier
+// A1). Nil when the cache is empty or holds no point or no edge — the
+// key-route picker then says there is no plant map, which is true and is
+// better than a network guessed from the node list.
 func (s *StationService) composerMap() *domain.ComposerMap {
-	g, memo := s.sceneDerived()
-	if memo == nil || len(g.Points) == 0 {
+	g := s.SceneGeometry()
+	if g == nil || len(g.Edges) == 0 || len(g.Points) == 0 {
 		return nil
 	}
+	return sceneMap(g)
+}
+
+// SceneGeometry is the geometry cache, as the resolver hands it: nil before
+// the first complete response and while Core holds no scene.
+func (s *StationService) SceneGeometry() *domain.SceneGeometry {
+	if s.sceneGeometry == nil {
+		return nil
+	}
+	return s.sceneGeometry()
+}
+
+// SceneMap is g in the shared scene shape (LEAD-NOTES D11) for the operator
+// station's robot panel (GET /api/operator-stations/{id}/scene): composerMap's
+// builder, so every edge endpoint is placed. Nil when g holds no point.
+func SceneMap(g *domain.SceneGeometry) *domain.ComposerMap {
+	if g == nil || len(g.Points) == 0 {
+		return nil
+	}
+	return sceneMap(g)
+}
+
+// sceneMap builds the map from g: every point, and every edge as its two
+// names and, on a curved one, its handles.
+func sceneMap(g *domain.SceneGeometry) *domain.ComposerMap {
 	m := &domain.ComposerMap{
-		// The revision is READ: D3's caption says "plant map from Core ·
-		// revision <rev>" (processes-desktop.js:1493), which is how an
-		// engineer tells a stale cache from a current one.
+		// The cache's revision: which pull this is. The desktop's caption
+		// that showed it ("plant map from Core · revision <rev>") went with
+		// the routing-set map (2026-11-14); the robot panel's door answers
+		// it in this body and as its ETag (apiStationScene).
 		Revision: g.Revision,
 		Points:   make(map[string]domain.ComposerMapPoint, len(g.Points)),
 		Edges:    make([]domain.ComposerMapEdge, 0, len(g.Edges)),
@@ -470,14 +510,10 @@ func (s *StationService) composerMap() *domain.ComposerMap {
 			m.Points[name] = domain.ComposerMapPoint{X: x, Y: y}
 		}
 	}
-	for i, e := range g.Edges {
+	for _, e := range g.Edges {
 		place(e.From, e.FromX, e.FromY)
 		place(e.To, e.ToX, e.ToY)
-		m.Edges = append(m.Edges, domain.ComposerMapEdge{
-			From: e.From, To: e.To,
-			Len:     memo.Edges[i].Len,
-			Handles: e.Handles,
-		})
+		m.Edges = append(m.Edges, domain.ComposerMapEdge{From: e.From, To: e.To, Handles: e.Handles})
 	}
 	return m
 }
@@ -788,35 +824,6 @@ func presetUse(members int) string {
 		return "used by 1 part"
 	}
 	return "used by " + strconv.Itoa(members) + " parts"
-}
-
-// sceneDerived returns the geometry cache and the adjacency derived from it,
-// computing the derivation once per cache rather than once per request.
-//
-// Keyed by the cache's IDENTITY rather than its revision: two caches can
-// carry the same revision string, and a pointer cannot be wrong. The cache is
-// replaced only by a complete node-list response (NewSceneGeometry is
-// all-or-nothing), so this recomputes on a sync and never on a poll.
-func (s *StationService) sceneDerived() (*domain.SceneGeometry, *domain.ComposerScene) {
-	if s.sceneGeometry == nil {
-		return nil, nil
-	}
-	g := s.sceneGeometry()
-	if g == nil || len(g.Edges) == 0 {
-		return g, nil
-	}
-	s.sceneMu.Lock()
-	defer s.sceneMu.Unlock()
-	if s.sceneMemoFor != g {
-		sc := &domain.ComposerScene{Edges: make([]domain.ComposerEdge, 0, len(g.Edges))}
-		for _, e := range g.Edges {
-			sc.Edges = append(sc.Edges, domain.ComposerEdge{
-				From: e.From, To: e.To, Len: math.Hypot(e.ToX-e.FromX, e.ToY-e.FromY),
-			})
-		}
-		s.sceneMemoFor, s.sceneMemo = g, sc
-	}
-	return g, s.sceneMemo
 }
 
 // routingFromBlock reads the routing set back off the block that was just

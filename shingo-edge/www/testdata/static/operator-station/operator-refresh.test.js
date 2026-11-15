@@ -375,7 +375,7 @@ ctx.showLostConnectionBanner = (server, lastFrameAt) => { bannerCalls.push('show
 ctx.clearLostConnectionBanner = () => { bannerCalls.push('clear'); };
 ['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
     'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js',
-    'operator-release.js', 'operator-modal.js', 'operator-render.js',
+    'operator-release.js', 'operator-modal.js', 'operator-render.js', 'operator-robot-panel.js',
 ].forEach(loadModule);
 const showToastShipped = ctx.showToast;
 const OP = loadModule('operator.js');

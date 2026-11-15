@@ -4,6 +4,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -241,6 +242,110 @@ func TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot(t *testing.T) {
 	}
 	if got2.VendorOrderID != got1.VendorOrderID {
 		t.Errorf("vendor_order_id changed on narrow write: was %q, now %q (should be untouched)", got1.VendorOrderID, got2.VendorOrderID)
+	}
+}
+
+// robotsOnUpdates lists every order.update the outbox holds for one order, in
+// send order, as "status/robot".
+func robotsOnUpdates(t *testing.T, db *store.DB, edgeUUID string) []string {
+	t.Helper()
+	outbox, err := db.ListPendingOutbox(500)
+	if err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	var out []string
+	for _, msg := range outbox {
+		if msg.MsgType != protocol.TypeOrderUpdate {
+			continue
+		}
+		var env protocol.Envelope
+		var u protocol.OrderUpdate
+		if json.Unmarshal(msg.Payload, &env) != nil || json.Unmarshal(env.Payload, &u) != nil {
+			continue
+		}
+		if u.OrderUUID == edgeUUID {
+			out = append(out, u.Status+"/"+u.RobotID)
+		}
+	}
+	return out
+}
+
+// THE ROBOT RIDES EVERY STATUS UPDATE. The waybill names the robot on its first
+// assignment only, so a robot the fleet changed afterwards (AMB-42 -> AMB-99
+// here, with the move to staged) was written to orders.robot_id and the station
+// was never told. Every vendor-status update carries Core's robot, including a
+// transition whose event names none (Case D: the FINISHED here), and so does the
+// completion notice.
+func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
+	t.Parallel()
+	db, eng, sim, order := dispatchRetrieveOrderWithRobot(t)
+
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
+	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-99")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	delivered := testdb.AssertOrderStatus(t, db, "rid-order-1", "delivered")
+	if _, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(delivered, delivered.StationID, "confirmed", 1); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+
+	got := strings.Join(robotsOnUpdates(t, db, order.EdgeUUID), " ")
+	want := "in_transit/AMB-42 staged/AMB-99 delivered/AMB-99 confirmed/AMB-99"
+	if got != want {
+		t.Errorf("order.update robots, in send order:\n got  %s\n want %s", got, want)
+	}
+}
+
+// A ROBOT SWAP IS NOT A TRANSITION. The fleet moves a staged order's job to
+// another robot after Core released it (Core in_transit, RDS still WAITING at
+// the old wait). Read as a WAITING -> WAITING status event, it would stage the
+// order again; on its own event it writes the robot and a mission_events row,
+// and nothing else: the status stays, and nothing is sent to the station (the
+// robot reaches it on the order's next update). A report naming a vendor order
+// the Core order no longer runs is dropped.
+func TestVendorRobotChange_WritesTheRobotAndNothingElse(t *testing.T) {
+	t.Parallel()
+	db, eng, sim, order := dispatchRetrieveOrderWithRobot(t)
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
+	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-42")
+	staged := testdb.AssertOrderStatus(t, db, "rid-order-1", "staged")
+	if err := eng.Dispatcher().Lifecycle().Release(staged, "test"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	pending := func() int {
+		msgs, err := db.ListPendingOutbox(500)
+		if err != nil {
+			t.Fatalf("read outbox: %v", err)
+		}
+		return len(msgs)
+	}
+	sent := pending()
+	em := &pollerEmitter{bus: eng.Events}
+
+	em.EmitOrderRobotChanged(order.ID, "some-other-vendor-order", "WAITING", "AMB-42", "AMB-7")
+	if got := testdb.RequireOrder(t, db, "rid-order-1"); got.RobotID != "AMB-42" {
+		t.Fatalf("a report for another vendor order wrote robot %q", got.RobotID)
+	}
+
+	em.EmitOrderRobotChanged(order.ID, order.VendorOrderID, "WAITING", "AMB-42", "AMB-99")
+	got := testdb.AssertOrderStatus(t, db, "rid-order-1", "in_transit")
+	if got.RobotID != "AMB-99" {
+		t.Errorf("robot_id = %q, want AMB-99", got.RobotID)
+	}
+	if got.VendorState != "WAITING" {
+		t.Errorf("vendor_state = %q, want WAITING (a robot change is not a state)", got.VendorState)
+	}
+	if n := pending(); n != sent {
+		t.Errorf("the robot change sent %d message(s); want none", n-sent)
+	}
+	events, err := db.ListMissionEvents(order.ID)
+	if err != nil {
+		t.Fatalf("mission events: %v", err)
+	}
+	last := events[len(events)-1]
+	if last.RobotID != "AMB-99" || last.OldState != "WAITING" || last.NewState != "WAITING" ||
+		last.Detail != "fleet robot: AMB-42 -> AMB-99" {
+		t.Errorf("last mission event = %s->%s robot %s %q; want the swap on the timeline",
+			last.OldState, last.NewState, last.RobotID, last.Detail)
 	}
 }
 

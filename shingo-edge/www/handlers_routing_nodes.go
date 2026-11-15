@@ -233,8 +233,11 @@ func (h *Handlers) apiProcessComposer(w http.ResponseWriter, r *http.Request) {
 // reach the admin read above — which is precisely why the whole composer used
 // to ride the station view, rebuilt on every 500 ms poll and discarded. It is
 // not the admin route moved: that one serves the plant map, every style's
-// Advanced policy block and the press picture, and none of that belongs on
-// the floor network. This serves the station's shape and nothing more.
+// Advanced policy block and the press picture, and none of that rides this
+// read. This serves the station's shape and nothing more. (The plant map does
+// reach the floor, for the operator station's robot panel, through a door of
+// its own: GET /api/operator-stations/{id}/scene, geometry only, ETag'd on the
+// cache revision. See apiStationScene.)
 //
 // KEYED BY STATION, NOT BY PROCESS. The station id is what the board already
 // has and what the URL already carries, and resolving the process here means
@@ -251,7 +254,7 @@ func (h *Handlers) apiStationComposer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if data == nil {
-		writeError(w, http.StatusNotFound, "no such process")
+		writeError(w, http.StatusNotFound, "no such station")
 		return
 	}
 	data.DropRefusedRows(h.coreNodeKinds())

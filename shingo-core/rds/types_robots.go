@@ -52,6 +52,23 @@ type RobotStatus struct {
 	// disagreeing with the other two is how we would learn it is unsafe.
 	IsLoaded     bool `json:"isLoaded"`
 	CurrentOrder any  `json:"current_order"`
+	// UnfinishedPath is the route RDS has planned for the robot and not yet
+	// driven: bare point ids ("12", not "LM12"), the point the robot is at
+	// first, the destination last. Empty on an idle robot. The route a robot
+	// is on is read from here, not estimated (owner ruling, 2026-11-14).
+	//
+	// Two neighbours on the wire are left off on purpose. finished_path is the
+	// part already driven, and it ALSO lists the current point, so the two
+	// arrays overlap by one: reading both and joining them would draw the
+	// current point twice. area_resources_occupied[].path_occupied[] is the
+	// one to three segments RDS holds for the robot right now, traffic-control
+	// bookkeeping rather than a route. Pinned by
+	// TestGetRobotsStatus_UnfinishedPath.
+	//
+	// The ids become scene point names further up in Core
+	// (scenesync.PointIndex), not here: that needs the synced scene, which
+	// this package never sees.
+	UnfinishedPath []string `json:"unfinished_path"`
 	// UndispatchableReason is RDS's own account of why a robot is not taking
 	// work. mapRobotStatus used to hardcode Suspended: false behind a
 	// "Phase 2" comment while this struct sat on the wire unread — a

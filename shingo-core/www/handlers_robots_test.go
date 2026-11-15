@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol/debuglog"
 	"shingo/protocol/testutil"
@@ -166,6 +167,61 @@ func TestApiRobotsStatus_EmptyCache(t *testing.T) {
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&robots), "decode")
 	if len(robots) != 0 {
 		t.Errorf("expected empty robot list, got %d", len(robots))
+	}
+}
+
+// TestApiRobotsStatus_PlannedRoute pins the route end to end on a running
+// engine: a scene sync rebuilds the index, the 2 s poll names the fleet's
+// route ids from it, and /api/robots seeds the map with "path" as scene names
+// in order, omitted for a robot with no route and never carrying the
+// vendor's raw ids. Scene and ids invented.
+func TestApiRobotsStatus_PlannedRoute(t *testing.T) {
+	t.Parallel()
+	h, _, sim := testHandlersWithRobotFleet(t)
+
+	pt := func(name string) fleet.ScenePoint {
+		return fleet.ScenePoint{ClassName: "LocationMark", InstanceName: name, PropertiesJSON: "[]"}
+	}
+	h.orchestration.SyncScenePoints([]fleet.SceneArea{{
+		Name:           "area-1",
+		AdvancedPoints: []fleet.ScenePoint{pt("LM7"), pt("LM31"), pt("AP32")},
+		Edges: []fleet.SceneEdge{
+			{ClassName: "DegenerateBezier", InstanceName: "LM7-LM31", FromName: "LM7", ToName: "LM31", ToX: 1},
+			{ClassName: "DegenerateBezier", InstanceName: "LM31-AP32", FromName: "LM31", ToName: "AP32", FromX: 1, ToX: 2},
+		},
+	}})
+	sim.mu.Lock()
+	sim.robots = []fleet.RobotStatus{
+		{VehicleID: "AMR-01", Connected: true, PathIDs: []string{"7", "31", "32"}},
+		{VehicleID: "AMR-02", Connected: true},
+	}
+	sim.mu.Unlock()
+
+	var byID map[string]map[string]json.RawMessage
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		rec := getPlain(t, h.apiRobotsStatus, "/api/robots")
+		var list []map[string]json.RawMessage
+		testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &list), "decode")
+		byID = map[string]map[string]json.RawMessage{}
+		for _, r := range list {
+			var id string
+			_ = json.Unmarshal(r["VehicleID"], &id)
+			byID[id] = r
+		}
+		if byID["AMR-01"]["path"] != nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if got := string(byID["AMR-01"]["path"]); got != `["LM7","LM31","AP32"]` {
+		t.Fatalf("AMR-01 path = %s, want [\"LM7\",\"LM31\",\"AP32\"] (scene names, in order)", got)
+	}
+	if _, has := byID["AMR-02"]["path"]; has || byID["AMR-02"] == nil {
+		t.Errorf("AMR-02 (no route) = %v, want listed with no \"path\" key", byID["AMR-02"])
+	}
+	if _, has := byID["AMR-01"]["PathIDs"]; has {
+		t.Error("the fleet's raw route ids reached /api/robots; only the named path may")
 	}
 }
 

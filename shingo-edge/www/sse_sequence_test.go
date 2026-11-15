@@ -25,6 +25,9 @@ type sseFrame struct {
 	event string
 	id    string
 	data  string
+	// wire is the frame's bytes as written, its blank line included (the
+	// hub writes LF framing, so each line is its text and one byte).
+	wire int
 }
 
 // sseFrames opens url and streams parsed frames until ctx ends.
@@ -46,6 +49,7 @@ func sseFrames(t *testing.T, ctx context.Context, url string) <-chan sseFrame {
 		var f sseFrame
 		for sc.Scan() {
 			line := sc.Text()
+			f.wire += len(line) + 1
 			switch {
 			case line == "":
 				if f.event != "" {
@@ -220,6 +224,68 @@ func TestSSE_HonoursTopics(t *testing.T) {
 	hub.Broadcast(SSEEvent{Type: "plc-status", Data: 3})
 	if _, ok := nextFrame(t, scoped, "plc-status", 200*time.Millisecond); ok {
 		t.Fatal("the scoped client received plc-status, which it did not ask for")
+	}
+}
+
+// TestSSE_RobotPosReachesOnlyItsOwnStationsClient: a robot-pos frame reaches
+// the client that named exactly its topic and no other: not a client that
+// named no topics (every durable topic, as the shared bus's stream is), not one
+// that named other topics, and not a panel of another operator station.
+func TestSSE_RobotPosReachesOnlyItsOwnStationsClient(t *testing.T) {
+	hub := NewEventHub()
+	hub.Start()
+	defer hub.Stop()
+	srv := httptest.NewServer(http.HandlerFunc(hub.HandleSSE))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	clients := map[string]<-chan sseFrame{
+		"panel 3":  sseFrames(t, ctx, srv.URL+"/events?topics=robot-pos.3"),
+		"panel 4":  sseFrames(t, ctx, srv.URL+"/events?topics=robot-pos.4"),
+		"durable":  sseFrames(t, ctx, srv.URL+"/events"),
+		"board":    sseFrames(t, ctx, srv.URL+"/events?topics=order-update,bins&station=3"),
+		"debugger": sseFrames(t, ctx, srv.URL+"/events?debug=1"),
+	}
+	for name, ch := range clients {
+		if _, ok := nextFrame(t, ch, "connected", 2*time.Second); !ok {
+			t.Fatalf("%s: no connected frame", name)
+		}
+	}
+	// A panel's first frame is its station's {available}: false on a hub no
+	// robot stream is wired to (openRobotPos).
+	for _, panel := range []string{"panel 3", "panel 4"} {
+		topic := map[string]string{"panel 3": "robot-pos.3", "panel 4": "robot-pos.4"}[panel]
+		if f, ok := nextFrame(t, clients[panel], topic, 2*time.Second); !ok || f.data != availableFrame(false) {
+			t.Fatalf("%s: first frame %+v (%v), want %s %s", panel, f, ok, topic, availableFrame(false))
+		}
+	}
+	hub.Broadcast(SSEEvent{Type: "robot-pos.3", Data: map[string]int{"n": 1}})
+	// A durable frame every client but the two panels takes, broadcast after:
+	// frames are ordered, so a client that reads it has already been sent
+	// whatever robot-pos frame it was going to get.
+	hub.Broadcast(SSEEvent{Type: "order-update", Data: 2})
+
+	got, ok := nextFrame(t, clients["panel 3"], "robot-pos.3", 2*time.Second)
+	if !ok || got.data != `{"n":1}` {
+		t.Fatalf("panel 3 lost its own station's frame: %+v, %v", got, ok)
+	}
+	for _, name := range []string{"durable", "board", "debugger"} {
+		for {
+			f, ok := <-clients[name]
+			if !ok {
+				t.Fatalf("%s: the stream ended before order-update", name)
+			}
+			if strings.HasPrefix(f.event, robotPosTopicPrefix) {
+				t.Fatalf("%s received %s, a robot-pos topic it never named", name, f.event)
+			}
+			if f.event == "order-update" {
+				break
+			}
+		}
+	}
+	if f, ok := nextFrame(t, clients["panel 4"], "robot-pos.3", 200*time.Millisecond); ok {
+		t.Fatalf("panel 4 received station 3's frame: %+v", f)
 	}
 }
 

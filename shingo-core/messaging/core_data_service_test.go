@@ -5,6 +5,7 @@ package messaging
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -259,5 +260,60 @@ func TestHeartbeatAck_CarriesTheConfiguredPlantTimezone(t *testing.T) {
 	if got := ackTimezone(""); got != "" {
 		t.Errorf("ack timezone = %q, want empty — an unconfigured Core must propagate nothing, "+
 			"or its own default silently becomes the whole site's clock", got)
+	}
+}
+
+// TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic pins D2's advertising
+// half: the registration reply and every heartbeat ack name the ephemeral
+// topic the messaging client verified, read at send time, and name nothing
+// when it verified none or none is wired. Nothing named is no key at all on
+// the wire, so an ack to an older Edge is the ack it always got.
+func TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	const st = "stn-eph-test"
+	_, err := db.EnrollEdge(st, "", st)
+	testutil.MustNoErr(t, err, "enroll edge")
+
+	named := func(wire bool, verified string) (reg *protocol.EdgeRegistered, hb *protocol.EdgeHeartbeatAck) {
+		t.Helper()
+		resp := &captureResponder{}
+		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+		if wire {
+			svc.SetEphemeralTopic(func() string { return verified })
+		}
+		svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
+		svc.HandleEdgeHeartbeat(&protocol.Envelope{}, &protocol.EdgeHeartbeat{StationID: st, Feeds: map[string]string{}})
+		for _, r := range resp.replies {
+			switch p := r.payload.(type) {
+			case *protocol.EdgeRegistered:
+				reg = p
+			case *protocol.EdgeHeartbeatAck:
+				hb = p
+			}
+		}
+		if reg == nil || hb == nil {
+			t.Fatalf("replies %v: want a registration reply and a heartbeat ack", resp.replies)
+		}
+		return reg, hb
+	}
+
+	reg, hb := named(true, "shingo.ephemeral")
+	if reg.EphemeralTopic != "shingo.ephemeral" || hb.EphemeralTopic != "shingo.ephemeral" {
+		t.Errorf("verified topic: registration names %q, ack %q; want shingo.ephemeral on both", reg.EphemeralTopic, hb.EphemeralTopic)
+	}
+	for _, c := range []struct {
+		name string
+		wire bool
+	}{{"a client that verified none", true}, {"no client wired", false}} {
+		reg, hb := named(c.wire, "")
+		if reg.EphemeralTopic != "" || hb.EphemeralTopic != "" {
+			t.Errorf("%s: registration names %q, ack %q; want nothing", c.name, reg.EphemeralTopic, hb.EphemeralTopic)
+		}
+		raw, err := json.Marshal(hb)
+		testutil.MustNoErr(t, err, "marshal ack")
+		if strings.Contains(string(raw), "ephemeral_topic") {
+			t.Errorf("%s: the ack carries the key on the wire: %s", c.name, raw)
+		}
 	}
 }

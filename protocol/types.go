@@ -319,12 +319,13 @@ const (
 	SubjectBinsSnapshot = "bins.snapshot"
 )
 
-// AllTypes returns every envelope Type constant in this package. Used by
-// startup-coverage assertions (every Type must have a router handler
-// registered at boot) and by the agreement test that pins router-and-switch
-// dispatch parity during the cutover. Adding a new envelope type means
-// adding both the const above and an entry here — the agreement test fails
-// loudly if either side is missing.
+// AllTypes returns every envelope Type of the two durable topics (the
+// constants above). Used by startup-coverage assertions (every Type must have a
+// router handler registered at boot) and by the agreement test that pins
+// router-and-switch dispatch parity during the cutover. Adding a new envelope
+// type means adding both the const above and an entry here — the agreement
+// test fails loudly if either side is missing. The ephemeral topic's types are
+// not here: no router dispatches them (EphemeralTypes, ephemeral.go).
 func AllTypes() []string {
 	return []string{
 		TypeData,

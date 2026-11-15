@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"shingo/protocol/testutil"
 	"shingocore/fleet"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -226,6 +227,59 @@ func TestGetRobotsStatus(t *testing.T) {
 	}
 }
 
+// robotsStatusDriving is a synthetic /robotsStatus body shaped like the
+// shared-map study's capture (2026-11-14): a driving robot carries
+// finished_path, unfinished_path and area_resources_occupied[].path_occupied[],
+// and the point it stands on (7) closes finished_path and opens
+// unfinished_path. The ids are invented; the shape is the capture's. The
+// finished-only ids (903, 905) appear nowhere else, so a decode that kept the
+// driven part would show them.
+const robotsStatusDriving = `{"code":0,"report":[
+ {"vehicle_id":"AMB-01",
+  "finished_path":["903","905","7"],
+  "unfinished_path":["7","31","32","40"],
+  "area_resources_occupied":[{"area_name":"area-1","blocks_occupied":[],
+    "path_occupied":[{"source_id":"7","end_id":"31","start_percentage":0.4,"end_percentage":1}]}],
+  "rbk_report":{"current_station":"","last_station":"LM7"}},
+ {"vehicle_id":"AMB-02","finished_path":[],"unfinished_path":[],
+  "area_resources_occupied":[{"area_name":"area-1","blocks_occupied":[],"path_occupied":[]}]}
+]}`
+
+// TestGetRobotsStatus_UnfinishedPath pins the decode of the planned route:
+// unfinished_path arrives in order, current point first, and is the only
+// route array kept. Before it was declared, encoding/json discarded it on
+// every poll.
+func TestGetRobotsStatus_UnfinishedPath(t *testing.T) {
+	t.Parallel()
+	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(robotsStatusDriving))
+	})
+	defer srv.Close()
+
+	robots, err := client.GetRobotsStatus()
+	if err != nil {
+		t.Fatalf("GetRobotsStatus: %v", err)
+	}
+	if len(robots) != 2 {
+		t.Fatalf("len = %d, want 2", len(robots))
+	}
+	if got, want := robots[0].UnfinishedPath, []string{"7", "31", "32", "40"}; !slices.Equal(got, want) {
+		t.Errorf("driving robot UnfinishedPath = %v, want %v (in order, current point first)", got, want)
+	}
+	if got := robots[1].UnfinishedPath; len(got) != 0 {
+		t.Errorf("idle robot UnfinishedPath = %v, want empty", got)
+	}
+	kept, err := json.Marshal(robots[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, dropped := range []string{`"903"`, `"905"`, `"finished_path"`, `"path_occupied"`} {
+		if strings.Contains(string(kept), dropped) {
+			t.Errorf("decoded robot carries %s: only unfinished_path is kept; got %s", dropped, kept)
+		}
+	}
+}
+
 func TestHTTPError(t *testing.T) {
 	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
@@ -316,6 +370,7 @@ type mockPollerEmitter struct {
 	events       []pollerEvent
 	blockEvents  []blockEvent
 	graceExpired []graceExpiredEvent
+	robotChanges []string
 }
 
 type graceExpiredEvent struct {
@@ -357,6 +412,13 @@ func (m *mockPollerEmitter) EmitBlockCompleted(orderID int64, rdsOrderID, blockI
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.blockEvents = append(m.blockEvents, blockEvent{orderID, rdsOrderID, blockID, location, binTask, startTime, terminateTime})
+}
+
+// EmitOrderRobotChanged records a robot swap as "state:from->to".
+func (m *mockPollerEmitter) EmitOrderRobotChanged(orderID int64, rdsOrderID, state, fromRobotID, robotID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.robotChanges = append(m.robotChanges, state+":"+fromRobotID+"->"+robotID)
 }
 
 type mockResolver struct{}

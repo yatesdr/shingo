@@ -1125,6 +1125,51 @@ func ActiveIDsByRobot(db *sql.DB) (map[string]int64, error) {
 	return out, rows.Err()
 }
 
+// OrderRobot is one order's station and robot, as the live robot feed reads
+// them (engine/robot_watch.go).
+type OrderRobot struct {
+	UUID      string
+	StationID string
+	RobotID   string
+}
+
+// RobotsByUUID returns the station and robot of each order among uuids that
+// the fleet holds on a robot: one statement, on idx_orders_uuid. "The fleet
+// holds it" is protocol.IsVendorTracked (dispatched, in transit, staged or
+// faulted), not merely "not terminal": robot_id is not cleared when an order
+// goes back to queued (only a handover clears it), so a queued order can name
+// the robot of a vendor leg that was cancelled, and a delivered or terminal
+// one the robot that has driven off to other work. An order not found, not
+// held by the fleet, or with no robot is absent. No uuids, no statement.
+func RobotsByUUID(db *sql.DB, uuids []string) ([]OrderRobot, error) {
+	if len(uuids) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(uuids))
+	args := make([]any, len(uuids))
+	for i, u := range uuids {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = u
+	}
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT edge_uuid, station_id, robot_id FROM orders
+		  WHERE edge_uuid IN (%s) AND robot_id <> '' AND status IN (%s)`,
+		strings.Join(ph, ", "), protocol.VendorTrackedStatusSQLList()), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OrderRobot
+	for rows.Next() {
+		var r OrderRobot
+		if err := rows.Scan(&r.UUID, &r.StationID, &r.RobotID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListActive returns all orders in non-terminal statuses.
 func ListActive(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList()))

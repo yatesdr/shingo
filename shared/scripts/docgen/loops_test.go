@@ -219,7 +219,7 @@ func TestLoops_TheRealInventory(t *testing.T) {
 			"KanbanKeeper.Run":           "30s (`keeperTickInterval`)",
 			"claimSweepLoop":             "config `staging.sweep_interval`, else 5m (`config.DefaultStagingSweepInterval`)",
 			"terminateChaseLoop":         "60s (`terminateChaseInterval`)",
-			"robotRefreshLoop":           "2s (`robotPollInterval`)",
+			"robotRefreshLoop":           "2s (`protocol.RobotPollInterval`)",
 			"laneLivenessFloorLoop":      "60s (`laneLivenessFloorInterval`)",
 			"Scanner.StartPeriodicSweep": "60s",
 			"ReconciliationService.Loop": "config `staging.sweep_interval`, else 5m (`config.DefaultStagingSweepInterval`)",

@@ -1,0 +1,32 @@
+{
+  "about": "Synthetic route scene, no plant data: integer metres on a made-up grid. Three ways from SMN_05 to PLN_02: A (north, straight, two-way, 20 m), C (straight, ONE-WAY stored toward SMN_05, 16.47 m) and B (south, two cubic hops, two-way: 16 m of chord, 21.6 m of arc). B chord < C < A < B arc, so a router that ignores direction, a router that weighs chords and a router that does neither each answer differently. LM941-LM942 is an island no route reaches. BIN_901 is a point on no segment. Segments are stored rows as RDS keeps them: one row per direction a robot may drive, handles in the row's own direction. One row is listed before its twin on purpose (PLN_02>LM921 before LM921>PLN_02), so a first-row-wins rule is visible.",
+  "points": [
+    { "name": "SMN_05", "class": "GeneralLocation", "x": 0, "y": 0 },
+    { "name": "PLN_02", "class": "GeneralLocation", "x": 16, "y": 0 },
+    { "name": "LM911", "class": "LocationMark", "x": 0, "y": 2 },
+    { "name": "LM912", "class": "LocationMark", "x": 16, "y": 2 },
+    { "name": "LM931", "class": "LocationMark", "x": 2, "y": 1 },
+    { "name": "LM932", "class": "LocationMark", "x": 14, "y": 1 },
+    { "name": "LM921", "class": "LocationMark", "x": 8, "y": 0 },
+    { "name": "LM941", "class": "LocationMark", "x": 30, "y": 10 },
+    { "name": "LM942", "class": "LocationMark", "x": 34, "y": 10 },
+    { "name": "BIN_901", "class": "GeneralLocation", "x": 17, "y": -1 }
+  ],
+  "segments": [
+    { "from": "SMN_05", "to": "LM911" },
+    { "from": "LM911", "to": "SMN_05" },
+    { "from": "LM911", "to": "LM912" },
+    { "from": "LM912", "to": "LM911" },
+    { "from": "LM912", "to": "PLN_02" },
+    { "from": "PLN_02", "to": "LM912" },
+    { "from": "PLN_02", "to": "LM932" },
+    { "from": "LM932", "to": "LM931" },
+    { "from": "LM931", "to": "SMN_05" },
+    { "from": "SMN_05", "to": "LM921", "h": [1, -4, 7, -4] },
+    { "from": "LM921", "to": "SMN_05", "h": [7, -4, 1, -4] },
+    { "from": "PLN_02", "to": "LM921", "h": [15, -4, 9, -4] },
+    { "from": "LM921", "to": "PLN_02", "h": [9, -4, 15, -4] },
+    { "from": "LM941", "to": "LM942" },
+    { "from": "LM942", "to": "LM941" }
+  ]
+}

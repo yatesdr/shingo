@@ -1,0 +1,93 @@
+/* scene-view.css — the look of what shared/scene-view.js and
+ * shared/comet-layer.js draw: the floor, the grid, the aisles, the route
+ * lines, the robots, their name chips and the comets.
+ *
+ * SHARED, under docs/shared-layer-promotion.md. Core's robot map
+ * (dashboard-map.html) and the Edge's robot panel (operator-display.html)
+ * draw the same plant with the same modules; a disagreement here is the same
+ * robot drawn two ways on two screens of one floor. Moved whole, 2026-11-14,
+ * from Core's dashboard.css (the declarations as they were) and the copy the
+ * Edge panel had made of them in operator.css (owner: "all scene drawing runs
+ * on one machinery in shared/"). Pinned by TestSceneLook_OneSheetForBothSurfaces.
+ *
+ * Sizes (radius, stroke, font) are set in user units by the scripts, so they
+ * scale with the map; this sheet owns colours, opacity and animation. Per-shape
+ * fills and strokes are SVG attributes set by the scripts: do NOT set `fill`
+ * on those classes, a CSS fill overrides the presentation attribute. The
+ * classes are bare on purpose, as they always were on the map: a page that
+ * loads this sheet draws one scene machinery. */
+
+.map-svg { width: 100%; height: 100%; display: block; background: var(--map-floor, #131a24); }
+
+/* Backdrop: a faint grid under the floor (scene-view.js drawBackdrop). Its
+ * stroke-width is set in user units: a CSS width would not scale. */
+.map-grid { stroke: rgba(255, 255, 255, 0.05); }
+
+/* Travel network: the scene's lanes, one line per physical lane. */
+.map-aisle { stroke: var(--map-aisle, #56698a); stroke-linecap: round; stroke-opacity: 0.82; }
+
+/* A moving robot's route is a comet (a bright leading arrow and a fading
+ * tail, comet-layer.js) on .map-comet-layer, a separate <svg> laid over the
+ * scene and rebuilt only when the set of comets changes. The layer ignores
+ * pointer events so a click reaches the scene. */
+.map-comet-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.map-comet-head { stroke: none; }
+/* Fetch (empty-run) comet head: hollow outline. Its stroke colour is set
+ * inline (per status), so this class must NOT force a stroke: it only keeps
+ * the `.map-comet-head { stroke: none }` rule above off it. */
+.map-comet-head-hollow { fill: none; }
+
+/* Route states, all STATIC (no flow); only a moving robot animates. Intent
+ * lines recede to neutral aisle steel (structure recedes); a frozen lane
+ * carries its colour inline at low opacity. */
+.map-route-intent {
+  stroke-linecap: round;
+  stroke-dasharray: 2 6;
+  stroke: var(--map-aisle, #45566e);
+}
+.map-route-frozen { stroke-linecap: round; stroke-linejoin: round; }
+
+/* Robots: moving = chevron with heading + pulsing halo; at rest = compact
+ * disc, no halo. The glyph stroke is LIGHT: stacked same-colour glyphs
+ * separate against each other; a dark stroke piled overlaps into a blob. */
+.map-robot-halo { opacity: 0.16; animation: map-halo 2.6s ease-in-out infinite; }
+@keyframes map-halo { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.27; } }
+.map-robot { stroke: rgba(255, 255, 255, 0.55); }
+/* At rest and paused (not taking orders): the fill fades and the outline
+ * takes the robot's colour (set inline). Offline, or a position the panel
+ * has lost: the whole disc dims. */
+.map-robot.is-paused { fill-opacity: 0.25; }
+.map-robot.is-offline { opacity: 0.55; }
+.map-robot-core { fill: #070a0f; }
+/* Each robot's glyphs and chip sit in a [data-robot] group; the pointer says
+ * a click does something there (the map focuses the robot). */
+.map-robot-hit { cursor: pointer; }
+/* Outline on the focused robot: the UI accent, not a status colour. */
+.map-robot-focus { stroke: var(--accent, #7c7cf0); }
+/* Hairline tying a de-collided name chip back to its robot. */
+.map-chip-leader { stroke: rgba(255, 255, 255, 0.18); }
+
+/* Name chips: dark pill, status-coloured hairline border, monospace label. */
+.map-chip { fill: rgba(7, 10, 15, 0.9); stroke-opacity: 0.7; }
+.map-robot-label {
+  fill: #dbe4ee;
+  text-anchor: middle;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+/* Comets are skipped in the scripts under reduced motion (routes show as
+ * static lanes), and the halo's pulse stops here. Not silenced: the fault
+ * flare (an open owner question, LEAD-NOTES open item 3). */
+@media (prefers-reduced-motion: reduce) {
+  .map-robot-halo { animation: none; }
+}
+
+/* Fault flare: a larger, louder pulsing halo for a blocked or faulted robot,
+ * a second outer ring that compounds with the motion halo. */
+.map-robot-fault-flare { animation: map-fault-flare 1.1s ease-in-out infinite; }
+@keyframes map-fault-flare {
+  0%, 100% { opacity: 0.30; }
+  50%       { opacity: 0.65; }
+}

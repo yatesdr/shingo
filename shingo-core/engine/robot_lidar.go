@@ -23,6 +23,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/store/robothours"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 )
 
@@ -49,7 +50,7 @@ const lidarParkedMetres = 0.05
 // lidarPollWait bounds how long the round waits for a poll newer than a probe,
 // so the bracket's second reading postdates the frame. Two poll intervals and
 // a margin; a fleet that stops answering drops the robot from the round.
-const lidarPollWait = 2*robotPollInterval + time.Second
+const lidarPollWait = 2*protocol.RobotPollInterval + time.Second
 
 // nextLidarRound is the next round time strictly after now: lidarRoundOffset
 // past a UTC hour.

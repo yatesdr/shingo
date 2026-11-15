@@ -223,6 +223,33 @@ func TestOnCoreAck_StampsTheEdgeClock(t *testing.T) {
 	}
 }
 
+// TestOnCoreAck_TellsTheObserverAfterTheAckMoved: the observer is told once
+// per ack, after LastCoreAck holds the ack it is told about, and with the
+// book's lock free (it reads LastCoreAck itself); removed, it is told nothing.
+func TestOnCoreAck_TellsTheObserverAfterTheAckMoved(t *testing.T) {
+	t.Parallel()
+	e := testEngine(t, testEngineDB(t))
+	at := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	e.feeds.now = func() time.Time { return at }
+	var seen []time.Time
+	e.SetCoreAckObserver(func() {
+		local, _ := e.LastCoreAck()
+		seen = append(seen, local)
+	})
+	e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	at = at.Add(time.Minute)
+	e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	want := []time.Time{time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), time.Date(2026, 11, 14, 9, 1, 0, 0, time.UTC)}
+	if len(seen) != 2 || !seen[0].Equal(want[0]) || !seen[1].Equal(want[1]) {
+		t.Fatalf("the observer saw %v, want each ack's own time %v", seen, want)
+	}
+	e.SetCoreAckObserver(nil)
+	e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	if len(seen) != 2 {
+		t.Errorf("a removed observer was told %d more times", len(seen)-2)
+	}
+}
+
 // The first ack after more than four minutes without one reconciles orders;
 // acks a minute apart do not, and the first ack since boot does not.
 func TestOnCoreAck_GapReconciles(t *testing.T) {

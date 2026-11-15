@@ -1959,7 +1959,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 13 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
-| [`orders`](#edge-orders) | 44 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
+| [`orders`](#edge-orders) | 45 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
 | [`payload_catalog`](#edge-payload_catalog) | 8 | `id` |  |
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
@@ -2312,6 +2312,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `source_node` | `TEXT` | yes | `''` |  |  |
 | `load_type` | `TEXT` | yes | `''` |  | load_type: dormant. Nothing on either module read it, and its writers went (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs. |
 | `waybill_id` | `TEXT` |  |  |  |  |
+| `robot_id` | `TEXT` | yes | `''` |  | robot_id (Edge v50): the robot Core assigned, written by a waybill or an order.update that names one. An empty robot on the wire is absent, not a clear. '' = none named yet. |
 | `external_ref` | `TEXT` |  |  |  |  |
 | `final_count` | `INTEGER` |  |  |  |  |
 | `count_confirmed` | `INTEGER` | yes | `0` |  |  |
@@ -2337,7 +2338,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `release_facts` | `TEXT` |  |  |  | release_facts (Edge v8): the leg's static release facts, computed from its steps when this Edge created it (release.Facts, JSON): the nodes it leaves a bin at, the bin its release lifts, the nodes a release lets a bin cross, its role at its process node. NULL for an order with no steps this Edge authored, and for every row older than v8. |
 | `release_intent` | `TEXT` | yes | `''` |  | release_intent / release_held (Edge v9): the act's promise to this leg for one station wait (release.Intent, JSON; '' = none), and the last hold or rejection sentence the board's chip shows. |
 | `release_held` | `TEXT` | yes | `''` |  |  |
-| `staged_at` | `TEXT` |  |  |  | staged_at (Edge v53): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
+| `staged_at` | `TEXT` |  |  |  | staged_at (Edge v54): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
 | `want` | `TEXT` | yes | `''` |  | want (Edge v30): the height an empty is wanted at, as this Edge stated it on the order's request (protocol.Height's spelling; '' is none). SEND BACK knows its pull by it; a projection never writes it. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 | `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
@@ -2445,10 +2446,10 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `released_empty` | `INTEGER` | yes | `0` |  | released_empty: the bound carrier was released as empty (RELEASE EMPTY, an underpack, a release declaring 0). It is not charged afterwards: a consume tick drains the pile, then is held for the next carrier of the part. Set by the release's count write, cleared when the carrier leaves or another carrier binds. After the v17 column, where the v19 ALTERs put both. |
 | `placed_seq` | `INTEGER` |  |  |  | placed_seq: the placement stamp of the landing this seat last bound (Core's bin_placement_seq). The landing's bind refuses one not newer, so a redelivered or overtaken landing binds nothing. Kept by every leave; a person's bind leaves it as it is. NULL until the first landing. After released_empty, where the v20 ALTER puts it. |
 | `hold_stopped` | `INTEGER` | yes | `0` |  | hold_stopped: a produce seat's pile would have passed one pack and was thrown away whole; the seat sets nothing aside until another cart binds here or a person enters a count (a Core lifecycle message never clears it). After placed_seq, where the v49 ALTER puts it. |
-| `reorder_hold` | `TEXT` | yes | `''` |  | reorder_hold: the position's auto-reorder hold ('' none, 'paused', 'off', 'person_off'), ranked in that order; the one write (HoldReorder) never sets a kind below the one held. The demand sweep does not ask while it holds (domain.AutoReorderHeld). After hold_stopped, where the v50 ALTERs put the three hold columns. |
+| `reorder_hold` | `TEXT` | yes | `''` |  | reorder_hold: the position's auto-reorder hold ('' none, 'paused', 'off', 'person_off'), ranked in that order; the one write (HoldReorder) never sets a kind below the one held. The demand sweep does not ask while it holds (domain.AutoReorderHeld). After hold_stopped, where the v51 ALTERs put the three hold columns. |
 | `reorder_hold_at` | `TEXT` | yes | `''` |  | reorder_hold_at: when the hold was set, the engine's clock ('' when never). A pause ends ten minutes after it. |
 | `reorder_hold_note` | `TEXT` | yes | `''` |  | reorder_hold_note: who or what set the hold, in the board's words. |
-| `reorder_go_at` | `TEXT` | yes | `''` |  | reorder_go_at: the position's last go, the engine's clock ('' when never): a REQUEST, or Processes turning a claim's auto-reorder on. The same statement clears a pause or an off (GoReorder). After reorder_hold_note, where the v51 ALTER puts it. |
+| `reorder_go_at` | `TEXT` | yes | `''` |  | reorder_go_at: the position's last go, the engine's clock ('' when never): a REQUEST, or Processes turning a claim's auto-reorder on. The same statement clears a pause or an off (GoReorder). After reorder_hold_note, where the v52 ALTER puts it. |
 
 #### Edge: `process_nodes`
 
@@ -2523,7 +2524,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `group_id` | `INTEGER` |  |  | → `process_groups(id) ON DELETE SET NULL` |  |
 | `flow_composer_enabled` | `INTEGER` | yes | `0` |  | flow_composer_enabled gates the HMI flow composer for this process. OFF until the engineer has reviewed the routing set derived into process_routing_nodes below; the backfill re-derives only while it is off, so a reviewed set is never silently re-seeded. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
-| `auto_reorder_switch_hmi` | `INTEGER` | yes | `0` |  | auto_reorder_switch_hmi: the station board shows this line's auto-reorder switch (engine FlipAutoReorder from the station). Off until an engineer allows it in Processes. After created_at, where the v52 ALTER puts it. |
+| `auto_reorder_switch_hmi` | `INTEGER` | yes | `0` |  | auto_reorder_switch_hmi: the station board shows this line's auto-reorder switch (engine FlipAutoReorder from the station). Off until an engineer allows it in Processes. After created_at, where the v53 ALTER puts it. |
 
 #### Edge: `production_tick_cursor`
 
@@ -2556,7 +2557,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `tag_name` | `TEXT` | yes |  |  |  |
 | `last_count` | `INTEGER` | yes | `0` |  |  |
 | `last_poll_at` | `TEXT` |  |  |  |  |
-| `last_part_at` | `TEXT` |  |  |  | last_part_at (Edge v53): the engine's clock at the last read that counted a part. last_poll_at also moves on a read that counts none (a point's first read, a counter reset to 0); this does not. NULL until the first counted part. The idle rule's off ends on it (engine/idle_cancel.go). |
+| `last_part_at` | `TEXT` |  |  |  | last_part_at (Edge v54): the engine's clock at the last read that counted a part. last_poll_at also moves on a read that counts none (a point's first read, a counter reset to 0); this does not. NULL until the first counted part. The idle rule's off ends on it (engine/idle_cancel.go). |
 | `enabled` | `INTEGER` | yes | `1` |  |  |
 | `warlink_managed` | `INTEGER` | yes | `0` |  |  |
 

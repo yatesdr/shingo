@@ -1198,7 +1198,9 @@ export function renderFooter() {
         footerStatus.textContent = co.from_style_name + ' \u2192 ' + co.to_style_name +
             ' [' + done + '/' + coNodes.length + ' nodes]';
     } else {
-        footerStatus.textContent = 'Operator Station Ready';
+        // UI text says screen, never station (docs/terminology.md, Operator
+        // Station). Pinned by operator-render-state-words.test.js.
+        footerStatus.textContent = 'Operator screen ready';
     }
 
     // THE BADGE IS DERIVED, NOT ANNOUNCED: stationState reads it from fields

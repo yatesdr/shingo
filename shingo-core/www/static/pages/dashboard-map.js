@@ -18,25 +18,32 @@
 // chevron with heading, a pulsing halo, and a monospace name chip. Robot color tracks
 // order status (saturated lifecycle hue while on an active job); a delivered/confirmed
 // robot still moving, or any idle robot in motion, shows neutral grey — green only at
-// rest. Charge/park bays recede to quiet outlines; they light up only when a robot docks.
+// rest. A charge or park bay is drawn only while a robot stands on it or an order
+// names it.
 //
 // Routes follow the aisles. The travel network is the scene's real
 // connectivity — drivable path segments (SEER advanced curves) served by
-// /api/map/edges — and each robot→destination route is the lit shortest path
-// along it. Nothing is derived from point proximity (a derived graph invented
-// links through walls); with no synced edges the network is simply empty and
-// routes fall back to a straight robot→destination hint line.
+// /api/map/edges, each stored in the direction robots may drive it. A driving
+// robot's route is the path RDS planned for it (the frame's `path`), drawn
+// along those segments; with no path, or one the scene cannot draw, it draws
+// no route at all (lead decisions D6, D10). An order not yet driving draws a
+// dashed intent line along the route model's way (shared/scene-net.js,
+// directed, weighed by the distance driven: D9), or a straight hint where the
+// network does not join its ends. Nothing is derived from point proximity (a
+// derived graph invented links through walls); with no synced edges the
+// network is simply empty.
 //
 // A curved segment is DRAWN CURVED and WEIGHED CURVED. SEER states each
 // segment's shape with two cubic-Bezier handles, which arrive as
 // ctrl1_x/ctrl1_y/ctrl2_x/ctrl2_y; the map used to drop them and draw the
 // chord, which at Springfield paints a lane up to 1.30 m from the one the
 // robot drives (LM10-LM113, off a 7.17 m chord), so the fleet visibly leaves
-// the network as painted. The same handles fix the Dijkstra weight, which on
-// a chord runs up to 24% short of the distance actually driven.
+// the network as painted. The same handles fix the route model's weight,
+// which on a chord runs up to 24% short of the distance actually driven.
 //
-// THE DECISION IS THE HANDLES, NOT THE CLASS NAME. className says
-// "DegenerateBezier" on 264 of Springfield's 377 segments; 171 of those sit
+// THE DECISION IS THE HANDLES, NOT THE CLASS NAME. In the scene these counts
+// were taken from (377 segments, an older read; the scene has grown since),
+// className said "DegenerateBezier" on 264; 171 of those sit
 // within a centimetre of their chord (a cubic spelling a straight line), 93
 // bow further, and 58 bow more than 10 cm. The scene holds exactly TWO
 // BezierPaths, both at 0.17 m. Meanwhile "StraightPath" segments carry no
@@ -47,20 +54,29 @@
 import { escapeHtml } from '/static/shared/dom.js';
 import { formatClock, serverNow } from '/static/shared/clock.js';
 import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
-// The scene-drawing substrate — projection, orientation, cubic arithmetic,
-// lane identity — lives in shared/scene-geom.js so a second scene page, on
-// either surface, draws the same network without inheriting this file's
-// viewport, comets and SSE wiring. Promoted from components/ when the Edge's
-// station cell picture became its second consumer (docs/shared-layer-promotion.md).
+// The scene machinery is shared/'s: scene-geom.js the projection, orientation
+// and cubic arithmetic; scene-net.js the scene's network read once (its rows,
+// its lanes); scene-view.js the retained <svg> that draws it; comet-layer.js
+// the comets over it. This page keeps what decides what is drawn: its orders,
+// legs, focus, calm rule, legends and rail.
 import {
-  makeProjector, turnedProjector, mapTurn, headingDeg, dist2, isCoord, cubicLength, cubicPathD, laneKey,
-  cubicPoint, CUBIC_SAMPLES
+  makeProjector, turnedProjector, mapTurn, headingDeg, dist2
 } from '/static/shared/scene-geom.js';
+import { sceneNet, sceneRoute, nearestVertex } from '/static/shared/scene-net.js';
+import { pathWorld, hopsWorld } from '/static/shared/scene-path.js';
+import { createSceneView, svgNode } from '/static/shared/scene-view.js';
+import { createCometLayer } from '/static/shared/comet-layer.js';
+import { sceneOfRows } from '/static/components/scene-rows.js';
+// When a robot is moving, the calm's limit and the pickup radius: the same
+// numbers the Edge's robot panel reads (shared/robot-motion.js). MOVE_LINGER_MS
+// is also the stall pins' door (dashboard-map.stall.test.js reads it here).
+import {
+  COMET_LIMIT, MOVE_LINGER_MS, PICKUP_RADIUS, movedFrom, movingAt
+} from '/static/shared/robot-motion.js';
 
 (function () {
   var body = document.body;
   var dashboardId = body.getAttribute('data-dashboard-id');
-  var SVGNS = 'http://www.w3.org/2000/svg';
 
   // Read a CSS custom property off :root with a hex fallback, so the map's
   // colors come from the shared token palette (P13, shared/tokens.css) instead
@@ -152,10 +168,8 @@ import {
   var turnDeg = 0;          // the map's quarter turn clockwise (computeView)
   var focusRobot = null;    // click-to-focus: id of the robot whose route is lit
   var mapKeyOpen = false;   // node-type symbol key collapsed by default (reference info)
-  var cometLayer = null;    // persistent SVG overlay holding the route comets
-  var lastCometSig = '';    // signature of the last-built comet set (rebuild only on change)
-  var cometState = [];      // live comet geometry + dot elements, positioned each frame by rAF
-  var cometRAF = 0;         // requestAnimationFrame handle for the comet positioner loop
+  // The route comets, on their own layer over the map (shared/comet-layer.js).
+  var comets = createCometLayer(document.getElementById('map-svg-wrap'));
   var clickBound = false;   // host click handler attached once
   // ── auto-framing state ─────────────────────────────────────────────
   var viewTarget = null;          // desired view after hysteresis; `view` eases toward this
@@ -164,10 +178,14 @@ import {
   var minimapEl = null;           // persistent minimap <svg> inside .map-region
   var minimapViewportRect = null; // viewport indicator rect inside the minimap
   var minimapRobotGroup = null;   // robot-dots <g> inside the minimap
-  // Above this many active routes, the ambient view calms to dim lines (no
-  // comets) so a busy floor doesn't become 20 arrows fighting for attention;
-  // clicking a robot still lights its comet. Tune to taste.
-  var COMET_LIMIT = 12;
+  // Above COMET_LIMIT moving orders (shared/robot-motion.js; render's
+  // movingComets: each order moving with its robot seen moving, counted per
+  // order, path or not), the ambient view calms: no comets and no intent
+  // lines, just the robots (a lane still draws where laneVisible says), so a
+  // busy floor doesn't become 20 arrows fighting for attention. Clicking a
+  // robot lights its comet and its intent line again. Pinned:
+  // twelveCometsThenNone, countedPerOrderNotPerRobot,
+  // theCalmCountsMovingOrdersPathOrNot.
 
   // ── manual view: wheel-zoom + drag-pan break auto-follow ────────────
   // Once the user zooms or pans, `userView` latches true and computeView()
@@ -190,8 +208,9 @@ import {
   // LATCHED: once the robot reaches its source (bin pickup) during an order it is
   // "carrying" for the rest of that order; before that it is "fetching". Latch
   // per order_id, pruned when the order leaves the active set.
+  // "At the source" is within PICKUP_RADIUS median rows of it
+  // (shared/robot-motion.js).
   var pickedUpByOrder = {};   // order_id → true once the robot has reached source
-  var PICKUP_RADIUS = 0.9;    // × graphScale (world units) — "at the source node"
 
   // ── activity feed + status rail ────────────────────────────────────
   var activityFeed = [];   // [{text, level, ts}] — newest first
@@ -228,6 +247,19 @@ import {
   function setConnected(ok) {
     var el = document.getElementById('dash-conn');
     if (el) el.className = 'dash-conn ' + (ok ? 'dash-conn-ok' : 'dash-conn-down');
+  }
+
+  // writeHTML sets el's markup only when it differs from what this page last
+  // wrote there, so a legend or rail that has not changed costs no parse, no
+  // layout and no new listeners on a render. It compares with the string it
+  // wrote, not with el.innerHTML, which a browser re-serialises. Returns
+  // whether it wrote. Pinned by the render pin legendsAndRailWriteOnlyOnChange.
+  var shownHTML = new WeakMap();
+  function writeHTML(el, html) {
+    if (shownHTML.get(el) === html) return false;
+    shownHTML.set(el, html);
+    el.innerHTML = html;
+    return true;
   }
 
   // Bucket a robot into one of the header-legend categories so the legend can
@@ -273,10 +305,10 @@ import {
     // Only active states show — a zero bucket is just clutter (Blocked sitting
     // there doing nothing). Exceptions (Blocked/Error) therefore appear only
     // when something is actually blocked/faulted, so they read as real signal.
-    el.innerHTML = items.filter(function (it) { return counts[it[0]] > 0; }).map(function (it) {
+    writeHTML(el, items.filter(function (it) { return counts[it[0]] > 0; }).map(function (it) {
       return '<span class="map-legend-item"><span class="map-legend-dot" style="background:' + it[2] +
         '"></span>' + it[1] + '<span class="map-legend-count">' + counts[it[0]] + '</span></span>';
-    }).join('') || '<span class="map-legend-item map-legend-zero">No active robots</span>';
+    }).join('') || '<span class="map-legend-item map-legend-zero">No active robots</span>');
   }
 
   // ── robot normalization (handles SSE lowercase + REST PascalCase) ──
@@ -300,7 +332,11 @@ import {
       station: r.station || r.CurrentStation || '',
       // The alarm Core judged to have begun with this robot's fault (sse.go
       // faultAlarm); never the robot's whole alarm list.
-      faultAlarm: r.fault_alarm || null
+      faultAlarm: r.fault_alarm || null,
+      // The route RDS has planned for the robot, as the scene's point names,
+      // its current point first; `path` on both the frame and /api/robots
+      // (lowercase there too), and absent when there is none.
+      path: Array.isArray(r.path) ? r.path : []
     };
   }
 
@@ -308,16 +344,13 @@ import {
   // ProcBusiness) stays false for direct/manual moves, so a driving robot
   // would render as idle if we trusted flags alone. If the robot physically
   // displaced more than a jitter threshold between updates, it's moving;
-  // the state lingers briefly so turn pauses don't flicker disc/chevron.
-  var MOVE_LINGER_MS = 5000; // bridges brief stops (turns, order-cancel pauses) without flickering to a disc
+  // the state lingers briefly so turn pauses don't flicker disc/chevron. The
+  // jitter threshold and the linger are shared/robot-motion.js's (movedFrom,
+  // movingAt), the Edge's robot panel's too.
   function mergeRobot(rb) {
     var prev = robots[rb.id];
     rb.lastMoveAt = prev ? (prev.lastMoveAt || 0) : 0;
-    if (prev && isFinite(prev.x) && isFinite(rb.x)) {
-      var eps = (graphScale > 0) ? Math.max(graphScale * 0.02, 0.05) : 0.05;
-      var dx = rb.x - prev.x, dy = rb.y - prev.y;
-      if (dx * dx + dy * dy > eps * eps) rb.lastMoveAt = Date.now();
-    }
+    if (prev && isFinite(prev.x) && isFinite(rb.x) && movedFrom(prev, rb, graphScale)) rb.lastMoveAt = Date.now();
     robots[rb.id] = rb;
   }
   // DELIBERATELY Date.now(), not serverNow. lastMoveAt and the
@@ -328,35 +361,52 @@ import {
   // browser stamp against a server now, which is the defect serverNow exists to
   // remove — pointed the other way.
   function isMoving(r) {
-    return (Date.now() - (r.lastMoveAt || 0)) < MOVE_LINGER_MS;
+    return movingAt(r.lastMoveAt, Date.now());
   }
 
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
   // dead-on their bay point, so proximity within half a typical edge length
   // is the test; an explicit charging flag (REST payload) wins outright.
-  // bayOccupied: a robot stands on the bay at (x, y), by dockOf's own distance.
-  // With no network to scale by there is no judging it, and every bay draws.
-  function bayOccupied(x, y) {
-    if (!(graphScale > 0)) return true;
-    var lim = Math.pow(graphScale * 0.5, 2);
-    for (var k in robots) {
-      var r = robots[k];
-      if (!isFinite(r.x) || !isFinite(r.y)) continue;
-      var dx = x - r.x, dy = y - r.y;
-      if (dx * dx + dy * dy <= lim) return true;
+  //
+  // THE NEAREST BAY, not the first one in range (flat bug, fixed 2026-11-14):
+  // dockOf took the first bay within the radius in point order, and
+  // bayOccupied lit every bay in it, so where two bays sit closer than half
+  // an edge a robot 0.03 m from one docked on the other, 1.99 m away, and
+  // both drew as taken. Pinned by the render pin aRobotDocksOnTheNearestBay.
+  //
+  // bayNear is the bay nearest robot r within half a graphScale, the first of
+  // equals in point order, or null.
+  function bayNear(r) {
+    if (!bays.length || !(graphScale > 0) || !isFinite(r.x) || !isFinite(r.y)) return null;
+    var lim = Math.pow(graphScale * 0.5, 2), best = null, bd = Infinity;
+    for (var i = 0; i < bays.length; i++) {
+      var dx = bays[i].x - r.x, dy = bays[i].y - r.y, d = dx * dx + dy * dy;
+      if (d <= lim && d < bd) { bd = d; best = bays[i]; }
     }
-    return false;
+    return best;
+  }
+
+  // dockedBays is every bay a robot stands on (each robot's bayNear).
+  function dockedBays() {
+    var out = [];
+    for (var k in robots) {
+      var b = bayNear(robots[k]);
+      if (b) out.push(b);
+    }
+    return out;
+  }
+
+  // bayOccupied: a robot stands on the bay at (x, y), the bay it is nearest
+  // (dockedBays, as given, else worked out). With no network to scale by
+  // there is no judging it, and every bay draws.
+  function bayOccupied(x, y, docked) {
+    if (!(graphScale > 0)) return true;
+    return (docked || dockedBays()).some(function (b) { return b.x === x && b.y === y; });
   }
 
   function dockOf(r) {
     if (r.charging) return { kind: 'charge', x: r.x, y: r.y };
-    if (!bays.length || !(graphScale > 0)) return null;
-    var lim = Math.pow(graphScale * 0.5, 2);
-    for (var i = 0; i < bays.length; i++) {
-      var dx = bays[i].x - r.x, dy = bays[i].y - r.y;
-      if (dx * dx + dy * dy <= lim) return bays[i];
-    }
-    return null;
+    return bayNear(r);
   }
 
   // A robot at rest is one disc, one size, whatever its state (HOP,
@@ -414,7 +464,7 @@ import {
     var vb = view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h;
     var sceneSVG = document.querySelector('#map-svg-wrap .map-svg');
     if (sceneSVG) sceneSVG.setAttribute('viewBox', vb);
-    if (cometLayer) cometLayer.setAttribute('viewBox', vb);
+    comets.setViewBox(vb);
   }
 
   var EASE_ALPHA = 0.18; // per-frame lerp factor (~18% per ~16ms frame)
@@ -534,7 +584,7 @@ import {
     viewTarget = null;
     var btn = document.getElementById('map-recenter');
     if (btn) btn.classList.remove('is-active');
-    clearCometLayer();
+    comets.clear();
     render();
   }
 
@@ -647,9 +697,7 @@ import {
     points.forEach(function (p) {
       if (isFinite(p.pos_x) && isFinite(p.pos_y)) { wx.push(p.pos_x); wy.push(p.pos_y); }
     });
-    tnodes.forEach(function (t) {
-      if (t.orphan) { wx.push(t.x); wy.push(t.y); }
-    });
+    orphans.forEach(function (t) { wx.push(t.x); wy.push(t.y); });
     // No scene at all: fall back to robot positions
     if (!wx.length) {
       Object.keys(robots).forEach(function (k) {
@@ -699,7 +747,8 @@ import {
       roiMinX = fullPlantView.minX; roiMinY = fullPlantView.minY;
       roiW = fullPlantView.w; roiH = fullPlantView.h;
     } else {
-      // Active: include each active order's robot + source + delivery + route.
+      // Active: include each active order's robot + source + delivery + the
+      // robot's route, as RDS planned it (robotRoute, lead decision D10).
       var roiSx = [], roiSy = [];
       activeOrds.forEach(function (o) {
         var rbt = robots[o.robot_id];
@@ -710,13 +759,11 @@ import {
         if (sn) { var ss = proj(sn.x, sn.y); roiSx.push(ss[0]); roiSy.push(ss[1]); }
         var dn = findNode(o.delivery_node);
         if (dn) { var ds = proj(dn.x, dn.y); roiSx.push(ds[0]); roiSy.push(ds[1]); }
-        if (rbt && dn) {
-          var rworld = routeWorld(rbt.x, rbt.y, dn);
-          if (rworld) {
-            rworld.forEach(function (w) {
-              var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
-            });
-          }
+        var rworld = rbt ? robotRoute(rbt) : null;
+        if (rworld) {
+          rworld.forEach(function (w) {
+            var ws = proj(w[0], w[1]); roiSx.push(ws[0]); roiSy.push(ws[1]);
+          });
         }
       });
       if (!roiSx.length) { roiSx = fsx.slice(); roiSy = fsy.slice(); }
@@ -782,138 +829,59 @@ import {
     return nodeIndex[String(name).toLowerCase()] || null;
   }
 
-  // ── travel graph (the scene's real connectivity) ────────────────────
-  // The graph is exactly the drivable path segments synced from the fleet
-  // (SEER advanced curves, GET /api/map/edges). Vertices key by endpoint
-  // instance name so curves meeting at a point share a vertex; endpoints with
-  // a name but no synced scene point are flagged as orphans — "missing"
-  // points that still join the network via the curve's own coordinates.
+  // ── the scene's network ────────────────────────────────────────────
+  // The network is exactly the drivable path segments synced from the fleet
+  // (SEER advanced curves, GET /api/map/edges), adapted once per load to the
+  // shared scene shape (sceneOfRows) and read by shared/scene-net.js: its
+  // vertices, its rows by the direction a robot may drive them, its lanes.
+  // Endpoints with a name but no synced scene point are orphans — "missing"
+  // points that still join the network via the curve's own coordinates, and
+  // that still count toward the plant's extent (computeView).
   // Deliberately NO proximity-derived fallback: a guessed graph draws
   // plausible-but-wrong aisles (through walls); honest emptiness is better.
-  var tnodes = [];          // [{x, y, orphan}] world coords of graph vertices
-  var tadj = [];            // adjacency: tadj[i] = [{n, w}]
-  var routeCache = {};      // "s:d" -> array of tnode indices (cleared on rebuild)
-  var graphScale = 0;       // median edge length (world units); also the local
-                            // scale that drives marker/label sizing
+  var scene = sceneOfRows([]); // sceneEdges as the shared scene shape (sceneOfRows)
+  var orphans = [];         // [{x, y}]: the vertices no scene point names, world
+  var graphScale = 0;       // median row length (scene-net's scale, world units);
+                            // also the local scale that drives marker/label sizing
+  var sceneRev = 0;         // bumped by every buildGraph, which every scene load
+                            // runs (loadPoints via buildNodeIndex, loadEdges);
+                            // keys the minimap's static layer (syncMinimap)
+  // pathTally.misses counts the robot paths this page could not draw because
+  // a hop has no stored row in its direction (scene-path.js pathWorld), once
+  // per robot frame. Read by the render pins.
+  var pathTally = { misses: 0 };
 
   function isTravel(cls) { return cls === 'LocationMark' || cls === 'GeneralLocation'; }
 
+  // buildGraph reads the network again from sceneEdges, and the orphans
+  // against the scene points loaded so far (nodeIndex): both loads run it.
+  // sceneOfRows (components/scene-rows.js) is the rows as the shared scene
+  // shape; the localization board reads its rows through it too.
   function buildGraph() {
-    tnodes = []; tadj = []; routeCache = {}; graphScale = 0;
-    var byKey = {}, lens = [];
-    function vertex(name, x, y) {
-      var k = name ? String(name).toLowerCase() : '@' + x + ',' + y;
-      if (byKey[k] === undefined) {
-        byKey[k] = tnodes.length;
-        var orphan = !!name && !nodeIndex[String(name).toLowerCase()];
-        tnodes.push({ x: x, y: y, orphan: orphan });
-      }
-      return byKey[k];
-    }
-    function addEdge(a, b, w, c) {
-      tadj[a] = tadj[a] || [];
-      if (!tadj[a].some(function (e) { return e.n === b; })) tadj[a].push({ n: b, w: w, c: c || null });
-    }
-    sceneEdges.forEach(function (e) {
-      if (!isFinite(e.from_x) || !isFinite(e.from_y) || !isFinite(e.to_x) || !isFinite(e.to_y)) return;
-      var a = vertex(e.from_name, e.from_x, e.from_y);
-      var b = vertex(e.to_name, e.to_x, e.to_y);
-      if (a === b) return;
-      // The handles, when the scene states a shape. All four or none: three
-      // coordinates describe no cubic. Core already rejects SEER's all-zero
-      // "no handles" pair, so a real coordinate here is real geometry.
-      var c = null;
-      if (isCoord(e.ctrl1_x) && isCoord(e.ctrl1_y) && isCoord(e.ctrl2_x) && isCoord(e.ctrl2_y)) {
-        c = [e.ctrl1_x, e.ctrl1_y, e.ctrl2_x, e.ctrl2_y];
-      }
-      var w = c ? cubicLength(tnodes[a], c, tnodes[b]) : Math.sqrt(dist2(tnodes[a], tnodes[b]));
-      if (!(w > 0)) return;
-      lens.push(w);
-      // Curves are stored directed; for display routing robots drive them
-      // either way, so the graph is undirected. The reverse handle order is
-      // swapped with it — the same curve read end-to-start — so whichever
-      // direction the renderer picks up, it draws the shape SEER authored.
-      addEdge(a, b, w, c);
-      addEdge(b, a, w, c && [c[2], c[3], c[0], c[1]]);
+    scene = sceneOfRows(sceneEdges);
+    sceneRev++;
+    var net = sceneNet(scene);
+    graphScale = net.scale;
+    orphans = [];
+    net.names.forEach(function (n) {
+      if (!scene.points[n].anon && !nodeIndex[n.toLowerCase()]) orphans.push(net.at[n]);
     });
-    for (var i = 0; i < tnodes.length; i++) if (!tadj[i]) tadj[i] = [];
-    lens.sort(function (a, b) { return a - b; });
-    graphScale = lens[Math.floor(lens.length / 2)] || 0;
   }
 
-  function nearestTNode(wx, wy) {
-    var best = -1, bd = Infinity, q = { x: wx, y: wy };
-    for (var i = 0; i < tnodes.length; i++) {
-      var d = dist2(tnodes[i], q);
-      if (d < bd) { bd = d; best = i; }
+  // robotRoute is robot r's route, world [[x, y], ...]: the path RDS planned
+  // for it (r.path, current point first) drawn along the stored rows from the
+  // robot's projection onto its first hop (shared/scene-path.js pathWorld,
+  // lead decisions D6 and D10). null when it has no path, is at its last
+  // point, or a hop has no stored row in its direction (counted in
+  // pathTally): then the robot draws no route at all. Worked out once per
+  // robot frame and scene, as computeView and render both ask: each frame is
+  // a new robot object (mergeRobot), and each scene load bumps sceneRev.
+  function robotRoute(r) {
+    if (r.routeRev !== sceneRev) {
+      r.routeRev = sceneRev;
+      r.route = pathWorld(scene, r, r.path, pathTally);
     }
-    return best;
-  }
-
-  // Dijkstra over the travel graph. Small graphs (a few hundred nodes), so a
-  // plain O(V^2) scan is fine; results are cached per start/dest node pair.
-  function shortestPath(s, d) {
-    if (s < 0 || d < 0) return null;
-    if (s === d) return [s];
-    var key = s + ':' + d;
-    if (routeCache[key]) return routeCache[key];
-    var n = tnodes.length, dist = new Array(n), prev = new Array(n), seen = new Array(n);
-    for (var i = 0; i < n; i++) { dist[i] = Infinity; prev[i] = -1; seen[i] = false; }
-    dist[s] = 0;
-    for (var k = 0; k < n; k++) {
-      var u = -1, ud = Infinity;
-      for (var t = 0; t < n; t++) { if (!seen[t] && dist[t] < ud) { ud = dist[t]; u = t; } }
-      if (u < 0 || u === d) break;
-      seen[u] = true;
-      var edges = tadj[u] || [];
-      for (var e = 0; e < edges.length; e++) {
-        var nd = dist[u] + edges[e].w;
-        if (nd < dist[edges[e].n]) { dist[edges[e].n] = nd; prev[edges[e].n] = u; }
-      }
-    }
-    if (dist[d] === Infinity) { routeCache[key] = null; return null; }
-    var path = [], c = d;
-    while (c !== -1) { path.unshift(c); c = prev[c]; }
-    routeCache[key] = path;
-    return path;
-  }
-
-  // World-space route polyline robot -> aisle network -> destination, or null
-  // if the graph can't connect them (caller falls back to a straight line).
-  //
-  // A CURVED HOP IS SAMPLED ALONG ITS BEZIER, with the same handles the aisle
-  // under it is drawn with. Joining the vertices alone drew the chord, so a
-  // comet, a frozen lane or an intent line cut straight across every bowed
-  // lane while the network beneath it curved away.
-  function routeWorld(rx, ry, dest) {
-    if (tnodes.length < 2) return null;
-    var s = nearestTNode(rx, ry), d = nearestTNode(dest.x, dest.y);
-    var seq = shortestPath(s, d);
-    if (!seq) return null;
-    var pts = [[rx, ry]];
-    for (var i = 0; i < seq.length; i++) {
-      var to = tnodes[seq[i]];
-      var c = i > 0 ? hopHandles(seq[i - 1], seq[i]) : null;
-      if (c) {
-        var from = tnodes[seq[i - 1]];
-        for (var k = 1; k < CUBIC_SAMPLES; k++) {
-          var q = cubicPoint(from, c, to, k / CUBIC_SAMPLES);
-          pts.push([q.x, q.y]);
-        }
-      }
-      pts.push([to.x, to.y]);
-    }
-    pts.push([dest.x, dest.y]);
-    return pts;
-  }
-
-  // hopHandles returns the handles of the graph edge a -> b, oriented a to b
-  // (buildGraph stores the reverse entry with its pair swapped), or null for a
-  // straight segment.
-  function hopHandles(a, b) {
-    var edges = tadj[a] || [];
-    for (var i = 0; i < edges.length; i++) if (edges[i].n === b) return edges[i].c;
-    return null;
+    return r.route;
   }
 
   // ── leg-aware routing helpers ──────────────────────────────────────
@@ -924,6 +892,11 @@ import {
   // carrying for the rest of the order. This fixes the reversed-arrow bug where
   // the comet always ran robot→delivery, i.e. opposite the AMR's motion on the
   // pickup leg.
+  //
+  // PER PAGE ON PURPOSE. The Edge's robot panel has its own orderLeg
+  // (operator-station/operator-robot-map.js): it has no board `carrying`, and
+  // reads RDS's path's end and the station's departed instead. The inputs
+  // differ, so the rule is not shared; the pickup radius is.
   function orderLeg(o, r, src) {
     // Authoritative physical signal first: the board carries `carrying` from the
     // robot's lift/jack state (BoardOrder.Carrying ← LiftHeight). A loaded robot is on
@@ -952,24 +925,22 @@ import {
     return 'fetch';
   }
 
-  // World→screen polyline from the robot to a target node, routed on the network.
-  function legPts(r, node) {
-    var w = routeWorld(r.x, r.y, node);
-    return w ? w.map(function (p) { return proj(p[0], p[1]); })
-      : [proj(r.x, r.y), proj(node.x, node.y)];
-  }
-
-  // Dashed "intent" line source→delivery for pre-dispatch / staged orders — no
-  // robot is actively driving this leg, so it gets structure, not motion.
-  function drawIntentLine(svg, src, dst, robotR, dimmed) {
-    var w = routeWorld(src.x, src.y, dst);
-    var pts = w ? w.map(function (p) { return proj(p[0], p[1]); })
-      : [proj(src.x, src.y), proj(dst.x, dst.y)];
-    svg.appendChild(svgEl('polyline', {
-      points: pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
-      class: 'map-route-intent', fill: 'none',
-      'stroke-width': robotR * 0.16, 'stroke-opacity': dimmed ? 0.18 : 0.34
-    }));
+  // intentPts is an intent line, world→screen: order o's source place, the
+  // route model's way from its source to its delivery along the stored rows
+  // (shared/scene-net.js sceneRoute, lead decision D9: directed, weighed by
+  // the distance driven), its delivery place. With no way there, a straight
+  // two-point hint: an intent line is not a robot's route, so the hint stays.
+  // An order node named as a scene point is that point; any other is its
+  // place on the map (src, dst).
+  function intentPts(o, src, dst) {
+    var net = sceneNet(scene);
+    var a = net.resolve(String(o.source_node || '')) || src;
+    var b = net.resolve(String(o.delivery_node || '')) || dst;
+    var seq = sceneRoute(scene, a, b);
+    var w = seq ? hopsWorld(scene, seq) : null;
+    var s = proj(src.x, src.y), d = proj(dst.x, dst.y);
+    if (!w) return [s, d];
+    return [s].concat(w.map(function (p) { return proj(p[0], p[1]); }), [d]);
   }
 
   // laneVisible: a working robot's route draws as a static lane only where a
@@ -981,19 +952,6 @@ import {
   // destination node still say where its order is going.
   function laneVisible(blocked, reduceMotion) {
     return blocked || reduceMotion;
-  }
-
-  // Static lane (no flow), drawn where laneVisible says. A blocked/faulted
-  // robot is signalled on the ROBOT glyph itself (robotColor → red error
-  // state), so its lane draws the SAME neutral frozen treatment — the old loud
-  // red route line doubled the signal and was removed (2026-07).
-  function drawStaticLane(svg, pts, color, robotR, opts) {
-    svg.appendChild(svgEl('polyline', {
-      points: pts.map(function (p) { return p[0] + ',' + p[1]; }).join(' '),
-      class: 'map-route-frozen', fill: 'none',
-      stroke: color, 'stroke-width': robotR * 0.22,
-      'stroke-opacity': opts.dimmed ? 0.22 : 0.4
-    }));
   }
 
   // ── node classes (e.g. advanced/action points vs bin locations) ────
@@ -1015,264 +973,63 @@ import {
       .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
   }
 
-  function svgEl(name, attrs) {
-    var e = document.createElementNS(SVGNS, name);
-    for (var k in attrs) if (attrs[k] !== undefined && attrs[k] !== null && attrs[k] !== '') e.setAttribute(k, attrs[k]);
-    return e;
-  }
-
-  // Chevron pointing +X (heading 0), centered at origin: a forward triangle
-  // with a notched tail so heading reads at a glance.
-  function chevronPoints(s) {
-    return s + ',0 ' + (-s * 0.85) + ',' + (s * 0.72) + ' ' +
-      (-s * 0.42) + ',0 ' + (-s * 0.85) + ',' + (-s * 0.72);
-  }
-
-  // Compact lightning bolt centered on (cx, cy), sized to sit inside a
-  // charge-point ring.
-  function boltPoints(cx, cy, s) {
-    var p = [[0.12, -0.6], [-0.38, 0.08], [-0.06, 0.08], [-0.12, 0.6], [0.38, -0.08], [0.06, -0.08]];
-    return p.map(function (q) {
-      return (cx + q[0] * s * 1.4) + ',' + (cy + q[1] * s * 1.4);
-    }).join(' ');
-  }
-
-  // Mix a hex color toward white by `amt` (0..1) — used to brighten the comet's
-  // leading arrow so the head reads as the front of the streak while the tail
-  // keeps the route's status hue.
-  function hexLighten(hex, amt) {
-    var h = String(hex).replace('#', '');
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    var r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
-    if (!isFinite(r) || !isFinite(g) || !isFinite(b)) return hex;
-    r = Math.round(r + (255 - r) * amt); g = Math.round(g + (255 - g) * amt); b = Math.round(b + (255 - b) * amt);
-    return '#' + [r, g, b].map(function (v) { return ('0' + v.toString(16)).slice(-2); }).join('');
-  }
-
-  // Comet trail params, shared by the builder and the rAF positioner: a bright
-  // leading arrow (i=0) trailed by dots that taper in size and fade behind it.
-  // ~6s per lap; the tail spans ~16% of the path so the lane sits empty between
-  // passes and other routes/nodes show through.
-  var COMET_PERIOD = 6000;  // ms per lap
-  var COMET_COUNT = 10;     // dots per comet (head + 9 tail)
-  var COMET_SPAN = 0.16;    // tail occupies this fraction of the path length
-
-  // buildCometDots appends one comet's dot elements to the overlay and returns
-  // their specs. NO SMIL: positions are set every frame by tickComets from the
-  // route's LIVE polyline, so the comet leaves the robot and tracks it as it
-  // drives, and never restarts/teleports when the path is retargeted. (P17 —
-  // replaces the animateMotion/mpath approach, which Chrome would not re-sample
-  // when the referenced path's geometry changed mid-animation.)
-  // leg: 'fetch' → hollow (outlined) dots = empty run to source; 'carry' → solid
-  // (filled) dots = loaded run to delivery. So the map reads loaded vs empty at a
-  // glance.
-  function buildCometDots(layer, color, robotR, leg) {
-    var fetch = leg === 'fetch';
-    var headK = robotR * 0.5;
-    var headColor = hexLighten(color, 0.45);
-    var sw = (robotR * 0.14).toFixed(3); // outline weight for the hollow fetch dots
-    var dots = [];
-    for (var i = 0; i < COMET_COUNT; i++) {
-      var el;
-      if (i === 0) {
-        var head = {
-          points: (headK * 1.7) + ',0 ' + (-headK) + ',' + headK + ' ' +
-            (-headK * 0.35) + ',0 ' + (-headK) + ',' + (-headK),
-          // Fetch uses a distinct class so the `.map-comet-head { stroke: none }`
-          // rule doesn't kill the hollow outline (CSS beats a presentation attr).
-          class: fetch ? 'map-comet-head-hollow' : 'map-comet-head'
-        };
-        if (fetch) { head.fill = 'none'; head.stroke = headColor; head['stroke-width'] = sw; }
-        else { head.fill = headColor; }
-        el = svgEl('polygon', head);
-      } else {
-        var dot = { r: (robotR * 0.4 * (1 - 0.7 * i / COMET_COUNT)).toFixed(3) };
-        if (fetch) { dot.fill = 'none'; dot.stroke = color; dot['stroke-width'] = sw; }
-        else { dot.fill = color; }
-        el = svgEl('circle', dot);
-      }
-      el.setAttribute('opacity', '0');
-      layer.appendChild(el);
-      dots.push({ el: el, idx: i, isHead: i === 0, baseOpacity: (1 - i / COMET_COUNT) });
-    }
-    return dots;
-  }
-
-  // Cumulative segment lengths so a 0..1 fraction maps to an arc-length point.
-  function measurePolyline(pts) {
-    var cum = [0], total = 0, i;
-    for (i = 1; i < pts.length; i++) {
-      var dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1];
-      total += Math.sqrt(dx * dx + dy * dy);
-      cum.push(total);
-    }
-    return { cum: cum, total: total };
-  }
-
-  // Point + heading (deg) at fraction f (0..1) along a measured polyline.
-  function pointAt(pts, meas, f) {
-    if (!pts || pts.length < 2 || meas.total <= 0) {
-      return { x: pts && pts[0] ? pts[0][0] : 0, y: pts && pts[0] ? pts[0][1] : 0, a: 0 };
-    }
-    var target = f * meas.total, lo = 0;
-    while (lo < meas.cum.length - 2 && meas.cum[lo + 1] < target) lo++;
-    var segLen = meas.cum[lo + 1] - meas.cum[lo];
-    var t = segLen > 0 ? (target - meas.cum[lo]) / segLen : 0;
-    var p0 = pts[lo], p1 = pts[lo + 1];
-    return {
-      x: p0[0] + (p1[0] - p0[0]) * t,
-      y: p0[1] + (p1[1] - p0[1]) * t,
-      a: Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180 / Math.PI
-    };
-  }
-
-  // tickComets positions every comet's dots along its LIVE polyline each frame.
-  // Geometry comes from cometState, which syncCometLayer refreshes every render
-  // tick — so the streak follows the robot as it drives, gliding continuously
-  // with no teardown or restart. Idles itself (stops re-arming) when empty.
-  function tickComets(now) {
-    cometRAF = 0;
-    if (!cometState.length) return;
-    var base = (now % COMET_PERIOD) / COMET_PERIOD; // head phase, advances with time
-    var gapFrac = COMET_SPAN / COMET_COUNT;
-    for (var c = 0; c < cometState.length; c++) {
-      var cs = cometState[c];
-      for (var d = 0; d < cs.dots.length; d++) {
-        var dot = cs.dots[d];
-        var f = base - dot.idx * gapFrac;
-        f -= Math.floor(f); // wrap into [0,1)
-        var p = pointAt(cs.pts, cs.meas, f);
-        // Fade in near the robot, out near the destination — no pop at the wrap.
-        var env = f < 0.06 ? f / 0.06 : (f > 0.9 ? (1 - f) / 0.1 : 1);
-        dot.el.setAttribute('opacity', (dot.baseOpacity * Math.max(0, Math.min(1, env))).toFixed(3));
-        if (dot.isHead) {
-          dot.el.setAttribute('transform', 'translate(' + p.x.toFixed(2) + ' ' + p.y.toFixed(2) + ') rotate(' + p.a.toFixed(1) + ')');
-        } else {
-          dot.el.setAttribute('cx', p.x.toFixed(2));
-          dot.el.setAttribute('cy', p.y.toFixed(2));
-        }
-      }
-    }
-    cometRAF = requestAnimationFrame(tickComets);
-  }
-  function startComets() { if (!cometRAF && cometState.length) cometRAF = requestAnimationFrame(tickComets); }
-  function stopComets() { if (cometRAF) { cancelAnimationFrame(cometRAF); cometRAF = 0; } }
-
-  // ── persistent comet overlay ───────────────────────────────────────
-  // The comets live on their own <svg> layered over the map — a sibling of
-  // #map-svg-wrap inside the position:relative .map-main, with the same viewBox
-  // and pointer-events:none so robot clicks fall through to the scene. The
-  // per-tick scene rebuild wipes #map-svg-wrap, NOT this layer, so the comet
-  // animations keep running; we only clear+rebuild the layer when the comet SET
-  // actually changes (route added/removed, status/focus/scale/frame change),
-  // detected by a signature. That decoupling is what fixes the teleporting and
-  // the renderer churn.
-  function ensureCometLayer() {
-    if (cometLayer && cometLayer.parentNode) return cometLayer;
-    var host = document.getElementById('map-svg-wrap');
-    var parent = host && host.parentNode;
-    if (!parent) return null;
-    cometLayer = svgEl('svg', { class: 'map-comet-layer', preserveAspectRatio: 'xMidYMid meet' });
-    // Insert right after the map wrap: above the scene (so comets aren't hidden
-    // by the SVG's opaque background) but below the class-legend overlay.
-    parent.insertBefore(cometLayer, host.nextSibling);
-    return cometLayer;
-  }
-
-  function clearCometLayer() {
-    if (cometLayer) { while (cometLayer.firstChild) cometLayer.removeChild(cometLayer.firstChild); }
-    cometState = [];
-    stopComets();
-    lastCometSig = '';
-  }
-
-  function syncCometLayer(cometRoutes, robotR) {
-    var layer = ensureCometLayer();
-    if (!layer) return;
-    if (view) layer.setAttribute('viewBox', view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h);
-    var vbKey = view ? (Math.round(view.minX) + ',' + Math.round(view.minY) + ',' +
-      Math.round(view.w) + ',' + Math.round(view.h)) : 'none';
-    // SET signature = which comets exist (identity + color + frame + scale), NOT
-    // the path geometry. Robot movement only refreshes geometry (below); the dot
-    // elements are rebuilt solely when the SET changes.
-    var sig = vbKey + '|' + Math.round(robotR * 100) + '|' +
-      cometRoutes.map(function (c) { return c.sig + ':' + c.color; }).join(';');
-    if (sig !== lastCometSig) {
-      // SET changed (route added/removed, focus, status, scale, frame) — rebuild
-      // the dot elements. Brief and infrequent.
-      lastCometSig = sig;
-      while (layer.firstChild) layer.removeChild(layer.firstChild);
-      cometState = cometRoutes.map(function (c) {
-        return { pts: c.pts, meas: measurePolyline(c.pts), dots: buildCometDots(layer, c.color, robotR, c.leg) };
-      });
-    } else {
-      // Same SET — just refresh each comet's live geometry (robot moved). The rAF
-      // positioner reads it next frame, so the streak tracks the robot with no
-      // teardown and no restart. The deterministic sort in render() keeps index →
-      // comet stable, so cometState[i] always matches cometRoutes[i].
-      for (var i = 0; i < cometState.length && i < cometRoutes.length; i++) {
-        cometState[i].pts = cometRoutes[i].pts;
-        cometState[i].meas = measurePolyline(cometRoutes[i].pts);
-      }
-    }
-    startComets();
-  }
-
   // ── minimap (persistent small overview, bottom-right of .map-region) ──
-  // The minimap SVG has a FIXED viewBox = the full plant. Only the robot dots
-  // and the viewport rect change — those are updated cheaply by tickEase and
-  // render() without rebuilding the static network layer.
+  // The minimap SVG has a FIXED viewBox = the full plant. Its static layer, the
+  // travel network and the scene's point dots, is built once per scene, turn
+  // and full-plant view: syncMinimap keys it on all three (minimapBuiltFor)
+  // and builds it only when the key changes. Every other render, like tickEase
+  // and the manual view controls, only refreshes the robot dots and the
+  // viewport rect (updateMinimapDynamic). The container's pixel size is not in
+  // the key: the viewBox scales the layer, so a resize draws nothing new.
+  // Pinned by the render pin theMinimap.
+  var minimapBuiltFor = '';
 
-  function rebuildMinimap() {
+  function syncMinimap() {
     if (!fullPlantView) return;
     var region = document.querySelector('.map-region');
     if (!region) return;
     if (!minimapEl) {
       // Clickable: click-to-jump centers the main view on the clicked spot.
-      // Robot dots + viewport rect inside stay pointer-events:none (CSS) so the
-      // click always resolves against the minimap surface.
-      minimapEl = svgEl('svg', { class: 'map-minimap' });
+      // A click on a dot or the viewport rect inside bubbles up to this
+      // listener, and jumpToWorld reads the point off the minimap's own CTM,
+      // so a click anywhere on it jumps there.
+      minimapEl = svgNode('svg', { class: 'map-minimap' });
       minimapEl.addEventListener('click', function (e) { jumpToWorld(e.clientX, e.clientY); });
       region.appendChild(minimapEl);
     }
     var fp = fullPlantView;
+    var builtFor = sceneRev + '|' + turnDeg + '|' + fp.minX + ' ' + fp.minY + ' ' + fp.w + ' ' + fp.h;
+    if (builtFor === minimapBuiltFor) { updateMinimapDynamic(); return; }
+    minimapBuiltFor = builtFor;
     minimapEl.setAttribute('viewBox', fp.minX + ' ' + fp.minY + ' ' + fp.w + ' ' + fp.h);
     minimapEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     while (minimapEl.firstChild) minimapEl.removeChild(minimapEl.firstChild);
 
     // Static layer: travel network + all scene point dots
-    var netG = svgEl('g', { opacity: '0.3' });
+    var netG = svgNode('g', { opacity: '0.3' });
     var sw = (graphScale > 0 ? graphScale : Math.max(fp.w, fp.h) * 0.01) * 0.06;
-    if (tnodes.length > 1) {
-      var seen = {};
-      for (var ai = 0; ai < tadj.length; ai++) {
-        var edges = tadj[ai] || [];
-        for (var ei = 0; ei < edges.length; ei++) {
-          var bi = edges[ei].n;
-          var ekey = laneKey(ai, bi);
-          if (seen[ekey]) continue; seen[ekey] = true;
-          var mpa = proj(tnodes[ai].x, tnodes[ai].y);
-          var mpb = proj(tnodes[bi].x, tnodes[bi].y);
-          netG.appendChild(svgEl('line', {
-            x1: mpa[0], y1: mpa[1], x2: mpb[0], y2: mpb[1],
-            stroke: cssVar('--map-aisle', '#45566e'), 'stroke-width': sw
-          }));
-        }
-      }
-    }
+    // Each physical lane once, as the aisles draw it, but as a chord.
+    sceneNet(scene).lanes.forEach(function (lane) {
+      var mpa = proj(lane.a.x, lane.a.y);
+      var mpb = proj(lane.b.x, lane.b.y);
+      netG.appendChild(svgNode('line', {
+        x1: mpa[0], y1: mpa[1], x2: mpb[0], y2: mpb[1],
+        stroke: cssVar('--map-aisle', '#45566e'), 'stroke-width': sw
+      }));
+    });
     var dotR = sw * 1.2;
     points.forEach(function (p) {
       if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
       var ms = proj(p.pos_x, p.pos_y);
-      netG.appendChild(svgEl('circle', { cx: ms[0], cy: ms[1], r: dotR, fill: cssVar('--map-node', '#66768f') }));
+      netG.appendChild(svgNode('circle', { cx: ms[0], cy: ms[1], r: dotR, fill: cssVar('--map-node', '#66768f') }));
     });
     minimapEl.appendChild(netG);
 
     // Dynamic: robot dots group + viewport indicator rect
-    minimapRobotGroup = svgEl('g');
+    minimapRobotGroup = svgNode('g');
     minimapEl.appendChild(minimapRobotGroup);
     var vbSw = sw * 1.8;
-    minimapViewportRect = svgEl('rect', {
+    minimapViewportRect = svgNode('rect', {
       fill: 'none', stroke: cssVar('--map-aisle', '#45566e'),
       'stroke-width': vbSw, rx: vbSw * 1.5
     });
@@ -1281,7 +1038,8 @@ import {
     updateMinimapDynamic();
   }
 
-  // Called from tickEase (viewport rect) and render() (robot dots + rect).
+  // Called from syncMinimap on every render (robot dots + rect), and from
+  // tickEase, startEase and applyManualView as the view moves.
   function updateMinimapDynamic() {
     if (!minimapEl || !minimapViewportRect) return;
     // Hide the minimap at full-plant view (idle); it adds no context when the
@@ -1298,7 +1056,7 @@ import {
         var ord = orderByRobot[r.id];
         var moving = r.state === 'busy' || isMoving(r);
         var ms2 = proj(r.x, r.y);
-        minimapRobotGroup.appendChild(svgEl('circle', {
+        minimapRobotGroup.appendChild(svgNode('circle', {
           cx: ms2[0], cy: ms2[1], r: dr, fill: robotColor(r, ord, moving)
         }));
       });
@@ -1323,81 +1081,93 @@ import {
     requestAnimationFrame(function () { dirty = false; render(); });
   }
 
-  function drawNode(svg, p, nodeR) {
-    var wx = p.pos_x, wy = p.pos_y;
-    var cls = classOf(p);
-    // Action points snap onto the nearest network vertex when their scene
-    // coordinate sits a hair off the curve endpoint they serve — otherwise
-    // the ring floats beside its node with its own dot, which reads sloppy.
-    // Half a typical edge length is close enough to mean "same node".
-    if (cls === 'ActionPoint' && graphScale > 0 && tnodes.length) {
-      var ni = nearestTNode(wx, wy);
-      if (ni >= 0) {
-        var nd = Math.sqrt(dist2(tnodes[ni], { x: wx, y: wy }));
-        if (nd > 0 && nd <= graphScale * 0.5) { wx = tnodes[ni].x; wy = tnodes[ni].y; }
+  // What the page asks the scene view to draw, and in what colours.
+  var sceneView = null;
+  var SCENE_LOOK = { flare: STATUS_COLOR.blocked || STATE_COLOR.error, accent: ACCENT, accentGlow: ACCENT_GLOW };
+
+  // nodeFacts lists, in point order, the scene points the nodes layer draws,
+  // as drawNodeGlyph takes them. Travel points draw nothing: they are path
+  // structure, and the aisle lines carry the network. AN EMPTY BAY IS NOT
+  // DRAWN (HOP, 2026-11-12): a plant's rows of chargers and park spots were
+  // most of the marks on the map and said nothing until a robot stood on one.
+  // An occupied bay draws under its robot; a bay an order names draws as any
+  // hot node. Called by the scene view only when render's nodesKey changes.
+  function nodeFacts() {
+    var out = [], docked = dockedBays();
+    points.forEach(function (p) {
+      if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
+      var cls = classOf(p);
+      if (isTravel(cls)) return;
+      var wx = p.pos_x, wy = p.pos_y;
+      // Action points snap onto the nearest network vertex when their scene
+      // coordinate sits a hair off the curve endpoint they serve — otherwise
+      // the ring floats beside its node with its own dot, which reads sloppy.
+      // Half a typical edge length is close enough to mean "same node".
+      if (cls === 'ActionPoint' && graphScale > 0) {
+        var nv = nearestVertex(scene, wx, wy);
+        if (nv) {
+          var at = sceneNet(scene).at[nv];
+          var nd = Math.sqrt(dist2(at, { x: wx, y: wy }));
+          if (nd > 0 && nd <= graphScale * 0.5) { wx = at.x; wy = at.y; }
+        }
       }
-    }
-    var s = proj(wx, wy);
-    var hot = hotNodes[String(p.point_name || '').toLowerCase()] ||
-      hotNodes[String(p.label || '').toLowerCase()] ||
-      hotNodes[String(p.instance_name || '').toLowerCase()];
-    // Capture each node's PRIMARY glyph so an active node can take the accent on
-    // the glyph itself (P21) rather than via a separate ring drawn on top.
-    var glyph = null;
-    if (isTravel(cls)) {
-      // Travel nodes are path structure only — no dot drawn. The aisle lines
-      // carry the network; vertex dots added visual noise without information.
-    } else if (cls === 'ActionPoint') {
-      // Single dot — no ring.
-      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 1.0, fill: NODE_ACTION_COLOR });
-      svg.appendChild(glyph);
-    } else if ((cls === 'ChargePoint' || cls === 'ParkPoint') && !hot && !bayOccupied(wx, wy)) {
-      // AN EMPTY BAY IS NOT DRAWN (HOP, 2026-11-12): a plant's rows of
-      // chargers and park spots were most of the marks on the map and said
-      // nothing until a robot stood on one. An occupied bay draws under its
-      // robot; a bay an order names draws as any hot node.
-    } else if (cls === 'ChargePoint') {
-      // Thin ring (charge stays identifiable) + faint bolt; smaller than before
-      // so a row of chargers reads as a calm strip, not a noisy fence.
-      glyph = svgEl('circle', {
-        cx: s[0], cy: s[1], r: nodeR * 0.95, class: 'map-node-charge',
-        fill: 'none', stroke: CHARGE_RING, 'stroke-width': nodeR * 0.22
-      });
-      svg.appendChild(glyph);
-      svg.appendChild(svgEl('polygon', {
-        points: boltPoints(s[0], s[1], nodeR * 0.8), fill: cssVar('--map-bay-glyph', '#6b7a90'), 'fill-opacity': 0.4
-      }));
-    } else if (cls === 'ParkPoint') {
-      // Single faint dot — no ring. Park bays are plentiful; rings-on-rings made
-      // a charge row look identical to a pack of park bays.
-      glyph = svgEl('circle', {
-        cx: s[0], cy: s[1], r: nodeR * 0.85,
-        fill: cssVar('--map-node', '#7e92b3'), 'fill-opacity': 0.55
-      });
-      svg.appendChild(glyph);
-    } else {
-      glyph = svgEl('circle', { cx: s[0], cy: s[1], r: nodeR * 0.9, fill: classColors[cls] || '#67748f', 'fill-opacity': 0.7 });
-      svg.appendChild(glyph);
-    }
-    // Active node (order source/destination): the glyph itself takes the UI
-    // accent — an indigo stroke + soft glow — marking it as live/active (per the
-    // guide, the accent marks genuinely live elements). No separate ring; green
-    // stays delivered-only.
-    if (hot && glyph) {
-      glyph.setAttribute('stroke', ACCENT);
-      glyph.setAttribute('stroke-width', nodeR * 0.45);
-      glyph.setAttribute('style', 'filter: drop-shadow(0 0 ' + (nodeR * 1.1).toFixed(2) + 'px ' + ACCENT_GLOW + ')');
-    }
+      var hot = !!(hotNodes[String(p.point_name || '').toLowerCase()] ||
+        hotNodes[String(p.label || '').toLowerCase()] ||
+        hotNodes[String(p.instance_name || '').toLowerCase()]);
+      if ((cls === 'ChargePoint' || cls === 'ParkPoint') && !hot && !bayOccupied(wx, wy, docked)) return;
+      var n = { x: wx, y: wy, hot: hot };
+      if (cls === 'ActionPoint') { n.kind = 'action'; n.fill = NODE_ACTION_COLOR; }
+      else if (cls === 'ChargePoint') { n.kind = 'charge'; n.ring = CHARGE_RING; n.fill = cssVar('--map-bay-glyph', '#6b7a90'); }
+      else if (cls === 'ParkPoint') { n.kind = 'park'; n.fill = cssVar('--map-node', '#7e92b3'); }
+      else { n.kind = 'class'; n.fill = classColors[cls] || '#67748f'; }
+      out.push(n);
+    });
+    return out;
+  }
+
+  // hotKey and occupiedKey are the parts of the nodes layer that change
+  // without the scene changing: which node names an order holds (hotNodes,
+  // set by loadOrders), and which bays a robot stands on (bayOccupied, by
+  // bay, in point order).
+  function hotKey() {
+    return Object.keys(hotNodes).filter(function (k) { return hotNodes[k]; }).sort().join(',');
+  }
+  function occupiedKey() {
+    var docked = dockedBays();
+    return bays.map(function (b) { return bayOccupied(b.x, b.y, docked) ? '1' : '0'; }).join('');
+  }
+
+  // robotFact is what robotSpec and chipSpecs draw for one robot.
+  function robotFact(r, nodeR) {
+    var ord = orderByRobot[r.id];
+    var moving = r.state === 'busy' || isMoving(r);
+    var alert = r.state === 'error';
+    // Name chips only where they carry signal: on an order, physically
+    // moving, or faulted. Stationary paused/offline robots keep their grey
+    // disc but no tag — the cluster stays calm.
+    var chip = !!ord || alert || isMoving(r);
+    return {
+      id: r.id, x: r.x, y: r.y, state: r.state,
+      color: robotColor(r, ord, moving),
+      moving: moving, alert: alert,
+      fault: alert || !!(ord && (ord.status === 'blocked' || ord.status === 'faulted')),
+      focused: !!focusRobot && r.id === focusRobot,
+      rot: moving ? headingDeg(r.angle, turnDeg) : null,
+      rest: moving ? null : restDisc(r, nodeR),
+      chip: chip,
+      chipColor: chip ? robotColor(r, ord, r.state === 'busy' || !!ord || isMoving(r)) : null
+    };
   }
 
   function render() {
     var host = document.getElementById('map-svg-wrap');
     var empty = document.getElementById('map-empty');
     if (!host) return;
-    // Click-to-focus: clicking a robot (its glyph or name chip) lights that
-    // robot's route comet and dims the rest; clicking it again, or clicking
-    // empty floor, clears the focus. Delegated once — the SVG is rebuilt each
-    // render, so we walk up to the nearest [data-robot] ancestor.
+    // Click-to-focus: clicking a robot (its glyph or name chip) focuses it:
+    // its comet and intent line stay, every other robot's comet and intent
+    // line go, and their frozen lanes dim. Clicking it again, or clicking
+    // empty floor, clears the focus. Delegated once, on the host: the handler
+    // walks up from whatever was hit to the nearest [data-robot] group.
     if (!clickBound) {
       clickBound = true;
       host.addEventListener('click', function (ev) {
@@ -1410,10 +1180,11 @@ import {
         scheduleRender();
       });
     }
+    if (!sceneView) sceneView = createSceneView(host, SCENE_LOOK);
     computeView();
     if (!view) {
-      host.innerHTML = '';
-      clearCometLayer();
+      sceneView.clear();
+      comets.clear();
       if (empty) empty.style.display = points.length ? 'none' : 'block';
       return;
     }
@@ -1430,28 +1201,24 @@ import {
     var nodeR = Math.max(unit * 0.0024, Math.min(unit * 0.006, base * 0.3));
     var fontS = Math.max(unit * 0.006, Math.min(unit * 0.0085, base * 0.8));
 
-    var svg = svgEl('svg', {
-      class: 'map-svg',
-      viewBox: view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h,
-      preserveAspectRatio: 'xMidYMid meet'
-    });
-
-    drawBackdrop(svg, unit);
-
-    drawAisles(svg, nodeR);
-
     // ── routes ────────────────────────────────────────────────────────
     // Three honest visual states, so the map shows what's REALLY happening:
-    //  • Moving, working order → an animated comet along the robot's CURRENT LEG
-    //    (source until pickup, then delivery — see orderLeg). Fetch legs draw
-    //    hollow/empty dots, carry legs solid/loaded, so loaded-vs-empty reads at
-    //    a glance. The comet lives on a PERSISTENT overlay (syncCometLayer below)
-    //    so it glides continuously instead of restarting each SSE tick.
-    //  • Blocked/faulted, or reduced-motion → a faint STATIC lane, no flow (see
-    //    laneVisible). Motion means motion: a stationary robot never animates,
-    //    and a robot standing still draws no line at all.
-    //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most;
-    //    nothing is driving that leg yet.
+    //  • Moving, working order → an animated comet along the path RDS planned
+    //    for the robot (robotRoute, lead decision D10). Fetch legs draw
+    //    hollow/empty dots, carry legs solid/loaded (orderLeg), so
+    //    loaded-vs-empty reads at a glance. The comet lives on a PERSISTENT
+    //    overlay (comets.sync below) so it glides continuously instead of
+    //    restarting each SSE tick.
+    //  • Blocked/faulted, or reduced-motion → a faint STATIC lane along that
+    //    same path, no flow (see laneVisible). Motion means motion: a
+    //    stationary robot never animates, and a robot standing still draws no
+    //    line at all.
+    //  • Pre-dispatch / staged → a dashed INTENT line source→delivery at most,
+    //    along the route model's way (intentPts); nothing is driving that leg
+    //    yet.
+    // A robot with no path RDS planned, or one this scene cannot draw, draws
+    // no comet and no lane: no estimate stands in for it. Its glyph, focus
+    // ring and lit destination are drawn as ever.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var MOVING_PHASE = { dispatched: 1, in_transit: 1, reshuffling: 1 };
     var INTENT_PHASE = { pending: 1, queued: 1, acknowledged: 1, submitted: 1, staged: 1 };
@@ -1461,8 +1228,11 @@ import {
     orders.forEach(function (o) { liveOrderIds[o.order_id] = 1; });
     Object.keys(pickedUpByOrder).forEach(function (id) { if (!liveOrderIds[id]) delete pickedUpByOrder[id]; });
 
-    // Count the comets that would actually animate first, so the busy-floor calm
-    // (≤ COMET_LIMIT → no route lines, just robots) keys off real motion.
+    // Count the moving orders first, so the busy-floor calm (more than
+    // COMET_LIMIT moving orders → no comets and no intent lines, just robots,
+    // unless one is focused) keys off real motion: an order moving with a
+    // robot seen moving, whether or not its path can be drawn (lead decision
+    // D10 keeps this count as it was).
     var movingComets = 0;
     orders.forEach(function (o) {
       if (!MOVING_PHASE[o.status]) return;
@@ -1472,6 +1242,7 @@ import {
     var quiet = movingComets <= COMET_LIMIT;
 
     var cometRoutes = [];
+    var routeLines = []; // the scene view's routes layer, in order
     orders.forEach(function (o) {
       if (o.status === 'delivered' || o.status === 'confirmed' || o.status === 'cancelled') return;
       var focused = !!focusRobot && o.robot_id === focusRobot;
@@ -1483,7 +1254,7 @@ import {
       // Pre-dispatch / staged: a dashed intent line at most (no comet, no robot
       // needed). Calmed like the comets — only when quiet or focused.
       if (INTENT_PHASE[o.status]) {
-        if (src && dst && calmOK) drawIntentLine(svg, src, dst, robotR, dimmed);
+        if (src && dst && calmOK) routeLines.push({ key: 'intent:' + o.order_id, kind: 'intent', pts: intentPts(o, src, dst) });
         return;
       }
 
@@ -1494,10 +1265,12 @@ import {
 
       var blocked = (o.status === 'blocked' || o.status === 'faulted');
       var leg = orderLeg(o, r, src);
-      var legNode = (leg === 'fetch' && src) ? src : (dst || src);
-      if (!legNode) return;
       var color = STATUS_COLOR[o.status] || '#888';
-      var pts = legPts(r, legNode);
+      // The route is RDS's path and nothing else: it neither needs nor ends
+      // at the order's nodes.
+      var route = robotRoute(r);
+      if (!route) return;
+      var pts = route.map(function (p) { return proj(p[0], p[1]); });
 
       var wantComet = !reduceMotion && !blocked && isMoving(r) && calmOK;
       if (wantComet) {
@@ -1512,201 +1285,41 @@ import {
         // itself is shown by the RED ROBOT glyph, so a blocked robot's lane draws NEUTRAL
         // grey (IDLE_MOVE_COLOR), not a loud red alert line.
         if (laneVisible(blocked, reduceMotion)) {
-          drawStaticLane(svg, pts, blocked ? IDLE_MOVE_COLOR : color, robotR, { dimmed: dimmed });
+          routeLines.push({ key: 'lane:' + o.order_id, kind: 'frozen', pts: pts, color: blocked ? IDLE_MOVE_COLOR : color, dimmed: dimmed });
         }
       }
-      // Destination is marked by the node glyph's indigo accent (drawNode/hotNodes).
+      // Destination is marked by the node glyph's indigo accent (nodeFacts/hotNodes).
     });
     // Deterministic order so the comet SET signature is order-independent — a
     // server reshuffle of `orders` doesn't force a needless rebuild, and index →
     // overlay path id stays stable for in-place geometry updates.
     cometRoutes.sort(function (a, b) { return a.sig < b.sig ? -1 : a.sig > b.sig ? 1 : 0; });
 
-    // nodes — receded travel dots + distinct outlined waypoint shapes, ON TOP
-    // of routes so they stay legible even with paths running underneath.
-    points.forEach(function (p) {
-      if (!isFinite(p.pos_x) || !isFinite(p.pos_y)) return;
-      drawNode(svg, p, nodeR);
-    });
-    // Orphan tnodes (edge endpoints with no scene point) — no dot drawn; the
-    // aisle lines already show where the network goes.
-
-    // robots — halo, then chevron, so labels (last pass) sit above everything.
+    // The grid and the aisles show the view, the turn (proj is
+    // turnedProjector(turnDeg)) and the scene (sceneRev, bumped by every
+    // scene load); nodeR follows from the view and the scene. The view is
+    // spelled exactly: in steady state it is the same object render to render,
+    // and a rounded key would leave the grid and the marker sizes from a view
+    // up to the rounding away.
+    var baseKey = view.minX + ' ' + view.minY + ' ' + view.w + ' ' + view.h + '|' + turnDeg + '|' + sceneRev;
     var robotList = Object.keys(robots).map(function (k) { return robots[k]; })
       .filter(function (r) { return isFinite(r.x) && isFinite(r.y); });
-    robotList.forEach(function (r) {
-      var s = proj(r.x, r.y);
-      var ord = orderByRobot[r.id];
-      var moving = r.state === 'busy' || isMoving(r);
-      var color = robotColor(r, ord, moving);
-      var alert = r.state === 'error';
-      var fault = alert || (ord && (ord.status === 'blocked' || ord.status === 'faulted'));
-      // Each robot's glyphs live in a [data-robot] group so a click anywhere on
-      // the robot focuses its route (delegated handler walks up to this group).
-      var rg = svgEl('g', { 'data-robot': r.id, class: 'map-robot-hit' });
-      svg.appendChild(rg);
-      // Focus ring on the selected robot — a quiet outline, not another color.
-      if (focusRobot && r.id === focusRobot) {
-        rg.appendChild(svgEl('circle', {
-          cx: s[0], cy: s[1], r: robotR * 1.8, class: 'map-robot-focus',
-          fill: 'none', 'stroke-width': robotR * 0.12
-        }));
-      }
-      // Fault flare: loud outer ring so a blocked/error robot is the first thing
-      // the eye hits. Drawn outside the normal halo so both rings compound.
-      if (fault) {
-        rg.appendChild(svgEl('circle', {
-          cx: s[0], cy: s[1], r: robotR * 2.4, class: 'map-robot-fault-flare',
-          fill: STATUS_COLOR.blocked || STATE_COLOR.error
-        }));
-      }
-      // Halo only where it carries signal: motion or a fault. Parked robots
-      // get none, so a charge row reads as a tidy strip of docked units.
-      if (moving || alert) {
-        rg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 1.35, class: 'map-robot-halo', fill: color }));
-      }
-      if (moving) {
-        // In motion the chevron shows heading. Fleet Angle is radians
-        // (confirmed live); SVG rotate wants degrees. (Open question worth
-        // re-checking: the reversed-arrow report was the comet LEG direction —
-        // the comet always ran
-        // robot→delivery, i.e. backwards on the pickup leg — now fixed via
-        // orderLeg. This chevron convention is the second candidate only if
-        // reversed CHEVRONS, not streaks, are ever seen again.)
-        var rot = headingDeg(r.angle, turnDeg);
-        var g = svgEl('g', { transform: 'translate(' + s[0] + ',' + s[1] + ') rotate(' + rot + ')' });
-        g.appendChild(svgEl('polygon', { points: chevronPoints(robotR), class: 'map-robot', fill: color, 'stroke-width': robotR * 0.16 }));
-        rg.appendChild(g);
-        rg.appendChild(svgEl('circle', { cx: s[0], cy: s[1], r: robotR * 0.22, class: 'map-robot-core' }));
-      } else {
-        // At rest heading is noise: one solid disc (restDisc), so it reads as
-        // a robot and not as one more ring on the floor. Paused, not taking
-        // orders: the same disc with its fill faded, so it never reads as the
-        // ready robot beside it. Offline: the disc dimmed whole.
-        var d = restDisc(r, nodeR), ds = proj(d.x, d.y);
-        var disc = svgEl('circle', {
-          cx: ds[0], cy: ds[1], r: d.r, fill: color, 'stroke-width': robotR * 0.14,
-          class: 'map-robot' + (r.state === 'paused' ? ' is-paused' : r.state === 'offline' ? ' is-offline' : '')
-        });
-        if (r.state === 'paused') disc.setAttribute('style', 'stroke: ' + color);
-        rg.appendChild(disc);
-      }
+    sceneView.draw({
+      view: view, proj: proj, unit: unit, nodeR: nodeR, robotR: robotR, fontS: fontS,
+      baseKey: baseKey,
+      lanes: sceneNet(scene).lanes,
+      // The nodes show all of that, plus which nodes an order names and which
+      // bays a robot stands on.
+      nodesKey: baseKey + '|' + hotKey() + '|' + occupiedKey(),
+      nodes: nodeFacts,
+      routes: routeLines,
+      robots: robotList.map(function (r) { return robotFact(r, nodeR); })
     });
-
-    // Second pass: name chips with greedy downward de-collision, so a cluster of
-    // robots parked on top of each other reads as a vertical list of names.
-    var placed = [];
-    robotList.forEach(function (r) {
-      var ord = orderByRobot[r.id];
-      // Name chips only where they carry signal: on an order, physically
-      // moving, or faulted. Stationary paused/offline robots keep their grey
-      // disc but no tag — the cluster stays calm.
-      if (!ord && r.state !== 'error' && !isMoving(r)) return;
-      var s = proj(r.x, r.y);
-      var lx = s[0], ly = s[1] - robotR * 2.0;
-      var guard = 0;
-      while (guard++ < 16 && placed.some(function (p) {
-        return Math.abs(p.x - lx) < fontS * 5.2 && Math.abs(p.y - ly) < fontS * 1.25;
-      })) { ly += fontS * 1.35; }
-      placed.push({ x: lx, y: ly });
-      var color = robotColor(r, ord, r.state === 'busy' || !!ord || isMoving(r));
-      var halfW = (r.id.length * fontS * 0.62) / 2 + fontS * 0.55;
-      var chipH = fontS * 1.3;
-      // Chip lives in a [data-robot] group too, so clicking the name focuses
-      // the same robot as clicking its glyph.
-      var cg = svgEl('g', { 'data-robot': r.id, class: 'map-robot-hit' });
-      svg.appendChild(cg);
-      // Leader line ties a displaced chip back to its robot so a stacked
-      // cluster of names stays attributable.
-      if (Math.abs(ly - s[1]) > robotR * 2.6) {
-        cg.appendChild(svgEl('line', {
-          x1: s[0], y1: s[1], x2: lx, y2: ly - chipH * 0.7,
-          class: 'map-chip-leader', 'stroke-width': fontS * 0.06
-        }));
-      }
-      cg.appendChild(svgEl('rect', {
-        x: lx - halfW, y: ly - chipH * 0.75, width: halfW * 2, height: chipH, rx: fontS * 0.25,
-        class: 'map-chip', stroke: color, 'stroke-width': fontS * 0.06
-      }));
-      cg.appendChild(svgEl('circle', { cx: lx - halfW + fontS * 0.5, cy: ly - chipH * 0.1, r: fontS * 0.2, fill: color }));
-      var label = svgEl('text', { x: lx + fontS * 0.35, y: ly, class: 'map-robot-label', 'font-size': fontS });
-      label.textContent = r.id;
-      cg.appendChild(label);
-    });
-
-    host.innerHTML = '';
-    host.appendChild(svg);
-    syncCometLayer(cometRoutes, robotR);
+    comets.sync(cometRoutes, robotR, view);
     renderClassLegend();
     renderLegend(); // live fleet counts track every robot/order tick
     renderRail();
-    rebuildMinimap(); // rebuild static network layer + robot dots + viewport rect
-  }
-
-  // drawAisles paints the travel network — the faint connective tissue under
-  // everything else on the map.
-  //
-  // A segment whose adjacency entry carries handles draws as a cubic <path>;
-  // one without stays a <line>. Both get the same map-aisle class and the same
-  // stroke width, so a bend never reads as a different KIND of lane — only as
-  // the shape the fleet actually drives. <path> needs fill:none explicitly:
-  // SVG's default fill is black, and a filled aisle would blot the floor.
-  //
-  // The laneKey dedup keeps the a<b entry, whose handles were stored in the a→b
-  // direction by buildGraph, so the control points project across in order.
-  function drawAisles(svg, nodeR) {
-    if (tnodes.length < 2) return;
-    var seen = {};
-    for (var a = 0; a < tadj.length; a++) {
-      var edges = tadj[a] || [];
-      for (var e = 0; e < edges.length; e++) {
-        var b = edges[e].n, key = laneKey(a, b);
-        if (seen[key]) continue; seen[key] = true;
-        var pa = proj(tnodes[a].x, tnodes[a].y), pb = proj(tnodes[b].x, tnodes[b].y);
-        var ctl = edges[e].c;
-        if (ctl) {
-          var q1 = proj(ctl[0], ctl[1]), q2 = proj(ctl[2], ctl[3]);
-          svg.appendChild(svgEl('path', {
-            d: cubicPathD(pa, q1, q2, pb),
-            fill: 'none',
-            class: 'map-aisle', 'stroke-width': nodeR * 0.48
-          }));
-        } else {
-          svg.appendChild(svgEl('line', {
-            x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1],
-            class: 'map-aisle', 'stroke-width': nodeR * 0.48
-          }));
-        }
-      }
-    }
-  }
-
-  // Faint grid — gives the floor a frame so the scene reads as a plant view
-  // rather than dots in a void.
-  //
-  // THE CORNER BRACKETS ARE GONE, and the reason they read badly is the reason
-  // they looked like a good idea: they were derived from the live view
-  // (view.minX/minY/w/h) rather than from the plant, so they framed the VIEWPORT
-  // instead of the floor. A frame that is redrawn at the new edges on every zoom
-  // and every pan is not a frame — it is four marks that chase the cursor, and
-  // on an auto-following display it never settles, because the ROI re-frames as
-  // robots move. They also read as a box the map was clipped to, which is
-  // exactly what they were not.
-  //
-  // The grid stays: it is keyed to WORLD coordinates, so it slides under the
-  // scene as you pan instead of moving with you, which is what actually conveys
-  // that the floor is a fixed thing you are looking around.
-  function drawBackdrop(svg, unit) {
-    var step = unit * 0.08;
-    var gridW = unit * 0.0012; // stroke width in user units — CSS px wouldn't scale
-    var x0 = view.minX, y0 = view.minY, x1 = view.minX + view.w, y1 = view.minY + view.h;
-    var gx, gy;
-    for (gx = Math.ceil(x0 / step) * step; gx < x1; gx += step) {
-      svg.appendChild(svgEl('line', { x1: gx, y1: y0, x2: gx, y2: y1, class: 'map-grid', 'stroke-width': gridW }));
-    }
-    for (gy = Math.ceil(y0 / step) * step; gy < y1; gy += step) {
-      svg.appendChild(svgEl('line', { x1: x0, y1: gy, x2: x1, y2: gy, class: 'map-grid', 'stroke-width': gridW }));
-    }
+    syncMinimap(); // robot dots + viewport rect; the network only when the scene, turn or plant changed
   }
 
   // Class legend mirrors the actual node encoding: travel dots recede, typed
@@ -1734,14 +1347,16 @@ import {
           n === 'ChargePoint' || n === 'ParkPoint') return;
       items.push(legendSwatch(classColors[n] || '#67748f', 'dot', prettyClass(n)));
     });
-    if (!items.length) { el.innerHTML = ''; return; }
+    if (!items.length) { writeHTML(el, ''); return; }
     // The node-type key is reference an operator learns once, so it lives behind
     // a small collapsible toggle (default closed) instead of a permanent second
     // legend strip competing with the live status counts in the header.
-    el.innerHTML =
+    var html =
       '<button type="button" class="map-key-toggle" aria-expanded="' + mapKeyOpen + '">' +
         (mapKeyOpen ? '▾' : '▸') + ' Map key</button>' +
       '<div class="map-key-items"' + (mapKeyOpen ? '' : ' hidden') + '>' + items.join('') + '</div>';
+    // Unchanged: the button on screen is the one already listened to.
+    if (!writeHTML(el, html)) return;
     var btn = el.querySelector('.map-key-toggle');
     if (btn) btn.addEventListener('click', function () { mapKeyOpen = !mapKeyOpen; renderClassLegend(); });
   }
@@ -1907,9 +1522,9 @@ import {
       queued: 'queued', pending: 'pending', reshuffling: 'reshuffling'
     };
     if (!shown.length) {
-      motionEl.innerHTML = '<li class="rail-empty">Nothing active</li>';
+      writeHTML(motionEl, '<li class="rail-empty">Nothing active</li>');
     } else {
-      motionEl.innerHTML = shown.map(function (o) {
+      writeHTML(motionEl, shown.map(function (o) {
         var color = STATUS_COLOR[o.status] || '#888';
         var label = statusLabel[o.status] || o.status;
         return '<li class="rail-row" style="border-left-color:' + color + '">' +
@@ -1925,7 +1540,7 @@ import {
             return words ? '<span class="rail-row-why" style="color:' + color + '">' + escapeHtml(words) + '</span>' : '';
           })() +
           '</li>';
-      }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : '');
+      }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : ''));
     }
 
     // ── Activity feed ─────────────────────────────────────────────────
@@ -1934,14 +1549,14 @@ import {
     activityFeed = activityFeed.filter(function (e) { return (now - e.ts) < FEED_MAX_AGE_MS; });
     var showing = activityFeed.slice(0, FEED_MAX_ITEMS);
     if (!showing.length) {
-      activityEl.innerHTML = '<li class="rail-empty">No recent activity</li>';
+      writeHTML(activityEl, '<li class="rail-empty">No recent activity</li>');
     } else {
-      activityEl.innerHTML = showing.map(function (e) {
+      writeHTML(activityEl, showing.map(function (e) {
         var ageFrac = (now - e.ts) / FEED_MAX_AGE_MS;
         var opacity = Math.max(0.25, 1 - ageFrac * 0.75).toFixed(2);
         var cls = 'rail-event' + (e.level === 'alert' ? ' rail-event-alert' : '');
         return '<li class="' + cls + '" style="opacity:' + opacity + '">' + escapeHtml(e.text) + '</li>';
-      }).join('');
+      }).join(''));
     }
   }
 
@@ -2037,6 +1652,7 @@ import {
   function init() {
     renderLegend();
     wireViewControls(); // wheel-zoom + drag-pan + recenter on the map host
+    comets.wirePause(); // comet loop off while the tab is hidden or the map off screen
     startFeedTimer(); // starts the 10s interval that ages/expires feed events
     // Initial paint from REST so the board isn't blank before the first SSE tick.
     refreshAll();

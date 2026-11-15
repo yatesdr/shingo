@@ -122,11 +122,12 @@ func WithBuild(version, commit string) RouterOption {
 
 // WithCoalescingWindows sets the router's two coalescing windows: how long the
 // boards' nudge waits for the rest of its burst (EventHub.nudgeWindow, shipped
-// as sseNudgeWindow) and how long a plant-claims publish does
-// (specChangeWindow, shipped as defaultSpecChangeWindow). NewRouter applies it
-// before either loop starts. A test that walks the real router's doors sets
-// both short, so it waits a multiple of them per door rather than a multiple
-// of the shipped windows. Pinned by TestNewRouter_CoalescesAQuarterSecond.
+// as sseNudgeWindow; the robot stream's recompute waits the same) and how long
+// a plant-claims publish does (specChangeWindow, shipped as
+// defaultSpecChangeWindow). NewRouter applies it before any loop starts. A
+// test that walks the real router's doors sets both short, so it waits a
+// multiple of them per door rather than a multiple of the shipped windows.
+// Pinned by TestNewRouter_CoalescesAQuarterSecond.
 func WithCoalescingWindows(nudge, specChange time.Duration) RouterOption {
 	return func(h *Handlers) {
 		h.eventHub.nudgeWindow = nudge
@@ -185,6 +186,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	// directly; no need for the field on *Handlers since no handler
 	// method reads it. Mirrors core/www/router.go's pattern.
 	h.eventHub.SetupEngineListeners(eng)
+	// The robot panel's stream (robot_stream.go): the hub tells it of every
+	// robot-pos client, and it drives the engine's robot watch. Its burst
+	// window is the nudge's: both wait out one burst of order writes.
+	robots := newRobotStream(eng, eng.StationService().RobotWatchOrders,
+		h.eventHub.Broadcast, h.eventHub.nudgeWindow, h.eventHub.stopChan)
+	h.eventHub.robotPos = robots
+	robots.start(eng.Events)
 
 	// Wire debug log entries to SSE broadcast
 	dbg.SetOnEntry(func(e debuglog.Entry) {
@@ -294,6 +302,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// The line's auto-reorder switch from the board, where Processes
 			// shows it there (handlers_auto_reorder.go). Shop floor: no login.
 			r.Post("/operator-stations/{id}/auto-reorder", h.apiStationFlipAutoReorder)
+			// The robot panel's map, fetched once when the panel is first
+			// shown, 304 while the scene is unchanged. See apiStationScene.
+			r.Get("/operator-stations/{id}/scene", h.apiStationScene)
 
 			// Process node operations (material request, release, produce, bin ops)
 			r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)

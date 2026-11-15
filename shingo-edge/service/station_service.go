@@ -203,14 +203,6 @@ type StationService struct {
 	// binNodesChanged runs when a rebuild moves the watched names.
 	binNodesChanged func()
 
-	// sceneMemo is composerScene's derived adjacency, computed once per
-	// geometry cache rather than per request; sceneMemoFor is the cache it
-	// was derived from. Guarded because one service serves every board's
-	// poll. See composerScene.
-	sceneMu      lockcheck.Mutex[lockorder.StationScene]
-	sceneMemoFor *domain.SceneGeometry
-	sceneMemo    *domain.ComposerScene
-
 	// curtained is every live node with the curtain interlock on, keyed by
 	// (process, core node), as of process_nodes generation curtainedGen. See
 	// curtainedNodes for why it is held rather than read per poll.
@@ -955,20 +947,22 @@ func (s *StationService) curtainedNodes() map[curtainKey]processes.Node {
 //
 // Fail-open, like every other enrichment: a failed read draws less of the
 // picture, never no picture.
+//
+// NO SUCH STATION IS (nil, nil), which the door answers 404. The store answers
+// a missing row with sql.ErrNoRows, never a nil station, and this used to pass
+// that up as an error, so the door answered 500 (pinned by
+// TestOperatorStations_CellPicture_NoSuchStationIs404).
 func (s *StationService) CellPictureForStation(stationID int64) (*domain.CellPicture, error) {
 	station, err := s.db.GetOperatorStation(stationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
-	}
-	if station == nil {
-		return nil, nil
 	}
 	process, err := s.db.GetProcess(station.ProcessID)
 	if err != nil {
 		return nil, err
-	}
-	if process == nil {
-		return nil, nil
 	}
 	live := s.liveClaims(process.ID)
 	active := map[string]domain.NodeClaim{}

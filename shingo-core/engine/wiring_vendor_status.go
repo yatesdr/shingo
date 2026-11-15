@@ -69,9 +69,14 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	// Vendor-state-domain mapping has already produced newStatus (a ShinGo
 	// status). Route through the typed lifecycle method matching the
-	// target ShinGo status — the vendor terminal-check at line 81 below
-	// guards against routing terminal vendor states through MarkInTransit/
-	// MarkStaged. Cancel/Fail are dispatched in the post-mapping switch.
+	// target ShinGo status. A terminal vendor state never reaches
+	// MarkInTransit/MarkStaged: rds.OrderState.CoreStatus maps FINISHED to
+	// delivered and STOPPED to cancelled. The vendor terminal checks
+	// (e.fleet.IsTerminalState(ev.NewStatus), at the refusal and after the
+	// station push below) only decide whether the post-mapping switch runs,
+	// which is where Cancel/Fail are dispatched. This comment used to credit
+	// the check, cited as "line 81 below", with keeping terminal states out
+	// of MarkInTransit/MarkStaged; it never did that, the mapping does.
 	lc := e.dispatcher.Lifecycle()
 
 	// The fault fields for this transition, shared between the lifecycle write
@@ -161,11 +166,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			refused = err
 		}
 	case dispatch.StatusDispatched:
-		// Fleet shouldn't actually report Dispatched — the dispatcher
-		// writes that status itself after backend.CreateOrder returns.
-		// If we see it from MapState, log and skip rather than silently
-		// re-writing the status.
-		e.logFn("engine: unexpected fleet-reported Dispatched for order %d, skipping", order.ID)
+		// The dispatcher writes dispatched itself after backend.CreateOrder
+		// returns, and the fleet's CREATED / TOBEDISPATCHED that follow map
+		// to it and take the same-status path above. Here Core is somewhere
+		// else and the fleet has gone back to an unassigned state (an order
+		// it re-dispatches after RUNNING): Core does not move, so this
+		// REFUSES like the arms above. It used to log and fall through, and
+		// the push below then told the station `dispatched` while Core held
+		// in_transit, the very announcement the rule below forbids.
+		// Pinned by TestVendorStatus_UnassignedAfterRunningTellsTheStationNothing.
+		refused = fmt.Errorf("unexpected fleet-reported Dispatched, skipping")
 	case dispatch.StatusFailed, dispatch.StatusCancelled:
 		// Handled by the post-mapping switch below.
 	case dispatch.StatusFaulted:
@@ -188,7 +198,13 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// rather than silently bypassing the state machine. A mapped
 		// status outside the typed-method list signals an adapter
 		// mismatch that needs investigation, not a generic DB write.
+		//
+		// And it is a refusal, like the arms above: the push below used to
+		// tell the station a status Core never wrote (the simulator maps a
+		// state it does not define to the word "unknown"). Pinned by
+		// TestVendorStatus_UnmappedStateTellsTheStationNothing.
 		e.logFn("engine: unknown mapped status %q for order %d (vendor=%q); skipping write — adapter MapState may be out of sync with dispatch.Status* constants", newStatus, order.ID, ev.NewStatus)
+		refused = fmt.Errorf("unknown mapped status %q", newStatus)
 	}
 	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)
@@ -210,10 +226,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	// pill on the node tile. On any other status the ETA is left nil
 	// (Edge doesn't render pills on pre-in-transit statuses and treats
 	// terminal statuses as pill-hidden — see operator-render.js).
+	//
+	// The robot rides every one of these. The waybill names the robot on its
+	// first assignment only (above), so a robot the fleet changed afterwards
+	// reached orders.robot_id and Core's board and never the station; this
+	// carries Core's robot to it on the order's next transition.
 	update := &protocol.OrderUpdate{
 		OrderUUID: order.EdgeUUID,
 		Status:    string(newStatus),
 		Detail:    fmt.Sprintf("fleet state: %s", ev.NewStatus),
+		RobotID:   effectiveRobotID,
 	}
 	if newStatus == dispatch.StatusFaulted {
 		// The Edge board shows this string to an operator. "fleet state: FAILED"
@@ -293,6 +315,43 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	case dispatch.StatusCancelled:
 		e.handleFleetOrderCancelled(order, ev.Snapshot)
 	}
+}
+
+// handleVendorRobotChange records a robot the fleet moved an order to without
+// changing its state (rds.Poller reportRobotSwap): orders.robot_id, and a
+// mission_events row so the swap is on the mission's timeline. The status is
+// not touched, whatever the vendor state maps to: this event is not a
+// transition (EventOrderRobotChanged).
+//
+// The station is not told here. The robot reaches it on the order's next
+// order.update, which carries Core's robot (handleVendorStatusChange).
+//
+// A report for a vendor order the Core order no longer runs (a redirect raced
+// the poll) names another job's robot, and is dropped.
+func (e *Engine) handleVendorRobotChange(ev OrderRobotChangedEvent) {
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil {
+		e.logFn("engine: get order %d for robot change: %v", ev.OrderID, err)
+		return
+	}
+	if protocol.IsTerminal(order.Status) || ev.RobotID == "" || ev.RobotID == order.RobotID ||
+		ev.VendorOrderID != order.VendorOrderID {
+		return
+	}
+	if err := e.db.UpdateOrderRobotID(order.ID, ev.RobotID); err != nil {
+		e.logFn("engine: update order %d robot: %v", order.ID, err)
+		return
+	}
+	e.logFn("engine: order %d: the fleet moved it from robot %s to %s (%s)",
+		order.ID, ev.FromRobotID, ev.RobotID, ev.VendorState)
+	e.recordMissionEvent(OrderStatusChangedEvent{
+		OrderID:       order.ID,
+		VendorOrderID: ev.VendorOrderID,
+		OldStatus:     ev.VendorState,
+		NewStatus:     ev.VendorState,
+		RobotID:       ev.RobotID,
+		Detail:        fmt.Sprintf("fleet robot: %s -> %s", ev.FromRobotID, ev.RobotID),
+	})
 }
 
 // faultRefFrom builds the history-row reference for a fault: where the order

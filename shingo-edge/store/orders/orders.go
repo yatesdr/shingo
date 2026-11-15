@@ -35,7 +35,7 @@ type (
 
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.want,
-	o.waybill_id, o.external_ref, o.final_count,
+	o.waybill_id, o.robot_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
 	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.staged_at, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
@@ -216,7 +216,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var laneHeld int
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
-			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
+			&o.WaybillID, &o.RobotID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
 			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
@@ -265,7 +265,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var laneHeld int
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
-		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
+		&o.WaybillID, &o.RobotID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
 		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
@@ -541,9 +541,27 @@ func UpdateStatus(db *sql.DB, id int64, newStatus string) error {
 	return err
 }
 
-// UpdateWaybill writes the carrier waybill and ETA fields.
-func UpdateWaybill(db *sql.DB, id int64, waybillID, eta string) error {
-	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?, updated_at=datetime('now') WHERE id=?`, waybillID, eta, id)
+// UpdateWaybill writes the carrier waybill and ETA fields, and the robot when
+// the waybill names one. The waybill Core sends at dispatch names none (there is
+// no robot yet), and an empty robot leaves the stored one: on the wire it is
+// absent, not a clear: an empty omitempty field is indistinguishable from a
+// missing one (the queue_reason lesson, see SetQueueReason). One statement
+// either way.
+func UpdateWaybill(db *sql.DB, id int64, waybillID, robotID, eta string) error {
+	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?,
+		robot_id=CASE WHEN ?='' THEN robot_id ELSE ? END, updated_at=datetime('now') WHERE id=?`,
+		waybillID, eta, robotID, robotID, id)
+	return err
+}
+
+// SetRobotID writes the robot an order.update names. The handler calls it only
+// with a non-empty robot, for the reason UpdateWaybill gives. A NO-OP WHEN THE
+// ROBOT IS UNCHANGED, as SetFaultClock is: Core puts the robot on every update
+// once it holds one, and rewriting the same value would bump updated_at on
+// every push.
+func SetRobotID(db *sql.DB, uuid, robotID string) error {
+	_, err := db.Exec(`UPDATE orders SET robot_id=?, updated_at=datetime('now') WHERE uuid=? AND robot_id<>?`,
+		robotID, uuid, robotID)
 	return err
 }
 
@@ -625,8 +643,17 @@ func UpdateBinID(db *sql.DB, id int64, binID *int64) error {
 // clear on terminal/dispatch transitions. code is protocol.QueueCode as a raw
 // string (Edge does not branch on it in v1 — it persists it so future behavior
 // is a read, not a schema change).
+//
+// A NO-OP WHEN NOTHING CHANGES, as SetFaultClock is. The handler clears the
+// reason on every non-waiting order.update, so without the guard every push
+// rewrote two empty columns and bumped updated_at, which reads as the order
+// advancing: the stuck-order and unconfirmed-delivery anomalies
+// (reconciliation.ListAnomalies) measure from it, and keep-staged's pause
+// reads a refill's end from it (engine spotPause). Pinned by
+// TestSetQueueReason_AnUnchangedReasonWritesNothing.
 func SetQueueReason(db *sql.DB, uuid, reason, code string) error {
-	_, err := db.Exec(`UPDATE orders SET queue_reason=?, queue_code=?, updated_at=datetime('now') WHERE uuid=?`, reason, code, uuid)
+	_, err := db.Exec(`UPDATE orders SET queue_reason=?, queue_code=?, updated_at=datetime('now')
+		WHERE uuid=? AND (queue_reason<>? OR queue_code<>?)`, reason, code, uuid, reason, code)
 	return err
 }
 

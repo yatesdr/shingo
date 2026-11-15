@@ -102,6 +102,10 @@ type Engine struct {
 	// feeds is what this Edge holds of each Core feed and what the last
 	// heartbeat ack said about Core (feeds.go).
 	feeds feedBook
+	// robotWatch is the live robot feed: the orders each operator station is
+	// showing, the topic Core names, and the latest position per order
+	// (robot_watch.go).
+	robotWatch robotWatch
 	// asks is the asks sent and not yet answered, and the kinds Core answers
 	// (ask.go); askAppliers is what each kind's answer applies beyond its rows.
 	asks        askBook
@@ -215,10 +219,9 @@ type Engine struct {
 	// The vendor map's own universe — see scene_graph.go. In-memory only and
 	// re-delivered on every node-list sync, like the catalog above.
 	scenePoints  []protocol.ScenePointInfo
-	sceneEdges   []protocol.SceneEdgeInfo
 	sceneGraphMu lockcheck.RWMutex[lockorder.SceneGraph]
 	// The map's geometry — see scene_geometry.go. Replaced only by a complete
-	// response, unlike the two slices above; its own lock because the two
+	// response, unlike the point slice above; its own lock because the two
 	// caches change on different responses.
 	sceneGeometry   *domain.SceneGeometry
 	sceneGeometryMu lockcheck.RWMutex[lockorder.SceneGeometry]
@@ -531,6 +534,10 @@ func (e *Engine) Start() {
 	e.startCatidMonitor()
 
 	e.startIntentWorker()
+
+	// The live robot feed's sender: idle (no timer) until Core names the
+	// ephemeral topic and an operator station shows an order.
+	e.startRobotWatchLoop(protocol.RobotWatchInterval)
 
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)

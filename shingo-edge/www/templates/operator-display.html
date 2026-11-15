@@ -27,6 +27,12 @@
     <link rel="stylesheet" href="{{assetURL "/static/operator-station/operator.css"}}">
     <link rel="stylesheet" href="{{assetURL "/static/operator-station/flow-picture.css"}}">
     <link rel="stylesheet" href="{{assetURL "/static/operator-station/composer-glyphs.css"}}">
+    <!-- The robot panel's map look, the one sheet Core's robot map loads too
+         (shared/scene-view.css). Linked here rather than injected on the
+         panel's first show: about 1 kB gzipped, one request on a cold cache
+         and none after (a hashed URL), and the panel is never drawn
+         unstyled. -->
+    <link rel="stylesheet" href="{{assetURL "/static/shared/scene-view.css"}}">
     <!-- composer.css is NOT here. It is 20 kB for a screen two taps away, and
          composer-boot.js injects it on the first open. Every tag here is the
          handler's hashed URL (assetURL), cached for good; a restart that

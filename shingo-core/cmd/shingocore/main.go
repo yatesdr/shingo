@@ -531,6 +531,17 @@ func main() {
 		log.Printf("shingocore: envelope signing enabled")
 	}
 
+	// ── The live robot feed (protocol/ephemeral.go) ────────────────────
+	// The registration and every heartbeat ack name the ephemeral topic only
+	// once Connect has created and verified it; the robot poll answers each
+	// live watch straight onto it; the watches arrive on its own reader (no
+	// group, last offset), never through the ingestor above. An unverified
+	// topic names nothing and starts no reader, so no Edge watches and the
+	// poll does no feed work.
+	coreDataService.SetEphemeralTopic(msgClient.EphemeralTopic)
+	eng.SetRobotPositionsPublisher(msgClient.PublishEphemeral)
+	msgClient.SubscribeEphemeral(buildEphemeralReader(ingestor.SigningKey, eng))
+
 	// ── Protocol router (envelope Type dispatch) ───────────────────────
 	// The dispatch table lives in routers.go; see the header there.
 	protoRouter, err := buildProtocolRouter(

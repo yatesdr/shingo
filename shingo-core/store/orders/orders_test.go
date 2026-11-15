@@ -1148,3 +1148,52 @@ func TestScanOrders_DirectSQL(t *testing.T) {
 		t.Errorf("ScanOrders len = %d, want 3", len(all))
 	}
 }
+
+// TestRobotsByUUID_OrdersTheFleetHoldsOnARobot pins the live robot feed's one
+// read: the station and robot of each named order the fleet holds on a robot
+// (in transit, dispatched, faulted), and nothing for one back in queued with
+// the robot of its cancelled leg still on the row, a confirmed one (its robot
+// has driven off), one with no robot yet, or one not named.
+func TestRobotsByUUID_OrdersTheFleetHoldsOnARobot(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t).DB
+	mk := func(uuid, station string, status protocol.Status, robot string) {
+		t.Helper()
+		o := newPendingOrder(uuid)
+		o.StationID, o.Status = station, status
+		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
+		if robot != "" {
+			testutil.MustNoErr(t, orders.UpdateVendor(db, o.ID, "v-"+uuid, "RUNNING", robot), "robot on "+uuid)
+		}
+	}
+	mk("u-live", "edge.a", protocol.StatusInTransit, "AMR-01")
+	mk("u-other", "edge.b", protocol.StatusDispatched, "AMR-02")
+	mk("u-fault", "edge.a", protocol.StatusFaulted, "AMR-05")
+	mk("u-parked", "edge.a", protocol.StatusQueued, "AMR-06")
+	mk("u-done", "edge.a", protocol.StatusConfirmed, "AMR-03")
+	mk("u-norobot", "edge.a", protocol.StatusDispatched, "")
+	mk("u-unnamed", "edge.a", protocol.StatusInTransit, "AMR-04")
+
+	got, err := orders.RobotsByUUID(db, []string{"u-live", "u-other", "u-fault", "u-parked", "u-done", "u-norobot", "u-missing"})
+	testutil.MustNoErr(t, err, "read")
+	byUUID := map[string]orders.OrderRobot{}
+	for _, r := range got {
+		byUUID[r.UUID] = r
+	}
+	want := map[string]orders.OrderRobot{
+		"u-live":  {UUID: "u-live", StationID: "edge.a", RobotID: "AMR-01"},
+		"u-other": {UUID: "u-other", StationID: "edge.b", RobotID: "AMR-02"},
+		"u-fault": {UUID: "u-fault", StationID: "edge.a", RobotID: "AMR-05"},
+	}
+	if len(byUUID) != len(want) {
+		t.Errorf("read %+v, want exactly %v", got, want)
+	}
+	for u, w := range want {
+		if byUUID[u] != w {
+			t.Errorf("%s read as %+v, want %+v", u, byUUID[u], w)
+		}
+	}
+	if got, err := orders.RobotsByUUID(db, nil); err != nil || got != nil {
+		t.Errorf("no uuids = %v, %v; want nothing and no error", got, err)
+	}
+}

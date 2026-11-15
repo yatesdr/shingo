@@ -9,7 +9,7 @@ import (
 	"shingo/protocol/testutil"
 )
 
-// idle_rule_clocks_test.go — the two clocks the idle rule reads (v53), each
+// idle_rule_clocks_test.go — the two clocks the idle rule reads (v54), each
 // stamped by an UPDATE that already ran, on the engine's clock.
 
 // TestReportingPoints_TheCountedReadStampsTheLastPart: a read that counted

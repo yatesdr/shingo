@@ -330,9 +330,33 @@ func TestWireStructs_RealTree(t *testing.T) {
 	if !sort.StringsAreSorted(ss) {
 		t.Error("wireStructs is not sorted")
 	}
-	for _, must := range []string{"Envelope", "RawHeader", "Address", "Data", "OrderRequest", "EdgeHeartbeatAck", "NodeBinsRow"} {
+	for _, must := range []string{"Envelope", "RawHeader", "Address", "Data", "OrderRequest", "EdgeHeartbeatAck", "NodeBinsRow",
+		"RobotWatch", "RobotPositions", "RobotPosition"} {
 		if i := sort.SearchStrings(ss, must); i == len(ss) || ss[i] != must {
 			t.Errorf("wireStructs misses %s", must)
+		}
+	}
+}
+
+// TestEphemeralMessages_RealTree pins the ephemeral registry's rows on the
+// real tree: each type is read by the one side its composition root registers
+// it at, robot.watch by Core and robot.positions by the Edge, with the struct
+// that side's handler decodes.
+func TestEphemeralMessages_RealTree(t *testing.T) {
+	ms, err := ephemeralMessages(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]message{}
+	for _, m := range ms {
+		got[m.constName] = m
+	}
+	for k, want := range map[string]message{
+		"TypeRobotWatch":     {wire: "robot.watch", constName: "TypeRobotWatch", direction: dirEdgeToCore, payload: "RobotWatch"},
+		"TypeRobotPositions": {wire: "robot.positions", constName: "TypeRobotPositions", direction: dirCoreToEdge, payload: "RobotPositions"},
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %+v, want %+v", k, got[k], want)
 		}
 	}
 }

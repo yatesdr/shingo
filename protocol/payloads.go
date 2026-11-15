@@ -133,6 +133,10 @@ type EdgeRegistered struct {
 	StationID string `json:"station_id"`
 	// Message is a human-readable status message.
 	Message string `json:"message,omitempty"`
+	// EphemeralTopic is the ephemeral topic (ephemeral.go) Core has created
+	// and verified, as on EdgeHeartbeatAck.EphemeralTopic; absent when it has
+	// none. Every registration and every ack states it afresh.
+	EphemeralTopic string `json:"ephemeral_topic,omitempty"`
 }
 
 // EdgeHeartbeatAck acknowledges a heartbeat.
@@ -185,6 +189,13 @@ type EdgeHeartbeatAck struct {
 	// ack named it, and refuses the act otherwise: nil (absent) is a Core
 	// without the ask pair. Not sent to an Edge that sends no Feeds.
 	Asks []string `json:"asks,omitempty"`
+	// EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created
+	// and whose retention it read back and verified; absent when it has none.
+	// AN EDGE TOUCHES THE TOPIC ONLY WHILE THE LAST ACK OR REGISTRATION NAMED
+	// IT: absent from a later one (an older Core, or one that could not verify
+	// it) stops the Edge's reader and writer. Additive: an older Edge ignores
+	// the key and never reads the topic.
+	EphemeralTopic string `json:"ephemeral_topic,omitempty"`
 }
 
 // --- Order payloads: Edge -> Core ---
@@ -425,6 +436,13 @@ type OrderUpdate struct {
 	// to the sentence. Ships alongside QueueReason so Edge can persist the code
 	// for future branching without a schema change.
 	QueueCode string `json:"queue_code,omitempty"`
+	// RobotID is the robot Core holds for the order when it sends the update
+	// (orders.robot_id, or the fleet's robot on a vendor-status push). The
+	// waybill names the robot on its first assignment only, so a robot that
+	// changes later reaches the Edge on the next update that carries this.
+	// Empty when Core holds none, and an empty one is absent, not a clear: the
+	// Edge keeps the robot it has. Additive: an older Edge ignores it.
+	RobotID string `json:"robot_id,omitempty"`
 
 	// ── Fault fields ────────────────────────────────────────────────────
 	//
@@ -1111,9 +1129,11 @@ type NodeListResponse struct {
 	//
 	// NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the
 	// "absence is never a finding" guards read the full name set on every
-	// sync, so names are never left off. The coordinates and handles are what
-	// the station's cell picture draws from, and they are the bulk of the
-	// message — so Core stamps SceneRevision on every response and sends the
+	// sync, so names are never left off. The coordinates and handles are the
+	// Edge's geometry cache (the cell picture places its positions by the point
+	// coordinates; the desktop's key-route walk and the operator station's
+	// robot panel read the segments and handles too), and they are the bulk of
+	// the message — so Core stamps SceneRevision on every response and sends the
 	// geometry only when the request's revision does not match it. An Edge
 	// that received geometry keeps it (durably) and quotes the revision back.
 	ScenePoints []ScenePointInfo `json:"scene_points,omitempty"`

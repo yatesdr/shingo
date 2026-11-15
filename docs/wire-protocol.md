@@ -14,13 +14,13 @@ This document specifies everything needed to implement a compatible producer or 
 
 ### Broker
 
-| Broker | Edge -> Core Topic | Core -> Edge Topic |
-|--------|-------------------|--------------------|
-| Kafka  | `shingo.orders`   | `shingo.dispatch`  |
+| Broker | Edge -> Core Topic | Core -> Edge Topic | Both ways, lossy |
+|--------|-------------------|--------------------|------------------|
+| Kafka  | `shingo.orders`   | `shingo.dispatch`  | `shingo.ephemeral` |
 
 ### Topic Architecture
 
-The protocol uses **two topics** for strict separation of traffic direction:
+The protocol uses **two durable topics** for strict separation of traffic direction:
 
 - **`shingo.orders`** -- Edge -> Core. Carries order-related requests and data channel messages (registration, heartbeats) from edge nodes upstream to the core server. Core subscribes to this topic. Edges publish to it.
 
@@ -30,6 +30,10 @@ Edges never see each other's order traffic. Core never sees its own replies echo
 
 The topic names are the defaults; both services read them from `messaging.orders_topic` and
 `messaging.dispatch_topic`.
+
+A third topic, **`shingo.ephemeral`** (`messaging.ephemeral_topic`), carries the messages whose successor
+carries the same truth seconds later: see [The ephemeral topic](#the-ephemeral-topic). Nothing on it is
+durable, and none of this section's or the next's guarantees apply to it.
 
 ### Kafka Configuration
 
@@ -41,7 +45,7 @@ The topic names are the defaults; both services read them from `messaging.orders
 | Message key | the station uid on Edge publishes (`PartitionKey`); Core publishes with no key |
 | Partitions | **1** (`ensureTopics`), which makes the message key and the balancer inert |
 | Balancer | `kafka.Hash` on both writers |
-| Topic retention | broker default (no topic configs are sent at creation) |
+| Topic retention | broker default (no topic configs are sent at creation); the ephemeral topic's are [below](#the-ephemeral-topic) |
 
 A replay under a new group id is bounded by expiry: the ingestor drops an envelope past its `exp` before any
 handler runs. A no-expiry message (see [Subject-Specific TTLs](#subject-specific-ttls)) does reach its handler,
@@ -57,6 +61,27 @@ assigned to exactly one group member, so two edges sharing a station uid share a
 group and one of them receives no dispatch traffic at all while still
 heartbeating, registering and publishing. Distinct `station_uid`s prevent it,
 not partitioning.
+
+### The ephemeral topic
+
+`shingo.ephemeral` (`messaging.ephemeral_topic` on both services; empty turns it off) carries short-lived,
+lossy messages: today the live robot feed, [`robot.watch` and `robot.positions`](#live-robot-feed). It is named
+for the class of data, not for what rides it (`protocol/ephemeral.go`).
+
+| Parameter | Value |
+|-----------|-------|
+| Created by | **Core**, at every connect: `CreateTopics` with 1 partition, RF 1, `retention.ms=60000`, `segment.ms=60000` (both: Kafka deletes whole closed segments only, so `retention.ms` alone keeps data until a 1 GiB segment rolls) |
+| Verified by | Core, straight after: it reads the topic's partitions and those two configs back and, where an existing topic disagrees, alters the configs and reads them again. A topic with more than one partition cannot be corrected and is not used. Each attempt runs on its own goroutine, never under the messaging client's lock or on the robot poll, with every round trip under the broker-probe deadline; one that does not verify is tried again every minute (`ephemeralRetryEvery`) until one does, and then no more. |
+| Advertised | `EdgeRegistered.ephemeral_topic` and `EdgeHeartbeatAck.ephemeral_topic`, only once verified. The plant brokers auto-create topics, so no Edge may read or write the topic before Core has made it: an Edge touches it only while the last registration or ack named it, and only when that is the name its own config holds. |
+| Consumer group | **none**, on both sides; no offset is ever committed |
+| Start offset | **the last offset.** A reader that starts, or starts again after an outage, sees only what is published after it: nothing is replayed |
+| Publish | direct to the topic: no outbox row, no retry (one attempt, asynchronous; a failure is dropped) |
+| Signing | as every other message (`messaging.signing_key`) |
+| Expiry | `exp` = stamp + 10 s (`EphemeralTTL`). It is also the clock skew a station tolerates |
+| Drops | a bad signature, a message past its `exp` (or with none), and one addressed elsewhere are dropped **with no log line** and are not counted in `ExpiredDrops`. These messages do not go through the ingestor, which logs both |
+
+An Edge or a Core from before the topic never reads it. A new Edge against an older Core is never named the
+topic and never touches it; an older Edge ignores the new key on the ack.
 
 ---
 
@@ -281,6 +306,9 @@ Type strings use dotted notation: `{category}.{action}`. Two categories exist fo
 
 - `order.*` -- Transport order lifecycle
 - `data` -- Generic data channel (subject-based dispatch)
+
+A third, `robot.*`, rides only [the ephemeral topic](#the-ephemeral-topic) and is not in the registry below:
+no router dispatches it ([Live robot feed](#live-robot-feed)).
 
 ### Complete Type Registry
 
@@ -651,6 +679,7 @@ Acknowledges a successful edge registration via `data` message with subject `edg
 |---|---|---|---|
 | `station_id` | string |  | StationID echoes the registered station's UID. |
 | `message` | string | omitempty | Message is a human-readable status message. |
+| `ephemeral_topic` | string | omitempty | EphemeralTopic is the ephemeral topic (ephemeral.go) Core has created and verified, as on EdgeHeartbeatAck.EphemeralTopic; absent when it has none. Every registration and every ack states it afresh. |
 
 <!-- /generated -->
 
@@ -678,6 +707,84 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 | `claims` | object (string → string) |  | Claims is, for every process Core holds a plant-claims report for from this station, the digest that arrived with that process's last report. The Edge re-publishes a process whose digest differs or is missing, and publishes an empty report for a name it no longer has. nil means Core could not read them (or is older); {} means it holds none. |
 | `bin_watch` | string | omitempty | BinWatch is the digest of the bins watch list Core holds for this Edge, as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge publishes its list when this differs from its own. A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core without the bins feed, and the Edge then reads bins as it did before and publishes nothing. An Edge that sends no Feeds is not answered either. |
 | `asks` | string[] | omitempty | Asks is every ask kind this Core answers (protocol.AskKinds, as registered), sorted. The Edge sends an ask of a kind only while the last ack named it, and refuses the act otherwise: nil (absent) is a Core without the ask pair. Not sent to an Edge that sends no Feeds. |
+| `ephemeral_topic` | string | omitempty | EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created and whose retention it read back and verified; absent when it has none. AN EDGE TOUCHES THE TOPIC ONLY WHILE THE LAST ACK OR REGISTRATION NAMED IT: absent from a later one (an older Core, or one that could not verify it) stops the Edge's reader and writer. Additive: an older Edge ignores the key and never reads the topic. |
+
+<!-- /generated -->
+
+#### Live robot feed
+
+Two message types on [the ephemeral topic](#the-ephemeral-topic), sent as plain envelopes (`type` is the
+message type, `p` its body; no `data` wrapper), signed, with `exp` 10 s after `ts`.
+
+- **`robot.watch`** (`TypeRobotWatch`), Edge → Core, `dst` role `core`. The Core order uuids this Edge's
+  operator stations are showing a robot for, together. Sent at once when the set changes and every 5 s
+  (`RobotWatchInterval`) while it is not empty; an Edge with nothing shown sends nothing. Core keys the watch on
+  `src.station` (a body naming another station is dropped) and keeps it for 15 s (`RobotWatchLease`) after the
+  last one; every watch replaces the one before.
+- **`robot.positions`** (`TypeRobotPositions`), Core → one Edge, `dst` station = the watching Edge's uid. One per
+  robot poll (2 s, `RobotPollInterval`, which the body carries as `interval_ms`) per station with a live watch,
+  built from that poll. Core honours only the watched orders that are the station's own and that the fleet holds
+  on a robot (dispatched, in transit, staged or faulted, `IsVendorTracked`, with `orders.robot_id` read each
+  poll); an order whose robot the poll did not list connected is left out. **No live watch: no database read,
+  nothing built, nothing sent.**
+
+The bodies are `RobotWatch` and `RobotPositions` (`protocol/ephemeral.go`). Each side reads the topic through
+`router.ReadEphemeral` over a router of its own, which carries only the types that side reads.
+
+```json
+{"v":1,"type":"robot.positions","id":"…","src":{"role":"core","station":"core"},
+ "dst":{"role":"edge","station":"stn-4f8a1c02b7e39d15"},"ts":"2026-11-14T15:30:00.1234Z","exp":"2026-11-14T15:30:10.1234Z",
+ "p":{"t":"2026-11-14T15:30:00.123Z","interval_ms":2000,
+      "orders":[{"order_uuid":"…","robot_id":"AMR-01","x":12.5,"y":-3.25,"heading":1.5708,"path":["LM7","LM31","AP32"]}]}}
+```
+
+The registry below is generated from the readers' registrations: each type is read by the one side whose
+composition root registers it behind `router.ReadEphemeral`.
+
+<!-- generated: protocol/ephemeral.go EphemeralTypes -->
+
+| Type | Constant | Direction | Payload | TTL |
+|---|---|---|---|---|
+| `robot.watch` | `TypeRobotWatch` | Edge → Core | [`RobotWatch`](#robotwatch) | 10 s |
+| `robot.positions` | `TypeRobotPositions` | Core → Edge | [`RobotPositions`](#robotpositions) | 10 s |
+
+<!-- /generated -->
+
+##### RobotWatch
+
+<!-- generated: protocol struct RobotWatch -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `station_id` | string |  | StationID is the watching Edge's station uid. Core keys the watch on the envelope's source station and drops a watch whose StationID is another. |
+| `order_uuids` | string[] |  | OrderUUIDs are the Core order uuids this Edge's operator stations are showing, together, sorted and each once. Core honours only the ones whose order is this station's. Every watch replaces the one before it. |
+
+<!-- /generated -->
+
+##### RobotPositions
+
+<!-- generated: protocol struct RobotPositions -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `t` | timestamp |  | T is when Core's robot poll sampled the fleet (Core's clock, UTC, millisecond precision). |
+| `interval_ms` | integer |  | IntervalMS is Core's robot poll interval, so a reader can count the updates it missed. |
+| `orders` | [`RobotPosition`](#robotposition)[] |  | Orders is one entry per watched order of this station that the fleet holds on a robot (IsVendorTracked) and whose robot this poll listed connected. Any other is left out rather than sent stale; [] when none is. |
+
+<!-- /generated -->
+
+##### RobotPosition
+
+<!-- generated: protocol struct RobotPosition -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `order_uuid` | string |  | OrderUUID is the watched order's Core uuid. |
+| `robot_id` | string |  | RobotID is the robot Core holds the order on (orders.robot_id), read on this poll: the live robot, not the one an earlier message named. |
+| `x` | float |  | X and Y are the robot's position in the scene's frame, metres. |
+| `y` | float |  | See `x`. |
+| `heading` | float |  | Heading is the robot's heading, radians, as the fleet reports it. |
+| `path` | string[] | omitempty | Path is the route the fleet has left the robot to drive, as scene point names, the robot's current point first. Absent when there is none to draw: no plan, an id the scene cannot name, or no synced scene. |
 
 <!-- /generated -->
 
@@ -901,7 +1008,7 @@ digest and `scene_revision` is the `scene` feed's value.
 | `loaders` | [`LoaderInfo`](#loaderinfo)[] | omitempty | Loaders is the Core-owned bin-loader aggregate (each loader with its positions and payloads), which the Edge caches in core_loaders and its loader resolvers read. |
 | `payload_bin_types` | [`PayloadBinTypeInfo`](#payloadbintypeinfo)[] | omitempty |  |
 | `family` | object (string → string) | omitempty | Family is each bin type's carrier family, by bin-type code: two types are one physical cart exactly when their strings are equal, and a CLEAR offers only those. Per type, not per PayloadBinTypes row, because a type's family does not vary by payload. Bare markers are not in it: nobody chooses one. Absent from an older Core, and an older Edge ignores it; an Edge holding none does not filter its picker. |
-| `scene_points` | [`ScenePointInfo`](#scenepointinfo)[] | omitempty | ScenePoints and SceneEdges are the vendor map's own universe of locations and the drivable segments between them. Sibling slices for the same reason as the two above, and additive in the same way. SHINGO WORKS IN APs, so the node list is only the subset of map points that Shingo gives a job to. A key route is expressed in the VENDOR's universe — a plain waypoint (class LM) is its primary use — so it is validated against these names, never the node list, which would refuse a correct route. NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the "absence is never a finding" guards read the full name set on every sync, so names are never left off. The coordinates and handles are what the station's cell picture draws from, and they are the bulk of the message — so Core stamps SceneRevision on every response and sends the geometry only when the request's revision does not match it. An Edge that received geometry keeps it (durably) and quotes the revision back. |
+| `scene_points` | [`ScenePointInfo`](#scenepointinfo)[] | omitempty | ScenePoints and SceneEdges are the vendor map's own universe of locations and the drivable segments between them. Sibling slices for the same reason as the two above, and additive in the same way. SHINGO WORKS IN APs, so the node list is only the subset of map points that Shingo gives a job to. A key route is expressed in the VENDOR's universe — a plain waypoint (class LM) is its primary use — so it is validated against these names, never the node list, which would refuse a correct route. NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the "absence is never a finding" guards read the full name set on every sync, so names are never left off. The coordinates and handles are the Edge's geometry cache (the cell picture places its positions by the point coordinates; the desktop's key-route walk and the operator station's robot panel read the segments and handles too), and they are the bulk of the message — so Core stamps SceneRevision on every response and sends the geometry only when the request's revision does not match it. An Edge that received geometry keeps it (durably) and quotes the revision back. |
 | `scene_edges` | [`SceneEdgeInfo`](#sceneedgeinfo)[] | omitempty | See `scene_points`. |
 | `scene_revision` | string | omitempty | SceneRevision identifies the scene the slices above were cut from. Empty when the scene could not be read in full, in which case the Edge must keep whatever geometry it already has. It is a hash of the rows, not a counter: two Cores, or one Core restarted, answer the same scene with the same revision. |
 | `plant_wide` | boolean | omitempty | PlantWide says Nodes is Core's plant-wide list: the station has no nodes of its own, so Core sent every root and every physical child of a node group. False for a station-scoped list (the station's own nodes) and from an older Core. The Edge refuses a name its list does not hold, in a role where Core picks, only from a plant-wide list: a station-scoped one leaves out names the station may still route to. |
@@ -1934,6 +2041,7 @@ Status change or ETA update for an in-progress order. May be sent multiple times
 | `eta` | string | omitempty | ETA is the updated estimated time of arrival, when there is one. |
 | `queue_reason` | string | omitempty | QueueReason carries the blocking signal from Core's orders.queue_reason when Status is "queued" — e.g. "no bin of requested payload in node group AMR Supermarket". Omitted (not cleared) for non-queued updates; omitempty means an absent field signals "leave unchanged", not "clear". Core sends it when an order's wait changes while it waits (dispatch.WriteQueueDetail). |
 | `queue_code` | string | omitempty | QueueCode is the structured category behind QueueReason (protocol.QueueCode). Additive: old Edge ignores it; new Edge with old Core sees "" and falls back to the sentence. Ships alongside QueueReason so Edge can persist the code for future branching without a schema change. |
+| `robot_id` | string | omitempty | RobotID is the robot Core holds for the order when it sends the update (orders.robot_id, or the fleet's robot on a vendor-status push). The waybill names the robot on its first assignment only, so a robot that changes later reaches the Edge on the next update that carries this. Empty when Core holds none, and an empty one is absent, not a clear: the Edge keeps the robot it has. Additive: an older Edge ignores it. |
 | `fault_since` | timestamp | omitempty | FaultSince is when the order faulted — the faulted history row's created_at, not orders.updated_at, which the vendor poll rewrites. The Edge ticks its clock from this. |
 | `fault_deadline` | timestamp | omitempty | FaultDeadline is when Core gives up (FaultSince + config fault_grace). A live config change mid-grace drifts it, which is acceptable for a countdown and beats the poller's copy, which does not survive a restart. |
 | `fault_notice` | boolean | omitempty | FaultNotice is Core's decision AT PUSH TIME about whether this is a replan or a fault worth the word. Always false on the push that creates the fault, because nothing has been faulted for a minute at the instant it faults — which is exactly why FaultNoticeAfterS rides along. |

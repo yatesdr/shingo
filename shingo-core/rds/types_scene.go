@@ -59,9 +59,9 @@ type CurveEnd struct {
 //
 // ControlPos1/ControlPos2 are the segment's two cubic-Bezier control handles,
 // in the start→end direction. SEER writes them as TOP-LEVEL siblings of
-// startPos/endPos, NOT inside Property — Property carries exactly one key
-// across all 377 of Springfield's curves (bindRobotMap) and no geometry
-// whatsoever. Some segments omit the two keys entirely, so they are pointers:
+// startPos/endPos, NOT inside Property — Property carries exactly one key on
+// every one of Springfield's curves (bindRobotMap; re-checked 2026-11-14) and
+// no geometry whatsoever. Some segments omit the two keys entirely, so they are pointers:
 // absent stays absent instead of collapsing into a coordinate at the origin.
 //
 // Vendor properties beyond the endpoints and these handles are still not

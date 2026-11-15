@@ -44,6 +44,16 @@ func (b *emitterBridge) EmitOrderReadable(orderID int64, rdsOrderID string) {
 
 var _ rds.UnreadableEmitter = (*emitterBridge)(nil)
 
+// EmitOrderRobotChanged forwards rds.RobotChangeEmitter to the fleet layer's
+// optional fleet.RobotChangeEmitter, when the emitter has it.
+func (b *emitterBridge) EmitOrderRobotChanged(orderID int64, rdsOrderID, state, fromRobotID, robotID string) {
+	if rc, ok := b.emitter.(fleet.RobotChangeEmitter); ok {
+		rc.EmitOrderRobotChanged(orderID, rdsOrderID, state, fromRobotID, robotID)
+	}
+}
+
+var _ rds.RobotChangeEmitter = (*emitterBridge)(nil)
+
 // resolverBridge adapts fleet.OrderIDResolver to rds.OrderIDResolver.
 type resolverBridge struct {
 	resolver fleet.OrderIDResolver

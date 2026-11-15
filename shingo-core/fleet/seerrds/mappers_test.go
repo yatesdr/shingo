@@ -63,6 +63,32 @@ func TestMapRobotStatus_LocalizationFromWire(t *testing.T) {
 	}
 }
 
+// TestMapRobotStatus_PlannedRouteFromWire decodes a driving robot's route
+// fields and pins that the remaining route, and only it, reaches the fleet
+// status as PathIDs, in order and still as the vendor's ids: naming them is the
+// engine's job (Engine.resolveRobotPaths), so the adapter leaves Path empty.
+// Ids invented; the shape is the shared-map study's capture (2026-11-14).
+func TestMapRobotStatus_PlannedRouteFromWire(t *testing.T) {
+	t.Parallel()
+	const wire = `{
+		"vehicle_id": "AMR-01",
+		"finished_path": ["903", "905", "7"],
+		"unfinished_path": ["7", "31", "32", "40"],
+		"area_resources_occupied": [{"path_occupied": [{"source_id": "7", "end_id": "31"}]}]
+	}`
+	var in rds.RobotStatus
+	if err := json.Unmarshal([]byte(wire), &in); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := mapRobotStatus(in)
+	if want := []string{"7", "31", "32", "40"}; !reflect.DeepEqual(got.PathIDs, want) {
+		t.Errorf("PathIDs = %v, want %v (the remaining route, current point first)", got.PathIDs, want)
+	}
+	if got.Path != nil {
+		t.Errorf("Path = %v, want empty: the adapter has no scene to name ids from", got.Path)
+	}
+}
+
 // TestMapState_KnownStates verifies every documented RDS state maps to the
 // expected canonical protocol status.
 func TestMapState_KnownStates(t *testing.T) {

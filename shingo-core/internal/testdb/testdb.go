@@ -627,8 +627,8 @@ func terminateBackends(ctx context.Context, conn *sql.Conn, name string) error {
 }
 
 // Open returns a *store.DB connected to a fresh database cloned from the
-// pre-migrated template. Each call creates a new database (test_<random>)
-// so tests are fully isolated. The database and connection are cleaned up
+// pre-migrated template. Each call creates a new database
+// (test_<test name>_p<pid>_<n>, nextTestDBName) so tests are fully isolated. The database and connection are cleaned up
 // via t.Cleanup.
 //
 // If Docker is not running, the test is skipped (not failed).
@@ -683,15 +683,23 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		t.Fatalf("setup template database: %v", templateErr)
 	}
 
-	// THE PID IS IN THE NAME BECAUSE THE SERVER IS SHARED. Test names are
-	// unique within a package and nothing more: TestCoverage_… shapes repeat
-	// across store/admin, store/audit and their neighbours, and once every
-	// package clones into one server those namesakes are competing for one
-	// database name behind a 1-in-100k random suffix. Per-process qualification
-	// makes the collision impossible instead of unlikely. Worst case is 5 + 40
-	// (sanitize's cap) + 2 + pid + 1 + 5, inside Postgres's 63-byte identifier
-	// limit.
-	dbName := fmt.Sprintf("test_%s_p%d_%d", sanitize(t.Name()), os.Getpid(), rand.Intn(100000))
+	// ONE NAME PER OPEN, BY CONSTRUCTION: test_<test name>_p<pid>_<n>
+	// (nextTestDBName).
+	//   - THE PID, BECAUSE THE SERVER IS SHARED. Test names are unique within a
+	//     package and nothing more: TestCoverage_… shapes repeat across
+	//     store/admin, store/audit and their neighbours, and every package is
+	//     its own process cloning into one server.
+	//   - <n>, BECAUSE THE TEST NAME IS CUT TO 40 CHARACTERS (sanitize), so
+	//     every subtest of a long-named test shares those 40 and the pid. <n> is
+	//     this process's counter and never repeats in it. It used to be a
+	//     1-in-100k random number, and the comment here said the pid made the
+	//     collision impossible; two subtests of
+	//     TestScenario_KeepStagedRecovery_AfterCancelledChangeover drew the same
+	//     number (2026-11-14, U12's gate: "database ... already exists",
+	//     SQLSTATE 42P04). Pinned by
+	//     TestTestDBName_TwoSubtestsSharingTheirFirstFortyCharactersGetTwoNames
+	//     and TestTestDBName_OneProcessNeverRepeatsAName.
+	dbName := nextTestDBName(t.Name())
 
 	// BOUNDED, BECAUSE THE SERVER IS SHARED AND THIS IS THE EXPENSIVE PART.
 	// CREATE DATABASE ... TEMPLATE is a file copy, and every parallel test in
@@ -1098,6 +1106,42 @@ func sanitize(name string) string {
 		s = s[:40]
 	}
 	return s
+}
+
+// testDBSeq numbers this process's test databases (nextTestDBName). It only
+// counts up, so no two Opens in one process get one name. It STARTS at a
+// random point below a million, which is what the old random suffix was for
+// between processes: a database left behind by a process that died, whose pid
+// the OS has since handed to another test process on the same server, is
+// still unlikely to share a name with one this process makes.
+var testDBSeq = func() *atomic.Uint64 {
+	var n atomic.Uint64
+	n.Store(uint64(rand.Intn(1_000_000)))
+	return &n
+}()
+
+// nextTestDBName is the name of the database Open creates for the test named
+// testName: testDBName with this process's pid and its next number.
+func nextTestDBName(testName string) string {
+	return testDBName(testName, os.Getpid(), testDBSeq.Add(1))
+}
+
+// pgIdentMax is Postgres's identifier limit: it silently truncates a longer
+// one, so two names that differ only past it would be one database.
+const pgIdentMax = 63
+
+// testDBName is test_<sanitize(testName)>_p<pid>_<seq>, inside pgIdentMax by
+// construction: the suffix that makes the name unique is never cut, and the
+// test name gives up room for it when pid and seq run long (sanitize's 40 fit
+// beside a 7-digit pid and an 8-digit seq). sanitize's character rules hold
+// throughout: lower-case letters, digits and underscores.
+func testDBName(testName string, pid int, seq uint64) string {
+	suffix := "_p" + strconv.Itoa(pid) + "_" + strconv.FormatUint(seq, 10)
+	name := sanitize(testName)
+	if room := pgIdentMax - len("test_") - len(suffix); len(name) > room {
+		name = name[:max(room, 0)]
+	}
+	return "test_" + name + suffix
 }
 
 // StandardData holds the common entities created by SetupStandardData.

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +78,58 @@ var lossySSETopics = map[string]bool{
 	"debug-log": true,
 }
 
+// robotPosTopicPrefix opens the one lossy FAMILY: robot-pos.<operatorStationID>,
+// the robot panel's live positions for one operator station (robot_stream.go,
+// LEAD-NOTES D12). A position is superseded by the next one two seconds later,
+// so a frame a full queue cannot take is shed like debug-log and never evicts.
+//
+// THE FAMILY IS THE PREFIX AND A STATION ID, NOTHING WIDER. robotPosStation
+// takes "robot-pos." followed by a positive decimal id exactly as
+// strconv.FormatInt writes it; "robot-pos", "robot-pos.", "robot-pos.0",
+// "robot-pos.007", "robot-pos.1.2" and "robot-positions" are not in it and stay
+// durable like every other name. And it is delivered only to a client that
+// named exactly that topic in ?topics= (sseClient.wants): a client that named
+// no topics, the shared bus's durable stream included, never takes one.
+// Pinned by TestSSE_RobotPosFamilyIsOneStationExactly and
+// TestSSE_RobotPosReachesOnlyItsOwnStationsClient.
+//
+// ONE STATE FRAME RIDES IT, {available} (D12), and that is the one exception
+// to the rule above lossySSETopics. It is also every connect's first frame,
+// written before the stream reads its queues (openRobotPos), so a panel that
+// connects starts from the truth; a later change is lost only to a panel whose
+// lossy queue is full, sixteen frames (half a minute of positions) behind, and
+// that panel's positions have already gone lost by its own rule (D13).
+const robotPosTopicPrefix = "robot-pos."
+
+// robotPosTopic is operator station stationID's robot-pos topic.
+func robotPosTopic(stationID int64) string {
+	return robotPosTopicPrefix + strconv.FormatInt(stationID, 10)
+}
+
+// robotPosStation is the operator station a robot-pos topic names; false for
+// any other name (robotPosTopicPrefix).
+func robotPosStation(typ string) (int64, bool) {
+	rest, ok := strings.CutPrefix(typ, robotPosTopicPrefix)
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != rest {
+		return 0, false
+	}
+	return id, true
+}
+
+// lossySSETopic reports whether frames of this type ride the lossy queue: a
+// name in lossySSETopics, or one of the robot-pos family.
+func lossySSETopic(typ string) bool {
+	if lossySSETopics[typ] {
+		return true
+	}
+	_, ok := robotPosStation(typ)
+	return ok
+}
+
 // sseDebugTopic is delivered only to a client that connects with ?debug=1
 // (the Diagnostics page). Before, every /events client got every debug line:
 // Production, the station boards and Manual Order received a stream none of
@@ -102,10 +155,15 @@ type sseClient struct {
 	queued atomic.Int64
 }
 
-// wants reports whether the client takes frames of this type.
+// wants reports whether the client takes frames of this type. A robot-pos
+// topic only when the client named it (robotPosTopicPrefix): no topics means
+// every durable topic, not every station's positions.
 func (c *sseClient) wants(typ string) bool {
 	if typ == sseDebugTopic && !c.debug {
 		return false
+	}
+	if _, ok := robotPosStation(typ); ok {
+		return c.topics[typ]
 	}
 	return c.topics == nil || c.topics[typ]
 }
@@ -157,6 +215,17 @@ type EventHub struct {
 	// toucher marks a station's screen online (StationService.Touch). Set
 	// once, before serving (SetStationToucher).
 	toucher func(stationID int64)
+	// robotPos is told of every robot-pos client (robot_stream.go). Set once,
+	// before serving (NewRouter); nil tells nobody and says {available:false}.
+	robotPos robotPosStreams
+}
+
+// robotPosStreams is what HandleSSE tells of a client that names a robot-pos
+// topic: opened when it registers, returning its first {available}, and
+// closed when it goes.
+type robotPosStreams interface {
+	opened(stationID int64) (available bool)
+	closed(stationID int64)
 }
 
 // NewEventHub creates a new EventHub.
@@ -248,7 +317,7 @@ func (h *EventHub) Broadcast(evt SSEEvent) {
 	select {
 	case h.broadcast <- evt:
 	default:
-		if lossySSETopics[evt.Type] {
+		if lossySSETopic(evt.Type) {
 			return
 		}
 		log.Printf("sse: broadcast buffer full, lost %s event: evicting every client", evt.Type)
@@ -321,7 +390,7 @@ func (h *EventHub) fanOut(evt SSEEvent) {
 	h.mu.RLock()
 	evt.seq = h.seq.Add(1)
 	var stuck []*sseClient
-	lossy := lossySSETopics[evt.Type]
+	lossy := lossySSETopic(evt.Type)
 	for c := range h.clients {
 		if !c.wants(evt.Type) {
 			continue
@@ -404,6 +473,8 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	// after an edge restart trigger a hard-reload on the client, and the seq
 	// the client starts at.
 	fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"seq\":%d}\n\n", serverInstance, start)
+	panels := h.openRobotPos(w, client.topics)
+	defer h.closeRobotPos(panels)
 	flusher.Flush()
 
 	keepalive := time.NewTicker(h.keepalive)
@@ -451,6 +522,38 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			h.touch(station)
 		}
+	}
+}
+
+// openRobotPos tells the robot stream of each robot-pos topic the client
+// named, after it registered, and writes each one's first frame, {available},
+// before the stream reads its queues, so a panel starts from the truth however
+// full its queue later gets. It returns the stations for closeRobotPos.
+func (h *EventHub) openRobotPos(w http.ResponseWriter, topics map[string]bool) []int64 {
+	var stations []int64
+	for t := range topics {
+		if id, ok := robotPosStation(t); ok {
+			stations = append(stations, id)
+		}
+	}
+	slices.Sort(stations)
+	for _, id := range stations {
+		available := false
+		if h.robotPos != nil {
+			available = h.robotPos.opened(id)
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", robotPosTopic(id), robotPosAvailable(available))
+	}
+	return stations
+}
+
+// closeRobotPos tells the robot stream the client's robot-pos topics went.
+func (h *EventHub) closeRobotPos(stations []int64) {
+	if h.robotPos == nil {
+		return
+	}
+	for _, id := range stations {
+		h.robotPos.closed(id)
 	}
 }
 

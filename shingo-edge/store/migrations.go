@@ -2529,15 +2529,43 @@ func edgeMigrations() []migrate.Migration {
 			},
 		},
 		{
-			// v50 (2026-11-14): the position's auto-reorder hold on
+			// v50 (2026-11-14): orders.robot_id, the robot Core assigned. The
+			// waybill carried it from the start and the Edge dropped it; an
+			// order.update carries it too, so a robot that changes after the
+			// waybill reaches the Edge. '' on every existing row: what those
+			// orders' robots were is not recoverable here. The baseline CREATE
+			// carries it for a fresh install; column-check guarded, like v49.
+			Version: 50,
+			Name:    "orders_robot_id",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'robot_id'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN robot_id TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'robot_id'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
+		{
+			// v51 (2026-11-14): the position's auto-reorder hold on
 			// process_node_runtime_states: reorder_hold (the kind, '' none),
 			// reorder_hold_at (the engine's clock, '' when never) and
 			// reorder_hold_note (who or what set it). '' on every existing
 			// row, which holds nothing. Each column guarded, as v43.
-			Version: 50,
+			Version: 51,
 			Name:    "runtime_reorder_hold",
 			Fn: func(tx *sql.Tx) error {
-				for _, c := range v50Columns {
+				for _, c := range v51Columns {
 					var n int
 					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states') WHERE name = ?`, c.column).Scan(&n); err != nil {
 						return err
@@ -2555,15 +2583,15 @@ func edgeMigrations() []migrate.Migration {
 				var n int
 				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
 					WHERE name IN ('reorder_hold', 'reorder_hold_at', 'reorder_hold_note')`).Scan(&n)
-				return err == nil && n == len(v50Columns)
+				return err == nil && n == len(v51Columns)
 			},
 		},
 		{
-			// v51 (2026-11-14): process_node_runtime_states.reorder_go_at,
+			// v52 (2026-11-14): process_node_runtime_states.reorder_go_at,
 			// the position's last go (a REQUEST, or Processes turning a
 			// claim's auto-reorder on), on the engine's clock. '' on every
 			// existing row: no go recorded. Column-check guarded, like v49.
-			Version: 51,
+			Version: 52,
 			Name:    "runtime_reorder_go_at",
 			Fn: func(tx *sql.Tx) error {
 				var n int
@@ -2585,14 +2613,14 @@ func edgeMigrations() []migrate.Migration {
 			},
 		},
 		{
-			// v52 (2026-11-14): a line's auto-reorder switch.
+			// v53 (2026-11-14): a line's auto-reorder switch.
 			// processes.auto_reorder_switch_hmi (0 on every existing process:
 			// the station shows no switch until an engineer allows it), and
 			// auto_reorder_flips, the record of every flip: who, from where,
 			// which way, when (the engine's clock). The table is the chain's
 			// alone, so it is created here and nowhere else; the column is in
 			// the baseline too, guarded like v49.
-			Version: 52,
+			Version: 53,
 			Name:    "auto_reorder_switch",
 			Fn: func(tx *sql.Tx) error {
 				var n int
@@ -2627,20 +2655,20 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 			},
 		},
 		{
-			// v53 (2026-11-14): the idle rule's two clocks.
+			// v54 (2026-11-14): the idle rule's two clocks.
 			// reporting_points.last_part_at, the engine's clock at the last
 			// read that counted a part (NULL until one), and orders.staged_at,
 			// the engine's clock when the order was last mirrored to staged
-			// (NULL until then). Each column guarded, as v50. An order staged
+			// (NULL until then). Each column guarded, as v51. An order staged
 			// when the column is added is stamped with the migration's own
 			// time (SQLite's, the wall: the engine's clock is not running yet,
 			// and at a plant they agree): its robots get their hour from the
 			// release, rather than being sent back by the first pass of a rule
 			// that cannot see when they arrived. Every other row stays NULL.
-			Version: 53,
+			Version: 54,
 			Name:    "idle_rule_clocks",
 			Fn: func(tx *sql.Tx) error {
-				for _, c := range v53Columns {
+				for _, c := range v54Columns {
 					var n int
 					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil {
 						return err
@@ -2660,7 +2688,7 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return nil
 			},
 			Verify: func(q migrate.Querier) bool {
-				for _, c := range v53Columns {
+				for _, c := range v54Columns {
 					var n int
 					if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil || n != 1 {
 						return false
@@ -2672,15 +2700,15 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 	}
 }
 
-// v53Columns are v53's columns (each TEXT, NULL on every existing row).
-var v53Columns = []struct{ table, column string }{
+// v54Columns are v54's columns (each TEXT, NULL on every existing row).
+var v54Columns = []struct{ table, column string }{
 	{"reporting_points", "last_part_at"},
 	{"orders", "staged_at"},
 }
 
-// v50Columns are v50's runtime-row columns, each with its ADD (run only where
+// v51Columns are v51's runtime-row columns, each with its ADD (run only where
 // missing).
-var v50Columns = []struct{ column, add string }{
+var v51Columns = []struct{ column, add string }{
 	{"reorder_hold", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold TEXT NOT NULL DEFAULT ''"},
 	{"reorder_hold_at", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold_at TEXT NOT NULL DEFAULT ''"},
 	{"reorder_hold_note", "ALTER TABLE process_node_runtime_states ADD COLUMN reorder_hold_note TEXT NOT NULL DEFAULT ''"},

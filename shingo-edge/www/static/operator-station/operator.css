@@ -196,6 +196,11 @@ body {
    amber, the tile chip's colour: the line asks for nothing on its own. */
 .os-header-btn.auto-reorder { background: #2d4060; }
 .os-header-btn.auto-reorder.off { background: #ffd98a; color: #1a1204; }
+/* ROBOTS — the robot panel's toggle (operator-robot-panel.js). A toggle, not an
+   act: no fill of its own; on, its outline is the accent (an active UI state);
+   off, the outline recedes and the word dims. */
+.os-header-btn.robots { background: var(--os-surface); border: 2px solid var(--os-accent); }
+.os-header-btn.robots[aria-pressed="false"] { border-color: var(--os-border); color: var(--os-text-muted); }
 
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */
@@ -1805,3 +1810,87 @@ body.os-pc-active #os-footer { display: none; }
     border-color: var(--accent-solid);
     color: var(--on-accent-solid);
 }
+
+/* ===== The robot panel (operator-robot-panel.js, operator-robot-map.js) =====
+   This screen's robots on the plant map, bottom right over the board: fixed
+   page furniture on the chrome rung, under the modals, the toasts and the flow
+   panel. 360 px wide: a 20 px strip on its top edge that says TAP TO HIDE
+   (owner H2), the map 216 tall (5:3), then one 24 px line per two robots: on
+   a 1280 x 800 screen it covers under a third of the board's width and, with
+   one or two robots, about a third of its height; on the 1024-wide kiosk fit
+   it stays inside the grid with twelve robots. The whole panel is one tap
+   target (a tap hides it), far past --os-touch-min.
+
+   THE MAP IS CORE'S LOOK, FROM ONE SHEET: shared/scene-view.css styles what
+   shared/scene-view.js and shared/comet-layer.js draw, on Core's robot map
+   and here alike (operator-display.html links it). This section is only the
+   panel's own frame and rows. */
+.os-robot-panel {
+    position: fixed;
+    right: var(--sp-3);
+    bottom: calc(var(--os-footer-h) + var(--sp-3));
+    width: 360px;
+    z-index: var(--z-chrome);
+    background: var(--map-floor);
+    border: 1px solid var(--os-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.os-robot-panel[hidden] { display: none; }
+/* The close hint (owner H2): words, not a mark. A lone close mark reads as a
+   small button of its own, under --os-touch-min, when the target is the whole
+   panel; the screen says what a tap does in words (TAP TO LOAD). In the flow,
+   above the map, so the map keeps its box (and the crop its size): the panel
+   grows by the strip, upward from its bottom edge. The rows' surface and rule,
+   the type scale's caption step. */
+.os-rp-hint {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: 20px;
+    padding: 0 var(--sp-2);
+    border-bottom: 1px solid var(--os-border);
+    background: var(--os-surface);
+    font-size: var(--font-xs);
+    font-weight: var(--fw-bold);
+    letter-spacing: 0.04em;
+    color: var(--os-text-muted);
+    white-space: nowrap;
+}
+.os-rp-map { position: relative; height: 216px; }
+.os-rp-scene { position: absolute; inset: 0; }
+
+/* One row per robot: its status dot, its id, its words (the ETA, Arrived, a
+   fault's word, or Position lost). Two to a line. */
+.os-rp-rows {
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--sp-2);
+    padding: var(--sp-1) var(--sp-2);
+    border-top: 1px solid var(--os-border);
+    background: var(--os-surface);
+    font-size: var(--font-sm);
+}
+.os-rp-rows:empty { display: none; }
+.os-rp-row { display: flex; align-items: center; gap: var(--sp-2); height: 24px; min-width: 0; white-space: nowrap; }
+.os-rp-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--map-robot-idle); }
+.os-rp-dot--dispatched { background: var(--status-dispatched-dot); }
+.os-rp-dot--in_transit { background: var(--status-in-transit-dot); }
+.os-rp-dot--staged { background: var(--status-staged-dot); }
+.os-rp-dot--faulted { background: var(--status-blocked-dot); }
+.os-rp-id {
+    flex: 0 1 auto;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-weight: var(--fw-bold);
+    color: var(--os-text);
+}
+.os-rp-words { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--os-text-muted); }
+.os-rp-row.is-lost .os-rp-dot { opacity: 0.55; }
+.os-rp-row.is-lost .os-rp-words { color: var(--status-faulted-ink); }

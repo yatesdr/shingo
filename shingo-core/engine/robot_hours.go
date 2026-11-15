@@ -14,6 +14,7 @@ import (
 	"sort"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store/robothours"
 )
@@ -179,7 +180,7 @@ func pollDt(lastPoll, now time.Time) time.Duration {
 	if dt < 0 {
 		return 0
 	}
-	if limit := 2 * robotPollInterval; dt > limit {
+	if limit := 2 * protocol.RobotPollInterval; dt > limit {
 		return limit
 	}
 	return dt
@@ -187,7 +188,7 @@ func pollDt(lastPoll, now time.Time) time.Duration {
 
 // observePoll folds one poll into the bucket of the UTC hour it lands in. A
 // poll's dt is credited whole to that hour, so the hour boundary is off by at
-// most 2×robotPollInterval — four seconds in an hour.
+// most 2×protocol.RobotPollInterval — four seconds in an hour.
 func (t *robotHoursTap) observePoll(robots []fleet.RobotStatus, now time.Time) {
 	dt := pollDt(t.lastPoll, now)
 	t.lastPoll = now

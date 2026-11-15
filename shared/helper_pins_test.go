@@ -197,6 +197,11 @@ var sharedExportsNoImporter = map[string]string{
 	// station import those, and a page's own banner would use these.
 	"notice.js banner":      "the primitive under S5's two, read by testdata/components/notice.test.js",
 	"notice.js clearBanner": "the primitive under S5's two, read by testdata/components/notice.test.js",
+	// A cubic's path string. Its importers (the Edge desktop's routing-set map,
+	// the robot map's aisles, the localization board's lanes) all draw a lane
+	// through laneSpec now, which spells it inside scene-geom.js; and
+	// testdata/js/scene-geom.test.js reads it.
+	"scene-geom.js cubicPathD": "a cubic's path d, read by laneSpec and testdata/js/scene-geom.test.js",
 }
 
 var (

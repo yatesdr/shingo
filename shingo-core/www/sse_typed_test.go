@@ -1,12 +1,16 @@
 package www
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/engine"
+	"shingocore/fleet"
 )
 
 // TestSetupEngineListeners_TypedBroadcast guards the SubscribeTyped migration in
@@ -105,4 +109,94 @@ func waitForFrame(c *sseClient, event, sub string, timeout time.Duration) bool {
 			return false
 		}
 	}
+}
+
+// frameData reads frames until one of event arrives and returns its Data, or
+// false when the timeout elapses first.
+func frameData(c *sseClient, event string, timeout time.Duration) (string, bool) {
+	deadline := time.After(timeout)
+	for {
+		select {
+		case evt := <-c.durable:
+			if evt.Event == event {
+				return evt.Data, true
+			}
+		case <-c.wake:
+			for _, evt := range c.takeCoalesced() {
+				if evt.Event == event {
+					return evt.Data, true
+				}
+			}
+		case <-deadline:
+			return "", false
+		}
+	}
+}
+
+// TestRobotUpdateFrame_CarriesThePlannedRoute pins the route on the fleet
+// frame the Core map reads: a driving robot's "path" is its Path, scene names
+// in order, and a robot with no route has no "path" key at all, so "no route"
+// costs nothing on the wire and cannot be mistaken for an empty one.
+//
+// It also logs what the route costs per robot per tick, on the frame and on
+// the /api/robots entry (which is fleet.RobotStatus as encoded): with and
+// without a 22-point route, the length of the shared-map study's first drive.
+// Run with -v to read them; nothing asserts the count.
+func TestRobotUpdateFrame_CarriesThePlannedRoute(t *testing.T) {
+	eng := &engine.Engine{Events: engine.NewEventBus()}
+	hub := NewEventHub()
+	hub.Start()
+	defer hub.Stop()
+	hub.SetupEngineListeners(eng)
+	ch := hub.AddClientFiltered([]string{"robot-update"})
+	defer hub.RemoveClient(ch)
+
+	route := make([]string, 22) // invented names, five characters each
+	for i := range route {
+		route[i] = fmt.Sprintf("LM%d", 101+i)
+	}
+	robot := func(id string, path []string) fleet.RobotStatus {
+		return fleet.RobotStatus{VehicleID: id, Connected: true, Busy: true, X: 12.345, Y: -6.789, Angle: 1.571,
+			BatteryLevel: 87, CurrentMap: "map-1", Model: "model-1", IP: "192.0.2.1",
+			PathIDs: []string{"101", "102"}, Path: path}
+	}
+	frame := func(robots ...fleet.RobotStatus) string {
+		t.Helper()
+		drainFrames(ch)
+		eng.Events.Emit(engine.Event{Type: engine.EventRobotsUpdated, Payload: engine.RobotsUpdatedEvent{Robots: robots}})
+		data, ok := frameData(ch, "robot-update", 2*time.Second)
+		if !ok {
+			t.Fatal("no robot-update frame")
+		}
+		return data
+	}
+
+	var got []map[string]json.RawMessage
+	testutil.MustNoErr(t, json.Unmarshal([]byte(frame(robot("AMR-01", route[:3]), robot("AMR-02", nil))), &got), "decode frame")
+	if len(got) != 2 {
+		t.Fatalf("frame has %d robots, want 2", len(got))
+	}
+	if p := string(got[0]["path"]); p != `["LM101","LM102","LM103"]` {
+		t.Errorf("AMR-01 path = %s, want [\"LM101\",\"LM102\",\"LM103\"] (in order)", p)
+	}
+	if _, has := got[1]["path"]; has {
+		t.Errorf("AMR-02 has no route and still carries \"path\": %s", got[1]["path"])
+	}
+	for _, r := range got {
+		for k := range r {
+			if strings.Contains(strings.ToLower(k), "pathid") {
+				t.Errorf("the frame carries the fleet's raw route ids as %q", k)
+			}
+		}
+	}
+
+	with, without := len(frame(robot("AMR-01", route))), len(frame(robot("AMR-01", nil)))
+	apiWith, err := json.Marshal(robot("AMR-01", route))
+	testutil.MustNoErr(t, err, "marshal")
+	apiWithout, err := json.Marshal(robot("AMR-01", nil))
+	testutil.MustNoErr(t, err, "marshal")
+	t.Logf("robot-update, one robot: %d bytes without a route, %d with 22 points: +%d (%.1f per point)",
+		without, with, with-without, float64(with-without)/22)
+	t.Logf("/api/robots entry: %d bytes without a route, %d with 22 points: +%d (%.1f per point)",
+		len(apiWithout), len(apiWith), len(apiWith)-len(apiWithout), float64(len(apiWith)-len(apiWithout))/22)
 }

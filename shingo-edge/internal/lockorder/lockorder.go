@@ -60,10 +60,11 @@ type (
 	Feeds           struct{}
 	Asks            struct{}
 	IntentQueue     struct{}
-	StationScene    struct{}
+	RobotWatch      struct{}
 	StationCurtain  struct{}
 	StationTouch    struct{}
 	StationView     struct{}
+	RobotStream     struct{}
 	SSEHub          struct{}
 	QueryCount      struct{}
 
@@ -98,10 +99,11 @@ func (SceneGeometry) Rank() int   { return 113 }
 func (Feeds) Rank() int           { return 120 }
 func (Asks) Rank() int            { return 122 }
 func (IntentQueue) Rank() int     { return 122 }
-func (StationScene) Rank() int    { return 130 }
+func (RobotWatch) Rank() int      { return 125 }
 func (StationCurtain) Rank() int  { return 131 }
 func (StationTouch) Rank() int    { return 132 }
 func (StationView) Rank() int     { return 133 }
+func (RobotStream) Rank() int     { return 134 }
 func (SSEHub) Rank() int          { return 140 }
 func (QueryCount) Rank() int      { return 990 }
 
@@ -138,10 +140,11 @@ func (SceneGeometry) Name() string   { return "engine.sceneGeometryMu" }
 func (Feeds) Name() string           { return "engine.feedBook.mu" }
 func (Asks) Name() string            { return "engine.askBook.mu" }
 func (IntentQueue) Name() string     { return "engine.intentQueue.mu" }
-func (StationScene) Name() string    { return "service.sceneMu" }
+func (RobotWatch) Name() string      { return "engine.robotWatch.mu" }
 func (StationCurtain) Name() string  { return "service.curtainMu" }
 func (StationTouch) Name() string    { return "service.touchMu" }
 func (StationView) Name() string     { return "www.stationViewGroup.mu" }
+func (RobotStream) Name() string     { return "www.robotStream.mu" }
 func (SSEHub) Name() string          { return "www.EventHub.mu" }
 func (QueryCount) Name() string      { return "store.queryCount.mu" }
 

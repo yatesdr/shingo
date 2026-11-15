@@ -6,6 +6,7 @@ package www
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"shingoedge/domain"
+	"shingoedge/service"
 )
 
 func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.Request) {
@@ -260,4 +262,49 @@ func (h *Handlers) apiStationCellPicture(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, pic)
+}
+
+// apiStationScene is the robot panel's map (LEAD-NOTES D7, D11, D12): the
+// Edge's scene geometry cache in the shared scene shape (service.SceneMap),
+// fetched once when the panel is first shown.
+//
+// THE ETAG IS THE CACHE'S REVISION. A page that holds the map asks again with
+// If-None-Match and gets 304 and no body, and nothing is built: the map moves
+// only when Core's scene does.
+//
+// AN EMPTY CACHE IS AN ANSWER, NOT AN ERROR: 200 with revision "", no points
+// and no edges, and no ETag (nothing has arrived from Core yet, or Core holds
+// no scene). Every error is non-2xx: 400 for an id that is not a number, 404
+// for no such station, 500 when the station cannot be read. So the panel can
+// tell "no map yet" from "could not ask".
+//
+// SHOP FLOOR, beside /cell: a station has no login.
+func (h *Handlers) apiStationScene(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid station id")
+		return
+	}
+	svc := h.engine.StationService()
+	if _, err := svc.Get(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "no such station")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	g := svc.SceneGeometry()
+	if g == nil || len(g.Points) == 0 {
+		writeJSON(w, domain.ComposerMap{Points: map[string]domain.ComposerMapPoint{}, Edges: []domain.ComposerMapEdge{}})
+		return
+	}
+	etag := `W/"` + g.Revision + `"`
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	writeJSON(w, service.SceneMap(g))
 }

@@ -43,6 +43,10 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 		// screen a floor operator actually uses. A hand-list is exactly how that
 		// happened, which is why the replacement is a pinned one.
 		{"PRE_DISPATCH_STATUSES", protocol.PreDispatchStatusSQLList},
+		// VENDOR_TRACKED_STATUSES is the robot panel's "has a robot" (LEAD-NOTES
+		// D13): the statuses Core sends a robot's position for. A hand-list here
+		// would let the panel wait on a robot Core never reports, or miss one it does.
+		{"VENDOR_TRACKED_STATUSES", protocol.VendorTrackedStatusSQLList},
 	}
 
 	for _, tc := range cases {

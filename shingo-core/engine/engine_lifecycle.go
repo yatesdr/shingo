@@ -127,6 +127,11 @@ func (e *Engine) Start() {
 		e.tracker.Start()
 	}
 
+	// The robot-route index from the scene already stored, before the first
+	// connection check below can start a scene sync: a sync's own rebuild then
+	// always lands after this one (rebuildPointIndex).
+	e.rebuildPointIndex()
+
 	// Emit initial connection status
 	e.checkConnectionStatus()
 
@@ -500,7 +505,7 @@ func (e *Engine) tableTurnAlarm(orderID int64, node, detail string) {
 // polledRobotFresh is how old the latest robot poll may be for the table turn
 // to act on it: three poll intervals. Older, and a robot's table angle is a
 // memory, not a reading.
-const polledRobotFresh = 3 * robotPollInterval
+const polledRobotFresh = 3 * protocol.RobotPollInterval
 
 // polledRobotStatus is the table turn's robot read: the robot as the latest
 // poll listed it, and false when that poll is stale or does not list it. It

@@ -238,3 +238,26 @@ func TestProcess_PatchFlowComposerEnabled(t *testing.T) {
 		t.Fatal("PATCH flow_composer_enabled=false did not persist")
 	}
 }
+
+// TestProcesses_Composer_NoSuchProcessIs404: the desktop's composer read for a
+// process that is not there is 404, not 500. It answered 500:
+// ComposerForProcess passed the store's sql.ErrNoRows up as an error, so the
+// door's "no such process" branch was never reached (flat bug, found by U13's
+// read, 2026-11-14; the same shape /cell had). A real process still gets its
+// composer, and an id that is not one is 400.
+func TestProcesses_Composer_NoSuchProcessIs404(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+	pid := seedProcess(t, dbOf(h), "DesktopComposerLine")
+
+	ok := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/composer", nil, cookie)
+	assertStatus(t, ok, http.StatusOK)
+
+	resp := doRequest(t, router, "GET", "/api/processes/999999/composer", nil, cookie)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertJSONPath(t, resp, "error", "no such process")
+
+	bad := doRequest(t, router, "GET", "/api/processes/bad/composer", nil, cookie)
+	assertStatus(t, bad, http.StatusBadRequest)
+}

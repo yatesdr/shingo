@@ -166,6 +166,20 @@ func (e *pollerEmitter) EmitOrderReadable(orderID int64, vendorOrderID string) {
 
 var _ fleet.UnreadableEmitter = (*pollerEmitter)(nil)
 
+// EmitOrderRobotChanged: the fleet moved an order to another robot without
+// changing its state (fleet.RobotChangeEmitter).
+func (e *pollerEmitter) EmitOrderRobotChanged(orderID int64, vendorOrderID, vendorState, fromRobotID, robotID string) {
+	e.bus.Emit(Event{Type: EventOrderRobotChanged, Payload: OrderRobotChangedEvent{
+		OrderID:       orderID,
+		VendorOrderID: vendorOrderID,
+		VendorState:   vendorState,
+		FromRobotID:   fromRobotID,
+		RobotID:       robotID,
+	}})
+}
+
+var _ fleet.RobotChangeEmitter = (*pollerEmitter)(nil)
+
 func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *fleet.OrderSnapshot) {
 	e.bus.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
 		OrderID:       orderID,

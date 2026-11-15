@@ -364,7 +364,7 @@ const boot = loadModule(path.join(SRC_DIR, 'composer-boot.js'), { imports: 1 });
     'operator-board-model.js', 'operator-board.js'].forEach(f => loadModule(path.join(SRC_DIR, f)));
 loadModule(path.join(SRC_DIR, 'operator-flow.js'), { imports: 1 });
 ['operator-supply-refusal.js', 'operator-load-bin.js', 'operator-release.js', 'operator-modal.js',
-    'operator-render.js', 'operator.js'].forEach(f => loadModule(path.join(SRC_DIR, f)));
+    'operator-render.js', 'operator-robot-panel.js', 'operator.js'].forEach(f => loadModule(path.join(SRC_DIR, f)));
 
 const MODEL = '/static/operator-station/composer-model.js';
 const modelSrc = fs.readFileSync(path.join(SRC_DIR, 'composer-model.js'), 'utf8');

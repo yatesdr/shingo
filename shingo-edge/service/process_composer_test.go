@@ -150,10 +150,14 @@ func TestComposerForProcess_CarriesAdvancedAndTheStationDoesNot(t *testing.T) {
 
 // TestComposerForProcess_CarriesTheMapAndTheStationDoesNot — D3's read (U9c).
 //
-// The routing-set screen draws the plant, so the desktop's read carries the
-// geometry cache whole. The station's does not: the same asymmetry as the
-// Advanced blocks, and for a bigger reason — this is every point and every
-// segment of the map, and no station screen draws one.
+// The desktop's key-route picker walks the plant (composer-model.js
+// viaWaypoints, over shared/scene-net.js), so the desktop's read carries the
+// geometry cache whole; nothing on that page draws it since the routing-set
+// map's drawing went (2026-11-14, tier A1). The station's composer reads do
+// not carry it: the same asymmetry as the Advanced blocks, and for a bigger
+// reason — this is every point and every segment of the map. The station's
+// robot panel draws the map from its own door, GET
+// /api/operator-stations/{id}/scene, never from a composer read.
 func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 	fx := scenefixtures.A()
 	db := testdb.Open(t)
@@ -169,10 +173,10 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 		t.Fatalf("ComposerForProcess: %v", err)
 	}
 	if got.Map == nil {
-		t.Fatal("the desktop read carries no map — D3 has nothing to draw")
+		t.Fatal("the desktop read carries no map — the key-route picker has no network to walk")
 	}
 	if len(got.Map.Points) != len(geom.Points) || len(got.Map.Edges) != len(geom.Edges) {
-		t.Errorf("map is %d points / %d edges, cache is %d / %d — D3 draws the plant, not a subgraph",
+		t.Errorf("map is %d points / %d edges, cache is %d / %d — the route model walks the plant, not a subgraph",
 			len(got.Map.Points), len(got.Map.Edges), len(geom.Points), len(geom.Edges))
 	}
 	if got.Map.Revision != geom.Revision {
@@ -185,7 +189,7 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 	for _, want := range []string{"PLN_01", "PLN_04"} {
 		p, ok := got.Map.Points[want]
 		if !ok {
-			t.Errorf("%s is not on the map the desktop draws", want)
+			t.Errorf("%s is not on the desktop's map", want)
 			continue
 		}
 		if p.Class != "GeneralLocation" {
@@ -204,34 +208,19 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 		}
 	}
 
-	// Every Map edge carries the length a waypoint walk needs (the station's
-	// collapsed Scene went in pick-a-part U4: the station no longer edits a
-	// flow, so Map is the one copy of the network).
-	for _, e := range got.Map.Edges {
-		// A degenerate segment has length 0 honestly. The endpoints are read
-		// from Points now — an edge carries names, not places
-		// (composer_map_endpoints_test.go).
-		if got.Map.Points[e.From] == got.Map.Points[e.To] {
-			continue
-		}
-		if e.Len == 0 {
-			t.Fatalf("map edge %s→%s carries no length; the via walk would have to recompute every one in the browser", e.From, e.To)
-		}
-	}
-
 	station, err := svc.BuildView(context.Background(), seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}
 	if station.Composer.Map != nil {
-		t.Errorf("the station view carries the whole plant map; no screen on it draws one")
+		t.Errorf("the station view carries the whole plant map; the robot panel takes it from /scene, never the view")
 	}
 	stn, err := svc.ComposerForStation(seeded.ProcessID)
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
 	if stn.Map != nil {
-		t.Error("the station read carries the whole plant map; no screen on it draws one")
+		t.Error("the station read carries the whole plant map; the robot panel takes it from /scene, never a composer read")
 	}
 }
 
@@ -289,8 +278,8 @@ func TestComposerReads_FirstRunHasNoRoutingSetAndNoPresets(t *testing.T) {
 		t.Errorf("a fresh press offers %d preset cards", len(desktop.Presets))
 	}
 	// THE MAP IS ABSENT, NOT EMPTY. With no geometry cached there is no plant
-	// map to draw, and the desktop's picture falls back to the schematic. An
-	// empty-but-present Map is a frame with no points in it.
+	// map, and the desktop's picture falls back to the schematic. An
+	// empty-but-present Map is a network with no points in it.
 	if desktop.Map != nil && len(desktop.Map.Points) == 0 {
 		t.Error("a fresh press ships an empty plant map; with no geometry it should ship none")
 	}
