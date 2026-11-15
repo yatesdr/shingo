@@ -3267,8 +3267,8 @@ function openPicker(btn) {
     // A NODE CHIP IS THE SHARED PICKER (slice 5): a search over the model's own
     // choices, the one on marked, what another position already takes said on
     // its row. Role and swap mode stay the menus below: two to four answers,
-    // each with its word (style guide 33, rule 6). An empty list keeps its
-    // reason and its Add and use, below.
+    // each with its words, where a search box adds nothing. An empty list
+    // keeps its reason and its Add and use, below.
     if (!note && kind !== 'role' && kind !== 'mode') {
         const choices = opts.filter(o => !o.note);
         openRowPicker(pop, btn, choices.map((o, i) => ({

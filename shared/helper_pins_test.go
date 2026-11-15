@@ -211,9 +211,12 @@ var (
 	// What a module takes: named imports and re-exports, then every
 	// specifier at all (side-effect and dynamic imports too) for the URL rule.
 	sharedNamedImportRe = regexp.MustCompile(`\b(?:import|export)[ \t]*\{([^}]*)\}\s*from[ \t]*['"]([^'"]+)['"]`)
-	sharedAnySpecRe     = regexp.MustCompile(`(?:\bfrom[ \t]*|\bimport[ \t]*\(?[ \t]*)['"]([^'"]+)['"]`)
-	sharedLineCommentRe = regexp.MustCompile(`(?m)(^|[^:'"\\])//.*$`)
-	sharedTmplCommentRe = regexp.MustCompile(`(?s)\{\{-?\s*/\*.*?\*/\s*-?\}\}`)
+	// import('…') of one literal: the module taken whole, its names read off
+	// the namespace (processes-desktop.js's loadStack).
+	sharedDynamicImportRe = regexp.MustCompile(`\bimport[ \t]*\([ \t]*['"]([^'"]+)['"][ \t]*\)`)
+	sharedAnySpecRe       = regexp.MustCompile(`(?:\bfrom[ \t]*|\bimport[ \t]*\(?[ \t]*)['"]([^'"]+)['"]`)
+	sharedLineCommentRe   = regexp.MustCompile(`(?m)(^|[^:'"\\])//.*$`)
+	sharedTmplCommentRe   = regexp.MustCompile(`(?s)\{\{-?\s*/\*.*?\*/\s*-?\}\}`)
 )
 
 // sharedSource is one browser source: its repo path, the URL it is served at
@@ -392,6 +395,18 @@ func TestSharedExportsHaveImporters(t *testing.T) {
 				if f := strings.Fields(n); len(f) > 0 {
 					imported[file+" "+f[0]] = true
 				}
+			}
+		}
+		// A module a page imports by import() is taken whole: every export
+		// counts as imported, the page destructuring what it uses.
+		for _, m := range sharedDynamicImportRe.FindAllStringSubmatch(s.code, -1) {
+			u := sharedResolve(s.url, m[1])
+			if !strings.HasPrefix(u, "/static/shared/") || u == s.url {
+				continue
+			}
+			file := strings.TrimPrefix(u, "/static/shared/")
+			for _, n := range exports[file] {
+				imported[file+" "+n] = true
 			}
 		}
 	}

@@ -53,7 +53,7 @@ win.
 **When to opt into `preserveState: true`:** multi-step wizards, long edit forms
 where an accidental close-then-reopen shouldn't lose work. It also fits a modal
 whose content is rebuilt on every open: the Processes page's sheet scrim
-(`hideSheet`) passes it, because the reset would be work done on fields about to
+(`showSheet`) passes it, because the reset would be work done on fields about to
 be thrown away.
 
 Most modals — anything with serious input — get the safe defaults
