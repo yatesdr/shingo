@@ -126,7 +126,7 @@ func TestPinClaimReader_DeliveredAtAPlainNodeWithNoClaim_DoesNotBind(t *testing.
 	}
 }
 
-// wiring_status_changed.go handleSequentialBackfill — SAME ANSWER. The sequential backfill needs a
+// sequential_backfill.go ensureSequentialBackfill — SAME ANSWER. The sequential backfill needs a
 // sequential claim; nil and a synthesized manual_swap claim both return.
 func TestPinClaimReader_SequentialBackfill_NoneAtACoreOwnedWindow(t *testing.T) {
 	t.Parallel()

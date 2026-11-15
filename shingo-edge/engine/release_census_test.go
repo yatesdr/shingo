@@ -154,7 +154,7 @@ var orderCreationSites = map[string]string{
 	"operator_stations.go:applyConsumePlan":                       "consume REQUEST: the swap legs (the builders' waits)",
 	"release_commit.go:commitMaterial":                            "Material page RELEASE (door 3) and the position evac (door 4): a move created at the release",
 	"operator_window_pullback.go:PullFromMarket":                  "loader window: pull from market",
-	"wiring_status_changed.go:handleSequentialBackfill":           "sequential backfill B, minted on Order A's in_transit (no wait: a drop finishes, S7)",
+	"sequential_backfill.go:ensureSequentialBackfill":             "sequential backfill B, made at Order A's release at the line (no wait: a drop finishes, S7)",
 }
 
 // stationWaitSites are the step builders that place a station-owned wait.

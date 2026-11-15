@@ -57,8 +57,8 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // ONE LINE, ONE LIVE SWAP, IN EVERY SWAP MODE. A swap still working the cell
 // refuses the next request, whatever plan that request would have built. A
 // sequential line used to be let through, because its backfill is made when the
-// removal goes on its way. That backfill is made by the removal's status change
-// (handleSequentialBackfill), not by a request, so refusing requests does not
+// removal is released at the line. That backfill is made by the release
+// (ensureSequentialBackfill), not by a request, so refusing requests does not
 // touch it. What a second request did make there was a second removal: Core
 // skipped it on a consume line, and on a produce line it lifted the backfill
 // that had just landed, and a RELEASE of it would finalize a fresh empty as a

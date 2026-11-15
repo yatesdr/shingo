@@ -159,9 +159,11 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 }
 
 // HandleWaybill is the wire's order.waybill: the vendor order, the robot Core
-// assigned and the ETA, then the mirror's move to in_transit. Core sends one at
-// dispatch, which names no robot yet, and one on the robot's first assignment
-// (Core's wiring_vendor_status.go), which names it.
+// assigned and the ETA, then the mirror's move to in_transit. For a plain order
+// Core sends one at dispatch, which names no robot yet (Core's
+// fulfillment/scanner.go, notifyEdgeDispatched), and one on the robot's first
+// assignment (Core's engine/wiring_vendor_status.go), which names it. A complex
+// order gets only the second: its first waybill is its robot's.
 func (m *Manager) HandleWaybill(p *protocol.OrderWaybill) error {
 	m.DebugLog.Log("dispatch reply: uuid=%s type=%s robot=%s", p.OrderUUID, ReplyWaybill, p.RobotID)
 	order, err := m.db.GetOrderByUUID(p.OrderUUID)

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -12,8 +13,8 @@ import (
 
 // sequential_changeover_backfill_test.go — the double-supply interlock.
 //
-// handleSequentialBackfill mints Order B whenever a sequential node's active
-// order reaches in_transit. In STEADY STATE that is right and necessary: Order A
+// ensureSequentialBackfill mints Order B whenever a sequential node's active
+// order is released at the line. In STEADY STATE that is right and necessary: Order A
 // (BuildSequentialRemovalSteps) only takes the full bin away, so without Order B
 // the position never gets a fresh carrier.
 //
@@ -61,15 +62,35 @@ func ordersDroppingAt(t *testing.T, db *store.DB, coreNode string) []int64 {
 	return hits
 }
 
-// driveToInTransit moves an order to in_transit and publishes the status change
-// on the bus, which is the path wireEventHandlers subscribes
-// handleSequentialBackfill to. The test engine's order manager holds a no-op
+// releaseAtLine is the station's RELEASE of an order at the line node, as the
+// release act leaves it: the row in transit, its intent sent for the station
+// wait in front of its lift at the node (0 when its plan has none there), the
+// status change on the bus, then the act's call for the second robot
+// (ensureSequentialBackfill). The test engine's order manager holds a no-op
 // emitter, so the event is raised here with the payload orderEmitter builds.
-func driveToInTransit(t *testing.T, eng *Engine, orderID, nodeID int64) {
+// The act itself is walked in sequential_backfill_release_test.go.
+func releaseAtLine(t *testing.T, eng *Engine, orderID, nodeID int64) {
 	t.Helper()
 	o, err := eng.db.GetOrder(orderID)
 	testutil.MustNoErr(t, err, "get order")
+	node, err := eng.db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get node")
+	at := 0
+	if steps, ok := eng.orderSteps(o); ok {
+		waits := 0
+		for _, s := range steps {
+			if s.Action == protocol.ActionWait && protocol.IsStationWaitKind(s.WaitKind) {
+				if s.Node == node.CoreNodeName {
+					at = waits
+				}
+				waits++
+			} else if s.Action == protocol.ActionPickup && s.Node == node.CoreNodeName {
+				break
+			}
+		}
+	}
 	old := string(o.Status)
+	testutil.MustNoErr(t, eng.db.SetOrderReleaseIntent(orderID, fmt.Sprintf(`{"station_wait":%d,"sent_at":"2026-11-15T00:00:00Z"}`, at)), "the release's intent, sent")
 	testutil.MustNoErr(t, eng.db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "in_transit")
 	eng.Events.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
 		OrderID:       orderID,
@@ -79,6 +100,7 @@ func driveToInTransit(t *testing.T, eng *Engine, orderID, nodeID int64) {
 		NewStatus:     string(orders.StatusInTransit),
 		ProcessNodeID: &nodeID,
 	}})
+	eng.ensureSequentialBackfill(orderID)
 }
 
 // TestSequentialChangeover_OnePositionGetsOneCarrier is the wedge, pinned.
@@ -98,7 +120,7 @@ func TestSequentialChangeover_OnePositionGetsOneCarrier(t *testing.T) {
 			"before anything is driven", before, orderA)
 	}
 
-	driveToInTransit(t, eng, orderA, activeNodeID)
+	releaseAtLine(t, eng, orderA, activeNodeID)
 
 	after := ordersDroppingAt(t, db, "SEQ-A")
 	if len(after) != 1 {
@@ -145,7 +167,7 @@ func TestSequentialSteadyState_RemovalStillMintsTheBackfill(t *testing.T) {
 			"Order A takes the full bin away and brings nothing back", before)
 	}
 
-	driveToInTransit(t, eng, orderA, nodeID)
+	releaseAtLine(t, eng, orderA, nodeID)
 
 	after := ordersDroppingAt(t, db, "PRODUCE-NODE")
 	if len(after) != 1 {

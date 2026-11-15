@@ -31,6 +31,8 @@ Deploy: Edge v51–v54 first, at every Edge of the plant. Core has no migration,
 - Not during a changeover, nor within an hour of one ending, of a REQUEST there, or of the robots parking, nor while the counter cannot be read
 - Never a robot Core has released or holds at its own wait, and never one the Edge did not hear park (it parked while the Edge was down): that one waits for a person
 - That off ends when the line counts a part after the stop, or on REQUEST, even if the Edge restarted in between
+- A sequential position's second robot is called when the first is released at the line, not when the first robot is sent, so it no longer waits behind the first with the new bin
+- A sequential robot parked at a line idle past its hour is sent back on its own; a release that went out just before the Edge stopped still calls the second robot when it starts
 - A cancel the Edge sends no longer expires on its way to Core
 - The hour is `demand.idle_cancel_after` in the Edge config
 - Processes Settings has an Auto-reorder card: switch a line's auto-reorder off or on, and choose whether its station shows the switch

@@ -490,6 +490,10 @@ func (e *Engine) Start() {
 	// Reconcile any in-progress changeover against order statuses
 	e.restoreChangeoverState()
 
+	// A sequential Order A released at the line while this Edge then stopped,
+	// before its Order B was created: create it now.
+	e.recoverSequentialBackfills()
+
 	// Note: pre-side-cycle this had a NOTE about StartupSweepManualSwap.
 	// That sweep, along with HandleDemandSignal and tryAutoRequest, was
 	// removed once the side-cycle (line REQUEST -> loader L1 -> L2) became

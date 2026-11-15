@@ -69,7 +69,7 @@ var originZeroAllowed = map[string]string{
 // TestOriginTotality_NoUnstatedOriginOutsideTheEpisodeHelpers is the census.
 //
 // MUTATION (verified): write `ordermgr.Origin{}` at any create site in this
-// package — wiring_status_changed.go's sequential backfill is the one it was
+// package — sequential_backfill.go's sequential backfill is the one it was
 // checked against — and this fails naming the file and line. Delete an entry
 // from originZeroAllowed and it fails for that file, which is what keeps the
 // allowlist from silently growing.

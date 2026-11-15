@@ -39,7 +39,7 @@ func (e *Engine) orderPlacesBinAtAny(o *orders.Order, nodes []string) bool {
 }
 
 // orderRefillsNodeItself reports whether this order's OWN plan already brings
-// coreNode its replacement carrier — the question handleSequentialBackfill has
+// coreNode its replacement carrier — the question ensureSequentialBackfill has
 // to ask before minting a second one.
 //
 // It is a property of the order, not of the order's origin. The two sequential

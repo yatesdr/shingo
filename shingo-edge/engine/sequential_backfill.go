@@ -1,15 +1,15 @@
-// wiring_status_changed.go — handlers subscribed to EventOrderStatusChanged.
+// sequential_backfill.go — a sequential position's Order B, the backfill.
 //
-// handleSequentialBackfill auto-creates Order B (backfill) when Order A
-// enters in_transit on a sequential swap-mode node. Wired by
-// wireEventHandlers (wiring.go), which also hands the status event to the
-// release layer (onReleaseStatusChanged: a leg that ends wakes its sibling's
-// intents).
+// A sequential position is served by two robots one after the other. Order A
+// drives to the line, waits for the station's RELEASE, lifts the old bin and
+// takes it away; Order B brings the new one. B is created when the station's
+// RELEASE of A at the line node goes out (ensureSequentialBackfill, from the
+// release act's commit), not before: created earlier, it reached the line with
+// a full bin and stood behind A until A left, and a pair parked at an idle line
+// was never sent back.
 //
-// History: the deferred-sibling re-fire and the swap survivor lived here until
-// S5 replaced both with the release intent, which is on the order row and is
-// re-planned by the intent worker on Core's OrderStaged, the lifter's
-// BinPickedUp, a sibling's end and a 15 s floor.
+// A release that went out while the Edge then stopped, before B was created,
+// is found again at start (recoverSequentialBackfills).
 
 package engine
 
@@ -17,16 +17,18 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/release"
+	"shingoedge/store/orders"
 )
 
-// handleSequentialBackfill watches for sequential Order A going in_transit
-// and auto-creates Order B (backfill) to deliver replacement material.
-func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
-	if changed.NewStatus != string(protocol.StatusInTransit) || changed.ProcessNodeID == nil {
-		return
-	}
-	order, err := e.db.GetOrder(changed.OrderID)
-	if err != nil || order.ProcessNodeID == nil {
+// ensureSequentialBackfill creates Order B for a sequential position once its
+// Order A, the position's active order, has been released at the line node,
+// and only if no B exists yet. Called for each leg whose release went out
+// (releaseAct) and, once per start, for each position with an active order and
+// no B (recoverSequentialBackfills). Anything else returns with nothing made.
+func (e *Engine) ensureSequentialBackfill(orderID int64) {
+	order, err := e.db.GetOrder(orderID)
+	if err != nil || order.ProcessNodeID == nil || protocol.IsTerminal(order.Status) {
 		return
 	}
 	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
@@ -50,6 +52,10 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 	claim := e.claimAtNode(node)
 	if claim == nil || claim.SwapMode != protocol.SwapModeSequential {
 		return
+	}
+	planA, ok := e.orderSteps(order)
+	if !ok || !releasedAtLine(order, planA, claim.CoreNodeName) {
+		return // A has not been released at the line yet
 	}
 
 	// ── ONE POSITION, ONE INBOUND CARRIER ─────────────────────────────────────
@@ -110,5 +116,52 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 	if err := e.db.LinkOrderSiblings(order.ID, orderB.ID); err != nil {
 		log.Printf("link sequential siblings %d↔%d: %v", order.ID, orderB.ID, err)
 	}
-	log.Printf("sequential backfill: created Order B %d for node %s (Order A %d in_transit)", orderB.ID, node.Name, order.ID)
+	log.Printf("sequential backfill: created Order B %d for node %s (Order A %d released at the line)", orderB.ID, node.Name, order.ID)
+}
+
+// releasedAtLine reports whether an order's release of the station wait in
+// front of its lift at line has gone out: its sent intent is for that wait or
+// a later one, or Core has since staged it at a later station wait (which
+// consumes the intent, release.Intent.OnStaged). The wait is the last station
+// wait at line before the first lift there; a plan with none answers false.
+func releasedAtLine(o *orders.Order, steps []protocol.ComplexOrderStep, line string) bool {
+	at, waits := -1, 0
+	for _, s := range steps {
+		if s.Action == protocol.ActionWait && protocol.IsStationWaitKind(s.WaitKind) {
+			if s.Node == line {
+				at = waits
+			}
+			waits++
+			continue
+		}
+		if s.Action == protocol.ActionPickup && s.Node == line {
+			break
+		}
+	}
+	if at < 0 {
+		return false
+	}
+	if in, err := release.DecodeIntent(o.ReleaseIntent); err == nil && in != nil && in.Sent() && in.StationWait >= at {
+		return true
+	}
+	return o.StationWait != nil && *o.StationWait > at
+}
+
+// recoverSequentialBackfills is ensureSequentialBackfill for every position
+// with an active order and no Order B, once at start: the release of a
+// sequential Order A went out and the Edge stopped before B was created. Its
+// cost is the start's only: the positions, and one runtime row each.
+func (e *Engine) recoverSequentialBackfills() {
+	nodes, err := e.db.ListProcessNodes()
+	if err != nil {
+		e.logFn("sequential backfill: read the positions at start: %v", err)
+		return
+	}
+	for i := range nodes {
+		rt, err := e.db.GetProcessNodeRuntime(nodes[i].ID)
+		if err != nil || rt == nil || rt.ActiveOrderID == nil || rt.StagedOrderID != nil {
+			continue
+		}
+		e.ensureSequentialBackfill(*rt.ActiveOrderID)
+	}
 }

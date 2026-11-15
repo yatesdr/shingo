@@ -389,9 +389,10 @@ and in memory but is never stored. The mode applies equally to both roles.
 **Sequential** (`sequential`) — One robot handles the swap in two phases. Order
 A drives to lineside empty, holds, waits for operator release, picks up the
 outgoing bin, and delivers it to the outbound destination — three steps
-(`BuildSequentialRemovalSteps`). Order B is auto-created when Order A's status
-becomes `in_transit` (`handleSequentialBackfill`) and delivers the replacement
-from the inbound source in two steps (`BuildSequentialBackfillSteps`).
+(`BuildSequentialRemovalSteps`). Order B is created when the station's release
+of Order A at the line goes out (`ensureSequentialBackfill`), not before, and
+delivers the replacement from the inbound source in two steps
+(`BuildSequentialBackfillSteps`).
 
 **Two Robot** (`two_robot`) — Two robots work concurrently. Robot A (resupply)
 picks the replacement from the inbound source, drops it at inbound staging, and
