@@ -115,9 +115,9 @@ func (p *FlowPreview) Orders() int {
 	return *p.OrderCount
 }
 
-// FlowSaveRequest is a flow to write. CalledBy is the operator station's
-// NAME, resolved by the handler from the request's station id; the client
-// never sends it.
+// FlowSaveRequest is a flow to write. It names no station: the save writes
+// a style's claims, and no part of it reads which screen it came from.
+// CalledBy is the handler's (see Source below); the client never sends it.
 type FlowSaveRequest struct {
 	ToStyleID   int64
 	Cells       []domain.FlowCell

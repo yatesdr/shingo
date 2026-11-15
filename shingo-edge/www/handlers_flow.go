@@ -48,9 +48,11 @@ type flowPreviewBody struct {
 	New     bool  `json:"new"`
 }
 
-// flowSaveBody is POST /api/processes/{id}/flow/save. station_id names the
-// operator station saving; the handler resolves its NAME for called_by, the
-// client never sends the name.
+// flowSaveBody is POST /api/processes/{id}/flow/save. station_id is
+// optional: when set it names the operator station the desktop is looking
+// at, and the handler refuses one that is not this process's; zero or absent
+// is a process with no screen yet. It is never authorship — called_by is the
+// session's person (R1), not the station's name.
 type flowSaveBody struct {
 	ToStyleID   int64             `json:"to_style_id"`
 	Cells       []domain.FlowCell `json:"cells"`
@@ -164,25 +166,30 @@ func (h *Handlers) apiSaveFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.StationID == 0 {
-		writeError(w, http.StatusBadRequest, "station_id is required: a flow is saved by a station")
-		return
-	}
-	station, err := h.engine.StationService().Get(body.StationID)
-	if err != nil || station == nil {
-		writeError(w, http.StatusBadRequest, "unknown station")
-		return
-	}
-	if station.ProcessID != processID {
-		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
-		return
+	// THE STATION IS OPTIONAL. A body that names one still has to name a
+	// real station of THIS process — a desktop looking at one press and
+	// saving into another is refused here, before the engine runs. A body
+	// that names none saves: nothing below reads the station (the author is
+	// the session's person, and engine.SaveFlow takes no station), and a
+	// process has no screen until someone hangs one on it, which is after
+	// its first style is set up, not before. Refusing that save made the
+	// screen a prerequisite of the setup it is part of.
+	// TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle pins both halves.
+	if body.StationID != 0 {
+		station, err := h.engine.StationService().Get(body.StationID)
+		if err != nil || station == nil {
+			writeError(w, http.StatusBadRequest, "unknown station")
+			return
+		}
+		if station.ProcessID != processID {
+			writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
+			return
+		}
 	}
 	// WHO SAVED THIS — decided here, from the signed-in caller, and never
 	// from the body (owner ruling R1). The route is behind login: only the
-	// desktop saves a flow, so the author is the session's person. The
-	// station is still required and still has to belong to the process: a
-	// flow is saved AT a press, and the desktop says which one it is looking
-	// at.
+	// desktop saves a flow, so the author is the session's person, whichever
+	// screen (if any) the desktop was looking at.
 	//
 	// This is the routing set's rule applied to a second write. A body that
 	// declared its own source would be a page deciding authorship, and

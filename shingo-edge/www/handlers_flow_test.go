@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
 	"shingoedge/store"
 
 	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
+	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
 
@@ -159,11 +161,11 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 		t.Errorf("422 body = %v, want findings", b)
 	}
 
-	// The station is required and must belong to the process.
+	// A station the body names must belong to the process. A body naming
+	// none is a process with no screen, and saves
+	// (TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle).
 	stub.flowSaveErr = nil
 	stub.flowSaveResult = &engine.FlowSaveResult{Fingerprint: "def", Written: 2, Deleted: 1}
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(map[string]any{"station_id": 0}), nil)
-	assertStatus(t, resp, http.StatusBadRequest)
 	resp = doRequest(t, router, "POST", "/api/processes/2/flow/save", body(nil), nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 
@@ -288,6 +290,81 @@ func TestFlowSave_CarriesPresetProvenanceWhenTheBodyHasIt(t *testing.T) {
 	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save",
 		body(map[string]any{"source_preset_id": 42}), nil)
 	assertStatus(t, resp, http.StatusBadRequest)
+}
+
+// TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle: a style's flow is
+// saved on the desktop by a person, and nothing in the save reads a station —
+// so a process that has no operator screen yet saves one. The press is set up
+// before anybody hangs a screen on it, and refusing the save until a screen
+// exists made the screen a prerequisite of the setup it is part of.
+//
+// Through the real engine, so the claim is on the style afterwards and not
+// merely handed to a stub. A station that IS named still has to be this
+// process's: a body naming another process's screen is refused before the
+// engine runs, and the style is left as it was.
+func TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle(t *testing.T) {
+	db := testdb.Open(t)
+	pid, err := db.CreateProcess("NOSCREEN-PROC", "no operator screen", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	for i, name := range []string{"NOSCREEN-A", "NOSCREEN-B"} {
+		id, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: name, Name: name, Sequence: i + 1, Enabled: true})
+		testutil.MustNoErr(t, err, "position "+name)
+		_, err = db.EnsureProcessNodeRuntime(id)
+		testutil.MustNoErr(t, err, "runtime "+name)
+	}
+	styleID, err := db.CreateStyle("NOSCREEN-STYLE", "", pid)
+	testutil.MustNoErr(t, err, "create style")
+	if screens, err := db.ListOperatorStationsByProcess(pid); err != nil || len(screens) != 0 {
+		t.Fatalf("the fixture's process has screens %v (%v); this test is about one with none", screens, err)
+	}
+	otherPID, err := db.CreateProcess("NOSCREEN-OTHER", "", "", "", false)
+	testutil.MustNoErr(t, err, "create other process")
+	otherStation, err := db.CreateOperatorStation(stations.Input{ProcessID: otherPID, Code: "other-screen", Name: "Other Screen", Enabled: true})
+	testutil.MustNoErr(t, err, "create other station")
+
+	h, router := realFlowRouter(t, db)
+	cookie := authCookie(t, h)
+	cells := []domain.FlowCell{{
+		CoreNodeName: "NOSCREEN-A", Role: "consume", SwapMode: "two_robot", PayloadCode: "PART-NOSCREEN",
+		InboundStaging: "NOSCREEN-STG", InboundSource: "NOSCREEN-SRC", OutboundDestination: "NOSCREEN-DST",
+	}}
+	pv := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/flow/preview",
+		map[string]any{"to_style_id": styleID, "cells": cells}, cookie)
+	fingerprint, _ := flowBody(t, pv)["fingerprint"].(string)
+	if fingerprint == "" {
+		t.Fatal("the preview returned no fingerprint; the save below would be refused as stale")
+	}
+	body := map[string]any{"to_style_id": styleID, "cells": cells, "fingerprint": fingerprint}
+
+	// A station of ANOTHER process is still refused, and nothing is written.
+	wrong := map[string]any{"station_id": otherStation}
+	for k, v := range body {
+		wrong[k] = v
+	}
+	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/flow/save", wrong, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if msg, _ := flowBody(t, resp)["error"].(string); msg != "station Other Screen is not a station of this process" {
+		t.Errorf("the refusal reads %q, want it to name the other process's screen", msg)
+	}
+	if got, err := db.ListStyleNodeClaims(styleID); err != nil || len(got) != 0 {
+		t.Fatalf("a refused save left claims %v (%v)", got, err)
+	}
+
+	// No station at all: the save goes through.
+	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/flow/save", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	if b := flowBody(t, resp); b["written"] != float64(1) {
+		t.Errorf("200 body = %v, want one cell written", b)
+	}
+	saved, err := db.ListStyleNodeClaims(styleID)
+	testutil.MustNoErr(t, err, "reload claims")
+	if len(saved) != 1 || saved[0].CoreNodeName != "NOSCREEN-A" || saved[0].PayloadCode != "PART-NOSCREEN" {
+		t.Fatalf("the style holds %+v, want the one cell the save sent", saved)
+	}
+	if saved[0].Source != domain.ClaimSourceAdmin || saved[0].CalledBy != "testadmin" {
+		t.Errorf("the claim reads source %q called_by %q; the author is the session's person, screen or no screen",
+			saved[0].Source, saved[0].CalledBy)
+	}
 }
 
 // TestChangeoverStart_FlowFingerprintIsCheckedFirst: a stale flow_fingerprint
