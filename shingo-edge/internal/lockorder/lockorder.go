@@ -61,7 +61,6 @@ type (
 	Asks            struct{}
 	IntentQueue     struct{}
 	RobotWatch      struct{}
-	StationScene    struct{}
 	StationCurtain  struct{}
 	StationTouch    struct{}
 	StationView     struct{}
@@ -101,7 +100,6 @@ func (Feeds) Rank() int           { return 120 }
 func (Asks) Rank() int            { return 122 }
 func (IntentQueue) Rank() int     { return 122 }
 func (RobotWatch) Rank() int      { return 125 }
-func (StationScene) Rank() int    { return 130 }
 func (StationCurtain) Rank() int  { return 131 }
 func (StationTouch) Rank() int    { return 132 }
 func (StationView) Rank() int     { return 133 }
@@ -143,7 +141,6 @@ func (Feeds) Name() string           { return "engine.feedBook.mu" }
 func (Asks) Name() string            { return "engine.askBook.mu" }
 func (IntentQueue) Name() string     { return "engine.intentQueue.mu" }
 func (RobotWatch) Name() string      { return "engine.robotWatch.mu" }
-func (StationScene) Name() string    { return "service.sceneMu" }
 func (StationCurtain) Name() string  { return "service.curtainMu" }
 func (StationTouch) Name() string    { return "service.touchMu" }
 func (StationView) Name() string     { return "www.stationViewGroup.mu" }

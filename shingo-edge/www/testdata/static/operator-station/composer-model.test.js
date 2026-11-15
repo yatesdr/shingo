@@ -1553,9 +1553,9 @@ test('via: at most four, evenly spaced', () => {
 // scene Core's map and the shared route model are pinned on too. Three ways run
 // from SMN_05 to PLN_02: A straight and two-way (20 m), C straight and stored ONE
 // WAY toward SMN_05 (16.47 m), B two cubic hops (16 m of chord, 21.6 m of arc).
-// The map carries `len` as the CHORD, as the Edge builds it (station_composer.go
-// sceneDerived); the route model reads none of it, weighs B by its arc and
-// keeps C to its stored direction, so the way is A.
+// The map is the Edge's shape, no length on an edge (the `len` chord left the
+// wire on 2026-11-14, owner F3); the route model weighs B by its arc and keeps C
+// to its stored direction, so the way is A.
 //
 // FLIPPED ON PURPOSE (lead decision D9, 2026-11-14): this walk used to add every
 // row both ways and weigh `len`, and offered LM921 (B, by its chord) and, with
@@ -1568,8 +1568,7 @@ function routeSceneMap(drop) {
     for (const p of scene.points) m.points[p.name] = { class: p.class, x: p.x, y: p.y };
     for (const e of scene.segments) {
         if (drop && drop(e)) continue;
-        const a = m.points[e.from], b = m.points[e.to];
-        const edge = { from: e.from, to: e.to, len: Math.hypot(b.x - a.x, b.y - a.y) };
+        const edge = { from: e.from, to: e.to };
         if (e.h) edge.h = e.h.slice();
         m.edges.push(edge);
     }

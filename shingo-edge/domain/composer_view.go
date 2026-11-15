@@ -113,8 +113,8 @@ type ComposerData struct {
 	// only; fetched on CHANGEOVER, never on the poll.
 	PartRows []ComposerPartRow `json:"part_rows,omitempty"`
 	// Map is the plant's drivable network in the shared scene shape
-	// (LEAD-NOTES D11): placed points and the shape of every stored segment,
-	// each with its length. The desktop's key-route walk reads it
+	// (LEAD-NOTES D11): placed points and the shape of every stored segment.
+	// The desktop's key-route walk reads it
 	// (composer-model.js viaWaypoints, over shared/scene-net.js); nothing
 	// draws it since the routing-set map's drawing went (2026-11-14, tier A1).
 	//
@@ -128,7 +128,8 @@ type ComposerData struct {
 
 // ComposerMap is the vendor map's geometry in the shared scene shape
 // (LEAD-NOTES D11): the desktop composer read's Map, and the robot panel's
-// GET /api/operator-stations/{id}/scene answer (service.SceneMap, no lengths).
+// GET /api/operator-stations/{id}/scene answer (service.SceneMap). The two are
+// one builder's (service sceneMap), so they carry the same keys.
 type ComposerMap struct {
 	// Revision is the cache's, so a reader can say which pull it holds.
 	Revision string `json:"revision"`
@@ -166,15 +167,14 @@ type ComposerMapPoint struct {
 // sceneMap guarantees every endpoint is in Points, so the lookup cannot
 // miss — see it for why that is a repair and not just a precondition.
 //
-// Len is the straight-line length, the same number ComposerEdge carries.
-// NOTHING READS IT: the key-route walk, its one reader, moved onto
-// shared/scene-net.js (2026-11-14, LEAD-NOTES D9), which measures each row from
-// its points and handles, the arc on a curved one; the /scene answer leaves it
-// off. It stays on the desktop read until a ruling takes it off the wire.
+// NO LENGTH. Each edge carried its straight-line length (`len`) until
+// 2026-11-14, when the owner took it off the wire (follow-up F3): its one
+// reader, the key-route walk, moved onto shared/scene-net.js (LEAD-NOTES D9),
+// which measures each row from its points and handles, the arc on a curved
+// one. TestComposerMap_AnEdgeCarriesNoCoordinates refuses the key.
 type ComposerMapEdge struct {
 	From    string      `json:"from"`
 	To      string      `json:"to"`
-	Len     float64     `json:"len,omitempty"`
 	Handles *[4]float64 `json:"h,omitempty"`
 }
 
@@ -371,28 +371,6 @@ type ComposerPreset struct {
 	// recipe, never from a body. The desktop's carries it, so a group's
 	// Advanced round-trips through the draft.
 	Groups []RecipeGroup `json:"groups,omitempty"`
-}
-
-// ComposerScene is the station service's per-cache memo (sceneDerived): one
-// ComposerEdge per cache edge, in cache order. No payload carries it since
-// the station's Scene went with its flow editor (pick-a-part U4); composerMap
-// copies its lengths onto the Map.
-//
-// NO GROUP MEMBERSHIP. It used to hang off here, so the desktop asked for a
-// travel graph it never walked in order to reach a membership map — and once
-// it was on the block as well, the same map was on the payload twice.
-// CellPicture.Groups is the one copy, and both surfaces already carry the
-// picture.
-type ComposerScene struct {
-	Edges []ComposerEdge `json:"edges,omitempty"`
-}
-
-// ComposerEdge is one stored segment, From → To as the cache holds it, with
-// Len its straight-line length in metres.
-type ComposerEdge struct {
-	From string  `json:"from"`
-	To   string  `json:"to"`
-	Len  float64 `json:"len,omitempty"`
 }
 
 // ComposerPartRow is one row of the station's part list: the code, the

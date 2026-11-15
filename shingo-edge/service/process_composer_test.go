@@ -208,22 +208,6 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 		}
 	}
 
-	// Every Map edge carries its straight-line length (sceneDerived), the
-	// payload as it stands. NO READER READS IT: the key-route walk moved onto
-	// shared/scene-net.js, which measures each row from its points and handles
-	// (lead decisions D9, D11). The field stays until a ruling removes it.
-	for _, e := range got.Map.Edges {
-		// A degenerate segment has length 0 honestly. The endpoints are read
-		// from Points now — an edge carries names, not places
-		// (composer_map_endpoints_test.go).
-		if got.Map.Points[e.From] == got.Map.Points[e.To] {
-			continue
-		}
-		if e.Len == 0 {
-			t.Fatalf("map edge %s→%s carries no length; the Map carries every edge's chord", e.From, e.To)
-		}
-	}
-
 	station, err := svc.BuildView(context.Background(), seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)

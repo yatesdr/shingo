@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -126,8 +125,8 @@ func TestStationScene_TheSharedShapeWholeAndNoLength(t *testing.T) {
 			}
 		}
 		assertSceneKeys(t, c.name, body)
-		t.Logf("%s: %d points, %d segments: %d bytes, %d gzipped; the lengths would add %d bytes",
-			c.name, len(m.Points), len(m.Edges), len(body), gzipLen(t, body), lengthBytes(t, c.g, m))
+		t.Logf("%s: %d points, %d segments: %d bytes, %d gzipped",
+			c.name, len(m.Points), len(m.Edges), len(body), gzipLen(t, body))
 	}
 }
 
@@ -172,25 +171,6 @@ func gzipLen(t *testing.T, body []byte) int {
 		t.Fatalf("gzip: %v", err)
 	}
 	return buf.Len()
-}
-
-// lengthBytes is what each segment's straight-line length (the desktop
-// composer's `len`, sceneDerived's arithmetic) would add to the served map.
-func lengthBytes(t *testing.T, g *domain.SceneGeometry, m domain.ComposerMap) int {
-	t.Helper()
-	without, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	m.Edges = append([]domain.ComposerMapEdge(nil), m.Edges...)
-	for i, e := range g.Edges {
-		m.Edges[i].Len = math.Hypot(e.ToX-e.FromX, e.ToY-e.FromY)
-	}
-	with, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	return len(with) - len(without)
 }
 
 // TestStationScene_AnswersAConditionalGetOnTheRevision: quoting the ETag gets

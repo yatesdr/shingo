@@ -202,14 +202,6 @@ type StationService struct {
 	// binNodesChanged runs when a rebuild moves the watched names.
 	binNodesChanged func()
 
-	// sceneMemo is sceneDerived's per-edge lengths (a flat edge list, one
-	// entry per cache edge), computed once per geometry cache rather than per
-	// request; sceneMemoFor is the cache it was derived from. Guarded because
-	// one service serves every board's poll. See sceneDerived.
-	sceneMu      lockcheck.Mutex[lockorder.StationScene]
-	sceneMemoFor *domain.SceneGeometry
-	sceneMemo    *domain.ComposerScene
-
 	// curtained is every live node with the curtain interlock on, keyed by
 	// (process, core node), as of process_nodes generation curtainedGen. See
 	// curtainedNodes for why it is held rather than read per poll.
