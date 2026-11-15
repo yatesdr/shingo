@@ -13,10 +13,10 @@
 // the template's own <script src> tags in the template's order (so a script
 // added to the page is loaded here without anyone remembering to); esc.js;
 // and operator-flow.js's renderFlowPicture / pictureRows /
-// sentencesFromModel / relationPlacement / moduleOf, loaded the way
-// operator-flow.test.js loads them; the shared modules the page imports
-// (layer.js, notice.js, http.js, picker.js and dom.js under them, scene-net.js
-// and scene-geom.js under it), each loaded once into the page's realm with its
+// sentencesFromModel / relationPlacement / moduleOf, in their own context
+// beside the model (loadFlow); the shared modules the page imports (layer.js,
+// notice.js, http.js, picker.js and dom.js under them, scene-net.js and
+// scene-geom.js under it), each loaded once into the page's realm with its
 // imports bound, as a browser's module map holds them (sharedLoader).
 //
 // WHAT THE COMPONENTS BUILD IS A REAL TREE. They build with dom.js's el(), so
@@ -92,8 +92,10 @@ function classicScripts() {
 }
 
 // The flow picture in its own context, shared by every page this process
-// opens: it is pure over its inputs. The same load operator-flow.test.js and
-// processes-desktop.popover-acts.test.js make.
+// opens: it is pure over its inputs. The same load
+// processes-desktop.popover-acts.test.js makes: the model, then the flow
+// module. No scene-geom.js: operator-flow.js does not import it, and neither
+// file names any of its exports.
 let flowCache = null;
 function loadFlow() {
     if (flowCache) return flowCache;
@@ -108,7 +110,6 @@ function loadFlow() {
     };
     vm.createContext(ctx);
     vm.runInContext(read(path.join(dir, 'composer-model.js')), ctx);
-    vm.runInContext(read(path.join(SHARED, 'scene-geom.js')).replace(/^export /mg, ''), ctx);
     const src = read(path.join(dir, 'operator-flow.js')).replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, sentencesFromModel, relationPlacement, moduleOf };', ctx);
     flowCache = ctx.__out;

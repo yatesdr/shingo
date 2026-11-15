@@ -583,10 +583,11 @@ function loadPage(loadOpts) {
     return { root, pop, bar, main, doc, win, scrim, sheet: () => sheetParts(doc, scrim) };
 }
 
-// operator-flow.js in its own context, the way operator-flow.test.js loads
-// it: scene-geom's exports stripped to declarations, the flow module's imports
-// stripped and its station helpers stubbed, the model beside it on window so
-// sentencesFromModel reads the same api the page does.
+// operator-flow.js in its own context: the flow module's imports stripped and
+// its station helpers stubbed, the model beside it on window so
+// sentencesFromModel reads the same api the page does. No scene-geom.js:
+// operator-flow.js does not import it, and neither file names any of its
+// exports.
 function loadFlow() {
     const dir = path.join(SRC_DIR, '..', '..', 'operator-station');
     const ctx = {
@@ -599,9 +600,6 @@ function loadFlow() {
     };
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(path.join(dir, 'composer-model.js'), 'utf8'), ctx);
-    const geom = fs.readFileSync(
-        path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared', 'scene-geom.js'), 'utf8');
-    vm.runInContext(geom.replace(/^export /mg, ''), ctx);
     const raw = fs.readFileSync(path.join(dir, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, sentencesFromModel, relationPlacement, ' +
