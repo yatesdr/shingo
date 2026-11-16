@@ -324,3 +324,47 @@ func TestCoreLoaderChange_ABufferSpotOnTheScreenIsASecondEmptyTile(t *testing.T)
 		}
 	}
 }
+
+// ONE RULE, TWO READERS. "Make a screen" and the loader gaps read Core's
+// loaders as the Edge caches them (store.CoreLoader.BoardWindows); "Core
+// added" reads them as the loader store projects them (Loader.BoardWindows).
+// Both are domain.IsBoardWindow, and for every shape they name the same
+// members in the same order: shared windows, dedicated homes (an unpinned one
+// included), never a buffer spot.
+func TestBoardWindows_TheCacheAndTheAggregateAgree(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	unpinned := dedicatedLoader([]string{"BW-H1"}, []string{"BW-B1"})
+	unpinned.LoaderKey = "loader:BW-U"
+	unpinned.Positions = append(unpinned.Positions, protocol.LoaderPosition{CoreNodeName: "BW-H2",
+		HomeKind: protocol.LoaderHomeKindHome, Ordinal: 2})
+	shared := sharedLoader("BW-W2", "BW-W1")
+	shared.LoaderKey = "loader:BW-S"
+	mixed := dedicatedLoader([]string{"BW-H3", "BW-H4"}, []string{"BW-B2", "BW-B3"})
+	mixed.LoaderKey = "loader:BW-D"
+	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{unpinned, shared, mixed}); err != nil {
+		t.Fatalf("ReplaceCoreLoaders: %v", err)
+	}
+	cached, err := db.ListCoreLoaders()
+	if err != nil {
+		t.Fatalf("ListCoreLoaders: %v", err)
+	}
+	want := map[string][]string{
+		"loader:BW-U": {"BW-H1", "BW-H2"},
+		"loader:BW-S": {"BW-W2", "BW-W1"},
+		"loader:BW-D": {"BW-H3", "BW-H4"},
+	}
+	for _, cl := range cached {
+		l, err := projectCoreLoader(cl)
+		if err != nil {
+			t.Fatalf("project %s: %v", cl.LoaderKey, err)
+		}
+		var projected []string
+		for _, n := range l.BoardWindows() {
+			projected = append(projected, string(n))
+		}
+		if got := cl.BoardWindows(); !slices.Equal(got, want[cl.LoaderKey]) || !slices.Equal(projected, got) {
+			t.Errorf("%s: cache %v, aggregate %v; want both %v", cl.LoaderKey, got, projected, want[cl.LoaderKey])
+		}
+	}
+}

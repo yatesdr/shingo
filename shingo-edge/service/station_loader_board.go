@@ -53,14 +53,19 @@ type nodeBinding struct {
 // LoaderBoardGaps lists Core loaders with no board on this edge.
 //
 // ONLY a loader with ZERO of its windows on a station counts, and that threshold
-// is the whole design. Partial binding is NORMAL, not a gap: a dedicated loader
-// of 31 positions may have 22 homes on its board and 9 buffer spots that no
-// operator ever works. Reporting "unbound windows" would put a permanent 9-row
-// complaint on a correctly configured loader — the same failure mode as a
-// threshold warning that fires on every loader that does not use thresholds.
+// is the whole design. Partial binding is NORMAL, not a gap: a loader may have
+// windows that no screen here works. Reporting "unbound windows" would put a
+// permanent complaint on a correctly configured loader — the same failure mode
+// as a threshold warning that fires on every loader that does not use thresholds.
 //
-// A loader with no windows at all is skipped too. There is nothing to bind, and
-// Core's own box already says so (configGapHtml) at the place it can be fixed.
+// ITS WINDOWS ARE WHAT A BOARD WORKS AS TILES (CoreLoader.BoardWindows, the one
+// rule): a dedicated loader's buffer spots are not among them. The board draws
+// those from the loader (the buffer strip), so they are never bound and never
+// counted (SPR's Bin Loader: 22 homes on its screen, 9 buffer spots on none).
+//
+// A loader with no windows at all is skipped too, a loader of buffer spots
+// only among them. There is nothing to bind, and Core's own box already says
+// so (configGapHtml) at the place it can be fixed.
 func (s *StationService) LoaderBoardGaps() ([]LoaderBoardGap, error) {
 	loaders, err := s.db.ListCoreLoaders()
 	if err != nil {
@@ -73,12 +78,7 @@ func (s *StationService) LoaderBoardGaps() ([]LoaderBoardGap, error) {
 
 	var out []LoaderBoardGap
 	for _, l := range loaders {
-		windows := make([]string, 0, len(l.Positions))
-		for _, p := range l.Positions {
-			if p.PositionNode != "" {
-				windows = append(windows, p.PositionNode)
-			}
-		}
+		windows := l.BoardWindows()
 		if len(windows) == 0 {
 			continue
 		}
@@ -149,6 +149,12 @@ func (s *StationService) nodeBindings() (map[string]nodeBinding, error) {
 // CreateLoaderBoard makes the operator screen for a Core loader and binds its
 // windows to it, in that order, as one action.
 //
+// ITS WINDOWS, NOT ITS BUFFER SPOTS (CoreLoader.BoardWindows, the rule "Core
+// added" follows too; owner, 2026-11-16: "it shouldnt put its buffer spots on
+// the screen"). The board draws a dedicated loader's buffer spots from the
+// loader; one bound here as well was a second tile with no part, whose sheet
+// offers only CLOSE. A loader of buffer spots only has nothing to bind.
+//
 // One call rather than the two it composes (create station, then set its nodes)
 // because a half-applied version — a screen with no nodes — is exactly the
 // looks-configured-does-nothing state this work exists to remove.
@@ -171,14 +177,9 @@ func (s *StationService) CreateLoaderBoard(loaderKey string, processID int64) (i
 	if l == nil {
 		return 0, fmt.Errorf("loader %s: not in this edge's Core loader cache", loaderKey)
 	}
-	windows := make([]string, 0, len(l.Positions))
-	for _, p := range l.Positions {
-		if p.PositionNode != "" {
-			windows = append(windows, p.PositionNode)
-		}
-	}
+	windows := l.BoardWindows()
 	if len(windows) == 0 {
-		return 0, fmt.Errorf("loader %s has no windows to bind: give it members on Core first", loaderKey)
+		return 0, fmt.Errorf("loader %s has no windows to bind: give it members on Core first (a buffer spot is drawn from the loader, never bound)", loaderKey)
 	}
 
 	name := strings.TrimSpace(l.Name)

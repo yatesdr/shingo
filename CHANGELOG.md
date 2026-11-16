@@ -73,6 +73,7 @@ Deploy: Edge v55–v56. Edge only; Core is unchanged.
 - On a loader's or unloader's process, the positions on no screen are listed, not picked; Put them on <screen> moves them
 - A loader's process says Core added <window> with Put it on <screen>, and Core removed <window> with Take it off
 - A window Core removes from a loader no longer turns its process into a line; Edge v56 remembers Core's windows
+- Make a screen puts a dedicated loader's homes on the new screen, not its buffer spots, which the board draws already
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
 - The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once

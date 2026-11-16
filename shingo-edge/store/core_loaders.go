@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/windoworder"
+	"shingoedge/domain"
 )
 
 // CoreLoader is the cached read shape for one Core-owned loader, assembled with
@@ -61,6 +62,21 @@ type CoreLoader struct {
 	NoClearPartials bool
 	Positions       []CoreLoaderPosition
 	Payloads        []CoreLoaderPayload
+}
+
+// BoardWindows is the cached loader's members a board works as tiles, in
+// Core's order (domain.IsBoardWindow, the one rule): every window of a
+// shared_window loader, every home of a dedicated one, never a buffer spot.
+// "Make a screen" puts these on the new screen, and the loader gaps count
+// them; the projected aggregate answers the same (Loader.BoardWindows).
+func (l CoreLoader) BoardWindows() []string {
+	var out []string
+	for _, p := range l.Positions {
+		if p.PositionNode != "" && domain.IsBoardWindow(domain.LoaderLayout(l.Layout), p.HomeKind) {
+			out = append(out, p.PositionNode)
+		}
+	}
+	return out
 }
 
 // CoreLoaderPosition is one home of a cached loader (position node NAME). For a
