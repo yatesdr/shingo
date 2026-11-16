@@ -1069,29 +1069,27 @@ async function pinSheetStack() {
         const page = await open();
         const rows = [];
         const from = page.mark();
-        page.click('root', { act: 'set-add' });
+        page.click('root', { act: 'adv-open', node: 'POS_A1' });
         await page.settle();
-        rows.push('Set for this style › + Add a setting: ' + stackFacts(page) + '; ' + popFacts(page));
+        rows.push('POS_A1 › Advanced: ' + stackFacts(page) + '; title ' + JSON.stringify(sheetTitle(page)));
         await esc(page, rows);
-        rows.push('nothing picked: dirty=' + page.pd('dirty')() + '; requests ' + (page.since(from).filter(c => !isPreview(c)).map(lineOf).join(' · ') || 'none'));
-        block('Escape: Set for this style\'s setting list (a popover on the tab, no sheet)', rows);
+        rows.push('nothing changed: dirty=' + page.pd('dirty')() + '; requests ' + (page.since(from).filter(c => !isPreview(c)).map(lineOf).join(' · ') || 'none'));
+        block("Escape: a position's Advanced sheet (the row's own, round 5)", rows);
     }
     {
         const page = await open();
         const rows = [];
-        page.click('root', { act: 'set-add' });
+        page.click('root', { act: 'adv-open', node: 'POS_A1' });
         await page.settle();
-        if (!await pickIn(page, 'pd-pop', 'lineside_soft_threshold')) throw new Error('+ Add a setting offers no lineside_soft_threshold');
-        await pickIn(page, 'pd-pop', 'POS_A1');
-        const num = page.root.querySelectorAll('[data-setnum]').find(e => e.dataset.setnum === 'lineside_soft_threshold' && e.dataset.node === 'POS_A1');
-        if (!num) throw new Error('Set for this style draws no lineside_soft_threshold field on POS_A1');
+        const num = page.scrim.querySelectorAll('[data-setnum]').find(e => e.dataset.setnum === 'lineside_soft_threshold' && e.dataset.node === 'POS_A1');
+        if (!num) throw new Error("POS_A1's Advanced sheet draws no lineside_soft_threshold field");
         num.value = '7';
-        // A BUBBLING input, as a browser sends it: the list's numbers are read
-        // by one listener on the page root (onSetNumber), not one per field.
+        // A BUBBLING input, as a browser sends it: the sheet's numbers are
+        // read by one listener on the sheet (onSetNumber), not one per field.
         num.dispatchEvent({ type: 'input' });
-        rows.push('typed 7 into lineside_soft_threshold on POS_A1: dirty=' + page.pd('dirty')() + '; ' + stackFacts(page));
+        rows.push("typed 7 into lineside_soft_threshold in POS_A1's sheet: dirty=" + page.pd('dirty')() + '; ' + stackFacts(page));
         await esc(page, rows, p => 'dirty=' + p.pd('dirty')());
-        block('Set for this style: a number typed is the style draft\'s, and Escape takes nothing away', rows);
+        block("A position's Advanced sheet: a number typed is the style draft's, and Escape takes nothing away", rows);
     }
     {
         const page = await open({ extra: STYLE_ROUTES });

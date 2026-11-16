@@ -2110,7 +2110,7 @@ async function mainAsync() {
         await drain();
         // TEN COLUMNS: the set chip's column is drawn only where a row sets something for
         // the style, and these rows set nothing (the gear's column was always drawn).
-        const want = '<tr class="paired"><td colspan="10">PLN_02 is paired core node for PLN_01 · ' +
+        const want = '<tr class="paired"><td colspan="11">PLN_02 is paired core node for PLN_01 · ' +
             'PLN_04 is inbound staging for PLN_03 — no row of their own</td></tr>';
         if (root.innerHTML.indexOf(want) < 0) {
             throw new Error('the foot does not name each rowless position by its role:\n      got  ' +
@@ -3415,12 +3415,13 @@ async function recipeGroupPins(h) {
         }
     });
 
-    // ── Set for this style, and a recipe group's list (slice 3) ─────────────
+    // ── a position's Advanced sheet (round 5), and a recipe group's list ────
     //
-    // The Advanced sheet is gone: what a position sets for a style is a list
-    // under the positions table, a list per setting it sets, and a group's is
-    // the same list on its card (shared/exceptions.js). Pickers are the shared
-    // picker, drawn into #pd-pop (a built host here, so a pick is a click).
+    // What a position sets for a style is in its row's own sheet: every row
+    // ends with "Advanced" (or "Advanced · N set"), opening the shared sheet
+    // with every setting flowspec offers it, each with its value control. A
+    // group's is still a list on its card (shared/exceptions.js). Pickers are
+    // the shared picker, drawn into #pd-pop (a built host here).
     const lbl = (win, f) => {
         const w = win.FLOWSPEC && win.FLOWSPEC.labels && win.FLOWSPEC.labels[f];
         if (!w) throw new Error('setup: the flowspec table has no label for ' + f);
@@ -3463,45 +3464,55 @@ async function recipeGroupPins(h) {
         return seg ? (seg[1].match(/>[^<]+<\/button>/g) || []).map(b => b.slice(1, -9)).join(' / ') : '';
     };
 
-    await pin('Set for this style lists a setting where a position sets it, by its name, with its help once', async () => {
+    // advSheet opens node's Advanced sheet from its row and returns its
+    // markup and a click inside it.
+    const advSheet = async (ctx, node) => {
+        click(ctx.main, ctx.doc, { act: 'adv-open', node: node });
+        await settle();
+        const sh = ctx.sheet();
+        if (!sh.open) throw new Error(node + '\'s Advanced did not open a sheet');
+        return {
+            html: () => ctx.sheet().el.innerHTML,
+            click: data => click(ctx.sheet().el, ctx.doc, data),
+        };
+    };
+    const sheetKeys = html => [...new Set((html.match(/data-key="[^"]+"/g) || []).map(k => k.slice(10, -1)))];
+
+    await pin('every row ends with Advanced; its sheet names each setting with its help once, Next carrier with its answer', async () => {
         const ctx = setPage(withAdvanced({ PLN_010: { refill_by: 'index_robot' } }));
         await settle();
         const h = ctx.root.innerHTML;
         if (h.indexOf('data-act="advanced"') >= 0 || h.indexOf('<th>Advanced</th>') >= 0) throw new Error('the gear is still drawn');
-        const list = between(h, 'data-exc="set-refill_by"', '</table>');
-        if (!list) throw new Error('no Next carrier list under Set for this style: ' + plain(between(h, 'id="pd-setfor"', 'pd-bar')));
-        const name = '<div class="exc-name">' + lbl(ctx.win, 'refill_by') + '<small>which robot brings this part’s next carrier</small></div>';
-        if (list.indexOf(name) < 0) throw new Error('the list is not named with its help: ' + list.slice(0, 200));
-        if (/same for every part/.test(h)) throw new Error('the next carrier still says it is the same for every part');
-        if (plain(list).indexOf('1 of 2 positions') < 0) throw new Error('the summary is not "1 of 2 positions": ' + plain(list));
-        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list) || /exc-pos">PLN_012/.test(list)) throw new Error('the rows are not PLN_010 alone: ' + plain(list));
-        if (!/class="on" data-act="set-seg" data-key="refill_by" data-node="PLN_010" data-v="index_robot"/.test(list)) throw new Error('Robot 2 is not the answer on: ' + list);
-        // What Robot 2 means is the position's work list (round 4), one click
-        // away: the link selects PLN_010, whose row the list opens under.
-        if (!/data-act="work-goto" data-node="PLN_010">see what its robots do</.test(list)) throw new Error('the way to what Robot 2 means is not beside it: ' + plain(list));
+        if (h.indexOf('id="pd-setfor"') >= 0 || h.indexOf('data-act="set-add">') >= 0) throw new Error('the list under the table or its button is still drawn');
         const row = n => between(h, 'data-row="' + n + '"', '</tr>');
-        if (row('PLN_010').indexOf('data-act="set-goto"') < 0 || plain(row('PLN_010')).indexOf('1 set') < 0) throw new Error('PLN_010\'s row has no "1 set" chip');
-        if (row('PLN_012').indexOf('set-goto') >= 0) throw new Error('PLN_012 sets nothing and carries a chip');
+        if (!/data-act="adv-open" data-node="PLN_010">Advanced · 1 set</.test(row('PLN_010'))) throw new Error('PLN_010\'s row does not read "Advanced · 1 set": ' + plain(row('PLN_010')));
+        if (!/data-act="adv-open" data-node="PLN_012">Advanced</.test(row('PLN_012'))) throw new Error('PLN_012 sets nothing and its row does not read "Advanced": ' + plain(row('PLN_012')));
+        const sheet = await advSheet(ctx, 'PLN_010');
+        const html = sheet.html();
+        const name = '<div class="pd-advname">' + lbl(ctx.win, 'refill_by') + '<small>which robot brings this part’s next carrier</small></div>';
+        if (html.indexOf(name) < 0) throw new Error('Next carrier is not named with its help: ' + plain(html).slice(0, 300));
+        if (html.split(name).length !== 2) throw new Error('Next carrier is named more than once');
+        if (/same for every part/.test(html)) throw new Error('the next carrier still says it is the same for every part');
+        if (!/class="on" data-act="set-seg" data-key="refill_by" data-node="PLN_010" data-v="index_robot"/.test(html)) throw new Error('Robot 2 is not the answer on: ' + html);
+        if (!/data-act="work-goto" data-node="PLN_010">see what its robots do</.test(html)) throw new Error('the way to what Robot 2 means is not beside it: ' + plain(html));
+        if (/data-node="(?!PLN_010)/.test(html.replace(/data-node="PLN_010"/g, ''))) throw new Error('the sheet names another position: ' + html);
     });
 
-    await pin('+ Add a setting offers what the positions take, greyed with why; a pick asks for the position', async () => {
+    await pin('a row\'s sheet offers what its swap takes, never the position again; a switch and its second value save', async () => {
         const ctx = setPage(press6Composer());
         await settle();
-        click(ctx.main, ctx.doc, { act: 'set-add' });
-        const rows = pk.rows(ctx.host).map(r => r.getAttribute('data-value') + (r.classList.contains('is-off') ? ' (' + pk.side(ctx.host, r.getAttribute('data-value')) + ')' : ''));
-        for (const want of ['strict_pack', 'partial_dest', 'refill_by', 'evac_nodes', 'curtain_required (no position of this style takes it)']) {
-            if (rows.indexOf(want) < 0) throw new Error('the list lacks ' + want + ': ' + rows.join(', '));
+        const sheet = await advSheet(ctx, 'PLN_010');
+        const keys = sheetKeys(sheet.html());
+        for (const want of ['strict_pack', 'partial_dest', 'refill_by', 'evac_nodes']) {
+            if (keys.indexOf(want) < 0) throw new Error('the sheet lacks ' + want + ': ' + keys.join(', '));
         }
-        if (rows.some(r => /^(reorder_point|auto_reorder|sequence|changeover_carryover_disposition|pack_tolerance_pct)/.test(r))) {
-            throw new Error('the list offers a field that is no setting of its own here: ' + rows.join(', '));
+        if (keys.some(k => /^(reorder|reorder_point|auto_reorder|sequence|changeover_carryover_disposition|pack_tolerance_pct|curtain_required|auto_push)$/.test(k))) {
+            throw new Error('the sheet offers a field that is no setting of its own here: ' + keys.join(', '));
         }
-        pk.pick(ctx.host, 'strict_pack');
+        if (/find a position|set-addpos/.test(sheet.html())) throw new Error('the sheet asks for the position: ' + plain(sheet.html()));
+        sheet.click({ act: 'set-switch', key: 'strict_pack', node: 'PLN_010', v: '1' });
         await settle();
-        pk.pick(ctx.host, 'PLN_010');
-        await settle();
-        const list = between(ctx.root.innerHTML, 'data-exc="set-strict_pack"', '</table>');
-        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list)) throw new Error('strict pack is not listed on PLN_010: ' + plain(list));
-        if (list.indexOf('data-setnum="pack_tolerance_pct"') < 0) throw new Error('the tolerance is not strict pack\'s second value: ' + list);
+        if (sheet.html().indexOf('data-setnum="pack_tolerance_pct"') < 0) throw new Error('the tolerance is not strict pack\'s second value: ' + sheet.html());
         typeNumber(ctx, { setnum: 'pack_tolerance_pct', key: 'pack_tolerance_pct', node: 'PLN_010' }, '5');
         const body = await savedBody(ctx);
         const a = cellOf(body, 'PLN_010').advanced || {};
@@ -3509,30 +3520,29 @@ async function recipeGroupPins(h) {
         if ((cellOf(body, 'PLN_012').advanced || {}).strict_pack) throw new Error('PLN_012 saved a strict pack nobody set');
     });
 
-    await pin('Partials go to says what each kind of home does, once', async () => {
+    await pin('Partials go to says what each kind of home does, once, with its home', async () => {
         const ctx = setPage(withAdvanced({}, { PLN_012: { partial_destination: 'ULN_005' } }));
         await settle();
-        const list = between(ctx.root.innerHTML, 'data-exc="set-partial_dest"', '</table>');
-        const want = '<div class="exc-name">' + lbl(ctx.win, 'partial_destination') +
+        const html = (await advSheet(ctx, 'PLN_012')).html();
+        const want = '<div class="pd-advname">' + lbl(ctx.win, 'partial_destination') +
             '<small>where a bin released short goes; a node group holds it to be finished, an unloader unloads it</small></div>';
-        if (list.indexOf(want) < 0) throw new Error('the partial home reads ' + plain(list));
-        if (!/data-act="set-pick" data-key="partial_dest" data-node="PLN_012"><span class="t">ULN_005</.test(list)) throw new Error('its row does not show ULN_005: ' + list);
+        if (html.indexOf(want) < 0) throw new Error('the partial home reads ' + plain(html));
+        if (!/data-act="set-pick" data-key="partial_dest" data-node="PLN_012"><span class="t">ULN_005</.test(html)) throw new Error('its value is not ULN_005: ' + html);
     });
 
     // A CURTAIN TIE WHERE NO CURTAIN IS WIRED (a recipe group lays it on every
     // claim it mints): it waits for nothing until a curtain is switched on, and
-    // then gates every such style at once. It was hidden and could not be
-    // cleared; it is listed, said, and × takes it off.
-    await pin('Curtain required set where no curtain is wired is listed, said, and can be taken off', async () => {
+    // then gates every such style at once. Its sheet says so, and Off clears it.
+    await pin('Curtain required set where no curtain is wired is said in the sheet, and Off takes it off', async () => {
         const ctx = setPage(withAdvanced({ PLN_010: { curtain_required: true } }));
         await settle();
-        const list = between(ctx.root.innerHTML, 'data-exc="set-curtain_required"', '</table>');
-        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list)) throw new Error('the dormant flag is not listed: ' + plain(between(ctx.root.innerHTML, 'id="pd-setfor"', 'pd-bar')));
-        if (plain(list).indexOf('no curtain is switched on here: nothing waits until one is') < 0) throw new Error('the row does not say it waits for nothing: ' + plain(list));
-        click(ctx.main, ctx.doc, { act: 'set-rm', key: 'curtain_required', node: 'PLN_010' });
+        const sheet = await advSheet(ctx, 'PLN_010');
+        if (!/class="on" data-act="set-switch" data-key="curtain_required" data-node="PLN_010" data-v="1"/.test(sheet.html())) throw new Error('the dormant flag is not on in the sheet: ' + sheet.html());
+        if (plain(sheet.html()).indexOf('no curtain is switched on here: nothing waits until one is') < 0) throw new Error('the row does not say it waits for nothing: ' + plain(sheet.html()));
+        sheet.click({ act: 'set-switch', key: 'curtain_required', node: 'PLN_010', v: '0' });
         await settle();
         const a = cellOf(await savedBody(ctx), 'PLN_010').advanced || {};
-        if (a.curtain_required) throw new Error('× did not take the flag off: ' + JSON.stringify(a));
+        if (a.curtain_required) throw new Error('Off did not take the flag off: ' + JSON.stringify(a));
     });
 
     // CARRY-OVER IS A TOOL CHANGE'S SECOND VALUE (domain.ClearanceTreatmentAtNode
@@ -3543,22 +3553,20 @@ async function recipeGroupPins(h) {
         const ctx = setPage(withAdvanced({ PLN_010: { changeover_carryover_disposition: 'keep_lineside' } },
             { PLN_010: { changeover_evac_nodes: ['PLN_010'] } }));
         await settle();
-        const h = ctx.root.innerHTML;
-        const list = between(h, 'data-exc="set-evac_nodes"', '</table>');
-        if (!/<td class="exc-pos">PLN_010<\/td>/.test(list) || /exc-pos">PLN_012/.test(list)) throw new Error('Tool change is not listed on PLN_010 alone: ' + plain(list));
-        if (segWords(list, 'if the part stays</span> ') !== 'Fresh bin / Keep it / Out and back') {
-            throw new Error('the carry-over is not the mark\'s second value: ' + list);
+        const sheet = await advSheet(ctx, 'PLN_010');
+        const html = sheet.html();
+        if (!/data-act="set-unchip" data-key="evac_nodes" data-node="PLN_010" data-v="PLN_010"/.test(html)) throw new Error('Tool change does not mark PLN_010: ' + plain(html));
+        if (segWords(html, 'if the part stays</span> ') !== 'Fresh bin / Keep it / Out and back') {
+            throw new Error('the carry-over is not the mark\'s second value: ' + html);
         }
-        if (!/class="on" data-act="set-seg" data-key="changeover_carryover_disposition" data-node="PLN_010" data-v="keep_lineside"/.test(list)) throw new Error('Keep it is not on: ' + list);
-        if (!/data-v="outbound_staging" disabled title="this position has no outbound staging"/.test(list)) throw new Error('Out and back is offered with no outbound staging: ' + list);
-        if (h.indexOf('If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.') < 0) {
-            throw new Error('the carry-over help is not written from the code: ' + plain(between(h, 'data-exc="set-evac_nodes"', 'exc-add')));
+        if (!/class="on" data-act="set-seg" data-key="changeover_carryover_disposition" data-node="PLN_010" data-v="keep_lineside"/.test(html)) throw new Error('Keep it is not on: ' + html);
+        if (!/data-v="outbound_staging" disabled title="this position has no outbound staging"/.test(html)) throw new Error('Out and back is offered with no outbound staging: ' + html);
+        if (html.indexOf('If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.') < 0) {
+            throw new Error('the carry-over help is not written from the code: ' + plain(html));
         }
-        if (/part-full bin/.test(h)) throw new Error('the carry-over still talks of a part-full bin');
-        click(ctx.main, ctx.doc, { act: 'set-unchip', key: 'evac_nodes', node: 'PLN_010', v: 'PLN_010' });
+        if (/part-full bin/.test(html)) throw new Error('the carry-over still talks of a part-full bin');
+        sheet.click({ act: 'set-unchip', key: 'evac_nodes', node: 'PLN_010', v: 'PLN_010' });
         await settle();
-        const after = between(ctx.root.innerHTML, 'data-exc="set-evac_nodes"', '</table>');
-        if (!after || /if the part stays/.test(after)) throw new Error('with no mark the row should stay, without its carry-over: ' + plain(after));
         const c = cellOf(await savedBody(ctx), 'PLN_010');
         if ((c.changeover_evac_nodes || []).length || (c.advanced || {}).changeover_carryover_disposition !== 'replace') {
             throw new Error('PLN_010 saved marks ' + JSON.stringify(c.changeover_evac_nodes) + ' and carry-over ' + JSON.stringify((c.advanced || {}).changeover_carryover_disposition));
@@ -3566,16 +3574,16 @@ async function recipeGroupPins(h) {
     });
 
     // A recipe's save strips every cell's Advanced (domain.StripFlowPayload), so
-    // a recipe draft has no set chip and no Set for this style: a group's list
-    // is the one a recipe keeps.
-    await pin('a recipe draft draws no set chip and no Set for this style', async () => {
+    // a recipe draft has no Advanced on its rows: a group's list is the one a
+    // recipe keeps.
+    await pin('a recipe draft draws no Advanced on its rows', async () => {
         const ctx = setPage(withAdvanced({ PLN_010: { refill_by: 'index_robot' } }));
         await settle();
-        if (ctx.root.innerHTML.indexOf('data-act="set-goto"') < 0) throw new Error('setup: the style has no chip to lose');
+        if (ctx.root.innerHTML.indexOf('data-act="adv-open"') < 0) throw new Error('setup: the style has no Advanced to lose');
         await openRecipe(ctx);
         const h = ctx.root.innerHTML;
         if (h.indexOf('Recipe · Two spot press index') < 0) throw new Error('setup: the draft did not open');
-        if (h.indexOf('set-goto') >= 0 || h.indexOf('id="pd-setfor"') >= 0) throw new Error('the recipe draft draws a style\'s settings');
+        if (h.indexOf('adv-open') >= 0 || h.indexOf('id="pd-setfor"') >= 0) throw new Error('the recipe draft draws a style\'s settings');
     });
 
     const groupPage = async () => {

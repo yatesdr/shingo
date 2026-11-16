@@ -331,25 +331,33 @@ async function pinAdvanced() {
     }
     out['advanced-shows.txt'] = shows.join('\n') + '\n';
 
-    // setCount(node) — the row's "N set" chip — for every row of the
-    // all-default style (A) and the all-set style (B); for a row with any set,
-    // the lists Set for this style draws it under, which is the number the
-    // chip is there to forecast.
-    const count = ['# setCount(node) per style and row; for a row with any set, the lists Set for this style',
-        '# draws it under (one per setting), and how many.'];
+    // THE ROW'S ADVANCED (round 5): every row's control, "Advanced" or
+    // "Advanced · N set" (setCount), for the all-default style (A) and the
+    // all-set style (B); for a row of B, what its sheet lists, each setting by
+    // its name with its value control as text.
+    const count = ['# The row\'s Advanced control per style and row, and for Style B (every setting set) what each',
+        '# row\'s sheet lists: heading, then name = its value control as text.'];
     for (const st of S.composer.styles) {
         page.click('root', { style: String(st.id) });
         await page.settle();
         count.push('', '## ' + st.name);
-        const block = page.root.innerHTML.split('id="pd-setfor"')[1] || '';
-        const lists = block.split('<div class="exc" data-exc="set-').slice(1);
         for (const n of tableRows(page.S)) {
-            const chip = pd('setCount')(n);
-            if (!chip) { count.push(n + ' ' + modeRole(page.S, n) + '  setCount=0'); continue; }
-            const under = lists.filter(l => l.indexOf('<td class="exc-pos">' + n + '</td>') >= 0)
-                .map(l => decode((l.match(/<div class="exc-name">([^<]*)/) || [])[1] || l.slice(0, l.indexOf('"'))));
-            count.push(n + ' ' + modeRole(page.S, n) + '  setCount=' + chip + '  listed under=' + under.length);
-            for (const u of under) count.push('    list ' + JSON.stringify(u));
+            const cell = (new RegExp('data-act="adv-open" data-node="' + n + '">([^<]*)</button>').exec(page.root.innerHTML) || [])[1];
+            count.push(n + ' ' + modeRole(page.S, n) + '  setCount=' + pd('setCount')(n) + '  control ' + JSON.stringify(cell ? decode(cell) : '(none)'));
+            if (st.name !== 'Style B') continue;
+            page.click('root', { act: 'adv-open', node: n });
+            await page.settle();
+            const sheet = String(page.scrim.innerHTML).split('<div class="layer-foot"')[0];
+            for (const sec of sheet.split('<div class="pd-advsec">').slice(1)) {
+                count.push('    · ' + decode((/<div class="pd-lbl">([^<]*)/.exec(sec) || [])[1] || ''));
+                for (const row of sec.split('<div class="pd-advrow">').slice(1)) {
+                    const name = decode((/<div class="pd-advname">([^<]*)/.exec(row) || [])[1] || '');
+                    const val = text(row.slice(row.indexOf('<div class="pd-advval">')));
+                    count.push('      ' + name + ' = ' + val);
+                }
+            }
+            pd('closeSheet')();
+            await page.settle();
         }
     }
     out['advanced-count.txt'] = count.join('\n') + '\n';

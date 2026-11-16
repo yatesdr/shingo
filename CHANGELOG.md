@@ -45,7 +45,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - #tab=styles typed on an open process opens Styles
 - With WarLink off, the CATID monitor asks WarLink for nothing at start
 - The per-position short lists name only the positions that differ, each added through the node picker
-- Set for this style and a recipe group's list replace the Advanced sheet
+- A recipe group's settings are a list on its card
 - A recipe group carries no carry-over; carry-over is on a position marked Tool change
 - Counted somewhere else takes several positions in one pick and saves with the rest
 - Every chooser on the page is the shared picker; a long part set folds its chips
@@ -59,7 +59,8 @@ Deploy: no migration. Edge only; Core is unchanged.
 - A station board with more tiles than its screen's grid holds adds rows, so no tile draws over itself
 - A running style with no changeover on record no longer reads "never run here" beside its running tag
 - Settings shows the positions each screen holds, and offers the positions on no screen to each screen
-- The Styles tab has one + Add a position, under the table, and an Advanced settings button for what a position sets
+- The Styles tab has one + Add a position, under the table
+- Each row on the Styles tab ends with Advanced, which opens that position's settings in a sheet; Allowed parts starts from the row's part
 - First style and the Styles tab show a position's robot work lists: each robot and the steps the Edge sends it
 - Sequential A/B reads as two robots, one after the other; Index Swap's card holds for every Next carrier
 - First style offers no staging on Index Swap or Sequential A/B, whose swaps never stop there

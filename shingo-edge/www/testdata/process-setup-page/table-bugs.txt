@@ -9,8 +9,8 @@ ok   col:partner:secondPaired offers no position bound to another screen
 ## B5 · Tool change is drawn exactly where flowspec lets the mode carry changeover_evac_nodes
 ok   every row
 
-## B6 · the row's "N set" is the number of Set for this style's lists it is in
-ok   every row of Style B
+## B6 · every row's Advanced control says how many of its settings are set
+ok   every row of Style A and Style B
 
 ## F15 · Board order only on a loader position; Curtain required only where the node has a curtain
 ok   Board order is drawn on no line-mode position
@@ -44,10 +44,10 @@ ok   a pair card says "Paired core node"
 ## + Add a position is one control, the dashed row under the rows
 ok   one add control, the dashed row inside the rows' box
 
-## Set for this style · a switch added is the style's draft, and × takes the draft back
+## A position's Advanced sheet · a switch turned on is the style's draft, and off takes the draft back
 ok   POS_A2: the style as it opened is not dirty
-ok   POS_A2: Strict pack added makes the draft dirty
-ok   POS_A2: taken off again, the draft is clean
+ok   POS_A2: Strict pack on makes the draft dirty
+ok   POS_A2: off again, the draft is clean
 
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
 ok   a position with no swap mode: "1 to fix POS_A11 · how does it swap? — Pick its swap mode on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) No unsaved changes"

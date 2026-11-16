@@ -400,26 +400,19 @@ block({
     checks: [r => ['the sheet names "POS_A1 needs a source"', statusText(r.page).indexOf('POS_A1 needs a source') >= 0,
         'status ' + JSON.stringify(statusText(r.page))]],
 });
-// The Advanced sheet went in slice 3; its Set for this style keeps the rule:
-// a setting added and taken off again is no change (advancedAction).
+// The row's Advanced sheet (round 5) keeps the rule the list kept: a setting
+// switched on and off again is no change (advancedAction).
 block({
-    title: 'P0 :4169: a setting added and taken off again in Set for this style changes nothing',
+    title: "P0 :4169: a setting switched on and off again in a position's Advanced sheet changes nothing",
     open: () => ({}),
     act: async page => {
         const before = JSON.stringify(page.pd('M')().toCells(page.S.model));
-        page.click('root', { act: 'set-add' });
+        page.click('root', { act: 'adv-open', node: 'POS_A1' });
         await page.settle();
-        const pick = v => {
-            const r = page.byId('pd-pop').querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === v);
-            if (r) r.click();
-            return !!r;
-        };
-        if (!pick('auto_confirm')) throw new Error('+ Add a setting offers no auto_confirm');
-        await page.settle();
-        pick('POS_A1');
+        page.click('scrim', { act: 'set-switch', key: 'auto_confirm', node: 'POS_A1', v: '1' }, { inside: ['.pd-modal'] });
         await page.settle();
         const from = page.mark();
-        page.click('root', { act: 'set-rm', key: 'auto_confirm', node: 'POS_A1' });
+        page.click('scrim', { act: 'set-switch', key: 'auto_confirm', node: 'POS_A1', v: '0' }, { inside: ['.pd-modal'] });
         await page.settle();
         return { before: before, after: JSON.stringify(page.pd('M')().toCells(page.S.model)), sent: page.since(from).filter(c => !/flow\/preview/.test(c.url)) };
     },

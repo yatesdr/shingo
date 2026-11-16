@@ -52,7 +52,7 @@
     ↑ Pick up       POS_B1 (positions)
     ↓ Drop          POS_A1 (positions)
 
-## POS_A1, Next carrier Robot 2 (Advanced settings › Next carrier)
+## POS_A1, Next carrier Robot 2 (its row's Advanced › Next carrier)
   Robot work lists · POS_A1 — Index Swap · the steps sent to Core
   Robot 1 · old bin out
     ‖ Wait          POS_A1 (positions)
@@ -65,7 +65,7 @@
     ↑ Pick up       GRP_A (inbound)
     ↓ Drop          POS_B1 (positions)
 
-## POS_A1, Next carrier Robot 3 (Advanced settings › Next carrier)
+## POS_A1, Next carrier Robot 3 (its row's Advanced › Next carrier)
   Robot work lists · POS_A1 — Index Swap · the steps sent to Core
   Robot 1 · old bin out
     ‖ Wait          POS_A1 (positions)

@@ -60,22 +60,25 @@ const BUGS = [
         },
     },
     {
-        // The sheet went in slice 3: the row's chip forecasts Set for this
-        // style's lists, one per setting the position is listed under.
-        title: 'B6 · the row\'s "N set" is the number of Set for this style\'s lists it is in',
+        // THE ROW'S ADVANCED (round 5): every row ends with one control,
+        // "Advanced" with nothing set and "Advanced · N set" with N its
+        // settings set (setCount), on the all-default and all-set styles.
+        title: 'B6 · every row\'s Advanced control says how many of its settings are set',
         run: async page => {
             const S = page.S;
-            const style = S.composer.styles.find(s => s.name === 'Style B');
-            page.click('root', { style: String(style.id) });
-            await page.settle();
-            const lists = String(page.root.innerHTML).split('<div class="exc" data-exc="set-').slice(1);
             const bad = [];
-            for (const n of tableRows(page.S)) {
-                const chip = page.pd('setCount')(n);
-                const listed = lists.filter(l => l.indexOf('<td class="exc-pos">' + n + '</td>') >= 0).length;
-                if (chip !== listed) bad.push(n + ' chip ' + chip + ', lists ' + listed);
+            for (const name of ['Style A', 'Style B']) {
+                const style = S.composer.styles.find(s => s.name === name);
+                page.click('root', { style: String(style.id) });
+                await page.settle();
+                for (const n of tableRows(page.S)) {
+                    const chip = page.pd('setCount')(n);
+                    const want = 'Advanced' + (chip ? ' · ' + chip + ' set' : '');
+                    const got = (new RegExp('data-act="adv-open" data-node="' + n + '">([^<]*)</button>').exec(String(page.root.innerHTML)) || [])[1];
+                    if (got !== want) bad.push(name + ' ' + n + ' reads ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+                }
             }
-            return [['every row of Style B', !bad.length, bad.join('; ')]];
+            return [['every row of Style A and Style B', !bad.length, bad.join('; ')]];
         },
     },
     {
@@ -223,32 +226,27 @@ const BUGS = [
         },
     },
     {
-        // The sheet went in slice 3, and with it the backdrop that could drop a
-        // flipped switch: a switch in Set for this style is the style's draft,
-        // which Save style or Discard changes answers.
-        title: 'Set for this style · a switch added is the style\'s draft, and × takes the draft back',
+        // A switch in a position's Advanced sheet (round 5) is the style's
+        // draft, which Save style or Discard changes answers, as the list's
+        // was; there is no Cancel to drop it.
+        title: 'A position\'s Advanced sheet · a switch turned on is the style\'s draft, and off takes the draft back',
         run: async page => {
             const n = tableRows(page.S).find(x => page.pd('advShows')('strict_pack', page.pd('setCtx')({ node: x })));
             const dirty = () => page.pd('dirty')();
             const before = dirty();
-            page.click('root', { act: 'set-add' });
+            page.click('root', { act: 'adv-open', node: n });
             await page.settle();
-            const pick = v => {
-                const r = page.byId('pd-pop').querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === v);
-                if (r) r.click();
-            };
-            pick('strict_pack');
-            await page.settle();
-            pick(n);
+            const sw = v => page.click('scrim', { act: 'set-switch', key: 'strict_pack', node: n, v: v }, { inside: ['.pd-modal'] });
+            sw('1');
             await page.settle();
             const after = dirty();
-            page.click('root', { act: 'set-rm', key: 'strict_pack', node: n });
+            sw('0');
             await page.settle();
             const back = dirty();
             return [
                 [n + ': the style as it opened is not dirty', !before, 'dirty before any change'],
-                [n + ': Strict pack added makes the draft dirty', after, 'not dirty: Save style would not send it'],
-                [n + ': taken off again, the draft is clean', !back, 'still dirty'],
+                [n + ': Strict pack on makes the draft dirty', after, 'not dirty: Save style would not send it'],
+                [n + ': off again, the draft is clean', !back, 'still dirty'],
             ];
         },
     },

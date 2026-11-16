@@ -57,13 +57,13 @@ Add process with its group list open: sheet open (the layer's shell), #pd-scrim 
 Escape → sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none; pd-pop hidden, pd-stpop absent, pd-advpop hidden
 Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
-## Escape: Set for this style's setting list (a popover on the tab, no sheet)
-Set for this style › + Add a setting: sheet closed, #pd-scrim markup empty, layers 1, body overflow "", S.sheet null, question none; pd-pop open, pd-stpop absent, pd-advpop absent
+## Escape: a position's Advanced sheet (the row's own, round 5)
+POS_A1 › Advanced: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none; title "Advanced · POS_A1"
 Escape → sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
-nothing picked: dirty=false; requests none
+nothing changed: dirty=false; requests none
 
-## Set for this style: a number typed is the style draft's, and Escape takes nothing away
-typed 7 into lineside_soft_threshold on POS_A1: dirty=true; sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none
+## A position's Advanced sheet: a number typed is the style draft's, and Escape takes nothing away
+typed 7 into lineside_soft_threshold in POS_A1's sheet: dirty=true; sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none
 Escape → dirty=true; sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none; pd-pop hidden, pd-stpop absent, pd-advpop absent
 
 ## the discard question on a sheet: a typed name, Escape, Keep editing, OK
@@ -87,5 +87,5 @@ Escape → S.selected null; sheet closed, #pd-scrim markup empty, layers 0, body
 
 ## facts
 body scroll lock: overflow "hidden" while a sheet is up, "" once it closes (the layer's counted lock; every block above)
-focus() calls across every block above: 24
+focus() calls across every block above: 26
 Escape: document keydown listeners per page, at most 2 (the page's own, for nothing open; the layer's, added with its first entry); the window listeners boot adds: error, unhandledrejection, resize, focus

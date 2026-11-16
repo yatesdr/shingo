@@ -125,10 +125,10 @@ The flow composer (the desktop Processes page and the station's changeover
 screens) is the convention at full size. Its state object is
 `shingo-edge/www/static/operator-station/composer-model.js` — pure, no DOM,
 `reduce(state, action)` — and the fields it cannot draw on the picture are
-listed on the desktop under the positions table, in *Set for this style*'s
-exception lists (one per setting a position sets, the **Advanced settings**
-button for the rest; see [Desktop composer patterns](16-desktop-composer-patterns-u9.md) ›
-The exception list). What those lists offer is asked of `advancedShows()`,
+in a position's own **Advanced** sheet, opened from its row of the positions
+table (every setting its swap takes, each with its value control; see
+[Desktop composer patterns](16-desktop-composer-patterns-u9.md) › The row's
+Advanced). What the sheet offers is asked of `advancedShows()`,
 which asks **flowspec**: the same table the server validates against, so a
 control cannot be offered for a value the save would refuse. Copy from it:
 

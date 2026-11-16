@@ -214,9 +214,9 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   has been opened, then says so and goes. **Skip setup, use Settings** hides it in this browser; **Show setup**
   brings it back while the process cannot run.
 - **Styles**: a rail of the recipes and styles, and each style's flow, as the same picture and model the
-  operator station uses, with its positions table, one dashed **+ Add a position** row closing it, and, under it, the
-  **Advanced settings** button and *Set for this style* (what a position sets for this style, only where it
-  differs from the default). A row clicked opens its **robot work lists** under it: each robot, and the steps
+  operator station uses, with its positions table and one dashed **+ Add a position** row closing it. Each row
+  ends with **Advanced** (**Advanced · N set** where it sets something), which opens that position's settings in a
+  sheet, each with its value control, saved with the style. A row clicked opens its **robot work lists** under it: each robot, and the steps
   it is sent, as the Edge's own builders make them for the draft (the preview's `?steps=1`). The list is the
   swap as configured: an empty line, an index press's back positions being primed, a keep-staged spot with no
   spare and a held partial change what a request sends, and are not drawn. Changes are saved with **Save style**; **+ New style**

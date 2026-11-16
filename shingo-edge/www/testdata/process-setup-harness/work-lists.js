@@ -8,7 +8,7 @@
 // each step's glyph, verb, node and the role the node is named in.
 //
 // One position per swap, and an Index Swap on each Next carrier, set as an
-// engineer sets it: Advanced settings, Next carrier, the position, the answer.
+// engineer sets it: the row's Advanced, Next carrier, the answer.
 'use strict';
 
 let T;
@@ -41,24 +41,17 @@ async function select(page, node) {
     await page.settle();
 }
 
-// nextCarrier sets node's Next carrier to v through Advanced settings (the
-// setting added at its default, then the answer pressed).
+// nextCarrier sets node's Next carrier to v in node's Advanced sheet (the
+// row's own, round 5), then closes it with Done.
 async function nextCarrier(page, node, v) {
-    const listed = String(page.root.innerHTML).indexOf('data-act="set-seg" data-key="refill_by" data-node="' + node + '"') >= 0;
-    if (!listed) {
-        page.click('root', { act: 'set-add' });
-        await page.settle();
-        const pick = val => {
-            const r = page.byId('pd-pop').querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === val);
-            if (!r) throw new Error('Advanced settings offers no ' + val);
-            r.click();
-        };
-        pick('refill_by');
-        await page.settle();
-        pick(node);
-        await page.settle();
+    page.click('root', { act: 'adv-open', node: node });
+    await page.settle();
+    if (String(page.scrim.innerHTML).indexOf('data-act="set-seg" data-key="refill_by" data-node="' + node + '"') < 0) {
+        throw new Error(node + "'s Advanced sheet offers no Next carrier");
     }
-    page.click('root', { act: 'set-seg', key: 'refill_by', node: node, v: v });
+    page.click('scrim', { act: 'set-seg', key: 'refill_by', node: node, v: v }, { inside: ['.pd-modal'] });
+    await page.settle();
+    page.pd('closeSheet')();
     await page.settle();
 }
 
@@ -77,7 +70,7 @@ async function run(t) {
     }
     for (const [v, robot] of [['index_robot', 'Robot 2'], ['own_robot', 'Robot 3']]) {
         await nextCarrier(page, 'POS_A1', v);
-        L.push('', '## POS_A1, Next carrier ' + robot + ' (Advanced settings › Next carrier)', ...workText(page));
+        L.push('', '## POS_A1, Next carrier ' + robot + " (its row's Advanced › Next carrier)", ...workText(page));
     }
     // A swap not complete sends no robot: POS_A3's destination cleared.
     await select(page, 'POS_A3');

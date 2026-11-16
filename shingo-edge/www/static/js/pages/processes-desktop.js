@@ -159,6 +159,7 @@ const S = {
     setPicks: {},        // every set pick drawn, by key: {pid, api} — see mountSetPick
     looseOnto: '',       // Settings' draft puts the positions on no screen onto this screen (its id)
     steady: null,        // the last preview's steady state (flow/preview?steps=1): {styleId, cells}
+    advNode: '',         // the position whose Advanced sheet is open (openAdvSheet), or ''
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
     stShell: null,       // Settings' shell for one visit: {pid, top, sheet, body, page} (settingsShell)
     stPickersPid: 0,     // the process Settings' pickers were declared for (settingsPickers)
@@ -1824,6 +1825,7 @@ function drawFlows() {
     markRecipeState();
     scrollers.forEach(([sel, axis], i) => { const el = root().querySelector(sel); if (el) el[axis] = wasAt[i]; });
     bindRailSearch();
+    drawAdvSheet();
 }
 
 // reportDesktopFit publishes D1's geometry for the shots harness, the way U8's
@@ -2325,7 +2327,7 @@ function main() {
         '<button class="pd-btn primary" data-act="save" disabled>Save style</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' + freeLine() +
-        positionsTable() + styleSettings() +
+        positionsTable() +
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
 
@@ -3201,16 +3203,16 @@ function tableColumns() {
         { col: 'c-dst', head: W('outbound_destination'), uses: shows('outbound_destination'),
             cell: (n, c) => fieldCell(n, 'dest', 'outbound_destination', c.dest, '—') + routingGap(n, 'outbound_destination', c.dest) },
         { col: 'c-reorder', head: W('auto_reorder'), draftless: true, uses: shows('auto_reorder'), cell: n => reorderCell(n) },
-        // THE ROW SAYS IT SETS SOMETHING FOR THIS STYLE, and the chip takes
-        // you to it (Set for this style, under the table). A row that sets
-        // nothing draws nothing: the chip marks an exception. It replaces the
-        // gear, which opened a sheet of every field at its default. The count
-        // is the list's own (setCount): one per setting the position is
-        // listed under.
-        { col: 'c-set', head: '', draftless: true, uses: n => setCount(n) > 0, cell: n => {
+        // THE ROW'S OWN ADVANCED (owner, 2026-11-15: "just add it here and
+        // put advanced settings on it to open a modal"): every row ends with
+        // one control, "Advanced", or "Advanced · N set" where the position
+        // sets something for this style (setCount), opening that position's
+        // sheet (openAdvSheet). It replaces the list under the table and its
+        // button, which asked for the position again on every add.
+        { col: 'c-set', head: '', draftless: true, cell: n => {
             const set = setCount(n);
-            return set ? '<button class="pd-chip pd-setchip" data-act="set-goto" title="see it under Set for this style">' +
-                set + ' set</button>' : '';
+            return '<button class="pd-chip pd-setchip' + (set ? ' set' : '') + '" data-act="adv-open" data-node="' + esc(n) + '">' +
+                'Advanced' + (set ? ' · ' + set + ' set' : '') + '</button>';
         } },
     ];
     return S.shapeDraft ? out.filter(col => !col.draftless) : out;
@@ -5161,32 +5163,9 @@ function setList(key, places, eligible, group) {
             cells: setCells(key, p, setCtx(p)),
             remove: Object.assign({ act: 'set-rm', key: key }, p.g !== undefined ? { g: p.g } : { node: p.node }),
         })),
-        add: !group && places.length < eligible ? { label: '+ Add a position', act: 'set-addpos', key: key } : null,
+        add: null,
     }) + (key === 'evac_nodes' && places.some(p => setCtx(p).evacNodes.length)
         ? '<p class="pd-note pd-setnote">' + esc(CARRYOVER_NOTE) + '</p>' : '');
-}
-
-// styleSettings is under the positions table: the Advanced settings button,
-// which offers every setting (openSetAdd), and "Set for this style", a list per
-// setting some position of this style sets.
-//
-// THE WAY IN IS A BUTTON, IN THE ACCENT, IN ONE PLACE. As "+ Add a setting"
-// it was a quiet grey line under whatever lists were drawn, so with nothing
-// set an engineer had no sign the settings existed. Outlined rather than
-// filled: Save style is the tab's one filled button. Not amber: amber on
-// these pages is state (needed, stale), and this is not a state.
-function styleSettings() {
-    const rows = drawnRows();
-    if (!rows.length) return '';
-    const lists = setKeys('style').map(key => {
-        const eligible = rows.filter(n => advShows(key, setCtx({ node: n })));
-        const listed = eligible.filter(n => isListed(key, { node: n }, setCtx({ node: n })));
-        return listed.length ? setList(key, listed.map(n => ({ node: n })), eligible.length) : '';
-    }).join('');
-    return '<div class="pd-setfor" id="pd-setfor">' +
-        '<button class="pd-btn accent" data-act="set-add">Advanced settings</button>' +
-        (lists ? '<div class="pd-lbl">Set for this style<span class="hint">only where a position differs from the default</span></div>' + lists : '') +
-        '</div>';
 }
 
 // groupSettings is a recipe group's own list, on its card: the settings every
@@ -5201,84 +5180,193 @@ function groupSettings(g, i) {
         '<button class="pd-btn quiet exc-add" data-act="set-add" data-g="' + i + '">+ Add a setting</button></div>';
 }
 
-// openSetAdd is + Add a setting: the shared picker over the settings, under
-// their headings. A setting no place here may take, or one every place that
-// may take it already sets, is greyed with why. A style's pick then asks for
-// the position, unless only one may take it; a group's is the group.
+// openSetAdd is a recipe group's + Add a setting: the shared picker over the
+// settings the group may take, under their headings, one it already sets
+// greyed. (A style's position sets its own in its row's sheet, openAdvSheet.)
 function openSetAdd(btn, group) {
     const pop = $('pd-pop');
-    if (!pop) return;
+    if (!pop || !group) return;
+    const p = { g: group.g };
     const rows = [];
-    const places = group ? [{ g: group.g }] : drawnRows().map(n => ({ node: n }));
-    const free = {};
     for (const [section, keys] of SET_SECTIONS) {
         for (const key of keys) {
-            if (setKeys(group ? 'group' : 'style').indexOf(key) < 0) continue;
-            const may = places.filter(p => advShows(key, setCtx(p)));
-            if (group && !may.length) continue;
-            free[key] = may.filter(p => !isListed(key, p, setCtx(p)));
+            if (setKeys('group').indexOf(key) < 0 || !advShows(key, setCtx(p))) continue;
             const r = { value: key, label: W(SET_COPY[key][0]), section: section };
-            if (!may.length) r.reason = 'no position of this style takes it';
-            else if (!free[key].length) r.reason = group ? 'set' : 'set on every position that takes it';
+            if (isListed(key, p, setCtx(p))) r.reason = 'set';
             rows.push(r);
         }
     }
-    openRowPicker(pop, btn, rows, key => {
-        if (group || free[key].length === 1) { setAddAt(key, free[key][0]); return; }
-        openSetPosition(btn, key);
-    }, { placeholder: 'find a setting' });
-}
-
-// openSetPosition is the second step, and a list's own + Add a position: the
-// style's positions that may take the setting, one already listed greyed.
-function openSetPosition(btn, key) {
-    const pop = $('pd-pop');
-    if (!pop) return;
-    const rows = drawnRows().filter(n => advShows(key, setCtx({ node: n }))).map(n => {
-        const r = { value: n, label: n };
-        if (isListed(key, { node: n }, setCtx({ node: n }))) r.reason = 'set';
-        return r;
-    });
-    openRowPicker(pop, btn, rows, n => setAddAt(key, { node: n }), { placeholder: 'find a position' });
+    openRowPicker(pop, btn, rows, key => setAddAt(key, p), { placeholder: 'find a setting' });
 }
 
 // openSetPick is a row's own picker: parts, a staging node, a destination, the
 // positions a Tool change marks.
 function openSetPick(btn, key, p) {
-    const pop = $('pd-pop');
+    // A PICKER OPENED IN A SHEET DRAWS ON THE SHEET'S OWN POPOVER, or it
+    // draws behind the modal (openGroupPicker's reason).
+    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
+    const pop = inSheet ? $('pd-advpop') : $('pd-pop');
     if (!pop) return;
     const d = setCtx(p);
+    // The sheet has no ×: a pick's "none" is its way back to the default.
+    const none = inSheet ? [{ value: '-', label: 'none' }] : [];
+    const val = v => (v === '-' ? '' : v);
     const routing = S.composer.routing || [];
     const node = r => ({ value: r.core_node_name, label: r.label || r.core_node_name });
     keepRow(key, p);
     switch (key) {
         case 'allowed_payload_codes': {
-            const have = d.a.allowed_payload_codes || [];
+            const have = advList(key, p);
             const rows = S.model.parts.filter(c => have.indexOf(c) < 0).map(c => ({ value: c, label: M().shortPart(c), search: c }));
             openRowPicker(pop, btn, rows, list => setWrite(p, key, have.concat(list)), { multi: true, placeholder: 'find parts' });
             return;
         }
-        case 'auto_request_payload':
-            openRowPicker(pop, btn, S.model.parts.map(c => ({ value: c, label: M().shortPart(c), search: c })),
-                c => setWrite(p, key, c), { placeholder: 'find a part' });
+        case 'auto_request_payload': {
+            // THE ROW'S PART FIRST, and the one the list opens on when none is
+            // set: the setting takes a part, and the row already holds one.
+            const own = rowPart(p);
+            const parts = own ? [own].concat(S.model.parts.filter(c => c !== own)) : S.model.parts;
+            openRowPicker(pop, btn, none.concat(parts.map(c => ({ value: c, label: M().shortPart(c), search: c }))),
+                c => setWrite(p, key, val(c)), { placeholder: 'find a part', selected: d.a.auto_request_payload || own || undefined });
             return;
+        }
         // The staging nodes of the routing set: a spot is a node a robot sets
         // one bin down on and lifts it from, which is what a staging node is.
         // It may be this position's own inbound staging (the robot waits under
         // the spare); the save refuses one another position already names.
         case 'keep_staged_node':
-            openRowPicker(pop, btn, routing.filter(r => r.role === 'staging').map(node),
-                n => setWrite(p, key, n), { placeholder: 'find a staging node' });
+            openRowPicker(pop, btn, none.concat(routing.filter(r => r.role === 'staging').map(node)),
+                n => setWrite(p, key, val(n)), { placeholder: 'find a staging node' });
             return;
         case 'partial_dest':
-            openRowPicker(pop, btn, routing.filter(r => r.role === 'destination').map(node),
-                n => setWrite(p, key, n), { placeholder: 'find a destination' });
+            openRowPicker(pop, btn, none.concat(routing.filter(r => r.role === 'destination').map(node)),
+                n => setWrite(p, key, val(n)), { placeholder: 'find a destination' });
             return;
         case 'evac_nodes':
             openRowPicker(pop, btn, toolChangeOwn(p.node).filter(n => d.evacNodes.indexOf(n) < 0).map(n => ({ value: n, label: n })),
                 list => setWrite(p, key, d.evacNodes.concat(list)), { multi: true, placeholder: 'find positions' });
             return;
         default:
+    }
+}
+
+// ── a position's Advanced sheet ──────────────────────────────────────────────
+//
+// ONE POSITION, ITS OWN SETTINGS, IN THE SHARED SHEET. The row's "Advanced"
+// opens it (owner, 2026-11-15). It lists every setting flowspec offers this
+// position (advShows, as the list did), each with its value control, under
+// SET_SECTIONS' headings. Every control is a draft edit through setWrite, as
+// the list's were, saved with Save style: there is no second writer and no
+// Cancel (the shell's cancel: false). Done closes it.
+//
+// THE POSITION AND ITS PART ARE THE ROW'S. Nothing in it asks for the
+// position, and a setting that takes a part starts from the row's: Allowed
+// parts lists the row's part until another is added (an empty list is the
+// row's part alone, NodeClaim.AllowedPayloads), and Auto request part's list
+// opens on it. The list under the table asked for the position on every add,
+// and started both empty.
+
+// rowPart is a position's part, the row's.
+function rowPart(p) {
+    return p && p.node && S.model.cells[p.node] ? S.model.cells[p.node].part || '' : '';
+}
+
+// advList is a list setting's value at a place: Allowed parts reads as the
+// row's part alone while none is set, which is what its readers take it as.
+function advList(key, p) {
+    const v = advValue(key, setCtx(p)) || [];
+    if (key === 'allowed_payload_codes' && !v.length && rowPart(p)) return [rowPart(p)];
+    return v;
+}
+
+// setSwitch is an Off · On choice for a switch setting (SET_SWITCHES).
+function setSwitch(key, p, on) {
+    return '<div class="pd-seg">' + [['0', 'Off'], ['1', 'On']].map(([v, w]) =>
+        '<button class="' + ((v === '1') === !!on ? 'on' : '') + '" data-act="set-switch"' + setData(key, p, { v: v }) + '>' + w + '</button>').join('') + '</div>';
+}
+
+// advControl is a setting's value control in the sheet: every one is drawn,
+// set or not, with what it is now.
+function advControl(key, p, d) {
+    if (SET_SWITCHES.indexOf(key) >= 0) {
+        const on = !!advValue(key, d);
+        const more = on ? setCells(key, p, d).slice(1).join(' ') : '';
+        return setSwitch(key, p, on) + (more ? ' ' + more : '');
+    }
+    switch (key) {
+        case 'allowed_payload_codes':
+            return advList(key, p).map(c => setChip(key, p, c, M().shortPart(c))).join('') +
+                '<button class="pd-chip add" data-act="set-pick"' + setData(key, p) + '>+ add</button>';
+        case 'auto_request_payload': {
+            const v = d.a.auto_request_payload;
+            return setPickBtn(key, p, esc(v ? M().shortPart(v) : 'off'), '');
+        }
+        case 'keep_staged_node':
+        case 'partial_dest':
+            return setPickBtn(key, p, esc(advValue(key, d) || 'none'), '');
+        case 'evac_nodes': {
+            const cells = setCells(key, p, d);
+            const marks = cells[0] || '<button class="pd-chip add" data-act="set-pick"' + setData(key, p) + '>+ mark</button>';
+            return marks + (cells[1] ? '<div class="pd-advmore">' + cells[1] + '</div><p class="pd-note">' + esc(CARRYOVER_NOTE) + '</p>' : '');
+        }
+        default:
+            return setCells(key, p, d).join(' ');
+    }
+}
+
+// advSheetBody is the sheet's settings for node, under their headings.
+function advSheetBody(node) {
+    const p = { node: node };
+    const d = setCtx(p);
+    const keys = setKeys('style');
+    const sections = SET_SECTIONS.map(([head, list]) => {
+        const rows = list.filter(k => keys.indexOf(k) >= 0 && advShows(k, d)).map(k =>
+            '<div class="pd-advrow"><div class="pd-advname">' + esc(W(SET_COPY[k][0])) + '<small>' + esc(SET_COPY[k][1]) + '</small></div>' +
+            '<div class="pd-advval">' + advControl(k, p, d) + '</div></div>').join('');
+        return rows ? '<div class="pd-advsec"><div class="pd-lbl">' + esc(head) + '</div>' + rows + '</div>' : '';
+    }).join('');
+    return '<div class="pd-advsheet" id="pd-advsheet">' + (sections || '<p class="pd-dim">This swap takes no settings of its own.</p>') + '</div>';
+}
+
+// openAdvSheet opens node's Advanced sheet.
+function openAdvSheet(node) {
+    const c = S.model && S.model.cells[node];
+    if (!c || !c.on) return;
+    const label = M().modeLabels()[c.mode] || c.mode || '';
+    const h = pageSheet('Advanced · ' + node, [c.part ? M().shortPart(c.part) : 'no part', label, 'saved with Save style'].filter(Boolean).join(' · '),
+        advSheetBody(node), 'Done', () => closeSheet(), false, undefined, false, { cancel: false });
+    S.advNode = node;
+    // A number is written as it is typed (onSetNumber), as on the page.
+    h.el.addEventListener('input', onSetNumber);
+}
+
+// drawAdvSheet redraws the open sheet's settings after a draft edit: the
+// page's redraw (drawFlows) calls it.
+function drawAdvSheet() {
+    if (!S.advNode || !S.sheet || !S.sheet.handle) return;
+    // The shell's own body: the sheet's whole content, its popover included,
+    // which a redraw closes as a pick does.
+    const body = S.sheet.handle.el.querySelector('.layer-body');
+    if (!body) return;
+    if (!S.model.cells[S.advNode] || !S.model.cells[S.advNode].on) { closeSheet(); return; }
+    body.innerHTML = advSheetBody(S.advNode) + '<div class="pd-pop" id="pd-advpop" hidden></div>';
+}
+
+// setAct runs a setting control's act, from the page (a recipe group's list)
+// or from a position's sheet; true when it was one.
+function setAct(btn) {
+    const p = setPlace(btn);
+    switch (btn.dataset.act) {
+        case 'set-pick': openSetPick(btn, btn.dataset.key, p); return true;
+        case 'set-rm': setRemove(btn.dataset.key, p); return true;
+        case 'set-seg': keepRow(btn.dataset.key, p); setWrite(p, btn.dataset.key, btn.dataset.v); return true;
+        case 'set-switch': keepRow(btn.dataset.key, p); setWrite(p, btn.dataset.key, btn.dataset.v === '1'); return true;
+        case 'set-unchip': {
+            keepRow(btn.dataset.key, p);
+            setWrite(p, btn.dataset.key, advList(btn.dataset.key, p).filter(v => v !== btn.dataset.v));
+            return true;
+        }
+        default: return false;
     }
 }
 
@@ -5438,6 +5526,13 @@ function onScrimClick(e) {
         spop.innerHTML = '';
     }
     const act = e.target.closest && e.target.closest('[data-act]');
+    // A POSITION'S ADVANCED SHEET: its controls are the page's own setting
+    // acts (setAct); Next carrier's link closes it and selects the row, whose
+    // work list opens under it.
+    if (act && S.advNode) {
+        if (act.dataset.act === 'work-goto') { e.stopPropagation(); closeSheet(); gotoFinding(act.dataset.node); return; }
+        if (setAct(act)) { e.stopPropagation(); return; }
+    }
     // NEW STYLE'S SPOTS STEP draws into this scrim: a card or band lane of its
     // picture is a tap (a lane first — a used lane's slot carries the spot it
     // serves as its data-pos), and a move's chip puts it back.
@@ -7677,16 +7772,16 @@ function bindPickers() {
 // draws behind the modal. One per sheet — and the sheets that never open one
 // pay an empty div.
 // wide: the process sheet, whose set pick draws its four boxes side by side.
-function pageSheet(title, sub, body, confirm, run, danger, opener, wide) {
+function pageSheet(title, sub, body, confirm, run, danger, opener, wide, more) {
     if (S.sheet && S.sheet.handle) S.sheet.handle.close('replaced');
-    const h = openSheet({
+    const h = openSheet(Object.assign({
         title: title, sub: sub, ok: confirm, danger: !!danger, opener: opener || undefined,
         body: body + '<div class="pd-pop" id="pd-advpop" hidden></div>',
         cardClass: 'layer-card layer-sheet pd-modal' + (wide ? ' pd-wide' : ''),
         backdrop: true,
         run: () => run(),
         onClose: why => sheetGone(h, why),
-    });
+    }, more || {}));
     // The sheet's own controls (pickers, choosers, its popover's rows) answer
     // in onScrimClick, as they did on #pd-scrim: the sheet is outside #pd-root.
     h.el.addEventListener('click', onScrimClick);
@@ -7739,6 +7834,7 @@ function sheetGone(h, why) {
     if (h && S.sheet && S.sheet.handle !== h) return;   // a sheet already replaced
     const half = S.sheet && S.sheet.half;
     S.sheet = null;
+    S.advNode = '';
     if (half) void half();
     if (h && h.el === $('pd-scrim')) h.el.innerHTML = '';
     // A sheet another took the place of leaves its page state to the one
@@ -10008,7 +10104,7 @@ async function runPresetApply() {
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
-    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1, 'ch-pin-pick': 1, 'fs-part': 1,
+    'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1, 'ch-pin-pick': 1, 'fs-part': 1,
     'fs-addpart': 1, 'fs-pick': 1, 'fs-addpos': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
@@ -10106,21 +10202,8 @@ function onClick(e) {
             case 'discard': selectStyle(S.styleID); return;
             // Set for this style, and a group's list (see setList).
             case 'set-add': openSetAdd(btn, btn.dataset.g !== undefined ? { g: Number(btn.dataset.g) } : null); return;
-            case 'set-addpos': openSetPosition(btn, btn.dataset.key); return;
-            case 'set-pick': openSetPick(btn, btn.dataset.key, setPlace(btn)); return;
-            case 'set-rm': setRemove(btn.dataset.key, setPlace(btn)); return;
-            case 'set-seg': keepRow(btn.dataset.key, setPlace(btn)); setWrite(setPlace(btn), btn.dataset.key, btn.dataset.v); return;
-            case 'set-unchip': {
-                const p = setPlace(btn);
-                keepRow(btn.dataset.key, p);
-                setWrite(p, btn.dataset.key, (advValue(btn.dataset.key, setCtx(p)) || []).filter(v => v !== btn.dataset.v));
-                return;
-            }
-            case 'set-goto': {
-                const el = $('pd-setfor');
-                if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
-                return;
-            }
+            case 'set-pick': case 'set-rm': case 'set-seg': case 'set-switch': case 'set-unchip': setAct(btn); return;
+            case 'adv-open': openAdvSheet(btn.dataset.node); return;
             case 'rmpart': apply({ type: 'removePart', payloadCode: btn.dataset.part }); return;
             case 'rmpos': apply({ type: 'removePosition', node: btn.dataset.node }); return;
             // The route's own two verbs. Both compute the whole new list and

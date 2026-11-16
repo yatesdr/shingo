@@ -66,7 +66,7 @@ ok   the page says "the Edge refused it"
 ## P0 :6467: a mint refused 422 with findings names them
 ok   the sheet names "POS_A1 needs a source"
 
-## P0 :4169: a setting added and taken off again in Set for this style changes nothing
+## P0 :4169: a setting switched on and off again in a position's Advanced sheet changes nothing
 ok   the flow is as it was
 ok   the flow is not dirty
 ok   nothing is sent

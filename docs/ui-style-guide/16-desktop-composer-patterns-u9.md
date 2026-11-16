@@ -29,7 +29,7 @@ every other screen that shows it shows it read-only:
 | HMI setup, recipe names, and which parts a recipe is applied to | **Settings › Operator setup** |
 | whether the station shows the auto-reorder switch | **Settings › Auto-reorder** |
 | quality hold | **Settings › Quality hold** |
-| a style's flow, and what a position sets for that style | **Styles** (the positions table, and *Set for this style* under it) |
+| a style's flow, and what a position sets for that style | **Styles** (the positions table; each row's **Advanced** sheet) |
 | a recipe's shape, and what a recipe group sets | **Styles**, from the rail (open a recipe, or **+ New recipe**) |
 | a process, its screen, its positions, routing set and parts, when it is made | **Add process**, which lands on **Setup**; Setup's Change… is the same sheet |
 
@@ -123,11 +123,14 @@ own (`#pd-poshead`, the same colgroup) sticky against the column and carried
 sideways with the rows. The bar sticks to the foot of the column, so Save is
 always on screen.
 
-**The per-row `N set` chip.** A positions-table row whose position sets
-something for this style says how many settings, in the accent (`2 set`), and
-the chip takes you to them under *Set for this style*. A row that sets nothing
-draws nothing: the chip marks an exception. The count is the list's own — one
-per setting the position is listed under — and "is set" is the SAME predicate
+**The row's Advanced.** Every positions-table row ends with one control,
+**Advanced**, or **Advanced · N set** where its position sets something for
+this style (the count in the accent), opening that position's sheet: the
+shared sheet shell, every setting flowspec offers the position under its
+heading, each with its value control, edits the style's draft (no Cancel;
+Done closes it). It never asks for the position again, and a setting that
+takes a part starts from the row's part. The count is one per setting set,
+and "is set" is the SAME predicate
 the server uses for "has a value" (Robot 1 and Fresh bin are defaults, not
 settings), so a chip and a save cannot disagree; a second spelling of it would
 put an indigo count on a row the server reads as untouched. There is no gear
@@ -139,15 +142,12 @@ differs is said as the rule once (`2 of 23 positions`, `all 23 at the
 production counter`) and a row only where a place differs, each with its
 controls and a ×, then `+ Add …` — never one row per place saying the default.
 It is one shared piece, `exceptionList` in `shared/exceptions.js` (markup only;
-the page's delegated handler acts on its × and its add), with three uses:
+the page's delegated handler acts on its × and its add), with two uses:
 **Settings › Light curtain** and **Settings › Counted somewhere else** (each
 the card's whole subject, so the list is `bare`: no name column of its own, `+
-Add a position` at the card's right edge), **Styles › Set for this style** under the positions table (what a
-position sets for one style: the **Advanced settings** button, an outlined
-button in the accent directly under the table, for every setting, then a list
-per setting that is set, each with its own `+ Add a position`), and a recipe
-group's own list on its card (**Set for this group**, one row named for the
-group). A setting's label is the claim's own word (`Next carrier`, `Tool
+Add a position` at the card's right edge), and a recipe group's own list on its
+card (**Set for this group**, one row named for the group). A style's position
+is not a list: its settings are its row's Advanced sheet (above). A setting's label is the claim's own word (`Next carrier`, `Tool
 change`) with one muted sub-line only where it changes what a person would
 pick. What a list offers is flowspec's decision, as the positions table's
 columns are: a setting this choreography forbids or never reads is not
