@@ -665,6 +665,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     position: sticky; top: -6px; z-index: var(--z-sticky); margin: 0 -4px; padding: 6px 4px 8px; background: var(--surface);
 }
 .pd-modal .layer-body .setpick .picker--open .picker-list { max-height: none; }
+/* And the "Picking …" head sticks under them, so it is never half covered:
+   its offset is the boxes' height, which the pick sets as it draws. */
+.pd-modal .layer-body .setpick-head {
+    position: sticky; top: calc(var(--setpick-boxes-h, 0px) - 6px); z-index: var(--z-sticky);
+    margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0; padding: var(--sp-3) var(--sp-3) var(--sp-2); background: var(--bg);
+    border-radius: calc(var(--radius) + 4px) calc(var(--radius) + 4px) 0 0;
+}
 .pd-sec { padding: 10px 0 4px; }
 .pd-sec .pd-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pd-sec .pd-lbl .cnt {

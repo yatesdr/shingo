@@ -194,6 +194,12 @@ export function createSetPick(host, opts) {
         }
         pane.setAttribute('data-role', b ? (b.role || b.key) : '');
         root.setAttribute('data-active', active || '');
+        // THE BOXES' HEIGHT, for a page that sticks the boxes and the head
+        // under them (a sheet's one scroll): the head says which box a tick
+        // goes in, and it slid half under the boxes as the list scrolled.
+        if (root.style && root.style.setProperty && typeof row.offsetHeight === 'number') {
+            root.style.setProperty('--setpick-boxes-h', row.offsetHeight + 'px');
+        }
         dirtyMark();
     }
 
