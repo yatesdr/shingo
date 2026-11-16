@@ -83,6 +83,10 @@
   Robot work lists · POS_A3 — 2‑Robot Swap · the steps sent to Core
   No robot is sent until this swap is complete: 2‑Robot Swap requires an outbound destination
 
+## POS_A7 with its Outbound destination cleared (the builder takes it; its removal would drop at no node)
+  Robot work lists · POS_A7 — Sequential A/B · the steps sent to Core
+  No robot is sent until this swap is complete: Sequential A/B requires an outbound destination
+
 ## POS_B1 clicked (POS_A1's back position)
   Robot work lists · POS_A1 — Index Swap · the steps sent to Core
   Robot 1 · old bin out

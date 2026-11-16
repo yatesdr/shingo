@@ -9,12 +9,18 @@
 // carrierSpec for Robot 3's carrier to an index press's back
 // (followOnOnPickup, at Robot 2's lift). What this file decides is only which
 // of those a cell's legs owe, and it reads that from the legs' own steps
-// (followOnPositions), as the runtime does.
+// (followOnPositions), as the runtime does; and whether a cell is complete
+// enough to be drawn at all (notComplete).
 
 package engine
 
 import (
+	"fmt"
+	"strings"
+
 	"shingo/protocol"
+	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
 	"shingoedge/store/processes"
 )
 
@@ -108,5 +114,50 @@ func steadyCell(claim *processes.NodeClaim) SteadyCell {
 		out.Legs = append(out.Legs, SteadyLeg{Leg: SteadyLegFollowOn, Position: pos, Kind: SteadyKindRetrieve,
 			Retrieve: &SteadyRetrieve{Source: spec.Source, Delivery: spec.Delivery, PayloadCode: spec.Payload, Empty: spec.Empty}})
 	}
+	if why := notComplete(claim, out.Legs); why != "" {
+		return SteadyCell{CoreNodeName: out.CoreNodeName, Role: out.Role, SwapMode: out.SwapMode, Error: why, Legs: []SteadyLeg{}}
+	}
 	return out
+}
+
+// notComplete is why a cell's legs are not drawn though the builders made
+// them: a step names no node on a swap not complete, one leaving blank a
+// routing field flowspec requires (each is named). Blank when every step names
+// its node, or when nothing required is blank (a source flowspec does not
+// require: the pickup names no node and Core picks the bin).
+//
+// A SWAP NOT COMPLETE IS NEVER DRAWN WITH A STEP TO NOWHERE (round 10). The
+// builders take some such drafts: Sequential A/B's removal and 1-Robot Swap's
+// last leg drop at a blank outbound destination, and Sequential A/B's Order B
+// picks up at a blank inbound source. The save refuses every one of them
+// (flowspec Required, validateSwapModeRouting), and the preview runs the
+// builders on a draft, so the work list drew "no node". This is the preview's
+// refusal, not the builder's: the builders are REQUEST's, and only 2-Robot Swap
+// and Index Swap refuse a blank destination there (buildSwapDispatch); a new
+// refusal at REQUEST is a plant change this does not make. Pinned by
+// TestPreviewFlow_SteadyIsTheRequestBuilders (sequential/no_destination,
+// sequential/no_source, single_robot/no_destination; two_robot/no_source is
+// the blank Core picks, drawn as built).
+func notComplete(claim *processes.NodeClaim, legs []SteadyLeg) string {
+	nodeless := false
+	for _, l := range legs {
+		for _, s := range l.Steps {
+			nodeless = nodeless || (s.Node == "" && (s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff))
+		}
+		nodeless = nodeless || (l.Retrieve != nil && (l.Retrieve.Source == "" || l.Retrieve.Delivery == ""))
+	}
+	if !nodeless {
+		return ""
+	}
+	need := flowspec.Steady(claim.Role, claim.SwapMode)
+	var blank []string
+	for _, f := range flowspec.RoutingFields() {
+		if need[f] == flowspec.Required && !domain.ClaimHas(claim, f) {
+			blank = append(blank, string(f))
+		}
+	}
+	if len(blank) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("node %s: a step names no node (blank: %s)", claim.CoreNodeName, strings.Join(blank, ", "))
 }

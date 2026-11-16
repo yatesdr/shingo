@@ -1007,6 +1007,35 @@
   {
     "style_id": 1,
     "cell": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-7",
+      "paired_core_node": "POS_A8",
+      "inbound_source": "GRP_A"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "error": "node POS_A7: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A7",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      }
+    ]
+  },
+  {
+    "style_id": 1,
+    "cell": {
       "core_node_name": "POS_A8",
       "role": "consume",
       "swap_mode": "sequential",
@@ -1059,6 +1088,35 @@
         }
       ]
     }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-8",
+      "paired_core_node": "POS_A7",
+      "inbound_source": "GRP_A"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "error": "node POS_A8: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A8",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      }
+    ]
   },
   {
     "style_id": 1,
@@ -1120,6 +1178,35 @@
   {
     "style_id": 1,
     "cell": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-9",
+      "paired_core_node": "POS_A10",
+      "inbound_source": "SRC_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "error": "node POS_A9: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A9",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      }
+    ]
+  },
+  {
+    "style_id": 1,
+    "cell": {
       "core_node_name": "POS_A10",
       "role": "produce",
       "swap_mode": "sequential",
@@ -1173,6 +1260,35 @@
         }
       ]
     }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-10",
+      "paired_core_node": "POS_A9",
+      "inbound_source": "SRC_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "error": "node POS_A10: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A10",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      }
+    ]
   },
   {
     "style_id": 2,
@@ -2256,6 +2372,53 @@
   {
     "style_id": 2,
     "cell": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-7",
+      "paired_core_node": "POS_A8",
+      "inbound_source": "GRP_A",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "error": "node POS_A7: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A7",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      },
+      {
+        "core_node_name": "POS_A7",
+        "side": "to",
+        "field": "changeover_evac_nodes",
+        "severity": "error",
+        "message": "\"POS_A11\" is marked for changeover clearance but is not one of this claim's nodes"
+      },
+      {
+        "core_node_name": "POS_A7",
+        "side": "to",
+        "field": "inbound_staging",
+        "severity": "error",
+        "message": "A tool change holds the new carrier at inbound staging. Set inbound staging on this claim."
+      }
+    ]
+  },
+  {
+    "style_id": 2,
+    "cell": {
       "core_node_name": "POS_A8",
       "role": "consume",
       "swap_mode": "sequential",
@@ -2312,6 +2475,53 @@
         }
       ]
     }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-8",
+      "paired_core_node": "POS_A7",
+      "inbound_source": "GRP_A",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "error": "node POS_A8: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A8",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      },
+      {
+        "core_node_name": "POS_A8",
+        "side": "to",
+        "field": "changeover_evac_nodes",
+        "severity": "error",
+        "message": "\"POS_A11\" is marked for changeover clearance but is not one of this claim's nodes"
+      },
+      {
+        "core_node_name": "POS_A8",
+        "side": "to",
+        "field": "inbound_staging",
+        "severity": "error",
+        "message": "A tool change holds the new carrier at inbound staging. Set inbound staging on this claim."
+      }
+    ]
   },
   {
     "style_id": 2,
@@ -2377,6 +2587,53 @@
   {
     "style_id": 2,
     "cell": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-9",
+      "paired_core_node": "POS_A10",
+      "inbound_source": "SRC_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "error": "node POS_A9: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A9",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      },
+      {
+        "core_node_name": "POS_A9",
+        "side": "to",
+        "field": "changeover_evac_nodes",
+        "severity": "error",
+        "message": "\"POS_A11\" is marked for changeover clearance but is not one of this claim's nodes"
+      },
+      {
+        "core_node_name": "POS_A9",
+        "side": "to",
+        "field": "inbound_staging",
+        "severity": "error",
+        "message": "A tool change holds the new carrier at inbound staging. Set inbound staging on this claim."
+      }
+    ]
+  },
+  {
+    "style_id": 2,
+    "cell": {
       "core_node_name": "POS_A10",
       "role": "produce",
       "swap_mode": "sequential",
@@ -2434,5 +2691,52 @@
         }
       ]
     }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-10",
+      "paired_core_node": "POS_A9",
+      "inbound_source": "SRC_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "error": "node POS_A10: a step names no node (blank: outbound_destination)",
+      "follow_ons": 0,
+      "legs": []
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A10",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "Sequential A/B requires an outbound destination"
+      },
+      {
+        "core_node_name": "POS_A10",
+        "side": "to",
+        "field": "changeover_evac_nodes",
+        "severity": "error",
+        "message": "\"POS_A11\" is marked for changeover clearance but is not one of this claim's nodes"
+      },
+      {
+        "core_node_name": "POS_A10",
+        "side": "to",
+        "field": "inbound_staging",
+        "severity": "error",
+        "message": "A tool change holds the new carrier at inbound staging. Set inbound staging on this claim."
+      }
+    ]
   }
 ]

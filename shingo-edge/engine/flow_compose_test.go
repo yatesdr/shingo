@@ -376,9 +376,14 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 		refill    protocol.RefillBy
 		third     string
 		noDest    bool
+		noSource  bool
 		legs      []leg
 		followOns int
 		err       string
+		// unsent is a swap not complete the builders do not refuse: a field
+		// flowspec requires is blank, so a step they make names no node. The
+		// preview sends no legs for it, and its error names the field.
+		unsent string
 	}{
 		{name: "sequential", mode: protocol.SwapModeSequential,
 			legs: []leg{a, {SteadyLegFollowOn, "FLOW-SWAP", SteadyKindComplex}}, followOns: 1},
@@ -393,6 +398,12 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 		{name: "press_index/own_robot/three_positions", mode: protocol.SwapModeTwoRobotPressIndex, refill: protocol.RefillByOwnRobot,
 			third: "FLOW-THIRD", legs: []leg{a, b, {SteadyLegFollowOn, "FLOW-THIRD", SteadyKindRetrieve}}, followOns: 1},
 		{name: "two_robot/no_destination", mode: protocol.SwapModeTwoRobot, noDest: true, err: "outbound destination"},
+		{name: "sequential/no_destination", mode: protocol.SwapModeSequential, noDest: true, unsent: "outbound_destination"},
+		{name: "sequential/no_source", mode: protocol.SwapModeSequential, noSource: true, unsent: "inbound_source"},
+		{name: "single_robot/no_destination", mode: protocol.SwapModeSingleRobot, noDest: true, unsent: "outbound_destination"},
+		// A blank source flowspec does not require is a swap Core sources
+		// (its pickup names no node, and Core picks the bin): drawn as built.
+		{name: "two_robot/no_source", mode: protocol.SwapModeTwoRobot, noSource: true, legs: []leg{a, b}},
 	}
 	for _, row := range rows {
 		for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
@@ -401,6 +412,9 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 				InboundSource: "FLOW-SRC", InboundStaging: "FLOW-STG", OutboundStaging: "FLOW-OSTG", OutboundDestination: "FLOW-DST"}
 			if row.noDest {
 				cell.OutboundDestination = ""
+			}
+			if row.noSource {
+				cell.InboundSource = ""
 			}
 			if row.mode == protocol.SwapModeTwoRobotPressIndex {
 				cell.PairedCoreNode, cell.SecondPairedCoreNode = "FLOW-BACK", row.third
@@ -451,6 +465,25 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 			}
 			if derr != nil || d == nil {
 				t.Fatalf("%s: BuildSwapDispatch refused the row's own draft: %v", name, derr)
+			}
+			if row.unsent != "" {
+				// The builders take it, and a step they make names no node:
+				// what the preview does not draw.
+				built := append(append([]protocol.ComplexOrderStep{}, d.StepsA...), d.StepsB...)
+				if row.mode == protocol.SwapModeSequential {
+					built = append(built, BuildSequentialBackfillSteps(&claim)...)
+				}
+				nodeless := false
+				for _, s := range built {
+					nodeless = nodeless || (s.Node == "" && (s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff))
+				}
+				if !nodeless {
+					t.Errorf("%s: the builders' steps all name a node; the row pins nothing", name)
+				}
+				if !strings.Contains(got.Error, row.unsent) || got.Legs == nil || len(got.Legs) != 0 || got.FollowOns != 0 {
+					t.Errorf("%s: error %q legs %+v follow_ons %d, want the swap not complete (%s) and no legs", name, got.Error, got.Legs, got.FollowOns, row.unsent)
+				}
+				continue
 			}
 			var want []SteadyLeg
 			for _, l := range row.legs {

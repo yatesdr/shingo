@@ -77,9 +77,17 @@ async function run(t) {
     page.pd('apply')({ type: 'setDest', node: 'POS_A3', dest: '' });
     await page.settle();
     L.push('', '## POS_A3 with its Outbound destination cleared (the builder refuses it)', ...workText(page));
-    // A back position's click opens its press's list, under the press's row.
-    // (POS_A3 let go first: a click on the selected row lets go of it.)
+    // A SWAP NOT COMPLETE THE BUILDER TAKES IS NOT DRAWN EITHER (round 10):
+    // Sequential A/B's removal would drop at no node; the preview sends no
+    // legs for it, and the list says what the swap needs.
     await select(page, 'POS_A3');
+    await select(page, 'POS_A7');
+    page.pd('apply')({ type: 'setDest', node: 'POS_A7', dest: '' });
+    await page.settle();
+    L.push('', '## POS_A7 with its Outbound destination cleared (the builder takes it; its removal would drop at no node)', ...workText(page));
+    // A back position's click opens its press's list, under the press's row.
+    // (POS_A7 let go first: a click on the selected row lets go of it.)
+    await select(page, 'POS_A7');
     await select(page, 'POS_B1');
     L.push('', '## POS_B1 clicked (POS_A1\'s back position)', ...workText(page));
     T.out['work-lists.txt'] = L.join('\n') + '\n';

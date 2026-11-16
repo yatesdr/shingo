@@ -219,7 +219,8 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   sheet, each with its value control, saved with the style. A row clicked opens its **robot work lists** under it: each robot, and the steps
   it is sent, as the Edge's own builders make them for the draft (the preview's `?steps=1`). The list is the
   swap as configured: an empty line, an index press's back positions being primed, a keep-staged spot with no
-  spare and a held partial change what a request sends, and are not drawn. Changes are saved with **Save style**; **+ New style**
+  spare and a held partial change what a request sends, and are not drawn. A swap not complete (a field its swap
+  requires is blank) draws no robot, even where the builders would make a step to no node, and says what it needs. Changes are saved with **Save style**; **+ New style**
   puts parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as
   running**, the admin's style switch for when the plant changed parts without shingo. A position's reorder
   point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never

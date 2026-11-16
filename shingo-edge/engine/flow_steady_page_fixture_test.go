@@ -43,10 +43,11 @@ type steadyPageEntry struct {
 // unedited (domain.Collapse, then the preview's own draftFlow path: Expand and
 // MaterializeClaim over the claim as prior) and, on an index press, once more
 // per Next carrier (the cell's Advanced, as the page sends it once Next
-// carrier is set); a 2-Robot Swap once more with its destination cleared, the
-// builder's refusal, with the validator's findings on it. The harness serves
-// an entry only for a cell that matches it field for field, its findings with
-// it; any other draft gets no steady state and no finding.
+// carrier is set); a 2-Robot Swap and a Sequential A/B once more with its
+// destination cleared, a swap not complete, with the validator's findings on
+// it. The harness serves an entry only for a cell that matches it field for
+// field, its findings with it; any other draft gets no steady state and no
+// finding.
 func TestSteady_PageHarnessFixture(t *testing.T) {
 	dir := filepath.Join("..", "www", "testdata", "process-setup-harness")
 	raw, err := os.ReadFile(filepath.Join(dir, "fixture.json"))
@@ -91,8 +92,10 @@ func TestSteady_PageHarnessFixture(t *testing.T) {
 				}
 			}
 			// A swap not complete: a 2-Robot Swap drafted with its
-			// destination cleared, which BuildSwapDispatch refuses.
-			if prior.SwapMode == protocol.SwapModeTwoRobot {
+			// destination cleared, which BuildSwapDispatch refuses, and a
+			// Sequential A/B, which it takes and the preview does not draw
+			// (notComplete).
+			if prior.SwapMode == protocol.SwapModeTwoRobot || prior.SwapMode == protocol.SwapModeSequential {
 				cell := domain.Collapse(prior)
 				cell.OutboundDestination = ""
 				add(st.ID, prior, cell, "", true)
