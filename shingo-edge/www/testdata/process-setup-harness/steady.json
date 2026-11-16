@@ -700,7 +700,16 @@
       "error": "node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)",
       "follow_ons": 0,
       "legs": []
-    }
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A3",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "2‑Robot Swap requires an outbound destination"
+      }
+    ]
   },
   {
     "style_id": 1,
@@ -791,7 +800,16 @@
       "error": "node POS_A4: two-robot swap requires outbound destination (the evac leg's dropoff)",
       "follow_ons": 0,
       "legs": []
-    }
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A4",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "2‑Robot Swap requires an outbound destination"
+      }
+    ]
   },
   {
     "style_id": 1,
@@ -1897,7 +1915,23 @@
       "error": "node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)",
       "follow_ons": 0,
       "legs": []
-    }
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A3",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "2‑Robot Swap requires an outbound destination"
+      },
+      {
+        "core_node_name": "POS_A3",
+        "side": "to",
+        "field": "changeover_evac_nodes",
+        "severity": "error",
+        "message": "\"POS_A11\" is marked for changeover clearance but is not one of this claim's nodes"
+      }
+    ]
   },
   {
     "style_id": 2,
@@ -1996,7 +2030,23 @@
       "error": "node POS_A4: two-robot swap requires outbound destination (the evac leg's dropoff)",
       "follow_ons": 0,
       "legs": []
-    }
+    },
+    "findings": [
+      {
+        "core_node_name": "POS_A4",
+        "side": "to",
+        "field": "outbound_destination",
+        "severity": "error",
+        "message": "2‑Robot Swap requires an outbound destination"
+      },
+      {
+        "core_node_name": "POS_A4",
+        "side": "to",
+        "field": "changeover_evac_nodes",
+        "severity": "error",
+        "message": "\"POS_A11\" is marked for changeover clearance but is not one of this claim's nodes"
+      }
+    ]
   },
   {
     "style_id": 2,

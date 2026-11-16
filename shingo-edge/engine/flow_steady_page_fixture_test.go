@@ -16,13 +16,22 @@ import (
 var updateSteadyPageFixture = flag.Bool("update-steady-page-fixture", false,
 	"rewrite www/testdata/process-setup-harness/steady.json from the builders")
 
-// steadyPageEntry is one cell the Processes page's harness may preview, and
-// the steady state the builders give it.
+// steadyPageEntry is one cell the Processes page's harness may preview, the
+// steady state the builders give it, and the validator's findings on it.
 type steadyPageEntry struct {
 	StyleID  int64           `json:"style_id"`
 	Cell     domain.FlowCell `json:"cell"`
 	RefillBy string          `json:"refill_by"`
 	Steady   SteadyCell      `json:"steady"`
+	// Findings is what the preview's validator says of the cell alone
+	// (validateFlowInputs, over a context it could not look in, so no
+	// membership or key-route check), so a page pin shows the sentence a real
+	// preview gives. ONLY ON A DRAFT WRITTEN AS A SWAP NOT COMPLETE: the stored
+	// claims' own findings are not served, because Style B (every setting set)
+	// is refused by the validator for its tool change (POS_A11 marked, not one
+	// of the claim's nodes; no inbound staging), and answering that would block
+	// every Style B pin's save.
+	Findings []domain.NodeFinding `json:"findings,omitempty"`
 }
 
 // TestSteady_PageHarnessFixture writes the steady state the Processes page's
@@ -35,8 +44,9 @@ type steadyPageEntry struct {
 // MaterializeClaim over the claim as prior) and, on an index press, once more
 // per Next carrier (the cell's Advanced, as the page sends it once Next
 // carrier is set); a 2-Robot Swap once more with its destination cleared, the
-// builder's refusal. The harness serves an entry only for a cell that matches
-// it field for field; any other draft gets no steady state.
+// builder's refusal, with the validator's findings on it. The harness serves
+// an entry only for a cell that matches it field for field, its findings with
+// it; any other draft gets no steady state and no finding.
 func TestSteady_PageHarnessFixture(t *testing.T) {
 	dir := filepath.Join("..", "www", "testdata", "process-setup-harness")
 	raw, err := os.ReadFile(filepath.Join(dir, "fixture.json"))
@@ -55,23 +65,29 @@ func TestSteady_PageHarnessFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out []steadyPageEntry
-	add := func(styleID int64, prior processes.NodeClaim, cell domain.FlowCell, r protocol.RefillBy) {
+	add := func(styleID int64, prior processes.NodeClaim, cell domain.FlowCell, r protocol.RefillBy, incomplete bool) {
 		if r != "" {
 			a := domain.AdvancedOf(&prior)
 			a.RefillBy = r
 			cell.Advanced = a
 		}
-		claim := domain.MaterializeClaim(domain.Expand(cell, &prior, domain.ClaimSourceHMI, ""), &prior)
+		in := domain.Expand(cell, &prior, domain.ClaimSourceHMI, "")
+		in.StyleID = styleID
+		claim := domain.MaterializeClaim(in, &prior)
 		cell.Advanced = nil
-		out = append(out, steadyPageEntry{StyleID: styleID, Cell: cell, RefillBy: string(r), Steady: steadyCell(&claim)})
+		e := steadyPageEntry{StyleID: styleID, Cell: cell, RefillBy: string(r), Steady: steadyCell(&claim)}
+		if incomplete {
+			e.Findings = validateFlowInputs(domain.ClaimContextSet{}, []domain.NodeClaimInput{in})
+		}
+		out = append(out, e)
 	}
 	for _, st := range fx.Composer.Styles {
 		for i := range st.Claims {
 			prior := st.Claims[i]
-			add(st.ID, prior, domain.Collapse(prior), "")
+			add(st.ID, prior, domain.Collapse(prior), "", false)
 			if prior.IsPressIndex() {
 				for _, r := range []protocol.RefillBy{protocol.RefillByClearingRobot, protocol.RefillByIndexRobot, protocol.RefillByOwnRobot} {
-					add(st.ID, prior, domain.Collapse(prior), r)
+					add(st.ID, prior, domain.Collapse(prior), r, false)
 				}
 			}
 			// A swap not complete: a 2-Robot Swap drafted with its
@@ -79,7 +95,7 @@ func TestSteady_PageHarnessFixture(t *testing.T) {
 			if prior.SwapMode == protocol.SwapModeTwoRobot {
 				cell := domain.Collapse(prior)
 				cell.OutboundDestination = ""
-				add(st.ID, prior, cell, "")
+				add(st.ID, prior, cell, "", true)
 			}
 		}
 	}
