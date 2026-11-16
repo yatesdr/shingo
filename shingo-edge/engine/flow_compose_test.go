@@ -442,7 +442,9 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 				if derr == nil || got.Error != derr.Error() || !strings.Contains(got.Error, row.err) || got.Legs == nil || len(got.Legs) != 0 {
 					t.Errorf("%s: error %q legs %+v, want BuildSwapDispatch's refusal (%v) and no legs", name, got.Error, got.Legs, derr)
 				}
-				if raw, _ := json.Marshal(got); !strings.Contains(string(raw), `"legs":[]`) {
+				raw, err := json.Marshal(got)
+				testutil.MustNoErr(t, err, "marshal the refused cell")
+				if !strings.Contains(string(raw), `"legs":[]`) {
 					t.Errorf("%s: %s, want legs as [] not null", name, raw)
 				}
 				continue
@@ -473,8 +475,10 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 				want = append(want, w)
 			}
 			if !reflect.DeepEqual(got.Legs, want) {
-				gj, _ := json.Marshal(got.Legs)
-				wj, _ := json.Marshal(want)
+				gj, gerr := json.Marshal(got.Legs)
+				testutil.MustNoErr(t, gerr, "marshal the preview's legs")
+				wj, werr := json.Marshal(want)
+				testutil.MustNoErr(t, werr, "marshal the builders' legs")
 				t.Errorf("%s: legs\n got  %s\n want %s", name, gj, wj)
 			}
 			if got.FollowOns != d.FollowOns || got.FollowOns != row.followOns || got.Error != "" {
@@ -483,7 +487,8 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 			// THE WIRE KEYS the page is built against, said once, on the row that
 			// carries every one of them.
 			if row.name == "press_index/own_robot" {
-				raw, _ := json.Marshal(got)
+				raw, err := json.Marshal(got)
+				testutil.MustNoErr(t, err, "marshal the own_robot cell")
 				for _, key := range []string{`"core_node_name":"FLOW-SWAP"`, `"role":"` + string(role) + `"`,
 					`"swap_mode":"two_robot_press_index"`, `"follow_ons":1`, `"leg":"A","kind":"complex","steps":[`,
 					`"leg":"follow_on","position":"FLOW-BACK","kind":"retrieve","retrieve":{"source":"FLOW-SRC","delivery":"FLOW-BACK","payload_code":"PART-NEW","empty":`} {
