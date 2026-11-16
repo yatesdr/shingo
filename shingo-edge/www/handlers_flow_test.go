@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
@@ -82,6 +83,54 @@ func TestFlowPreview_WritesTheEngineResultVerbatim(t *testing.T) {
 	testutil.MustNoErr(t, err, "json.Marshal")
 	if string(gotC) != string(want) {
 		t.Errorf("handler body:\n got  %s\n want %s", gotC, want)
+	}
+}
+
+// TestFlowPreview_StepsReachTheEngineAndTheNoOrdersBody: ?steps=1 is the
+// engine request's Steps, beside ?preflight=1 and independent of it, and off
+// without it. A preview that fires nothing carries its steady state on the
+// hand-built 400 exactly as the engine built it, and without one the key is
+// absent, as on a 200 (omitempty).
+func TestFlowPreview_StepsReachTheEngineAndTheNoOrdersBody(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	stub := h.orchestration.(*stubEngine)
+	stub.flowPreview = &engine.FlowPreview{OrderCount: ptr(1), Findings: []domain.NodeFinding{}, Unresolved: []string{},
+		Preflight: engine.FlowPreflight{State: "unchecked", Missing: []string{}}, Fingerprint: "f"}
+	for _, c := range []struct {
+		query            string
+		steps, preflight bool
+	}{{"", false, false}, {"?steps=1", true, false}, {"?steps=1&preflight=1", true, true}, {"?preflight=1", false, true}, {"?steps=0", false, false}} {
+		resp := doRequest(t, router, "POST", "/api/processes/1/flow/preview"+c.query, map[string]any{"to_style_id": 7, "cells": []any{}}, nil)
+		assertStatus(t, resp, http.StatusOK)
+		got := stub.flowPreviewCalls[len(stub.flowPreviewCalls)-1]
+		if got.Steps != c.steps || got.Preflight != c.preflight {
+			t.Errorf("%q: the engine was asked steps %v preflight %v, want %v %v", c.query, got.Steps, got.Preflight, c.steps, c.preflight)
+		}
+	}
+
+	steady := []engine.SteadyCell{{CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot", Legs: []engine.SteadyLeg{
+		{Leg: engine.SteadyLegA, Kind: engine.SteadyKindComplex, Steps: []protocol.ComplexOrderStep{{Action: "pickup", Node: "PLN_01"}}},
+	}}, {CoreNodeName: "PLN_02", Role: "produce", SwapMode: "two_robot", Error: "needs a destination", Legs: []engine.SteadyLeg{}}}
+	want, err := json.Marshal(steady)
+	testutil.MustNoErr(t, err, "json.Marshal")
+	stub.flowPreview = &engine.FlowPreview{OrderCount: ptr(0), Findings: []domain.NodeFinding{}, Unresolved: []string{},
+		Preflight: engine.FlowPreflight{State: "unchecked", Missing: []string{}}, Fingerprint: "f", Steady: steady}
+	stub.flowPreviewErr = &engine.FlowNoOrdersError{Preview: stub.flowPreview}
+	for _, with := range []bool{true, false} {
+		if !with {
+			stub.flowPreview.Steady = nil
+		}
+		resp := doRequest(t, router, "POST", "/api/processes/1/flow/preview?steps=1", map[string]any{"to_style_id": 7}, nil)
+		assertStatus(t, resp, http.StatusBadRequest)
+		var body map[string]json.RawMessage
+		testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&body), "decode")
+		raw, ok := body["steady"]
+		switch {
+		case with && string(raw) != string(want):
+			t.Errorf("no-orders steady:\n got  %s\n want %s", raw, want)
+		case !with && ok:
+			t.Errorf("no-orders body carries steady %s with none asked for", raw)
+		}
 	}
 }
 

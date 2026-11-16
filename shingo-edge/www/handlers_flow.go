@@ -112,12 +112,16 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 	// (a new one every 400 ms) do not ask, and the desktop never does: it
 	// does not read the answer. See engine.flowPreflight.
 	//
+	// ?steps=1 asks for every cell's steady-state legs as Core would receive
+	// them (engine.FlowPreview.Steady). Not on the mint form.
+	//
 	// r.Context() travels, so a preview whose operator has left the screen
 	// stops at the next phase boundary instead of finishing a plan and a Core
 	// call for nobody.
 	preq := engine.FlowPreviewRequest{
 		ToStyleID: body.ToStyleID, Cells: body.Cells, TakenOff: body.TakenOff,
 		Preflight: r.URL.Query().Get("preflight") == "1",
+		Steps:     r.URL.Query().Get("steps") == "1",
 	}
 	if body.PresetID != 0 || len(body.Parts) > 0 || body.StyleID != 0 {
 		preq = engine.FlowPreviewRequest{Preflight: preq.Preflight, Mint: &engine.MintRequest{
@@ -134,9 +138,7 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &noOrders) && noOrders.Preview != nil {
 			// 400 with the named reason — and the preview's findings and
 			// unresolved nodes, which are usually why nothing fires.
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]any{
+			out := map[string]any{
 				"error":       err.Error(),
 				"order_count": 0,
 				"findings":    noOrders.Preview.Findings,
@@ -144,7 +146,14 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 				"preflight":   noOrders.Preview.Preflight,
 				"fingerprint": noOrders.Preview.Fingerprint,
 				"mint":        noOrders.Preview.Mint,
-			})
+			}
+			// Present when asked, absent otherwise, as on a 200 (omitempty).
+			if len(noOrders.Preview.Steady) > 0 {
+				out["steady"] = noOrders.Preview.Steady
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(out)
 			return
 		}
 		if !writeFlowRefusal(w, err) {
