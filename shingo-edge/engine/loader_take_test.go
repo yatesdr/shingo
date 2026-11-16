@@ -613,3 +613,34 @@ func mustStation(t *testing.T, db *store.DB, name string) int64 {
 	t.Fatalf("no screen %s", name)
 	return 0
 }
+
+// FOUND ON THE DEV STACK (round 10): a person on Core makes a station, picks
+// this Edge, then gives it windows and a part. The screen is made once the
+// loader is one this Edge can run, whichever send that is, not only on the
+// send that changed the pick.
+func TestLoaderTake_ALoaderPickedBeforeItIsCompleteGetsItsScreenWhenItIs(t *testing.T) {
+	t.Parallel()
+	eng, db, _ := takeEngine(t)
+	l := picked(keyed(sharedLoader(), "loader:TK", "TK Loader"), takeSelf, "THIS EDGE")
+	mustSetLoaders(t, eng, l) // picked, no windows yet
+	l = picked(keyed(sharedLoader("TK-W1", "TK-W2"), "loader:TK", "TK Loader"), takeSelf, "THIS EDGE")
+	l.Payloads = nil
+	mustSetLoaders(t, eng, l) // windows, no part: this Edge cannot run it yet
+	if n := countRows(t, db, "processes"); n != 0 {
+		t.Fatalf("%d process(es) made before the loader has a part", n)
+	}
+	l = picked(keyed(sharedLoader("TK-W1", "TK-W2"), "loader:TK", "TK Loader"), takeSelf, "THIS EDGE")
+	mustSetLoaders(t, eng, l) // the part: now it runs
+	got := screensOf(t, db)
+	if len(got) != 1 || got[0].process != "TK Loader" || !slices.Equal(got[0].positions, []string{"TK-W1", "TK-W2"}) {
+		t.Fatalf("screens = %+v, want TK Loader's screen made with both windows once the loader runs", got)
+	}
+
+	// Picked, then its windows added in a later send with its part already set.
+	eng2, db2, _ := takeEngine(t)
+	mustSetLoaders(t, eng2, picked(keyed(sharedLoader(), "loader:TK2", "TK Two"), takeSelf, "THIS EDGE"))
+	mustSetLoaders(t, eng2, picked(keyed(sharedLoader("TK-X1"), "loader:TK2", "TK Two"), takeSelf, "THIS EDGE"))
+	if got := screensOf(t, db2); len(got) != 1 || !slices.Equal(got[0].positions, []string{"TK-X1"}) {
+		t.Errorf("screens = %+v, want TK Two's screen made when its first window came", got)
+	}
+}

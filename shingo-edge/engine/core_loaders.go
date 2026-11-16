@@ -46,7 +46,6 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 	// With no held set to compare with, the send runs as a start does:
 	// removals and marks, nothing added.
 	arriving := service.FactsOfInfos(loaders, e.cfg.StationID())
-	e.stationService.SetLoaderFacts(arriving)
 	if known {
 		e.takeLoaders("node-list sync", held, arriving, false)
 	} else {

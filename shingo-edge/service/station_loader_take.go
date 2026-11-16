@@ -18,10 +18,11 @@ import (
 // Which Edge it names decides what this one takes:
 //
 //   - THIS EDGE (LoaderCaseHere): the Edge takes the loader whole. When Core's
-//     pick becomes this Edge, every window goes onto the loader's screen here,
-//     and with no screen here the Edge makes the process and screen through
-//     CreateLoaderBoard, the door "Make a screen" uses. Windows Core adds later
-//     go on; windows it removes come off.
+//     pick becomes this Edge, or a loader it names this Edge for comes to run,
+//     every window goes onto the loader's screen here; and on any send that
+//     changes such a loader and finds no screen for it here, the Edge makes the
+//     process and screen through CreateLoaderBoard, the door "Make a screen"
+//     uses. Windows Core adds later go on; windows it removes come off.
 //   - ANOTHER EDGE (LoaderCaseElsewhere): this Edge takes and offers nothing for
 //     the loader. A screen of it here from before loses the loader's windows;
 //     the process and screen stay, and the page says where Core moved it.
@@ -81,6 +82,11 @@ type LoaderFacts struct {
 	Case    LoaderCase
 	// EdgeUID and EdgeName are the Edge Core names: blank for LoaderCaseNone.
 	EdgeUID, EdgeName string
+	// Runs: this Edge's loader store holds the loader as Core sends it (one
+	// it skips as malformed, a shared loader with no part, has no board to
+	// draw). Set by TakeLoaders from the store; a loader that comes to run is
+	// a change of its own.
+	Runs bool
 }
 
 // loaderCaseOf reads Core's pick against this Edge's station uid. A blank
@@ -197,10 +203,13 @@ func diffLoaders(held, arriving []LoaderFacts) loaderDiff {
 		seen[f.Key] = true
 		old, had := before[f.Key]
 		d.had[f.Key] = had
-		if !had || old.EdgeUID != f.EdgeUID {
+		if !had || old.EdgeUID != f.EdgeUID || old.Runs != f.Runs {
 			d.changed = true
 		}
-		if f.Case == LoaderCaseHere && (!had || old.Case != LoaderCaseHere) {
+		// Taken whole when Core's pick becomes this Edge, and when a loader
+		// it names this Edge for comes to run: a person on Core may pick the
+		// Edge before the station has windows or a part.
+		if f.Case == LoaderCaseHere && f.Runs && (!had || old.Case != LoaderCaseHere || !old.Runs) {
 			d.whole[f.Key] = true
 		}
 		for _, w := range f.Windows {
@@ -382,6 +391,13 @@ type TakeResult struct {
 // changed a loader's windows or pick, something was kept before, or start.
 func (s *StationService) TakeLoaders(held, arriving []LoaderFacts, start bool) (TakeResult, error) {
 	var res TakeResult
+	// Whether this Edge runs each loader, from the store in memory, and the
+	// set held from here on: the page reads it, and the next send compares.
+	arriving = append([]LoaderFacts(nil), arriving...)
+	for i := range arriving {
+		arriving[i].Runs = s.runsLoader(arriving[i])
+	}
+	s.SetLoaderFacts(arriving)
 	diff := diffLoaders(held, arriving)
 	if !start && !diff.changed && !s.takePending.Load() {
 		return res, nil
@@ -512,7 +528,7 @@ func (s *StationService) planAdditions(pl *takePlant, arriving []LoaderFacts, di
 		if len(want) == 0 {
 			continue
 		}
-		if !s.runsLoader(f) {
+		if !f.Runs {
 			if f.Case == LoaderCaseHere {
 				notes[f.Key] = "this Edge cannot run the loader as Core sends it (its log says why)"
 			}
@@ -545,7 +561,9 @@ func (s *StationService) planAdditions(pl *takePlant, arriving []LoaderFacts, di
 			if f.Case == LoaderCaseHere {
 				notes[f.Key] = "more than one screen here holds its windows and none was made for it"
 			}
-		case f.Case == LoaderCaseHere && diff.whole[f.Key]:
+		case f.Case == LoaderCaseHere:
+			// Made on any send that changes a loader Core names this Edge
+			// for and finds no screen for it: the pick, a window, the part.
 			line, why := s.makeLoaderScreen(f, pl)
 			if line != "" {
 				res.Changes = append(res.Changes, line)

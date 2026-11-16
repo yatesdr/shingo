@@ -496,7 +496,6 @@ func (e *Engine) Start() {
 	// digest is the one held), and the windows a running order kept on a
 	// screen taken off if it has ended.
 	if facts, ok := e.cachedLoaderFacts(); ok {
-		e.stationService.SetLoaderFacts(facts)
 		e.takeLoaders("start", facts, facts, true)
 	}
 
