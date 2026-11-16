@@ -199,12 +199,15 @@ func refillPickup(fromClaim, toClaim *processes.NodeClaim) protocol.ComplexOrder
 		return spotPickup(toClaim)
 	}
 	step := buildStep("pickup", toClaim.InboundSource)
-	if toClaim.InboundSource == "" {
-		return step
-	}
 	// A produce node refills with an EMPTY carrier; a consume node refills with a
 	// payload-matched FULL retrieve. That is the only difference between the two,
 	// and it is this flag.
+	//
+	// WHETHER OR NOT A SOURCE IS PICKED (round 11). A blank inbound source is
+	// allowed where flowspec does not require one: the pickup names no node and
+	// Core chooses the bin. This returned early on that blank, before the flag,
+	// so a produce position's refill asked Core for a FULL bin of its part, where
+	// it needs an empty to fill. No saved claim at either plant had the shape.
 	step.Empty = toClaim.Role == protocol.ClaimRoleProduce
 	// ── WHICH PAYLOAD, AND WHY BOTH ROLES HAVE TO SAY IT ──────────────────
 	//

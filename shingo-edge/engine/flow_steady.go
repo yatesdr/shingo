@@ -127,16 +127,13 @@ func steadyCell(claim *processes.NodeClaim) SteadyCell {
 // require: the pickup names no node and Core picks the bin).
 //
 // A SWAP NOT COMPLETE IS NEVER DRAWN WITH A STEP TO NOWHERE (round 10). The
-// builders take some such drafts: Sequential A/B's removal and 1-Robot Swap's
-// last leg drop at a blank outbound destination, and Sequential A/B's Order B
-// picks up at a blank inbound source. The save refuses every one of them
-// (flowspec Required, validateSwapModeRouting), and the preview runs the
-// builders on a draft, so the work list drew "no node". This is the preview's
-// refusal, not the builder's: the builders are REQUEST's, and only 2-Robot Swap
-// and Index Swap refuse a blank destination there (buildSwapDispatch); a new
-// refusal at REQUEST is a plant change this does not make. Pinned by
-// TestPreviewFlow_SteadyIsTheRequestBuilders (sequential/no_destination,
-// sequential/no_source, single_robot/no_destination; two_robot/no_source is
+// builders take one such draft: Sequential A/B's Order B picks up at a blank
+// inbound source, which the save refuses (flowspec Required) and the preview
+// runs the builders on a draft, so the work list drew "no node". A blank
+// outbound destination is the builders' own refusal in every mode since round
+// 11 (requireOutboundDestination), and the cell carries it as its Error.
+// Pinned by TestPreviewFlow_SteadyIsTheRequestBuilders (sequential/no_source;
+// the */no_destination rows are the builders' refusal; two_robot/no_source is
 // the blank Core picks, drawn as built).
 func notComplete(claim *processes.NodeClaim, legs []SteadyLeg) string {
 	nodeless := false

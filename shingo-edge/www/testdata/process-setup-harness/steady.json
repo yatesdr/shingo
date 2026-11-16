@@ -697,7 +697,7 @@
       "core_node_name": "POS_A3",
       "role": "consume",
       "swap_mode": "two_robot",
-      "error": "node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "error": "node POS_A3: 2‑Robot Swap requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -797,7 +797,7 @@
       "core_node_name": "POS_A4",
       "role": "produce",
       "swap_mode": "two_robot",
-      "error": "node POS_A4: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "error": "node POS_A4: 2‑Robot Swap requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -1019,7 +1019,7 @@
       "core_node_name": "POS_A7",
       "role": "consume",
       "swap_mode": "sequential",
-      "error": "node POS_A7: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A7: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -1104,7 +1104,7 @@
       "core_node_name": "POS_A8",
       "role": "consume",
       "swap_mode": "sequential",
-      "error": "node POS_A8: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A8: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -1190,7 +1190,7 @@
       "core_node_name": "POS_A9",
       "role": "produce",
       "swap_mode": "sequential",
-      "error": "node POS_A9: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A9: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -1276,7 +1276,7 @@
       "core_node_name": "POS_A10",
       "role": "produce",
       "swap_mode": "sequential",
-      "error": "node POS_A10: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A10: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -2028,7 +2028,7 @@
       "core_node_name": "POS_A3",
       "role": "consume",
       "swap_mode": "two_robot",
-      "error": "node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "error": "node POS_A3: 2‑Robot Swap requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -2143,7 +2143,7 @@
       "core_node_name": "POS_A4",
       "role": "produce",
       "swap_mode": "two_robot",
-      "error": "node POS_A4: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "error": "node POS_A4: 2‑Robot Swap requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -2388,7 +2388,7 @@
       "core_node_name": "POS_A7",
       "role": "consume",
       "swap_mode": "sequential",
-      "error": "node POS_A7: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A7: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -2495,7 +2495,7 @@
       "core_node_name": "POS_A8",
       "role": "consume",
       "swap_mode": "sequential",
-      "error": "node POS_A8: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A8: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -2603,7 +2603,7 @@
       "core_node_name": "POS_A9",
       "role": "produce",
       "swap_mode": "sequential",
-      "error": "node POS_A9: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A9: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },
@@ -2711,7 +2711,7 @@
       "core_node_name": "POS_A10",
       "role": "produce",
       "swap_mode": "sequential",
-      "error": "node POS_A10: a step names no node (blank: outbound_destination)",
+      "error": "node POS_A10: Sequential A/B requires an outbound destination (where the old bin goes)",
       "follow_ons": 0,
       "legs": []
     },

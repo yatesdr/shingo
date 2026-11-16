@@ -398,9 +398,9 @@ func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
 		{name: "press_index/own_robot/three_positions", mode: protocol.SwapModeTwoRobotPressIndex, refill: protocol.RefillByOwnRobot,
 			third: "FLOW-THIRD", legs: []leg{a, b, {SteadyLegFollowOn, "FLOW-THIRD", SteadyKindRetrieve}}, followOns: 1},
 		{name: "two_robot/no_destination", mode: protocol.SwapModeTwoRobot, noDest: true, err: "outbound destination"},
-		{name: "sequential/no_destination", mode: protocol.SwapModeSequential, noDest: true, unsent: "outbound_destination"},
+		{name: "sequential/no_destination", mode: protocol.SwapModeSequential, noDest: true, err: "outbound destination"},
 		{name: "sequential/no_source", mode: protocol.SwapModeSequential, noSource: true, unsent: "inbound_source"},
-		{name: "single_robot/no_destination", mode: protocol.SwapModeSingleRobot, noDest: true, unsent: "outbound_destination"},
+		{name: "single_robot/no_destination", mode: protocol.SwapModeSingleRobot, noDest: true, err: "outbound destination"},
 		// A blank source flowspec does not require is a swap Core sources
 		// (its pickup names no node, and Core picks the bin): drawn as built.
 		{name: "two_robot/no_source", mode: protocol.SwapModeTwoRobot, noSource: true, legs: []leg{a, b}},

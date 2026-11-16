@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
 	"shingoedge/store/processes"
 )
 
@@ -182,6 +184,44 @@ func confirmPolicy(claim *processes.NodeClaim, steps []protocol.ComplexOrderStep
 	return !protocol.PlacesBinAt(steps, claim.CoreNodeName)
 }
 
+// requireOutboundDestination is the ONE refusal of a swap whose old carrier
+// would leave for nowhere, for every mode whose steps drop it at the outbound
+// destination: the modes flowspec requires the field for at save, so the save
+// and the request ask the same question. Same words for every mode.
+//
+// WHY AT REQUEST, AND HERE. buildStep emits a dropoff with NO NODE for a blank
+// field, and a node-less dropoff is the legitimate deferred destination
+// reserved for dedicated-loader placement (Core's dispatch/complex_steps.go):
+// Core cannot tell a missing setting from a deliberate deferral, so this is the
+// last boundary that can. And it has to refuse the whole dispatch, not one leg:
+// applyConsumePlan / applyProducePlan ship the supply leg to Core before they
+// build the evac leg, behind a durable outbox with no compensating cancel.
+//
+// 2-Robot Swap learned it at Springfield, 2026-06-23 17:34:38: the ALN_001
+// claim had no outbound_destination, the evac leg went out as [wait ALN_001,
+// pickup ALN_001, dropoff <nowhere>] and never got a Core row, and its supply
+// leg, Core order 2217, was left unpaired while the Edge's sibling_order_id
+// said the pair was intact. Index Swap checked it since it was written.
+// Sequential A/B and 1-Robot Swap did not (round 11): one order each, so
+// nothing was stranded, but the robot was sent a dropoff with no node, a wedge
+// the system is blamed for. The save refuses all four first; this is for a
+// claim saved before that, or written around the save.
+func requireOutboundDestination(node *processes.Node, claim *processes.NodeClaim) error {
+	if claim.OutboundDestination != "" {
+		return nil
+	}
+	if flowspec.Steady(claim.Role, claim.SwapMode)[flowspec.OutboundDestination] != flowspec.Required {
+		return nil
+	}
+	switch claim.SwapMode {
+	case protocol.SwapModeSequential, protocol.SwapModeSingleRobot,
+		protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
+		return fmt.Errorf("node %s: %s requires an outbound destination (where the old bin goes)",
+			node.Name, domain.SwapModeWord(claim.SwapMode))
+	}
+	return nil
+}
+
 // Every read of claim.OutboundDestination below is the evac leg's dropoff,
 // "where does the carrier leaving this cell go", aimed at the requested claim's
 // outbound whatever stands on the cell. A carrier of another part is Core's to
@@ -189,6 +229,9 @@ func confirmPolicy(claim *processes.NodeClaim, steps []protocol.ComplexOrderStep
 // outbound to its own claim's (dispatch's by-contents choice). InboundSource is
 // the supply leg's: it fetches what was asked for.
 func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
+	if err := requireOutboundDestination(node, claim); err != nil {
+		return nil, err
+	}
 	switch claim.SwapMode {
 	case protocol.SwapModeSequential:
 		stepsA := BuildSequentialRemovalSteps(claim)
@@ -220,28 +263,8 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		if claim.InboundStaging == "" {
 			return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
 		}
-		// The EVAC leg's only dropoff, validated alongside the SUPPLY leg's
-		// field because both legs come out of one builder and the caller cannot
-		// decline half a dispatch. applyConsumePlan / applyProducePlan create
-		// the supply leg and SHIP IT TO CORE before they build this one, behind
-		// a durable outbox with no compensating cancel — so a field only the
-		// evac leg reads is unrecoverable by the time the evac leg fails.
-		//
-		// Nor can Core catch it: buildStep emits a dropoff with NO NODE when
-		// this is blank, and a node-less dropoff is the legitimate deferred
-		// destination reserved for dedicated-loader placement
-		// (dispatch/complex_steps.go). Core cannot tell a missing config from a
-		// deliberate deferral, so this is the last boundary that can.
-		//
-		// two_robot_press_index has checked this since it was written; this
-		// mode never did. Springfield, 2026-06-23 17:34:38: the ALN_001 claim
-		// had no outbound_destination, the evac leg went out as
-		// [wait ALN_001, pickup ALN_001, dropoff <nowhere>] and never got a Core
-		// row, and its supply leg — Core order 2217 — is unpaired there to this
-		// day while Edge's sibling_order_id still says the pair is intact.
-		if claim.OutboundDestination == "" {
-			return nil, fmt.Errorf("node %s: two-robot swap requires outbound destination (the evac leg's dropoff)", node.Name)
-		}
+		// The outbound destination is checked above, for every mode
+		// (requireOutboundDestination); this mode is where it started.
 		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
 		return &SwapDispatch{
 			CycleMode:    protocol.SwapModeTwoRobot,
@@ -255,9 +278,6 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 	case protocol.SwapModeTwoRobotPressIndex:
 		if claim.PairedCoreNode == "" {
 			return nil, fmt.Errorf("node %s: two_robot_press_index requires paired_core_node (back position)", node.Name)
-		}
-		if claim.OutboundDestination == "" {
-			return nil, fmt.Errorf("node %s: two_robot_press_index requires outbound_destination", node.Name)
 		}
 		stepsR1, stepsR2 := BuildTwoRobotPressIndexSwapSteps(claim)
 		return &SwapDispatch{
