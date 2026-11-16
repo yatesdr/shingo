@@ -92,6 +92,15 @@ function rootButton(page, act, more) {
     if (!b) throw new Error('#pd-root draws no ' + act + ' ' + JSON.stringify(more || {}));
     return Object.assign({}, b.dataset);
 }
+// scrLines is what Settings' screen lines say, a line each: its words, its
+// chips as <name>, its buttons and links as [words].
+function scrLines(page) {
+    const host = page.byId('pd-scrlines');
+    if (!host) return ['-- no screen lines'];
+    return host.innerHTML.split(/(?=<div class="pd-scrline"|<p class="pd-note")/).filter(Boolean).map(h => '-- ' + T.text(h
+        .replace(/<span class="setpick-chip">([\s\S]*?)<\/span>/g, ' <$1> ')
+        .replace(/<(button|a)\b[^>]*>([\s\S]*?)<\/(?:button|a)>/g, ' [$2] ')).replace(/\s+/g, ' ').trim());
+}
 function sheetTitle(page) {
     const m = /<h2>([\s\S]*?)<\/h2>/.exec(page.scrim.innerHTML);
     return m ? T.decode(m[1].replace(/<[^>]*>/g, '')) : '';
@@ -535,6 +544,8 @@ Object.assign(D, {
     // Screen A" moves the positions on no screen onto it, and POS_A11 comes
     // off. Only the take-off is asked about: a move keeps its curtain and
     // counter (slice 5); the screen's write takes the moved ones.
+    // Settings opened and read, nothing pressed.
+    scrLines: { hash: '#tab=settings', drive: async () => {} },
     posMoveAndUntick: { hash: '#tab=settings', page: oneScreenPage, extra: ONE_SCREEN_ROUTES, drive: async page => {
         T.setPick(page, 'st', 'positions', 'POS_A11', 'drop');
         page.click('root', drawn(page, 'pd-scrlines', 'loose-onto'));
@@ -644,6 +655,7 @@ async function pinRequests() {
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
+        ['Settings on Press A, two screens (Screen A, Unloader A) and POS_B1-POS_B4 on none: the screen lines', D.scrLines, scrLines],
         ['Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)', D.posAdd],
         ['Settings › Positions and routing › the Positions box: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
         ['Settings › Positions and routing on a one-screen Press A: POS_A11 off and Put them on Screen A, Save (the move is not asked about)', D.posMoveAndUntick],

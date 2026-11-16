@@ -1,3 +1,9 @@
+## Settings on Press A, two screens (Screen A, Unloader A) and POS_B1-POS_B4 on none: the screen lines
+-- sheet closed
+-- Screen Screen A holds 11 positions · online · 30 s ago [Edit] [Open]
+-- Screen Unloader A holds 1 position · online · 30 s ago [Edit] [Open]
+-- 4 positions on no screen: POS_B1, POS_B2, POS_B3, POS_B4
+
 ## Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)
   1  GET /api/operator-stations/11/claimed-nodes
   2  PUT /api/operator-stations/11/claimed-nodes
