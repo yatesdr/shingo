@@ -221,8 +221,9 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   orders.
 - **Settings**: one page with one Save, the full width, its sections down the left (a dot on one that needs
   attention), each a card, grouped by what it is about. Health first, while it has items. **The line**: Line
-  (name, description, group), Parts, Positions and routing (the same set pick as Add process, the line's screen
-  under it with Edit and Open, the positions on no screen, and its loader windows; it says in one line that
+  (name, description, group), Parts, Positions and routing (the same set pick as Add process, each screen
+  under it with Edit and Open and a chip for each position it holds, the positions on no screen with Put them on
+  <screen> for each screen, and its loader windows; it says in one line that
   operators are offered these names, never the plant). A name in Inbound, Staging or Outbound is a place this
   process may route material through; there is nothing to switch on, since a name in the list is set up. A recipe
   follows the one name in a role; with several, it keeps the one it was saved with. Taking one out warns what it

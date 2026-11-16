@@ -918,6 +918,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-scrline { display: flex; align-items: center; gap: 12px; min-height: 32px; font-size: 13px; }
 .pd-scrline > span:first-child { flex: 1; min-width: 0; color: var(--text-muted); }
 .pd-scrline b { color: var(--text); }
+/* The positions a screen holds, a chip each, under its line. */
+.pd-scrchips { padding: 0 0 6px; }
 
 /* Settings · Position settings: a light curtain's row fits the value column.
    A PLC name is short; a tag is a struct path and keeps the wider box. */

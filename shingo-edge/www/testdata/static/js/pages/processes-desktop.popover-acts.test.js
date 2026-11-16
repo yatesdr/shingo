@@ -1137,8 +1137,13 @@ async function mainAsync() {
         for (const want of ['Screen Screen A holds 1 position', 'Screen Screen B holds 1 position', '1 position on no screen: PLN_04']) {
             if (lines.indexOf(want) < 0) throw new Error('the screen lines do not say ' + JSON.stringify(want) + ': ' + lines);
         }
-        // Two screens: nothing here moves the positions on none onto one.
-        if (scrLines.innerHTML.indexOf('data-act="loose-onto"') >= 0) throw new Error('a line with two screens offers "Put them on"');
+        // Two screens: each holds its positions as chips, and the positions on
+        // none are offered to either (round 4).
+        for (const want of ['<span class="setpick-chip">PLN_01</span>', '<span class="setpick-chip">PLN_02</span>',
+            'data-act="loose-onto" data-station="10">Put them on Screen A</button>',
+            'data-act="loose-onto" data-station="11">Put them on Screen B</button>']) {
+            if (scrLines.innerHTML.indexOf(want) < 0) throw new Error('the screen lines do not draw ' + want + ': ' + scrLines.innerHTML);
+        }
         checks++;
         console.log('ok: Settings\' Positions box greys another process\'s position "on <process>" behind "In use by other processes", from one read');
     }
@@ -4397,9 +4402,9 @@ async function settingsPositionsPins(h) {
             live: () => live().filter(n => n.core_node_name !== 'ULN_002'),
         });
         await settle();
-        const onto = '<button class="pd-btn quiet" data-act="loose-onto">Put them on Press 6 Operator Screen</button>';
+        const onto = '<button class="pd-btn quiet" data-act="loose-onto" data-station="18">Put them on Press 6 Operator Screen</button>';
         if (ctx.linesHost.innerHTML.indexOf(onto) < 0) throw new Error('the one-screen line does not offer ' + onto + ': ' + ctx.linesHost.innerHTML);
-        click(ctx.root, ctx.doc, { act: 'loose-onto' });
+        click(ctx.root, ctx.doc, { act: 'loose-onto', station: '18' });
         await settle();
         if (ctx.writes.length) throw new Error('"Put them on" wrote before Save: ' + JSON.stringify(ctx.writes));
         if (prov(ctx) !== 'Unsaved changes') throw new Error('"Put them on" did not mark the bar: ' + prov(ctx));

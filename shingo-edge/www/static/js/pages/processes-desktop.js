@@ -157,7 +157,7 @@ const S = {
     coreNodes: null,     // Core's node list as the Edge sent it (NODES' rows), null until read
     pickers: {},         // every open node picker, by key — see pickerInit
     setPicks: {},        // every set pick drawn, by key: {pid, api} — see mountSetPick
-    looseOnto: false,    // Settings' draft puts the positions on no screen onto the line's screen
+    looseOnto: '',       // Settings' draft puts the positions on no screen onto this screen (its id)
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
     stShell: null,       // Settings' shell for one visit: {pid, top, sheet, body, page} (settingsShell)
     stPickersPid: 0,     // the process Settings' pickers were declared for (settingsPickers)
@@ -4468,8 +4468,8 @@ function processPositions() {
 // screensDraft is a positions box as savePositions' draft ({screen id: its
 // list, none: the positions on no screen}). A position stays where it is; a
 // new one goes on the line's screen (the first, on a line that has two from
-// before); on a line with no screen it is on none. onto: the positions on no
-// screen go on the screen too ("Put them on").
+// before); on a line with no screen it is on none. onto: a screen's id, whose
+// list takes the positions on no screen too ("Put them on <screen>").
 function screensDraft(names, onto) {
     const screens = stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes);
     const loose = loosePositions();
@@ -4479,8 +4479,13 @@ function screensDraft(names, onto) {
         d[st.id] = (S.stationNodes[String(st.id)] || []).filter(n => names.indexOf(n) >= 0);
         d[st.id].forEach(n => placed.add(n));
     }
-    const stay = onto && screens.length ? [] : loose.filter(n => names.indexOf(n) >= 0);
+    const to = onto ? screens.find(st => String(st.id) === String(onto)) : null;
+    const stay = to ? [] : loose.filter(n => names.indexOf(n) >= 0);
     stay.forEach(n => placed.add(n));
+    if (to) {
+        d[to.id] = d[to.id].concat(loose.filter(n => names.indexOf(n) >= 0 && !placed.has(n)));
+        d[to.id].forEach(n => placed.add(n));
+    }
     const fresh = names.filter(n => !placed.has(n));
     if (screens.length) d[screens[0].id] = d[screens[0].id].concat(fresh);
     if (loose.length || !screens.length) d.none = stay.concat(screens.length ? [] : fresh);
@@ -5533,7 +5538,8 @@ function settingsSetMoved() {
 }
 
 // drawScreenLines is the line under the pick: each screen with what it will
-// hold once saved, its health, Edit and Open; the positions on no screen; and
+// hold once saved, a chip per position, its health, Edit and Open; the
+// positions on no screen, with "Put them on <screen>" for each screen; and
 // "+ Add a screen" on a line that has none.
 function drawScreenLines() {
     const el = $('pd-scrlines');
@@ -5544,20 +5550,30 @@ function drawScreenLines() {
     const loose = d.none || [];
     const lines = screens.map(st => {
         const unread = !(String(st.id) in S.stationNodes);
-        const n = unread ? 0 : (d[st.id] || []).length;
+        const held = unread ? [] : (d[st.id] || []);
+        const n = held.length;
         return '<div class="pd-scrline"><span>Screen <b>' + esc(st.name) + '</b> ' +
             (unread ? '· its positions could not be read, so they cannot be changed here. Reload the page.'
                 : (screens.length === 1 && n && !loose.length ? 'holds all ' + nOf(n, 'position') : 'holds ' + nOf(n, 'position'))) +
             ' · ' + esc(healthOf(st).text) + '</span>' +
             '<span class="pd-scracts"><button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
-            '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></span></div>';
+            '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></span></div>' +
+            (n ? '<div class="setpick-chips pd-scrchips">' + held.map(p => '<span class="setpick-chip">' + esc(p) + '</span>').join('') + '</div>' : '');
     });
+    // "PUT THEM ON" FOR EACH SCREEN: on a line with two, the positions on no
+    // screen are offered to either, as main's checklist on each screen did,
+    // and once they are going on one, to the others still.
+    const readable = screens.filter(st => String(st.id) in S.stationNodes);
+    const onto = readable.find(st => String(st.id) === String(S.looseOnto));
+    const putOn = list => '<span class="pd-scracts">' + list.map(st => '<button class="pd-btn quiet" data-act="loose-onto" data-station="' + st.id + '">Put them on ' +
+        esc(st.name) + '</button>').join('') + '</span>';
     if (loose.length) {
         lines.push('<div class="pd-scrline"><span>' + esc(nOf(loose.length, 'position') + ' on no screen: ' + loose.join(', ')) + '</span>' +
-            (screens.length === 1 ? '<button class="pd-btn quiet" data-act="loose-onto">Put them on ' + esc(screens[0].name) + '</button>' : '') + '</div>');
+            putOn(readable) + '</div>');
     }
-    if (S.looseOnto && screens.length === 1) {
-        lines.push('<p class="pd-note">The positions on no screen go on ' + esc(screens[0].name) + ' when this is saved.</p>');
+    if (onto) {
+        lines.push('<div class="pd-scrline"><span>The positions on no screen go on ' + esc(onto.name) + ' when this is saved.</span>' +
+            putOn(readable.filter(st => st !== onto)) + '</div>');
     }
     if (!screens.length) {
         lines.push('<div class="pd-scrline"><span>No screen works this process yet: an operator reaches it once one holds its positions.</span>' +
@@ -6178,7 +6194,7 @@ function takeSettingsRead(kept) {
     const sp = S.setPicks[ST_SET];
     if (sp && sp.pid === S.processID) {
         const read = settingsSetSel();
-        if (!('positions' in kept)) { sp.api.set('positions', read.positions, { clean: true }); S.looseOnto = false; }
+        if (!('positions' in kept)) { sp.api.set('positions', read.positions, { clean: true }); S.looseOnto = ''; }
         if (!('routing' in kept)) for (const g of ROUTING_GROUPS) sp.api.set(g[0], read[g[0]], { clean: true });
     }
     for (const n of Object.keys(kept)) SETTINGS_SECTIONS[n].put(kept[n]);
@@ -8715,7 +8731,7 @@ async function openScreenSheet(stationID) {
             const sp = S.setPicks[ST_SET];
             if (takes.length && sp && sp.pid === S.processID && S.tab === 'settings' && S.stShell) {
                 sp.api.set('positions', processPositions(), { clean: true });
-                S.looseOnto = false;
+                S.looseOnto = '';
                 S.stShell.page.rebase(['positions']);
                 drawSettings();
             }
@@ -9934,7 +9950,7 @@ function onClick(e) {
                 return;
             }
             case 'ar-toggle': S.arLine = !S.arLine; drawSettings(); return;
-            case 'loose-onto': S.looseOnto = true; settingsSetMoved(); return;
+            case 'loose-onto': S.looseOnto = btn.dataset.station || ''; settingsSetMoved(); return;
             case 'preset-older':
                 S.presets.older = !S.presets.older;
                 drawPresets();
