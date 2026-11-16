@@ -243,10 +243,16 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   screen** shows only on a line with none, and takes its positions. A loader's or unloader's process, whose
   board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger. Its screens' positions and
   any on no screen are listed, not picked; positions on no screen go onto a screen with **Put them on <screen>**, or with
-  **+ Add a screen** when it has none. Its board draws the screen's positions, not the loader's windows, so what Core
-  changes on the loader is one line each: **Core added <window>** with **Put it on <screen>** (no tile until a screen has
-  it), and **Core removed <window>** with **Take it off <screen>** (already off the board). The one Save writes the screen.
-  A dedicated loader's buffer spots are drawn from the loader itself and never need a line.
+  **+ Add a screen** when it has none. Its board draws the screen's positions, not the loader's windows. The Edge keeps
+  them itself, by the Edge Core names for the loader under Loaders: one line per loader says **Core's pick: this Edge**,
+  **Core moved <loader> to <Edge>**, or **No Edge picked: set on Core, under Loaders**. Named here, the Edge makes the
+  loader's process and screen and puts on and takes off what Core adds and removes; named elsewhere, it offers nothing
+  and the screen loses the loader's windows but stays; with none picked, a window Core adds goes onto the one screen
+  already holding the loader's others, and one it removes comes off. What it could not take is one line each:
+  **Core added <window>** with **Put it on <screen>**, and **Core removed <window>** with **Take it off <screen>**, or, while
+  an order runs there, "comes off by itself when its order ends". The one Save writes the screen. A screen with a
+  position no loader holds is never written by the Edge. A dedicated loader's buffer spots are drawn from the loader
+  itself and never need a line.
 
 A process's production counter is its reporting point: the Edge keeps the reporting point that binds that tag
 to the active style in step whenever the process is saved or changes over, and PLC polling reads it from there.

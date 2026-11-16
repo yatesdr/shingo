@@ -32,6 +32,14 @@ A loader is one `bin_loaders` row on Core (columns: [data-model.md](data-model.m
   pick on the station's Settings, one pick for both stages of a two-stage unloader. Blank, the default and what
   every loader read before v178, picks none. Core refuses a newly picked uid it holds no Edge for, and sends the
   uid on `LoaderInfo.EdgeStationUID` with that Edge's display name as `EdgeDisplayName`.
+  - **On the Edge** (`shingo-edge/service/station_loader_take.go`, run from `SetCoreLoaders` and at start), it acts on
+    *loader screens* only, screens every live position of which is a loader window. Named here: when the pick becomes
+    this Edge every window goes on the loader's screen, made through `CreateLoaderBoard` when there is none, and
+    windows added and removed follow. Named elsewhere: nothing is made or offered, and a screen of it from before
+    loses its windows and stays (`operator_stations.core_loader_key` remembers whose it was, Edge v57). Blank: a
+    window added to a loader the Edge held goes onto the one loader screen holding its others; one removed comes
+    off. A window an order runs at is kept and taken off on a later send or at start. Additions come from the
+    difference against the set held, removals from state; an unchanged set issues no statement.
 
 Its homes are `bin_loader_homes` rows (a window or a dedicated position; `UNIQUE(position_node_id)`, so a node
 belongs to at most one loader; `home_kind` for a dedicated home with no part). A loader's carrier mix

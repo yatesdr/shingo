@@ -13,9 +13,10 @@ its board, the process row's `core_boards` — has Settings alone: Line, Screens
 and positions, a **Loader board** pointer to Core, and Danger; no Setup, no
 Styles, no flow picture. Nothing on it is a pick: a position there that no
 loader holds would make the process a line again. Positions on no screen are
-chips with **Put them on <screen>**, and what Core changes on the loader is one
-line each, **Core added <window>** with **Put it on <screen>** and **Core removed
-<window>** with **Take it off <screen>**, drafts on the one Save. These are the patterns on it worth reusing. Each is
+chips with **Put them on <screen>**. One line per loader says which Edge Core
+names for it; the Edge keeps the windows itself, and what it could not take is
+one line each, **Core added <window>** with **Put it on <screen>** and **Core
+removed <window>** with **Take it off <screen>**, drafts on the one Save. These are the patterns on it worth reusing. Each is
 one paragraph because each is one idea.
 
 **One editor per fact.** Each fact about a process is edited in one place, and
