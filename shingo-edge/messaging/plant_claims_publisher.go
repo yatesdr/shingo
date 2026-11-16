@@ -34,8 +34,12 @@ import (
 //     instead of an hour.
 //
 // Together the periodic + boot snapshots replace Kafka compaction for late
-// joiners: Core persists the mirror on every message, and a snapshot rebuilds
-// it from scratch. Loaders/unloaders (manual_swap claims) are EXCLUDED here —
+// joiners: Core persists the mirror on every message, each replacing the rows
+// of the one process it names, and a snapshot names only the processes this
+// Edge has, so it never removes one this Edge no longer has. That process
+// (deleted or renamed) is emptied only by ReconcileClaims' empty report
+// (emptyUnreported), sent to a Core that quotes its digests back.
+// Loaders/unloaders (manual_swap claims) are EXCLUDED here —
 // they enter the computation as pool supply/demand via the loader aggregate,
 // never as style claims. Their seats travel as the report's Positions, which
 // Core reads only to address a landing or an announcement to this station.
