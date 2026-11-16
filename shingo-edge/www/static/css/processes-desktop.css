@@ -913,6 +913,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-scrline b { color: var(--text); }
 /* The positions a screen holds, a chip each, under its line. */
 .pd-scrchips { padding: 0 0 6px; }
+/* The part set under its heading, no field label beside it. */
+.pd-partsbox { padding: 2px 0 8px; }
 
 /* Settings · Position settings: a light curtain's row fits the value column.
    A PLC name is short; a tag is a struct path and keeps the wider box. */

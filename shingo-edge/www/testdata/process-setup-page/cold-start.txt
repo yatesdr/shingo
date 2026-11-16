@@ -227,7 +227,7 @@ ok   Save style is the Styles save (flow/save) of the step's draft
   the part set less PART-11, Save: PUT …/payloads {"payloads":["PART-1","PART-10","PART-2","PART-3","PART-4","PART-5","PART-6","PART-7","PART-8","PART-9"]} · sheet closed · notices ["The part set was saved."]
 
 ## Add process
-  fields ["Name (what this process is called here)","Operator screen (blank: named after the process)","Group (groups processes on the list)","Parts (what this process may run — the catalog is Core’s)"]
+  fields ["Name (what this process is called here)","Operator screen (blank: named after the process)","Group (groups processes on the list)"]
   the set pick: ["positions (needed)","source (needed)","staging","destination (needed)"] · open on "positions"
   still to pick: "Still to pick: Positions, Inbound, Outbound . You can also finish it in Setup."
 ok   Create on a name alone makes the process and its screen, named after it, and nothing else

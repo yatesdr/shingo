@@ -191,14 +191,19 @@ block({
         return ['the title: ' + JSON.stringify(title), title === 'Press A', 'said ' + JSON.stringify(title)];
     }],
 });
+// THE PART SET IS SAID ONCE (round 5, owner 2026-11-15): under the Parts
+// heading, with no field label saying Parts again (which, drawn as a sheet's
+// .pd-fld, was also the wrong grid; slice 4).
 block({
-    title: 'smoke: Settings\' Parts row is on the settings grid, as every other row is',
+    title: 'smoke: Settings\' part set sits under its Parts heading, not labelled Parts a second time',
     open: () => ({ hash: '#tab=settings' }),
     act: async () => {},
     checks: [r => {
         const html = String(r.page.root.innerHTML);
-        const row = (/<div class="(pd-s?fld)"><label>Parts<small>/.exec(html) || ['', 'missing'])[1];
-        return ['the Parts row is a .pd-sfld', row === 'pd-sfld', 'drawn as .' + row + ' (the sheets\' 230 px grid)'];
+        const labelled = /<label>Parts<small>/.test(html);
+        const box = /<h2>Parts<\/h2>[\s\S]*?<div class="pd-partsbox">/.test(html);
+        return ['the part set is under the heading, with no second Parts label', box && !labelled,
+            (labelled ? 'a field label still says Parts' : '') + (box ? '' : ' no .pd-partsbox under the heading')];
     }],
 });
 

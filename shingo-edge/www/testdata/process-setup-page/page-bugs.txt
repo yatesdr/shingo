@@ -20,8 +20,8 @@ ok   Press A's counter cell: "off · PLC_A"
 ## smoke: a screen named after its process is not said twice in the title
 ok   the title: "Press A"
 
-## smoke: Settings' Parts row is on the settings grid, as every other row is
-ok   the Parts row is a .pd-sfld
+## smoke: Settings' part set sits under its Parts heading, not labelled Parts a second time
+ok   the part set is under the heading, with no second Parts label
 
 ## smoke: Add process on a fresh list reads no plant map as it opens (A1)
 ok   no composer read

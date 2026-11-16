@@ -7030,8 +7030,8 @@ function drawSettings() {
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
         (S.partSet === null
             ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
-            : stField('Parts', 'what this process may run — the catalog is Core’s', pickerBox(PART_SET_PICKER))) +
-        '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
+            : '<div class="pd-partsbox">' + pickerBox(PART_SET_PICKER) + '</div>') +
+        '<p class="pd-note">' + esc(PART_SET_HELP.charAt(0).toUpperCase() + PART_SET_HELP.slice(1) + '. ' + PART_SET_NOTE) + '</p>';
 
     // EVERY SECTION IS OPEN (owner, 2026-11-14): Operator setup and Quality
     // hold show their controls in place, in the page's one draft.
@@ -8530,6 +8530,9 @@ const PART_SET_PICKER = 'parts';
 
 // What Settings says under the part set.
 const PART_SET_NOTE = 'A part used by a flow stays available until it is removed from that flow.';
+// PART_SET_HELP is the part set's one help line: what it is and whose list
+// the parts come from.
+const PART_SET_HELP = 'what this line runs, from Core’s catalog';
 
 // loadProcessPayloads reads the STORED half of a process's part set — what
 // Settings' picker is about to replace. A failed read opens the picker empty, and
@@ -8603,8 +8606,11 @@ function processSheet(edit) {
         // PARTS FIRST (owner, 2026-11-15: "couple times now i forgot to get to
         // parts ... parts above so you select parts first"): the node list
         // below them takes scrolling, so a field after it was missed.
-        '<div class="pd-sec"><div class="pd-lbl">1 · Parts</div><span class="pd-dim">what this line runs</span></div>' +
-        pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s') +
+        // ONE HEADING, THE FIELD, ONE LINE (owner, 2026-11-15: "whats this
+        // redundancy with parts stuff?"): it said Parts and what the line runs
+        // twice over, as a step heading and again as a field label.
+        '<div class="pd-sec"><div class="pd-lbl">1 · Parts</div><span class="pd-dim">' + esc(PART_SET_HELP) + '</span></div>' +
+        '<div class="pd-partsbox">' + pickerBox(PART_SET_PICKER) + '</div>' +
         (edit && edit.parts === null ? unread('part set') : '') +
         '<div class="pd-sec"><div class="pd-lbl">2 · Nodes</div><span class="pd-dim">click a box, then tick nodes into it</span></div>' +
         (edit && !edit.routingRead ? unread('routing set') : '') +
