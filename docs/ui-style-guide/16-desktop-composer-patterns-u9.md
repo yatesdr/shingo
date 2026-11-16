@@ -36,14 +36,17 @@ every other screen that shows it shows it read-only:
 **The set pick is one piece in two places** (`shared/set-pick.js`): four boxes,
 Positions, Inbound, Staging and Outbound, each in its role's colour (the
 `--role-*` tokens, never the robot hues) with its picks as chips, over one
-always-open list, folded: one line per name prefix (ALN, PLN, SMN …) with
-Groups first, each opening to a grid of ticks and saying what is picked from it
-already ("3 in Positions", "1 here"); **All · Groups only · Free only** and
-**Expand all** beside the name filter; nodes other processes hold under one
-line at the foot. What holds for many rows of the open box is said once above
-the list (`hint`), not on each row. The open box, its chips and the list's
-frame are neutral: only a box still needed is outlined in its role's colour. In a sheet the boxes stay in view at the
-top of the sheet's one scroll while the list goes under them. The Add process
+always-open list, one row a line with nothing to open before a tick (a group's
+nodes wait under its **show N**, as everywhere). Beside the name filter,
+**All · Groups only · Free only**, then the name prefixes (PLN, SMN …), each a
+filter: Groups only is the group rows, already listed; Free only is what the
+open box may take. A node already in another box carries that box's name as a
+tag in its colour, and is greyed with the reason where the open box may not
+take it; nodes other processes hold wait under one line at the foot. What holds
+for many rows of the open box is said once above the list (`hint`), not on each
+row. The open box, its chips and the list's frame are neutral: only a box still
+needed is outlined in its role's colour. In a sheet the boxes stay in view at
+the top of the sheet's one scroll while the list goes under them. The Add process
 sheet (and its Change…, the same sheet filled in) and Settings › Positions and
 routing draw it; both save through the same
 doors (`savePositions`, `saveRouting`), so it is one editor drawn twice, not two

@@ -300,15 +300,9 @@ function openSheetEl(doc) {
 // host: a row by its value, the note or reason beside it, a pick (a dropdown's
 // list opens when its search box takes focus; a checklist's is open), a
 // chip's ×, a prefix filter, and the filters it offers.
-// A set pick's list is folded by prefix (shared/picker.js shelves): a row is
-// read after its lines are opened, as an engineer opens them (Expand all).
-function unfold(host) {
-    const b = findIn(host, '[data-expand]').find(x => x.textContent === 'Expand all');
-    if (b) b.click();
-}
 const pk = {
-    rows: host => { unfold(host); return findIn(host, '.picker-row'); },
-    row: (host, v) => { unfold(host); return findIn(host, '.picker-row').find(r => r.getAttribute('data-value') === v) || null; },
+    rows: host => findIn(host, '.picker-row'),
+    row: (host, v) => findIn(host, '.picker-row').find(r => r.getAttribute('data-value') === v) || null,
     open: host => { const q = findIn(host, '.picker-q')[0]; if (q) for (const fn of (q.listeners.focus || [])) fn({ type: 'focus' }); },
     side: (host, v) => { const r = pk.row(host, v); const t = r && findIn(r, '.picker-note, .picker-why')[0]; return t ? t.textContent : ''; },
     off: (host, v) => { const r = pk.row(host, v); return !!r && r.classList.contains('is-off'); },
@@ -356,6 +350,27 @@ const sp = {
         b.click();
     },
 };
+
+// flatSetPick holds a set pick to one list (round 2's, restored 2026-11-15:
+// "the old way was better just keep the group sorting thing"): no prefix line
+// to open, no tick grid, no Expand all; beside the name filter the views, All
+// on, then the page's prefix filters; Groups only lists exactly the groups,
+// drawn without a press; All puts every row back.
+function flatSetPick(host, groups, prefixes) {
+    const folds = findIn(host, '.picker-shelf, .picker-shelf-grid, [data-shelf], [data-expand]');
+    if (folds.length) throw new Error('the set pick still folds its list: ' + folds.length + ' prefix lines or Expand all');
+    const bar = findIn(findIn(host, '.picker-filters')[0] || madeElement('div'), 'button')
+        .map(b => b.textContent + (b.classList.contains('is-on') ? '*' : ''));
+    const want = ['All*', 'Groups only', 'Free only'].concat(prefixes);
+    if (JSON.stringify(bar) !== JSON.stringify(want)) throw new Error('beside the name filter: ' + JSON.stringify(bar) + '\n      want ' + JSON.stringify(want));
+    const all = pk.rows(host).length;
+    const view = key => findIn(host, '[data-view]').find(b => b.getAttribute('data-view') === key).click();
+    view('groups');
+    const tops = pk.rows(host).filter(r => !r.classList.contains('picker-row--member')).map(r => r.getAttribute('data-value'));
+    if (JSON.stringify(tops) !== JSON.stringify(groups)) throw new Error('Groups only lists ' + JSON.stringify(tops) + ', want ' + JSON.stringify(groups));
+    view('all');
+    if (pk.rows(host).length !== all) throw new Error('All draws ' + pk.rows(host).length + ' rows, not the ' + all + ' it started with');
+}
 
 // popRows is the shared picker a popover holds, as rows: { el, value, label,
 // note, on, off }. THE LAST ONE DRAWN: this harness's popover keeps the
@@ -2731,6 +2746,21 @@ async function mainAsync() {
         }
     });
 
+    // THE SAME ONE LIST AS SETTINGS (the shared pick; flatSetPick).
+    await pin('Add process\'s set pick is the one list: the views, then the prefixes; Groups only lists the groups', async () => {
+        const hosts = procHosts();
+        const nodes = [{ name: 'PLN_07', node_type: 'storage' }, { name: 'SMN_010', node_type: 'storage' }, { name: 'SMN_011', node_type: 'storage' },
+            { name: 'Supermarket', node_type: 'NGRP', members: ['SMN_010', 'SMN_011'] }];
+        const ctx = loadPage({
+            allowSheet: true, composer: savedComposer(), extraIds: hosts,
+            fetch: url => (url === '/api/core-nodes' ? okJSON(nodes) : url === '/api/payload-catalog' || url === '/api/process-nodes' ? okJSON([]) : null),
+        });
+        await settle();
+        click(ctx.root, ctx.doc, { act: 'add-process' });
+        await settle();
+        flatSetPick(hosts['sp-proc'], ['Supermarket'], ['PLN', 'SMN']);
+    });
+
     // CREATE IS MAIN'S CHAIN (ruling 2026-11-15, item 2): the process, its
     // screen named as typed or after the process, the positions claimed on
     // that screen, the routing set in one write with its roles in the order
@@ -4320,6 +4350,24 @@ async function settingsPositionsPins(h) {
         if (findIn(h, '.picker-why').some(x => /positions one at a time/.test(x.textContent))) throw new Error('a group row still repeats the rule');
         // "All" is a view of the list (with Groups only, Free only), not a tick-all.
         if (findIn(h, 'button').some(b => !b.hasAttribute('data-view') && /^(all|none)$/i.test(b.textContent))) throw new Error('the picker offers a tick-all');
+    });
+
+    // ONE LIST, ONE HEIGHT A ROW (owner, 2026-11-15, after the fold by prefix:
+    // "the old way was better just keep the group sorting thing"). A node
+    // picked in another box reads as round 2 drew it: its row, greyed with the
+    // box's reason, and that box's name as a tag in its colour.
+    await pin('Settings\' set pick is one list: the views, then the prefixes; Groups only lists the groups; a position is tagged in the roles', async () => {
+        const ctx = page('#tab=settings');
+        await settle();
+        const h = ctx.spHost;
+        flatSetPick(h, ['Press Unloader'], ['PLN', 'SMN', 'ULN']);
+        sp.open(h, 'source');
+        const row = pk.row(h, 'PLN_005');
+        const tag = row && findIn(row, '.picker-tag')[0];
+        if (!tag || tag.textContent !== 'Positions' || tag.getAttribute('data-tone') !== 'positions' || !pk.off(h, 'PLN_005') ||
+            pk.side(h, 'PLN_005') !== 'a position of this process — available to every flow on it already') {
+            throw new Error('a position under Inbound reads ' + (row ? row.innerHTML : '(no row)'));
+        }
     });
 
     // A BOX CLICK OPENS THE BOX, AND NOTHING ELSE. Settings' set pick sits in

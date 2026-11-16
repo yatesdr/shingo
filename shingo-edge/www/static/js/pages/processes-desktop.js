@@ -4496,8 +4496,8 @@ function mountSetPick(key, hostId, sel, o) {
         field: box => setPickField(key, box, o.pid),
         closed: o.closed, note: o.note,
         hint: b => (b === 'positions' ? 'A group is one row: its nodes are positions one at a time. Show a group to pick one.' : ''),
-        later: { label: HELD_ELSEWHERE },
-        placeholder: 'filter by name',
+        filters: checklistFilters, later: { label: HELD_ELSEWHERE },
+        placeholder: 'filter by name, or pick a prefix',
         onChange: (box, sp) => {
             if (box === 'positions') {
                 const pos = sp.value('positions');

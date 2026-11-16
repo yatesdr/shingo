@@ -38,12 +38,7 @@ async function setPick(opts) {
         n.querySelector('.picker-label').textContent + n.querySelectorAll('.picker-tag').map((t) => ' [' + t.textContent + ']').join(''));
     const tick = (v) => s.el.querySelectorAll('.picker-row').find((n) => n.getAttribute('data-value') === v).click();
     const press = (sel) => s.el.querySelector(sel).click();
-    const shelves = () => s.el.querySelectorAll('.picker-shelf').map((n) => n.querySelector('b').textContent + ' ' +
-        n.querySelector('small').textContent + (n.querySelector('.picker-shelf-note') ? ' (' + n.querySelector('.picker-shelf-note').textContent + ')' : '') +
-        (n.getAttribute('aria-expanded') === 'true' ? ' open' : ''));
-    // The list starts folded; a case about rows opens every shelf first.
-    if (!(opts && opts.folded)) press('[data-expand]');
-    return { p, s, box, rows, tick, press, shelves, moved };
+    return { p, s, box, rows, tick, press, moved };
 }
 
 test('nothing happens at import: no listener, no element', async () => {
@@ -128,26 +123,27 @@ test('a box\'s hint is one line above the list while that box is open, and none 
     eq(hints(), []);
 });
 
-test('the list is folded: one line per prefix, Groups first, each saying what is picked from it', async () => {
-    const f = await setPick({ folded: true, selected: { positions: ['ALN_01', 'ALN_02'], source: ['Supermarket Area'] } });
-    eq(f.shelves(), ['Groups 1 group (1 in Inbound)', 'ALN 3 nodes (2 here)', 'SLN 1 node', 'SMN 1 node']);
-    eq(f.rows(), [], 'nothing is ticked open until a line is pressed');
-    f.press('[data-shelf="ALN"]');
-    eq([f.shelves()[1], f.rows()], ['ALN 3 nodes (2 here) open', ['ALN_01', 'ALN_02', 'ALN_03']], 'a pressed line opens to its ticks');
-    ok(!!f.s.el.querySelector('.picker-shelf-grid .picker-row'), 'an open line lays its ticks out as a grid');
-    f.press('[data-expand]');
-    eq(f.shelves().every((x) => / open$/.test(x)), true, 'Expand all opens every line');
+test('the list is one list: a row a line, every row drawn, nothing to open before a tick', async () => {
+    const f = await setPick({ selected: { positions: ['ALN_01'], source: ['Supermarket Area'] } });
+    eq(f.rows(), ['Supermarket Area [Inbound]', 'ALN_01', 'ALN_02', 'ALN_03', 'SLN_01', 'SMN_023']);
+    eq(f.s.el.querySelectorAll('.picker-shelf, .picker-shelf-grid, [data-shelf], [data-expand]').length, 0, 'no prefix line, tick grid or Expand all');
+    f.tick('ALN_03');
+    eq(f.s.value('positions'), ['ALN_01', 'ALN_03'], 'a row ticks as drawn');
 });
 
-test('the views: Groups only keeps the Groups line; Free only drops what the box may not take', async () => {
-    const f = await setPick({ folded: true, field: (key) => ({ members: 'fold', rule: (n) => (n.name === 'ALN_03' ? 'held' : '') }) });
-    eq(f.s.el.querySelectorAll('[data-view]').map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')),
-        ['All*', 'Groups only', 'Free only'], 'All is on at the start');
+test('the views: Groups only lists the groups as they are; Free only keeps what the box may take', async () => {
+    const f = await setPick({ field: (key) => ({ members: 'fold', rule: (n) => (n.name === 'ALN_03' ? 'held' : n.name === 'Supermarket Area' ? 'a group' : '') }) });
+    const views = () => f.s.el.querySelectorAll('[data-view]').map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : ''));
+    eq(views(), ['All*', 'Groups only', 'Free only'], 'All is on at the start');
     f.press('[data-view="groups"]');
-    eq(f.shelves(), ['Groups 1 group']);
+    eq([views()[1], f.rows()], ['Groups only*', ['Supermarket Area']], 'the group row is listed, nothing to open first');
+    f.press('[data-fold="Supermarket Area"]');
+    eq(f.rows(), ['Supermarket Area', '  SMN_005', '  SMN_006'], 'a group brings its nodes under its show, as in All');
     f.press('[data-view="free"]');
-    f.press('[data-expand]');
-    eq(f.rows().indexOf('ALN_03'), -1, 'a node the box refuses is not free');
+    eq(f.rows(), ['Supermarket Area', '  SMN_005', '  SMN_006', 'ALN_01', 'ALN_02', 'SLN_01', 'SMN_023'],
+        'a node the box refuses is not free; a refused group stays for its free nodes');
+    f.press('[data-view="all"]');
+    eq(f.rows().indexOf('ALN_03') >= 0, true, 'All draws it again');
 });
 
 run();

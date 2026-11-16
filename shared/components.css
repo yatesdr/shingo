@@ -1329,6 +1329,10 @@ nav {
     background: none; color: var(--text-muted); font: inherit; font-size: var(--font-xs); cursor: pointer;
 }
 .picker-filters button.is-on { border-color: var(--accent); color: var(--accent); }
+/* The views (opts.views: All · Groups only · Free only) come first, the
+ * prefix filters after them a little apart: a view is one of three, a prefix
+ * is a query. */
+.picker-filters .picker-view + button:not(.picker-view) { margin-left: var(--sp-3); }
 .picker-list {
     max-height: 18rem; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface); box-shadow: var(--shadow-md);
@@ -1364,34 +1368,6 @@ nav {
     border-top: 1px solid var(--sub-2); color: var(--text-muted); font-size: var(--font-sm);
 }
 .picker-add { color: var(--accent); }
-/* THE FOLDED LIST (opts.shelves): one line per shelf with its count and what
- * is picked from it, closed until pressed; open, a grid of ticks several
- * across. Views (All · Groups only · Free only) share the filters' look;
- * Expand all sits at the bar's right. */
-.picker-shelf {
-    display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: 40px; padding: var(--sp-1) var(--sp-3);
-    border: 0; border-top: 1px solid var(--sub-2); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
-}
-.picker-shelf:first-child { border-top: 0; }
-.picker-shelf small { color: var(--text-muted); font-size: var(--font-xs); }
-.picker-shelf-car {
-    flex: 0 0 auto; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent;
-    border-left: 6px solid var(--text-muted);
-}
-.picker-shelf.is-open .picker-shelf-car { transform: rotate(90deg); }
-.picker-shelf-note {
-    padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px; color: var(--text-muted); font-size: var(--font-xs);
-}
-.picker-shelf-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-1);
-    padding: 0 var(--sp-3) var(--sp-2) var(--sp-6);
-}
-.picker-shelf-grid .picker-row {
-    flex-wrap: wrap; min-height: 36px; padding: var(--sp-1) var(--sp-2); border: 1px solid var(--sub-2); border-radius: var(--radius);
-}
-.picker-shelf-grid .picker-row--member { padding-left: var(--sp-2); }
-.picker-shelf-grid .picker-row.is-on { border-color: var(--accent-solid); }
-.picker-filters .picker-expand { margin-left: auto; border: 0; color: var(--accent); }
 .picker-add.is-busy { color: var(--text-muted); cursor: progress; }
 /* A write-through pick out with the caller (onPick), and its refusal. */
 .picker-row.is-pending { color: var(--text-muted); cursor: progress; }

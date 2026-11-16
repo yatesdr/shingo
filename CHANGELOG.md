@@ -23,7 +23,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - Setup is three steps, nodes and part, a first style, open the screen; it can be skipped
 - Setup's first style names the style, puts a part on each position and fills the routing set's nodes in
 - Add process asks for the parts before the nodes
-- The node pick is folded by name prefix with a Groups line, All · Groups only · Free only, and Expand all
+- The node pick is one plain list again, with All · Groups only · Free only by its filter
 - First style goes one position at a time: a checklist, the open position, Done · next position, Not in this style
 - First style can add a position to the line or take one off, asked about first as Settings asks
 - The node pick and First style are quieter: a role is a dot; only a box still needed is outlined in colour
