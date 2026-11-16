@@ -75,6 +75,9 @@ type LoaderFacts struct {
 	// Windows is the loader's board windows, in Core's order
 	// (domain.IsBoardWindow): never a buffer spot.
 	Windows []string
+	// Members is every node the loader holds, its buffer spots among them:
+	// what decides that Core still holds a position.
+	Members []string
 	Case    LoaderCase
 	// EdgeUID and EdgeName are the Edge Core names: blank for LoaderCaseNone.
 	EdgeUID, EdgeName string
@@ -100,7 +103,11 @@ func FactsOfInfos(infos []protocol.LoaderInfo, self string) []LoaderFacts {
 		f := LoaderFacts{Key: l.LoaderKey, Name: l.Name, Case: loaderCaseOf(l.EdgeStationUID, self),
 			EdgeUID: l.EdgeStationUID, EdgeName: l.EdgeDisplayName}
 		for _, p := range l.Positions {
-			if p.CoreNodeName != "" && domain.IsBoardWindow(domain.LoaderLayout(l.Layout), p.HomeKind) {
+			if p.CoreNodeName == "" {
+				continue
+			}
+			f.Members = append(f.Members, p.CoreNodeName)
+			if domain.IsBoardWindow(domain.LoaderLayout(l.Layout), p.HomeKind) {
 				f.Windows = append(f.Windows, p.CoreNodeName)
 			}
 		}
@@ -113,8 +120,14 @@ func FactsOfInfos(infos []protocol.LoaderInfo, self string) []LoaderFacts {
 func FactsOfCoreLoaders(ls []store.CoreLoader, self string) []LoaderFacts {
 	out := make([]LoaderFacts, 0, len(ls))
 	for _, l := range ls {
-		out = append(out, LoaderFacts{Key: l.LoaderKey, Name: l.Name, Windows: l.BoardWindows(),
-			Case: loaderCaseOf(l.EdgeStationUID, self), EdgeUID: l.EdgeStationUID, EdgeName: l.EdgeDisplayName})
+		f := LoaderFacts{Key: l.LoaderKey, Name: l.Name, Windows: l.BoardWindows(),
+			Case: loaderCaseOf(l.EdgeStationUID, self), EdgeUID: l.EdgeStationUID, EdgeName: l.EdgeDisplayName}
+		for _, p := range l.Positions {
+			if p.PositionNode != "" {
+				f.Members = append(f.Members, p.PositionNode)
+			}
+		}
+		out = append(out, f)
 	}
 	return out
 }
@@ -350,7 +363,9 @@ type screenPlan struct {
 	// retry is the disabled positions coming off: kept for an order before.
 	retry []int64
 	add   []string
-	link  string
+	// back is the disabled positions going back on, enabled.
+	back []string
+	link string
 }
 
 // TakeResult is what one run of the take did, for the engine's log.
@@ -439,20 +454,26 @@ func (s *StationService) TakeLoaders(held, arriving []LoaderFacts, start bool) (
 // names another Edge for. A disabled one is planned too, so its retire is
 // tried again once its order is gone.
 func (s *StationService) planRemovals(pl *takePlant, facts map[string]LoaderFacts, planFor func(int64) *screenPlan) {
+	// Whose member each node is, as Core sends the set: a loader this Edge
+	// cannot run (one its loader store skips) still holds its windows.
+	holder := map[string]string{}
+	for key, f := range facts {
+		for _, m := range f.Members {
+			holder[m] = key
+		}
+	}
 	for _, sc := range pl.screens {
 		if !s.isLoaderScreen(sc) {
 			continue
 		}
 		for _, p := range sc.positions {
 			off, moved := false, ""
-			if s.loaders != nil {
-				l, _ := s.loaders.LoaderForNode(domain.NodeID(p.name))
-				switch {
-				case l == nil || !l.Contains(domain.NodeID(p.name)):
-					off = p.marked
-				case facts[string(l.ID())].Case == LoaderCaseElsewhere:
-					off, moved = true, string(l.ID())
-				}
+			key, held := holder[p.name]
+			switch {
+			case !held:
+				off = p.marked
+			case facts[key].Case == LoaderCaseElsewhere:
+				off, moved = true, key
 			}
 			if !off {
 				continue
@@ -488,6 +509,15 @@ func (s *StationService) planAdditions(pl *takePlant, arriving []LoaderFacts, di
 		if diff.whole[f.Key] {
 			want = f.Windows
 		}
+		if len(want) == 0 {
+			continue
+		}
+		if !s.runsLoader(f) {
+			if f.Case == LoaderCaseHere {
+				notes[f.Key] = "this Edge cannot run the loader as Core sends it (its log says why)"
+			}
+			continue
+		}
 		var on []string
 		for _, w := range want {
 			if len(pl.live[w]) == 0 {
@@ -497,9 +527,18 @@ func (s *StationService) planAdditions(pl *takePlant, arriving []LoaderFacts, di
 		sid, ambiguous := s.screenFor(f, pl, f.Case == LoaderCaseHere)
 		switch {
 		case sid != 0:
-			if len(on) > 0 {
+			// A window kept on the screen for an order, wanted again, goes
+			// back on with the rest rather than being kept a second time.
+			var back []string
+			for _, p := range pl.byID[sid].positions {
+				if !p.enabled && slices.Contains(want, p.name) {
+					back = append(back, p.name)
+				}
+			}
+			if len(on) > 0 || len(back) > 0 {
 				plan := planFor(sid)
 				plan.add = append(plan.add, on...)
+				plan.back = append(plan.back, back...)
 				plan.link = f.Key
 			}
 		case ambiguous:
@@ -603,7 +642,7 @@ func (s *StationService) writeScreenPlan(sc *takeScreen, p *screenPlan) (kept []
 			enabledOff = append(enabledOff, pos.name)
 		}
 	}
-	if len(p.add) == 0 && len(enabledOff) == 0 {
+	if len(p.add) == 0 && len(enabledOff) == 0 && len(p.back) == 0 {
 		if len(p.retry) == 0 {
 			return nil, "", nil
 		}
@@ -622,7 +661,7 @@ func (s *StationService) writeScreenPlan(sc *takeScreen, p *screenPlan) (kept []
 	}
 	var names []string
 	for _, pos := range sc.positions {
-		if pos.enabled && !p.remove[pos.name] {
+		if (pos.enabled || slices.Contains(p.back, pos.name)) && !p.remove[pos.name] {
 			names = append(names, pos.name)
 		}
 	}
@@ -637,8 +676,8 @@ func (s *StationService) writeScreenPlan(sc *takeScreen, p *screenPlan) (kept []
 		}
 	}
 	var parts []string
-	if len(p.add) > 0 {
-		parts = append(parts, "put on "+strings.Join(p.add, ", "))
+	if on := append(append([]string(nil), p.back...), p.add...); len(on) > 0 {
+		parts = append(parts, "put on "+strings.Join(on, ", "))
 	}
 	var off []string
 	for name := range p.remove {
@@ -654,6 +693,21 @@ func (s *StationService) writeScreenPlan(sc *takeScreen, p *screenPlan) (kept []
 		parts = append(parts, "kept "+strings.Join(kept, ", ")+" for a running order")
 	}
 	return kept, fmt.Sprintf("screen %d: %s", sc.id, strings.Join(parts, "; ")), nil
+}
+
+// runsLoader is whether this Edge's loader store holds the loader as Core
+// sends it: a loader it skips as malformed (a shared loader with no part) has
+// no board to draw, so nothing is taken for it.
+func (s *StationService) runsLoader(f LoaderFacts) bool {
+	if s.loaders == nil {
+		return false
+	}
+	for _, w := range f.Windows {
+		if l, _ := s.loaders.LoaderForNode(domain.NodeID(w)); l != nil && string(l.ID()) == f.Key {
+			return true
+		}
+	}
+	return false
 }
 
 // anyOrderRunning is whether an order is active at any of the positions.

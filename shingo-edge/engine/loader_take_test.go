@@ -541,3 +541,75 @@ func TestLoaderTake_StatementsPerSend(t *testing.T) {
 		t.Errorf("a replayed send read %d and wrote %d plant statements, want none", r, w)
 	}
 }
+
+// FOUND ON THE DEV STACK (round 10): a shared loader Core sends with no part
+// is one this Edge's loader store skips as malformed, so its board would draw
+// nothing. Core naming this Edge makes no process or screen for it; the page
+// says why.
+func TestLoaderTake_ALoaderThisEdgeCannotRunIsNotMade(t *testing.T) {
+	t.Parallel()
+	eng, db, _ := takeEngine(t)
+	l := picked(keyed(sharedLoader("TK-W1", "TK-W2"), "loader:TK", "TK Loader"), takeSelf, "THIS EDGE")
+	l.Payloads = nil
+	mustSetLoaders(t, eng, l)
+	if n := countRows(t, db, "processes"); n != 0 {
+		t.Errorf("%d process(es) made for a loader this Edge cannot run", n)
+	}
+	if note := eng.stationService.LoaderTakeNote("loader:TK"); !strings.Contains(note, "cannot run") {
+		t.Errorf("note = %q, want it to say this Edge cannot run the loader as Core sends it", note)
+	}
+}
+
+// FOUND ON THE DEV STACK (round 10): a window kept on its screen for a running
+// order when Core moved the loader away is the loader's again when Core picks
+// this Edge back, and goes back on, enabled, with the rest; it is not kept a
+// second time.
+func TestLoaderTake_AKeptWindowWantedAgainGoesBackOn(t *testing.T) {
+	t.Parallel()
+	eng, db, _ := takeEngine(t)
+	l := keyed(sharedLoader("TK-W1", "TK-W2"), "loader:TK", "TK Loader")
+	mustSetLoaders(t, eng, picked(l, takeSelf, "THIS EDGE"))
+	var sid int64
+	for _, sc := range screensOf(t, db) {
+		if sc.link == "loader:TK" {
+			sid = mustStation(t, db, sc.screen)
+		}
+	}
+	activeOrderAt(t, db, positionID(t, db, sid, "TK-W2"))
+	mustSetLoaders(t, eng, picked(l, "stn-other", "EDGE 2"))
+	if got := screenPositions(t, db, sid); !slices.Equal(got, []string{"TK-W2"}) {
+		t.Fatalf("after the move: screen = %v, want TK-W2 kept for its order", got)
+	}
+	mustSetLoaders(t, eng, picked(l, takeSelf, "THIS EDGE"))
+	nodes, err := db.ListProcessNodesByStation(sid)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var got []string
+	for _, n := range nodes {
+		if !n.Enabled {
+			t.Errorf("%s is still disabled: kept again rather than taken back", n.CoreNodeName)
+		}
+		got = append(got, n.CoreNodeName)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"TK-W1", "TK-W2"}) {
+		t.Errorf("after the pick came back: screen = %v, want both windows", got)
+	}
+}
+
+// mustStation is the id of the screen named name.
+func mustStation(t *testing.T, db *store.DB, name string) int64 {
+	t.Helper()
+	list, err := db.ListOperatorStations()
+	if err != nil {
+		t.Fatalf("list screens: %v", err)
+	}
+	for _, st := range list {
+		if st.Name == name {
+			return st.ID
+		}
+	}
+	t.Fatalf("no screen %s", name)
+	return 0
+}
