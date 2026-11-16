@@ -4079,9 +4079,21 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	// string. Grouping them would delete real nodes, discard their runtime and
 	// repoint their orders onto an unrelated survivor. Exclude them here, and make
 	// the index below partial on the same predicate so unbound nodes stay possible.
+	// LIVE ROWS ONLY. A retired row (deleted_at set) is history, not a
+	// duplicate: taking a position off retires its row and putting the node
+	// back makes a new one, a pair the live-only unique index allows. Grouping
+	// retired rows "merged" every such pair at the next start, hard-deleting
+	// the retired row with a LOSES warning, and where the retired row was on a
+	// screen and the new one on none, deleting the LIVE one (round 11). The
+	// column is checked because this runs before migrateProcessNodeSoftDelete
+	// adds it to an older database, which then has no retired rows at all.
+	live, err := liveProcessNodesPredicate(db.DB)
+	if err != nil {
+		return err
+	}
 	rows, err := db.Query(`
 		SELECT process_id, core_node_name FROM process_nodes
-		WHERE core_node_name <> ''
+		WHERE core_node_name <> ''` + live + `
 		GROUP BY process_id, core_node_name HAVING COUNT(*) > 1`)
 	if err != nil {
 		return err
@@ -4101,7 +4113,7 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	}
 
 	for _, g := range groups {
-		if err := db.collapseProcessNodeGroup(g); err != nil {
+		if err := db.collapseProcessNodeGroup(g, live); err != nil {
 			return err
 		}
 	}
@@ -4111,12 +4123,30 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	// other and a process may hold several. Created here rather than in the
 	// canonical DDL because it cannot be built until the collapse above has run:
 	// schema.Apply would fail on any database that still has duplicates.
+	//
+	// Live rows only where the table has retired ones, the shape
+	// migrateProcessNodeSoftDelete gives it: built here without the predicate,
+	// a retired row beside its live replacement fails the index.
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_process_nodes_process_core_name
 		ON process_nodes(process_id, core_node_name)
-		WHERE core_node_name <> ''`); err != nil {
+		WHERE core_node_name <> ''` + live); err != nil {
 		return fmt.Errorf("enforce UNIQUE(process_id, core_node_name): %w", err)
 	}
 	return nil
+}
+
+// liveProcessNodesPredicate is " AND deleted_at IS NULL" where process_nodes
+// has the soft-delete column, and "" on an older database that has none (and
+// so no retired rows): the boot's collapse runs before that column is added.
+func liveProcessNodesPredicate(db *sql.DB) (string, error) {
+	has, err := schema.TableHasColumn(db, "process_nodes", "deleted_at")
+	if err != nil {
+		return "", fmt.Errorf("process_nodes deleted_at: %w", err)
+	}
+	if !has {
+		return "", nil
+	}
+	return " AND deleted_at IS NULL", nil
 }
 
 // dupGroup is one (process, core node) that has more than one process_nodes row.
@@ -4138,7 +4168,7 @@ type dupGroup struct {
 // What is destroyed is announced, and only after the commit that destroyed it —
 // logging a discard that then rolled back would be a lie in the one record anyone
 // has of it.
-func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
+func (db *DB) collapseProcessNodeGroup(g dupGroup, live string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("collapse %s: begin: %w", g.coreNodeName, err)
@@ -4149,7 +4179,7 @@ func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
 	if err := tx.QueryRow(`
 		SELECT pn.id FROM process_nodes pn
 		LEFT JOIN process_node_runtime_states r ON r.process_node_id = pn.id
-		WHERE pn.process_id = ? AND pn.core_node_name = ?
+		WHERE pn.process_id = ? AND pn.core_node_name = ?`+strings.ReplaceAll(live, "deleted_at", "pn.deleted_at")+`
 		ORDER BY (pn.operator_station_id IS NOT NULL) DESC,
 		         COALESCE(r.updated_at, '') DESC,
 		         pn.id ASC
@@ -4159,7 +4189,7 @@ func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
 
 	dead, err := scanIDs(tx.Query(`
 		SELECT id FROM process_nodes
-		WHERE process_id = ? AND core_node_name = ? AND id <> ?`,
+		WHERE process_id = ? AND core_node_name = ? AND id <> ?`+live,
 		g.processID, g.coreNodeName, survivor))
 	if err != nil {
 		return fmt.Errorf("collapse %s: list duplicates: %w", g.coreNodeName, err)

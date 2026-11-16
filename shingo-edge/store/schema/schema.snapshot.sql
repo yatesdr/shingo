@@ -42,8 +42,8 @@ CREATE UNIQUE INDEX idx_process_nodes_process_code_live
 		ON process_nodes(process_id, code) WHERE deleted_at IS NULL;
 
 CREATE UNIQUE INDEX idx_process_nodes_process_core_name
-				ON process_nodes(process_id, core_node_name)
-				WHERE core_node_name <> '' AND deleted_at IS NULL;
+		ON process_nodes(process_id, core_node_name)
+		WHERE core_node_name <> '' AND deleted_at IS NULL;
 
 CREATE INDEX idx_process_routing_nodes_process ON process_routing_nodes(process_id);
 
