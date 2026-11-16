@@ -433,7 +433,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`bin_loader_homes`](#core-bin_loader_homes) | 7 |  | [`bin_loaders`](#core-bin_loaders), [`nodes`](#core-nodes) |
 | [`bin_loader_payloads`](#core-bin_loader_payloads) | 4 | `loader_id`, `payload_code` | [`bin_loaders`](#core-bin_loaders) |
 | [`bin_loader_quotas`](#core-bin_loader_quotas) | 3 | `loader_id`, `bin_type_id` | [`bin_loaders`](#core-bin_loaders), [`bin_types`](#core-bin_types) |
-| [`bin_loaders`](#core-bin_loaders) | 24 | `id` | `bin_loaders` |
+| [`bin_loaders`](#core-bin_loaders) | 25 | `id` | `bin_loaders` |
 | [`bin_types`](#core-bin_types) | 13 | `id` | [`carrier_families`](#core-carrier_families), `bin_types` |
 | [`bin_uop_delta_daily`](#core-bin_uop_delta_daily) | 13 | `day`, `bin_id`, `epoch_seq`, `payload_code`, `reason`, `actor` |  |
 | [`bin_uop_exception`](#core-bin_uop_exception) | 13 | `id` |  |
@@ -632,6 +632,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `drains_leftover` | `boolean` | yes | `false` |  |
 | `drains_unverified` | `boolean` | yes | `false` |  |
 | `no_clear_partials` | `boolean` | yes | `false` |  |
+| `edge_station_uid` | `text` | yes | `''` |  |
 
 - Check `(layout = ANY (ARRAY['shared_window', 'dedicated_positions']))`
 - Check `(replenishment = ANY (ARRAY['operator', 'threshold']))`
@@ -1947,7 +1948,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`changeover_station_tasks`](#edge-changeover_station_tasks) | 5 | `id` | [`operator_stations`](#edge-operator_stations), [`process_changeovers`](#edge-process_changeovers) |
 | [`core_loader_payloads`](#edge-core_loader_payloads) | 3 | `loader_key`, `payload_code` |  |
 | [`core_loader_positions`](#edge-core_loader_positions) | 6 | `loader_key`, `position_node` |  |
-| [`core_loaders`](#edge-core_loaders) | 17 | `loader_key` |  |
+| [`core_loaders`](#edge-core_loaders) | 19 | `loader_key` |  |
 | [`counter_snapshots`](#edge-counter_snapshots) | 11 | `id` | [`reporting_points`](#edge-reporting_points) |
 | [`demand_origins_open`](#edge-demand_origins_open) | 17 | `episode_key` |  |
 | [`feed_copy`](#edge-feed_copy) | 5 | `feed` |  |
@@ -1957,7 +1958,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`inventory_delta_seq`](#edge-inventory_delta_seq) | 6 | `scope_kind`, `scope_key`, `epoch` |  |
 | [`line_counters`](#edge-line_counters) | 12 | `id` |  |
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
-| [`operator_stations`](#edge-operator_stations) | 13 | `id` | [`processes`](#edge-processes) |
+| [`operator_stations`](#edge-operator_stations) | 14 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
 | [`orders`](#edge-orders) | 45 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
@@ -2126,6 +2127,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `board_hides_idle` | `INTEGER` | yes | `0` |  | How the station's board draws (Edge v23). Core owns both (bin_loaders.board_hides_idle, board_shows_all_parts). |
 | `board_shows_all_parts` | `INTEGER` | yes | `0` |  |  |
 | `no_clear_partials` | `INTEGER` | yes | `0` |  | 1 = a dedicated loader whose Clear partials is off: the board offers no home clear (Edge v46). Core owns it (bin_loaders.no_clear_partials). |
+| `edge_station_uid` | `TEXT` | yes | `''` |  | The station uid of the Edge Core names to work this loader, and that Edge's display name (Edge v57). '' = Core names none (or predates the field). Core owns both (bin_loaders.edge_station_uid). |
+| `edge_display_name` | `TEXT` | yes | `''` |  |  |
 | `synced_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 
 #### Edge: `counter_snapshots`
@@ -2267,21 +2270,22 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Edge: `operator_stations`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `INTEGER` | yes |  | PK autoincrement |
-| `process_id` | `INTEGER` | yes |  | → `processes(id) ON DELETE CASCADE` |
-| `code` | `TEXT` | yes |  |  |
-| `name` | `TEXT` | yes |  |  |
-| `note` | `TEXT` | yes | `''` |  |
-| `area_label` | `TEXT` | yes | `''` |  |
-| `sequence` | `INTEGER` | yes | `0` |  |
-| `controller_node_id` | `TEXT` | yes | `''` |  |
-| `enabled` | `INTEGER` | yes | `1` |  |
-| `health_status` | `TEXT` | yes | `'offline'` |  |
-| `last_seen_at` | `TEXT` |  |  |  |
-| `created_at` | `TEXT` | yes | `(datetime('now'))` |  |
-| `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `INTEGER` | yes |  | PK autoincrement |  |
+| `process_id` | `INTEGER` | yes |  | → `processes(id) ON DELETE CASCADE` |  |
+| `code` | `TEXT` | yes |  |  |  |
+| `name` | `TEXT` | yes |  |  |  |
+| `note` | `TEXT` | yes | `''` |  |  |
+| `area_label` | `TEXT` | yes | `''` |  |  |
+| `sequence` | `INTEGER` | yes | `0` |  |  |
+| `controller_node_id` | `TEXT` | yes | `''` |  |  |
+| `enabled` | `INTEGER` | yes | `1` |  |  |
+| `health_status` | `TEXT` | yes | `'offline'` |  |  |
+| `last_seen_at` | `TEXT` |  |  |  |  |
+| `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
+| `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
+| `core_loader_key` | `TEXT` | yes | `''` |  | The Core loader this screen was made or taken for (Edge v57), its loader_key; '' = none. Written by the Edge, never by a screen's edit. |
 
 - Unique (process_id, code)
 
