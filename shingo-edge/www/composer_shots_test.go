@@ -925,10 +925,10 @@ func TestComposerShots(t *testing.T) {
 	for _, gone := range []string{"New bins from", "Old bins to", "Robot drives via"} {
 		desktopRefuteDOM("D1 invents no second name", d1, gone)
 	}
-	// D2 WAS D1 with one position's Advanced sheet open (#style=;adv=). The
-	// sheet went in slice 3: what a position sets for the style is Set for
-	// this style, under the table on D1 itself, with no state to open.
-	desktopDOM("D2 Set for this style", d1, `id="pd-setfor"`)
+	// D2 WAS D1 with one position's Advanced sheet open (#style=;adv=). What
+	// a position sets for the style is its row's Advanced (round 5): every
+	// row of D1 carries the control that opens it.
+	desktopDOM("D2 a row's Advanced", d1, `data-act="adv-open"`)
 	desktopDOM("P0 processes", "/processes", `class="pd-tbl"`)
 
 	// ── EDIT PROCESS CHANGES ONE FIELD AND NOTHING ELSE ─────────────────
