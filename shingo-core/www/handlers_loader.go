@@ -2,6 +2,7 @@ package www
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"shingo/protocol"
@@ -17,7 +18,7 @@ func loaderWriteStatus(err error) int {
 		errors.Is(err, service.ErrAcceptPartialsPartialHome) ||
 		errors.Is(err, service.ErrAutoPushProduce) || errors.Is(err, service.ErrWindowInAnotherGroup) ||
 		errors.Is(err, service.ErrQuotaBare) || errors.Is(err, service.ErrInboundSourceUnresolved) ||
-		drainRefusal(err) {
+		errors.Is(err, service.ErrUnknownEdge) || drainRefusal(err) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
@@ -150,6 +151,10 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// NoClearPartials: the Clear partials switch, off. Absent reads as
 		// false, which keeps the clear on.
 		NoClearPartials bool `json:"no_clear_partials"`
+		// EdgeStationUID: the Edge that works the station, by its station uid.
+		// A full-row write like the rest: absent picks no Edge, so the page
+		// sends the stored uid back with every other setting.
+		EdgeStationUID string `json:"edge_station_uid"`
 		// DrainStates: the drain boxes, as the set of carrier states ticked.
 		// A full-row write like the rest: absent drains nothing, so the page
 		// sends the stored set back with every other setting.
@@ -169,6 +174,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 		BoardHidesIdle: req.BoardHidesIdle, BoardShowsAllParts: req.BoardShowsAllParts,
 		NoClearPartials: req.NoClearPartials,
+		EdgeStationUID:  req.EdgeStationUID,
 		Drains:          req.DrainStates,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
@@ -402,6 +408,15 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Each loader's Edge by its display name, from one registry read for the
+	// whole list, and none when no loader names an Edge.
+	var edgeNames map[string]string
+	for _, l := range ls {
+		if l.EdgeStationUID != "" {
+			edgeNames = h.edgeDisplayNames("loader list")
+			break
+		}
+	}
 	out := make([]map[string]any, 0, len(ls))
 	for _, l := range ls {
 		payloads, _ := svc.Payloads(l.ID)
@@ -423,9 +438,29 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 			// Whether a drain box may be ticked here, as the save would answer
 			// (LoaderService.DrainAllowed): the page draws the boxes from it.
 			"drain_allowed": svc.DrainAllowed(l),
+			// The display name of the Edge the loader names (its
+			// edge_station_uid); blank when it names none, or the registry
+			// has no name for it.
+			"edge_display_name": edgeNames[l.EdgeStationUID],
 		})
 	}
 	h.jsonOK(w, map[string]any{"loaders": out})
+}
+
+// edgeDisplayNames maps each enrolled Edge's station uid to its display name,
+// from one registry read. A failed read is logged and maps nothing, so a list
+// naming Edges beside its rows still answers, without the names.
+func (h *Handlers) edgeDisplayNames(what string) map[string]string {
+	edges, err := h.engine.NodeService().ListEdges()
+	if err != nil {
+		log.Printf("%s: list edges: %v (listed with no Edge names)", what, err)
+		return nil
+	}
+	names := make(map[string]string, len(edges))
+	for _, e := range edges {
+		names[e.StationUID] = e.DisplayName
+	}
+	return names
 }
 
 // apiCalculateThreshold runs the ported lead-time calculator over a lookback

@@ -3,6 +3,8 @@
 package service
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -114,5 +116,78 @@ func TestLoaderService_ClearPartials(t *testing.T) {
 		"a save that omits it")
 	if got, err = db.GetLoader(id); err != nil || got.NoClearPartials {
 		t.Errorf("a save without the field: no_clear_partials=%v (%v), want false", got.NoClearPartials, err)
+	}
+}
+
+// TestLoaderService_EdgeStationUID pins the save path of a station's Edge: a
+// new station picks none; a save naming an enrolled Edge stores its uid,
+// trimmed, and the downward sync carries it; a uid Core has no Edge for is
+// refused with words a person can read, and the stored pick stays; a save that
+// omits it (the update is a full-row write) picks none again. A uid already
+// stored is saved back unchecked, so a station whose Edge has left the
+// registry still saves its other settings.
+func TestLoaderService_EdgeStationUID(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewLoaderService(db, nil)
+	_, err := db.EnrollEdge("stn-esu-press", "PRESS EDGE", "stn-esu-press")
+	testutil.MustNoErr(t, err, "enroll the Edge")
+	id, err := svc.Create("ESU-STATION", loaders.RoleProduce, loaders.LayoutSharedWindow,
+		loaders.ReplenishmentOperator, "", "", false)
+	testutil.MustNoErr(t, err, "create the loader")
+	stored := func() string {
+		t.Helper()
+		got, err := db.GetLoader(id)
+		testutil.MustNoErr(t, err, "read the loader")
+		return got.EdgeStationUID
+	}
+	synced := func() string {
+		t.Helper()
+		infos, err := db.BuildLoaderInfos()
+		testutil.MustNoErr(t, err, "build loader infos")
+		for _, li := range infos {
+			if li.Name == "ESU-STATION" {
+				return li.EdgeStationUID
+			}
+		}
+		t.Fatal("ESU-STATION missing from the downward sync")
+		return ""
+	}
+	if stored() != "" || synced() != "" {
+		t.Fatalf("a new station: stored %q, synced %q; want no Edge picked", stored(), synced())
+	}
+
+	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", BoardHidesIdle: true,
+		EdgeStationUID: "  stn-esu-press "}), "pick the enrolled Edge")
+	if stored() != "stn-esu-press" || synced() != "stn-esu-press" {
+		t.Fatalf("picked: stored %q, synced %q; want stn-esu-press, trimmed", stored(), synced())
+	}
+
+	err = svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", EdgeStationUID: "stn-esu-nobody"})
+	if !errors.Is(err, ErrUnknownEdge) {
+		t.Fatalf("a uid with no Edge: err = %v, want ErrUnknownEdge so the door answers 400", err)
+	}
+	if !strings.Contains(err.Error(), `no Edge with station uid "stn-esu-nobody"`) {
+		t.Errorf("refusal reads %q; want it to name the uid", err.Error())
+	}
+	if stored() != "stn-esu-press" {
+		t.Errorf("after the refusal: stored %q, want the pick before it", stored())
+	}
+
+	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION"}), "a save that omits it")
+	if stored() != "" || synced() != "" {
+		t.Errorf("a save without the field: stored %q, synced %q; want no Edge picked", stored(), synced())
+	}
+
+	// An Edge that has left the registry: the uid stays on the loader, and a
+	// save of another setting that sends it back is not refused.
+	cur, err := db.GetLoader(id)
+	testutil.MustNoErr(t, err, "read for the direct write")
+	cur.EdgeStationUID = "stn-esu-gone"
+	testutil.MustNoErr(t, db.UpdateLoader(*cur), "store a uid the registry does not hold")
+	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", BoardShowsAllParts: true,
+		EdgeStationUID: "stn-esu-gone"}), "save another setting with the stored uid sent back")
+	if got, err := db.GetLoader(id); err != nil || got.EdgeStationUID != "stn-esu-gone" || !got.BoardShowsAllParts {
+		t.Errorf("after the save: %+v (%v); want the stored uid kept beside the new setting", got, err)
 	}
 }

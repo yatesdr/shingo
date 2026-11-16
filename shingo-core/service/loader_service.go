@@ -8,10 +8,12 @@
 package service
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"shingo/protocol"
+	"strings"
 
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -290,10 +292,38 @@ type LoaderUpdate struct {
 	// NoClearPartials: Clear partials is off (loaders.Loader.NoClearPartials).
 	// A full-row write like the rest: absent leaves the clear on.
 	NoClearPartials bool
+	// EdgeStationUID: the Edge that works the station, by its station uid
+	// (loaders.Loader.EdgeStationUID). Trimmed; a newly picked uid must be an
+	// enrolled Edge's (checkEdge). A full-row write like the rest: absent
+	// picks no Edge.
+	EdgeStationUID string
 	// Drains: the part-less carrier states an unloader drains from its inbound
 	// source (loaders.DrainStates). A full-row write like the rest: absent
 	// drains nothing. Checked on every save that leaves a box on (checkDrains).
 	Drains []protocol.CarrierState
+}
+
+// ErrUnknownEdge refuses a station's Edge pick naming a station uid Core holds
+// no edge_registry row for. Wrapped with the uid: `no Edge with station uid "X"`.
+var ErrUnknownEdge = errors.New("no Edge with station uid")
+
+// checkEdge is the Edge uid a save stores: want, trimmed. Blank is valid and
+// picks no Edge. A uid other than the one stored must be an enrolled Edge's
+// (edge_registry.station_uid). The uid already stored is kept unchecked: the
+// page sends it back with every other setting (a full-row write), so a station
+// whose Edge has left the registry can still save the rest.
+func (s *LoaderService) checkEdge(stored, want string) (string, error) {
+	uid := strings.TrimSpace(want)
+	if uid == "" || uid == stored {
+		return uid, nil
+	}
+	if _, err := s.db.GetEdgeByUID(uid); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("%w %q", ErrUnknownEdge, uid)
+		}
+		return "", fmt.Errorf("read the Edge %q: %w", uid, err)
+	}
+	return uid, nil
 }
 
 // checkAcceptPartials refuses accept_partials where it cannot hold: a produce
@@ -370,6 +400,9 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	cur.BoardHidesIdle = in.BoardHidesIdle
 	cur.BoardShowsAllParts = in.BoardShowsAllParts
 	cur.NoClearPartials = in.NoClearPartials
+	if cur.EdgeStationUID, err = s.checkEdge(cur.EdgeStationUID, in.EdgeStationUID); err != nil {
+		return err
+	}
 	if cur.Drains, err = loaders.NewDrainStates(in.Drains); err != nil {
 		return err
 	}

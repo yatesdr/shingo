@@ -74,7 +74,8 @@ function shown(el) { return !el.classList.contains('is-hidden'); }
 
 // load builds a fresh module instance. opts.auth renders the signed-in page.
 // Every apiPost is recorded in order on h.posts, and resolves {} unless
-// opts.post says otherwise.
+// opts.post says otherwise. Every apiGet url is recorded on h.gets; opts.edges
+// answers GET /api/edges.
 function load(opts) {
     opts = opts || {};
     const ids = [
@@ -92,6 +93,7 @@ function load(opts) {
     }
     const listeners = [];
     const posts = [];
+    const gets = [];
     const toasts = [];
     const confirms = [];
     // The open layer entries, innermost last (shared/layer.js's stack).
@@ -136,7 +138,11 @@ function load(opts) {
         clearInterval() {},
         setTimeout() { return 0; },
         // Injected in place of the stripped ES import.
-        apiGet(url) { return Promise.resolve(url === '/api/loader/list' && opts.list ? { loaders: opts.list() } : {}); },
+        apiGet(url) {
+            gets.push(url);
+            if (url === '/api/edges' && opts.edges) return Promise.resolve(opts.edges());
+            return Promise.resolve(url === '/api/loader/list' && opts.list ? { loaders: opts.list() } : {});
+        },
         apiPost(url, body) { posts.push({ url: url, body: body }); return Promise.resolve(opts.post ? opts.post(url, body) : {}); },
         delegateActions() {},
         h: h,
@@ -166,7 +172,7 @@ function load(opts) {
         .replace(/^import[^;]+;\s*/mg, '');   // drop the ES imports; deps injected above
     vm.runInContext(src, ctxObj);
     return {
-        ctx: ctxObj, els: els, posts: posts, listeners: listeners, toasts: toasts, confirms: confirms, layer: layer,
+        ctx: ctxObj, els: els, posts: posts, gets: gets, listeners: listeners, toasts: toasts, confirms: confirms, layer: layer,
         // layerEscape is the layer's Escape on an untouched entry: the
         // innermost closes, and its onClose runs.
         layerEscape() { if (layer.length) closeEntry(layer[layer.length - 1].id, 'escape'); },
@@ -738,7 +744,8 @@ await (async function settingsSaveThroughTheApi() {
         html.indexOf('Order empties') < 0);
     check('settings: gone — "Leaves carriers bare as", the layout dropdown',
         html.indexOf('Leaves carriers bare as') < 0 && html.indexOf('Multi window') < 0 && html.indexOf('Single window') < 0);
-    check('settings: every row saves as ticked', (html.match(/data-action-change="saveStationSetting"/g) || []).length === 7);
+    check('settings: every row saves as ticked, the Edge pick with them',
+        (html.match(/data-action-change="saveStationSetting"/g) || []).length === 8);
     check('settings: the window-type picker never offers a bare type',
         html.indexOf('>CART<') >= 0 && html.indexOf('CART-BARE') < 0);
     check('binTypeOptions(set, false) leaves bare out', h.ctx.binTypeOptions([], false).indexOf('CART-BARE') < 0);
@@ -812,6 +819,119 @@ await (async function settingsSaveThroughTheApi() {
         h.ctx.settingUpdate(ded({ no_clear_partials: true }), 'name', 'LDR-B').no_clear_partials === true);
     check('a row that does not say keeps the clear on',
         h.ctx.settingUpdate(ded(), 'boardHidesIdle', true).no_clear_partials === false);
+})();
+
+// The Edge that works a station (v178). One pick in Settings' first section,
+// right after the station name: the blank first, then every Edge Core knows
+// (GET /api/edges, read signed in only), by its display name or its uid marked
+// unclaimed; a stored uid Core no longer lists stays, selected. A change sends
+// edge_station_uid, every other save sends the stored uid back (a full-row
+// write), and a pair's one pick saves both stages. Read-only, the card names
+// the Edge in one line.
+await (async function edgePick() {
+    const edges = [
+        { station_uid: 'stn-a', display_name: 'EDGE A', claimed_at: '2026-11-01T00:00:00Z' },
+        { station_uid: 'stn-b', display_name: '', claimed_at: null },
+    ];
+    const h = load({ auth: true });
+    h.set("binTypeCatalog = []");
+    h.set('edgeChoices = ' + JSON.stringify(edges));
+    const help = 'The Edge picked makes this station&#39;s operator screen and keeps its windows on it; every other Edge takes nothing of it.';
+    const optionsOf = function (html) {
+        const at = html.indexOf('data-field="edgeStationUID"');
+        if (at < 0) return [];
+        return html.slice(at, html.indexOf('</select>', at)).match(/<option[^>]*>[^<]*<\/option>/g) || [];
+    };
+    const draw = function (l) { return h.ctx.settingsHtml({ loader: l, homes: [], payloads: [], window_bin_types: {} }, null); };
+    const picked = draw(loader({ edge_station_uid: 'stn-a' }));
+    check('edge pick: the blank first, then each Edge by its name, or its uid marked unclaimed',
+        JSON.stringify(optionsOf(picked)) === JSON.stringify([
+            '<option value="">No Edge picked</option>',
+            '<option value="stn-a" selected>EDGE A</option>',
+            '<option value="stn-b">stn-b (unclaimed)</option>',
+        ]), JSON.stringify(optionsOf(picked)));
+    check('edge pick: labelled Edge, right after the station name, before Order empties',
+        picked.indexOf('>Edge</label>') >= 0 &&
+        picked.indexOf('data-field="name"') < picked.indexOf('data-field="edgeStationUID"') &&
+        picked.indexOf('data-field="edgeStationUID"') < picked.indexOf('data-field="replenishment"'));
+    check('edge pick: its one line under it',
+        picked.indexOf('</select><div class="form-hint">' + help + '</div>') > picked.indexOf('data-field="edgeStationUID"'));
+    check('edge pick: nothing stored, the blank is selected',
+        optionsOf(draw(loader()))[0] === '<option value="" selected>No Edge picked</option>');
+    const gone = optionsOf(draw(loader({ edge_station_uid: 'stn-gone' })));
+    check('edge pick: a stored uid Core no longer lists shows as itself, selected, not blanked',
+        gone.length === 4 && gone[0] === '<option value="">No Edge picked</option>' &&
+        gone[3] === '<option value="stn-gone" selected>stn-gone</option>', JSON.stringify(gone));
+
+    const body = h.ctx.settingUpdate(loader({ replenishment: 'operator' }), 'edgeStationUID', 'stn-b');
+    check('a pick sends edge_station_uid and leaves the rest alone',
+        body.edge_station_uid === 'stn-b' && body.replenishment === 'operator' && body.name === 'LDR-A');
+    check('picking the blank sends edge_station_uid:""',
+        h.ctx.settingUpdate(loader({ edge_station_uid: 'stn-a' }), 'edgeStationUID', '').edge_station_uid === '');
+    const stored = loader({ edge_station_uid: 'stn-a' });
+    check('every other save sends the stored uid back: a tick, a rename, a slot, the wait group',
+        h.ctx.settingUpdate(stored, 'boardHidesIdle', true).edge_station_uid === 'stn-a' &&
+        h.ctx.settingUpdate(stored, 'name', 'LDR-B').edge_station_uid === 'stn-a' &&
+        h.ctx.placeUpdate(stored, 'outbound', 'EMPTIES').edge_station_uid === 'stn-a' &&
+        h.ctx.waitGroupUpdates(unloader({ id: 7, edge_station_uid: 'stn-a' }), unloader({ id: 8, edge_station_uid: 'stn-a' }), 'WAIT-G')
+            .every(function (b) { return b.edge_station_uid === 'stn-a'; }));
+    check('a row that never named one sends the key, blank',
+        h.ctx.loaderPayload(h.ctx.formStateFromLoader(loader())).edge_station_uid === '');
+
+    const pickEl = function (lid, uid) {
+        const el = makeEl('', 'select');
+        el.value = uid;
+        el.setAttribute('data-loader-id', String(lid));
+        el.setAttribute('data-field', 'edgeStationUID');
+        return el;
+    };
+    h.set('loaderData = ' + JSON.stringify([{ loader: loader({ funnel_windows: true }), homes: [], payloads: [] }]));
+    await h.ctx.saveStationSetting(pickEl(21, 'stn-a'));
+    check('a change saves at once: one update with the uid, the rest as stored',
+        h.posts.length === 1 && h.posts[0].url === '/api/loader/update' && h.posts[0].body.id === 21 &&
+        h.posts[0].body.edge_station_uid === 'stn-a' && h.posts[0].body.funnel_windows === true, JSON.stringify(h.posts));
+    const tick = makeEl('', 'input');
+    tick.type = 'checkbox';
+    tick.checked = true;
+    tick.setAttribute('data-loader-id', '21');
+    tick.setAttribute('data-field', 'boardHidesIdle');
+    h.set('loaderData = ' + JSON.stringify([{ loader: loader({ edge_station_uid: 'stn-a' }), homes: [], payloads: [] }]));
+    await h.ctx.saveStationSetting(tick);
+    check('another setting saved through the page sends the stored uid back',
+        h.posts.length === 2 && h.posts[1].body.board_hides_idle === true && h.posts[1].body.edge_station_uid === 'stn-a');
+
+    const hp = load({ auth: true });
+    const [one, two] = pair({ funnel_windows: true }, { outbound_dest: 'EMPTIES' });
+    hp.set('loaderData = ' + JSON.stringify([one, two]));
+    hp.set('edgeChoices = ' + JSON.stringify(edges));
+    const ph = hp.ctx.settingsHtml(one, two);
+    check('a pair: one pick, on the station card', (ph.match(/data-field="edgeStationUID"/g) || []).length === 1);
+    await hp.ctx.saveStationSetting(pickEl(7, 'stn-a'));
+    check('a pair: the one pick saves both stages, stage 1 then stage 2, nothing else moving',
+        hp.posts.length === 2 && hp.posts[0].body.id === 7 && hp.posts[1].body.id === 8 &&
+        hp.posts.every(function (p) { return p.url === '/api/loader/update' && p.body.edge_station_uid === 'stn-a'; }) &&
+        hp.posts[0].body.funnel_windows === true && hp.posts[1].body.outbound_dest === 'EMPTIES' &&
+        hp.posts[1].body.name === 'PAIR-A · stage 2', JSON.stringify(hp.posts));
+
+    // The read of the Edges: signed in only.
+    const ha = load({ auth: true, edges: function () { return edges; } });
+    await ha.ctx.refresh();
+    check('signed in, the refresh reads /api/edges and keeps what it lists',
+        ha.gets.indexOf('/api/edges') >= 0 && ha.get('edgeChoices.length') === 2);
+    const hr = load({ edges: function () { return edges; } });
+    await hr.ctx.refresh();
+    check('read-only, the refresh never asks for /api/edges', hr.gets.indexOf('/api/edges') < 0 && hr.gets.length > 0);
+
+    // Read-only, the card names the Edge; signed in, Settings does instead.
+    const card = function (hh, l, name) {
+        return hh.ctx.gridHtml([{ loader: l, edge_display_name: name, homes: [], payloads: [] }]);
+    };
+    check('read-only: one line, the Edge by its name',
+        card(hr, loader({ edge_station_uid: 'stn-a' }), 'EDGE A').indexOf('>Edge: EDGE A</span>') >= 0);
+    check('read-only: an Edge Core holds no name for is named by its uid',
+        card(hr, loader({ edge_station_uid: 'stn-b' }), '').indexOf('>Edge: stn-b</span>') >= 0);
+    check('read-only: no Edge picked, no line', card(hr, loader(), '').indexOf('Edge: ') < 0);
+    check('signed in: the card carries no Edge line', card(ha, loader({ edge_station_uid: 'stn-a' }), 'EDGE A').indexOf('Edge: ') < 0);
 })();
 
 // The four drain boxes (W14). Beside Accept partials on a single unloader where

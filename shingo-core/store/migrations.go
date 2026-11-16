@@ -4574,7 +4574,24 @@ func migrationList() []migration {
 				err := q.QueryRow(`SELECT EXISTS (` + v177OffLaneDepths + `)`).Scan(&left)
 				return err == nil && !left
 			}},
+		{178, "bin_loaders.edge_station_uid - the station uid of the Edge that works the loader; blank on every existing loader, and blank means no Edge picked",
+			v178LoaderEdgeStationUID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "edge_station_uid") }},
 	}
+}
+
+// v178LoaderEdgeStationUID adds bin_loaders.edge_station_uid: the Edge that
+// works the loader, named by its edge_registry.station_uid (never the display
+// name, which a person edits). Blank, the default and what every existing
+// loader reads, picks no Edge, so no Edge changes on the deploy. No foreign
+// key: blank is not a registry row, and a picked uid is checked against the
+// registry when it is picked (LoaderService.checkEdge). ROLLBACK is the
+// previous binary plus DROP COLUMN. Pin: TestLoaderMigration_V178_EveryLoaderPicksNoEdge.
+func v178LoaderEdgeStationUID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS edge_station_uid TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v178 bin_loaders.edge_station_uid: %w", err)
+	}
+	return nil
 }
 
 // v177OffLaneWhere is a physical node c holding a depth no lane gives it:

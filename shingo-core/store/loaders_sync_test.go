@@ -557,6 +557,69 @@ func TestLoaderNoClearPartials_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestLoaderEdgeStationUID_RoundTrip follows a loader's Edge the whole way, as
+// TestLoaderNoClearPartials_RoundTrip does Clear partials: a new loader picks
+// none (blank, and the wire leaves the key off, as an older Core's does), a
+// picked uid survives the write, the list read and the projection, and a
+// full-row write without it picks none again. The projection carries the uid
+// only; the Edge's display name is the node list's (buildNodeList).
+func TestLoaderEdgeStationUID_RoundTrip(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "ESU-L", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	wireHasKey := func() bool {
+		t.Helper()
+		raw, err := json.Marshal(findLoaderInfo(t, db, id))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return strings.Contains(string(raw), `"edge_station_uid"`)
+	}
+	got, err := db.GetLoader(id)
+	if err != nil || got == nil {
+		t.Fatalf("GetLoader: %v", err)
+	}
+	if got.EdgeStationUID != "" || wireHasKey() {
+		t.Fatalf("a new loader: edge_station_uid=%q, on the wire=%v; want blank and no key", got.EdgeStationUID, wireHasKey())
+	}
+
+	got.EdgeStationUID = "stn-esu-press"
+	if err := db.UpdateLoader(*got); err != nil {
+		t.Fatalf("UpdateLoader: %v", err)
+	}
+	if back, err := db.GetLoader(id); err != nil || back == nil || back.EdgeStationUID != "stn-esu-press" {
+		t.Errorf("picked, GetLoader = %+v (%v); want edge_station_uid stn-esu-press", back, err)
+	}
+	all, err := db.ListLoaders()
+	if err != nil {
+		t.Fatalf("ListLoaders: %v", err)
+	}
+	listed := false
+	for _, l := range all {
+		listed = listed || (l.ID == id && l.EdgeStationUID == "stn-esu-press")
+	}
+	if !listed {
+		t.Error("ListLoaders drops edge_station_uid: the sync walks that list")
+	}
+	if li := findLoaderInfo(t, db, id); li.EdgeStationUID != "stn-esu-press" || li.EdgeDisplayName != "" {
+		t.Errorf("picked, BuildLoaderInfos sends uid %q name %q; want the uid and no name", li.EdgeStationUID, li.EdgeDisplayName)
+	}
+
+	got.EdgeStationUID = ""
+	if err := db.UpdateLoader(*got); err != nil {
+		t.Fatalf("UpdateLoader blank: %v", err)
+	}
+	if wireHasKey() {
+		t.Error("blanked, the wire still carries edge_station_uid")
+	}
+}
+
 // findLoaderInfo projects every loader and returns the one with this id's key.
 func findLoaderInfo(t *testing.T, db *store.DB, id int64) protocol.LoaderInfo {
 	t.Helper()

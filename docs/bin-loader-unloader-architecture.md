@@ -28,6 +28,10 @@ A loader is one `bin_loaders` row on Core (columns: [data-model.md](data-model.m
   shared loader spreads a demand over its windows or funnels it to its first; `auto_push` arms the Edge's
   window-free asks; `second_stage_loader_id` joins the two loaders of a two-stage unloader.
 - `no_clear_partials` turns off a dedicated loader's **Clear partials** (see [Clear partials](#clear-partials)).
+- `edge_station_uid` names the Edge that works the loader, by its `edge_registry.station_uid` (v178): the **Edge**
+  pick on the station's Settings, one pick for both stages of a two-stage unloader. Blank, the default and what
+  every loader read before v178, picks none. Core refuses a newly picked uid it holds no Edge for, and sends the
+  uid on `LoaderInfo.EdgeStationUID` with that Edge's display name as `EdgeDisplayName`.
 
 Its homes are `bin_loader_homes` rows (a window or a dedicated position; `UNIQUE(position_node_id)`, so a node
 belongs to at most one loader; `home_kind` for a dedicated home with no part). A loader's carrier mix

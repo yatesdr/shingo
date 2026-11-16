@@ -45,7 +45,10 @@ let payloadOptionsHtml = ''; // the catalogue as <option>s, built once per refre
 const loaderParts = partSource(function () {
   return apiGet('/api/payloads').then(function (pd) { return (pd && (pd.payloads || pd.data || pd)) || []; });
 });
-let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types}]
+let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types, edge_display_name}]
+// The Edges Core knows (GET /api/edges, signed in only): what a station's Edge
+// pick offers. A failed read keeps the last list.
+let edgeChoices = [];
 let loadError = null; // why the last refresh failed, else null
 let draggingMemberNode = null;
 
@@ -170,6 +173,9 @@ function formShape(state) {
     // spot (homesAndBuffer, from the list). Switched off, it stays drawn
     // whatever else changed, so it can always be switched back on.
     clearPartials: saved && dedicated && (!!state.homesAndBuffer || state.clearPartials === false),
+    // Which Edge works the station: any saved station, a pair's two stages
+    // picked as one.
+    edge: saved,
     remove: saved,
   };
 }
@@ -319,6 +325,8 @@ function formStateFromLoader(l) {
     boardShowsAllParts: !!l.board_shows_all_parts,
     // Stored as its restriction (no_clear_partials); on unless it says so.
     clearPartials: !l.no_clear_partials,
+    // The Edge that works it, by station uid; blank picks none.
+    edgeStationUID: l.edge_station_uid || '',
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
   };
@@ -367,6 +375,8 @@ function loaderPayload(state) {
     // Off only when the switch says so: a state that never read the row
     // keeps the clear on.
     no_clear_partials: state.clearPartials === false,
+    // Sent back with every save: absent, the server would pick no Edge.
+    edge_station_uid: state.edgeStationUID || '',
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };
@@ -398,6 +408,8 @@ const DRAIN_FIELD = 'drain-';
 const DRAIN_HELP = "Drains carts that land in this unloader's inbound source. Point it at a press's outbound, not a stock group.";
 const DRAIN_EMPTY_HELP = 'Tote bins nobody counted are drained by the unverified box.';
 const CLEAR_PARTIALS_HELP = 'Off: the board never asks to pull a full so a buffer partial can go home.';
+const EDGE_NONE = 'No Edge picked';
+const EDGE_HELP = "The Edge picked makes this station's operator screen and keeps its windows on it; every other Edge takes nothing of it.";
 
 // drainSet is the set drains with one state set on or off, in DRAIN_BOXES'
 // order, each once; a state no box drains is left out.
@@ -415,6 +427,17 @@ function placeUpdate(loader, slot, name) {
   if (slot === 'inbound') { state.inbound = name; state.fedDirectly = false; }
   if (slot === 'outbound') { state.outbound = name; if (name) state.pulledDirectly = false; }
   return loaderPayload(state);
+}
+
+// edgeUpdates is one Edge pick as update bodies: the station's loader, and on
+// a two-stage unloader its stage 2 as well, since one Edge works the one
+// station. Stage 1 first, as the station's card is stage 1's.
+function edgeUpdates(loaderID, uid) {
+  const ctx = stationContext(loaderID);
+  if (!ctx) return [];
+  return [ctx.s1, ctx.s2].filter(Boolean).map(function (it) {
+    return settingUpdate(it.loader, 'edgeStationUID', uid);
+  });
 }
 
 // waitGroupUpdates names (or, with '', clears) the group a pair's carts wait
@@ -660,6 +683,7 @@ function stationHtml(item, s2) {
   const head = h`<div class="loader-station-head">`
     + h`<span class="loader-box-name">${baseName(l.name) || '(unnamed)'}</span>`
     + h`<span class="loader-station-kind">${kindText(l, pair)}</span>`
+    + (isAuth ? '' : edgeLineHtml(item))
     + (status ? h`<span class="badge badge-warn loader-station-status">${status}</span>` : '')
     + configGapHtml(item) + (s2 ? configGapHtml(s2) : '')
     + thresholdGapHtml(item)
@@ -671,6 +695,15 @@ function stationHtml(item, s2) {
     ? settingsHtml(item, s2)
     : h`<div class="loader-station-body${pair ? ' loader-pair-grid' : ''}">${groups.map(stageBoxHtml)}</div>`;
   return h`<div class="loader-station${pair ? ' loader-pair' : ''}" data-loader-id="${l.id}">${raw(head)}${raw(body)}</div>`;
+}
+
+// edgeLineHtml is the read-only card's one line naming the Edge that works the
+// station, by the name Core holds for it (the uid when it holds none); nothing
+// when no Edge is picked. Signed in, the Settings pick says it instead.
+function edgeLineHtml(item) {
+  const uid = item.loader.edge_station_uid || '';
+  if (!uid) return '';
+  return h`<span class="loader-station-kind loader-station-edge">${'Edge: ' + (item.edge_display_name || uid)}</span>`;
 }
 
 function stageBoxHtml(group) {
@@ -881,6 +914,27 @@ function supplyHtml(state) {
   return h`<div class="form-group loader-setting"><label for="${id}">Order empties</label><select id="${id}" class="form-input" data-action-change="saveStationSetting" data-loader-id="${state.id}" data-field="replenishment">${opts}</select></div>`;
 }
 
+// edgeLabel is how the Edge pick names one Edge: its display name, or its bare
+// uid marked unclaimed when nobody has named it (the Edges page's Unclaimed).
+function edgeLabel(e) {
+  const name = (e.display_name || '').trim();
+  return name && e.claimed_at ? name : e.station_uid + ' (unclaimed)';
+}
+
+// edgeHtml is the station's Edge pick: the blank first, then every Edge Core
+// knows. A stored uid Core no longer lists stays an option, selected, so the
+// pick never reads blank while the station still names an Edge.
+function edgeHtml(state, edges) {
+  const id = 'loader-set-' + state.id + '-edge';
+  const cur = state.edgeStationUID || '';
+  const rows = [['', EDGE_NONE]].concat((edges || []).map(function (e) { return [e.station_uid, edgeLabel(e)]; }));
+  if (cur && !rows.some(function (r) { return r[0] === cur; })) rows.push([cur, cur]);
+  const opts = rows.map(function (r) {
+    return h`<option value="${r[0]}"${raw(r[0] === cur ? ' selected' : '')}>${r[1]}</option>`;
+  });
+  return h`<div class="form-group loader-setting"><label for="${id}">Edge</label><select id="${id}" class="form-input" data-action-change="saveStationSetting" data-loader-id="${state.id}" data-field="edgeStationUID">${opts}</select><div class="form-hint">${EDGE_HELP}</div></div>`;
+}
+
 function settingsHtml(item, s2) {
   const state = formStateFromItem(item);
   const shape = formShape(state);
@@ -888,6 +942,7 @@ function settingsHtml(item, s2) {
   const pair = !!s2;
   let first = '';
   first += settingName(lid, state.name);
+  if (shape.edge) first += edgeHtml(state, edgeChoices);
   if (shape.supply) first += supplyHtml(state);
   if (shape.partials) first += settingCheck(lid, 'acceptPartials', state.acceptPartials, 'Accept partly used bins, not only full ones');
   if (shape.drains) first += drainChecksHtml(lid, state.drains);
@@ -1117,8 +1172,10 @@ async function saveStationSetting(el) {
       } catch (e) { toast('' + e, 'error'); return; }
     }
   }
+  // One Edge works the one station: on a pair the pick saves both stages.
+  const bodies = field === 'edgeStationUID' ? edgeUpdates(lid, value) : [body];
   try {
-    await apiPost('/api/loader/update', body);
+    for (const b of bodies) await apiPost('/api/loader/update', b);
   } catch (e) {
     toast('' + e, 'error');
   }
@@ -1420,8 +1477,12 @@ function toggleWaitGroup(el) {
 
 async function refresh() {
   try {
-    const results = await Promise.all([apiGet('/api/nodes'), loaderParts.load(), apiGet('/api/loader/list')]);
+    const results = await Promise.all([apiGet('/api/nodes'), loaderParts.load(), apiGet('/api/loader/list'),
+      // The Edges, for the Settings pick: a signed-in read, and a failed one
+      // keeps the last list rather than failing the page.
+      isAuth ? apiGet('/api/edges').catch(function () { return null; }) : null]);
     const nd = results[0], ld = results[2];
+    if (Array.isArray(results[3])) edgeChoices = results[3];
     if (loaderParts.rows() === null) throw new Error(loaderParts.error());
     const nodes = (nd && (nd.nodes || nd.data || nd)) || [];
     nodesByName = {}; nodesById = {}; nodeInfo = {};
