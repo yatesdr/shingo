@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -235,7 +236,8 @@ func TestCreateLoaderBoard_PutsTheHomesOnTheScreenNotTheBufferSpots(t *testing.T
 	db, svc := boardFixture(t)
 	cacheDedicated(t, db, "loader:7", []string{"SMN_014", "SMN_003", "SMN_015", "SMN_004"},
 		[]string{"home", "buffer", "home", "buffer"})
-	pid, _ := db.CreateProcess("Bin Loader", "", "", "", false)
+	pid, err := db.CreateProcess("Bin Loader", "", "", "", false)
+	testutil.MustNoErr(t, err, "CreateProcess")
 
 	gaps, err := svc.LoaderBoardGaps()
 	if err != nil {
@@ -259,7 +261,8 @@ func TestCreateLoaderBoard_ALoaderOfBufferSpotsOnlyHasNothingToBind(t *testing.T
 	t.Parallel()
 	db, svc := boardFixture(t)
 	cacheDedicated(t, db, "loader:8", []string{"SMN_003", "SMN_004"}, []string{"buffer", "buffer"})
-	pid, _ := db.CreateProcess("Buffers", "", "", "", false)
+	pid, err := db.CreateProcess("Buffers", "", "", "", false)
+	testutil.MustNoErr(t, err, "CreateProcess")
 
 	gaps, err := svc.LoaderBoardGaps()
 	if err != nil {
