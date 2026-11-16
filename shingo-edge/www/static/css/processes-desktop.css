@@ -893,10 +893,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
 .pd-card .pd-sfld .v { min-width: 0; }
 .pd-card .pd-inp.wide, .pd-card .pd-combo { min-width: 0; width: 100%; max-width: 420px; }
 .pd-setup .pd-card .pd-note, .pd-card .pd-sphost ~ .pd-note { text-align: left; margin: 2px 0 0; }
+/* AT 1280 THE SECTION LIST KEEPS ITS LEFT COLUMN (round 10), as at 1440; the
+   cards beside it go one to a row (954 px in a 1280 window: two to a row were
+   469 px, and Part identity's three-way switch was cut). The list goes across
+   the top only on a narrower window. Pinned by
+   TestSettingsSectionListKeepsItsColumnAt1280. */
 @media (max-width: 1280px) {
+    .pd-stcards { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1000px) {
     .pd-stlayout { grid-template-columns: minmax(0, 1fr); }
     .pd-stnav { position: static; flex-direction: row; flex-wrap: wrap; }
-    .pd-stcards { grid-template-columns: minmax(0, 1fr); }
 }
 /* An on/off setting is a switch with what it means beside it; a meaning too
    long for the column wraps beside the switch, not under it. */

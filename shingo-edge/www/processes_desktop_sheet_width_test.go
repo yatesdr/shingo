@@ -106,3 +106,36 @@ func TestDesktopSheetFitsItsWideField(t *testing.T) {
 		t.Errorf("the sheet's fields stack below %d px, but the card is capped from %d px", bp, base+48)
 	}
 }
+
+// SETTINGS KEEPS ITS SECTION LIST ON THE LEFT AT 1280 (round 10). At 1440 the
+// sections run down the left beside the cards; at 1280 one rule put them
+// across the top, a wrapped row with their group headings inline, on the
+// laptops the page is mostly used on. Measured in a headless Chrome launched
+// at 1280 x 900, the column fits there: the cards beside it are 954 px one to
+// a row. Two to a row they were 469 px, and Part identity's three-way switch
+// was cut, so the cards still go one to a row from 1280. The list goes across
+// the top only on a narrower window.
+func TestSettingsSectionListKeepsItsColumnAt1280(t *testing.T) {
+	t.Parallel()
+	css := desktopCSS(t)
+	media := regexp.MustCompile(`@media \(max-width: (\d+)px\) \{([^@]*?)\n\}`)
+	across, oneUp := 0, 0
+	for _, m := range media.FindAllStringSubmatch(css, -1) {
+		bp, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("breakpoint %q: %v", m[1], err)
+		}
+		if regexp.MustCompile(`\.pd-stnav \{[^}]*flex-direction: row`).MatchString(m[2]) {
+			across = bp
+		}
+		if regexp.MustCompile(`\.pd-stcards \{ grid-template-columns: minmax\(0, 1fr\); \}`).MatchString(m[2]) {
+			oneUp = bp
+		}
+	}
+	if across == 0 || across >= 1280 {
+		t.Errorf("the Settings section list goes across the top from %d px; at 1280 it keeps its left column", across)
+	}
+	if oneUp < 1280 {
+		t.Errorf("the Settings cards go one to a row from %d px; two to a row at 1280 cut Part identity's switch", oneUp)
+	}
+}

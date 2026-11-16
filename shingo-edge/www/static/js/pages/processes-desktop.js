@@ -9573,9 +9573,11 @@ function recipesHTML() {
     // needs and the spots less than their list. THE ACTIONS COLUMN HOLDS A
     // BUTTON, not just a ⋯, so it gets the room for one: the table is
     // `table-layout: fixed`, so a cell does not grow to its contents, it cuts
-    // them.
-    const presetCols = '<colgroup><col style="width:32%"><col style="width:20%">' +
-        '<col style="width:16%"><col style="width:14%"><col style="width:18%"></colgroup>';
+    // them. AT 1280 (round 10) the table is 692 px, beside the section list:
+    // 18% was 125 px for the 149 px Apply to parts… and its ⋯ need, so it has
+    // 24% now, from Recipe and Applied to.
+    const presetCols = '<colgroup><col style="width:28%"><col style="width:20%">' +
+        '<col style="width:14%"><col style="width:14%"><col style="width:24%"></colgroup>';
     const table = presets.length
         ? '<table class="pd-tbl pd-presettbl">' + presetCols +
         '<thead><tr><th>Recipe</th><th>Spots</th><th>Applied to</th><th>Saved</th><th></th></tr></thead><tbody>' +
