@@ -45,8 +45,10 @@ tag in its colour, and is greyed with the reason where the open box may not
 take it; nodes other processes hold wait under one line at the foot. What holds
 for many rows of the open box is said once above the list (`hint`), not on each
 row. The open box, its chips and the list's frame are neutral: only a box still
-needed is outlined in its role's colour. In a sheet the boxes stay in view at
-the top of the sheet's one scroll while the list goes under them. The Add process
+needed is outlined in its role's colour. **The pick has one scroll, what holds
+it**: the list has no height of its own, the sheet's body (Add process) or the
+Settings column scrolls it, and the boxes and the **Picking …** line stay in
+view at the top of that scroll while the rows go under them. The Add process
 sheet (and its Change…, the same sheet filled in) and Settings › Positions and
 routing draw it; both save through the same
 doors (`savePositions`, `saveRouting`), so it is one editor drawn twice, not two

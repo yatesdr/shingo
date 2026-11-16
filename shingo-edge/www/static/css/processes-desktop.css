@@ -96,7 +96,7 @@ body.pd-body { overflow-x: hidden; }
    can. A sheet taller than the viewport was previously handled by the page
    growing; now it is handled here. */
 body.pd-body .pd-list { overflow: auto; }
-body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
+body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpick-top: -12px; }
 
 
 /* ── app bar ──────────────────────────────────────────────────────────── */
@@ -660,24 +660,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-modal .layer-head { padding: 20px 24px 12px; border-bottom: 1px solid var(--sub-1); }
 .pd-modal .layer-head h2 { font-size: 18px; font-weight: 600; }
 .pd-modal .layer-head p { margin: 4px 0 0; font-size: 12.5px; }
-.pd-modal .layer-body { margin: 0; padding: 6px 24px 10px; overflow: auto; }
+.pd-modal .layer-body { margin: 0; padding: 6px 24px 10px; overflow: auto; --setpick-top: -6px; }
 .pd-modal .layer-foot { padding: 14px 24px; border-top: 1px solid var(--sub-1); gap: 10px; }
 .pd-modal .layer-status { font-size: 12.5px; }
-/* THE PICK IN A SHEET HAS ONE SCROLL, THE SHEET'S (owner, 2026-11-15: the
-   boxes scrolled out of view while picking). The list does not scroll on its
-   own inside the sheet; the boxes stick to the top of the sheet's body while
-   the list goes under them, so what has been picked stays in view. */
-.pd-modal .layer-body .setpick-boxes {
-    position: sticky; top: -6px; z-index: var(--z-sticky); margin: 0 -4px; padding: 6px 4px 8px; background: var(--surface);
-}
-.pd-modal .layer-body .setpick .picker--open .picker-list { max-height: none; }
-/* And the "Picking …" head sticks under them, so it is never half covered:
-   its offset is the boxes' height, which the pick sets as it draws. */
-.pd-modal .layer-body .setpick-head {
-    position: sticky; top: calc(var(--setpick-boxes-h, 0px) - 6px); z-index: var(--z-sticky);
-    margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0; padding: var(--sp-3) var(--sp-3) var(--sp-2); background: var(--bg);
-    border-radius: calc(var(--radius) + 4px) calc(var(--radius) + 4px) 0 0;
-}
+/* THE SET PICK SCROLLS WITH WHAT HOLDS IT (shared/components.css, THE SET
+   PICK HAS ONE SCROLL): on Add process the sheet's body (.layer-body above),
+   on Settings the column (body.pd-body .pd-sheet). Each scroller's own rule
+   sets --setpick-top to minus its top padding, so the pick's boxes stick
+   flush with its edge: the body's 6 px, the column's 12 px (.pd-sheet's
+   padding in components.css). TestSetPickScrollsWithWhatHoldsIt holds both. */
 .pd-sec { padding: 10px 0 4px; }
 .pd-sec .pd-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pd-sec .pd-lbl .cnt {

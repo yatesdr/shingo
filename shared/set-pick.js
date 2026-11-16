@@ -24,7 +24,9 @@
 // just keep the group sorting thing"). All · Groups only · Free only sit
 // beside the name filter, before the host's prefix filters: Groups only is
 // the group rows, already listed; Free only is what the open box may take
-// now. Nodes other processes hold stay under one line at the foot.
+// now. Nodes other processes hold stay under one line at the foot. How long
+// the list may be is the page's to say: it scrolls with the page around it
+// (shared/components.css, THE SET PICK HAS ONE SCROLL).
 //
 // IT HOLDS A DRAFT. Nothing here writes: the host reads value(box) on its own
 // Save, and onChange tells it a box moved (a host may move names between
@@ -178,9 +180,9 @@ export function createSetPick(host, opts) {
         }
         pane.setAttribute('data-role', b ? (b.role || b.key) : '');
         root.setAttribute('data-active', active || '');
-        // THE BOXES' HEIGHT, for a page that sticks the boxes and the head
-        // under them (a sheet's one scroll): the head says which box a tick
-        // goes in, and it slid half under the boxes as the list scrolled.
+        // THE BOXES' HEIGHT, the head's sticky offset (THE SET PICK HAS ONE
+        // SCROLL, shared/components.css): the head says which box a tick goes
+        // in, and it slid half under the stuck boxes as the list scrolled.
         if (root.style && root.style.setProperty && typeof row.offsetHeight === 'number') {
             root.style.setProperty('--setpick-boxes-h', row.offsetHeight + 'px');
         }

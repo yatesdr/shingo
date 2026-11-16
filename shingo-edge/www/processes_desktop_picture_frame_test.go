@@ -59,3 +59,45 @@ func TestDesktopMainColumnIsTheOneVerticalScroller(t *testing.T) {
 		}
 	}
 }
+
+// THE SET PICK SCROLLS WITH WHAT HOLDS IT (owner, 2026-11-15: "its hard to
+// scroll the page and the new thing"). Settings capped the pick's list at
+// 360 px inside its scrolling column, with the list's overscroll contained:
+// two scrolls under one pointer, and the column would not move while the
+// pointer was over the list. The list has no height of its own now
+// (shared/components.css), the sheet's body or the Settings column scrolls
+// it, and the boxes and the "Picking …" head stick at the top of that scroll.
+// Each scroller says its top padding as --setpick-top, so the stuck boxes sit
+// flush with its edge; a padding changed without it leaves a strip of rows
+// showing above them.
+func TestSetPickScrollsWithWhatHoldsIt(t *testing.T) {
+	t.Parallel()
+	comp := sharedComponentsCSS(t)
+	list := cssRule(t, comp, ".setpick .picker--open .picker-list")
+	for _, want := range [][2]string{{"max-height", "none"}, {"overflow", "visible"}, {"overscroll-behavior", "auto"}} {
+		if !hasDecl(list, want[0], want[1]) {
+			t.Errorf("components.css .setpick .picker--open .picker-list: want %s: %s; the pick's list must not be a scroll box of its own", want[0], want[1])
+		}
+	}
+	for _, sel := range []string{".setpick-boxes", ".setpick-head"} {
+		if !hasDecl(cssRule(t, comp, sel), "position", "sticky") {
+			t.Errorf("components.css %s: want position: sticky; what is picked scrolls out of view under the list", sel)
+		}
+	}
+	css := desktopCSS(t)
+	if regexp.MustCompile(`\.setpick[^{}]*\.picker-list[^{}]*\{[^}]*max-height`).MatchString(css) {
+		t.Errorf("processes-desktop.css gives a set pick's list a height again; it scrolls with what holds it")
+	}
+	offset := regexp.MustCompile(`--setpick-top:\s*-(\d+)px`)
+	padTop := regexp.MustCompile(`(^|[;\s])padding:\s*(\d+)px`)
+	for _, c := range []struct{ scroller, padCSS, padSel string }{
+		{".pd-modal .layer-body", css, ".pd-modal .layer-body"},
+		{"body.pd-body .pd-sheet", comp, ".pd-sheet, .set-ui.set-page"},
+	} {
+		m := offset.FindStringSubmatch(cssRule(t, css, c.scroller))
+		p := padTop.FindStringSubmatch(cssRule(t, c.padCSS, c.padSel))
+		if m == nil || p == nil || m[1] != p[2] {
+			t.Errorf("%s: --setpick-top %v is not minus its top padding %v", c.scroller, m, p)
+		}
+	}
+}

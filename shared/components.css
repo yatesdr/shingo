@@ -1422,7 +1422,12 @@ nav {
 [data-role="staging"], .picker-tag[data-tone="staging"] { --role: var(--role-staging); }
 [data-role="outbound"], .picker-tag[data-tone="outbound"] { --role: var(--role-outbound); }
 .setpick { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
-.setpick-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-3); }
+/* The boxes stick to the top of the pick's scroll (THE SET PICK HAS ONE
+ * SCROLL, below), opaque so the rows pass under them. */
+.setpick-boxes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-3);
+    position: sticky; top: var(--setpick-top, 0px); z-index: var(--z-sticky); margin: 0 -4px; padding: 6px 4px 8px; background: var(--surface);
+}
 .setpick-box {
     display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; min-height: 120px; padding: var(--sp-3);
     border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--bg); cursor: pointer;
@@ -1456,8 +1461,28 @@ nav {
     display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3);
     border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--bg);
 }
-.setpick-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); }
+/* The "Picking …" head sticks just under the boxes, over the list's padding. */
+.setpick-head {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2);
+    position: sticky; top: calc(var(--setpick-boxes-h, 0px) + var(--setpick-top, 0px)); z-index: var(--z-sticky);
+    margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0; padding: var(--sp-3) var(--sp-3) var(--sp-2); background: var(--bg);
+    border-radius: calc(var(--radius) + 4px) calc(var(--radius) + 4px) 0 0;
+}
 .setpick-head .setpick-hint { flex-basis: 100%; }
 .setpick-head .setpick-dot { align-self: center; }
 .setpick-head small { color: var(--text-muted); font-size: var(--font-xs); }
-.setpick .picker--open .picker-list { max-height: 360px; box-shadow: none; }
+/* THE SET PICK HAS ONE SCROLL, ITS PAGE'S (owner, 2026-11-15: "its hard to
+ * scroll the page and the new thing"). The list is never a scroll box of its
+ * own. Capped at 360 px inside Settings' scrolling column it was two scrolls
+ * under one pointer, and the list's overscroll-behavior: contain held the
+ * column still while the pointer was over the list. So the list is its full
+ * height, and the box the pick sits in scrolls it: the Add sheet's body, the
+ * Settings column. The boxes, and the "Picking …" head under them (their
+ * rules above), stick to the top of that scroll, so what is picked and which
+ * box a tick goes in stay in view while the rows go under them; the count
+ * line is the list's last row. A sticky box stops inside its scroller's
+ * padding, so a page sets --setpick-top on its scroller to minus that padding
+ * and the boxes sit flush with the edge; --setpick-boxes-h is the boxes'
+ * height, which set-pick.js sets as it draws. */
+.setpick .picker--open .picker-list { max-height: none; overflow: visible; overscroll-behavior: auto; box-shadow: none; }
+.setpick .picker--open .picker-count { position: static; }
