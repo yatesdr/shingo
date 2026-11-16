@@ -99,7 +99,7 @@ type RecipeAdvanced struct {
 }
 
 // recipePartKeys are the Advanced keys that would put a part on a recipe.
-var recipePartKeys = []flowspec.Field{flowspec.AllowedPayloadCodes, flowspec.AutoRequestPayload}
+var recipePartKeys = []flowspec.Field{flowspec.AllowedPayloadCodes}
 
 // groupFields are the four lists a group spot carries, each beside the ★ cell
 // field it widens.

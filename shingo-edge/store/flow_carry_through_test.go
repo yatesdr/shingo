@@ -93,7 +93,6 @@ var unspokenColumns = []struct {
 	{"auto_reorder", func(c processes.NodeClaim) any { return c.AutoReorder }},
 	{"below_reorder_since", func(c processes.NodeClaim) any { return c.BelowReorderSince }},
 	{"allowed_payload_codes", func(c processes.NodeClaim) any { return c.AllowedPayloadCodes }},
-	{"auto_request_payload", func(c processes.NodeClaim) any { return c.AutoRequestPayload }},
 	{"keep_staged_node", func(c processes.NodeClaim) any { return c.KeepStagedNode }},
 	{"auto_confirm", func(c processes.NodeClaim) any { return c.AutoConfirm }},
 	{"sequence", func(c processes.NodeClaim) any { return c.Sequence }},

@@ -250,7 +250,6 @@ CREATE TABLE style_node_claims (
     containment_destination TEXT NOT NULL DEFAULT '',
     curtain_required        INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
-    auto_request_payload    TEXT NOT NULL DEFAULT '',
     keep_staged_node        TEXT NOT NULL DEFAULT '',
     paired_core_node        TEXT NOT NULL DEFAULT '',
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
@@ -285,7 +284,7 @@ CREATE TABLE style_node_claims (
 INSERT INTO style_node_claims (
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
     reorder_point, auto_reorder, inbound_staging, outbound_staging, inbound_source,
-    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged_node,
+    outbound_destination, containment_destination, allowed_payload_codes, keep_staged_node,
     paired_core_node, auto_confirm, sequence,
     lineside_soft_threshold, reuse_compatible_bins, auto_push,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
@@ -298,7 +297,7 @@ INSERT INTO style_node_claims (
 SELECT
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
     reorder_point, auto_reorder, inbound_staging, outbound_staging, inbound_source,
-    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged_node,
+    outbound_destination, containment_destination, allowed_payload_codes, keep_staged_node,
     paired_core_node, auto_confirm, sequence,
     lineside_soft_threshold, reuse_compatible_bins, auto_push,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,

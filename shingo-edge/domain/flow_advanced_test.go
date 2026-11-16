@@ -36,7 +36,6 @@ func advancedPrior() NodeClaim {
 	c.AllowedPayloadCodes = []string{"SYN-A-P002", "SYN-A-P003"}
 	c.ReorderPoint, c.AutoReorder = 60, true
 	c.LinesideSoftThreshold = 7
-	c.AutoRequestPayload = "SYN-A-P002"
 	c.AutoPush = true
 	c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	c.KeepStagedNode = "SPOT-1"
@@ -75,7 +74,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 	row := MaterializeClaim(got, &prior)
 	if !reflect.DeepEqual(row.AllowedPayloadCodes, prior.AllowedPayloadCodes) ||
 		row.ReorderPoint != 60 || !row.AutoReorder ||
-		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
+		row.LinesideSoftThreshold != 7 || !row.AutoPush ||
 		row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
 		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotFetches() || !row.AutoConfirm || !row.StrictPack || row.PackTolerancePct != 5 {
 		t.Errorf("a column the modal owns was flattened by a save that never opened it: %+v", row)
@@ -93,7 +92,6 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 		ReorderPoint:          12,
 		AutoReorder:           false,
 		LinesideSoftThreshold: 0,
-		AutoRequestPayload:    "",
 		AutoPush:              false,
 		CarryoverDisposition:  CarryoverOutboundStaging,
 		RefillBy:              refillFor(false),
@@ -108,8 +106,8 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	if row.ReorderPoint != 12 || row.AutoReorder {
 		t.Errorf("replenishment did not land: %d / %v", row.ReorderPoint, row.AutoReorder)
 	}
-	if row.LinesideSoftThreshold != 0 || row.AutoRequestPayload != "" || row.AutoPush {
-		t.Errorf("a cleared field did not clear: %d / %q / %v", row.LinesideSoftThreshold, row.AutoRequestPayload, row.AutoPush)
+	if row.LinesideSoftThreshold != 0 || row.AutoPush {
+		t.Errorf("a cleared field did not clear: %d / %v", row.LinesideSoftThreshold, row.AutoPush)
 	}
 	if row.ChangeoverCarryoverDisposition != CarryoverOutboundStaging {
 		t.Errorf("changeover special did not land: %q", row.ChangeoverCarryoverDisposition)

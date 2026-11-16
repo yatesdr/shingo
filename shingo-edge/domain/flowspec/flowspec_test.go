@@ -156,21 +156,6 @@ func TestStrictPack_ForbiddenOnConsumeAndLoaderClaimsOnly(t *testing.T) {
 	}
 }
 
-// TestAutoRequestPayload_UnusedEverywhere: Auto request part has had no reader
-// since decffaa0 (2026-04-10), so no row offers it. Unused, not Forbidden: the
-// editor carries a stored value through untouched and the save refuses none,
-// so a claim that holds one saves and fingerprints as it did.
-func TestAutoRequestPayload_UnusedEverywhere(t *testing.T) {
-	t.Parallel()
-	for _, mode := range steadyModes() {
-		for _, role := range flowspec.Roles() {
-			if got := flowspec.Steady(role, mode)[flowspec.AutoRequestPayload]; got != flowspec.Unused {
-				t.Errorf("%s %s: auto_request_payload is %v, want unused", role, mode, got)
-			}
-		}
-	}
-}
-
 // TestFlowspecPinsKnownDisagreements asserts that the readers still disagree
 // where they disagreed on 0f1c2c1f. EACH CASE MUST GO RED WHEN ITS
 // DISAGREEMENT IS RESOLVED — resolving one is a behaviour change with its own

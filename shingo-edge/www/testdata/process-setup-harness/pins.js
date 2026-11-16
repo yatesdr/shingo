@@ -298,7 +298,7 @@ async function pinTable() {
 // the tolerance are second values now (of Tool change, of strict pack), and
 // board order is offered nowhere a stored claim can reach.
 const ADV_FIELDS = ['allowed_payload_codes', 'reorder_point', 'auto_reorder', 'lineside_soft_threshold',
-    'auto_request_payload', 'auto_push', 'keep_staged_node', 'evac_nodes', 'changeover_carryover_disposition',
+    'auto_push', 'keep_staged_node', 'evac_nodes', 'changeover_carryover_disposition',
     'strict_pack', 'pack_tolerance_pct', 'partial_dest', 'refill_by', 'curtain_required', 'auto_confirm', 'sequence'];
 
 async function pinAdvanced() {

@@ -1242,8 +1242,6 @@ func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
 		c.RefillBy = protocol.RefillByIndexRobot
 	case flowspec.AutoConfirm:
 		c.AutoConfirm = true
-	case flowspec.AutoRequestPayload:
-		c.AutoRequestPayload = v
 	case flowspec.AutoPush:
 		c.AutoPush = true
 	case flowspec.KeyRoute:

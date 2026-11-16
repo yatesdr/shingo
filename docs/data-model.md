@@ -1979,8 +1979,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 48 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 52 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2656,7 +2656,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `strict_pack` | `INTEGER` | yes | `0` |  | strict_pack (v26): a produce claim's bound bin is charged only up to its pack (the catalog's uop_capacity for the claim's part); the ticks past it are held on the seat for the next bin of the part. 0 = uncapped, today's count. |
 | `pack_tolerance_pct` | `INTEGER` | yes | `0` |  | pack_tolerance_pct (v34): a strict claim's miscount tolerance, a percent of the pack (0-20). A station's RELEASE of a bin within it of the pack declares the bin full; further short ships the real count. 0 = no tolerance: the real count always ships. |
 | `allowed_payload_codes` | `TEXT` | yes | `''` |  |  |
-| `auto_request_payload` | `TEXT` | yes | `''` |  |  |
 | `keep_staged_node` | `TEXT` | yes | `''` |  | The keep-staged node: one more node this line's full or empty comes from instead of inbound_source, with a spare kept standing on it. Blank is off. Replaced the keep_staged flag, which armed a spot on inbound_staging and so gave that column a second meaning. |
 | `paired_core_node` | `TEXT` | yes | `''` |  |  |
 | `auto_confirm` | `INTEGER` | yes | `0` |  |  |
@@ -2712,7 +2711,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `strict_pack` | `INT` |  |  |  |
 | `pack_tolerance_pct` | `INT` |  |  |  |
 | `allowed_payload_codes` | `TEXT` |  |  |  |
-| `auto_request_payload` | `TEXT` |  |  |  |
 | `keep_staged_node` | `TEXT` |  |  |  |
 | `paired_core_node` | `TEXT` |  |  |  |
 | `auto_confirm` | `INT` |  |  |  |

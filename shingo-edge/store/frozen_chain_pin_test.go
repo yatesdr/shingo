@@ -53,6 +53,8 @@ import (
 //     changeover_evac_destination, removed with Edge v47 (wantTotal 158 -> 155).
 //     Sixth use: 2026-11-11, the ALTER adding style_node_claims.
 //     reorder_point_source, removed with Edge v48 (wantTotal 155 -> 154).
+//     Seventh use: 2026-11-16, the ALTER adding style_node_claims.
+//     auto_request_payload, removed with Edge v55 (wantTotal 154 -> 153).
 //   - A DATA step that rewrites live rows on every boot is removed, with a pin
 //     of the behaviour it broke. No versioned migration can retire it: the
 //     chain runs before the versioned runner on every start, so the step
@@ -87,7 +89,7 @@ func TestFrozenChainIsPinned(t *testing.T) {
 		t.Fatalf("no migrate() FuncDecl found in migrations.go")
 	}
 
-	const wantTotal = 154 // statements in migrate(): frozen chain + the runVersioned tail
+	const wantTotal = 153 // statements in migrate(): frozen chain + the runVersioned tail
 	if got := len(mig.Body.List); got != wantTotal {
 		t.Errorf("migrate() has %d statements, want %d — the frozen chain's shape changed. "+
 			"New schema changes go in edgeMigrations(), not here; frozen steps are never edited. "+

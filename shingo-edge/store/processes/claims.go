@@ -68,7 +68,7 @@ type (
 // than by each of the readers.
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	` + capacity.SQL("style_node_claims") + `, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
+	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
@@ -91,7 +91,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var presetID, presetVersion sql.NullInt64
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&resolvedCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
-		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON, &c.AutoRequestPayload,
+		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON,
 		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
@@ -659,16 +659,16 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// UNIQUE constraint on the same race.
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, auto_reorder, inbound_staging, outbound_staging,
-		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
+		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
 		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes,
 		refill_by, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, autoReorder, in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON, in.AutoRequestPayload,
+		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON,
 		keepStagedNode, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
@@ -791,7 +791,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
 		`containment_destination=?`, `partial_destination=?`, `curtain_required=?`, `strict_pack=?`, `pack_tolerance_pct=?`,
-		`allowed_payload_codes=?`, `auto_request_payload=?`,
+		`allowed_payload_codes=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 		`source=?`, `called_by=?`, `updated_at=datetime('now')`, `retired_at=NULL`,
@@ -800,7 +800,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
 		in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct,
-		allowedJSON, in.AutoRequestPayload,
+		allowedJSON,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		in.Source, in.CalledBy,
@@ -980,7 +980,7 @@ func carryoverOrDefault(d *domain.CarryoverDisposition) string {
 // on the live claims of one style, and NOTHING else.
 //
 // A DEDICATED NARROW UPDATE, because updateClaim is not the tool for this.
-// updateClaim writes eighteen columns unconditionally (claims.go's own
+// updateClaim writes seventeen columns unconditionally (claims.go's own
 // boundary note), so putting provenance through it means a caller who wanted
 // to record where a flow came from has to first reproduce the flow exactly or
 // silently rewrite it. Naming a migration candidate stamps rows an engineer

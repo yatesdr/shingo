@@ -117,8 +117,6 @@ func TestValidateFlowPreset_AGroupedRecipeIsCheckedByName(t *testing.T) {
 			says: "Left Hand lists a staging lane for PLN_010, and PLN_006 has none in the recipe — set one on PLN_006's row first, or take it out"},
 		"a part in Advanced": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"allowed_payload_codes":["SYN-P6-A"]`, 1)),
 			says: "Right Hand's Advanced sets allowed parts", is: ErrFlowPresetHasPayload},
-		"an auto-request part in Advanced": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"auto_request_payload":"SYN-P6-A"`, 1)),
-			says: "Right Hand's Advanced sets auto request part", is: ErrFlowPresetHasPayload},
 		// The mint would refuse every style made from it (the claim validator
 		// refuses what the mode forbids), so the save says so first.
 		"an Advanced field the mode does not use": {flow: twoSpotWith(leftHand, strings.Replace(rightHand, `"reorder_point":1`, `"auto_push":true`, 1)),
@@ -179,11 +177,11 @@ func TestRecipeAdvanced_IsFlowAdvancedLessWhatARecipeMayNotSay(t *testing.T) {
 	// cannot say which robot fetches the empty mints every floor-built style
 	// as Robot 1, whatever the press is. The carry-over IS: it is a Tool
 	// change position's, and a group marks none.
-	for _, k := range []string{"allowed_payload_codes", "auto_request_payload", "sequence", "changeover_carryover_disposition"} {
+	for _, k := range []string{"allowed_payload_codes", "sequence", "changeover_carryover_disposition"} {
 		delete(want, k)
 	}
 	if got := keys(RecipeAdvanced{}); !reflect.DeepEqual(got, want) {
-		t.Errorf("RecipeAdvanced keys %v, want FlowAdvanced's less the four %v", got, want)
+		t.Errorf("RecipeAdvanced keys %v, want FlowAdvanced's less the three %v", got, want)
 	}
 
 	var g RecipeAdvanced

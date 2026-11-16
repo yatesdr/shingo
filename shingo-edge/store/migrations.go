@@ -361,9 +361,10 @@ func (db *DB) migrate() error {
 	db.Exec("UPDATE style_node_claims SET inbound_source = COALESCE(NULLIF(inbound_source_node, ''), inbound_source_node_group) WHERE inbound_source = ''")
 	db.Exec("UPDATE style_node_claims SET outbound_source = COALESCE(NULLIF(outbound_source_node, ''), outbound_source_node_group) WHERE outbound_source = ''")
 
-	// Allowed payload codes and auto-request for manual_swap nodes
+	// Allowed payload codes for manual_swap nodes
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
+	// (auto_request_payload, added beside it, was dropped by Edge v55,
+	// 2026-11-16, and its ALTER removed with it.)
 
 	// REMOVED 2026-09-28: the ALTER that added payload_catalog.cycle_seconds.
 	// Edge v3 drops that column, and this unguarded step re-ran on every boot,
@@ -2695,6 +2696,36 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 					}
 				}
 				return true
+			},
+		},
+		{
+			// v55 (2026-11-16): auto_request_payload leaves style_node_claims
+			// and its quarantine mirror. Auto request part named the part a
+			// vacated position asked for; nothing has read it since decffaa0
+			// (2026-04-10), when that request was rewritten to ask for every
+			// allowed part, and the request itself went in c652540c. Every
+			// row's other columns stay as they are. It was in the flow
+			// fingerprint, so a preview held across this upgrade is refused
+			// once as stale and previewed again. The frozen-chain ALTER that
+			// re-added it on every boot was removed in the same change.
+			// Guarded per table, and no Verify, as v48.
+			Version: 55,
+			Name:    "drop_style_node_claims_auto_request_payload",
+			Fn: func(tx *sql.Tx) error {
+				for _, table := range []string{"style_node_claims", ClaimQuarantineTable} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + table + `')
+						WHERE name = 'auto_request_payload'`).Scan(&n); err != nil {
+						return fmt.Errorf("v55 %s: %w", table, err)
+					}
+					if n == 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP COLUMN auto_request_payload`); err != nil {
+						return fmt.Errorf("v55 %s: %w", table, err)
+					}
+				}
+				return nil
 			},
 		},
 	}

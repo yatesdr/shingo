@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration. Edge only; Core is unchanged.
+Deploy: Edge v55. Edge only; Core is unchanged.
 
 - The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
 - Add process is one sheet: name, group, operator screen, the coloured node pick and the parts
@@ -68,7 +68,8 @@ Deploy: no migration. Edge only; Core is unchanged.
 - First style asks for an Index Swap's or Sequential A/B's paired position, so both can be finished there
 - First style's Done waits until the position has nothing to fix, and says what it lacks in plain words
 - Allowed parts reads "other parts this position counts as its own"
-- Auto request part is no longer offered on any position: nothing reads it; a value already stored stays as it was
+- Auto request part is gone: nothing read it, and Edge v55 drops it, values and all
+- After this update, a Styles draft left open across the Edge's restart says "the flow changed since you previewed" once on Save, then previews again
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
 - The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once

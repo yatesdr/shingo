@@ -2308,7 +2308,7 @@ function gridLines(M, FLOWSPEC) {
     // Every Advanced key with a value that is not its INSERT default.
     const ALL_SET = {
         allowed_payload_codes: ['PART-X'], reorder_point: 5,
-        auto_reorder: true, lineside_soft_threshold: 3, auto_request_payload: 'PART-X',
+        auto_reorder: true, lineside_soft_threshold: 3,
         auto_push: true, keep_staged_node: 'STG_1', evacuate_on_changeover: true,
         changeover_carryover_disposition: 'keep_lineside', index_robot_supplies: true,
         auto_confirm: true, curtain_required: true, strict_pack: true, pack_tolerance_pct: 5,

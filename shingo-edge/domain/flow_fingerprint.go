@@ -108,7 +108,6 @@ type fingerprintClaim struct {
 	// the cap off (every claim saved before it existed) hashes as it did.
 	StrictPack                     bool                 `json:"strict_pack,omitempty"`
 	AllowedPayloadCodes            []string             `json:"allowed_payload_codes"`
-	AutoRequestPayload             string               `json:"auto_request_payload"`
 	KeepStagedNode                 string               `json:"keep_staged_node"`
 	PairedCoreNode                 string               `json:"paired_core_node"`
 	AutoConfirm                    bool                 `json:"auto_confirm"`
@@ -170,8 +169,8 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			PartialDestination:     c.PartialDestination,
 			CurtainRequired:        c.CurtainRequired,
 			StrictPack:             c.StrictPack,
-			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
-			KeepStagedNode: c.KeepStagedNode, PairedCoreNode: c.PairedCoreNode,
+			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes),
+			KeepStagedNode:         c.KeepStagedNode, PairedCoreNode: c.PairedCoreNode,
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,
 			LinesideSoftThreshold: c.LinesideSoftThreshold, SecondPairedCoreNode: c.SecondPairedCoreNode,
 			ReuseCompatibleBins: c.ReuseCompatibleBins, AutoPush: c.AutoPush,

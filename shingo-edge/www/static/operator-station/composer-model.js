@@ -218,11 +218,6 @@ const ADVANCED_DEFAULTS = {
     reorder_point: 0,
     auto_reorder: false,
     lineside_soft_threshold: 0,
-    // Offered nowhere (flowspec: Unused in every row; no reader since
-    // decffaa0). The key stays so a stored value rides the block back to the
-    // save as it was: without it advancedFor would drop it, and a save made
-    // after an edit in the sheet would write it blank.
-    auto_request_payload: '',
     auto_push: false,
     keep_staged_node: '',
     changeover_carryover_disposition: 'replace',

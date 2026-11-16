@@ -63,7 +63,7 @@ CREATE TABLE style_node_claims (
   inbound_staging TEXT NOT NULL DEFAULT '', outbound_staging TEXT NOT NULL DEFAULT '',
   inbound_source TEXT NOT NULL DEFAULT '', outbound_destination TEXT NOT NULL DEFAULT '',
   containment_destination TEXT NOT NULL DEFAULT '', partial_destination TEXT NOT NULL DEFAULT '', curtain_required INTEGER NOT NULL DEFAULT 0, strict_pack INTEGER NOT NULL DEFAULT 0, pack_tolerance_pct INTEGER NOT NULL DEFAULT 0,
-  allowed_payload_codes TEXT NOT NULL DEFAULT '', auto_request_payload TEXT NOT NULL DEFAULT '',
+  allowed_payload_codes TEXT NOT NULL DEFAULT '',
   keep_staged_node TEXT NOT NULL DEFAULT '',
   paired_core_node TEXT NOT NULL DEFAULT '', auto_confirm INTEGER NOT NULL DEFAULT 0,
   second_paired_core_node TEXT NOT NULL DEFAULT '', refill_by TEXT NOT NULL DEFAULT 'clearing_robot',

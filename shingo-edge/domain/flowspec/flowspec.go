@@ -119,7 +119,6 @@ const (
 	ReuseCompatibleBins            Field = "reuse_compatible_bins"
 	RefillBy                       Field = "refill_by"
 	AutoConfirm                    Field = "auto_confirm"
-	AutoRequestPayload             Field = "auto_request_payload"
 	AutoPush                       Field = "auto_push"
 	KeyRoute                       Field = "key_route"
 	KeyTask                        Field = "key_task"
@@ -182,7 +181,6 @@ var fieldLabels = map[Field]string{
 	ReuseCompatibleBins:            "Reuse compatible bins",
 	RefillBy:                       "Next carrier",
 	AutoConfirm:                    "Auto confirm",
-	AutoRequestPayload:             "Auto request part",
 	AutoPush:                       "Auto push",
 	KeyRoute:                       "Key route",
 	KeyTask:                        "Key task",
@@ -202,7 +200,7 @@ var fieldOrder = []Field{
 	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
 	LinesideSoftThreshold, Sequence, KeepStagedNode,
 	ChangeoverEvacNodes, ChangeoverCarryoverDisposition,
-	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoRequestPayload, AutoPush,
+	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoPush,
 	KeyRoute, KeyTask, PartialDestination, CurtainRequired,
 	StrictPack, PackTolerancePct,
 }
@@ -280,13 +278,6 @@ func steadyBase() map[Field]Need {
 	// modeArmViolation), so the editor must clear it on a mode change rather
 	// than carry a value that will not save.
 	out[KeepStagedNode] = Forbidden
-	// AutoRequestPayload has had no reader since decffaa0 (2026-04-10): the
-	// vacated-position request that named it was rewritten to ask for every
-	// allowed part, and later deleted. Unused in every row, not Forbidden: the
-	// editor offers it nowhere and carries a stored value through untouched,
-	// and the save refuses none, so a claim that holds one saves, and is
-	// fingerprinted, exactly as before.
-	out[AutoRequestPayload] = Unused
 	return out
 }
 
