@@ -241,7 +241,9 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   switched it; whether the station shows it), Quality hold (the containment destination), Light curtain
   (positions where a release waits for the curtain). **Danger**: delete the process. On/off settings are switches with what they mean beside them. A line has one screen: **+ Add a
   screen** shows only on a line with none, and takes its positions. A loader's or unloader's process, whose
-  board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger.
+  board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger. Its screens' positions and
+  any on no screen are listed, not picked; positions on no screen go onto a screen with **Put them on <screen>**, or with
+  **+ Add a screen** when it has none.
 
 A process's production counter is its reporting point: the Edge keeps the reporting point that binds that tag
 to the active style in step whenever the process is saved or changes over, and PLC polling reads it from there.

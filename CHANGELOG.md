@@ -70,6 +70,7 @@ Deploy: Edge v55. Edge only; Core is unchanged.
 - Allowed parts reads "other parts this position counts as its own"
 - Auto request part is gone: nothing read it, and Edge v55 drops it, values and all
 - After this update, a Styles draft left open across the Edge's restart says "the flow changed since you previewed" once on Save, then previews again
+- On a loader's or unloader's process, the positions on no screen are listed, not picked; Put them on <screen> moves them
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
 - The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once

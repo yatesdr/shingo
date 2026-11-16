@@ -11,7 +11,9 @@ and the recipes sit under **Settings › Operator setup** (a `#tab=presets` or
 `#tab=recipes` link lands there). A loader's or unloader's process — Core runs
 its board, the process row's `core_boards` — has Settings alone: Line, Screens
 and positions, a **Loader board** pointer to Core, and Danger; no Setup, no
-Styles, no flow picture. These are the patterns on it worth reusing. Each is
+Styles, no flow picture. Nothing on it is a pick: a position there that no
+loader holds would make the process a line again. Positions on no screen are
+chips with **Put them on <screen>**. These are the patterns on it worth reusing. Each is
 one paragraph because each is one idea.
 
 **One editor per fact.** Each fact about a process is edited in one place, and

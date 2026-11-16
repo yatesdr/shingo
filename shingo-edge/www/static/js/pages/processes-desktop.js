@@ -5732,9 +5732,43 @@ function looseShown() {
 
 function looseRow() {
     if (!looseShown()) return '';
+    if (coreBoards(process())) return coreLooseRow();
     return '<div class="pd-sfld pd-scrrow"><label>On no screen' +
         '<small>' + esc(nOf(pickerValue(LOOSE).length, 'position') + ' · a screen has not taken them yet') + '</small></label>' +
         '<div class="v col">' + pickerBox(LOOSE) + '</div></div>';
+}
+
+// A CORE LOADER'S POSITIONS ON NO SCREEN ARE TEXT. Its positions are its
+// loaders' windows, and a position picked here that no loader holds would make
+// the process a line again (CoreBoardProcesses), its page the full one; so
+// there is no pick. What is on no screen can still go on one: "Put them on
+// <screen>" moves it there in the draft (coreOnto), and Save writes the screen
+// before the list of positions on none (savePositions). With no screen,
+// + Add a screen takes them.
+function coreLooseRow() {
+    const left = pickerValue(LOOSE);
+    const going = loosePositions().filter(n => left.indexOf(n) < 0);
+    const screens = stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes);
+    const to = going.length ? screens.find(st => going.every(n => pickerValue(screenKey(st.id)).indexOf(n) >= 0)) : null;
+    const sub = left.length ? nOf(left.length, 'position') + ' · a screen has not taken them yet' : 'none once this is saved';
+    return '<div class="pd-sfld pd-scrrow"><label>On no screen<small>' + esc(sub) + '</small></label><div class="v col">' +
+        (left.length ? '<div class="picker-chips">' + left.map(n => '<span class="picker-chip">' + esc(n) + '</span>').join('') + '</div>' : '') +
+        (left.length && screens.length ? '<span class="pd-scracts">' + screens.map(st =>
+            '<button class="pd-btn quiet" data-act="core-onto" data-station="' + st.id + '">Put them on ' + esc(st.name) + '</button>').join('') + '</span>' : '') +
+        (left.length && !screens.length ? '<p class="pd-note">+ Add a screen takes them.</p>' : '') +
+        (going.length ? '<p class="pd-note">' + esc(going.join(', ') + (going.length === 1 ? ' goes on ' : ' go on ') +
+            (to ? to.name : 'a screen') + ' when this is saved.') + '</p>' : '') +
+        '</div></div>';
+}
+
+// coreOnto puts the positions on no screen onto screen id, in the draft.
+function coreOnto(id) {
+    const to = S.pickers[screenKey(id)];
+    const loose = S.pickers[LOOSE];
+    if (!to || !loose) return;
+    to.sel = to.sel.concat(loose.sel.filter(n => to.sel.indexOf(n) < 0));
+    loose.sel = [];
+    drawSettings();
 }
 
 // nOf is "1 position", "23 positions".
@@ -10287,6 +10321,7 @@ function onClick(e) {
             }
             case 'ar-toggle': S.arLine = !S.arLine; drawSettings(); return;
             case 'loose-onto': S.looseOnto = btn.dataset.station || ''; settingsSetMoved(); return;
+            case 'core-onto': coreOnto(btn.dataset.station); return;
             case 'work-goto': gotoFinding(btn.dataset.node); return;
             case 'preset-older':
                 S.presets.older = !S.presets.older;

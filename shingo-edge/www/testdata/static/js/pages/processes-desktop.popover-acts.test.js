@@ -4601,6 +4601,39 @@ async function settingsPositionsPins(h) {
         if (html.indexOf('data-act="setup-show"') >= 0 || html.indexOf('data-act="setup-skip"') >= 0) throw new Error('a loader\'s process offers Setup');
     });
 
+    // ON A CORE LOADER'S PAGE, "ON NO SCREEN" IS TEXT (round 7). A position
+    // picked there that no loader holds would turn the process back into a
+    // line and its page into the full one, so there is no pick. What is on no
+    // screen can still go on one: "Put them on <screen>" moves it in the
+    // draft, and Save writes the screen first and the empty list after.
+    await pin('a Core loader\'s positions on no screen are text, and Put them on <screen> puts them there on Save', async () => {
+        const ctx = page('#tab=settings', { process: { core_boards: true } });
+        await settle();
+        const row = () => {
+            const h = ctx.root.innerHTML;
+            const at = h.indexOf('<label>On no screen');
+            if (at < 0) throw new Error('no "On no screen" row: ' + plain(h).slice(0, 400));
+            const start = h.lastIndexOf('<div class="pd-sfld pd-scrrow">', at);
+            return h.slice(start, h.indexOf('<div class="pd-sfld', at + 10) > 0 ? h.indexOf('<div class="pd-sfld', at + 10) : h.length);
+        };
+        const r = row();
+        if (/data-npkbox=|class="picker-q"/.test(r)) throw new Error('the row draws a pick: ' + r);
+        if (r.indexOf('<span class="picker-chip">PLN_009</span>') < 0) throw new Error('PLN_009 is not drawn as text: ' + r);
+        for (const [id, name] of [[18, 'Press 6 Operator Screen'], [25, 'Unloader']]) {
+            if (r.indexOf('data-act="core-onto" data-station="' + id + '">Put them on ' + name + '</button>') < 0) throw new Error('no "Put them on ' + name + '": ' + r);
+        }
+        click(ctx.root, ctx.doc, { act: 'core-onto', station: '18' });
+        await settle();
+        if (plain(row()).indexOf('PLN_009 goes on Press 6 Operator Screen when this is saved') < 0) throw new Error('the row does not say where it goes: ' + plain(row()));
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('the bar reads ' + JSON.stringify(prov(ctx)));
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 6; i++) await settle();
+        const got = ctx.writes.map(w => w.method + ' ' + w.url);
+        if (JSON.stringify(got) !== '["PUT /api/operator-stations/18/claimed-nodes","PUT /api/processes/1/positions"]') throw new Error('Save wrote ' + JSON.stringify(ctx.writes));
+        if (ctx.writes[0].body.nodes.indexOf('PLN_009') < 0) throw new Error('the screen did not take PLN_009: ' + JSON.stringify(ctx.writes[0].body));
+        if (ctx.writes[1].body.nodes.length) throw new Error('PLN_009 stayed on no screen: ' + JSON.stringify(ctx.writes[1].body));
+    });
+
     // ONE DOOR TAKES A POSITION OFF THE LINE: the Positions box. Save asks
     // what still names the position first, and Save again takes it off. THE
     // WRITE IS THE SERVER'S LIST: PLN_009BCD, which the page was not loaded
