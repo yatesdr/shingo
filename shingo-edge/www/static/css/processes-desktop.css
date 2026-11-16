@@ -1060,8 +1060,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
 .pd-fsflbl { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .pd-fsflbl .setpick-dot { display: inline-block; }
 .pd-fsfield .pd-sel { min-width: 0; max-width: 100%; }
-/* A pick's one line, under its control (the label column and the gap). */
-.pd-fsnote { margin: -4px 0 0 182px; color: var(--text-muted); font-size: 13px; }
+/* A pick's one line, under its field row from the label's edge: indented under
+   the control, a back's part code took it to two lines at 1280. */
+.pd-fsnote { margin: -4px 0 0; color: var(--text-muted); font-size: 13px; }
 .pd-fsblock { display: flex; flex-direction: column; gap: 8px; }
 .pd-fsmodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .pd-fsmode {
