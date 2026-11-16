@@ -12,7 +12,7 @@
 // the line produces, the list's stopped) and its verbs; then + Add.
 //
 // Which positions a counter counts is said on its row and picked under
-// Position settings › Counted at, the one editor of a binding (the exception
+// Settings › Counted somewhere else, the one editor of a binding (the exception
 // list, shared/exceptions.js). A classic script, so its Node test loads it.
 (function () {
     'use strict';
