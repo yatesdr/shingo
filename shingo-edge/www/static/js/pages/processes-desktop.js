@@ -1366,6 +1366,21 @@ function firstPartnered(n, v) {
     }
 }
 
+// setFirstMode is the open position's swap card. A PARTNER KEPT THROUGH THE
+// CHANGE IS PAIRED AS IF PICKED (round 10): the pick stays the position's own
+// across swaps, so a row chosen under Index Swap is paired back on Sequential
+// A/B, and one chosen under Sequential A/B is the press's back on Index Swap.
+// Before, only an explicit pick did either, so a kept partner was left
+// unpaired, or was a row of its own and the press's back at once.
+function setFirstMode(mode) {
+    const d = S.firstStyle;
+    const n = d.cur;
+    if (!n || !d.own[n]) return;
+    d.own[n].mode = mode;
+    if (d.own[n].picks.paired) firstPartnered(n, d.own[n].picks.paired);
+    firstStyleChanged();
+}
+
 // firstPartFor is the position a back's part moves to: the next one to do
 // after n with no part, in the order Done · next position opens them (after
 // n, then before it), or none.
@@ -10603,7 +10618,7 @@ function onClick(e) {
             case 'setup-show': void setupGo('show'); return;
             case 'setup-later': void openSettingsAt(btn.dataset.to); return;
             // The open position's swap and role are its own copy.
-            case 'fs-mode': S.firstStyle.own[S.firstStyle.cur].mode = btn.dataset.mode; firstStyleChanged(); return;
+            case 'fs-mode': setFirstMode(btn.dataset.mode); return;
             case 'fs-role': S.firstStyle.own[S.firstStyle.cur].role = btn.dataset.role; firstStyleChanged(); return;
             case 'fs-part': openFirstPart(btn); return;
             case 'fs-addpart': void openFirstAddPart(btn); return;

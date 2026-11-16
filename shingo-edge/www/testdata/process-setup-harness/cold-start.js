@@ -582,10 +582,15 @@ async function pinFirstStylePartner() {
     page.click('root', { act: 'fs-mode', mode: mode('Sequential A/B') });
     await page.settle();
     check('another swap gives the back its row again', item('POS_A2')[1] !== 'out', JSON.stringify(item('POS_A2').slice(1)));
-    // The back given its row again has its part back, from where it moved.
+    // A PARTNER KEPT THROUGH THE SWAP CHANGE IS PAIRED AS IF PICKED (round 10):
+    // POS_A2, chosen under Index Swap, runs Sequential A/B paired with POS_A1,
+    // with its own part again (from where the back's pick moved it).
     const a2 = page.S.firstStyle.own.POS_A2 || {};
     L.push('  Sequential A/B, POS_A2 kept: POS_A2 runs ' + (labels[a2.mode] || '—') + ' paired with ' + ((a2.picks || {}).paired || '—') +
         ' · its part ' + (page.S.firstStyle.parts.POS_A2 || 'none') + ' · line "' + note() + '"');
+    check('a partner kept through the change to Sequential A/B is paired back, as if picked', a2.mode === mode('Sequential A/B') &&
+        (a2.picks || {}).paired === 'POS_A1' && page.S.model.cells.POS_A1.paired === 'POS_A2' && page.S.model.cells.POS_A2.paired === 'POS_A1',
+        JSON.stringify({ own: a2, cells: [page.S.model.cells.POS_A1.paired, (page.S.model.cells.POS_A2 || {}).paired] }));
     check('the back given its row again has its part again', page.S.firstStyle.parts.POS_A2 === backPart && onPos(backPart).join() === 'POS_A2' && !note(),
         JSON.stringify({ on: onPos(backPart), note: note() }));
     await pick('paired', 'POS_A3');
@@ -615,6 +620,28 @@ async function pinFirstStylePartner() {
     const fullNote = T.text((/<p class="pd-fsnote">([\s\S]*?)<\/p>/.exec(full.root.innerHTML) || [])[1] || '');
     L.push('  every other position with a part, POS_A2 picked: line "' + fullNote + '"');
     check('with no position free, the line says the back\'s part is on none', fullNote.indexOf(had) >= 0 && /no position/.test(fullNote), JSON.stringify(fullNote));
+    // THE OTHER WAY (round 10): a Sequential partner kept through a change to
+    // Index Swap is that press's back, as if picked there, not a row of its own
+    // and the press's back at once.
+    const back = await T.openPage(pressA(NO_FLOW, NOT_RUN));
+    back.click('root', { act: 'setup-style' });
+    await back.settle();
+    back.click('root', { act: 'fs-mode', mode: mode('Sequential A/B') });
+    await back.settle();
+    back.click('root', { act: 'fs-pick', pick: 'paired' });
+    await back.settle();
+    T.pickerRow(back, 'pd-pop', 'POS_A3');
+    await back.settle();
+    back.click('root', { act: 'fs-mode', mode: mode('Index Swap') });
+    await back.settle();
+    const bh = back.root.innerHTML;
+    const a3item = (/<li class="pd-fsitem ([a-z]+)[^"]*"><button data-act="fs-open" data-node="POS_A3">.*?<small>([^<]*)<\/small>/.exec(bh) || []);
+    const a3cell = back.S.model.cells.POS_A3 || {};
+    L.push('  Sequential A/B partner POS_A3, then Index Swap: POS_A3 ' + (a3item[1] || '?') + ' (' + T.decode(a3item[2] || '') + ') · in the draft ' +
+        (a3cell.on ? 'its own ' + labels[a3cell.mode] : 'not a cell of its own') + ' · POS_A1 paired with ' + back.S.model.cells.POS_A1.paired +
+        ' · line "' + T.text((/<p class="pd-fsnote">([\s\S]*?)<\/p>/.exec(bh) || [])[1] || '') + '"');
+    check('a partner kept through the change to Index Swap is the press\'s back, as if picked', back.S.model.cells.POS_A1.paired === 'POS_A3' &&
+        a3item[1] === 'out' && T.decode(a3item[2] || '') === 'back of POS_A1' && !a3cell.on, JSON.stringify({ item: a3item.slice(1), cell: a3cell.on }));
 }
 
 async function pinFirstStyle() {
