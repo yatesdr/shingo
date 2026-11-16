@@ -293,3 +293,34 @@ func TestCoreLoaderChange_BuffersOtherProcessesAndPressesAreNotChanges(t *testin
 		t.Errorf("a line's process has a change: %+v", changes[other])
 	}
 }
+
+// A BUFFER SPOT ON THE SCREEN IS A SECOND, EMPTY TILE. A dedicated loader's
+// buffer spot that is also a position on the screen resolves to its loader
+// like any member (Loader.Contains), so it is drawn as a tile with no part
+// (LoadablePayloadCodesAt: a buffer pins none; on the board its sheet says "No
+// payloads configured" and offers only CLOSE), and it is in the buffer strip
+// as well, read from the loader. "Make a screen" put every member on the new
+// screen until round 9 (rig, shots 03-06 of setup-round9).
+func TestCoreLoaderChange_ABufferSpotOnTheScreenIsASecondEmptyTile(t *testing.T) {
+	t.Parallel()
+	eng, _, sid := loaderChangePlant(t, "LWC-H1", "LWC-B1")
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{dedicatedLoader([]string{"LWC-H1"}, []string{"LWC-B1"})}); err != nil {
+		t.Fatalf("SetCoreLoaders: %v", err)
+	}
+	r := readBoard(t, eng, sid)
+	if want := []string{"LWC-H1", "LWC-B1"}; !slices.Equal(r.drawn, want) {
+		t.Errorf("drawn = %v, want %v: the buffer spot is a tile of its own", r.drawn, want)
+	}
+	if want := []string{"LWC-B1"}; !slices.Equal(r.strip, want) {
+		t.Errorf("strip = %v, want %v: and it is in the strip", r.strip, want)
+	}
+	view, err := eng.stationService.BuildView(context.Background(), sid)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	for _, tile := range view.Nodes {
+		if tile.Node.CoreNodeName == "LWC-B1" && (tile.Loader == nil || len(tile.Loader.Parts) != 0) {
+			t.Errorf("the buffer spot's tile carries loader %+v, want its loader with no part", tile.Loader)
+		}
+	}
+}
