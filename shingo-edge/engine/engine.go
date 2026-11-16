@@ -490,6 +490,11 @@ func (e *Engine) Start() {
 	// Reconcile any in-progress changeover against order statuses
 	e.restoreChangeoverState()
 
+	// The positions Core's loaders hold, as this Edge holds them, marked as
+	// loader windows: the rows from before v56 among them, since Core's next
+	// send changes nothing while its digest is the one held.
+	e.markLoaderWindows("start")
+
 	// A sequential Order A released at the line while this Edge then stopped,
 	// before its Order B was created: create it now.
 	e.recoverSequentialBackfills()

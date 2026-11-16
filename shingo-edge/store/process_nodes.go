@@ -50,6 +50,12 @@ func (db *DB) UpdateProcessNode(id int64, in processes.NodeInput) error {
 	return processes.UpdateNode(db.DB, id, in)
 }
 
+// MarkProcessNodesLoaderWindow marks the given rows as positions a Core
+// loader holds. See processes.MarkLoaderWindows.
+func (db *DB) MarkProcessNodesLoaderWindow(ids []int64) error {
+	return processes.MarkLoaderWindows(db.DB, ids)
+}
+
 // ListCurtainedProcessNodes returns every live node whose curtain interlock
 // is on. See processes.ListCurtainedNodes.
 func (db *DB) ListCurtainedProcessNodes() ([]processes.Node, error) {

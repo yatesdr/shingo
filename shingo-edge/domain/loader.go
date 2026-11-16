@@ -650,6 +650,28 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 	return false
 }
 
+// BoardWindows is the members a board works as tiles, in Core's order: every
+// window of a shared_window loader, every home of a dedicated one. A
+// dedicated loader's buffer spots are not among them: the board draws those
+// from the loader itself (the buffer strip), whatever its screen holds.
+// Pinned by TestLoader_BoardWindows.
+func (l *Loader) BoardWindows() []NodeID {
+	if l.IsShared() {
+		out := make([]NodeID, len(l.windows))
+		for i, w := range l.windows {
+			out[i] = w.Node
+		}
+		return out
+	}
+	var out []NodeID
+	for _, p := range l.positions {
+		if !p.IsBuffer() {
+			out = append(out, p.Node)
+		}
+	}
+	return out
+}
+
 // DeliveryNodes is the set of nodes a carrier for this loader may be delivered
 // to — every window for shared_window, every position for dedicated. Core
 // chooses among them (loaders.DeliveryTargets); the Edge reads the set for

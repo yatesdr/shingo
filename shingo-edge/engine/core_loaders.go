@@ -30,6 +30,9 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 			e.logFn("core_loaders: loader-store snapshot refresh failed — keeping last-known-good: %v", err)
 		}
 	}
+	// The positions Core now holds as windows are marked as such, so one Core
+	// removes in a later send is still known as one (MarkLoaderWindows).
+	e.markLoaderWindows("node-list sync")
 	// The board bin lists read the loaders; they rebuild on the next read.
 	e.loaderGeneration.Add(1)
 	// AFTER the cache and the snapshot, never before. A node whose stored claim
@@ -41,6 +44,23 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 	// differs from the one held.
 	e.nudgeBoards()
 	return nil
+}
+
+// markLoaderWindows marks every position a Core loader holds as a loader
+// window (StationService.MarkLoaderWindows), logging what it marked and any
+// failure; a failure leaves the marks as they were and is not the caller's.
+func (e *Engine) markLoaderWindows(when string) {
+	if e.stationService == nil {
+		return
+	}
+	n, err := e.stationService.MarkLoaderWindows()
+	if err != nil {
+		e.logFn("core_loaders: %s: %v", when, err)
+		return
+	}
+	if n > 0 {
+		e.logFn("core_loaders: %s: marked %d position(s) a Core loader holds as loader windows", when, n)
+	}
 }
 
 // reconcileLoaderClaims moves every stored manual_swap claim into the quarantine

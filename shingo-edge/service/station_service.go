@@ -467,16 +467,23 @@ func (s *StationService) LoaderHolds(coreNodeName string) bool {
 
 // CoreBoardProcesses is the set of processes whose boards Core runs: those
 // with at least one position, and every position (live process_nodes row,
-// enabled or not, on a screen or not) held by a Core loader (LoaderHolds).
+// enabled or not, on a screen or not) a Core loader's window: held by one now
+// (LoaderHolds), or held by one before (Node.LoaderWindow, MarkLoaderWindows).
 // That is a loader's or an unloader's process: its positions are the
 // loader's windows, and what they stage is Core's loader setting, not a
 // style this Edge sets up. A process with one press position among loader
 // windows is a press; a process with no position is not a loader's.
 //
+// HELD BEFORE COUNTS, so a window Core removes from the loader does not turn
+// its process into a line: its page stays the loader's, and says Core removed
+// it (CoreLoaderChanges). Without the mark the process's page became the
+// full line page (Setup, Styles, a pick saying Inbound and Outbound are
+// needed) the moment Core's next send landed (round 8, shot 03).
+//
 // nodes is every live position (ProcessService.ListNodes), the one read the
 // list shares with CurtainedNodeNames; LoaderHolds is the in-memory loader
-// resolver. With no resolver wired no position is a loader's, so the set is
-// empty. A process absent from the map is false.
+// resolver. With no resolver wired only a marked position is a loader's. A
+// process absent from the map is false.
 func (s *StationService) CoreBoardProcesses(nodes []processes.Node) map[int64]bool {
 	out := map[int64]bool{}
 	for _, n := range nodes {
@@ -484,11 +491,135 @@ func (s *StationService) CoreBoardProcesses(nodes []processes.Node) map[int64]bo
 		if seen && !held {
 			continue
 		}
-		out[n.ProcessID] = s.LoaderHolds(n.CoreNodeName)
+		out[n.ProcessID] = n.LoaderWindow || s.LoaderHolds(n.CoreNodeName)
 	}
 	for pid, held := range out {
 		if !held {
 			delete(out, pid)
+		}
+	}
+	return out
+}
+
+// MarkLoaderWindows marks every live position whose node a Core loader holds
+// now (LoaderHolds) as a loader window (process_nodes.loader_window), and
+// returns how many it newly marked. It never clears a mark: a window Core
+// removes later is still known as one (CoreBoardProcesses, CoreLoaderChanges).
+//
+// THREE CALLERS, the three moments the answer can change: the engine's start
+// (the rows already there, the first after v56 among them), every loader set
+// Core sends (engine.SetCoreLoaders), and every position write (setPositions
+// marks what it writes). One read of every live position and at most one
+// write; none when nothing new is held.
+func (s *StationService) MarkLoaderWindows() (int, error) {
+	if s.loaders == nil {
+		return 0, nil
+	}
+	nodes, err := s.db.ListProcessNodes()
+	if err != nil {
+		return 0, fmt.Errorf("mark loader windows: %w", err)
+	}
+	var ids []int64
+	for _, n := range nodes {
+		if !n.LoaderWindow && s.LoaderHolds(n.CoreNodeName) {
+			ids = append(ids, n.ID)
+		}
+	}
+	if err := s.db.MarkProcessNodesLoaderWindow(ids); err != nil {
+		return 0, fmt.Errorf("mark loader windows: %w", err)
+	}
+	return len(ids), nil
+}
+
+// CoreLoaderChange is what Core changed on a loader's process's loaders that
+// the process's screens do not show yet, as the process's page says it.
+type CoreLoaderChange struct {
+	// Added is each window or home of the process's loaders that is no live
+	// position of any process on this Edge, in the loaders' order: Core added
+	// it, and a screen has not taken it. A board draws only its screen's
+	// positions, so it has no tile until one does.
+	Added []string `json:"added,omitempty"`
+	// Removed is each position of the process a loader held and none holds
+	// now, in the process's order: Core removed it. Its tile is already off
+	// the board; the position is still on its screen.
+	Removed []string `json:"removed,omitempty"`
+}
+
+// CoreLoaderChanges is, per process Core runs the boards of (boards, from
+// CoreBoardProcesses), what Core added to or removed from its loaders that
+// its screens do not show. A process with neither is absent.
+//
+// ITS LOADERS are the ones holding one of its positions now. A window is
+// added when it is no live position anywhere here: one on another process
+// is that process's (a shared window is legitimately on several), and one
+// on this process's no-screen row is drawn there already.
+//
+// A DEDICATED LOADER'S BUFFER SPOTS ARE NOT ADDED. The board reads them from
+// the loader itself (bufferStrip), so a spot Core adds is on the board with
+// no step here; and no screen at either plant holds one (SPR 9, HOP 2), so
+// counting them would put a line on a correct page forever, the failure
+// LoaderBoardGaps' doc names. Loader.BoardWindows is the rule.
+//
+// nodes is the list's one read of every live position; the loaders are the
+// in-memory resolver. No statement.
+func (s *StationService) CoreLoaderChanges(nodes []processes.Node, boards map[int64]bool) map[int64]CoreLoaderChange {
+	out := map[int64]CoreLoaderChange{}
+	if len(boards) == 0 {
+		return out
+	}
+	positions := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		positions[n.CoreNodeName] = true
+	}
+	type ofProcess struct {
+		loaders []*domain.Loader
+		seen    map[domain.LoaderID]bool
+		removed []string
+	}
+	per := map[int64]*ofProcess{}
+	var order []int64
+	for _, n := range nodes {
+		if !boards[n.ProcessID] {
+			continue
+		}
+		p := per[n.ProcessID]
+		if p == nil {
+			p = &ofProcess{seen: map[domain.LoaderID]bool{}}
+			per[n.ProcessID] = p
+			order = append(order, n.ProcessID)
+		}
+		var l *domain.Loader
+		if s.loaders != nil && n.CoreNodeName != "" {
+			l, _ = s.loaders.LoaderForNode(domain.NodeID(n.CoreNodeName))
+		}
+		if l == nil || !l.Contains(domain.NodeID(n.CoreNodeName)) {
+			if n.LoaderWindow {
+				p.removed = append(p.removed, n.CoreNodeName)
+			}
+			continue
+		}
+		if !p.seen[l.ID()] {
+			p.seen[l.ID()] = true
+			p.loaders = append(p.loaders, l)
+		}
+	}
+	for _, pid := range order {
+		p := per[pid]
+		var c CoreLoaderChange
+		named := map[string]bool{}
+		for _, l := range p.loaders {
+			for _, w := range l.BoardWindows() {
+				name := string(w)
+				if positions[name] || named[name] {
+					continue
+				}
+				named[name] = true
+				c.Added = append(c.Added, name)
+			}
+		}
+		c.Removed = p.removed
+		if len(c.Added) > 0 || len(c.Removed) > 0 {
+			out[pid] = c
 		}
 	}
 	return out
@@ -715,8 +846,15 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 	if stationID != 0 {
 		screen, screenID = stationID, &stationID
 	}
+	// The rows this write leaves on the list whose node a Core loader holds,
+	// marked after the loop (MarkLoaderWindows' third caller): a window put
+	// on a screen now is known as one when Core removes it later.
+	var windows []int64
 	for i, name := range clean {
 		if n, exists := byCoreName[name]; exists {
+			if !n.LoaderWindow && s.LoaderHolds(name) {
+				windows = append(windows, n.ID)
+			}
 			// Adopt in place. UNIQUE(process_id, core_node_name) means a Core node
 			// has exactly ONE row per process, so finding it on another station is a
 			// MOVE, not a conflict — and it has to be a move, or we are back to
@@ -753,6 +891,12 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 		if _, err := s.db.EnsureProcessNodeRuntime(id); err != nil {
 			return nil, err
 		}
+		if s.LoaderHolds(name) {
+			windows = append(windows, id)
+		}
+	}
+	if err := s.db.MarkProcessNodesLoaderWindow(windows); err != nil {
+		return nil, err
 	}
 
 	// A POSITION IS NOT ALSO A ROUTING ROW. Positions stay in process_nodes and

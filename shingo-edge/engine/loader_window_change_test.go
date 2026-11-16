@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -175,5 +176,120 @@ func TestCoreLoaderChange_ASharedBoardDrawsItsScreensWindows(t *testing.T) {
 	}
 	if want := []string{"LWC-W1"}; !slices.Equal(r.drawn, want) {
 		t.Errorf("after Core removes LWC-W2: drawn = %v, want %v", r.drawn, want)
+	}
+}
+
+// THE PROCESS STAYS A LOADER'S, AND ITS PAGE SAYS WHAT CORE CHANGED. A
+// position Core's loader held is marked a loader window (MarkLoaderWindows:
+// on Core's send, at the Edge's start, on a position write), and the mark
+// keeps the process Core's (CoreBoardProcesses) after Core removes the
+// window; CoreLoaderChanges names the window Core removed and the one it
+// added that no screen holds. Without the mark the removal made the process
+// a line (round 8, shot 03).
+func TestCoreLoaderChange_AWindowCoreRemovesKeepsItsProcessALoaders(t *testing.T) {
+	t.Parallel()
+	eng, db, sid := loaderChangePlant(t, "LWC-W1", "LWC-W2")
+	svc := eng.stationService
+	pid := func() int64 {
+		st, err := db.GetOperatorStation(sid)
+		if err != nil {
+			t.Fatalf("station: %v", err)
+		}
+		return st.ProcessID
+	}()
+	read := func() (bool, service.CoreLoaderChange, map[string]bool) {
+		t.Helper()
+		nodes, err := db.ListProcessNodes()
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		boards := svc.CoreBoardProcesses(nodes)
+		marks := map[string]bool{}
+		for _, n := range nodes {
+			marks[n.CoreNodeName] = n.LoaderWindow
+		}
+		return boards[pid], svc.CoreLoaderChanges(nodes, boards)[pid], marks
+	}
+
+	// Rows from before v56: none marked until something marks them.
+	if _, _, marks := read(); marks["LWC-W1"] || marks["LWC-W2"] {
+		t.Fatalf("the seeded positions start marked: %v", marks)
+	}
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{sharedLoader("LWC-W1", "LWC-W2")}); err != nil {
+		t.Fatalf("SetCoreLoaders: %v", err)
+	}
+	core, change, marks := read()
+	if !core || change.Added != nil || change.Removed != nil || !marks["LWC-W1"] || !marks["LWC-W2"] {
+		t.Fatalf("after Core's send: core %v, change %+v, marks %v; want Core's, no change, both marked", core, change, marks)
+	}
+
+	// Core adds LWC-W3 and removes LWC-W2 in one send.
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{sharedLoader("LWC-W1", "LWC-W3")}); err != nil {
+		t.Fatalf("SetCoreLoaders: %v", err)
+	}
+	core, change, marks = read()
+	if !core {
+		t.Errorf("after Core removes LWC-W2 the process is no longer Core's: its page would be a line's")
+	}
+	if !slices.Equal(change.Added, []string{"LWC-W3"}) || !slices.Equal(change.Removed, []string{"LWC-W2"}) {
+		t.Errorf("change = %+v, want added [LWC-W3], removed [LWC-W2]", change)
+	}
+	if !marks["LWC-W2"] {
+		t.Errorf("LWC-W2's mark was cleared when Core removed it")
+	}
+
+	// The page's Put it on and Take it off are one screen write: LWC-W3 on,
+	// LWC-W2 off. LWC-W3 is marked as it is written, and nothing is left.
+	if _, err := svc.SetNodes(sid, []string{"LWC-W1", "LWC-W3"}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	core, change, marks = read()
+	if !core || change.Added != nil || change.Removed != nil || !marks["LWC-W3"] {
+		t.Errorf("after the screen takes LWC-W3 and drops LWC-W2: core %v, change %+v, marks %v; want Core's, no change, LWC-W3 marked",
+			core, change, marks)
+	}
+	if got := readBoard(t, eng, sid).drawn; !slices.Equal(got, []string{"LWC-W1", "LWC-W3"}) {
+		t.Errorf("the board draws %v, want [LWC-W1 LWC-W3]", got)
+	}
+}
+
+// What is not a change: a buffer spot Core adds (the board draws it from the
+// loader), a window that is a position of another process here (it is that
+// process's), and a press position no loader ever held (its process is a
+// line, not Core's).
+func TestCoreLoaderChange_BuffersOtherProcessesAndPressesAreNotChanges(t *testing.T) {
+	t.Parallel()
+	eng, db, sid := loaderChangePlant(t, "LWC-H1")
+	svc := eng.stationService
+	st, err := db.GetOperatorStation(sid)
+	if err != nil {
+		t.Fatalf("station: %v", err)
+	}
+	other, err := db.CreateProcess("LWC-OTHER", "", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	for _, n := range []string{"LWC-H2", "LWC-PRESS"} {
+		if _, err := db.CreateProcessNode(processes.NodeInput{ProcessID: other, CoreNodeName: n, Code: n, Name: n, Enabled: true}); err != nil {
+			t.Fatalf("create %s: %v", n, err)
+		}
+	}
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{dedicatedLoader([]string{"LWC-H1", "LWC-H2", "LWC-H3"}, []string{"LWC-B1"})}); err != nil {
+		t.Fatalf("SetCoreLoaders: %v", err)
+	}
+	nodes, err := db.ListProcessNodes()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	boards := svc.CoreBoardProcesses(nodes)
+	if !boards[st.ProcessID] || boards[other] {
+		t.Fatalf("boards = %v, want only %d (LWC-PRESS was never a loader's)", boards, st.ProcessID)
+	}
+	changes := svc.CoreLoaderChanges(nodes, boards)
+	if got := changes[st.ProcessID]; !slices.Equal(got.Added, []string{"LWC-H3"}) || got.Removed != nil {
+		t.Errorf("change = %+v, want added [LWC-H3] only: LWC-H2 is %d's, LWC-B1 is a buffer", got, other)
+	}
+	if _, ok := changes[other]; ok {
+		t.Errorf("a line's process has a change: %+v", changes[other])
 	}
 }

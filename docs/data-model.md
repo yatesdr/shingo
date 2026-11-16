@@ -1966,7 +1966,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`process_changeovers`](#edge-process_changeovers) | 15 | `id` | [`processes`](#edge-processes), [`styles`](#edge-styles) |
 | [`process_groups`](#edge-process_groups) | 5 | `id` |  |
 | [`process_node_runtime_states`](#edge-process_node_runtime_states) | 32 | `id` | [`orders`](#edge-orders), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
-| [`process_nodes`](#edge-process_nodes) | 16 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
+| [`process_nodes`](#edge-process_nodes) | 17 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
 | [`process_payloads`](#edge-process_payloads) | 4 | `id` | [`processes`](#edge-processes) |
 | [`process_routing_nodes`](#edge-process_routing_nodes) | 10 | `id` | [`processes`](#edge-processes) |
 | [`processes`](#edge-processes) | 16 | `id` | [`process_groups`](#edge-process_groups), [`styles`](#edge-styles) |
@@ -2471,6 +2471,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_tag_name` | `TEXT` | yes | `''` |  |  |
 | `curtain_safe_value` | `INTEGER` |  |  |  |  |
 | `line_counter_id` | `INTEGER` |  |  |  | The station counter this position is counted at (line_counters.id); NULL = counted by the process's production counter. No FK (the edge runs with foreign keys off): every read LEFT JOINs line_counters, so a binding to a deleted counter reads as unbound. |
+| `loader_window` | `INTEGER` | yes | `0` |  | 1 once a Core loader has held this position's node as a window or a home while the row lived (v56). Never cleared on a live row: it is how a window Core later removes is still known as one, so its process stays a loader's and its page says Core removed it. |
 
 - Unique (process_id, code) where `deleted_at IS NULL`
 - Unique (process_id, core_node_name) where `core_node_name <> '' AND deleted_at IS NULL`

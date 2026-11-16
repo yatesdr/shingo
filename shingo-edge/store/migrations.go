@@ -2728,6 +2728,35 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return nil
 			},
 		},
+		{
+			// v56 (2026-11-16): process_nodes.loader_window, 1 once a Core
+			// loader has held the position's node as a window or home while
+			// the row lived (StationService.MarkLoaderWindows). 0 on every
+			// existing row; the engine marks the held ones at its next start,
+			// from Core's loaders as this Edge holds them. It is what keeps a
+			// loader's process Core's after Core removes one of its windows.
+			// Column-check guarded, like v52.
+			Version: 56,
+			Name:    "process_nodes_loader_window",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes')
+					WHERE name = 'loader_window'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_nodes ADD COLUMN loader_window INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes')
+					WHERE name = 'loader_window'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

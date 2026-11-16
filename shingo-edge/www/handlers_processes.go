@@ -39,6 +39,12 @@ type processListRow struct {
 	// Always on the row, false included, so a reader never has to tell
 	// "false" from "not sent".
 	CoreBoards bool `json:"core_boards"`
+	// CoreAdded and CoreRemoved are what Core changed on such a process's
+	// loaders that its screens do not show (StationService.CoreLoaderChanges):
+	// a window no screen has taken, a position no loader holds any more. The
+	// page says each as one line, with the way onto the screen or off it.
+	CoreAdded   []string `json:"core_added,omitempty"`
+	CoreRemoved []string `json:"core_removed,omitempty"`
 }
 
 // processListRows is every process as the list draws it. The page's first
@@ -62,6 +68,7 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 	}
 	curtained := service.CurtainedNodeNames(nodes)
 	coreBoards := h.engine.StationService().CoreBoardProcesses(nodes)
+	coreChanges := h.engine.StationService().CoreLoaderChanges(nodes, coreBoards)
 	rows := make([]processListRow, len(processes))
 	for i, p := range processes {
 		rows[i] = processListRow{Process: p}
@@ -71,6 +78,8 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 		}
 		rows[i].CurtainNodes = curtained[p.ID]
 		rows[i].CoreBoards = coreBoards[p.ID]
+		rows[i].CoreAdded = coreChanges[p.ID].Added
+		rows[i].CoreRemoved = coreChanges[p.ID].Removed
 	}
 	return rows, nil
 }

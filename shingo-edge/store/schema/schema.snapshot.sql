@@ -720,7 +720,12 @@ CREATE TABLE process_nodes (
     -- NULL = counted by the process's production counter. No FK (the edge
     -- runs with foreign keys off): every read LEFT JOINs line_counters, so a
     -- binding to a deleted counter reads as unbound.
-    line_counter_id     INTEGER
+    line_counter_id     INTEGER,
+    -- 1 once a Core loader has held this position's node as a window or a
+    -- home while the row lived (v56). Never cleared on a live row: it is how
+    -- a window Core later removes is still known as one, so its process stays
+    -- a loader's and its page says Core removed it.
+    loader_window       INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE process_payloads (

@@ -325,7 +325,7 @@ func SetFlowComposerEnabled(db *sql.DB, processID int64, enabled bool) error {
 const nodeSelect = `n.id, n.process_id, n.operator_station_id, n.core_node_name, n.code, n.name,
 	n.sequence, n.enabled, n.created_at, n.updated_at, n.deleted_at,
 	n.curtain_enabled, n.curtain_plc_name, n.curtain_tag_name, n.curtain_safe_value,
-	COALESCE(s.name, ''), COALESCE(p.name, ''), lc.id`
+	COALESCE(s.name, ''), COALESCE(p.name, ''), lc.id, n.loader_window`
 
 // liveNodes is the WHERE fragment for "process_nodes that still exist as far as
 // the plant is concerned". Applied to the LIST paths, which are pickers and
@@ -349,7 +349,7 @@ func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 		&n.ID, &n.ProcessID, &stationID, &n.CoreNodeName, &n.Code, &n.Name,
 		&n.Sequence, &n.Enabled, &createdAt, &updatedAt, &deletedAt,
 		&n.CurtainEnabled, &n.CurtainPLCName, &n.CurtainTagName, &curtainSafe,
-		&n.StationName, &n.ProcessName, &lineCounter,
+		&n.StationName, &n.ProcessName, &lineCounter, &n.LoaderWindow,
 	)
 	if err != nil {
 		return n, err
@@ -632,6 +632,24 @@ var ErrCurtainPolarityUnset = errors.New("choose which curtain tag value allows 
 // ErrCurtainPointersMissing refuses an enabled curtain interlock with no PLC
 // or tag to read: the gate would refuse every release at the node.
 var ErrCurtainPointersMissing = errors.New("a PLC name and a tag name are required when the curtain interlock is enabled")
+
+// MarkLoaderWindows sets loader_window on the given process_nodes rows: a
+// Core loader holds each one's node as a window or a home
+// (StationService.MarkLoaderWindows decides which). It only ever sets the
+// mark, so a window Core later removes is still known as one. One statement;
+// no ids, no statement.
+func MarkLoaderWindows(db *sql.DB, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	_, err := db.Exec(`UPDATE process_nodes SET loader_window = 1 WHERE loader_window = 0 AND id IN (`+
+		strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")+`)`, args...)
+	return err
+}
 
 // SetNodeCurtain writes one node's FG light-curtain interlock settings. A
 // targeted UPDATE of the four curtain columns, so the general UpdateNode
