@@ -1279,6 +1279,15 @@ type LoaderInfo struct {
 	// goes home, and Core refuses the home clear. False, also what a Core
 	// predating this field sends, is the clear every loader has.
 	NoClearPartials bool `json:"no_clear_partials,omitempty"`
+	// EdgeStationUID is the station uid of the Edge that works this loader
+	// (bin_loaders.edge_station_uid): that Edge makes the loader's screen and
+	// keeps its windows on it, and every other Edge takes nothing of it. Blank,
+	// also what a Core predating this field sends, picks no Edge: each Edge
+	// infers from the screens it already has.
+	EdgeStationUID string `json:"edge_station_uid,omitempty"`
+	// EdgeDisplayName is that Edge's display name as Core holds it, so an Edge
+	// can name another on its page. Display only; never compared.
+	EdgeDisplayName string `json:"edge_display_name,omitempty"`
 	// Positions are the loader's member homes: its windows (shared_window) or
 	// its dedicated positions.
 	Positions []LoaderPosition `json:"positions,omitempty"`
