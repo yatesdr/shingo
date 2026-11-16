@@ -5711,9 +5711,65 @@ function screensSection() {
     return '<div class="pd-sect"><h2>Screens and positions</h2>' +
         (screens.length ? '<span class="pd-dim">' + esc(nOf(total, 'position') + ' on ' + nOf(screens.length, 'screen')) + '</span>' : '') +
         '<span class="pd-spacer"></span><button class="pd-btn" data-act="screen-add">+ Add a screen</button></div>' +
-        screens.map(screenRow).join('') + looseRow() +
+        screens.map(screenRow).join('') + looseRow() + coreChangeRows() +
         (screens.length ? '' : '<p class="pd-note">No screen works this process yet: an operator reaches it once one takes its positions.</p>') +
         loaderWindows();
+}
+
+// WHAT CORE CHANGED ON A LOADER'S PROCESS'S LOADERS, ONE LINE EACH (round 8).
+// The board draws its screen's positions, not the loader's windows, so a
+// window Core adds has no tile until a screen takes it, and one Core removes
+// is off the board already but still a position here. The process row says
+// both (core_added, core_removed: StationService.CoreLoaderChanges).
+// "Put it on <screen>" and "Take it off <screen>" move it in the draft, as
+// round 7's "Put them on" does, and the one Save writes the screen. No pick.
+// A dedicated loader's buffer spots are never added: the board draws them
+// from the loader.
+function coreChangeRows() {
+    const p = process() || {};
+    if (!coreBoards(p)) return '';
+    const screens = stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes);
+    const drafted = n => screens.find(st => pickerValue(screenKey(st.id)).indexOf(n) >= 0) || null;
+    const stored = n => screens.find(st => (S.stationNodes[String(st.id)] || []).indexOf(n) >= 0) || null;
+    const line = (what, sub, body) => '<div class="pd-sfld pd-scrrow"><label>' + esc(what) + '<small>' + esc(sub) + '</small></label>' +
+        '<div class="v col">' + body + '</div></div>';
+    const added = (p.core_added || []).map(n => {
+        const on = drafted(n);
+        return line('Core added ' + n, 'its board shows it once a screen has it', on
+            ? '<p class="pd-note">' + esc(n + ' goes on ' + on.name + ' when this is saved.') + '</p>'
+            : screens.length
+                ? '<span class="pd-scracts">' + screens.map(st => '<button class="pd-btn quiet" data-act="core-add" data-node="' +
+                    esc(n) + '" data-station="' + st.id + '">Put it on ' + esc(st.name) + '</button>').join('') + '</span>'
+                : '<p class="pd-note">+ Add a screen, then put it on.</p>');
+    });
+    const removed = (p.core_removed || []).map(n => {
+        const was = stored(n);
+        const still = drafted(n) || (pickerValue(LOOSE).indexOf(n) >= 0 ? { name: '' } : null);
+        const from = was ? ' ' + was.name : '';
+        return line('Core removed ' + n, 'its board no longer shows it', still
+            ? '<span class="pd-scracts"><button class="pd-btn quiet" data-act="core-off" data-node="' + esc(n) + '">Take it off' +
+                esc(from) + '</button></span>'
+            : '<p class="pd-note">' + esc(n + ' comes off' + (from || ' this process') + ' when this is saved.') + '</p>');
+    });
+    return added.join('') + removed.join('');
+}
+
+// coreAdd puts a window Core added onto screen id, in the draft.
+function coreAdd(name, id) {
+    const to = S.pickers[screenKey(id)];
+    if (!to || to.sel.indexOf(name) >= 0) return;
+    to.sel = to.sel.concat([name]);
+    drawSettings();
+}
+
+// coreOff takes a position Core removed off whatever holds it, in the draft.
+function coreOff(name) {
+    for (const k of Object.keys(S.pickers)) {
+        if (k.indexOf('scr-') !== 0) continue; // a screen's, or LOOSE ('scr-none')
+        const pk = S.pickers[k];
+        if (pk && pk.sel.indexOf(name) >= 0) pk.sel = pk.sel.filter(n => n !== name);
+    }
+    drawSettings();
 }
 
 // LOOSE is the picker key of the positions on no screen.
@@ -5744,16 +5800,19 @@ function looseRow() {
 // there is no pick. What is on no screen can still go on one: "Put them on
 // <screen>" moves it there in the draft (coreOnto), and Save writes the screen
 // before the list of positions on none (savePositions). With no screen,
-// + Add a screen takes them.
+// + Add a screen takes them. A position Core removed is not put on a screen:
+// its own line takes it off (coreChangeRows).
 function coreLooseRow() {
+    const gone = (process() || {}).core_removed || [];
     const left = pickerValue(LOOSE);
-    const going = loosePositions().filter(n => left.indexOf(n) < 0);
+    const movable = left.filter(n => gone.indexOf(n) < 0);
+    const going = loosePositions().filter(n => left.indexOf(n) < 0 && gone.indexOf(n) < 0);
     const screens = stationsOf(S.processID).filter(st => String(st.id) in S.stationNodes);
     const to = going.length ? screens.find(st => going.every(n => pickerValue(screenKey(st.id)).indexOf(n) >= 0)) : null;
     const sub = left.length ? nOf(left.length, 'position') + ' · a screen has not taken them yet' : 'none once this is saved';
     return '<div class="pd-sfld pd-scrrow"><label>On no screen<small>' + esc(sub) + '</small></label><div class="v col">' +
         (left.length ? '<div class="picker-chips">' + left.map(n => '<span class="picker-chip">' + esc(n) + '</span>').join('') + '</div>' : '') +
-        (left.length && screens.length ? '<span class="pd-scracts">' + screens.map(st =>
+        (movable.length && screens.length ? '<span class="pd-scracts">' + screens.map(st =>
             '<button class="pd-btn quiet" data-act="core-onto" data-station="' + st.id + '">Put them on ' + esc(st.name) + '</button>').join('') + '</span>' : '') +
         (left.length && !screens.length ? '<p class="pd-note">+ Add a screen takes them.</p>' : '') +
         (going.length ? '<p class="pd-note">' + esc(going.join(', ') + (going.length === 1 ? ' goes on ' : ' go on ') +
@@ -5761,13 +5820,15 @@ function coreLooseRow() {
         '</div></div>';
 }
 
-// coreOnto puts the positions on no screen onto screen id, in the draft.
+// coreOnto puts the positions on no screen onto screen id, in the draft,
+// except one Core removed.
 function coreOnto(id) {
     const to = S.pickers[screenKey(id)];
     const loose = S.pickers[LOOSE];
     if (!to || !loose) return;
-    to.sel = to.sel.concat(loose.sel.filter(n => to.sel.indexOf(n) < 0));
-    loose.sel = [];
+    const gone = (process() || {}).core_removed || [];
+    to.sel = to.sel.concat(loose.sel.filter(n => to.sel.indexOf(n) < 0 && gone.indexOf(n) < 0));
+    loose.sel = loose.sel.filter(n => gone.indexOf(n) >= 0);
     drawSettings();
 }
 
@@ -6490,8 +6551,9 @@ async function afterSettingsSave(out) {
         // A counter's row says which positions it counts.
         sent('positions', 'counted') ? loadStationCounters() : null,
         // The process rows carry its settings, its quality hold, the station
-        // switch and the list's Curtain column.
-        sent('process', 'gate', 'hold', 'reorder', 'curtain') ? reloadProcesses() : null,
+        // switch and the list's Curtain column; a loader's process's rows also
+        // say what Core added or removed that its screens do not show.
+        sent('process', 'gate', 'hold', 'reorder', 'curtain') || (sent('positions') && coreBoards(process())) ? reloadProcesses() : null,
         wrote('routing') ? loadRouting() : null,
         wrote('parts') ? loadProcessPayloads(S.processID).then(codes => { S.partSet = codes; }) : null,
         wrote('reorder') || wrote('lineReorder') ? loadAutoReorder() : null]);
@@ -10322,6 +10384,8 @@ function onClick(e) {
             case 'ar-toggle': S.arLine = !S.arLine; drawSettings(); return;
             case 'loose-onto': S.looseOnto = btn.dataset.station || ''; settingsSetMoved(); return;
             case 'core-onto': coreOnto(btn.dataset.station); return;
+            case 'core-add': coreAdd(btn.dataset.node, btn.dataset.station); return;
+            case 'core-off': coreOff(btn.dataset.node); return;
             case 'work-goto': gotoFinding(btn.dataset.node); return;
             case 'preset-older':
                 S.presets.older = !S.presets.older;

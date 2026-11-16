@@ -4634,6 +4634,47 @@ async function settingsPositionsPins(h) {
         if (ctx.writes[1].body.nodes.length) throw new Error('PLN_009 stayed on no screen: ' + JSON.stringify(ctx.writes[1].body));
     });
 
+    // WHAT CORE CHANGED ON THE LOADER, ONE LINE EACH (round 8). The board
+    // draws its screen's positions, so a window Core added has no tile until
+    // a screen takes it, and one Core removed is still a position. "Put it on
+    // <screen>" and "Take it off <screen>" are drafts, like "Put them on", and
+    // the one Save writes the screen: the server's list, less what comes off,
+    // plus what goes on. Then the process rows are read again. No pick.
+    await pin('a Core loader\'s page says Core added and Core removed, one line each, and one Save puts it on or takes it off the screen', async () => {
+        const ctx = page('#tab=settings', { process: { core_boards: true, core_added: ['ULN_007'], core_removed: ['PLN_006BCD'] } });
+        await settle();
+        const row = what => {
+            const h = ctx.root.innerHTML;
+            const at = h.indexOf('<label>' + what + '<small>');
+            if (at < 0) throw new Error('no "' + what + '" line: ' + plain(h).slice(0, 600));
+            const start = h.lastIndexOf('<div class="pd-sfld pd-scrrow">', at);
+            const next = h.indexOf('<div class="pd-sfld', at + 10);
+            return h.slice(start, next > 0 ? next : h.length);
+        };
+        const add = row('Core added ULN_007');
+        for (const [id, name] of [[18, 'Press 6 Operator Screen'], [25, 'Unloader']]) {
+            if (add.indexOf('data-act="core-add" data-node="ULN_007" data-station="' + id + '">Put it on ' + name + '</button>') < 0) throw new Error('no "Put it on ' + name + '": ' + add);
+        }
+        const off = row('Core removed PLN_006BCD');
+        if (off.indexOf('data-act="core-off" data-node="PLN_006BCD">Take it off Press 6 Operator Screen</button>') < 0) throw new Error('no "Take it off": ' + off);
+        if (/data-npkbox=|class="picker-q"/.test(ctx.root.innerHTML)) throw new Error('the lean page draws a pick');
+        click(ctx.root, ctx.doc, { act: 'core-add', node: 'ULN_007', station: '18' });
+        await settle();
+        click(ctx.root, ctx.doc, { act: 'core-off', node: 'PLN_006BCD' });
+        await settle();
+        if (plain(row('Core added ULN_007')).indexOf('ULN_007 goes on Press 6 Operator Screen when this is saved.') < 0) throw new Error('the add does not say where it goes: ' + plain(row('Core added ULN_007')));
+        if (plain(row('Core removed PLN_006BCD')).indexOf('PLN_006BCD comes off Press 6 Operator Screen when this is saved.') < 0) throw new Error('the removal does not say it comes off: ' + plain(row('Core removed PLN_006BCD')));
+        if (ctx.writes.length) throw new Error('a line wrote before Save: ' + JSON.stringify(ctx.writes));
+        if (prov(ctx) !== 'Unsaved changes') throw new Error('the bar reads ' + JSON.stringify(prov(ctx)));
+        const before = ctx.reads.length;
+        findIn(ctx.root, '[data-set="save"]')[0].click();
+        for (let i = 0; i < 6; i++) await settle();
+        const got = ctx.writes.map(w => w.method + ' ' + w.url);
+        if (JSON.stringify(got) !== '["POST /api/operator-stations/18/claimed-nodes/impact","PUT /api/operator-stations/18/claimed-nodes"]') throw new Error('Save wrote ' + JSON.stringify(got));
+        if (JSON.stringify(ctx.writes[1].body.nodes) !== '["PLN_005","PLN_009BCD","ULN_007"]') throw new Error('the screen was sent ' + JSON.stringify(ctx.writes[1].body));
+        if (ctx.reads.slice(before).indexOf('/api/processes') < 0) throw new Error('the process rows were not read again: ' + JSON.stringify(ctx.reads.slice(before)));
+    });
+
     // ONE DOOR TAKES A POSITION OFF THE LINE: the Positions box. Save asks
     // what still names the position first, and Save again takes it off. THE
     // WRITE IS THE SERVER'S LIST: PLN_009BCD, which the page was not loaded
