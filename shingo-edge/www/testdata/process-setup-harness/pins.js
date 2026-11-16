@@ -431,7 +431,10 @@ function setPick(page, key, box, name, how) {
     if (!boxEl().classList.contains('is-on')) throw new Error(key + '/' + box + ' did not open');
     const find = () => host.querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === name);
     for (let i = 0; i < 12 && !find(); i++) {
-        const f = host.querySelectorAll('[data-later]').find(x => x.textContent === 'show') ||
+        // The list is folded by prefix: its lines open first, as an engineer
+        // opens the one a name is under.
+        const f = host.querySelectorAll('[data-expand]').find(x => x.textContent === 'Expand all') ||
+            host.querySelectorAll('[data-later]').find(x => x.textContent === 'show') ||
             host.querySelectorAll('[data-fold]').find(x => x.getAttribute('aria-expanded') === 'false');
         if (!f) break;
         f.click();

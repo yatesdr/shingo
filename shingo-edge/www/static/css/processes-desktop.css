@@ -991,43 +991,57 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-supos .pd-surole { color: var(--role); font-weight: 700; }
 .pd-sulater { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 6px 0 4px; }
 .pd-setup .pd-note .setpick-dot { display: inline-block; vertical-align: middle; }
-/* First style's picks, under the line: each a dropdown in its role's colour
-   (the --role-* tokens through data-role), its words beside it. A set per
-   swap: the line's, then a position whose swap differs. */
-.pd-fspicks { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px; border-top: 1px solid var(--sub-1); }
-.pd-fspicks > .pd-sect { border-top: 0; padding: 4px 0 0; }
-.pd-fsset { display: flex; flex-direction: column; gap: 6px; }
-.pd-fssethd { font-size: 12px; font-weight: 700; color: var(--text-muted); }
-.pd-fspick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 12px; }
-.pd-fspickw { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; font-size: 13px; }
-.pd-fspickw .setpick-dot { display: inline-block; align-self: center; }
-.pd-fspickw small { flex-basis: 100%; padding-left: 18px; color: var(--text-muted); font-size: 12px; }
-.pd-fspick .pd-sel { min-width: 0; max-width: 100%; border-color: var(--role); }
-/* First style: a part per position, consume or produce, one way they swap. */
-.pd-fsblock { display: flex; flex-direction: column; gap: 8px; }
-.pd-fslbl { font-weight: 600; }
-.pd-fsline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-/* The positions, as rows: Position, Part, Swap. A row on its own swap says so
-   in the accent; a free row offers a part of its own. */
-.pd-fsrow {
-    display: grid; grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 12px;
-    min-height: 40px; border-top: 1px solid var(--sub-1);
+/* FIRST STYLE, ONE POSITION AT A TIME. The top line: the step's name, the
+   style's name, what is still to go and Save style. Below, the positions as a
+   checklist on the left and the open position in the middle. QUIETER (owner,
+   2026-11-15: "do you think the colors and highlighted boxes look a little
+   tacky"): the loud colours are the open position (the accent), green for a
+   done one, and nothing else outlined in colour. A role is a small dot. */
+.pd-fstop { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 0 16px; }
+.pd-fstop h1 { margin: 0; font-size: 22px; }
+.pd-fsnamefld { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+.pd-fsnamefld .pd-inp { width: 280px; }
+.pd-fsgo { color: var(--text-muted); font-size: 13px; }
+.pd-fsgrid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 1000px) { .pd-fsgrid { grid-template-columns: minmax(0, 1fr); } }
+.pd-fslist { display: flex; flex-direction: column; gap: 8px; }
+.pd-fslhd { color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.pd-fslist ol { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.pd-fsitem button {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; text-align: left; cursor: pointer;
 }
-.pd-fsrow > b { min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-.pd-fsrow > .pd-sel { min-width: 0; max-width: 100%; }
-.pd-fsrow > .pd-sel.own { border-color: var(--accent); }
-.pd-fsrow > .pd-btn { justify-self: start; }
-.pd-fsrow.pd-fshd { min-height: 0; border-top: 0; color: var(--text-muted); font-size: 12px; font-weight: 700; }
-.pd-fsfree { margin: 0; color: var(--text-muted); font-size: 13px; }
+.pd-fsitem.now button { border: 2px solid var(--accent); padding: 7px 9px; background: var(--surface); }
+.pd-fsmark {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border: 1px solid var(--sub-4); border-radius: 50%; color: var(--text-muted); font-size: 12px; font-weight: 700;
+}
+.pd-fsitem.is-done .pd-fsmark { border-color: var(--viz-green); background: var(--viz-green); color: #fff; }
+.pd-fsname { display: flex; flex-direction: column; min-width: 0; }
+.pd-fsname b { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pd-fsname small { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.pd-fsitem.out .pd-fsname b { color: var(--text-muted); }
+.pd-fspos { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pd-fsposhd { display: flex; align-items: baseline; gap: 12px; }
+.pd-fsposhd h2 { margin: 0; font-size: 18px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pd-fsposhd h2.pd-fsplain { font-family: inherit; }
+.pd-fsfield { display: grid; grid-template-columns: 170px minmax(0, 320px) auto; align-items: center; gap: 12px; }
+.pd-fsfield > .pd-seg, .pd-fsfield > .pd-dimlink { justify-self: start; }
+.pd-fsflbl { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.pd-fsflbl .setpick-dot { display: inline-block; }
+.pd-fsfield .pd-sel { min-width: 0; max-width: 100%; }
+.pd-fsblock { display: flex; flex-direction: column; gap: 8px; }
 .pd-fsmodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .pd-fsmode {
-    display: flex; align-items: flex-start; gap: 12px; min-height: 88px; padding: 14px; border: 1px solid var(--border);
+    display: flex; align-items: flex-start; gap: 12px; min-height: 80px; padding: 12px; border: 1px solid var(--border);
     border-radius: calc(var(--radius) + 4px); background: var(--bg); color: var(--text); font: inherit; text-align: left; cursor: pointer;
 }
-.pd-fsmode.on { border: 2px solid var(--accent); padding: 13px; background: var(--surface); }
+.pd-fsmode.on { border: 2px solid var(--text-muted); padding: 11px; background: var(--surface); }
 .pd-fsmode small { display: block; color: var(--text-muted); font-size: 13px; }
 .pd-fsfoot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .pd-fsbar { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.pd-btn.done { border-color: var(--success); background: var(--success); color: #fff; }
+.pd-btn.done:disabled { opacity: .5; cursor: default; }
 .pd-skip { font-weight: 600; }
 /* The process sheet is wider than the others: its set pick's four boxes sit
    side by side. Two fields share a line; the line over its buttons says what

@@ -180,54 +180,42 @@ ok   a Core loader's process has no Setup, and nothing to skip
   Start (step 2, a style with no flow yet) → tab setup (style step) · POST …/flow/preview
   Production counter (Later, on Settings) → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
 
-## Setup › First style on Press A (a style with no flow yet): the step, a choice, its preview and its Save
-ok   Start opens the First style step on Setup
-ok   one preview of the draft, through the Styles tab's door
-  name: "Style A" · rows: POS_A1=PART-1 (1‑Robot Swap) · POS_A2=PART-10 (1‑Robot Swap) · POS_A3=PART-11 (1‑Robot Swap) · POS_A4=PART-2 (1‑Robot Swap) · POS_A5=PART-3 (1‑Robot Swap) · POS_A6=PART-4 (1‑Robot Swap) · POS_A7=PART-5 (1‑Robot Swap) · POS_A8=PART-6 (1‑Robot Swap) · POS_A9=PART-7 (1‑Robot Swap) · POS_A10=PART-8 (1‑Robot Swap) · POS_A11=PART-9 (1‑Robot Swap) · ULD_1=free
-  role: consume · swap for every position: single_robot · bar: "Ready: 11 positions." · Save style enabled
-  picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging] · Outbound staging=STG_2 [staging]
-  line so far: "Inbound GRP_A → POS_A1 1‑Robot Swap · PART-1 POS_A2 1‑Robot Swap · PART-10 POS_A3 1‑Robot Swap · PART-11 POS_A4 1‑Robot Swap · PART-2 POS_A5 1‑Robot Swap · PART-3 POS_A6 1‑Robot Swap · PART-4 POS_A7 1‑Robot Swap · PART-5 POS_A8 1‑Robot Swap · PART-6 POS_A9 1‑Robot Swap · PART-7 POS_A10 1‑Robot Swap · PART-8 POS_A11 1‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1 | Inbound staging STG_1 · Outbound staging STG_2"
-  free: "1 position left free: ULD_1. Each takes a part of its own (“+ add a part”); a part is on one position."
-ok   a name somebody chose (Style A) is kept as the parts move: it is not a part
-ok   no "set each one": a row's own Swap is the way to a mix
-# another swap for every position (two_robot): POST …/flow/preview
-  name: "Style A" · rows: POS_A1=PART-1 (2‑Robot Swap) · POS_A2=PART-10 (2‑Robot Swap) · POS_A3=PART-11 (2‑Robot Swap) · POS_A4=PART-2 (2‑Robot Swap) · POS_A5=PART-3 (2‑Robot Swap) · POS_A6=PART-4 (2‑Robot Swap) · POS_A7=PART-5 (2‑Robot Swap) · POS_A8=PART-6 (2‑Robot Swap) · POS_A9=PART-7 (2‑Robot Swap) · POS_A10=PART-8 (2‑Robot Swap) · POS_A11=PART-9 (2‑Robot Swap) · ULD_1=free
-  role: consume · swap for every position: two_robot · bar: "Ready: 11 positions." · Save style enabled
-  picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging]
-  line so far: "Inbound GRP_A → POS_A1 2‑Robot Swap · PART-1 POS_A2 2‑Robot Swap · PART-10 POS_A3 2‑Robot Swap · PART-11 POS_A4 2‑Robot Swap · PART-2 POS_A5 2‑Robot Swap · PART-3 POS_A6 2‑Robot Swap · PART-4 POS_A7 2‑Robot Swap · PART-5 POS_A8 2‑Robot Swap · PART-6 POS_A9 2‑Robot Swap · PART-7 POS_A10 2‑Robot Swap · PART-8 POS_A11 2‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1 | Inbound staging STG_1"
-  free: "1 position left free: ULD_1. Each takes a part of its own (“+ add a part”); a part is on one position."
-# Produce: POST …/flow/preview
-  name: "Style A" · rows: POS_A1=PART-1 (2‑Robot Swap) · POS_A2=PART-10 (2‑Robot Swap) · POS_A3=PART-11 (2‑Robot Swap) · POS_A4=PART-2 (2‑Robot Swap) · POS_A5=PART-3 (2‑Robot Swap) · POS_A6=PART-4 (2‑Robot Swap) · POS_A7=PART-5 (2‑Robot Swap) · POS_A8=PART-6 (2‑Robot Swap) · POS_A9=PART-7 (2‑Robot Swap) · POS_A10=PART-8 (2‑Robot Swap) · POS_A11=PART-9 (2‑Robot Swap) · ULD_1=free
-  role: produce · swap for every position: two_robot · bar: "Ready: 11 positions." · Save style enabled
-  picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging]
-  line so far: "Inbound GRP_A → POS_A1 2‑Robot Swap · PART-1 POS_A2 2‑Robot Swap · PART-10 POS_A3 2‑Robot Swap · PART-11 POS_A4 2‑Robot Swap · PART-2 POS_A5 2‑Robot Swap · PART-3 POS_A6 2‑Robot Swap · PART-4 POS_A7 2‑Robot Swap · PART-5 POS_A8 2‑Robot Swap · PART-6 POS_A9 2‑Robot Swap · PART-7 POS_A10 2‑Robot Swap · PART-8 POS_A11 2‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1 | Inbound staging STG_1"
-  free: "1 position left free: ULD_1. Each takes a part of its own (“+ add a part”); a part is on one position."
-# POS_A2 on its own swap (the one the step started on): POST …/flow/preview
-  name: "Style A" · rows: POS_A1=PART-1 (2‑Robot Swap) · POS_A2=PART-10 (1‑Robot Swap) · POS_A3=PART-11 (2‑Robot Swap) · POS_A4=PART-2 (2‑Robot Swap) · POS_A5=PART-3 (2‑Robot Swap) · POS_A6=PART-4 (2‑Robot Swap) · POS_A7=PART-5 (2‑Robot Swap) · POS_A8=PART-6 (2‑Robot Swap) · POS_A9=PART-7 (2‑Robot Swap) · POS_A10=PART-8 (2‑Robot Swap) · POS_A11=PART-9 (2‑Robot Swap) · ULD_1=free
-  role: produce · swap for every position: two_robot · bar: "Ready: 11 positions." · Save style enabled
-  picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging] · POS_A2 Inbound source=GRP_A [inbound] · POS_A2 Outbound destination=DST_1 [outbound] · POS_A2 Inbound staging=STG_1 [staging] · POS_A2 Outbound staging=STG_2 [staging]
-  line so far: "Inbound GRP_A → POS_A1 2‑Robot Swap · PART-1 POS_A2 1‑Robot Swap · PART-10 POS_A3 2‑Robot Swap · PART-11 POS_A4 2‑Robot Swap · PART-2 POS_A5 2‑Robot Swap · PART-3 POS_A6 2‑Robot Swap · PART-4 POS_A7 2‑Robot Swap · PART-5 POS_A8 2‑Robot Swap · PART-6 POS_A9 2‑Robot Swap · PART-7 POS_A10 2‑Robot Swap · PART-8 POS_A11 2‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1 | Inbound staging STG_1 · Outbound staging STG_2"
-  free: "1 position left free: ULD_1. Each takes a part of its own (“+ add a part”); a part is on one position."
-ok   a position on its own swap has its own set of picks
-# POS_A2's Outbound staging offers: STG_1, STG_2, STG_3
-# POS_A2's Outbound staging → STG_3: POST …/flow/preview
-  name: "Style A" · rows: POS_A1=PART-1 (2‑Robot Swap) · POS_A2=PART-10 (1‑Robot Swap) · POS_A3=PART-11 (2‑Robot Swap) · POS_A4=PART-2 (2‑Robot Swap) · POS_A5=PART-3 (2‑Robot Swap) · POS_A6=PART-4 (2‑Robot Swap) · POS_A7=PART-5 (2‑Robot Swap) · POS_A8=PART-6 (2‑Robot Swap) · POS_A9=PART-7 (2‑Robot Swap) · POS_A10=PART-8 (2‑Robot Swap) · POS_A11=PART-9 (2‑Robot Swap) · ULD_1=free
-  role: produce · swap for every position: two_robot · bar: "Ready: 11 positions." · Save style enabled
-  picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging] · POS_A2 Inbound source=GRP_A [inbound] · POS_A2 Outbound destination=DST_1 [outbound] · POS_A2 Inbound staging=STG_1 [staging] · POS_A2 Outbound staging=STG_3 [staging]
-  line so far: "Inbound GRP_A → POS_A1 2‑Robot Swap · PART-1 POS_A2 1‑Robot Swap · PART-10 POS_A3 2‑Robot Swap · PART-11 POS_A4 2‑Robot Swap · PART-2 POS_A5 2‑Robot Swap · PART-3 POS_A6 2‑Robot Swap · PART-4 POS_A7 2‑Robot Swap · PART-5 POS_A8 2‑Robot Swap · PART-6 POS_A9 2‑Robot Swap · PART-7 POS_A10 2‑Robot Swap · PART-8 POS_A11 2‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1 | Inbound staging STG_1 · Outbound staging STG_3"
-  free: "1 position left free: ULD_1. Each takes a part of its own (“+ add a part”); a part is on one position."
+## Setup › First style on Press A (a style with no flow yet): one position at a time, then its Save
+ok   Start opens First style on its first position
+ok   no "Your line so far" on this step: the checklist is the line so far
+  checklist: POS_A1 now · POS_A2 todo · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A1 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Outbound staging=STG_2 · Goes to=DST_1 · role consume · swap single_robot
+  top: "12 positions to go" · Save style disabled
+ok   Save style waits for every position
+# POS_A1 on another swap, produce: POST …/flow/preview, POST …/flow/preview
+  checklist: POS_A1 now · POS_A2 todo · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A1 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Goes to=DST_1 · role produce · swap two_robot
+  top: "12 positions to go" · Save style disabled
+# POS_A1's Inbound staging offers: STG_1, STG_2, STG_3
 ok   the draft holds the pick
-# ULD_1's + add a part, PART-1 in Core's catalog: "on POS_A1, moves here"
-# ULD_1 takes PART-1: POST …/flow/preview
-  name: "Style A" · rows: POS_A1=free · POS_A2=PART-10 (1‑Robot Swap) · POS_A3=PART-11 (2‑Robot Swap) · POS_A4=PART-2 (2‑Robot Swap) · POS_A5=PART-3 (2‑Robot Swap) · POS_A6=PART-4 (2‑Robot Swap) · POS_A7=PART-5 (2‑Robot Swap) · POS_A8=PART-6 (2‑Robot Swap) · POS_A9=PART-7 (2‑Robot Swap) · POS_A10=PART-8 (2‑Robot Swap) · POS_A11=PART-9 (2‑Robot Swap) · ULD_1=PART-1 (2‑Robot Swap)
-  role: produce · swap for every position: two_robot · bar: "Ready: 11 positions." · Save style enabled
-  picked for you: Inbound source=GRP_A [inbound] · Outbound destination=DST_1 [outbound] · Inbound staging=STG_1 [staging] · POS_A2 Inbound source=GRP_A [inbound] · POS_A2 Outbound destination=DST_1 [outbound] · POS_A2 Inbound staging=STG_1 [staging] · POS_A2 Outbound staging=STG_3 [staging]
-  line so far: "Inbound GRP_A → POS_A1 not in this style POS_A2 1‑Robot Swap · PART-10 POS_A3 2‑Robot Swap · PART-11 POS_A4 2‑Robot Swap · PART-2 POS_A5 2‑Robot Swap · PART-3 POS_A6 2‑Robot Swap · PART-4 POS_A7 2‑Robot Swap · PART-5 POS_A8 2‑Robot Swap · PART-6 POS_A9 2‑Robot Swap · PART-7 POS_A10 2‑Robot Swap · PART-8 POS_A11 2‑Robot Swap · PART-9 POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 2‑Robot Swap · PART-1 → Outbound DST_1 | Inbound staging STG_1 · Outbound staging STG_3"
-  free: "1 position left free: POS_A1. Each takes a part of its own (“+ add a part”); a part is on one position."
-# Save style: PUT /api/styles/1 {"name":"FG-7731 finished","description":"","process_id":1,"expected_catid":"CAT-A"}, POST …/flow/save, POST …/flow/preview · then tab setup · notices ["Saved Style A. Next: Run it."]
+# Done · next position: POST …/flow/preview
+  checklist: POS_A1 done (PART-1 · 2‑Robot Swap) · POS_A2 now · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A2 · Part=PART-10 · Comes from=GRP_A · Inbound staging=STG_3 · Goes to=DST_1 · role produce · swap two_robot
+  top: "11 positions to go" · Save style disabled
+ok   POS_A1 is ticked and POS_A2 open, starting the same as POS_A1
+ok   a ticked position reopens, changes, and stays ticked
+# POS_A2's part, PART-1 in its list: "on POS_A1, moves here"
+  checklist: POS_A1 todo · POS_A2 now · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A2 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_3 · Goes to=DST_1 · role produce · swap two_robot
+  top: "12 positions to go" · Save style disabled
+ok   the part moved, and the position it left is not done
+# + Add a position offers (free): DST_9, LANE_1, NEW_1, NEW_2, NEW_3, OTH_1 …
+# + Add a position DST_9: PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A3","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11","DST_9"]}, POST …/flow/preview
+ok   it writes the screen's positions with the node, through Settings' door (PUT …/claimed-nodes)
+# Take POS_A3 off this line: POST /api/operator-stations/11/claimed-nodes/impact {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, POST …/flow/preview
+ok   taking one off asks what still names it first (…/claimed-nodes/impact), as Settings does
+  checklist: POS_A1 out (not in this style) · POS_A2 done (PART-1 · 2‑Robot Swap) · POS_A3 out (not in this style) · POS_A4 done (PART-2 · 2‑Robot Swap) · POS_A5 done (PART-3 · 2‑Robot Swap) · POS_A6 done (PART-4 · 2‑Robot Swap) · POS_A7 done (PART-5 · 2‑Robot Swap) · POS_A8 done (PART-6 · 2‑Robot Swap) · POS_A9 done (PART-7 · 2‑Robot Swap) · POS_A10 done (PART-8 · 2‑Robot Swap) · POS_A11 done (PART-9 · 2‑Robot Swap) · ULD_1 out (not in this style)
+  open: none ·  · role  · swap 
+  top: "" · Save style enabled
+ok   every position done or not in this style: Save style is live
+# Save style: PUT /api/styles/1 {"name":"FG-7731 finished","description":"","process_id":1,"expected_catid":"CAT-A"}, POST …/flow/save, POST …/flow/preview · then tab setup
 ok   a changed name is the rename (PUT /api/styles/1), written before the Styles save
 ok   Save style is the Styles save (flow/save) of the step's draft
-ok   and Setup is back on its steps, the one to do now Run it
 
 ## Setup › Change… (Edit process): Save writes only what moved, through Settings' doors
   the sheet: "Edit process" · boxes hold positions 16, source 2, staging 3, destination 2 · name "Press A" · screens "Operator screens each set on Settings Screen A · Unloader A "

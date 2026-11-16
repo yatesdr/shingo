@@ -300,9 +300,15 @@ function openSheetEl(doc) {
 // host: a row by its value, the note or reason beside it, a pick (a dropdown's
 // list opens when its search box takes focus; a checklist's is open), a
 // chip's ×, a prefix filter, and the filters it offers.
+// A set pick's list is folded by prefix (shared/picker.js shelves): a row is
+// read after its lines are opened, as an engineer opens them (Expand all).
+function unfold(host) {
+    const b = findIn(host, '[data-expand]').find(x => x.textContent === 'Expand all');
+    if (b) b.click();
+}
 const pk = {
-    rows: host => findIn(host, '.picker-row'),
-    row: (host, v) => findIn(host, '.picker-row').find(r => r.getAttribute('data-value') === v) || null,
+    rows: host => { unfold(host); return findIn(host, '.picker-row'); },
+    row: (host, v) => { unfold(host); return findIn(host, '.picker-row').find(r => r.getAttribute('data-value') === v) || null; },
     open: host => { const q = findIn(host, '.picker-q')[0]; if (q) for (const fn of (q.listeners.focus || [])) fn({ type: 'focus' }); },
     side: (host, v) => { const r = pk.row(host, v); const t = r && findIn(r, '.picker-note, .picker-why')[0]; return t ? t.textContent : ''; },
     off: (host, v) => { const r = pk.row(host, v); return !!r && r.classList.contains('is-off'); },
@@ -4296,7 +4302,8 @@ async function settingsPositionsPins(h) {
             throw new Error('the rule above the list reads ' + JSON.stringify(hints));
         }
         if (findIn(h, '.picker-why').some(x => /positions one at a time/.test(x.textContent))) throw new Error('a group row still repeats the rule');
-        if (findIn(h, 'button').some(b => /^(all|none)$/i.test(b.textContent))) throw new Error('the picker offers a tick-all');
+        // "All" is a view of the list (with Groups only, Free only), not a tick-all.
+        if (findIn(h, 'button').some(b => !b.hasAttribute('data-view') && /^(all|none)$/i.test(b.textContent))) throw new Error('the picker offers a tick-all');
     });
 
     // A BOX CLICK OPENS THE BOX, AND NOTHING ELSE. Settings' set pick sits in

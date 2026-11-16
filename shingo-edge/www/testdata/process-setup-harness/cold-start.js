@@ -519,15 +519,16 @@ async function pinSetup() {
     }
 }
 
-// ── Setup · First style: a name, a part on each position, how they swap ────
+// ── Setup · First style: one position at a time ─────────────────────────────
 //
-// Round 2 (2026-11-15): the name is a field; the positions are rows of
-// Position, Part and Swap; everything the step fills in is a dropdown in its
-// role's colour (Inbound source, Outbound destination, Inbound staging,
-// Outbound staging), one set for the line and one per position whose swap
-// differs; a free row offers "add a part" from Core's catalog.
+// Round 3 (2026-11-15): the positions are a checklist (done, the one open,
+// to do); the open position's part, consume or produce, swap (it starts as the
+// position before it) and picks; "Done · next position" ticks it, "Not in
+// this style" leaves it free; Save style is live once every position is one
+// or the other. + Add a position and Take … off this line are Settings'
+// positions write (savePositions).
 async function pinFirstStyle() {
-    L.push('', '## Setup › First style on Press A (a style with no flow yet): the step, a choice, its preview and its Save');
+    L.push('', '## Setup › First style on Press A (a style with no flow yet): one position at a time, then its Save');
     // Once saved, the composer read holds the flow (the fixture's Style A).
     let saved = false;
     const o = pressA(NO_FLOW, NOT_RUN);
@@ -540,76 +541,100 @@ async function pinFirstStyle() {
     page.click('root', { act: 'setup-style' });
     await page.settle();
     const html = () => page.root.innerHTML;
-    const rows = () => [...html().matchAll(/<div class="pd-fsrow"><b>([^<]*)<\/b>(<button class="pd-sel" data-act="fs-part"[^>]*><span class="t">([^<]*)<\/span>.*?data-act="fs-swap"[^>]*><span class="t">([^<]*)<\/span>|<button class="pd-btn quiet" data-act="fs-addpart")/g)]
-        .map(m => m[1] + '=' + (m[3] !== undefined ? T.decode(m[3]) + ' (' + T.decode(m[4]) + ')' : 'free'));
+    const items = () => [...html().matchAll(/<li class="pd-fsitem ([a-z]+)[^"]*"><button data-act="fs-open" data-node="([^"]*)">.*?<small>([^<]*)<\/small>/g)]
+        .map(m => m[2] + ' ' + m[1] + (m[3] && m[1] !== 'now' && m[1] !== 'todo' ? ' (' + T.decode(m[3]) + ')' : ''));
     const on = re => [...html().matchAll(re)].map(m => m[1]);
-    const picks = () => [...html().matchAll(/<div class="pd-fspick" data-role="([^"]*)">.*?<b>([^<]*)<\/b>.*?data-pick="([^"]*)" data-node="([^"]*)"><span class="t">([^<]*)<\/span>/g)]
-        .map(m => (m[4] ? m[4] + ' ' : '') + m[2] + '=' + T.decode(m[5]) + ' [' + m[1] + ']');
+    const fields = () => [...html().matchAll(/<div class="pd-fsfield"><span class="pd-fsflbl">(?:<i [^>]*><\/i>)?([^<]*)<\/span><button class="pd-sel" data-act="fs-(?:pick|part)"[^>]*><span class="t">([^<]*)<\/span>/g)]
+        .map(m => T.decode(m[1]) + '=' + T.decode(m[2]));
     const say = () => {
-        L.push('  name: ' + JSON.stringify(((page.byId('pd-fsname') || {}).value) || '') + ' · rows: ' + rows().join(' · '));
-        L.push('  role: ' + on(/<button class="on" data-act="fs-role" data-role="([^"]*)"/g).join() +
-            ' · swap for every position: ' + (on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g).join() || 'none') +
-            ' · bar: ' + JSON.stringify(T.text((/<div id="pd-bar" class="pd-fsbar">([\s\S]*?)<\/div>/.exec(html()) || [])[1] || '')) +
+        L.push('  checklist: ' + items().join(' · '));
+        L.push('  open: ' + (page.S.firstStyle.cur || 'none') + ' · ' + fields().join(' · ') +
+            ' · role ' + on(/<button class="on" data-act="fs-role" data-role="([^"]*)"/g).join() +
+            ' · swap ' + on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g).join());
+        L.push('  top: ' + JSON.stringify(T.decode((/<span class="pd-fsgo" id="pd-fsgo">([^<]*)<\/span>/.exec(html()) || [])[1] || '')) +
             ' · Save style ' + (/data-act="fs-save" disabled/.test(html()) ? 'disabled' : 'enabled'));
-        L.push('  picked for you: ' + picks().join(' · '));
-        const line = /<div class="pd-suline">([\s\S]*?)<p class="pd-note">([\s\S]*?)<\/p>/.exec(html());
-        L.push('  line so far: ' + JSON.stringify(line ? T.text(line[1]) + ' | ' + T.text(line[2]) : ''));
-        const free = /<p class="pd-fsfree">([^<]*)<\/p>/.exec(html());
-        if (free) L.push('  free: ' + JSON.stringify(T.decode(free[1])));
     };
-    check('Start opens the First style step on Setup', page.S.tab === 'setup' && page.S.setupView === 'style', 'tab ' + page.S.tab + ' view ' + page.S.setupView);
-    check('one preview of the draft, through the Styles tab\'s door', page.calls.filter(c => /\/flow\/preview$/.test(c.url)).length >= 1, 'no preview');
+    check('Start opens First style on its first position', page.S.tab === 'setup' && page.S.setupView === 'style' && page.S.firstStyle.cur === 'POS_A1',
+        'tab ' + page.S.tab + ' view ' + page.S.setupView + ' open ' + page.S.firstStyle.cur);
+    check('no "Your line so far" on this step: the checklist is the line so far', !/Your line so far/.test(html()), 'drawn');
     say();
-    // The swap the step starts on, read off its own card (a mode is never
-    // spelled here: the page's cards name them).
+    check('Save style waits for every position', /data-act="fs-save" disabled/.test(html()), 'enabled');
     const startMode = on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g)[0];
-    check('a name somebody chose (Style A) is kept as the parts move: it is not a part', page.S.firstStyle.named === true, 'named ' + page.S.firstStyle.named);
-    check('no "set each one": a row\'s own Swap is the way to a mix', !/data-act="fs-each"/.test(html()), 'fs-each still drawn');
+    // THE OPEN POSITION'S SWAP AND ROLE: another swap, produce.
     let from = page.mark();
     const mode = (/data-act="fs-mode" data-mode="([^"]*)"/.exec(html().replace(/<button class="pd-fsmode on"[^>]*>/g, '')) || [])[1];
     page.click('root', { act: 'fs-mode', mode: mode });
     await page.settle();
-    L.push('# another swap for every position (' + mode + '): ' + lines(page, from).join(', '));
-    say();
-    from = page.mark();
     page.click('root', { act: 'fs-role', role: 'produce' });
     await page.settle();
-    L.push('# Produce: ' + lines(page, from).join(', '));
+    L.push('# POS_A1 on another swap, produce: ' + lines(page, from).join(', '));
     say();
-    // A ROW'S OWN SWAP: POS_A2 back on the swap the step started on, the rest
-    // on the line's. It gets a set of picks of its own, listing only what its
-    // swap uses.
-    page.click('root', { act: 'fs-swap', node: 'POS_A2' });
-    await page.settle();
-    from = page.mark();
-    T.pickerRow(page, 'pd-pop', startMode);
-    await page.settle();
-    L.push('# POS_A2 on its own swap (the one the step started on): ' + lines(page, from).join(', '));
-    say();
-    check('a position on its own swap has its own set of picks', picks().some(p => /^POS_A2 /.test(p)), picks().join(' · '));
-    // A PICK IS A DROPDOWN OF ITS ROLE'S BOX: POS_A2's outbound staging moves
-    // to STG_3, and the line so far follows.
-    page.click('root', { act: 'fs-pick', pick: 'parkOld', node: 'POS_A2' });
+    // A PICK IS A DROPDOWN OF ITS ROLE'S BOX.
+    page.click('root', { act: 'fs-pick', pick: 'staging' });
     await page.settle();
     const offered = (page.byId('pd-pop') ? page.byId('pd-pop').querySelectorAll('.picker-row') : []).map(r => r.getAttribute('data-value'));
-    L.push('# POS_A2\'s Outbound staging offers: ' + offered.join(', '));
-    from = page.mark();
+    L.push('# POS_A1\'s Inbound staging offers: ' + offered.join(', '));
     T.pickerRow(page, 'pd-pop', 'STG_3');
     await page.settle();
-    L.push('# POS_A2\'s Outbound staging → STG_3: ' + lines(page, from).join(', '));
+    check('the draft holds the pick', (page.S.model.cells.POS_A1 || {}).staging === 'STG_3', JSON.stringify(page.S.model.cells.POS_A1));
+    // DONE · NEXT: POS_A1 ticked; POS_A2 opens on the same swap and role.
+    from = page.mark();
+    page.click('root', { act: 'fs-done' });
+    await page.settle();
+    L.push('# Done · next position: ' + lines(page, from).join(', '));
     say();
-    check('the draft holds the pick', (page.S.model.cells.POS_A2 || {}).parkOld === 'STG_3', JSON.stringify(page.S.model.cells.POS_A2));
-    // A FREE ROW'S "+ add a part": Core's catalog; PART-1, on POS_A1, moves.
-    page.click('root', { act: 'fs-addpart', node: 'ULD_1' });
+    check('POS_A1 is ticked and POS_A2 open, starting the same as POS_A1',
+        page.S.firstStyle.done.POS_A1 === true && page.S.firstStyle.cur === 'POS_A2' && page.S.firstStyle.own.POS_A2.mode === mode &&
+        page.S.firstStyle.own.POS_A2.role === 'produce', JSON.stringify(page.S.firstStyle.own.POS_A2));
+    // A TICKED POSITION REOPENS and is changed; it stays ticked.
+    page.click('root', { act: 'fs-open', node: 'POS_A1' });
+    await page.settle();
+    page.click('root', { act: 'fs-mode', mode: startMode });
+    await page.settle();
+    check('a ticked position reopens, changes, and stays ticked', page.S.firstStyle.cur === 'POS_A1' && page.S.firstStyle.done.POS_A1 === true &&
+        page.S.firstStyle.own.POS_A1.mode === startMode, JSON.stringify(page.S.firstStyle.own.POS_A1));
+    // A PART IS ON ONE POSITION: PART-1, on POS_A1, picked for POS_A2 moves,
+    // and POS_A1 is not done any more.
+    page.click('root', { act: 'fs-open', node: 'POS_A2' });
+    await page.settle();
+    page.click('root', { act: 'fs-part', node: 'POS_A2' });
     await page.settle();
     const pop = page.byId('pd-pop');
     const note = ((pop ? pop.querySelectorAll('.picker-row') : []).find(r => r.getAttribute('data-value') === 'PART-1') || { querySelector: () => null });
-    L.push('# ULD_1\'s + add a part, PART-1 in Core\'s catalog: ' + JSON.stringify((note.querySelector('.picker-note') || { textContent: '' }).textContent));
-    from = page.mark();
+    L.push('# POS_A2\'s part, PART-1 in its list: ' + JSON.stringify((note.querySelector('.picker-note') || { textContent: '' }).textContent));
     T.pickerRow(page, 'pd-pop', 'PART-1');
     await page.settle();
-    L.push('# ULD_1 takes PART-1: ' + lines(page, from).join(', '));
     say();
+    check('the part moved, and the position it left is not done', page.S.firstStyle.parts.POS_A2 === 'PART-1' && !page.S.firstStyle.parts.POS_A1 &&
+        page.S.firstStyle.done.POS_A1 === false, JSON.stringify({ parts: page.S.firstStyle.parts, done: page.S.firstStyle.done }));
+    // + ADD A POSITION and TAKE … OFF THIS LINE are Settings' positions write.
+    page.click('root', { act: 'fs-addpos' });
+    await page.settle();
+    const free = (page.byId('pd-pop') ? page.byId('pd-pop').querySelectorAll('.picker-row') : []).filter(r => r.getAttribute('aria-disabled') !== 'true')
+        .map(r => r.getAttribute('data-value'));
+    L.push('# + Add a position offers (free): ' + free.slice(0, 6).join(', ') + (free.length > 6 ? ' …' : ''));
+    from = page.mark();
+    T.pickerRow(page, 'pd-pop', free[0]);
+    await page.settle();
+    L.push('# + Add a position ' + free[0] + ': ' + lines(page, from).filter(l => !/^GET /.test(l)).join(', '));
+    check('it writes the screen\'s positions with the node, through Settings\' door (PUT …/claimed-nodes)',
+        page.since(from).some(c => c.method === 'PUT' && /\/claimed-nodes$/.test(c.url) && JSON.stringify(c.body).indexOf(free[0]) >= 0),
+        page.since(from).map(c => c.method + ' ' + c.url).join(' · '));
+    page.click('root', { act: 'fs-open', node: 'POS_A3' });
+    await page.settle();
+    from = page.mark();
+    page.click('root', { act: 'fs-takeoff' });
+    await page.settle();
+    L.push('# Take POS_A3 off this line: ' + lines(page, from).filter(l => !/^GET /.test(l)).join(', '));
+    check('taking one off asks what still names it first (…/claimed-nodes/impact), as Settings does',
+        page.since(from).some(c => c.method === 'POST' && /\/claimed-nodes\/impact$/.test(c.url)), page.since(from).map(c => c.method + ' ' + c.url).join(' · '));
+    // EVERY POSITION DONE OR LEFT FREE: then Save style is live.
+    for (let i = 0; i < 40 && page.S.firstStyle.cur; i++) {
+        page.click('root', { act: page.S.firstStyle.parts[page.S.firstStyle.cur] ? 'fs-done' : 'fs-out' });
+        await page.settle();
+    }
+    say();
+    check('every position done or not in this style: Save style is live', !/data-act="fs-save" disabled/.test(html()), 'disabled');
     // THE NAME TAKES ANY TEXT; a changed one is the style's rename, written
     // before the Styles save.
     const name = page.byId('pd-fsname');
@@ -619,15 +644,13 @@ async function pinFirstStyle() {
     page.click('root', { act: 'fs-save' });
     await page.settle();
     L.push('# Save style: ' + lines(page, from).filter(l => !/^GET /.test(l)).join(', ') + ' · then tab ' + page.S.tab +
-        (page.S.setupView ? ' (' + page.S.setupView + ')' : '') + ' · notices ' + JSON.stringify(page.notices.map(n => n.text)));
+        (page.S.setupView ? ' (' + page.S.setupView + ')' : ''));
     const writes = page.since(from).filter(c => c.method !== 'GET').map(c => c.method + ' ' + c.url);
     check('a changed name is the rename (PUT /api/styles/1), written before the Styles save',
         writes[0] === 'PUT /api/styles/1' && writes.some(w => /\/flow\/save$/.test(w)), writes.join(' · '));
     const save = page.since(from).find(c => /\/flow\/save$/.test(c.url));
     check('Save style is the Styles save (flow/save) of the step\'s draft', !!save && Array.isArray(save.body.cells) && save.body.cells.length > 0,
         save ? JSON.stringify(save.body).slice(0, 200) : 'no flow/save');
-    check('and Setup is back on its steps, the one to do now Run it', page.S.tab === 'setup' && !page.S.setupView &&
-        /<li class="pd-sus now"><span class="pd-susn">3<\/span>/.test(page.root.innerHTML), 'tab ' + page.S.tab + ' view ' + page.S.setupView);
 }
 
 // ── Setup's Change…: the process sheet again, titled Edit process ──────────

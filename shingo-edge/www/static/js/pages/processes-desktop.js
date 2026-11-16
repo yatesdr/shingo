@@ -706,7 +706,7 @@ function drawSetup() {
         : '<div class="pd-sutitle"><h1>Set up ' + esc(f.p.name || '') + '</h1><span class="pd-dim">' + doneN + ' of 3 done</span></div>' +
         '<ol class="pd-sustep">' + stepNodes(f) + stepStyle(f) + stepRun(f) + '</ol>';
     root().innerHTML = appbar() + '<div class="pd-sheet pd-setup"><div class="pd-sugrid"><div class="pd-sumain">' + left + '</div>' +
-        '<div class="pd-suside">' + lineSoFar(f, null) + setupLaterHTML() + '</div></div>' +
+        '<div class="pd-suside">' + lineSoFar(f) + setupLaterHTML() + '</div></div>' +
         '<div class="pd-pop" id="pd-pop" hidden></div></div>';
     if (f.canRun && !f.seen) startSetupPoll(); else stopSetupPoll();
 }
@@ -782,41 +782,28 @@ function setupEndHTML(f) {
         '<button class="pd-btn" data-tab="flows">Styles</button><button class="pd-btn" data-tab="settings">Settings</button></div></div>';
 }
 
-// lineSoFar is the picture of the line beside the steps: where the bin comes
-// from, the positions (each with what its first style runs there), where the
-// bin goes, and its staging. model, when given, is the First style draft: the
-// picture follows its picks as they are made (where the bin comes from and
-// goes, each staging spot), and the picks follow it as dropdowns. A position
-// a style leaves free is "not in this style"; before any style, "no style yet".
-function lineSoFar(f, model) {
-    const cells = model ? model.cells : null;
+// lineSoFar is the picture of the line beside Setup's steps: where the bin
+// comes from, the positions (each with what its first style runs there),
+// where the bin goes, and its staging. A position a style leaves free is "not
+// in this style"; before any style, "no style yet". First style draws none:
+// its checklist is the line so far.
+function lineSoFar(f) {
     const st = f.flowed[0];
     const claimOf = n => (st && st.claims || []).find(c => c.core_node_name === n);
     const posBox = n => {
-        const c = cells && cells[n];
         const cl = claimOf(n);
-        const sub = c && c.on && c.mode ? (M().modeLabels()[c.mode] || c.mode) + (c.part ? ' · ' + M().shortPart(c.part) : '')
-            : cl ? (M().modeLabels()[cl.swap_mode] || cl.swap_mode) + (cl.payload_code ? ' · ' + M().shortPart(cl.payload_code) : '')
-                : model || st ? 'not in this style' : 'no style yet';
+        const sub = cl ? (M().modeLabels()[cl.swap_mode] || cl.swap_mode) + (cl.payload_code ? ' · ' + M().shortPart(cl.payload_code) : '')
+            : st ? 'not in this style' : 'no style yet';
         return '<div class="pd-supos" data-role="positions"><b>' + esc(n) + '</b><small>' + esc(sub) + '</small></div>';
     };
     const end = (role, label, names) => '<div class="pd-supos" data-role="' + role + '"' + (names.length ? '' : ' data-empty') + '>' +
         '<small class="pd-surole">' + esc(label) + '</small><b>' + esc(names.length ? names.join(', ') : 'none yet') + '</b></div>';
-    const on = cells ? Object.keys(cells).filter(n => cells[n].on) : [];
-    const used = key => [...new Set(on.map(n => cells[n][key]).filter(Boolean))];
-    const inbound = model && on.length ? used('source') : f.inbound;
-    const outbound = model && on.length ? used('dest') : f.outbound;
-    const staging = model && on.length
-        ? [used('staging').length ? 'Inbound staging ' + used('staging').join(', ') : '',
-            used('parkOld').length ? 'Outbound staging ' + used('parkOld').join(', ') : ''].filter(Boolean).join(' · ') ||
-            'No staging: these swaps do not use it.'
-        : f.staging.length ? 'Staging: ' + f.staging.join(', ') + '.' : 'Staging: none. Optional; a swap that needs one will ask.';
+    const staging = f.staging.length ? 'Staging: ' + f.staging.join(', ') + '.' : 'Staging: none. Optional; a swap that needs one will ask.';
     return '<div class="pd-card"><div class="pd-sect"><h2>Your line so far</h2></div><div class="pd-suline">' +
-        end('inbound', 'Inbound', inbound) + '<span class="pd-dim">→</span>' +
+        end('inbound', 'Inbound', f.inbound) + '<span class="pd-dim">→</span>' +
         (f.positions.length ? f.positions.map(posBox).join('') : '<span class="pd-dim">no positions yet</span>') +
-        '<span class="pd-dim">→</span>' + end('outbound', 'Outbound', outbound) + '</div>' +
-        '<p class="pd-note"><i class="setpick-dot" data-role="staging"></i> ' + esc(staging) + '</p>' +
-        (model ? firstPicksHTML(model) : '') + '</div>';
+        '<span class="pd-dim">→</span>' + end('outbound', 'Outbound', f.outbound) + '</div>' +
+        '<p class="pd-note"><i class="setpick-dot" data-role="staging"></i> ' + esc(staging) + '</p></div>';
 }
 
 function setupLaterHTML() {
@@ -887,45 +874,50 @@ async function setupGo(act) {
 
 // ── Setup · First style ──────────────────────────────────────────────────────
 //
-// A NAME, A PART ON EACH POSITION, AND HOW THEY SWAP. The name starts as the
-// first part's and takes any text, such as the finished good, as the New
-// style sheet's one-off name does: POST /api/styles takes any name, and the
-// only rule is the store's, one live style per name in a process. A part is
-// on one position (the composer's rule, setPart), so each position takes one
-// from the part set, in order, changeable; a position left with none stays
-// free, and its row offers "add a part" from Core's catalog, which joins the
-// part set. The swap cards set every position's swap; a row's own Swap
-// changes that one.
+// ONE POSITION AT A TIME (owner, 2026-11-15: "id like to go position by
+// position in the setup helper then mark green when its done"). The left is
+// the line's positions as a checklist: done (a green tick, its part and its
+// swap), the one open now, and the rest to do; a row opens its position, a
+// done one too, to change it. "+ Add a position" puts a free node on the line
+// and its screen, and "Take <position> off this line" takes one off, both
+// through Settings' positions write (savePositions, screensDraft), asked
+// about first as Settings asks. The middle is the open position: its part,
+// consume or produce, its swap (it starts as the position before it), and
+// what was picked for it from the routing set, each a dropdown of that role's
+// box, only what its swap uses. "Done · next position" ticks it; "Not in this
+// style" leaves it free. Save style is live once every position is done or
+// left free.
 //
-// EVERYTHING THE STEP FILLS IN IS A DROPDOWN (owner, 2026-11-15: "shouldnt you
-// need to select inboudn and outbound staging"): Inbound source, Outbound
-// destination, Inbound staging and Outbound staging, each showing what was
-// picked for the engineer from that role's box of the routing set, in the
-// role's colour. One set covers the line; a position whose swap differs from
-// the line's has its own. Inbound and outbound staging are two fields, shown
-// only for a swap that uses them. One the swap requires is filled as the
+// The name starts as the first part's and takes any text, as the New style
+// sheet's one-off name does: POST /api/styles takes any name, and the only
+// rule is the store's, one live style per name in a process. A name somebody
+// chose is kept; a part-code name follows the first position's part.
+//
+// A part is on one position (the composer's rule, setPart): a part another
+// position has moves here, and that position is not done any more. A
+// position not opened yet runs as the one before it does, until it is opened:
+// then its own copy is changed. A swap that requires staging is filled as the
 // Styles tab fills a new row (addFreeAs): inbound staging the Staging box's
-// first name, outbound staging the next one, or the first again when the box
-// holds one. One the swap may use starts empty.
+// first name, outbound staging the next, or the first again when the box
+// holds one; one the swap may use starts empty.
 //
 // It is the Styles tab's draft (S.model), previewed and saved by the Styles
 // tab's own doors (flow/preview, saveFlow): no second writer. A changed name
-// is the style's rename (PUT /api/styles/{id}, styleBody), written first.
-// "Open the full flow table" goes there with the draft; saving comes back here.
+// is the style's rename (PUT /api/styles/{id}), written first.
 //
 // A press's back positions are never rows: they are a swap's partner, and the
 // model pairs them (ensurePartner).
 
-const FIRST_ROLES = [['consume', 'Consume', 'the line uses the parts'], ['produce', 'Produce', 'the line makes the parts']];
+const FIRST_ROLES = [['consume', 'Consume'], ['produce', 'Produce']];
 
 // FIRST_PICKS is what the step fills in, in the order it is said: the cell
-// key, the claim field, its words, its role's colour, the routing box its
+// key, the claim field, its word, its role's colour, the routing box its
 // choices come from, and the model's action with its argument.
 const FIRST_PICKS = [
-    { key: 'source', field: 'inbound_source', label: 'Inbound source', sub: 'where the bin comes from', role: 'inbound', box: 'source', act: 'setSource', arg: 'source' },
-    { key: 'dest', field: 'outbound_destination', label: 'Outbound destination', sub: 'where the bin goes', role: 'outbound', box: 'destination', act: 'setDest', arg: 'dest' },
-    { key: 'staging', field: 'inbound_staging', label: 'Inbound staging', sub: 'where the new bin waits', role: 'staging', box: 'staging', act: 'setStaging', arg: 'staging' },
-    { key: 'parkOld', field: 'outbound_staging', label: 'Outbound staging', sub: 'where the old bin is set down', role: 'staging', box: 'staging', act: 'setParkOld', arg: 'staging' },
+    { key: 'source', field: 'inbound_source', label: 'Comes from', role: 'inbound', box: 'source', act: 'setSource', arg: 'source' },
+    { key: 'staging', field: 'inbound_staging', label: 'Inbound staging', role: 'staging', box: 'staging', act: 'setStaging', arg: 'staging' },
+    { key: 'parkOld', field: 'outbound_staging', label: 'Outbound staging', role: 'staging', box: 'staging', act: 'setParkOld', arg: 'staging' },
+    { key: 'dest', field: 'outbound_destination', label: 'Goes to', role: 'outbound', box: 'destination', act: 'setDest', arg: 'dest' },
 ];
 
 // firstStyleTarget is the style the step draws: the first with no flow.
@@ -956,13 +948,12 @@ async function startFirstStyle() {
     const palette = S.composer.palette || [];
     const parts = {};
     rows.forEach((n, i) => { if (palette[i]) parts[n] = palette[i]; });
-    // A NAME SOMEBODY CHOSE IS KEPT. Only a style named by a part (the one
-    // this step makes, or one the New style sheet named from the part set)
-    // follows the first position's part as parts move.
+    // A NAME SOMEBODY CHOSE IS KEPT (named): only a part-code name follows.
     S.firstStyle = {
-        styleID: st.id, name: st.name || '', named: palette.indexOf(st.name) < 0, parts: parts, role: 'consume', mode: 'single_robot',
-        modes: {}, pick: {}, rowPick: {}, error: '',
+        styleID: st.id, name: st.name || '', named: palette.indexOf(st.name) < 0, parts: parts,
+        own: {}, done: {}, out: {}, cur: '', error: '', warned: '',
     };
+    if (rows.length) openFirstPosition(rows[0]);
     S.setupView = 'style';
     S.tab = 'setup';
     buildFirstStyle();
@@ -971,17 +962,27 @@ async function startFirstStyle() {
     void previewFirstStyle();
 }
 
-// firstMode is position n's swap: its own, or the line's.
-function firstMode(n) {
+// firstEff is what position n runs as: its own copy once opened, else the
+// nearest opened position before it, else a consume 1‑Robot Swap with every
+// pick at its default.
+function firstEff(n) {
     const d = S.firstStyle;
-    return d.modes[n] || d.mode;
+    if (d.own[n]) return d.own[n];
+    const rows = firstStyleRows();
+    for (let i = rows.indexOf(n) - 1; i >= 0; i--) if (d.own[rows[i]]) return d.own[rows[i]];
+    return { role: 'consume', mode: 'single_robot', picks: {} };
 }
 
-// firstDiffers: position n swaps another way than the line, so it has its
-// own set of picks.
-function firstDiffers(n) {
+// openFirstPosition makes n the open position; opened the first time, it
+// takes a copy of what it ran as (the position before it).
+function openFirstPosition(n) {
     const d = S.firstStyle;
-    return !!d.modes[n] && d.modes[n] !== d.mode;
+    if (!d.own[n]) {
+        const e = firstEff(n);
+        d.own[n] = { role: e.role, mode: e.mode, picks: Object.assign({}, e.picks) };
+    }
+    d.cur = n;
+    d.warned = '';
 }
 
 // firstChoices is a pick's choices: its routing box's names, in order. A
@@ -992,31 +993,28 @@ function firstChoices(p) {
         .sort((a, b) => (a.sequence || 0) - (b.sequence || 0)).map(r => r.core_node_name);
 }
 
-// firstUse is how a swap uses a pick's field in the step's role, from the
-// flowspec the model carries: 'required', 'used' (it may), or '' (it does not).
-function firstUse(state, mode, p) {
-    const row = ((((state && state.flowspec) || {}).steady || {})[S.firstStyle.role] || {})[mode] || {};
+// firstUse is how a swap uses a pick's field in a role, from the flowspec the
+// model carries: 'required', 'used' (it may), or '' (it does not).
+function firstUse(state, role, mode, p) {
+    const row = ((((state && state.flowspec) || {}).steady || {})[role] || {})[mode] || {};
     const u = row[p.field];
     return u === 'required' || u === 'used' ? u : '';
 }
 
-// firstValue is what a pick holds at position n: the engineer's choice (for
-// the position when its swap differs, else for the line), the line's choice
-// for a position that has made none of its own, else the default.
+// firstValue is what a pick holds at position n: its chosen value, else the
+// default (the box's first; a required outbound staging the next one).
 function firstValue(state, n, p) {
-    const d = S.firstStyle;
-    const own = firstDiffers(n) ? (d.rowPick[n] || {})[p.key] : undefined;
-    if (own !== undefined) return own;
-    if (d.pick[p.key] !== undefined) return d.pick[p.key];
+    const e = firstEff(n);
+    if (e.picks[p.key] !== undefined) return e.picks[p.key];
     const choices = firstChoices(p);
     if (p.box !== 'staging') return choices[0] || '';
-    if (firstUse(state, firstMode(n), p) !== 'required') return '';
+    if (firstUse(state, e.role, e.mode, p) !== 'required') return '';
     return (p.key === 'parkOld' ? choices[1] || choices[0] : choices[0]) || '';
 }
 
 // buildFirstStyle is the step's draft as the composer's own actions on the
-// style: each position with a part added in its swap, its role, its part,
-// and each pick its swap uses.
+// style: each position with a part, not left free, added in its swap, its
+// role, its part, and each pick its swap uses.
 function buildFirstStyle() {
     const d = S.firstStyle;
     const st = composerStyle(d.styleID);
@@ -1026,13 +1024,14 @@ function buildFirstStyle() {
     let m = initModel(st);
     for (const n of firstStyleRows()) {
         const part = d.parts[n];
-        if (!part) continue;
-        m = M().reduce(m, { type: 'addPosition', node: n, mode: firstMode(n) });
-        if (d.role === 'produce') m = M().reduce(m, { type: 'setRole', node: n, role: 'produce' });
+        if (!part || d.out[n]) continue;
+        const e = firstEff(n);
+        m = M().reduce(m, { type: 'addPosition', node: n, mode: e.mode });
+        if (e.role === 'produce') m = M().reduce(m, { type: 'setRole', node: n, role: 'produce' });
         m = M().reduce(m, { type: 'addPart', payloadCode: part });
         m = M().reduce(m, { type: 'setPart', node: n, payloadCode: part });
         for (const p of FIRST_PICKS) {
-            if (!firstUse(m, firstMode(n), p)) continue;
+            if (!firstUse(m, e.role, e.mode, p)) continue;
             const a = { type: p.act, node: n };
             a[p.arg] = firstValue(m, n, p);
             m = M().reduce(m, a);
@@ -1042,108 +1041,120 @@ function buildFirstStyle() {
     S.baseline = '';
 }
 
-// firstFree is the positions the style leaves free, by name.
-function firstFree() {
-    return firstStyleRows().filter(n => !S.firstStyle.parts[n]);
-}
-
-// firstPickHTML is one pick as a dropdown in its role's colour: its words,
-// and what it holds. node: the position whose own set it is, or '' (the line).
-function firstPickHTML(p, value, node, use) {
-    const choices = firstChoices(p);
-    const shown = value || (use === 'required' ? (choices.length ? 'pick one' : 'none in the ' + boxWord(p.box) + ' box') : 'none');
-    return '<div class="pd-fspick" data-role="' + p.role + '"><span class="pd-fspickw"><i class="setpick-dot"></i><b>' + esc(p.label) + '</b>' +
-        '<small>' + esc(p.sub) + '</small></span>' +
-        '<button class="pd-sel' + (use === 'required' && !value ? ' bad' : '') + '" data-act="fs-pick" data-pick="' + p.key + '" data-node="' + esc(node) + '">' +
-        '<span class="t">' + esc(shown) + '</span><i class="car"></i></button></div>';
-}
-
-// boxWord is a routing box's name as the set pick says it.
-function boxWord(box) {
-    const g = ROUTING_GROUPS.find(x => x[0] === box);
-    return g ? g[1] : box;
-}
-
-// firstPicksHTML is the picks: one set for the line (its swap's, at a
-// position on the line's swap), then a set for each position whose swap
-// differs. A set lists only what its swap uses.
-function firstPicksHTML(model) {
+// firstToGo is the positions neither done nor left free.
+function firstToGo() {
     const d = S.firstStyle;
-    const labels = M().modeLabels();
-    const placed = firstStyleRows().filter(n => d.parts[n]);
-    const set = (n, head) => {
-        const picks = FIRST_PICKS.map(p => [p, firstUse(model, firstMode(n), p)]).filter(x => x[1]);
-        return '<div class="pd-fsset">' + head +
-            picks.map(x => firstPickHTML(x[0], (model.cells[n] || {})[x[0].key] || '', firstDiffers(n) ? n : '', x[1])).join('') + '</div>';
-    };
-    const lineAt = placed.find(n => !firstDiffers(n));
-    const own = placed.filter(firstDiffers);
-    if (!lineAt && !own.length) return '';
-    return '<div class="pd-fspicks"><div class="pd-sect"><h2>Picked for you</h2><span class="pd-dim">from the routing set · change any</span></div>' +
-        (lineAt ? set(lineAt, own.length ? '<div class="pd-fssethd">' + esc(labels[d.mode] || d.mode) + ' · the line</div>' : '') : '') +
-        own.map(n => set(n, '<div class="pd-fssethd">' + esc(n) + ' · ' + esc(labels[firstMode(n)] || firstMode(n)) + '</div>')).join('') + '</div>';
+    return firstStyleRows().filter(n => !d.done[n] && !d.out[n]);
 }
 
 function drawFirstStyle(f) {
     const d = S.firstStyle;
     if (!d || !S.model || S.model.styleId !== d.styleID) { S.setupView = ''; drawSetup(); return; }
     const labels = M().modeLabels();
-    const order = Object.keys(MODE_WORDS).filter(m => labels[m]);
     const rows = firstStyleRows();
-    const free = firstFree();
-    const rowHTML = n => '<div class="pd-fsrow"><b>' + esc(n) + '</b>' +
-        (d.parts[n]
-            ? '<button class="pd-sel" data-act="fs-part" data-node="' + esc(n) + '"><span class="t">' + esc(M().shortPart(d.parts[n])) +
-                '</span><i class="car"></i></button>' +
-                '<button class="pd-sel' + (firstDiffers(n) ? ' own' : '') + '" data-act="fs-swap" data-node="' + esc(n) + '"><span class="t">' +
-                esc(labels[firstMode(n)] || firstMode(n)) + '</span><i class="car"></i></button>'
-            : '<button class="pd-btn quiet" data-act="fs-addpart" data-node="' + esc(n) + '">+ add a part</button>' +
-                '<span class="pd-dim">not in this style</span>') + '</div>';
-    const cards = order.map(m => '<button class="pd-fsmode' + (d.mode === m ? ' on' : '') + '" data-act="fs-mode" data-mode="' + esc(m) + '">' +
-        gl(m, 26, {}) + '<span><b>' + esc(labels[m]) + '</b><small>' + esc(MODE_WORDS[m]) + '</small></span></button>').join('');
-    const roleSeg = '<div class="pd-seg">' + FIRST_ROLES.map(r => '<button class="' + (d.role === r[0] ? 'on' : '') + '" data-act="fs-role" data-role="' +
-        r[0] + '">' + esc(r[1]) + '</button>').join('') + '</div>';
-    const roleSub = (FIRST_ROLES.find(r => r[0] === d.role) || [])[2] || '';
-    const left = '<div class="pd-sutitle"><h1>First style</h1><span class="pd-dim">step 2 of 3</span></div>' +
-        '<div class="pd-fsblock"><label class="pd-fslbl" for="pd-fsname">Style name</label>' +
-        '<span class="pd-dim">starts as the part · type any name, such as the finished good</span>' +
-        '<input class="pd-inp wide" id="pd-fsname" data-fs="name" type="text" autocomplete="off" value="' + esc(d.name) + '"></div>' +
-        '<div class="pd-fsblock"><span class="pd-fslbl">Positions</span>' +
-        '<div class="pd-fsrow pd-fshd"><span>Position</span><span>Part</span><span>Swap</span></div>' +
-        rows.map(rowHTML).join('') + '</div>' +
-        '<div class="pd-fsblock"><span class="pd-fslbl">Consume or produce</span><div class="pd-fsline">' + roleSeg +
-        '<span class="pd-dim">' + esc(roleSub) + '</span></div></div>' +
-        '<div class="pd-fsblock"><div class="pd-fsline"><span class="pd-fslbl">Swap for every position</span>' +
-        '<span class="pd-dim">pick one here, then change any position in its own row</span></div>' +
-        '<div class="pd-fsmodes">' + cards + '</div></div>' +
-        (free.length && rows.length > free.length
-            ? '<p class="pd-fsfree">' + esc(nOf(free.length, 'position') + ' left free: ' + free.join(', ') +
-                '. Each takes a part of its own (“+ add a part”); a part is on one position.') + '</p>' : '') +
-        (d.error ? '<div class="pd-refusal">' + esc(d.error) + '</div>' : '') +
-        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
-        '<button class="pd-dimlink" data-act="fs-table">Open the full flow table</button>' +
-        '<button class="pd-btn" data-act="fs-back">Back</button>' +
+    if (d.cur && rows.indexOf(d.cur) < 0) d.cur = '';
+    const togo = firstToGo();
+    const doneN = rows.length - togo.length;
+    const item = (n, i) => {
+        const e = firstEff(n);
+        const state = d.out[n] ? 'out' : n === d.cur ? 'now' : d.done[n] ? 'done' : 'todo';
+        const sub = d.out[n] ? 'not in this style'
+            : d.done[n] ? (d.parts[n] ? M().shortPart(d.parts[n]) + ' · ' : '') + (labels[e.mode] || e.mode)
+                : n === d.cur ? 'now' : 'to do';
+        return '<li class="pd-fsitem ' + state + (d.done[n] ? ' is-done' : '') + '"><button data-act="fs-open" data-node="' + esc(n) + '">' +
+            '<span class="pd-fsmark">' + (d.done[n] ? '✓' : d.out[n] ? '–' : String(i + 1)) + '</span>' +
+            '<span class="pd-fsname"><b>' + esc(n) + '</b><small>' + esc(sub) + '</small></span></button></li>';
+    };
+    const list = '<div class="pd-fslist"><div class="pd-fslhd">Positions · ' + doneN + ' of ' + rows.length + ' done</div>' +
+        '<ol>' + rows.map(item).join('') + '</ol>' +
+        '<button class="pd-btn quiet" data-act="fs-addpos">+ Add a position</button></div>';
+    const top = '<div class="pd-fstop"><h1>First style</h1>' +
+        '<label class="pd-fsnamefld"><span>Style name</span><input class="pd-inp" id="pd-fsname" data-fs="name" type="text" autocomplete="off" value="' + esc(d.name) + '"></label>' +
+        '<span class="pd-spacer"></span><span class="pd-fsgo" id="pd-fsgo">' + esc(firstSaveWords()) + '</span>' +
         '<button class="pd-btn primary" data-act="fs-save"' + (firstStyleReady() ? '' : ' disabled') + '>Save style</button></div>';
-    root().innerHTML = appbar() + '<div class="pd-sheet pd-setup"><div class="pd-sugrid"><div class="pd-sumain">' + left + '</div>' +
-        '<div class="pd-suside">' + lineSoFar(f, S.model) + '</div></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
+    const body = d.cur ? firstPositionHTML(d.cur, rows) : firstAllDoneHTML(rows);
+    root().innerHTML = appbar() + '<div class="pd-sheet pd-setup">' + top +
+        (d.error ? '<div class="pd-refusal">' + esc(d.error) + '</div>' : '') +
+        '<div class="pd-fsgrid">' + list + '<div class="pd-fspos">' + body + '</div></div>' +
+        '<div class="pd-pop" id="pd-pop" hidden></div></div>';
     const name = $('pd-fsname');
     if (name && name.addEventListener) {
         name.addEventListener('input', () => {
             d.name = name.value;
             d.named = true;
-            const bar = $('pd-bar');
-            if (bar) bar.innerHTML = firstStyleBar();
+            const go = $('pd-fsgo');
+            if (go) go.textContent = firstSaveWords();
             const save = root().querySelector('[data-act="fs-save"]');
             if (save) save.disabled = !firstStyleReady();
         });
     }
 }
 
+// firstPositionHTML is the open position: its part, consume or produce, its
+// swap, its picks, and its buttons.
+function firstPositionHTML(n, rows) {
+    const d = S.firstStyle;
+    const e = firstEff(n);
+    const labels = M().modeLabels();
+    const order = Object.keys(MODE_WORDS).filter(m => labels[m]);
+    const part = d.parts[n];
+    const roleSeg = '<div class="pd-seg">' + FIRST_ROLES.map(r => '<button class="' + (e.role === r[0] ? 'on' : '') +
+        '" data-act="fs-role" data-role="' + r[0] + '">' + esc(r[1]) + '</button>').join('') + '</div>';
+    const cards = order.map(m => '<button class="pd-fsmode' + (e.mode === m ? ' on' : '') + '" data-act="fs-mode" data-mode="' + esc(m) + '">' +
+        gl(m, 26, {}) + '<span><b>' + esc(labels[m]) + '</b><small>' + esc(MODE_WORDS[m]) + '</small></span></button>').join('');
+    const picks = FIRST_PICKS.map(p => [p, firstUse(S.model, e.role, e.mode, p)]).filter(x => x[1]).map(x => {
+        const p = x[0];
+        // What the position runs with, in the draft or (a position with no
+        // part yet, not in the draft) as it would. No colour on the box: the
+        // bar says what is missing.
+        const cell = S.model.cells[n];
+        const value = (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
+        const shown = value || (x[1] === 'required' ? (firstChoices(p).length ? 'pick one' : 'none in the ' + boxWord(p.box) + ' box') : 'none');
+        return '<div class="pd-fsfield"><span class="pd-fsflbl"><i class="setpick-dot" data-role="' + p.role + '"></i>' + esc(p.label) + '</span>' +
+            '<button class="pd-sel" data-act="fs-pick" data-pick="' + p.key + '">' +
+            '<span class="t">' + esc(shown) + '</span><i class="car"></i></button></div>';
+    }).join('');
+    const warn = d.warned === n && S.firstWarn ? '<div class="pd-warn">' + esc(S.firstWarn) + '</div>' : '';
+    return '<div class="pd-fsposhd"><h2>' + esc(n) + '</h2><span class="pd-spacer"></span>' +
+        '<button class="pd-dimlink" data-act="fs-takeoff">Take ' + esc(n) + ' off this line</button></div>' + warn +
+        '<div class="pd-fsfield"><span class="pd-fsflbl">Part</span>' +
+        '<button class="pd-sel" data-act="fs-part" data-node="' + esc(n) + '"><span class="t">' + esc(part ? M().shortPart(part) : 'no part') +
+        '</span><i class="car"></i></button>' +
+        '<button class="pd-dimlink" data-act="fs-addpart" data-node="' + esc(n) + '">+ add a part</button></div>' +
+        '<div class="pd-fsfield"><span class="pd-fsflbl">Consume or produce</span>' + roleSeg + '</div>' +
+        '<div class="pd-fsblock"><span class="pd-fsflbl">Swap</span><div class="pd-fsmodes">' + cards + '</div></div>' +
+        (picks ? '<div class="pd-fsblock"><span class="pd-fsflbl">Picked for you</span>' + picks + '</div>' : '') +
+        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
+        '<button class="pd-btn" data-act="fs-out">Not in this style</button>' +
+        '<button class="pd-btn" data-act="fs-back">Back</button>' +
+        '<button class="pd-btn done" data-act="fs-done"' + (part ? '' : ' disabled') + '>Done · next position</button></div>';
+}
+
+// firstAllDoneHTML is the middle once no position is open: every one done or
+// left free, or none on the line yet.
+function firstAllDoneHTML(rows) {
+    const togo = firstToGo();
+    if (!rows.length) return '<p class="pd-dim">This line has no positions yet. Add one on the left.</p>';
+    return '<div class="pd-fsposhd"><h2 class="pd-fsplain">' + (togo.length ? esc(nOf(togo.length, 'position')) + ' to go' : 'Every position is done') + '</h2></div>' +
+        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
+        '<button class="pd-dimlink" data-act="fs-table">Open the full flow table</button>' +
+        '<button class="pd-btn" data-act="fs-back">Back</button></div>';
+}
+
+// firstSaveWords is the top line's word beside Save style.
+function firstSaveWords() {
+    const togo = firstToGo().length;
+    if (togo) return nOf(togo, 'position') + ' to go';
+    if (!String(S.firstStyle.name || '').trim()) return 'the style needs a name';
+    return '';
+}
+
 // firstStyleBar is the step's one line: ready, with its orders, or the first
 // thing to fix, in the Styles bar's own words (composer-model bar).
 function firstStyleBar() {
-    if (!String(S.firstStyle.name || '').trim()) return '<i class="pd-cnt warn"><i></i></i><b>The style needs a name.</b>';
-    if (!Object.values(S.firstStyle.parts).some(Boolean)) return '<span class="pd-dim">Give a position a part to make the style.</span>';
+    if (!Object.keys(S.firstStyle.parts).some(n => S.firstStyle.parts[n] && !S.firstStyle.out[n])) {
+        return '<span class="pd-dim">Give a position a part to make the style.</span>';
+    }
     const b = M().bar(S.model);
     const pv = S.model.preview || {};
     if (b.tone === 'blocked') return '<i class="pd-cnt warn"><i></i></i><b>' + esc(b.heading) + '</b> <span class="pd-dim">' + esc(b.detail || '') + '</span>';
@@ -1154,8 +1165,9 @@ function firstStyleBar() {
 }
 
 function firstStyleReady() {
+    const d = S.firstStyle;
     return !!S.model && !!(S.model.preview || {}).fingerprint && M().bar(S.model).tone !== 'blocked' &&
-        Object.values(S.firstStyle.parts).some(Boolean) && !!String(S.firstStyle.name || '').trim();
+        Object.keys(d.parts).some(n => d.parts[n] && !d.out[n]) && !!String(d.name || '').trim() && !firstToGo().length;
 }
 
 // previewFirstStyle is the Styles tab's preview of the draft (flow/preview).
@@ -1175,7 +1187,7 @@ async function previewFirstStyle() {
 function firstStyleChanged() {
     const d = S.firstStyle;
     if (!d.named) {
-        const first = firstStyleRows().map(n => d.parts[n]).find(Boolean);
+        const first = firstStyleRows().map(n => (d.out[n] ? '' : d.parts[n])).find(Boolean);
         if (first) d.name = first;
     }
     d.error = '';
@@ -1184,28 +1196,35 @@ function firstStyleChanged() {
     void previewFirstStyle();
 }
 
-// openFirstPart is a position's part, from the part set: one part is on one
-// position, so picking one another position has moves it here.
+// setFirstPart puts code on position node (or takes its part off): a part on
+// another position moves here, and that position is not done any more.
+function setFirstPart(node, code) {
+    const d = S.firstStyle;
+    for (const n of Object.keys(d.parts)) {
+        if (code && n !== node && d.parts[n] === code) { delete d.parts[n]; d.done[n] = false; }
+    }
+    if (code) { d.parts[node] = code; d.out[node] = false; } else delete d.parts[node];
+    firstStyleChanged();
+}
+
+// openFirstPart is the open position's part, from the part set: one part is
+// on one position, so picking one another position has moves it here.
 function openFirstPart(btn) {
     const pop = $('pd-pop');
     const d = S.firstStyle;
     const node = btn.dataset.node;
     if (!pop || !d) return;
     const at = code => Object.keys(d.parts).find(n => n !== node && d.parts[n] === code);
-    const rows = [{ value: '-', label: 'no part · leave it free' }].concat((S.composer.palette || []).map(code =>
+    const rows = [{ value: '-', label: 'no part' }].concat((S.composer.palette || []).map(code =>
         ({ value: code, label: M().shortPart(code), note: at(code) ? 'on ' + at(code) + ', moves here' : '' })));
-    openRowPicker(pop, btn, rows, v => {
-        const code = v === '-' ? '' : v;
-        for (const n of Object.keys(d.parts)) if (code && d.parts[n] === code) delete d.parts[n];
-        if (code) d.parts[node] = code; else delete d.parts[node];
-        firstStyleChanged();
-    }, { selected: d.parts[node] || '-', placeholder: 'find a part' });
+    openRowPicker(pop, btn, rows, v => setFirstPart(node, v === '-' ? '' : v),
+        { selected: d.parts[node] || '-', placeholder: 'find a part' });
 }
 
-// openFirstAddPart is a free position's "add a part": Core's catalog, as the
-// Styles tab's part popover offers it. The part joins the process's part set
-// (the same PUT, written at once: the set is not a flow's) and goes on this
-// position in the draft; one already on another position moves here.
+// openFirstAddPart is "+ add a part": Core's catalog, as the Styles tab's part
+// popover offers it. The part joins the process's part set (the same PUT …/
+// payloads, written at once: the set is not a flow's) and goes on this
+// position; one already on another position moves here.
 async function openFirstAddPart(btn) {
     const pop = $('pd-pop');
     const d = S.firstStyle;
@@ -1225,52 +1244,130 @@ async function openFirstAddPart(btn) {
             const out = await writePartSet(S.partSet.concat([code]));
             if (!out.ok) { d.error = said(out, 'Could not add ' + code + ': '); drawSetup(); return; }
         }
-        for (const n of Object.keys(d.parts)) if (d.parts[n] === code) delete d.parts[n];
-        d.parts[node] = code;
-        firstStyleChanged();
+        setFirstPart(node, code);
     }, {
         placeholder: 'find a part in Core’s catalog',
         empty: S.payloadCatalog ? 'No part matches' : 'Core’s catalog could not be read. Try again in a moment.',
     });
 }
 
-// openFirstSwap is a position's own swap. The line's swap clears its own set.
-function openFirstSwap(btn) {
-    const pop = $('pd-pop');
-    const d = S.firstStyle;
-    const node = btn.dataset.node;
-    if (!pop || !d) return;
-    const labels = M().modeLabels();
-    const rows = Object.keys(MODE_WORDS).filter(m => labels[m]).map(m =>
-        ({ value: m, label: labels[m], note: m === d.mode ? 'the line’s swap' : MODE_WORDS[m] }));
-    openRowPicker(pop, btn, rows, m => {
-        if (m === d.mode) { delete d.modes[node]; delete d.rowPick[node]; } else d.modes[node] = m;
-        firstStyleChanged();
-    }, { selected: firstMode(node), placeholder: 'find a swap' });
-}
-
-// openFirstPick is one pick's dropdown: its routing box's names, and "none"
-// for a field the swap may go without.
+// openFirstPick is one of the open position's picks: its routing box's names,
+// and "none" for a field its swap may go without.
 function openFirstPick(btn) {
     const pop = $('pd-pop');
     const d = S.firstStyle;
     const p = FIRST_PICKS.find(x => x.key === btn.dataset.pick);
-    const node = btn.dataset.node || '';
-    if (!pop || !d || !p || !S.model) return;
-    const at = node || firstStyleRows().find(n => d.parts[n] && !firstDiffers(n)) || '';
-    const use = firstUse(S.model, firstMode(at), p);
-    const rows = (use === 'used' ? [{ value: '-', label: 'none', note: 'this swap may go without it' }] : [])
-        .concat(firstChoices(p).map(n => ({ value: n, label: n })));
+    const n = d && d.cur;
+    if (!pop || !d || !p || !n || !S.model) return;
+    const e = firstEff(n);
+    const use = firstUse(S.model, e.role, e.mode, p);
+    const rows = (use === 'used' ? [{ value: '-', label: 'none' }] : []).concat(firstChoices(p).map(x => ({ value: x, label: x })));
     openRowPicker(pop, btn, rows, v => {
-        const val = v === '-' ? '' : v;
-        if (node) d.rowPick[node] = Object.assign(d.rowPick[node] || {}, { [p.key]: val });
-        else d.pick[p.key] = val;
+        d.own[n].picks[p.key] = v === '-' ? '' : v;
         firstStyleChanged();
     }, {
-        selected: ((S.model.cells[at] || {})[p.key]) || '-', placeholder: 'find a name',
-        head: esc(p.label) + ' · ' + esc(p.sub),
+        selected: firstValue(S.model, n, p) || '-', placeholder: 'find a name', head: esc(p.label),
         empty: 'The ' + boxWord(p.box) + ' box is empty. Add one with Change… on step 1.',
     });
+}
+
+// firstDone ticks the open position and opens the next one to do after it
+// (then any before it), or none.
+function firstDone() {
+    const d = S.firstStyle;
+    const n = d.cur;
+    if (!n || !d.parts[n]) return;
+    d.done[n] = true;
+    d.out[n] = false;
+    firstNext(n);
+}
+
+// firstOut leaves the open position free: not in this style.
+function firstOut() {
+    const d = S.firstStyle;
+    const n = d.cur;
+    if (!n) return;
+    delete d.parts[n];
+    d.done[n] = false;
+    d.out[n] = true;
+    firstNext(n);
+}
+
+function firstNext(from) {
+    const rows = firstStyleRows();
+    const togo = firstToGo();
+    const i = rows.indexOf(from);
+    const next = togo.find(x => rows.indexOf(x) > i) || togo[0] || '';
+    if (next) openFirstPosition(next); else S.firstStyle.cur = '';
+    firstStyleChanged();
+}
+
+// openFirstAddPosition is "+ Add a position": the free nodes (a node held
+// by another process, in this process's routing set or a group is not
+// offered). The pick goes on the line and its screen through Settings'
+// positions write, and opens as the position after the last one.
+function openFirstAddPosition(btn) {
+    const pop = $('pd-pop');
+    if (!pop || !S.firstStyle) return;
+    loadCoreNodes().then(() => {
+        const mine = new Set(processPositions());
+        const routing = new Set((S.composer.routing || []).map(r => r.core_node_name));
+        const rows = (S.coreNodes || []).filter(n => n && n.name && n.node_type !== 'NGRP' && !mine.has(n.name))
+            .map(n => {
+                const r = { value: n.name, label: n.name };
+                if (heldElsewhere(n.name, S.processID)) r.reason = positionHeld(n.name, S.processID) || 'held by another process';
+                else if (routing.has(n.name)) r.reason = 'in this process’s routing set';
+                return r;
+            })
+            .sort((a, b) => (a.reason ? 1 : 0) - (b.reason ? 1 : 0) || (a.label < b.label ? -1 : 1));
+        openRowPicker(pop, btn, rows, name => { void firstWritePositions(all => all.concat([name]), name); },
+            { placeholder: 'find a free node', empty: 'No free node matches' });
+    });
+}
+
+// firstTakeOff is "Take <position> off this line": asked about first, as
+// Settings asks (savePositions: the server says what still names it, and a
+// second press takes it off).
+function firstTakeOff() {
+    const d = S.firstStyle;
+    const n = d && d.cur;
+    if (!n) return;
+    void firstWritePositions(all => all.filter(x => x !== n), '', n);
+}
+
+// firstWritePositions writes the line's positions through Settings' door and
+// reads the line again. change(all) is the new list from every position the
+// line has, read first: the positions on no screen are only known once the
+// process's positions are read, and a list made without them takes them off.
+// open: a position to open after (one just added); gone: the position taken
+// off (its warning is said on it).
+async function firstWritePositions(change, open, gone) {
+    const d = S.firstStyle;
+    await loadCurtainNodes();
+    const out = await savePositions(screensDraft(change(processPositions())));
+    if (!out.ok) {
+        S.firstWarn = out.error || 'The positions could not be saved.';
+        d.warned = gone || d.cur;
+        drawSetup();
+        return;
+    }
+    S.firstWarn = '';
+    d.warned = '';
+    await refreshProcessStationNodes();
+    await loadCurtainNodes();
+    await refreshProcess();
+    if (!S.firstStyle) return;
+    if (gone) {
+        delete d.parts[gone];
+        delete d.own[gone];
+        delete d.done[gone];
+        delete d.out[gone];
+        if (d.cur === gone) d.cur = '';
+        firstNext(gone);
+        return;
+    }
+    if (open && firstStyleRows().indexOf(open) >= 0) openFirstPosition(open);
+    firstStyleChanged();
 }
 
 // saveFirstStyle is the Styles tab's save of the draft; it comes back to
@@ -1291,6 +1388,12 @@ async function saveFirstStyle() {
     }
     S.fromSetup = true;
     await saveFlow();
+}
+
+// boxWord is a routing box's name as the set pick says it.
+function boxWord(box) {
+    const g = ROUTING_GROUPS.find(x => x[0] === box);
+    return g ? g[1] : box;
 }
 
 // openFirstTable takes the draft to the Styles tab's full flow table.
@@ -4320,8 +4423,8 @@ function mountSetPick(key, hostId, sel, o) {
         field: box => setPickField(key, box, o.pid),
         closed: o.closed, note: o.note,
         hint: b => (b === 'positions' ? 'A group is one row: its nodes are positions one at a time. Show a group to pick one.' : ''),
-        filters: checklistFilters, later: { label: HELD_ELSEWHERE },
-        placeholder: 'filter by name, or pick a prefix',
+        later: { label: HELD_ELSEWHERE },
+        placeholder: 'filter by name',
         onChange: (box, sp) => {
             if (box === 'positions') {
                 const pos = sp.value('positions');
@@ -5400,12 +5503,10 @@ function positionsRoutingSection() {
         '<p class="pd-note">' + esc(ROUTING_NOTE) + '</p>';
 }
 
-// ROUTING_NOTE is what a name in a role means, as main's Routing set said it.
-// Its last clause pointed at the HMI setup row, which is Operator setup now.
-const ROUTING_NOTE = 'A name in Inbound, Staging or Outbound is a place this process may route material through, and ' +
-    'operators are offered these and never the plant. There is nothing to switch on: a name in the list is set up. A recipe ' +
-    'follows the one name in a role; with several, it keeps the one it was saved with. Taking one out warns what it leaves ' +
-    'behind. Whether operators may change flows at all is under Operator setup.';
+// ROUTING_NOTE is what a name in a role means, in one line; the rest of main's
+// Routing set paragraph is in the Edge UI guide (Settings, Positions and
+// routing).
+const ROUTING_NOTE = 'Operators are offered these names, never the plant.';
 
 // settingsSetSel is Settings' pick as the process stands: its positions and
 // its routing set's enabled names, each role in its order.
@@ -8341,16 +8442,19 @@ function processSheet(edit) {
         '<div class="pd-fld"><label>Group<small>groups processes on the list</small></label>' +
         '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
         esc(group ? group.name : 'Ungrouped') + '<i class="car"></i></button></div></div>' +
-        '<div class="pd-sec"><div class="pd-lbl">Nodes</div><span class="pd-dim">click a box, then tick nodes into it</span></div>' +
-        (edit && !edit.routingRead ? unread('routing set') : '') +
-        '<div class="pd-sphost" id="sp-' + PROC_SET + '"></div>' +
-        '<div class="pd-sec"><div class="pd-lbl">Parts</div></div>' +
+        // PARTS FIRST (owner, 2026-11-15: "couple times now i forgot to get to
+        // parts ... parts above so you select parts first"): the node list
+        // below them takes scrolling, so a field after it was missed.
+        '<div class="pd-sec"><div class="pd-lbl">1 · Parts</div><span class="pd-dim">what this line runs</span></div>' +
         pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s') +
         (edit && edit.parts === null ? unread('part set') : '') +
+        '<div class="pd-sec"><div class="pd-lbl">2 · Nodes</div><span class="pd-dim">click a box, then tick nodes into it</span></div>' +
+        (edit && !edit.routingRead ? unread('routing set') : '') +
+        '<div class="pd-sphost" id="sp-' + PROC_SET + '"></div>' +
         '<p class="pd-still" id="pd-still"></p></div>';
     pageSheet(edit ? 'Edit process' : 'Add process',
         edit ? 'what this process is, what works it, and where its bins come from and go.'
-            : 'Name it, pick its nodes, pick a part. Only the name is needed now; Setup walks you through the rest.',
+            : 'Name it, pick its parts, pick its nodes. Only the name is needed now; Setup walks you through the rest.',
         body, edit ? 'Save' : 'Create', edit ? submitEditProcess : submitAddProcess, false, undefined, true);
     mountSetPick(PROC_SET, 'sp-' + PROC_SET, sel, {
         pid: pid, fresh: true,
@@ -9669,7 +9773,7 @@ async function runPresetApply() {
 // paint, which is the "clickable, nothing happens" report.
 const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
     'gspot-add': 1, 'glist-add': 1, 'cu-add': 1, 'ca-add': 1, 'set-add': 1, 'set-addpos': 1, 'set-pick': 1, 'ca-pick': 1, 'st-plc': 1, 'ch-pin-pick': 1, 'fs-part': 1,
-    'fs-addpart': 1, 'fs-swap': 1, 'fs-pick': 1 };
+    'fs-addpart': 1, 'fs-pick': 1, 'fs-addpos': 1 };
 
 // hashTab is the tab a #tab= names, or '' for none this page draws. No tab is
 // Styles. The Recipes tab's hash still says presets (F23); recipes names it
@@ -9974,14 +10078,17 @@ function onClick(e) {
             case 'setup-skip': void setupGo('skip'); return;
             case 'setup-show': void setupGo('show'); return;
             case 'setup-later': void openSettingsAt(btn.dataset.to); return;
-            // The cards set every position's swap: a position's own goes, and
-            // its own picks with it.
-            case 'fs-mode': S.firstStyle.mode = btn.dataset.mode; S.firstStyle.modes = {}; S.firstStyle.rowPick = {}; firstStyleChanged(); return;
-            case 'fs-role': S.firstStyle.role = btn.dataset.role; firstStyleChanged(); return;
+            // The open position's swap and role are its own copy.
+            case 'fs-mode': S.firstStyle.own[S.firstStyle.cur].mode = btn.dataset.mode; firstStyleChanged(); return;
+            case 'fs-role': S.firstStyle.own[S.firstStyle.cur].role = btn.dataset.role; firstStyleChanged(); return;
             case 'fs-part': openFirstPart(btn); return;
             case 'fs-addpart': void openFirstAddPart(btn); return;
-            case 'fs-swap': openFirstSwap(btn); return;
             case 'fs-pick': openFirstPick(btn); return;
+            case 'fs-open': openFirstPosition(btn.dataset.node); S.firstWarn = ''; drawSetup(); return;
+            case 'fs-done': firstDone(); return;
+            case 'fs-out': firstOut(); return;
+            case 'fs-addpos': openFirstAddPosition(btn); return;
+            case 'fs-takeoff': firstTakeOff(); return;
             case 'fs-table': openFirstTable(); return;
             case 'fs-back': S.setupView = ''; drawSetup(); return;
             case 'fs-save': void saveFirstStyle(); return;

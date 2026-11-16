@@ -36,8 +36,13 @@ every other screen that shows it shows it read-only:
 **The set pick is one piece in two places** (`shared/set-pick.js`): four boxes,
 Positions, Inbound, Staging and Outbound, each in its role's colour (the
 `--role-*` tokens, never the robot hues) with its picks as chips, over one
-always-open list; what holds for many rows of the open box is said once above
-the list (`hint`), not on each row. In a sheet the boxes stay in view at the
+always-open list, folded: one line per name prefix (ALN, PLN, SMN …) with
+Groups first, each opening to a grid of ticks and saying what is picked from it
+already ("3 in Positions", "1 here"); **All · Groups only · Free only** and
+**Expand all** beside the name filter; nodes other processes hold under one
+line at the foot. What holds for many rows of the open box is said once above
+the list (`hint`), not on each row. The open box, its chips and the list's
+frame are neutral: only a box still needed is outlined in its role's colour. In a sheet the boxes stay in view at the
 top of the sheet's one scroll while the list goes under them. The Add process
 sheet (and its Change…, the same sheet filled in) and Settings › Positions and
 routing draw it; both save through the same
@@ -54,11 +59,18 @@ say. One phrase for it everywhere: "Add a position".
 
 **Setup: a short path to a first line, skippable.** A new process opens on
 Setup: three steps, each done where it is shown — **Nodes and part** (the Add
-process sheet answered it; Change… opens it again), **First style** (a part on
-each position, consume or produce, one way they all swap, filled from the
-routing set and saved by the Styles tab's own save), and **Run it** (the screen,
-opened, with its three presses written out). No step lands on Settings. Beside
-them, the line so far and what can wait for Settings. It is finished when the
+process sheet answered it, parts first; Change… opens it again), **First
+style** (one position at a time: the positions as a checklist, done ones ticked
+green; the open position's part, consume or produce, swap (it starts as the
+position before it) and its picks from the routing set, only what its swap
+uses; **Done · next position** or **Not in this style**; **+ Add a position**
+and **Take … off this line** through Settings' positions write; Save style once
+every position is done or left free, by the Styles tab's own save), and **Run
+it** (the screen, opened, with its three presses written out). No step lands on
+Settings. Beside the first and last, the line so far and what can wait for
+Settings; First style's checklist is its line so far. Its loud colours are the
+open position, green for done, and the dashed outline of a pick box still
+needed; a role is a small dot. It is finished when the
 line **can** run and its screen **has been opened** (the screen's
 `last_seen_at`), not at a first changeover: some lines have none. **Skip setup,
 use Settings** hides it in this browser; **Show setup** brings it back while the
