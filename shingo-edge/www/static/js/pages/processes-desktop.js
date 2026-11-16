@@ -1135,7 +1135,9 @@ function firstPositionHTML(n, rows) {
         '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
         '<button class="pd-btn" data-act="fs-out">Not in this style</button>' +
         '<button class="pd-btn" data-act="fs-back">Back</button>' +
-        '<button class="pd-btn done" data-act="fs-done"' + (part ? '' : ' disabled') + '>Done · next position</button></div>';
+        // OFF UNTIL THE POSITION IS READY: a part, and nothing of its own to
+        // fix (positionFixes), as the bar says it.
+        '<button class="pd-btn done" data-act="fs-done"' + (part && !positionFixes(n).length ? '' : ' disabled') + '>Done · next position</button></div>';
 }
 
 // firstAllDoneHTML is the middle once no position is open: every one done or
@@ -1147,6 +1149,12 @@ function firstAllDoneHTML(rows) {
         '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
         '<button class="pd-dimlink" data-act="fs-table">Open the full flow table</button>' +
         '<button class="pd-btn" data-act="fs-back">Back</button></div>';
+}
+
+// positionFixes is what position n still needs, its findings' own sentences
+// (errors only; a warning is advice and blocks nothing).
+function positionFixes(n) {
+    return M().findings(S.model).filter(f => f.node === n && f.severity !== 'warning').map(f => f.message);
 }
 
 // firstWorkWait is what the work list says while position n has none: it
@@ -1293,7 +1301,7 @@ function openFirstPick(btn) {
 function firstDone() {
     const d = S.firstStyle;
     const n = d.cur;
-    if (!n || !d.parts[n]) return;
+    if (!n || !d.parts[n] || positionFixes(n).length) return;
     d.done[n] = true;
     d.out[n] = false;
     firstNext(n);
@@ -5302,11 +5310,14 @@ function workListHTML(node, wait) {
         return '<div class="pd-wl">' + head + '<p class="pd-dim">' + esc(why) + '</p></div>';
     }
     // A SWAP NOT COMPLETE SENDS NO ROBOT. The builder's refusal names the
-    // mode and the field in code (two_robot_press_index, paired_core_node);
-    // the bar says the same in the page's words, so this points there and
-    // keeps the refusal on hover.
+    // mode and the field in code (two_robot_press_index, paired_core_node), so
+    // it is not shown, hover included: what the position still needs is said
+    // from its own findings, in the words the bar uses ("Index Swap requires a
+    // paired core node").
     if (e.error) {
-        return '<div class="pd-wl">' + head + '<p class="pd-dim" title="' + esc(e.error) + '">No robot is sent until this swap is complete: the bar below says what it needs.</p></div>';
+        const needs = positionFixes(e.core_node_name);
+        return '<div class="pd-wl">' + head + '<p class="pd-dim">No robot is sent until this swap is complete' +
+            (needs.length ? ': ' + esc(needs[0]) : '.') + '</p></div>';
     }
     if (!(e.legs || []).length) return '<div class="pd-wl">' + head + '<p class="pd-dim">This swap sends no robot.</p></div>';
     const step = s => {
