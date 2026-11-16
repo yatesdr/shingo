@@ -810,16 +810,12 @@ func TestComposerShots(t *testing.T) {
 			t.Errorf("%s: the rows' box is %d px of content in %d px — it scrolls down, and only the column may",
 				label, fit.ScrollerScrollH, fit.ScrollerClientH)
 		}
-		// THE ADD CONTROL IS ON THE BOX'S HEAD LINE: above the headings, and
-		// on screen above the bar as the tab opens. As the box's footer it sat
-		// under the sticky bar at 1440x900 until the column scrolled.
+		// THE ADD CONTROL IS THE DASHED ROW CLOSING THE TABLE: inside the
+		// positions box, reached by scrolling the column as the paired-above
+		// line is. The head line's second copy is gone (one control per act).
 		if !fit.HasAdd {
 			t.Errorf("%s: the positions box has no add-a-position control", label)
 		} else {
-			if fit.AddBottom > fit.BarTop+1 {
-				t.Errorf("%s: the add control ends at y=%d, under the bar at y=%d — it is off screen as the tab opens",
-					label, fit.AddBottom, fit.BarTop)
-			}
 			if fit.AddTop < fit.TableTop-1 {
 				t.Errorf("%s: the add control starts at y=%d, above the positions box at y=%d",
 					label, fit.AddTop, fit.TableTop)

@@ -59,6 +59,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - A station board with more tiles than its screen's grid holds adds rows, so no tile draws over itself
 - A running style with no changeover on record no longer reads "never run here" beside its running tag
 - Settings shows the positions each screen holds, and offers the positions on no screen to each screen
+- The Styles tab has one + Add a position, under the table, and an Advanced settings button for what a position sets
 - Settings names a single back position in the singular
 - A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks
 

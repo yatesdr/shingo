@@ -210,14 +210,16 @@ const BUGS = [
         },
     },
     {
-        title: '+ Add a position is on the box\'s head line, above the headings, not under the rows and the bar',
+        // ONE "+ Add a position" (round 4, 2026-11-15): the dashed row closing
+        // the table; the head line's copy is gone.
+        title: '+ Add a position is one control, the dashed row under the rows',
         run: async page => {
             const html = String(page.pd('positionsTable')());
-            const add = html.indexOf('data-act="add-position"');
-            const head = html.indexOf('id="pd-poshead"');
+            const adds = html.split('data-act="add-position"').length - 1;
+            const row = html.indexOf('class="pd-addrowbtn" data-act="add-position"');
             const rows = html.indexOf('id="pd-postbl"');
-            return [['the control is drawn before the headings and the rows', add >= 0 && add < head && add < rows,
-                'at ' + add + ', headings at ' + head + ', rows at ' + rows + ': under the rows, where the bar covers it at 1440x900']];
+            return [['one add control, the dashed row inside the rows\' box', adds === 1 && row > rows,
+                adds + ' add controls; the dashed one at ' + row + ', rows at ' + rows]];
         },
     },
     {

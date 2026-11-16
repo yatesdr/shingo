@@ -143,8 +143,9 @@ the page's delegated handler acts on its × and its add), with three uses:
 **Settings › Light curtain** and **Settings › Counted somewhere else** (each
 the card's whole subject, so the list is `bare`: no name column of its own, `+
 Add a position` at the card's right edge), **Styles › Set for this style** under the positions table (what a
-position sets for one style: a list per setting that is set, `+ Add a
-setting` for the rest, each list's own `+ Add a position`), and a recipe
+position sets for one style: the **Advanced settings** button, an outlined
+button in the accent directly under the table, for every setting, then a list
+per setting that is set, each with its own `+ Add a position`), and a recipe
 group's own list on its card (**Set for this group**, one row named for the
 group). A setting's label is the claim's own word (`Next carrier`, `Tool
 change`) with one muted sub-line only where it changes what a person would

@@ -1683,7 +1683,7 @@ async function mainAsync() {
         const { root, pop, main, doc } = loadPage({ composer: firstRowComposer() });
         await drain();
         await drain();
-        if (root.innerHTML.indexOf('<button class="pd-btn" data-act="add-position">+ Add a position</button>') < 0) {
+        if (root.innerHTML.indexOf('<button class="pd-addrowbtn" data-act="add-position">+ Add a position</button>') < 0) {
             throw new Error('setup: a style with no rows does not draw "+ Add a position"');
         }
         const made = wireButtons(pop);
@@ -3077,11 +3077,12 @@ async function mainAsync() {
             '<button class="pd-dimlink" data-act="free-toggle">show them</button></div>') < 0) {
             throw new Error('no fold line: ' + (root.innerHTML.match(/<div class="pd-freeline">.*?<\/div>/) || ['(none)'])[0]);
         }
-        if (root.innerHTML.indexOf('<span>2 free</span>') < 0) throw new Error('the POSITIONS line does not fold its free names');
+        // The POSITIONS line names no free positions (round 4: one "+ Add a
+        // position", the dashed row; the fold line is the count).
+        if (/<span>2 free<\/span>| are free<\/span>/.test(root.innerHTML)) throw new Error('the POSITIONS line still lists the free names');
         click(main, doc, { act: 'free-toggle' });
         await settle();
         if (names() !== 'PLN_01 PLN_02 PLN_03 ULN_02') throw new Error('the style picture draws the whole process cell; it drew ' + names());
-        if (root.innerHTML.indexOf('<span>PLN_03 · ULN_02 are free</span>') < 0) throw new Error('shown, the POSITIONS line does not name the free ones');
         const row = makeElement('');
         row.dataset.act = 'recipe-open';
         row.dataset.preset = '7';

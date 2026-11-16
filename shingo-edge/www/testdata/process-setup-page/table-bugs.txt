@@ -41,8 +41,8 @@ ok   only POS_A3 two_robot, POS_A4 two_robot, POS_A5 single_robot, POS_A6 single
 ok   no card says "on deck for" or "paired with"
 ok   a pair card says "Paired core node"
 
-## + Add a position is on the box's head line, above the headings, not under the rows and the bar
-ok   the control is drawn before the headings and the rows
+## + Add a position is one control, the dashed row under the rows
+ok   one add control, the dashed row inside the rows' box
 
 ## Set for this style · a switch added is the style's draft, and × takes the draft back
 ok   POS_A2: the style as it opened is not dirty

@@ -295,31 +295,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
     overflow: hidden; padding-top: 6px;
 }
-/* THE ADD CONTROL IS ON THE BOX'S HEAD LINE, right of the label: outside
-   the sideways box, above the headings, and on screen as the tab opens. As
-   the box's footer it sat under the sticky bar at 1440x900 until the column
-   scrolled (browser walk 2026-11-11). */
-/* It is a CONTROL and a caption, not one dim line that is secretly both. It
-   was 12 px --text-muted with a cursor on it, which is the value of the hint
-   beside it and of the free-name list — so the only way to put a position
-   into a flow was drawn as the quietest thing in the box. The button is the
-   page's own .pd-btn; the free names keep the muted value, because they are
-   what the button is offering. The label's caps and tracking stop here. */
 .pd-posbox > .pd-lbl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; }
-.pd-posadd {
-    margin-left: 12px; display: flex; align-items: center; gap: 10px;
-    text-transform: none; letter-spacing: 0; font-weight: 400;
-}
-/* First on the line and in the accent: at the far right it read as caption. */
-.pd-posadd .pd-btn { border-color: var(--accent); color: var(--accent); font-weight: var(--fw-bold); }
-/* The same act again where a row ends: a dashed row closing the table. */
+/* The one "+ Add a position": a dashed row closing the table. */
 .pd-addrow td { padding: 6px 3px; }
 .pd-addrowbtn {
     width: 100%; min-height: 40px; padding: 0 12px; border: 1px dashed var(--sub-4); border-radius: var(--radius);
     background: none; color: var(--accent); font: inherit; font-weight: var(--fw-bold); text-align: left; cursor: pointer;
 }
 .pd-addrowbtn:hover { border-color: var(--accent); }
-.pd-posadd span { color: var(--text-muted); font-size: 12px; }
+/* An outlined button in the accent (Advanced settings): a way in that is
+   found, beside the tab's one filled button. */
+.pd-btn.accent { border-color: var(--accent); color: var(--accent); font-weight: var(--fw-bold); }
 .pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-postbl table { width: 100%; border-collapse: collapse; }
 .pd-postbl th {
@@ -496,7 +482,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    row is listed there, in the accent, like a set value. */
 .pd-setchip { color: var(--accent); border-color: var(--accent); font-size: 12px; cursor: pointer; }
 .pd-setfor { margin: 18px 24px 0; }
-.pd-setfor .pd-lbl { margin-bottom: 2px; }
+.pd-setfor .pd-lbl { margin: 14px 0 2px; }
 .pd-setfor .exc-rows .k, .pd-gset .exc-rows .k { color: var(--text-muted); font-size: 12px; }
 .pd-setnum { width: 72px; }
 .pd-setnote { margin: 0 0 6px; }

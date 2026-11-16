@@ -1761,12 +1761,11 @@ function reportDesktopFit() {
     const cb = col.getBoundingClientRect();
     const svgEl = pic.querySelector('#pd-svg');
     const svgRect = svgEl ? svgEl.getBoundingClientRect() : { width: 0, height: 0 };
-    // The add control is on the box's head line and has to be on screen, above
-    // the bar, as the tab opens; the paired-above line is the last row and has
-    // to be reachable by scrolling the column. Both are rendered geometry, so
-    // both are measured — a control that had slipped under the bar would
-    // still be in the DOM.
-    const add = $('pd-posadd');
+    // The add control is the dashed row closing the table and the
+    // paired-above line the last row: both have to be inside the positions
+    // box and reachable by scrolling the column. Both are rendered geometry,
+    // so both are measured.
+    const add = root().querySelector('#pd-postbl .pd-addrowbtn');
     const paired = root().querySelector('#pd-postbl tr.paired');
     // A point's distance from the top of the column's scrolled content.
     const inColumn = y => Math.round(y - cb.top + col.scrollTop);
@@ -3027,44 +3026,12 @@ function positionsTable() {
             ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
             ' own</td></tr>';
     }
-    // P3 · THE ADD CONTROL IS NOT ONLY A ROW. In the accepted D1 shot neither it
-    // nor the paired-above line was on screen: both were inside a tbody that
-    // scrolls, and with the picture at its resting height the box showed
-    // exactly the two position rows. An engineer looking at that screen has
-    // no way to learn that PLN_03 and PLN_06 are free — the one control that
-    // adds a position was below the fold of a box with no visible scrollbar.
-    //
-    // IT SITS ON THE BOX'S HEAD LINE, NOT UNDER THE ROWS (browser walk
-    // 2026-11-11). As the box's footer it was still under the sticky bar at
-    // 1440x900 until the column scrolled: the picture, two rows and the
-    // paired-above line already fill the column. On the head line it is on
-    // screen as the tab opens, beside the label, above the headings. The
-    // paired-above line STAYS a scrolling row: it is a statement about the
-    // rows, it belongs at the end of them.
-    //
-    // FIRST ON THE LINE, IN THE ACCENT, AND AGAIN UNDER THE ROWS (HOP,
-    // 2026-11-12). At the line's far right, past the hint, it still read as
-    // part of the caption, so it sits right after the label in the accent
-    // colour. And an engineer who has just filled a row looks below it for
-    // the next one, so a dashed "+ Add a position" row closes the table too:
-    // the same act, where the eye already is. The head line keeps the one
-    // that is on screen as the tab opens.
-    // THE ONE CONTROL THAT ADDS A POSITION LOOKS LIKE ONE. The whole footer
-    // was a 12 px dim-grey line with a cursor on it — the same value as the
-    // hint above the table and the free-name list beside it — so the only way
-    // to put a position into a flow read as a caption. Same ruling as the
-    // station card's chips and its Remove line (Amendment A): a control is
-    // drawn as a control. The free names stay as the quiet half, because they
-    // are what the button is offering rather than a second control.
-    // THE FREE NAMES FOLD WITH THE PICTURE (owner, 2026-11-14): two lines of
-    // names on a big line, a count until "show them" (freeLine).
-    const folded = !S.showFree && used.size;
-    const addCtl = free.length
-        ? '<span class="pd-posadd" id="pd-posadd">' +
-        '<button class="pd-btn" data-act="add-position">+ Add a position</button>' +
-        '<span>' + (folded ? esc(free.length + ' free') : esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free')) +
-        '</span></span>'
-        : '';
+    // ONE "+ ADD A POSITION": a dashed row closing the table, where an
+    // engineer who has just filled a row looks for the next one, drawn as a
+    // control and never as a caption. The head line carried a second one
+    // (browser walk 2026-11-11) for the same act, with the free names beside
+    // it; those names are the picker's rows once it opens, and the picture
+    // still says how many are free (freeLine).
     const addRow = free.length
         ? '<tr class="pd-addrow"><td colspan="' + columns.length + '"><button class="pd-addrowbtn" data-act="add-position">' +
         '+ Add a position</button></td></tr>'
@@ -3079,7 +3046,7 @@ function positionsTable() {
     // strip is a second `.pd-postbl` with the same colgroup, so its columns
     // are the rows' columns; syncPosHead carries it sideways with the rows.
     return '<div class="pd-posbox" id="pd-posbox">' +
-        '<div class="pd-lbl">Positions' + addCtl +
+        '<div class="pd-lbl">Positions' +
         '<span class="hint">click a card to find its row · click a cell to change it</span></div>' +
         '<div class="pd-postbl pd-poshead" id="pd-poshead">' +
         // F3: A FIELD IS CALLED WHAT THE CLAIM CALLS IT. These read `New bins
@@ -5084,8 +5051,15 @@ function setList(key, places, eligible, group) {
         ? '<p class="pd-note pd-setnote">' + esc(CARRYOVER_NOTE) + '</p>' : '');
 }
 
-// styleSettings is "Set for this style", under the positions table: a list per
-// setting some position of this style sets, and + Add a setting.
+// styleSettings is under the positions table: the Advanced settings button,
+// which offers every setting (openSetAdd), and "Set for this style", a list per
+// setting some position of this style sets.
+//
+// THE WAY IN IS A BUTTON, IN THE ACCENT, IN ONE PLACE. As "+ Add a setting"
+// it was a quiet grey line under whatever lists were drawn, so with nothing
+// set an engineer had no sign the settings existed. Outlined rather than
+// filled: Save style is the tab's one filled button. Not amber: amber on
+// these pages is state (needed, stale), and this is not a state.
 function styleSettings() {
     const rows = drawnRows();
     if (!rows.length) return '';
@@ -5094,9 +5068,10 @@ function styleSettings() {
         const listed = eligible.filter(n => isListed(key, { node: n }, setCtx({ node: n })));
         return listed.length ? setList(key, listed.map(n => ({ node: n })), eligible.length) : '';
     }).join('');
-    return '<div class="pd-setfor" id="pd-setfor"><div class="pd-lbl">Set for this style' +
-        '<span class="hint">only where a position differs from the default</span></div>' + lists +
-        '<button class="pd-btn quiet exc-add" data-act="set-add">+ Add a setting</button></div>';
+    return '<div class="pd-setfor" id="pd-setfor">' +
+        '<button class="pd-btn accent" data-act="set-add">Advanced settings</button>' +
+        (lists ? '<div class="pd-lbl">Set for this style<span class="hint">only where a position differs from the default</span></div>' + lists : '') +
+        '</div>';
 }
 
 // groupSettings is a recipe group's own list, on its card: the settings every

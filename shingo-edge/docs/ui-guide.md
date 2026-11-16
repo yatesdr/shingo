@@ -213,8 +213,9 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   has been opened, then says so and goes. **Skip setup, use Settings** hides it in this browser; **Show setup**
   brings it back while the process cannot run.
 - **Styles**: a rail of the recipes and styles, and each style's flow, as the same picture and model the
-  operator station uses, with its positions table and, under it, *Set for this style* (what a position sets for
-  this style, only where it differs from the default). Changes are saved with **Save style**; **+ New style**
+  operator station uses, with its positions table, one dashed **+ Add a position** row closing it, and, under it, the
+  **Advanced settings** button and *Set for this style* (what a position sets for this style, only where it
+  differs from the default). Changes are saved with **Save style**; **+ New style**
   puts parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as
   running**, the admin's style switch for when the plant changed parts without shingo. A position's reorder
   point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never
