@@ -35,8 +35,19 @@ func TestPreviewFlow_ReadsOncePerRequest(t *testing.T) {
 	// business and this test is not the place to freeze them. What it holds is
 	// that the preview does not re-read its own inputs.
 	const budget = 16
-	if n := counter.Count(); n > budget {
+	n := counter.Count()
+	if n > budget {
 		t.Errorf("a preview issues %d statements, budget %d — something is being read twice", n, budget)
+	}
+
+	// THE STEADY STATE IS FREE: builders over the draft the preview already
+	// holds, so asking for it (?steps=1) adds no statement at all.
+	counter.Reset()
+	if _, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{ToStyleID: toStyleID, Cells: cells, Steps: true}); err != nil {
+		t.Fatalf("preview with steps: %v", err)
+	}
+	if got := counter.Count(); got != n {
+		t.Errorf("a preview with its steady state issues %d statements, %d without — the dry run must read nothing", got, n)
 	}
 }
 

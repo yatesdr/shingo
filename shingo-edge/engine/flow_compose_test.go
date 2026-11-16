@@ -118,6 +118,7 @@ func seedFlowScenario(t *testing.T, db *store.DB) (processID, fromStyleID, toSty
 // TestPreviewFlow_NeverWrites: a preview cancels nothing, clears nothing,
 // enqueues nothing and creates no row — with a queued order sitting at the
 // very node the changeover would touch, which is what Start would cancel.
+// Asked for its steady state (Steps) too: that is builders over the draft.
 func TestPreviewFlow_NeverWrites(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -126,19 +127,24 @@ func TestPreviewFlow_NeverWrites(t *testing.T) {
 	queued := seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-preview", "PART-OLD", orders.StatusQueued)
 	before := snapshotFlowState(t, db, fromStyleID, toStyleID)
 
-	preview, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{ToStyleID: toStyleID, Cells: cellsOf(t, db, toStyleID)})
-	testutil.MustNoErr(t, err, "preview")
-	if preview.Orders() == 0 || len(preview.Actions) == 0 {
-		t.Fatalf("preview planned nothing: %+v", preview)
-	}
-	if got := reloadStatus(t, db, queued); got != orders.StatusQueued {
-		t.Errorf("the queued order is %s after a preview; a preview cancels nothing", got)
-	}
-	if after := snapshotFlowState(t, db, fromStyleID, toStyleID); !reflect.DeepEqual(after, before) {
-		t.Errorf("a preview changed stored state:\n before %+v\n after  %+v", before, after)
-	}
-	if preview.Fingerprint == "" || len(preview.Unresolved) != 0 || preview.Preflight.State != FlowPreflightUnchecked {
-		t.Errorf("preview shape: fingerprint %q, unresolved %v, preflight %+v", preview.Fingerprint, preview.Unresolved, preview.Preflight)
+	for _, steps := range []bool{false, true} {
+		preview, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{ToStyleID: toStyleID, Cells: cellsOf(t, db, toStyleID), Steps: steps})
+		testutil.MustNoErr(t, err, "preview")
+		if preview.Orders() == 0 || len(preview.Actions) == 0 {
+			t.Fatalf("steps %v: preview planned nothing: %+v", steps, preview)
+		}
+		if got := reloadStatus(t, db, queued); got != orders.StatusQueued {
+			t.Errorf("steps %v: the queued order is %s after a preview; a preview cancels nothing", steps, got)
+		}
+		if after := snapshotFlowState(t, db, fromStyleID, toStyleID); !reflect.DeepEqual(after, before) {
+			t.Errorf("steps %v: a preview changed stored state:\n before %+v\n after  %+v", steps, before, after)
+		}
+		if preview.Fingerprint == "" || len(preview.Unresolved) != 0 || preview.Preflight.State != FlowPreflightUnchecked {
+			t.Errorf("steps %v: preview shape: fingerprint %q, unresolved %v, preflight %+v", steps, preview.Fingerprint, preview.Unresolved, preview.Preflight)
+		}
+		if got := len(preview.Steady); (got > 0) != steps {
+			t.Errorf("steps %v: %d steady cells; the steady state is there when asked for and only then", steps, got)
+		}
 	}
 }
 
@@ -332,6 +338,202 @@ func TestPreviewFlow_PreflightStates(t *testing.T) {
 	if len(poster.asked) != 0 {
 		t.Errorf("a preview that did not ask still called Core with %v — that is one network "+
 			"round trip per keystroke on the edit loop", poster.asked)
+	}
+}
+
+// TestPreviewFlow_SteadyIsTheRequestBuilders: with Steps, a cell's steady
+// legs are the request-time builders' output on the claim the draft
+// materializes — orders A and B are BuildSwapDispatch's, a sequential line's
+// follow-on is BuildSequentialBackfillSteps', Robot 3's is carrierSpec's — for
+// every configurable mode, both roles and every index press refill. The table
+// names which legs each row owes, so a builder change that drops or adds one
+// fails here and not only on the floor. A draft BuildSwapDispatch refuses
+// carries its words and no legs. And all of it writes nothing.
+func TestPreviewFlow_SteadyIsTheRequestBuilders(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, fromStyleID, toStyleID := seedFlowScenario(t, db)
+	eng := testEngine(t, db)
+	// Core heard from: before it is, the planner refuses any press-index
+	// changeover (refusePressIndexWhenCoreUnavailable) and the preview is that
+	// error, with no steady state on it.
+	var bins []protocol.PayloadBinTypeInfo
+	for _, p := range []string{"PART-OLD", "PART-NEW", "PART-SAME", "PART-GONE", "PART-ADD"} {
+		bins = append(bins, protocol.PayloadBinTypeInfo{PayloadCode: p, BinTypeCode: "TOTE"})
+	}
+	eng.SetPayloadBinTypes(bins)
+	stored, err := db.ListStyleNodeClaims(toStyleID)
+	testutil.MustNoErr(t, err, "stored claims")
+	prior, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SWAP")
+	testutil.MustNoErr(t, err, "FLOW-SWAP")
+	before := snapshotFlowState(t, db, fromStyleID, toStyleID)
+
+	type leg struct{ leg, position, kind string }
+	a, b := leg{SteadyLegA, "", SteadyKindComplex}, leg{SteadyLegB, "", SteadyKindComplex}
+	rows := []struct {
+		name      string
+		mode      protocol.SwapMode
+		refill    protocol.RefillBy
+		third     string
+		noDest    bool
+		legs      []leg
+		followOns int
+		err       string
+	}{
+		{name: "sequential", mode: protocol.SwapModeSequential,
+			legs: []leg{a, {SteadyLegFollowOn, "FLOW-SWAP", SteadyKindComplex}}, followOns: 1},
+		{name: "single_robot", mode: protocol.SwapModeSingleRobot, legs: []leg{a}},
+		{name: "two_robot", mode: protocol.SwapModeTwoRobot, legs: []leg{a, b}},
+		{name: "press_index/clearing_robot", mode: protocol.SwapModeTwoRobotPressIndex, refill: protocol.RefillByClearingRobot,
+			legs: []leg{a, b}},
+		{name: "press_index/index_robot", mode: protocol.SwapModeTwoRobotPressIndex, refill: protocol.RefillByIndexRobot,
+			legs: []leg{a, b}},
+		{name: "press_index/own_robot", mode: protocol.SwapModeTwoRobotPressIndex, refill: protocol.RefillByOwnRobot,
+			legs: []leg{a, b, {SteadyLegFollowOn, "FLOW-BACK", SteadyKindRetrieve}}, followOns: 1},
+		{name: "press_index/own_robot/three_positions", mode: protocol.SwapModeTwoRobotPressIndex, refill: protocol.RefillByOwnRobot,
+			third: "FLOW-THIRD", legs: []leg{a, b, {SteadyLegFollowOn, "FLOW-THIRD", SteadyKindRetrieve}}, followOns: 1},
+		{name: "two_robot/no_destination", mode: protocol.SwapModeTwoRobot, noDest: true, err: "outbound destination"},
+	}
+	for _, row := range rows {
+		for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+			name := row.name + "/" + string(role)
+			cell := domain.FlowCell{CoreNodeName: "FLOW-SWAP", Role: role, SwapMode: row.mode, PayloadCode: "PART-NEW",
+				InboundSource: "FLOW-SRC", InboundStaging: "FLOW-STG", OutboundStaging: "FLOW-OSTG", OutboundDestination: "FLOW-DST"}
+			if row.noDest {
+				cell.OutboundDestination = ""
+			}
+			if row.mode == protocol.SwapModeTwoRobotPressIndex {
+				cell.PairedCoreNode, cell.SecondPairedCoreNode = "FLOW-BACK", row.third
+				cell.Advanced = domain.AdvancedOf(prior)
+				cell.Advanced.RefillBy = row.refill
+			}
+			cells := cellsOf(t, db, toStyleID)
+			at := -1
+			for i := range cells {
+				if cells[i].CoreNodeName == "FLOW-SWAP" {
+					cells[i], at = cell, i
+				}
+			}
+			p, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{ToStyleID: toStyleID, Cells: cells, Steps: true})
+			if err != nil {
+				var noOrders *FlowNoOrdersError
+				if !errors.As(err, &noOrders) {
+					t.Fatalf("%s: preview: %v", name, err)
+				}
+				p = noOrders.Preview
+			}
+			if len(p.Steady) != len(cells) {
+				t.Fatalf("%s: %d steady cells for %d cells, want one each", name, len(p.Steady), len(cells))
+			}
+			for i := range cells {
+				if p.Steady[i].CoreNodeName != cells[i].CoreNodeName {
+					t.Errorf("%s: steady[%d] is %s, want the request's order (%s)", name, i, p.Steady[i].CoreNodeName, cells[i].CoreNodeName)
+				}
+			}
+			got := p.Steady[at]
+
+			// The claim the request-time builders would be handed: the draft's.
+			claim := draftFlow(toStyleID, stored, cells, domain.ClaimSourceHMI, "", nil, nil).cells[at].claim
+			if got.Role != string(claim.Role) || got.SwapMode != string(row.mode) {
+				t.Errorf("%s: role %q mode %q, want %q %q", name, got.Role, got.SwapMode, claim.Role, row.mode)
+			}
+			d, derr := BuildSwapDispatch(&processes.Node{Name: claim.CoreNodeName}, &claim)
+			if row.err != "" {
+				if derr == nil || got.Error != derr.Error() || !strings.Contains(got.Error, row.err) || got.Legs == nil || len(got.Legs) != 0 {
+					t.Errorf("%s: error %q legs %+v, want BuildSwapDispatch's refusal (%v) and no legs", name, got.Error, got.Legs, derr)
+				}
+				if raw, _ := json.Marshal(got); !strings.Contains(string(raw), `"legs":[]`) {
+					t.Errorf("%s: %s, want legs as [] not null", name, raw)
+				}
+				continue
+			}
+			if derr != nil || d == nil {
+				t.Fatalf("%s: BuildSwapDispatch refused the row's own draft: %v", name, derr)
+			}
+			var want []SteadyLeg
+			for _, l := range row.legs {
+				w := SteadyLeg{Leg: l.leg, Position: l.position, Kind: l.kind}
+				switch {
+				case l.leg == SteadyLegA:
+					w.Steps = d.StepsA
+				case l.leg == SteadyLegB:
+					w.Steps = d.StepsB
+				case l.kind == SteadyKindComplex:
+					w.Steps = BuildSequentialBackfillSteps(&claim)
+				default:
+					s := carrierSpec(&claim, l.position, 1)
+					w.Retrieve = &SteadyRetrieve{Source: s.Source, Delivery: s.Delivery, PayloadCode: s.Payload, Empty: s.Empty}
+					// The spec's fields, said outright, so the row does not only
+					// agree with itself.
+					if *w.Retrieve != (SteadyRetrieve{Source: "FLOW-SRC", Delivery: l.position, PayloadCode: "PART-NEW",
+						Empty: role == protocol.ClaimRoleProduce}) {
+						t.Errorf("%s: Robot 3's carrier is %+v", name, *w.Retrieve)
+					}
+				}
+				want = append(want, w)
+			}
+			if !reflect.DeepEqual(got.Legs, want) {
+				gj, _ := json.Marshal(got.Legs)
+				wj, _ := json.Marshal(want)
+				t.Errorf("%s: legs\n got  %s\n want %s", name, gj, wj)
+			}
+			if got.FollowOns != d.FollowOns || got.FollowOns != row.followOns || got.Error != "" {
+				t.Errorf("%s: follow_ons %d (dispatch %d, row %d), error %q", name, got.FollowOns, d.FollowOns, row.followOns, got.Error)
+			}
+			// THE WIRE KEYS the page is built against, said once, on the row that
+			// carries every one of them.
+			if row.name == "press_index/own_robot" {
+				raw, _ := json.Marshal(got)
+				for _, key := range []string{`"core_node_name":"FLOW-SWAP"`, `"role":"` + string(role) + `"`,
+					`"swap_mode":"two_robot_press_index"`, `"follow_ons":1`, `"leg":"A","kind":"complex","steps":[`,
+					`"leg":"follow_on","position":"FLOW-BACK","kind":"retrieve","retrieve":{"source":"FLOW-SRC","delivery":"FLOW-BACK","payload_code":"PART-NEW","empty":`} {
+					if !strings.Contains(string(raw), key) {
+						t.Errorf("%s: %s does not carry %s", name, raw, key)
+					}
+				}
+			}
+		}
+	}
+	if after := snapshotFlowState(t, db, fromStyleID, toStyleID); !reflect.DeepEqual(after, before) {
+		t.Errorf("a preview with its steady state changed stored state:\n before %+v\n after  %+v", before, after)
+	}
+}
+
+// TestPreviewFlow_SteadyRidesTheRunningStyleAndTheNoOrdersRefusal: the steady
+// state is the draft's and not the plan's, so the running style's preview
+// (which plans nothing) carries it, and so does a preview that fires nothing,
+// on the refusal the handler writes as its 400. A mode with no complex swap
+// (the retired simple) is a cell with no legs and no error.
+func TestPreviewFlow_SteadyRidesTheRunningStyleAndTheNoOrdersRefusal(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, fromStyleID, _ := seedFlowScenario(t, db)
+	eng := testEngine(t, db)
+	running, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{
+		ToStyleID: fromStyleID, Cells: cellsOf(t, db, fromStyleID), Steps: true,
+	})
+	testutil.MustNoErr(t, err, "running style")
+	if !running.Running || len(running.Steady) != 3 {
+		t.Fatalf("running %v, %d steady cells, want the running style's three", running.Running, len(running.Steady))
+	}
+	for _, c := range running.Steady {
+		if len(c.Legs) != 2 || c.Error != "" {
+			t.Errorf("running style: %s has %d legs (%q), want its two_robot pair", c.CoreNodeName, len(c.Legs), c.Error)
+		}
+	}
+
+	db2 := testEngineDB(t)
+	processID2, _, _, toStyleID2 := seedNoChangeScenario(t, db2)
+	_, err = testEngine(t, db2).PreviewFlow(context.Background(), processID2, FlowPreviewRequest{
+		ToStyleID: toStyleID2, Cells: cellsOf(t, db2, toStyleID2), Steps: true,
+	})
+	var noOrders *FlowNoOrdersError
+	if !errors.As(err, &noOrders) {
+		t.Fatalf("err = %v, want *FlowNoOrdersError", err)
+	}
+	if s := noOrders.Preview.Steady; len(s) != 1 || s[0].CoreNodeName != "NC-NODE" || s[0].Error != "" ||
+		s[0].Legs == nil || len(s[0].Legs) != 0 {
+		t.Errorf("the refusal's steady state = %+v, want NC-NODE with no legs and no error", s)
 	}
 }
 

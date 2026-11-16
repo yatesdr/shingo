@@ -48,6 +48,11 @@ type FlowPreviewRequest struct {
 	// this is a network call, the edit loop makes a preview every 400 ms, and
 	// only the HMI's confirm sheet reads the answer. See flowPreflight.
 	Preflight bool
+	// Steps asks for the draft's steady state (FlowPreview.Steady): every
+	// cell's legs as its position's REQUEST would build them. Off by default,
+	// like Preflight: the edit loop does not read it. Pure builders over the
+	// draft, so asking costs no statement (TestPreviewFlow_ReadsOncePerRequest).
+	Steps bool
 	// TakenOff is the payload codes the engineer took off this flow in the
 	// draft. Request intent, not flow content: it is never stored and is not
 	// in the fingerprint, which is over the stored rows. It only tells the
@@ -104,6 +109,11 @@ type FlowPreview struct {
 	// Mint is set on a mint preview: the style the parts resolve to or would
 	// mint, and where each part lands.
 	Mint *MintFacts `json:"mint,omitempty"`
+	// Steady is set when the request asked (FlowPreviewRequest.Steps): one
+	// entry per cell of the request, its steady-state orders as Core would
+	// receive them (steadyCells). Carried on the running style's preview and
+	// on a FlowNoOrdersError's too, since neither depends on the plan.
+	Steady []SteadyCell `json:"steady,omitempty"`
 }
 
 // Orders is the count for a preview that planned, and 0 for one that did not.
@@ -485,6 +495,12 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 	// and the save that follows it agree either way.
 	draft := draftFlow(req.ToStyleID, stored, req.Cells, domain.ClaimSourceHMI, "", nil, nil)
 	toClaims := draft.claims()
+	// The steady state is the draft's alone, so it is taken here, ahead of the
+	// running style's return and the plan.
+	var steady []SteadyCell
+	if req.Steps {
+		steady = steadyCells(draft)
+	}
 
 	fingerprint, err := domain.FlowFingerprint(processID, process.ActiveStyleID, fromClaims, req.ToStyleID, stored)
 	if err != nil {
@@ -518,6 +534,7 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 			Preflight:   FlowPreflight{State: FlowPreflightUnchecked, Missing: []string{}},
 			Fingerprint: fingerprint,
 			Running:     true,
+			Steady:      steady,
 		}, nil
 	}
 
@@ -537,6 +554,7 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 		Unresolved:  unionNames(plan.unresolvedParticipants, skipped),
 		Preflight:   FlowPreflight{State: FlowPreflightUnchecked, Missing: []string{}},
 		Fingerprint: fingerprint,
+		Steady:      steady,
 	}
 	// Core is asked only when the caller says it is about to act on the
 	// answer — see flowPreflight.
