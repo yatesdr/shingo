@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v55–v57. Edge only; Core is unchanged.
+Deploy: Edge v55–v57 first, at every Edge of the plant; then Core v178. An Edge from before this release ignores the Edge Core names for a loader and keeps its screens as they are, so pick an Edge under Loaders only once every Edge at the plant runs this release.
 
 - The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
 - Add process is one sheet: name, group, operator screen, the coloured node pick and the parts
@@ -76,6 +76,7 @@ Deploy: Edge v55–v57. Edge only; Core is unchanged.
 - Make a screen puts a dedicated loader's homes on the new screen, not its buffer spots, which the board draws already
 - With no Edge picked on Core, a window Core adds to a loader goes onto the one screen here holding its others, and one it removes comes off
 - A window Core removes while an order runs there stays on its screen, saying so, and comes off once the order ends
+- Core's Loaders: a station's Settings has an Edge pick, the Edge that works it; every existing loader starts with No Edge picked
 - When Core names this Edge for a loader, the Edge makes its process and screen and keeps its windows on it, with nobody at the Edge
 - A loader Core gives another Edge is not offered here; a screen of it from before stays, says where Core moved it, and loses its windows
 - A loader's process says which Edge Core names for each of its loaders, or "No Edge picked: set on Core, under Loaders"
