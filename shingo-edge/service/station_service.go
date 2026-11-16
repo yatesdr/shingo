@@ -790,7 +790,7 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 	// THE LOOSE WRITE TAKES NOTHING OFF A SCREEN (ErrPositionOnAScreen), checked
 	// before the first row is written, so the refusal is total like the one
 	// above. A station's write skips it: a position on a sibling screen MOVES
-	// to this one, below.
+	// to this one (writePositionRows).
 	if stationID == 0 {
 		if err := onAScreen(clean, byCoreName); err != nil {
 			return nil, err
@@ -811,7 +811,7 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 	//     through to the refusal.
 	//   - The existing row already belongs to this process (byCoreName is
 	//     process-global), which is this write's own re-save and moves through
-	//     the adopt-in-place path below.
+	//     the adopt-in-place path (writePositionRows).
 	//
 	// Checked BEFORE the first row is written, so the refusal is total like the
 	// unknown-name one above.
@@ -839,63 +839,7 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 		return nil, &otherProcessPositionError{name: name, process: other}
 	}
 
-	// The screen every row of the list is written onto: the station, or NULL
-	// for the loose write (database/sql writes a nil any as NULL).
-	var screen any
-	var screenID *int64
-	if stationID != 0 {
-		screen, screenID = stationID, &stationID
-	}
-	// The rows this write leaves on the list whose node a Core loader holds,
-	// marked after the loop (MarkLoaderWindows' third caller): a window put
-	// on a screen now is known as one when Core removes it later.
-	var windows []int64
-	for i, name := range clean {
-		if n, exists := byCoreName[name]; exists {
-			if !n.LoaderWindow && s.LoaderHolds(name) {
-				windows = append(windows, n.ID)
-			}
-			// Adopt in place. UNIQUE(process_id, core_node_name) means a Core node
-			// has exactly ONE row per process, so finding it on another station is a
-			// MOVE, not a conflict — and it has to be a move, or we are back to
-			// minting duplicates. Re-point it, re-sequence it, re-enable it. The
-			// loose write only ever finds a row on no screen here (the refusal
-			// above), so it re-sequences and re-enables in place.
-			if stationID != 0 {
-				if n.OperatorStationID == nil {
-					log.Printf("station: adopting orphaned process_node %d (%s) onto station %d", n.ID, name, stationID)
-				} else if *n.OperatorStationID != stationID {
-					log.Printf("station: moving process_node %d (%s) from station %d to station %d", n.ID, name, *n.OperatorStationID, stationID)
-				}
-			}
-			if _, err := s.db.Exec(`UPDATE process_nodes SET operator_station_id=?, sequence=?, enabled=1, updated_at=datetime('now')
-				WHERE id=?`, screen, i+1, n.ID); err != nil {
-				return nil, err
-			}
-			if _, err := s.db.EnsureProcessNodeRuntime(n.ID); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		id, err := s.db.CreateProcessNode(processes.NodeInput{
-			ProcessID:         processID,
-			OperatorStationID: screenID,
-			CoreNodeName:      name,
-			Name:              name,
-			Sequence:          i + 1,
-			Enabled:           true,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if _, err := s.db.EnsureProcessNodeRuntime(id); err != nil {
-			return nil, err
-		}
-		if s.LoaderHolds(name) {
-			windows = append(windows, id)
-		}
-	}
-	if err := s.db.MarkProcessNodesLoaderWindow(windows); err != nil {
+	if err := s.writePositionRows(processID, stationID, clean, byCoreName); err != nil {
 		return nil, err
 	}
 
@@ -922,6 +866,68 @@ func (s *StationService) setPositions(processID, stationID int64, nodeNames []st
 	}
 
 	return s.releaseRemovedPositions(owned, desired)
+}
+
+// writePositionRows is setPositions' write: each name of clean, in order, on
+// the station (or on no screen for stationID 0), adopting the process's own
+// row for it (byCoreName) or creating one. The rows whose node a Core loader
+// holds are then marked loader windows (MarkLoaderWindows' third caller): a
+// window put on a screen now is known as one when Core removes it later.
+func (s *StationService) writePositionRows(processID, stationID int64, clean []string, byCoreName map[string]processes.Node) error {
+	// The screen every row of the list is written onto: the station, or NULL
+	// for the loose write (database/sql writes a nil any as NULL).
+	var screen any
+	var screenID *int64
+	if stationID != 0 {
+		screen, screenID = stationID, &stationID
+	}
+	var windows []int64
+	for i, name := range clean {
+		if n, exists := byCoreName[name]; exists {
+			if !n.LoaderWindow && s.LoaderHolds(name) {
+				windows = append(windows, n.ID)
+			}
+			// Adopt in place. UNIQUE(process_id, core_node_name) means a Core node
+			// has exactly ONE row per process, so finding it on another station is a
+			// MOVE, not a conflict — and it has to be a move, or we are back to
+			// minting duplicates. Re-point it, re-sequence it, re-enable it. The
+			// loose write only ever finds a row on no screen here (setPositions'
+			// onAScreen refusal), so it re-sequences and re-enables in place.
+			if stationID != 0 {
+				if n.OperatorStationID == nil {
+					log.Printf("station: adopting orphaned process_node %d (%s) onto station %d", n.ID, name, stationID)
+				} else if *n.OperatorStationID != stationID {
+					log.Printf("station: moving process_node %d (%s) from station %d to station %d", n.ID, name, *n.OperatorStationID, stationID)
+				}
+			}
+			if _, err := s.db.Exec(`UPDATE process_nodes SET operator_station_id=?, sequence=?, enabled=1, updated_at=datetime('now')
+				WHERE id=?`, screen, i+1, n.ID); err != nil {
+				return err
+			}
+			if _, err := s.db.EnsureProcessNodeRuntime(n.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		id, err := s.db.CreateProcessNode(processes.NodeInput{
+			ProcessID:         processID,
+			OperatorStationID: screenID,
+			CoreNodeName:      name,
+			Name:              name,
+			Sequence:          i + 1,
+			Enabled:           true,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.EnsureProcessNodeRuntime(id); err != nil {
+			return err
+		}
+		if s.LoaderHolds(name) {
+			windows = append(windows, id)
+		}
+	}
+	return s.db.MarkProcessNodesLoaderWindow(windows)
 }
 
 // wantedNames is how SetNodes and SetLoosePositions read a list: groups
