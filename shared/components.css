@@ -1487,6 +1487,6 @@ nav {
  * line is the list's last row. A sticky box stops inside its scroller's
  * padding, so a page sets --setpick-top on its scroller to minus that padding
  * and the boxes sit flush with the edge; --setpick-boxes-h is the boxes'
- * height, which set-pick.js sets as it draws. */
+ * height, which set-pick.js sets as they draw and whenever they change size. */
 .setpick .picker--open .picker-list { max-height: none; overflow: visible; overscroll-behavior: auto; box-shadow: none; }
 .setpick .picker--open .picker-count { position: static; }

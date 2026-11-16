@@ -190,14 +190,24 @@ export function createSetPick(host, opts) {
         }
         pane.setAttribute('data-role', b ? (b.role || b.key) : '');
         root.setAttribute('data-active', active || '');
-        // THE BOXES' HEIGHT, the head's sticky offset (THE SET PICK HAS ONE
-        // SCROLL, shared/components.css): the head says which box a tick goes
-        // in, and it slid half under the stuck boxes as the list scrolled.
+        boxesHeight();
+        dirtyMark();
+    }
+
+    // THE BOXES' HEIGHT, the head's sticky offset (THE SET PICK HAS ONE
+    // SCROLL, shared/components.css): the head says which box a tick goes in,
+    // and it slid half under the stuck boxes as the list scrolled. Set as the
+    // boxes draw, and again whenever they change size with no draw: a window
+    // resize that wraps the four onto another line left it stale until the
+    // next pick (round 10). One observer, here, so every page with the pick
+    // has it.
+    function boxesHeight() {
         if (root.style && root.style.setProperty && typeof row.offsetHeight === 'number') {
             root.style.setProperty('--setpick-boxes-h', row.offsetHeight + 'px');
         }
-        dirtyMark();
     }
+    const sizes = typeof ResizeObserver === 'function' ? new ResizeObserver(boxesHeight) : null;
+    if (sizes) sizes.observe(row);
 
     function dirtyMark() {
         if (api.dirty()) root.setAttribute('data-dirty', ''); else root.removeAttribute('data-dirty');
@@ -251,7 +261,7 @@ export function createSetPick(host, opts) {
             drawBoxes();
         },
         refresh() { picker.refresh(); drawBoxes(); },
-        destroy() { unwatch(); picker.destroy(); root.remove(); },
+        destroy() { unwatch(); if (sizes) sizes.disconnect(); picker.destroy(); root.remove(); },
     };
     drawBoxes();
     return api;

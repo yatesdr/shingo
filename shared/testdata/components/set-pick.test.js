@@ -20,8 +20,10 @@ const BOXES = [
     { key: 'destination', label: 'Outbound', sub: 'where the bin goes', role: 'outbound', need: 'needed' },
 ];
 
-async function setPick(opts) {
+// prep(p), when given, runs on the tab before the pick is drawn.
+async function setPick(opts, prep) {
     const p = page('layer.js', 'picker.js', 'node-picker.js', 'set-pick.js');
+    if (prep) prep(p);
     const [, , N, SP] = p.mods;
     const src = N.nodeSource(() => EDGE);
     await src.load();
@@ -161,6 +163,43 @@ test('the views: Groups only lists the groups as they are; Free only keeps what 
         'a node the box refuses is not free; a refused group stays for its free nodes');
     f.press('[data-view="all"]');
     eq(f.rows().indexOf('ALN_03') >= 0, true, 'All draws it again');
+});
+
+// THE HEAD'S OFFSET FOLLOWS THE BOXES (round 10). The head sticks under the
+// stuck boxes at their height (--setpick-boxes-h), set as they draw; a window
+// resize that wraps the four boxes onto another line changed their height and
+// left the offset stale until the next pick. The pick watches the boxes'
+// size itself, so each page that draws it has it.
+test("the head's offset is the boxes' height, and follows them when they reflow with no pick (a window resize)", async () => {
+    const observers = [];
+    const f = await setPick({}, (p) => {
+        p.r.ctx.ResizeObserver = class {
+            constructor(cb) { this.cb = cb; this.els = []; this.off = false; observers.push(this); }
+            observe(e) { this.els.push(e); }
+            disconnect() { this.off = true; }
+        };
+    });
+    const boxes = f.s.el.querySelector('.setpick-boxes');
+    let h = 120;
+    Object.defineProperty(boxes, 'offsetHeight', { get: () => h, configurable: true });
+    const watching = observers.filter((o) => o.els.indexOf(boxes) >= 0);
+    eq(watching.length, 1, 'one observer on the boxes');
+    const offset = () => f.s.el.style.getPropertyValue('--setpick-boxes-h');
+    watching[0].cb([{ target: boxes }]);
+    eq(offset(), '120px', 'their height when they first size');
+    h = 184;
+    watching[0].cb([{ target: boxes }]);
+    eq(offset(), '184px', 'the window narrowed and the boxes wrapped: the offset follows, with no pick');
+    f.s.destroy();
+    eq(watching[0].off, true, 'destroy lets the boxes go');
+});
+
+test('with no ResizeObserver the pick still draws, and sets the offset as it draws', async () => {
+    const f = await setPick({});
+    const boxes = f.s.el.querySelector('.setpick-boxes');
+    Object.defineProperty(boxes, 'offsetHeight', { get: () => 96, configurable: true });
+    f.s.open('source');
+    eq(f.s.el.style.getPropertyValue('--setpick-boxes-h'), '96px');
 });
 
 run();
