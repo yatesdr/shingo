@@ -112,8 +112,11 @@ type FlowCell struct {
 // Unmarshalling is untouched — omitempty is a marshalling tag — so a save
 // sending every key still writes every column.
 type FlowAdvanced struct {
-	// AllowedPayloadCodes is which payloads a robot may bring to this
-	// position. Set explicitly here, it beats Expand's degenerate-list guess.
+	// AllowedPayloadCodes is the other parts this position counts as its own:
+	// its readers take a carrier, pile or bin of a listed part as this
+	// position's (the changeover gate, counting, the lineside piles, Core's
+	// sourceability); none brings a second part to the line. Set explicitly
+	// here, it beats Expand's degenerate-list guess.
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
 	// ReorderPoint / AutoReorder are the replenishment policy: the point the
 	// engineer set (0 is off) and whether reaching it asks for a bin.

@@ -4737,7 +4737,10 @@ const SET_SECTIONS = [
 // changes what a person would pick. Two keys are the page's own (evac_nodes,
 // partial_dest); the field each edits is named here rather than guessed.
 const SET_COPY = {
-    allowed_payload_codes: ['allowed_payload_codes', 'which parts a robot may bring here'],
+    // WHAT ITS READERS DO: each takes a carrier, pile or bin of a listed part
+    // as this position's own (the changeover gate, counting, the lineside
+    // piles, Core's sourceability); none brings a second part to the line.
+    allowed_payload_codes: ['allowed_payload_codes', 'other parts this position counts as its own'],
     reorder: ['auto_reorder', REORDER_WORDS],
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
     auto_request_payload: ['auto_request_payload', 'the part a vacated position asks for on its own'],
