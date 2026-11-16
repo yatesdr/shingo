@@ -1059,10 +1059,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
 }
 .pd-fsmode.on { border: 2px solid var(--text-muted); padding: 11px; background: var(--surface); }
 .pd-fsmode small { display: block; color: var(--text-muted); font-size: 13px; }
-.pd-fsfoot { display: flex; align-items: center; gap: 12px; }
-/* One row: the bar's words wrap inside it, the buttons never wrap under it. */
-.pd-fsbar { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; font-size: 13px; }
-.pd-fsfoot > .pd-btn, .pd-fsfoot > .pd-dimlink { flex: 0 0 auto; white-space: nowrap; }
+/* The bar on its own line, the buttons one row under it, right-aligned:
+   beside the buttons the bar's sentence had a column a word wide. */
+.pd-fsfoot { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.pd-fsbar { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.pd-fsacts { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: nowrap; }
+.pd-fsacts > .pd-btn, .pd-fsacts > .pd-dimlink { flex: 0 0 auto; white-space: nowrap; }
 .pd-btn.done { border-color: var(--success); background: var(--success); color: #fff; }
 .pd-btn.done:disabled { opacity: .5; cursor: default; }
 .pd-skip { font-weight: 600; }

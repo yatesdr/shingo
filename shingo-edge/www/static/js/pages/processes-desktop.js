@@ -1159,12 +1159,14 @@ function firstPositionHTML(n, rows) {
         '<div class="pd-fsfield"><span class="pd-fsflbl">Consume or produce</span>' + roleSeg + '</div>' +
         '<div class="pd-fsblock"><span class="pd-fsflbl">Swap</span><div class="pd-fsmodes">' + cards + '</div></div>' +
         (picks ? '<div class="pd-fsblock"><span class="pd-fsflbl">Picked for you</span>' + picks + '</div>' : '') +
-        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
+        // THE BAR ON ITS OWN LINE, THE BUTTONS ONE ROW UNDER IT: beside the
+        // buttons, "2 to fix" and its sentence had a column a word wide.
+        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><div class="pd-fsacts">' +
         '<button class="pd-btn" data-act="fs-out">Not in this style</button>' +
         '<button class="pd-btn" data-act="fs-back">Back</button>' +
         // OFF UNTIL THE POSITION IS READY: a part, and nothing of its own to
         // fix (positionFixes), as the bar says it.
-        '<button class="pd-btn done" data-act="fs-done"' + (part && !positionFixes(n).length ? '' : ' disabled') + '>Done · next position</button></div>';
+        '<button class="pd-btn done" data-act="fs-done"' + (part && !positionFixes(n).length ? '' : ' disabled') + '>Done · next position</button></div></div>';
 }
 
 // firstAllDoneHTML is the middle once no position is open: every one done or
@@ -1173,9 +1175,9 @@ function firstAllDoneHTML(rows) {
     const togo = firstToGo();
     if (!rows.length) return '<p class="pd-dim">This line has no positions yet. Add one on the left.</p>';
     return '<div class="pd-fsposhd"><h2 class="pd-fsplain">' + (togo.length ? esc(nOf(togo.length, 'position')) + ' to go' : 'Every position is done') + '</h2></div>' +
-        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><span class="pd-spacer"></span>' +
+        '<div class="pd-fsfoot"><div id="pd-bar" class="pd-fsbar">' + firstStyleBar() + '</div><div class="pd-fsacts">' +
         '<button class="pd-dimlink" data-act="fs-table">Open the full flow table</button>' +
-        '<button class="pd-btn" data-act="fs-back">Back</button></div>';
+        '<button class="pd-btn" data-act="fs-back">Back</button></div></div>';
 }
 
 // positionFixes is what position n still needs, its findings' own sentences
